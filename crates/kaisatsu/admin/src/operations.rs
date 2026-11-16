@@ -75,7 +75,7 @@ pub(crate) fn person_target(ctx: &RequestCtx, user: &UserRepresentation) -> Obje
 /// any `realm-management` role, directly, through a group or a composite) unless the caller
 /// manages people realm-wide itself. An Organization's admins and people managers manage the
 /// people of their Organization; resetting a realm administrator's credentials would hand them
-/// the realm. The own account stays the caller's own business.
+/// the realm. Likewise a person holding an Organization role the caller lacks there. The own account stays the caller's own business.
 pub(crate) async fn ensure_person_ceiling(
     state: &AdminState,
     ctx: &RequestCtx,
@@ -113,7 +113,107 @@ pub(crate) async fn ensure_person_ceiling(
             "this person holds realm-wide rights: only a realm administrator or user manager changes them".into(),
         ));
     }
+    // The same within an Organization: a people manager never takes over its admin (ADM-07).
+    let memberships = store
+        .list_memberships_for_person(&ctx.realm_id, &user.id)
+        .await?;
+    if memberships.iter().any(|m| {
+        m.org_roles
+            .iter()
+            .any(|role| !caller.has_org_role(&m.org_id, role))
+    }) {
+        return Err(KaisatsuError::Forbidden(
+            "this person holds Organization roles you do not hold: only an Organization admin changes them".into(),
+        ));
+    }
     Ok(())
+}
+
+/// Refuses putting people into a group that carries realm-wide authority (realm roles the caller
+/// does not hold, or roles of an admin client) unless the caller manages people realm-wide: a
+/// membership hands out the group's roles, which an Organization admin may not grant (ADM-04).
+pub(crate) async fn ensure_may_join_group(
+    ctx: &RequestCtx,
+    store: &dyn Store,
+    realm: &str,
+    group: &GroupRepresentation,
+) -> Result<()> {
+    let caller = &ctx.principal;
+    if caller.has_realm_mgmt_role("manage-users") || caller.has_realm_mgmt_role("scim") {
+        return Ok(());
+    }
+    let admin_client =
+        |c: &str| matches!(c, "realm-management" | "broker") || c.ends_with("-realm");
+    let refused = || {
+        Err(KaisatsuError::Forbidden(
+            "this group carries realm-wide roles: only a realm administrator or user manager adds its members".into(),
+        ))
+    };
+    let realm_admin_clients = {
+        let mut ids = Vec::new();
+        for name in ["realm-management", "broker"] {
+            ids.extend(
+                store
+                    .get_client_by_client_id(realm, name)
+                    .await?
+                    .map(|c| c.id),
+            );
+        }
+        ids
+    };
+    // A member gets the roles of the group and of its ancestors, held on the group or mapped
+    // to it through the admin API (as tokens hand them down).
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = Some(group.clone());
+    while let Some(g) = next.take() {
+        if !seen.insert(g.id.clone()) {
+            break;
+        }
+        let realm_wide = g
+            .realm_roles
+            .iter()
+            .any(|r| !caller.realm_roles.contains(r))
+            || g.client_roles
+                .iter()
+                .any(|(client, roles)| admin_client(client) && !roles.is_empty());
+        if realm_wide {
+            return refused();
+        }
+        if store
+            .list_role_mappings_for_principal(realm, "group", &g.id, None)
+            .await?
+            .iter()
+            .any(|m| !caller.realm_roles.contains(&m.role_name))
+        {
+            return refused();
+        }
+        for client in &realm_admin_clients {
+            if !store
+                .list_role_mappings_for_principal(realm, "group", &g.id, Some(client))
+                .await?
+                .is_empty()
+            {
+                return refused();
+            }
+        }
+        if let Some(parent) = g.parent_id.as_deref() {
+            next = store.get_group(realm, None, parent).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Refuses enrolling a credential on the own account through a token another application holds:
+/// a client the person signed into must not mint recovery codes or add an authenticator. Only
+/// the account console and the person's own `admin-cli` sign-in enrol (as the account REST).
+fn ensure_own_credential_client(ctx: &RequestCtx) -> Result<()> {
+    match ctx.principal.client_id.as_deref() {
+        Some("account-console" | "admin-cli") => Ok(()),
+        _ => Err(KaisatsuError::Forbidden(
+            "credentials are enrolled in the account console: sign in there and add it again"
+                .into(),
+        )),
+    }
 }
 
 /// Runs registry operation `op` for `ctx`. `key` is the bound entity's key (or `None`),
@@ -250,6 +350,7 @@ pub async fn execute(
                     managed_by: group.managed_by.clone(),
                 },
             ))?;
+            ensure_may_join_group(ctx, store.as_ref(), realm, &group).await?;
             store.add_user_to_group(realm, &user.id, &group.id).await?;
             record_admin_write(
                 state,
@@ -520,8 +621,14 @@ pub async fn execute(
                 .ok_or_else(|| {
                     KaisatsuError::BadRequest("configuration must be a realm object".into())
                 })?;
-            // The bound realm is the one applied, whatever the document says.
+            // The bound realm is the one applied, whatever the document says: its name and its
+            // id, since the import keys every row by the document's id.
+            let realm_id = store
+                .get_realm(realm)
+                .await?
+                .map_or_else(|| realm.to_owned(), |r| r.id);
             doc["realm"] = Value::String(realm.to_owned());
+            doc["id"] = Value::String(realm_id);
             let opts = kaisatsu_import::ApplyOptions {
                 mode: if bool_param(params, "prune").unwrap_or(false) {
                     kaisatsu_import::ApplyMode::Full
@@ -584,6 +691,7 @@ pub async fn execute(
             if ctx.principal.subject.as_deref() != Some(user.id.as_str()) {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
+            ensure_own_credential_client(ctx)?;
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let (plain, hashes) = kaisatsu_crypto::generate_recovery_codes();
             for old in store
@@ -614,6 +722,7 @@ pub async fn execute(
             if ctx.principal.subject.as_deref() != Some(user.id.as_str()) {
                 return Err(KaisatsuError::NotFound("user not found".into()));
             }
+            ensure_own_credential_client(ctx)?;
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();
             let meta = json!({
@@ -671,6 +780,9 @@ pub async fn execute(
                 && !ctx.principal.is_realm_admin()
             {
                 return Err(KaisatsuError::NotFound("user not found".into()));
+            }
+            if ctx.principal.subject.as_deref() == Some(user.id.as_str()) {
+                ensure_own_credential_client(ctx)?;
             }
             check_decision(authz.check(ctx, Action::SelfService, &person_target(ctx, &user)))?;
             let realm_cfg = store.get_realm(realm).await?.unwrap_or_default();

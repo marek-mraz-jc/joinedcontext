@@ -205,7 +205,8 @@ async fn openid_configuration(
         "claims_supported": [
             "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp",
             "preferred_username", "name", "given_name", "family_name", "email", "email_verified",
-            "realm_access", "resource_access", "groups", "jc_org", "jc_groups"
+            "realm_access", "resource_access", "groups", "jc_org", "jc_org_id",
+            "jc_groups"
         ],
         "scopes_supported": [
             "openid", "profile", "email", "roles", "web-origins", "offline_access",
@@ -1002,6 +1003,26 @@ async fn authorize_get(
         .clone()
         .filter(|_| !force_reauth && !needs_step_up && kc_action.is_none())
     {
+        // Consent records hold the resolved scope (the login machine stores it), so the SSO
+        // check asks consent for each requested scope the resolution keeps (an `organization:`
+        // alias in its canonical case).
+        let (active, granted_scope) = resolve_scopes_for_client(
+            &state.store,
+            &realm,
+            &client,
+            params.get("scope").map(String::as_str),
+        )
+        .await?;
+        let requested = params.get("scope").map_or("", String::as_str);
+        let asked = granted_scope
+            .split_whitespace()
+            .filter(|g| {
+                requested
+                    .split_whitespace()
+                    .any(|t| t.eq_ignore_ascii_case(g))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
                 false
@@ -1011,19 +1032,12 @@ async fn authorize_get(
                     .list_consents(&realm.id, &sso.user_id)
                     .await?
                     .iter()
-                    .any(|c| c.client_id == client.client_id)
+                    .any(|c| c.covers(&client.client_id, &asked))
             }
         } else {
             true
         };
         if has_consent {
-            let (active, granted_scope) = resolve_scopes_for_client(
-                &state.store,
-                &realm,
-                &client,
-                params.get("scope").map(String::as_str),
-            )
-            .await?;
             let raw_code = random_handle_256();
             let code_rec = AuthorizationCodeRecord {
                 code_hash: sha256_hex(&raw_code),
@@ -1362,6 +1376,17 @@ fn audience_matches(claims: &Value, allowed: &[String]) -> bool {
     }
 }
 
+/// How long a used assertion's replay marker lives: until the assertion itself expires (plus
+/// the verifier's 30 s leeway), and at least `floor`, so it is refused again for its whole life.
+fn replay_marker_until(claims: &Value, floor: Duration) -> chrono::DateTime<Utc> {
+    let at_least = Utc::now() + floor;
+    claims
+        .get("exp")
+        .and_then(Value::as_i64)
+        .and_then(|exp| chrono::DateTime::from_timestamp(exp.saturating_add(30), 0))
+        .map_or(at_least, |exp| exp.max(at_least))
+}
+
 async fn verify_client_assertion(
     state: &OidcState,
     realm: &RealmConfig,
@@ -1518,7 +1543,7 @@ async fn verify_client_assertion(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("client-assertion:{jti}")),
             realm_id: realm.id.clone(),
-            expires_at: Utc::now() + Duration::minutes(10),
+            expires_at: replay_marker_until(&unverified, Duration::minutes(10)),
         })
         .await
         .map_err(|_| KaisatsuError::invalid_client("replayed client_assertion jti"))?;
@@ -3031,7 +3056,7 @@ async fn handle_jwt_bearer_grant(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("jwt-bearer:{}:{jti}", client.client_id)),
             realm_id: realm.id.clone(),
-            expires_at: Utc::now() + Duration::hours(1),
+            expires_at: replay_marker_until(&claims, Duration::hours(1)),
         })
         .await
         .map_err(|_| KaisatsuError::invalid_grant("replayed jwt-bearer assertion"))?;
@@ -3945,8 +3970,10 @@ async fn handle_logout_request(
     if let Some(hint) = id_token_hint {
         let keys = state.store.list_signing_keys(&realm.id).await?;
         let issuer = mount.realm_issuer(&realm.realm);
-        let (_, claims): (_, Value) = verify_jwt(hint, &keys, Some(&issuer), None)
-            .map_err(|_| KaisatsuError::BadRequest("invalid id_token_hint".into()))?;
+        let (_, claims): (_, Value) = verify_jwt_allowing_expired(hint, &keys, Some(&issuer))
+            .ok()
+            .filter(|(_, c): &(_, Value)| c.get("typ").and_then(Value::as_str) == Some("ID"))
+            .ok_or_else(|| KaisatsuError::BadRequest("invalid id_token_hint".into()))?;
         hint_client_id = claims.get("azp").and_then(Value::as_str).map(str::to_owned);
         if let (Some(cid), Some(azp)) = (client_id_param, hint_client_id.as_ref())
             && cid != azp
@@ -4091,4 +4118,24 @@ async fn handle_logout_request(
         resp.headers_mut().append(header::SET_COOKIE, v);
     }
     Ok(resp)
+}
+
+#[cfg(test)]
+mod replay_marker_tests {
+    use super::*;
+
+    #[test]
+    fn a_used_assertion_stays_refused_until_it_expires() {
+        let now = Utc::now();
+        let in_a_day = now.timestamp() + 86_400;
+        let until = replay_marker_until(&json!({ "exp": in_a_day }), Duration::minutes(10));
+        assert!(until.timestamp() >= in_a_day);
+        let soon = replay_marker_until(
+            &json!({ "exp": now.timestamp() + 5 }),
+            Duration::minutes(10),
+        );
+        assert!(soon >= now + Duration::minutes(10) - Duration::seconds(1));
+        let without = replay_marker_until(&json!({}), Duration::hours(1));
+        assert!(without >= now + Duration::hours(1) - Duration::seconds(1));
+    }
 }

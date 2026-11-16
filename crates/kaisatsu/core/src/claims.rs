@@ -136,11 +136,12 @@ const PROTECTED_CLAIMS: [&str; 22] = [
 /// Claims that carry authority (roles, group and organization membership, the identity a
 /// relying party names the person by): only the mapper that reads that authority from the store
 /// writes them, at its own path. The gateway matches a Policy's group assignees on `groups`.
-const AUTHORITY_CLAIMS: [&str; 7] = [
+const AUTHORITY_CLAIMS: [&str; 8] = [
     "realm_access",
     "resource_access",
     "groups",
     "jc_org",
+    "jc_org_id",
     "jc_groups",
     "email",
     "preferred_username",
@@ -485,7 +486,8 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                 if aggregate || vals.is_empty() {
                     // Only allow managed user attributes; `jc_org` and `jc_groups` come from groups
                     // unless explicitly present on a transient user.
-                    if (ctx.user.transient || !matches!(attr_name.as_str(), "jc_org" | "jc_groups"))
+                    if (ctx.user.transient
+                        || !matches!(attr_name.as_str(), "jc_org" | "jc_org_id" | "jc_groups"))
                         && let Some(uv) = ctx.user.attributes.get(&attr_name)
                     {
                         for item in uv {
@@ -503,6 +505,25 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                     .granted_scope_string
                     .split_whitespace()
                     .any(|s| s.starts_with("organization:"));
+                // The ids follow the pinned Organization: only a group naming it in `jc_org`
+                // gives its `jc_org_id` (EP-188).
+                if attr_name == "jc_org_id" && has_org_scope {
+                    vals = ctx
+                        .user_groups
+                        .iter()
+                        .filter(|g| {
+                            ctx.active_org.is_some_and(|pinned| {
+                                g.attributes
+                                    .get("jc_org")
+                                    .is_some_and(|orgs| orgs.iter().any(|o| o == pinned))
+                            })
+                        })
+                        .filter_map(|g| g.attributes.get("jc_org_id"))
+                        .flatten()
+                        .cloned()
+                        .collect();
+                    vals.dedup();
+                }
                 if attr_name == "jc_org" {
                     if has_org_scope {
                         vals.clear();
@@ -522,11 +543,12 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                         json!(vals[0])
                     };
                     // Only the membership attributes fill their own authority claim.
-                    let native = if matches!(attr_name.as_str(), "jc_org" | "jc_groups") {
-                        attr_name.as_str()
-                    } else {
-                        ""
-                    };
+                    let native =
+                        if matches!(attr_name.as_str(), "jc_org" | "jc_org_id" | "jc_groups") {
+                            attr_name.as_str()
+                        } else {
+                            ""
+                        };
                     insert_mapped(&mut claims, &claim_name, native, val);
                 }
             }
@@ -795,6 +817,9 @@ mod tests {
             ),
             ("jc_org", "", false),
             ("jc_org", "jc_org", true),
+            ("jc_org_id", "", false),
+            ("jc_org_id", "jc_org", false),
+            ("jc_org_id", "jc_org_id", true),
             ("jc_groups", "jc_org", false),
             ("sub", "sub", false),
             (".iss", "", false),
@@ -1011,5 +1036,79 @@ mod tests {
         assert_eq!(claims.get("aud"), Some(&json!("portal-api")));
         assert_eq!(claims.get("acr"), Some(&json!("mfa")));
         assert_eq!(claims.get("amr"), Some(&json!(["pwd", "otp"])));
+    }
+
+    /// EP-188: `jc_org_id` comes from group attributes alone, like `jc_org`, and under an
+    /// `organization:` scope only the pinned Organization's group gives its id.
+    #[test]
+    fn jc_org_id_follows_the_groups_and_the_pinned_organization() {
+        let realm = RealmConfig::default();
+        let client = ClientRepresentation {
+            client_id: "edge".into(),
+            protocol_mappers: vec![ProtocolMapperRepresentation {
+                name: "jc_org_id".into(),
+                protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
+                config: BTreeMap::from([
+                    ("user.attribute".into(), "jc_org_id".into()),
+                    ("claim.name".into(), "jc_org_id".into()),
+                    ("multivalued".into(), "true".into()),
+                    ("aggregate.attrs".into(), "true".into()),
+                    ("access.token.claim".into(), "true".into()),
+                ]),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let user = UserRepresentation {
+            id: "de300000-0000-4000-8000-000000000010".into(),
+            username: "demo.two@hel.fi".into(),
+            // A user attribute never mints an id.
+            attributes: HashMap::from([("jc_org_id".into(), vec!["sk_forged".into()])]),
+            ..Default::default()
+        };
+        let group = |org: &str, id: &str| GroupRepresentation {
+            id: org.into(),
+            name: format!("{org}_bound"),
+            path: format!("/{org}_bound"),
+            attributes: HashMap::from([
+                ("jc_org".into(), vec![org.into()]),
+                ("jc_org_id".into(), vec![id.into()]),
+            ]),
+            ..Default::default()
+        };
+        let groups = [group("helsinki", "fi_hel"), group("espoo", "fi_espoo")];
+        let ids = |scope: &str, active_org: Option<&str>| {
+            let ctx = MapperContext {
+                realm: &realm,
+                issuer: "https://idm.example.test/realms/dev",
+                client: &client,
+                user: &user,
+                user_groups: &groups,
+                all_realm_roles: &[],
+                active_scopes: &[],
+                granted_scope_string: scope,
+                acr: "pwd",
+                amr: &[],
+                session_id: None,
+                nonce: None,
+                jti: "j1",
+                iat: 1000,
+                exp: 1300,
+                auth_time: Some(1000),
+                dpop_jkt: None,
+                act: None,
+                active_org,
+            };
+            evaluate_mappers(&ctx, TokenKind::AccessToken)
+                .expect("claims")
+                .get("jc_org_id")
+                .cloned()
+        };
+        assert_eq!(ids("openid", None), Some(json!(["fi_hel", "fi_espoo"])));
+        assert_eq!(
+            ids("openid organization:helsinki", Some("helsinki")),
+            Some(json!(["fi_hel"]))
+        );
+        assert_eq!(ids("openid organization:vantaa", None), None);
     }
 }

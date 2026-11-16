@@ -713,9 +713,11 @@ describe("the scope tree", () => {
 
   it("gives every setup line a copy button", () => {
     render(
-      <I18nextProvider i18n={i18n}>
-        <SetupPanel name="a" url={URL_OF} />
-      </I18nextProvider>,
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nextProvider i18n={i18n}>
+          <SetupPanel name="a" url={URL_OF} />
+        </I18nextProvider>
+      </QueryClientProvider>,
     );
     expect(screen.getAllByRole("button", { name: /Copy/ }).length).toBe(3);
   });

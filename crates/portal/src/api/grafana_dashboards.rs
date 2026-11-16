@@ -275,6 +275,51 @@ fn variables_of(dashboard: &Value) -> Vec<&Value> {
         .unwrap_or_default()
 }
 
+/// `variable` as the caller may see it: a builder variable's values were read from its Endpoint
+/// when the dashboard was proposed, so a caller who may not read that Endpoint gets none of them,
+/// as a panel over it is refused. A custom variable naming no Endpoint is the dashboard's own.
+fn readable_variable(
+    state: &AppState,
+    effective: &Effective,
+    project: &str,
+    variable: &Value,
+) -> Value {
+    let Some((_, _, endpoint)) =
+        crate::grafana_builder::variable_source(variable["description"].as_str().unwrap_or(""))
+    else {
+        return variable.clone();
+    };
+    let readable = state
+        .mirror
+        .get(project, "Endpoint", &endpoint)
+        .and_then(|manifest| serde_json::to_value(manifest).ok())
+        .is_some_and(|manifest| effective.may_read_manifest("Endpoint", &manifest));
+    let mut variable = variable.clone();
+    if !readable {
+        for field in ["options", "query", "current"] {
+            variable[field] = Value::Null;
+        }
+    }
+    variable
+}
+
+/// `dashboard` with each variable as the caller may see it: the values a picked one is checked
+/// against are the ones the caller is offered, so a refusal tells nothing of the hidden ones.
+fn readable_dashboard(
+    state: &AppState,
+    effective: &Effective,
+    project: &str,
+    dashboard: &Value,
+) -> Value {
+    let mut dashboard = dashboard.clone();
+    if let Some(list) = dashboard["templating"]["list"].as_array_mut() {
+        for variable in list {
+            *variable = readable_variable(state, effective, project, variable);
+        }
+    }
+    dashboard
+}
+
 fn variable_view(variable: &Value) -> VariableView {
     let kind = variable["type"].as_str().unwrap_or("custom").to_owned();
     let options = match kind.as_str() {
@@ -421,7 +466,7 @@ pub async fn get_dashboard(
     State(state): State<AppState>,
     Path((project, uid)): Path<(String, String)>,
 ) -> Result<Json<DashboardView>, ApiError> {
-    member(&state, &user.0.identity, &project)?;
+    let effective = member(&state, &user.0.identity, &project)?;
     let client = client(&state)?;
     let org = organization_held(&client, &project).await?;
     let dashboard = dashboard_of(&client, org, &project, &uid).await?;
@@ -449,7 +494,9 @@ pub async fn get_dashboard(
             .map(str::to_owned),
         variables: variables_of(&dashboard)
             .into_iter()
-            .map(variable_view)
+            .map(|variable| {
+                variable_view(&readable_variable(&state, &effective, &project, variable))
+            })
             .collect(),
         panels: dashboard["panels"]
             .as_array()
@@ -749,7 +796,10 @@ pub async fn panel_data(
         panel,
     )
     .ok_or_else(|| ApiError::NotFound(format!("panel {panel} not found on '{uid}'")))?;
-    let query = checked_query(&dashboard, &asked)?;
+    let query = checked_query(
+        &readable_dashboard(&state, &effective, &project, &dashboard),
+        &asked,
+    )?;
     let held = client.all_datasources(org).await?;
     if let Some(reason) = denial(&state, &effective, &project, saved, &held) {
         return Ok(Json(PanelData {
@@ -839,7 +889,7 @@ pub async fn variable_values(
         .ok_or_else(|| ApiError::NotFound(format!("variable '{name}' not found on '{uid}'")))?;
     if variable["type"] != "query" {
         return Ok(Json(VariableValues {
-            options: custom_options(variable),
+            options: custom_options(&readable_variable(&state, &effective, &project, variable)),
         }));
     }
     // The variable's datasource is read as a panel's would be.
@@ -1551,6 +1601,62 @@ mod tests {
         assert!(denial(&state, &admin_rights, PROJECT, &closed, &elsewhere).is_some());
         let data = panel(admin(), &state, 4, &[]).await.expect("an answer");
         assert!(data.access_denied.is_some(), "{data:?}");
+    }
+
+    /// A builder variable's values come from its Endpoint: a caller who may not read that
+    /// Endpoint gets none of them, as a panel over it runs nothing.
+    #[test]
+    fn a_builder_variable_over_an_endpoint_the_caller_may_not_read_offers_no_values() {
+        let state = world(None);
+        let variable = |endpoint: &str| {
+            json!({
+                "name": "station", "type": "custom",
+                "description": format!("Values of name (AirQualityObserved, endpoint {endpoint})"),
+                "query": "Kallio,Mannerheimintie",
+                "current": { "value": ["Kallio"] },
+                "options": [{ "text": "Kallio", "value": "Kallio" }],
+            })
+        };
+        let viewer = crate::permissions::for_request(&state, &person(&[]).0.identity, PROJECT);
+        let approver = crate::permissions::for_request(&state, &admin().0.identity, PROJECT);
+        let offered = |effective: &Effective, variable: &Value| {
+            custom_options(&readable_variable(&state, effective, PROJECT, variable)).len()
+        };
+        assert_eq!(offered(&viewer, &variable("closed")), 0);
+        assert_eq!(
+            offered(&viewer, &variable("nobodys")),
+            0,
+            "an unknown Endpoint"
+        );
+        assert!(current_of(&readable_variable(
+            &state,
+            &viewer,
+            PROJECT,
+            &variable("closed")
+        ))
+        .is_empty());
+        assert_eq!(offered(&approver, &variable("closed")), 1);
+        // A picked value is checked against what the caller is offered, never the hidden list.
+        let dashboard = json!({ "templating": { "list": [variable("closed")] } });
+        let asked = vec![("var-station".to_owned(), "Kallio".to_owned())];
+        assert!(matches!(
+            checked_query(
+                &readable_dashboard(&state, &viewer, PROJECT, &dashboard),
+                &asked
+            ),
+            Err(ApiError::Unprocessable { .. })
+        ));
+        assert!(checked_query(
+            &readable_dashboard(&state, &approver, PROJECT, &dashboard),
+            &asked
+        )
+        .is_ok());
+        let own = json!({ "name": "unit", "type": "custom", "query": "a,b" });
+        assert_eq!(
+            offered(&viewer, &own),
+            2,
+            "a variable the builder did not write"
+        );
     }
 
     #[tokio::test]

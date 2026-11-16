@@ -1007,6 +1007,11 @@ fn parse_dot_tail(state: &mut ParserState<'_>, target: Expr) -> Result<Expr, Par
         if state.rem().starts_with('(') {
             // Bento parses the whole call first and reports an unknown name after its arguments.
             let args = parse_arg_list(state)?;
+            if crate::methods::REFUSED_METHODS.contains(&ident.as_str()) {
+                return Err(state.err(format!(
+                    "method '{ident}' is refused: it reads a file from the host"
+                )));
+            }
             if !state.env.has_method(&ident) {
                 return Err(state.err(format!("unrecognised method '{ident}'")));
             }
@@ -1016,6 +1021,7 @@ fn parse_dot_tail(state: &mut ParserState<'_>, target: Expr) -> Result<Expr, Par
                 &ident,
                 &args,
             )?;
+            check_params(state, crate::params::METHODS, &ident, &args)?;
             validate_method_args_at_parse(state, saved, &ident, &args)?;
             return Ok(Expr::MethodCall {
                 target: Box::new(target),
@@ -1148,6 +1154,7 @@ fn parse_primary(state: &mut ParserState<'_>) -> Result<Expr, ParseError> {
                 &ident,
                 &args,
             )?;
+            check_params(state, crate::params::FUNCTIONS, &ident, &args)?;
             let state_id = state.alloc_state_id();
             return Ok(Expr::FunctionCall {
                 name: ident,
@@ -1635,6 +1642,56 @@ fn check_required_param(
         return Err(state.err(format!("missing parameter: {param}")));
     }
     Ok(())
+}
+
+/// Bento's parse-time check of a call against the function's or method's parameter spec
+/// (params.rs): a named parameter the spec lacks, or more positional arguments than it declares
+/// on a non-variadic call. Names outside the spec (ekiben extensions) are not checked here.
+fn check_params(
+    state: &ParserState<'_>,
+    table: &[crate::params::Spec],
+    name: &str,
+    args: &ArgList,
+) -> Result<(), ParseError> {
+    let Some((_, variadic, params)) = table.iter().find(|(n, _, _)| *n == name) else {
+        return Ok(());
+    };
+    match args {
+        ArgList::Positional(v) if !variadic && v.len() > params.len() => Err(state.err(format!(
+            "wrong number of arguments, expected {}, got {}",
+            params.len(),
+            v.len()
+        ))),
+        ArgList::Positional(_) => Ok(()),
+        ArgList::Named(named) => {
+            let unknown: Vec<&str> = named
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .filter(|k| !params.iter().any(|(p, _, _)| p == k))
+                .collect();
+            if unknown.is_empty() {
+                return Ok(());
+            }
+            let missing: Vec<&str> = params
+                .iter()
+                .filter(|(p, optional, default)| {
+                    !optional && default.is_none() && !named.iter().any(|(k, _)| k == p)
+                })
+                .map(|(p, _, _)| *p)
+                .collect();
+            let mut msg = if unknown.len() == 1 {
+                format!("unknown parameter {}", unknown[0])
+            } else {
+                format!("unknown parameters {}", unknown.join(", "))
+            };
+            match (unknown.len(), missing.as_slice()) {
+                (1, [only]) => msg.push_str(&format!(", did you mean {only}?")),
+                (_, []) => {}
+                (_, m) => msg.push_str(&format!(", expected {}", m.join(", "))),
+            }
+            Err(state.err(msg))
+        }
+    }
 }
 
 fn validate_method_args_at_parse(

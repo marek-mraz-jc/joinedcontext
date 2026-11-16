@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { CodeBlock, Alert, Button, Icon, PageHeader, PageLoading } from "../../components/ui";
+import { AssistantGuides } from "../../components/endpoints/AssistantGuides";
 import { ANONYMOUS_CALLS_PER_MINUTE, clientName, readServer, serverUrl, setups } from "./connect";
 
 /**
@@ -174,6 +175,7 @@ export function ConnectPage({ project, name }: { project: string; name: string }
         <h2 id="connect-clients" className="text-title font-semibold text-fg">
           {t("connect.clients")}
         </h2>
+        <AssistantGuides />
         <Client
           id="connect-claude-code"
           title="Claude Code"
@@ -188,14 +190,6 @@ export function ConnectPage({ project, name }: { project: string; name: string }
           steps={t("connect.claudeDesktop.steps")}
           code={lines.claudeDesktop}
           copy={t("connect.claudeDesktop.copy")}
-          prompt={prompt}
-        />
-        <Client
-          id="connect-chatgpt"
-          title="ChatGPT"
-          steps={t("connect.chatgpt.steps")}
-          code={url}
-          copy={t("connect.copyAddress")}
           prompt={prompt}
         />
         <Client

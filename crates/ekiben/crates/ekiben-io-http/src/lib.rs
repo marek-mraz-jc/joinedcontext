@@ -11,7 +11,11 @@ pub mod input;
 pub mod mqtt;
 pub mod outbound;
 pub mod output;
+pub mod paginate;
 pub mod processor;
+#[cfg(feature = "websocket")]
+pub mod redis_cache;
+pub mod socket;
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
@@ -22,8 +26,11 @@ pub fn register_all(registry: &Registry) {
     input::register(registry);
     output::register(registry);
     http_server::register(registry);
+    socket::register(registry);
     #[cfg(feature = "websocket")]
     websocket::register(registry);
     #[cfg(feature = "websocket")]
     mqtt::register(registry);
+    #[cfg(feature = "websocket")]
+    redis_cache::register(registry);
 }

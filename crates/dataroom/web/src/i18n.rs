@@ -1067,6 +1067,22 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Adja hozzá ezt a címet az asszisztenshez egyéni csatlakozóként; a katalógus MCP-csatlakozó oldala mutatja, hol kell kattintani az egyes asszisztensekben.",
     );
     add(
+        "guide_signed_in",
+        "You add a connector from your organization's Portal, which needs sign-in.",
+        "Pridávate konektor z Portálu vašej organizácie, ktorý vyžaduje prihlásenie.",
+        "Přidáváte konektor z Portálu vaší organizace, který vyžaduje přihlášení.",
+        "Sie fügen einen Connector aus dem Portal Ihrer Organisation hinzu, der eine Anmeldung braucht.",
+        "A szervezete Portáljából ad hozzá csatlakozót, amely bejelentkezést kér.",
+    );
+    add(
+        "guide_signed_in_fix",
+        "Follow the same steps with its address, but where they say no sign-in choose OAuth: {name} opens the Portal's sign-in page, and you sign in with your Portal account.",
+        "Postupujte rovnako s jeho adresou, ale tam, kde kroky hovoria bez prihlásenia, zvoľte OAuth: {name} otvorí prihlasovaciu stránku Portálu a prihlásite sa účtom Portálu.",
+        "Postupujte stejně s jeho adresou, ale tam, kde kroky říkají bez přihlášení, zvolte OAuth: {name} otevře přihlašovací stránku Portálu a přihlásíte se účtem Portálu.",
+        "Folgen Sie denselben Schritten mit seiner Adresse, wählen Sie aber dort, wo ohne Anmeldung steht, OAuth: {name} öffnet die Anmeldeseite des Portals, und Sie melden sich mit Ihrem Portal-Konto an.",
+        "Kövesse ugyanezeket a lépéseket a címével, de ahol bejelentkezés nélkül szerepel, válassza az OAuth-t: a(z) {name} megnyitja a Portál bejelentkezési oldalát, és a Portál-fiókjával jelentkezik be.",
+    );
+    add(
         "guide_up",
         "Back to the list of assistants",
         "Späť na zoznam asistentov",

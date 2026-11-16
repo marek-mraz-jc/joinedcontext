@@ -1851,6 +1851,7 @@ async fn check_organization_names(
     crate::pipeline_lifetime::check(state, project, kind, &envelope.spec)?;
     // 4k. A history plan names only the slots of the spaces it lands in (PL-106).
     crate::pipeline_history::check(state, project, kind, &envelope.spec)?;
+    crate::pipeline_history::check_attributes(state, project, kind, &envelope.spec)?;
     Ok(())
 }
 

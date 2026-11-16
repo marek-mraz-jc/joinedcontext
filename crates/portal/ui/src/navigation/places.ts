@@ -1,14 +1,14 @@
 /**
  * The pages a person went to last and the ones they starred (UI-90, T-3240), kept in their own
- * preferences on the server (`/api/v1/preferences`, scoped by their Keycloak `sub`), so they
+ * preferences on the server (the `portal_preferences_get` door, scoped by their Keycloak `sub`), so they
  * follow the person to another browser. Read once, when something first asks. A star is written
  * at once: the stored preferences are read again and written back with only the stars changed,
  * so a theme or a layout saved elsewhere is kept. An opened page is not a write: the tab collects
- * them and reports them in one `POST /api/v1/preferences/recent` when it is hidden or closed,
+ * them and reports them in one `portal_preferences_recent` action when it is hidden or closed,
  * which the server merges into what is stored.
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { api } from "../api/client";
+import { door, doorAction } from "../api/odata";
 import type { components } from "../api/schema";
 
 export type Place = components["schemas"]["Place"];
@@ -33,10 +33,14 @@ function publish(next: Places): void {
   for (const listener of listeners) listener();
 }
 
+/** The person's stored preferences, through their Portal door (API/13 §2b). */
+export async function readPreferences(): Promise<Preferences> {
+  return (await door("portal_preferences_get", {})) as Preferences;
+}
+
 async function read(): Promise<Preferences | null> {
   try {
-    const answer = await api.GET("/api/v1/preferences", {});
-    return answer.data ?? null;
+    return await readPreferences();
   } catch {
     return null;
   }
@@ -58,13 +62,32 @@ function save(change: (current: Places) => Places): Promise<void> {
     if (!stored) return;
     const next = change({ recent: stored.recent ?? [], favourites: stored.favourites ?? [] });
     try {
-      const answer = await api.PUT("/api/v1/preferences", { body: { ...stored, ...next } });
-      if (answer.data) publish({ recent: answer.data.recent ?? [], favourites: answer.data.favourites ?? [] });
+      const answer = (await doorAction("portal_preferences_set", { body: { ...stored, ...next } })) as Preferences;
+      publish({ recent: answer.recent ?? [], favourites: answer.favourites ?? [] });
     } catch {
       // Unsaved: the screen keeps the change for this visit, the next visit reads what is stored.
     }
   });
   return writing;
+}
+
+/**
+ * Saves `patch` into the person's preferences: read fresh and written back in the same queue as the
+ * stars, since a PUT replaces the whole row and a copy read when the page opened would put back
+ * the stars and recent pages saved since.
+ */
+export function savePreferences(patch: Partial<Preferences>): Promise<Preferences> {
+  const saved = writing.then(async () => {
+    const stored = await readPreferences();
+    const answer = (await doorAction("portal_preferences_set", { body: { ...stored, ...patch } })) as Preferences;
+    publish({ recent: answer.recent ?? [], favourites: answer.favourites ?? [] });
+    return answer;
+  });
+  writing = saved.then(
+    () => undefined,
+    () => undefined,
+  );
+  return saved;
 }
 
 /** The address of the page as a place: its path and query, without the language override. */
@@ -101,8 +124,7 @@ export function reportRecent(): Promise<void> {
   if (unreported.length === 0) return Promise.resolve();
   const opened = unreported;
   unreported = [];
-  return api
-    .POST("/api/v1/preferences/recent", { body: { places: opened }, keepalive: true })
+  return doorAction("portal_preferences_recent", { body: { places: opened } }, undefined, true)
     .then(() => undefined)
     .catch(() => undefined);
 }

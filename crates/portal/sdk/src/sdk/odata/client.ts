@@ -26,8 +26,14 @@ export class ODataError extends Error {
   readonly title: string;
   /** The current `ETag` a `412` answers, to read the entity again with. */
   readonly etag?: string;
+  /** The edge's `X-Request-Id` of the answer, the reference a person quotes when reporting it. */
+  readonly requestId?: string;
+  /** Each field the refusal names: its `target` (`spec.name`) and what is wrong with it. */
+  readonly details: { target: string; message: string }[];
+  /** What the person can do next, when the service says. */
+  readonly hint?: string;
 
-  constructor(status: number, body: unknown, etag?: string) {
+  constructor(status: number, body: unknown, etag?: string, requestId?: string) {
     const error = (body as { error?: Record<string, unknown> } | null)?.error ?? {};
     const problem = (body ?? {}) as Record<string, unknown>;
     const text = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -40,6 +46,12 @@ export class ODataError extends Error {
     this.type = text(error.type) ?? text(problem.type) ?? `https://joinedcontext.com/errors/${this.code}`;
     this.title = text(error.title) ?? text(problem.title) ?? "Error";
     this.etag = etag;
+    this.requestId = requestId;
+    this.details = (Array.isArray(error.details) ? error.details : []).flatMap((d: unknown) => {
+      const { target, message } = (d ?? {}) as Record<string, unknown>;
+      return typeof target === "string" && typeof message === "string" ? [{ target, message }] : [];
+    });
+    this.hint = text(error.hint) ?? text(problem.hint);
   }
 
   /** `412`: the entity changed since it was read. */
@@ -180,13 +192,22 @@ export class ODataClient {
     return new Query<EntitySets[S]>(this, `projects${keyPredicate(project)}/${nav}`);
   }
 
-  /** One entity by its key; its `@odata.etag` is what a bound action sends as `If-Match`. */
-  async get<S extends keyof EntitySets & string>(set: S, key: KeyOf): Promise<EntitySets[S]> {
+  /**
+   * One entity by its key, with `select` its `$select` (members a list leaves out, such as a
+   * manifest's `spec`, answer only when named); its `@odata.etag` is what a bound action sends as
+   * `If-Match`.
+   */
+  async get<S extends keyof EntitySets & string>(
+    set: S,
+    key: KeyOf,
+    select?: readonly string[],
+  ): Promise<EntitySets[S]> {
     const members = ENTITY_KEYS[set];
     if (typeof key === "object" && members.some((m) => !(m in key))) {
       throw new ODataError(400, { error: { code: "invalid-request", message: `${set} is keyed by (${members.join(",")})` } });
     }
-    const { body } = await this.send("GET", `${set}${keyPredicate(key)}`);
+    const query = select?.length ? `?$select=${encodeURIComponent(select.join(","))}` : "";
+    const { body } = await this.send("GET", `${set}${keyPredicate(key)}${query}`);
     return body as EntitySets[S];
   }
 
@@ -208,10 +229,22 @@ export class ODataClient {
    * JSON object passes: `call("jc_schema_get", "air", { kind: "Endpoint" })`.
    */
   async call<F extends keyof Functions & string>(name: F, project: string, params: Functions[F]): Promise<unknown> {
+    return this.invoke(`projects${keyPredicate(project)}`, name, params);
+  }
+
+  /**
+   * A function bound to the `Organization` singleton, the people's:
+   * `organizationCall("jc_person_list", { search: "ana" })`.
+   */
+  async organizationCall<F extends keyof Functions & string>(name: F, params: Functions[F]): Promise<unknown> {
+    return this.invoke("Organization", name, params);
+  }
+
+  private async invoke(bound: string, name: string, params: unknown): Promise<unknown> {
     const entries = Object.entries(params as Record<string, unknown>).filter(([, v]) => v !== undefined);
     const args = entries.map(([n]) => `${n}=@${n}`).join(",");
     const aliases = entries.map(([n, v]) => `@${n}=${encodeURIComponent(literal(v))}`).join("&");
-    const address = `projects${keyPredicate(project)}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
+    const address = `${bound}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
     const { body } = await this.send("GET", address);
     return (body as { value?: unknown })?.value;
   }
@@ -237,7 +270,7 @@ export class ODataClient {
     if (ifMatch) headers["If-Match"] = ifMatch;
     const response = await this.transport({ method, path, body: method === "POST" ? (body ?? {}) : undefined, headers });
     if (response.status < 200 || response.status >= 300) {
-      throw new ODataError(response.status, response.body, response.headers?.etag);
+      throw new ODataError(response.status, response.body, response.headers?.etag, response.headers?.["x-request-id"]);
     }
     return response;
   }

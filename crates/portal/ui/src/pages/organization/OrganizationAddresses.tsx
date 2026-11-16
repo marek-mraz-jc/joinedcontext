@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { PageFailed } from "../../components/ui/PageState";
 import { EmptyState, safeHref, Skeleton } from "../../components/ui";
 
@@ -28,7 +28,7 @@ export function OrganizationAddresses(): JSX.Element {
   const addresses = useQuery({
     queryKey: ["organizationAddresses"],
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/organization/addresses")),
+      organizationReading("addresses"),
   });
   return (
     <section

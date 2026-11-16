@@ -6,12 +6,12 @@
 use std::time::Duration;
 
 use jc_core::kinds::data_source::{check_class, DataSourceSpec, DataSourceType};
-use jc_core::kinds::pipeline::{Compute, PipelineSource, PipelineSpec, Step};
+use jc_core::kinds::pipeline::{Compute, OutputMode, PipelineSource, PipelineSpec, Step};
 use jcctl::bento::InputContext;
 use serde_json::Value;
 
 use super::identity::{
-    bound_in_flight, in_flight, pipeline_oauth2, reads_in_batches, replaces, writes, written,
+    bound_in_flight, in_flight, mode_of, pipeline_oauth2, reads_in_batches, writes, written,
 };
 use super::RenderError;
 use crate::store::Mirror;
@@ -53,13 +53,14 @@ pub fn render_stream(
         (None, None) => {}
     }
 
+    processors.extend(attributes_step(pipeline, name)?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
     processors.extend(batching());
     processors.extend(writes(
         project,
-        &[(slug.to_owned(), replaces(pipeline, 0))],
+        &[(slug.to_owned(), mode_of(pipeline, 0))],
         "",
     )?);
 
@@ -108,6 +109,9 @@ fn bento_page_rows(bento: &str) -> Result<Option<u64>, RenderError> {
 
 /// The label of a pipeline's compute step, the studio's `compute` node (PL-66).
 pub const COMPUTE_LABEL: &str = "compute";
+
+/// The label of the step `spec.attributes` compiles to (G-15).
+pub const ATTRIBUTES_LABEL: &str = "attributes";
 
 /// The label of the step `spec.history` compiles to (PL-107).
 pub const HISTORY_LABEL: &str = "history";
@@ -281,6 +285,18 @@ pub(super) fn with_source_failures(stream: &mut Value, url: &str) {
 /// `spec.history` as its one Bento step (PL-107, T-4845): the planned `observedAt` of each
 /// attribute, after the author's steps and before the lifetime step, whose `from: observedAt`
 /// then reads the same time.
+/// The step of `spec.attributes` (G-15), after the author's steps and before the history step:
+/// each rule's `observedAt`, `unitCode` and `datasetId`, the source's system members dropped and
+/// its dates kept. `name` is the pipeline's, for the `datasetId` `urn:jc:pipeline:<name>`.
+pub(crate) fn attributes_step(
+    pipeline: &PipelineSpec,
+    name: &str,
+) -> Result<Option<Value>, RenderError> {
+    let step =
+        jcctl::attributes::step(pipeline, name).map_err(|e| RenderError::Custom(e.to_string()))?;
+    Ok(step.map(|text| labelled(serde_json::json!({ "mapping": text }), ATTRIBUTES_LABEL)))
+}
+
 pub(crate) fn history_step(pipeline: &PipelineSpec) -> Result<Option<Value>, RenderError> {
     let step = jcctl::history::step(pipeline).map_err(|e| RenderError::Custom(e.to_string()))?;
     Ok(step.map(|text| labelled(serde_json::json!({ "mapping": text }), HISTORY_LABEL)))
@@ -576,13 +592,19 @@ pub fn render_endpoint_stream(
         COMPUTE_LABEL,
     ));
 
+    processors.extend(attributes_step(
+        pipeline,
+        stream_key
+            .rsplit_once('/')
+            .map_or(stream_key, |(_, name)| name),
+    )?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
     processors.extend(batching());
     processors.extend(writes(
         project,
-        &[(target_slug.to_owned(), replaces(pipeline, 0))],
+        &[(target_slug.to_owned(), mode_of(pipeline, 0))],
         "",
     )?);
 
@@ -1010,10 +1032,10 @@ pub fn render_merged(
 
     // `outputs()` is the default lane's, then each route's in order (PL-73).
     // The slugs follow `outputs()`, so the n-th slug is written in the n-th output's mode.
-    let targets: Vec<(String, bool)> = target_slugs
+    let targets: Vec<(String, OutputMode)> = target_slugs
         .iter()
         .enumerate()
-        .map(|(at, slug)| (slug.clone(), replaces(pipeline, at)))
+        .map(|(at, slug)| (slug.clone(), mode_of(pipeline, at)))
         .collect();
     let lane = pipeline.lane_outputs().len().min(targets.len());
     let lane_writes = writes(project, &targets[..lane], "")?;
@@ -1024,6 +1046,7 @@ pub fn render_merged(
         processors.extend(routing);
         Some(cases)
     };
+    processors.extend(attributes_step(pipeline, name)?);
     processors.extend(history_step(pipeline)?);
     processors.extend(source_events_step(pipeline));
     processors.extend(lifetime_step(pipeline)?);
@@ -1274,7 +1297,7 @@ fn step_processor(step: Step) -> Result<Option<Value>, RenderError> {
 pub(super) fn routes(
     pipeline: &PipelineSpec,
     project: &str,
-    slugs: &[(String, bool)],
+    slugs: &[(String, OutputMode)],
 ) -> Result<(Vec<Value>, Vec<Value>), RenderError> {
     let mut processors: Vec<Value> = batching().into_iter().take(2).collect();
     let mut pick = String::from("meta jc_route = ");
@@ -1358,5 +1381,5 @@ pub(super) fn input_ends_by_itself(input: &Value) -> bool {
             .and_then(Value::as_u64)
             .is_some_and(|count| count > 0);
     }
-    jc_core::kinds::bento_inputs::TERMINATING.contains(&kind)
+    jc_core::kinds::data_source::input_terminates(kind)
 }

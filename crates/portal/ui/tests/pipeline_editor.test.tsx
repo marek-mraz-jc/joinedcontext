@@ -873,12 +873,14 @@ it("tells a feed from a space and reads the attributes of a class from an inline
     expect(formField("compute_mappingRef")).toBeVisible();
     expect(formField("compute_module")).not.toBeVisible();
 
-    // The schedule belongs to a scheduled pipeline.
+    // The schedule belongs to a scheduled pipeline, and the workbench's "When it runs" step asks
+    // it (G-23, T-7062): the form under it never shows a second schedule field.
     await user.selectOptions(
       labelled(dialog, /^Execution/),
       en.pipelines.field.classChoice.scheduled,
     );
-    expect(formField("schedule")).toBeVisible();
+    expect(formField("schedule")).not.toBeVisible();
+    expect(dialog.querySelector("#workbench-schedule-step-title")).toBeInTheDocument();
   });
 
   it("reads its choices as words and chooses no target for the author (T-2754)", async () => {

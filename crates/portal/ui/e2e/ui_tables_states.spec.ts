@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // jc-ui-tables (UI judge on the prod rehearsal, 2026-11-09): the tables of these pages were cut
 // off at 400 px and named people by their Keycloak ids. Each page in each state, at 1440 and

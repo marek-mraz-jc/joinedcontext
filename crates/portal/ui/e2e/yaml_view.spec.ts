@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5052: the YAML view of a manifest in a real browser, the API answered in the browser. A
 // viewer reads it in Monaco read-only; a steward edits it, sees what a field is for on hover, and

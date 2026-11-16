@@ -189,3 +189,48 @@ fn the_legacy_org_yaml_still_loads_with_a_deprecation_warning_pf121() {
         .iter()
         .any(|m| m.contains("legacy")));
 }
+
+/// T-7035 (EP-188, PF-130): two Organizations declaring one domain would open one tenant each;
+/// each claimant is named, and one domain per Organization passes.
+#[test]
+fn two_organizations_declaring_one_domain_are_refused_ep188() {
+    let dir = two_organizations("domain-twice", None);
+    write(
+        &dir,
+        "organizations/zilina.yaml",
+        &organization("zilina", "hel.fi", false),
+    );
+    let found = messages(&validate::run(&dir).findings);
+    let claims: Vec<_> = found
+        .iter()
+        .filter(|m| m.contains("declares the domain 'hel.fi'"))
+        .collect();
+    assert_eq!(claims.len(), 2, "{found:?}");
+    assert!(claims[0].contains("hel and zilina"), "{}", claims[0]);
+    let found = messages(&validate::run(&two_organizations("domain-once", None)).findings);
+    assert!(
+        !found.iter().any(|m| m.contains("declares the domain")),
+        "{found:?}"
+    );
+}
+
+/// T-7035 (PF-130): a project's tenant Organization comes from its own `organizationRef` and
+/// that Organization's domain, never from the installation's; a missing link is an error that
+/// names it.
+#[test]
+fn a_space_organization_is_read_from_the_repository_only_pf130() {
+    let dir = two_organizations("space-organization", None);
+    write(
+        &dir,
+        "projects/lost/project.yaml",
+        &project("lost", "nowhere", None),
+    );
+    let repo = jc_manifest::loader::Repository::load(&dir).expect("loads");
+    let id = |project: &str| repo.space_organization(project).map(|id| id.to_string());
+    assert_eq!(id("zilina").as_deref(), Ok("sk_zilina"));
+    assert_eq!(id("praha").as_deref(), Ok("fi_hel"));
+    let lost = id("lost").expect_err("no such Organization");
+    assert!(lost.contains("`nowhere`"), "{lost}");
+    let missing = id("absent").expect_err("no such project");
+    assert!(missing.contains("`absent`"), "{missing}");
+}

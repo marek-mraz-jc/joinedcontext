@@ -19,6 +19,8 @@ export const NAV_SECTIONS = [
   // The project's MQTT brokers, which a data source reads and a device publishes to (MF-54, T-3839).
   { plural: "mqttbrokers", labelKey: "nav.mqttbrokers", icon: "datasources" },
   { plural: "pipelines", labelKey: "nav.pipelines", icon: "pipelines" },
+  // Stored, reviewed JavaScript the pipelines pin by version (PL-118, T-7084).
+  { plural: "scripts", labelKey: "nav.scripts", icon: "pipelines" },
   { plural: "dashboards", labelKey: "nav.dashboards", icon: "dashboards" },
   // A person's charts over an Endpoint, saved into the project's Grafana folder (T-6509).
   { plural: "grafana", labelKey: "nav.grafana", icon: "dashboards" },

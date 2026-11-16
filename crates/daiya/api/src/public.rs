@@ -214,6 +214,17 @@ pub async fn create_or_update_public_dashboard(
             .uid
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("pub-{}", &raw_token[..12]));
+        // A uid names one public dashboard: another dashboard's record is never taken over.
+        if state
+            .store
+            .get_public_dashboard(req_ctx.org_id, &uid)
+            .await?
+            .is_some()
+        {
+            return Err(CrError::Conflict(format!(
+                "Public dashboard uid '{uid}' is already in use; choose another uid or leave it empty"
+            )));
+        }
         let new_rec = PublicDashboardRecord {
             installation_id: state.installation_id,
             org_id: req_ctx.org_id,
@@ -309,6 +320,25 @@ pub fn sanitize_dashboard_for_public_view(
 
     if let Some(panels) = obj.get_mut("panels").and_then(Value::as_array_mut) {
         sanitize_panels_for_public(panels, show_query_text);
+    }
+    // Variables and annotations name a datasource and carry query text too: they keep only
+    // their names, values and options.
+    for section in ["templating", "annotations"] {
+        let Some(list) = obj
+            .get_mut(section)
+            .and_then(|s| s.get_mut("list"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for entry in list.iter_mut().filter_map(Value::as_object_mut) {
+            entry.remove("datasource");
+            if !show_query_text {
+                for key in ["query", "definition", "expr", "rawSql", "target"] {
+                    entry.remove(key);
+                }
+            }
+        }
     }
     dash
 }

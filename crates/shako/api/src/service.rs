@@ -71,6 +71,10 @@ pub struct NewRepository {
 }
 
 fn check_org_write(state: &ShakoState, ctx: &RequestCtx, owner: &str) -> ShakoResult<()> {
+    // An owner name already bound to another Organization stays that Organization's.
+    if state.owner_org(owner).is_some_and(|org| org != ctx.org_id) {
+        return Err(ShakoError::NotFound("organization not found".into()));
+    }
     state
         .authorizer
         .check(
@@ -1008,12 +1012,38 @@ pub async fn update_pull_branch(
     let (repo, disk_path) =
         resolve_and_authorize_repo(state, ctx, owner, name, Action::Propose).await?;
     let mut pr = load_pull(state, &repo, number).await?;
+    if pr.merged || pr.state == "closed" {
+        return Err(ShakoError::Conflict(
+            "only an open pull request can be updated".into(),
+        ));
+    }
     let permit = state
         .memory_budget
         .acquire(MERGE_OPERATION_WEIGHT_BYTES)
         .await?;
     let _guard = state.repo_locks.lock(repo.id).await;
     let (b, h) = (pr.base_ref.clone(), pr.head_ref.clone());
+    // Updating moves the head branch like a push does: its protection rules decide (S5), with the
+    // paths the base brings in as the changed paths.
+    let (disk, head, base) = (disk_path.clone(), h.clone(), b.clone());
+    let incoming = blocking(move || diff_refs_files(&disk, &head, &base)).await?;
+    let changed_paths: Vec<String> = incoming.into_iter().map(|f| f.filename).collect();
+    let policy = state
+        .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
+        .await?;
+    policy.check_ref_update(
+        ctx,
+        state.authorizer.as_ref(),
+        &repo.owner,
+        &repo.name,
+        RefUpdate {
+            refname: &format!("refs/heads/{h}"),
+            is_delete: false,
+            is_create: false,
+            is_fast_forward: true,
+            changed_paths: &changed_paths,
+        },
+    )?;
     let author = caller_as_author(ctx);
     let (new_head, m) = blocking(move || {
         let _hold = permit;
@@ -1531,7 +1561,7 @@ pub async fn publish_generic_file(
     Ok(saved)
 }
 
-/// The bytes of one generic package file (Read).
+/// One generic package file (Read), opened for streaming.
 pub async fn read_generic_file(
     state: &ShakoState,
     ctx: &RequestCtx,
@@ -1539,7 +1569,7 @@ pub async fn read_generic_file(
     pkg: &str,
     ver: &str,
     file: &str,
-) -> ShakoResult<Vec<u8>> {
+) -> ShakoResult<tokio::fs::File> {
     authorize_package(state, ctx, owner, "generic", pkg, Action::Read)?;
     let target_org = state.resolve_org_for_owner(owner, &ctx.subject);
     let rec = state
@@ -1549,7 +1579,7 @@ pub async fn read_generic_file(
         .ok()
         .flatten()
         .ok_or_else(|| ShakoError::NotFound("package file not found".into()))?;
-    tokio::fs::read(blob_disk_path(state, owner, &rec.sha256))
+    tokio::fs::File::open(blob_disk_path(state, owner, &rec.sha256))
         .await
         .map_err(|_| ShakoError::NotFound("package blob not found".into()))
 }

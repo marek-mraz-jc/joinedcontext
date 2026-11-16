@@ -1,0 +1,25 @@
+[package]
+name = "ekiben-js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# QuickJS is C (rquickjs-sys builds it with cc), so this crate cannot forbid unsafe code the way
+# the others do; its own code holds none. rquickjs is pinned exactly: a bump is an advisory review
+# (T-7061 G-24), cargo deny and audit.
+[dependencies]
+ekiben-bloblang = { workspace = true }
+ekiben-core = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+rquickjs = { version = "=0.14.0", default-features = false, features = ["std"] }
+
+[features]
+# `ekiben_js::fuzzing`: one script over one message without a stream, for fuzz/ (cargo fuzz).
+fuzzing = []
+
+[dev-dependencies]
+tokio = { workspace = true }

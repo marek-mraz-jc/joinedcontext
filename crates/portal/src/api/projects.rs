@@ -914,7 +914,12 @@ pub async fn duplicate_project(
     Json(request): Json<DuplicateProject>,
 ) -> Result<(StatusCode, Json<Change>), ApiError> {
     let identity = &user.0.identity;
-    if !crate::permissions::for_request(&state, identity, &origin).may_read_project() {
+    // The copy carries the origin's whole repository and history, so the caller reads all of it,
+    // as a clone through the git door asks (T-6896); a narrower reader sees no such project.
+    let kinds = state.mirror.kinds_in(&origin);
+    if !crate::permissions::for_request(&state, identity, &origin)
+        .reads_whole_project(kinds.iter().map(String::as_str))
+    {
         return Err(ApiError::NotFound(format!("project '{origin}' not found")));
     }
     // The copy belongs to the origin's Organization, and its opener holds that right there.

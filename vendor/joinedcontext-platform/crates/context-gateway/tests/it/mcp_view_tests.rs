@@ -90,6 +90,7 @@ fn endpoint() -> Endpoint {
         description: Default::default(),
         base_path: format!("/api/endpoint/{SLUG}"),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: SPACE.to_owned(),
         audience: Audience::Public,
         allowed_projects: Vec::new(),
@@ -774,6 +775,7 @@ async fn a_space_too_long_for_a_view_id_is_refused_without_a_hop() {
         endpoint: Arc::new(Endpoint {
             slug: long.clone(),
             space: long.clone(),
+            tenant: context_gateway::middleware::tenancy::Tenant::segment(&long).ok(),
             base_path: format!("/cs/{long}"),
             ..endpoint()
         }),

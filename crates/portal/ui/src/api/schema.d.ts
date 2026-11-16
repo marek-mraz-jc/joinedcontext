@@ -2778,6 +2778,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/datasource-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Discovery
+         * @description Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things.
+         */
+        post: operations["discover_datasource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/datasource-paging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Paging
+         * @description Reads the first answer of an address once on the project's runner and answers how the source pages: the walk for `spec.http.paging` (a Link header, a next link, ArcGIS, WFS or CKAN), where the records sit, the records on the first page, the announced total and the pages a walk reads. Nothing is written.
+         */
+        post: operations["guess_datasource_paging"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/datasources/{name}/test": {
         parameters: {
             query?: never;
@@ -2792,6 +2832,46 @@ export interface paths {
          * @description Reads a saved data source once on the project's runner and answers its first record, or why there was none. Nothing is written.
          */
         post: operations["test_datasource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/datasources/{name}/test-event": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Webhook Test Event
+         * @description Posts the body to one reading pipeline's webhook through the runner's ingest handler, signed with the source's credential, and answers the status a sender would see. The event runs through the pipeline like a real one.
+         */
+        post: operations["test_event"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/datasources/{name}/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Webhook Addresses
+         * @description The URL each reading pipeline is posted to, the header a sender sets and the body cap. Never the credential.
+         */
+        get: operations["webhook_info"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4674,6 +4754,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/ops/jc_datasource_discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Discovery
+         * @description Lists what a public service offers an http preset: organizations, layers, entity sets, feature types, collections or Things
+         */
+        post: operations["jc_datasource_discover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/ops/jc_draft_drop": {
         parameters: {
             query?: never;
@@ -6034,6 +6134,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/ops/jc_script_test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the runner
+         */
+        post: operations["jc_script_test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/ops/jc_serviceaccount_access": {
         parameters: {
             query?: never;
@@ -6578,6 +6698,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Rejected Records
+         * @description Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.
+         */
+        get: operations["export_rejected"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Group Rejected Records
+         * @description Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.
+         */
+        get: operations["get_rejected_groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/pipelines/{name}/rejected/retry": {
         parameters: {
             query?: never;
@@ -6656,6 +6816,26 @@ export interface paths {
         get: operations["get_samples"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/pipelines/{name}/source-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Whole Source
+         * @description Runs the saved pipeline over every page of its http DataSource as a dry run on the project's runner and counts what a live run would accept and reject, by rule and attribute, with the first 1000 rejected records (secrets masked). Nothing is written. Ends at 60 s or 50 000 records and holds the project's one pipeline test slot (G-21, G-07). Needs read on the pipeline.
+         */
+        post: operations["check_source"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6788,6 +6968,26 @@ export interface paths {
         get: operations["revisions"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/scripts/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Script Test
+         * @description Runs a Script version's tests on the project's runner, in the sandbox the live stream uses, without writing.
+         */
+        post: operations["test_script"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9350,6 +9550,16 @@ export interface components {
         };
         /** @enum {string} */
         CheckState: "green" | "red" | "stale" | "unreadable";
+        /** @description One thing the person can pick. */
+        Choice: {
+            /** @description What the person reads. */
+            label: string;
+            /**
+             * @description What the form writes: an organization name, a layer id, an entity set, a feature type
+             *     name, a collection id or a Thing id.
+             */
+            value: string;
+        };
         /** @description The CKAN picture of one project. */
         CkanStatus: {
             /** @description Every catalogue this project can publish to. */
@@ -10010,6 +10220,41 @@ export interface components {
              */
             passed?: string[];
             run?: string | null;
+        };
+        /**
+         * @description What to list: the preset kind and the service's URL as the person typed it.
+         * @example {
+         *       "kind": "wfs",
+         *       "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs"
+         *     }
+         */
+        DiscoverRequest: {
+            /**
+             * @description `ckan`, `arcgisFeature`, `odata`, `wfs`, `ogcFeatures` or `sensorThings`.
+             * @example arcgisFeature
+             */
+            kind: string;
+            /**
+             * @description The service or any address under it, `https://geodata.example/rest/services/X/FeatureServer/0/query`.
+             * @example https://kartta.hel.fi/ws/geoserver/avoindata/wfs
+             */
+            url: string;
+        };
+        /** @description The listing of one service, or why there is none. */
+        Discovery: {
+            /** @description What the service lists, in its order, at most `MAX_CHOICES`. */
+            choices: components["schemas"]["Choice"][];
+            /**
+             * @description The form field a choice fills: `organization`, `layer`, `entitySet`, `typeNames`,
+             *     `collection` or `thing`.
+             */
+            field: string;
+            /** @description Why nothing is listed: the service did not answer, or answered something else. */
+            skipped?: string | null;
+            /** @description The answer was longer than the Portal reads, or listed more than `MAX_CHOICES`. */
+            truncated: boolean;
+            /** @description The listing's address the runner read. */
+            url: string;
         };
         /**
          * @description How a bar gauge fills its bars, Grafana's `displayMode`.
@@ -11734,6 +11979,45 @@ export interface components {
             /** @description The first `# heading`, absent when the Markdown has none (the built-in title shows). */
             title?: string | null;
         };
+        /** @description What the first answer says about the pages after it. */
+        PagingGuess: {
+            /** @description The answer says more pages follow without saying how many (ArcGIS, a next link). */
+            more: boolean;
+            /**
+             * Format: int64
+             * @description The records on the first page.
+             */
+            onPage?: number | null;
+            /**
+             * Format: int64
+             * @description The pages a walk reads: the total over the first page's records, rounded up.
+             */
+            pages?: number | null;
+            /**
+             * @description The walk to write into `spec.http.paging`; absent when the answer names no next page
+             *     the runner can follow.
+             */
+            paging?: Record<string, never> | null;
+            /** @description Where the records sit, for `spec.http.records`: `features`, `value`, `result.results`. */
+            records?: string | null;
+            /** @description Why nothing was guessed: the address did not answer, or answered no JSON. */
+            skipped?: string | null;
+            /**
+             * Format: int64
+             * @description The records in all, as the answer announces them.
+             */
+            total?: number | null;
+        };
+        /**
+         * @description The address whose first answer is read.
+         * @example {
+         *       "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&request=GetFeature&typeNames=avoindata:x&outputFormat=application/json"
+         *     }
+         */
+        PagingRequest: {
+            /** @description The address the source reads, as the person typed it. */
+            url: string;
+        };
         /** @description A Portal tab paired with a connector (T-5967). */
         PairedTab: {
             connector: string;
@@ -12174,6 +12458,11 @@ export interface components {
         PipelineTestSample: {
             /** @description How the sample is split into messages. */
             format?: components["schemas"]["PipelineTestSampleFormat"];
+            /**
+             * @description The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the
+             *     first sheet.
+             */
+            sheet?: string | null;
             /** @description The sample inline, at most five mebibytes. */
             text?: string | null;
             /** @description An http(s) URL the runner fetches the sample from instead. */
@@ -12183,7 +12472,7 @@ export interface components {
          * @description How a sample is split: one message, a CSV row each, or a JSON array's elements.
          * @enum {string}
          */
-        PipelineTestSampleFormat: "text" | "csv" | "json";
+        PipelineTestSampleFormat: "text" | "csv" | "json" | "xlsx" | "shapefile";
         /** @description A page of the Portal a person went to or starred: where it is and what it was called. */
         Place: {
             /** @description A path inside the Portal, with its query: `/projects/helsinki/pipelines/air?tab=runs`. */
@@ -12477,6 +12766,8 @@ export interface components {
         /** @description One fetch of a DataSource on the project's runner, or why there was none (MF-39). */
         Probe: {
             bytes?: number | null;
+            /** @description The pages a paged source's read walked (`spec.http.paging` or a preset); absent unpaged. */
+            pages?: number | null;
             /** @description Messages after the format split; one for a JSON document, one per element of an array. */
             records?: number | null;
             /** @description The first record as data. */
@@ -12838,6 +13129,39 @@ export interface components {
              */
             step?: number | null;
         };
+        /**
+         * @description One rule broken at one path, how often and its newest records (G-21): what the rejected list
+         *     is grouped by, counted over every record kept, not a page.
+         */
+        RejectedGroup: {
+            /** Format: int64 */
+            count: number;
+            /** @description The group's newest records, at most [`EXAMPLES`]. */
+            examples: components["schemas"]["Rejected"][];
+            path: string;
+            rule: string;
+        };
+        /** @description One group with where its fix belongs. */
+        RejectedGroupView: components["schemas"]["RejectedGroup"] & {
+            /** @description The values the model allows at `path`, for an `sh:in` group. */
+            allowed?: string[];
+            /**
+             * @description Where the fix belongs: `model` (the space's data model refuses the value or the
+             *     attribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline
+             *     failed) or `runner` (the runner refused it without a model rule).
+             */
+            fix: string;
+        };
+        /** @description The rejected list grouped by rule and path (G-21): what a steward fixes first. */
+        RejectedGroups: {
+            /** @description The largest group first, at most 50. */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description How many records the pipeline holds, at most 1000 (PL-61).
+             */
+            total: number;
+        };
         /** @description One page of a pipeline's rejected records. */
         RejectedPage: {
             items: components["schemas"]["Rejected"][];
@@ -13170,6 +13494,56 @@ export interface components {
             kind: string;
             name: string;
         };
+        /** @description jc-core's `ScriptLimits` as the document publishes it (PL-118). */
+        ScriptLimitsBody: {
+            /**
+             * Format: int32
+             * @description MiB per message, 1 to 64, e.g. `32`.
+             */
+            memoryMb?: number | null;
+            /**
+             * Format: int32
+             * @description Milliseconds per message, 1 to 200, e.g. `50`.
+             */
+            timeoutMs?: number | null;
+        };
+        /** @description Every test's result, in the order the tests were sent. */
+        ScriptTestAnswer: {
+            results: components["schemas"]["ScriptTestResult"][];
+        };
+        /** @description jc-core's `ScriptTest` as the document publishes it (PL-118); only the schema reads it. */
+        ScriptTestBody: {
+            /** @description The message the script must produce, as JSON. */
+            expected: unknown;
+            /** @description The input message, as JSON. */
+            input: unknown;
+            /** @description A short name, e.g. `converts-one-point`. */
+            name: string;
+        };
+        /** @description What a Script test runs: the code of one version, its limits and its tests. */
+        ScriptTestRequest: {
+            /** @description The version's source, at most 64 KiB. */
+            code: string;
+            limits?: null | components["schemas"]["ScriptLimitsBody"];
+            /** @description One to 20 tests, each `{name, input, expected}`. */
+            tests: components["schemas"]["ScriptTestBody"][];
+        };
+        /** @description One test's result. */
+        ScriptTestResult: {
+            /** @description Why the script failed on the input (a throw, the time or memory limit). */
+            error?: string | null;
+            /**
+             * Format: int64
+             * @description The run on the runner, stream start to answer, in milliseconds.
+             */
+            millis: number;
+            /** @description The test's name. */
+            name: string;
+            /** @description Whether the script made exactly `expected` of `input`. */
+            ok: boolean;
+            /** @description What the script made of the input, when it made something. */
+            output?: unknown;
+        };
         /** @description The project's secrets, by name. */
         SecretList: {
             items: components["schemas"]["StoredSecret"][];
@@ -13259,6 +13633,38 @@ export interface components {
         SortKey: {
             attr: string;
             desc?: boolean;
+        };
+        /** @description What the whole-source check found (G-21). */
+        SourceCheck: {
+            /**
+             * Format: int64
+             * @description Records the space's model takes.
+             */
+            accepted: number;
+            /**
+             * @description Whether the whole source was read: `false` when 60 s or 50 000 records ended the check
+             *     first, or the source's read failed, so the counts cover part of it.
+             */
+            complete: boolean;
+            /** @description What stopped the source or the runner, in words a person can act on. */
+            errors: string[];
+            /**
+             * @description The rejected records counted by rule and attribute, the largest first, each with its
+             *     first three records, where the fix belongs and, for an enum, the values the model allows.
+             */
+            groups: components["schemas"]["RejectedGroupView"][];
+            /**
+             * Format: int64
+             * @description Records the steps made, each checked: `accepted` plus `rejected`.
+             */
+            records: number;
+            /**
+             * Format: int64
+             * @description Records a live run would put on the rejected list.
+             */
+            rejected: number;
+            /** @description The first 1000 rejected records, secrets masked; `id` is the record's place in the run. */
+            rows: components["schemas"]["Rejected"][];
         };
         /** @enum {string} */
         SourceChoice: "delete" | "keep";
@@ -13655,6 +14061,29 @@ export interface components {
             entities: number;
             sha256: string;
         };
+        /**
+         * @description A test event: the body posted to one reading pipeline's address.
+         * @example {
+         *       "body": "{\"temperature\": 21.5}",
+         *       "pipeline": "ttn-uplinks"
+         *     }
+         */
+        TestEvent: {
+            /** @description The body, as the provider would send it, such as `{"temperature": 21.5}`. */
+            body: string;
+            /** @description A pipeline that reads this source, such as `ttn-uplinks`. */
+            pipeline: string;
+        };
+        /** @description What the runner answered a test event. */
+        TestEventAnswer: {
+            /** @description The first 2048 bytes of the answer's body. */
+            answer: string;
+            /**
+             * Format: int32
+             * @description The HTTP status the sender would have seen: 200 once the pipeline took the event.
+             */
+            status: number;
+        };
         /** @description One message a ServiceAccount would publish (API/01 §44a). */
         TestPublish: {
             /** @description A ServiceAccount the broker's roles name, e.g. `cam-west`. */
@@ -13878,6 +14307,29 @@ export interface components {
             /** @description Newest first; empty when `refusalsRead` is false. */
             refusals: components["schemas"]["Refusal"][];
             refusalsRead: boolean;
+        };
+        /** @description Where one pipeline reading the source is posted to. */
+        WebhookAddress: {
+            /** @description The reading pipeline. */
+            pipeline: string;
+            /** @description The URL a sender posts to, or `None` when this installation publishes no ingest listener. */
+            url?: string | null;
+        };
+        /** @description What a sender needs to post to a webhook DataSource. */
+        WebhookInfo: {
+            /** @description One address per reading pipeline, by pipeline name; empty when no pipeline reads it. */
+            addresses: components["schemas"]["WebhookAddress"][];
+            /** @description `hmac` or `bearer`. */
+            auth: string;
+            /** @description The header the sender sets: the signature header, or `Authorization`. */
+            header: string;
+            /**
+             * Format: int64
+             * @description The largest body accepted, in bytes.
+             */
+            maxBodyBytes: number;
+            /** @description Whether this installation publishes the ingest listener at all. */
+            published: boolean;
         };
         /**
          * @description Who is tried: one person, a member of a group or of a realm role with no person of their own,
@@ -22483,6 +22935,159 @@ export interface operations {
             };
         };
     };
+    discover_datasource: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscoverRequest"];
+            };
+        };
+        responses: {
+            /** @description The choices, or `skipped` with the reason in plain words */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Discovery"];
+                };
+            };
+            /** @description The URL does not name a service of the kind, or names one the runner may not reach */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    guess_datasource_paging: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PagingRequest"];
+            };
+        };
+        responses: {
+            /** @description The guess, or `skipped` with the reason in plain words */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PagingGuess"];
+                };
+            };
+            /** @description The URL does not parse, carries a credential, or names an address the runner may not reach */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The address is not on the public internet */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     test_datasource: {
         parameters: {
             query?: never;
@@ -22553,6 +23158,141 @@ export interface operations {
             };
             /** @description No pipeline runner is configured, or it did not answer */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+                /** @description DataSource name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestEvent"];
+            };
+        };
+        responses: {
+            /** @description What the runner answered */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestEventAnswer"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such DataSource in this project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The source is no webhook, `pipeline` reads no such source, or `body` is empty or over the cap */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The runner does not run in this process, or holds no credential for the source yet */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    webhook_info: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+                /** @description DataSource name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The addresses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebhookInfo"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant reads this DataSource */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such DataSource in this project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The DataSource is not of type webhook */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -30373,6 +31113,92 @@ export interface operations {
             };
         };
     };
+    jc_datasource_discover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "kind": "ckan",
+                 *       "url": "example"
+                 *     }
+                 */
+                "application/json": {
+                    /**
+                     * @description The preset kind
+                     * @enum {string}
+                     */
+                    kind: "ckan" | "arcgisFeature" | "odata" | "wfs" | "ogcFeatures" | "sensorThings";
+                    /** @description The service or any address under it */
+                    url: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     jc_draft_drop: {
         parameters: {
             query?: never;
@@ -32599,14 +33425,41 @@ export interface operations {
                  */
                 "application/json": {
                     /**
-                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did
+                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads
                      * @enum {string}
                      */
-                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity";
+                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity" | "costs" | "addresses" | "dataAccess" | "widgetOptions" | "personReadable";
                     /** @description agentActivity: nextCursor of the previous page */
                     cursor?: string;
+                    /** @description dataAccess: one Endpoint's row, by slug */
+                    endpoint?: string;
+                    /** @description dataAccess: one group's column */
+                    group?: string;
+                    /** @description agentActivity: one project's runs */
+                    inProject?: string;
                     /** @description agentActivity: page size, default 20 */
                     limit?: number;
+                    /** @description costs: e.g. 2026-09, default last month */
+                    month?: string;
+                    /** @description widgetOptions: the Organization, by name */
+                    organization?: string;
+                    /** @description personReadable: the Keycloak user id; agentActivity: runs this person started */
+                    person?: string;
+                    /** @description agentActivity: one agent profile's runs */
+                    profile?: string;
+                    /** @description agentActivity: one run */
+                    run?: string;
+                    /** @description agentActivity: runs started at or after, e.g. 2026-11-01T00:00:00Z */
+                    since?: string;
+                    /** @description agentActivity: runs that read this Context Space */
+                    space?: string;
+                    /** @description agentActivity: runs started before */
+                    until?: string;
+                    /**
+                     * @description agentActivity: refused, runs with a refused step
+                     * @enum {string}
+                     */
+                    verdict?: "ok" | "refused";
                 };
             };
         };
@@ -37114,7 +37967,7 @@ export interface operations {
                      * @example Pipeline
                      * @enum {string}
                      */
-                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal";
+                    kind: "Organization" | "Project" | "ContextSpace" | "DataModel" | "Mapping" | "Policy" | "ScopeDefinition" | "Endpoint" | "ModelProjection" | "SharedSpaceReference" | "ContextSourceRegistration" | "Subscription" | "ServiceAccount" | "Pipeline" | "DataSource" | "App" | "CkanInstance" | "KnowledgeSource" | "AssistantDeployment" | "McpServer" | "MqttBroker" | "Blueprint" | "AgentProfile" | "DataSpaceParticipant" | "DataOffer" | "DataAgreement" | "SyncSource" | "Bundle" | "UiSchema" | "Role" | "RoleBinding" | "Group" | "DelegationPolicy" | "ContextBroker" | "Environment" | "Dashboard" | "Layer" | "Portal" | "Script";
                     /** @description JSON pointer */
                     path?: string;
                 };
@@ -37136,6 +37989,112 @@ export interface operations {
                         path?: string;
                         required?: string[];
                         schema?: Record<string, never>;
+                    };
+                };
+            };
+            /** @description The change the operation opened, waiting for a person's approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the caller lacks what x-jc-requires names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project or an object the input names is not there */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The input does not match the schema; the problem names the path */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    jc_script_test: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "example",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {},
+                 *           "input": {},
+                 *           "name": "example"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @description JavaScript */
+                    code: string;
+                    /** @description Run limits */
+                    limits?: {
+                        /** @description MiB heap */
+                        memoryMb?: number;
+                        /** @description ms per run */
+                        timeoutMs?: number;
+                    };
+                    /** @description In/out cases */
+                    tests: {
+                        /** @description Expected out */
+                        expected: Record<string, never>;
+                        /** @description In */
+                        input: Record<string, never>;
+                        /** @description Test name */
+                        name: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description The operation's answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Per test: name, ok, the output or the error, and millis */
+                        results?: unknown[];
                     };
                 };
             };
@@ -39480,6 +40439,110 @@ export interface operations {
             };
         };
     };
+    export_rejected: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/csv, one row per rejected record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/csv": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list or a model could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_rejected_groups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RejectedGroups"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The list could not be read */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     retry_rejected: {
         parameters: {
             query?: never;
@@ -39780,6 +40843,76 @@ export interface operations {
             };
             /** @description Pipeline not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    check_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Pipeline name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceCheck"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden: the CSRF token is missing or does not match, or the caller lacks the verb this write needs */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Pipeline not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The pipeline reads no saved http DataSource, or a test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -40373,6 +41506,105 @@ export interface operations {
                 };
             };
             /** @description No repository configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    test_script: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        /** @description `code`: the version's source. `limits`: `timeoutMs` and `memoryMb`. `tests`: 1 to 20 `{name, input, expected}`. */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "code": "let m = bento.v0_msg_as_structured(); m.ok = true; bento.v0_msg_set_structured(m);",
+                 *       "tests": [
+                 *         {
+                 *           "expected": {
+                 *             "id": 1,
+                 *             "ok": true
+                 *           },
+                 *           "input": {
+                 *             "id": 1
+                 *           },
+                 *           "name": "flags-one"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["ScriptTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Each test's result, in the order sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScriptTestAnswer"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a Script in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The code, a limit or a test is outside its bounds, naming the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

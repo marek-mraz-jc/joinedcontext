@@ -3,9 +3,12 @@ import type { JSX, ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../../auth/AuthProvider";
+import { useBranding } from "../../branding";
+import { LanguageSwitcher } from "../LanguageSwitcher";
 import { Button, Icon, PageLoading } from "../ui";
 import type { IconName } from "../ui/icons";
 import { BrandMark } from "./BrandMark";
+import { ShellFooter } from "./ShellFooter";
 
 const LINKS: { to: "/catalogue" | "/ai-connectors" | "/settings"; label: string; icon: IconName }[] = [
   { to: "/catalogue", label: "member.catalogue", icon: "ckan" },
@@ -21,9 +24,18 @@ const LINKS: { to: "/catalogue" | "/ai-connectors" | "/settings"; label: string;
 export function MemberFrame({ children }: { children: ReactNode }): JSX.Element {
   const { t } = useTranslation();
   const { identity, signOut } = useAuth();
+  const branding = useBranding();
   const who = identity?.name ?? identity?.username;
+  // The Shell's skip link, language switch and footer, the accessibility statement in it: every
+  // page carries them (Decree 78/2020, T-5108), a member's too.
   return (
     <div className="flex min-h-screen flex-col bg-bg font-sans text-fg">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-primary-fg"
+      >
+        {t("nav.skipToContent")}
+      </a>
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-surface px-4 py-2">
         <BrandMark short />
         <nav aria-label={t("member.nav")} className="order-last flex w-full gap-1 overflow-x-auto sm:order-none sm:w-auto">
@@ -41,6 +53,7 @@ export function MemberFrame({ children }: { children: ReactNode }): JSX.Element 
         </nav>
         <div className="flex items-center gap-2">
           {who ? <span className="hidden text-caption text-fg-muted md:inline">{who}</span> : null}
+          <LanguageSwitcher />
           <Button size="sm" variant="secondary" icon={<Icon name="logout" className="size-4" />} onClick={() => void signOut()}>
             {t("member.signOut")}
           </Button>
@@ -49,6 +62,7 @@ export function MemberFrame({ children }: { children: ReactNode }): JSX.Element 
       <main id="main" className="mx-auto min-h-dvh w-full max-w-7xl flex-1 p-6">
         <Suspense fallback={<PageLoading label={t("app.loading")} />}>{children}</Suspense>
       </main>
+      <ShellFooter organisation={branding.organisation} contactEmail={branding.contactEmail} />
     </div>
   );
 }

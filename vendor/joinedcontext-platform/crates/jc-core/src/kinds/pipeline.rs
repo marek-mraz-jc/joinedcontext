@@ -105,10 +105,45 @@ pub struct PipelineSpec {
     /// row comes from (PL-106…PL-110).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<super::pipeline_history::History>,
+    /// Per written type, how chosen attributes are written: their `observedAt`, `unitCode` and
+    /// `datasetId`, the source's system members dropped and its own dates kept (G-15). The
+    /// rendered stream applies them after the author's steps, before history and lifetime.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attributes: Vec<super::pipeline_attributes::AttributeRules>,
     /// How the pipeline follows a record its source removed (PL-96…PL-100); absent, nothing is
     /// deleted, as with `mode: never`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_deletes: Option<super::pipeline_source_deletes::SourceDeletes>,
+    /// Published Script versions applied to every record, or to records of some types
+    /// (PL-119); `v1alpha2`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<AppliedScript>,
+}
+
+/// The most scripts one pipeline applies to every record (PL-119).
+pub const MAX_APPLIED_SCRIPTS: usize = 8;
+
+/// A Script version a pipeline applies to every record (PL-119).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppliedScript {
+    /// The published version, e.g. `{name: drop-test-rows, version: 1.0.0}`.
+    pub script_ref: super::script::ScriptRef,
+    /// Where it runs: `steps-start` (before the first step) or `before-output` (after the last).
+    pub apply_to: ApplyTo,
+    /// The entity types it runs for, e.g. `[ParkingSpot]`; absent, every record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub types: Vec<String>,
+}
+
+/// Where an [`AppliedScript`] runs among the pipeline's steps (PL-119).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApplyTo {
+    /// Before the first step, on the record as the source sent it.
+    StepsStart,
+    /// After the last step, on the record about to be written.
+    BeforeOutput,
 }
 
 /// The longest expiry window, in hours: a year (PL-64).
@@ -350,6 +385,10 @@ pub struct Compute {
     /// The cubes of a `datacube` step (PL-112).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub datacube: Option<Box<crate::datacube::DatacubeStep>>,
+    /// The published Script version a `script` step runs (PL-119), e.g.
+    /// `{name: sjtsk-to-wgs84, version: 1.0.0}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_ref: Option<super::script::ScriptRef>,
 }
 
 impl Compute {
@@ -386,6 +425,9 @@ pub enum ComputeKind {
     Kpi,
     /// JSON-stat 2.0 statistical cubes (PL-112), rendered to a mapping by jc-core.
     Datacube,
+    /// A published version of a stored [`Script`][crate::kinds::Script] (PL-119), rendered by
+    /// the reconciler as one sandboxed `javascript` processor.
+    Script,
 }
 
 impl ComputeKind {
@@ -405,6 +447,7 @@ impl ComputeKind {
             Self::Container => "container",
             Self::Kpi => "kpi",
             Self::Datacube => "datacube",
+            Self::Script => "script",
         }
     }
 }
@@ -587,6 +630,14 @@ pub enum OutputMode {
     Replace,
     /// Update or append attributes onto existing entity.
     UpdateAttrs,
+    /// Deep-merge the record into the entity (`entityOperations/merge`, NGSI-LD 5.6.20): a
+    /// sub-attribute the record does not name stays, and `urn:ngsi-ld:null` deletes one, so two
+    /// pipelines can each own part of one attribute (G-17).
+    Merge,
+    /// Append the record's attribute instances to the entity's history only
+    /// (`POST /temporal/entities/{id}/attrs`, 5.6.12): the current value is never touched, for
+    /// a backfill of past readings (G-17).
+    Backfill,
 }
 
 impl OutputMode {
@@ -596,6 +647,19 @@ impl OutputMode {
             Self::Upsert => "upsert",
             Self::Replace => "replace",
             Self::UpdateAttrs => "update-attrs",
+            Self::Merge => "merge",
+            Self::Backfill => "backfill",
+        }
+    }
+
+    /// The one operation a Policy grants for this mode's write (PL-20, G-17): the gateway
+    /// authorizes the Endpoint call it renders to by exactly this operation.
+    pub const fn grant(&self) -> crate::kinds::policy::Operation {
+        use crate::kinds::policy::Operation;
+        match self {
+            Self::Upsert | Self::Replace | Self::UpdateAttrs => Operation::UpsertBatch,
+            Self::Merge => Operation::MergeBatch,
+            Self::Backfill => Operation::AppendAttrsTemporal,
         }
     }
 }
@@ -994,7 +1058,23 @@ impl PipelineSpec {
             if let Some(source) = &self.source {
                 validate_source(source)?;
             }
+            if !self.scripts.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.scripts",
+                    value: String::new(),
+                    reason: "scripts apply to a pipeline written with `sources`, `steps` and \
+                             `outputs` (PL-119)",
+                });
+            }
             if let Some(compute) = &self.compute {
+                if compute.kind == ComputeKind::Script {
+                    return Err(Error::Name {
+                        field: "spec.compute.kind",
+                        value: "script".to_owned(),
+                        reason: "a script step is written in `steps` of a pipeline with `sources` \
+                                 and `outputs` (PL-119)",
+                    });
+                }
                 if compute.kind == ComputeKind::Kpi {
                     return Err(Error::Name {
                         field: "spec.compute.kind",
@@ -1112,6 +1192,21 @@ impl PipelineSpec {
                 .map(|out| out.entity_type.as_deref())
                 .collect();
             super::pipeline_history::validate(&self.history, written.as_ref())?;
+        }
+        if !self.attributes.is_empty() {
+            let outputs = self.outputs();
+            let written: Option<std::collections::BTreeSet<&str>> = outputs
+                .iter()
+                .map(|out| out.entity_type.as_deref())
+                .collect();
+            super::pipeline_attributes::validate(
+                &self.attributes,
+                &super::pipeline_attributes::Context {
+                    written: written.as_ref(),
+                    history: &self.history,
+                    author_texts: &self.author_texts(),
+                },
+            )?;
         }
         if let Some(source_deletes) = &self.source_deletes {
             source_deletes.validate(&super::pipeline_source_deletes::Context {
@@ -1282,6 +1377,12 @@ pub fn validate_processor_reading(
         )));
     }
     validate_cache_names(field, processor)?;
+    if let Some(step) = literal_dsn(processor) {
+        return Err(refused(format!(
+            "the `dsn` of `{step}` is written into the step; give it as `${{NAME}}` from a \
+             secretRef the pipeline declares, so the password never sits in Git (PL-52)"
+        )));
+    }
     // A `mapping` body and a `${! … }` interpolation are Bloblang too, and a step that reads
     // the runner is the same escape wherever it is written.
     let mut texts = Vec::new();
@@ -1392,6 +1493,39 @@ fn nested_refused(value: &serde_json::Value) -> Option<&'static str> {
                 .filter(|_| inner.is_object() || inner.is_null())
                 .copied()
                 .or_else(|| nested_refused(inner))
+        }),
+        _ => None,
+    }
+}
+
+/// The sql processors, whose `dsn` holds the database password.
+const DSN_PROCESSORS: &[&str] = &["sql_insert", "sql_raw", "sql_select"];
+
+/// The first sql processor, however deeply nested, whose `dsn` is anything but one `${NAME}`.
+fn literal_dsn(value: &serde_json::Value) -> Option<&'static str> {
+    let is_var = |dsn: &str| {
+        dsn.strip_prefix("${")
+            .and_then(|rest| rest.strip_suffix('}'))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            })
+    };
+    match value {
+        serde_json::Value::Array(items) => items.iter().find_map(literal_dsn),
+        serde_json::Value::Object(fields) => fields.iter().find_map(|(key, inner)| {
+            DSN_PROCESSORS
+                .iter()
+                .find(|name| **name == key.as_str())
+                .filter(|_| {
+                    inner
+                        .get("dsn")
+                        .is_some_and(|dsn| !dsn.as_str().is_some_and(is_var))
+                })
+                .copied()
+                .or_else(|| literal_dsn(inner))
         }),
         _ => None,
     }
@@ -1522,6 +1656,14 @@ pub(crate) fn validate_author_bloblang(field: &'static str, mapping: &str) -> Re
                      credentials (PL-16, PL-18, PL-50)",
         });
     }
+    if let Some(method) = literal_key_call(mapping) {
+        return Err(Error::Name {
+            field,
+            value: format!("{method}(…)"),
+            reason: "a signing or encryption key is a `${VAR}` naming an envVar of the \
+                     pipeline's secretRefs, never a literal in the mapping (MF-24, PL-16)",
+        });
+    }
     for (function, argument) in host_calls(mapping) {
         if function == "env" {
             match argument.as_deref() {
@@ -1594,6 +1736,60 @@ fn host_calls(mapping: &str) -> Vec<(String, Option<String>)> {
     calls
 }
 
+/// The Bloblang methods whose arguments carry a secret: a JWT signing key (`sign_jwt_*`, and the
+/// HMAC secret of `parse_jwt_hs*`) or an AES key. `parse_jwt_rs*` and `parse_jwt_es*` take a
+/// public key, which may be written out.
+fn takes_secret(method: &str) -> bool {
+    method.starts_with("sign_jwt_")
+        || method.starts_with("parse_jwt_hs")
+        || method == "encrypt_aes"
+        || method == "decrypt_aes"
+}
+
+/// The first call of a [`takes_secret`] method whose arguments name no `${VAR}`, so the key is
+/// written into the manifest. Like [`host_calls`] the scan reads every character and models no
+/// lexer: the arguments run to the `)` that closes the call's `(` (or to the end of the text),
+/// and a `${!` (message interpolation) is no secret.
+fn literal_key_call(mapping: &str) -> Option<&str> {
+    let bytes = mapping.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        let name = &mapping[start..i];
+        if bytes.get(i) != Some(&b'(') || !takes_secret(name) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = bytes.len();
+        for (j, b) in bytes.iter().enumerate().skip(i) {
+            match b {
+                b'(' => depth += 1,
+                b')' if depth == 1 => {
+                    end = j;
+                    break;
+                }
+                b')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+        let arguments = &mapping[i + 1..end.max(i + 1)];
+        let names_a_variable = arguments.match_indices("${").any(|(k, _)| {
+            arguments[k + 2..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        });
+        if !names_a_variable {
+            return Some(name);
+        }
+    }
+    None
+}
+
 /// The argument list after a call's `(` when it is exactly one `"NAME"` of letters, digits and
 /// `_` between optional blanks: `env("JC_SPACE")` yields the name; `env(this.pick)`,
 /// `env("A" + "B")` and `env("""A""")` yield `None`, so a name that cannot be read here is refused
@@ -1643,6 +1839,35 @@ fn validate_compute(c: &Compute, own: &[&str]) -> Result<()> {
     }
     if let Some(step) = &c.datacube {
         step.validate()?;
+    }
+    match (&c.script_ref, c.kind == ComputeKind::Script) {
+        (None, true) => {
+            return Err(Error::Name {
+                field: "spec.steps.scriptRef",
+                value: String::new(),
+                reason: "a `script` step names the published version it runs, e.g. \
+                         `scriptRef: {name: sjtsk-to-wgs84, version: 1.0.0}` (PL-119)",
+            })
+        }
+        (Some(_), false) => {
+            return Err(Error::Name {
+                field: "spec.steps.scriptRef",
+                value: c.kind.to_string(),
+                reason:
+                    "a `script` step carries `scriptRef`, and only a `script` step does (PL-119)",
+            })
+        }
+        (Some(r), true) => {
+            r.validate("spec.steps.scriptRef")?;
+            if c.module.is_some() || c.function.is_some() || c.mapping_ref.is_some() {
+                return Err(Error::Name {
+                    field: "spec.steps",
+                    value: "script".to_owned(),
+                    reason: "a `script` step carries `scriptRef` alone (PL-119)",
+                });
+            }
+        }
+        (None, false) => {}
     }
     if let Some(ref mapping) = c.bloblang {
         if c.kind != ComputeKind::Bloblang {
@@ -1749,8 +1974,43 @@ impl PipelineSpec {
             }
         }
         validate_steps("spec.steps", &self.steps, &own, self.is_scheduled())?;
+        self.validate_scripts()?;
         self.validate_kpi()?;
         self.validate_routes()
+    }
+
+    /// `spec.scripts` (PL-119): at most eight, each reference well formed, `before-output` only
+    /// without routes, each named type an entity type.
+    fn validate_scripts(&self) -> Result<()> {
+        if self.scripts.len() > MAX_APPLIED_SCRIPTS {
+            return Err(Error::Name {
+                field: "spec.scripts",
+                value: self.scripts.len().to_string(),
+                reason: "a pipeline applies at most 8 scripts (PL-119)",
+            });
+        }
+        for applied in &self.scripts {
+            applied.script_ref.validate("spec.scripts.scriptRef")?;
+            if applied.apply_to == ApplyTo::BeforeOutput && !self.routes.is_empty() {
+                return Err(Error::Name {
+                    field: "spec.scripts.applyTo",
+                    value: "before-output".to_owned(),
+                    reason: "a pipeline with routes writes after each route's steps: put the \
+                             script as a step of each route instead (PL-119)",
+                });
+            }
+            if applied.types.len() > EXPIRY_MAX_TYPES {
+                return Err(Error::Name {
+                    field: "spec.scripts.types",
+                    value: applied.types.len().to_string(),
+                    reason: "a script names at most 20 types (PL-119)",
+                });
+            }
+            for entity_type in &applied.types {
+                names::validate_entity_type(entity_type)?;
+            }
+        }
+        Ok(())
     }
 
     /// A `kpi` step (PL-102, PL-103): the only step, no routes, over two to five named Endpoint
@@ -1935,5 +2195,157 @@ mod runner_registry_tests {
         );
         super::validate_processor("spec.steps", &json!({ "mapping": "root = this" }))
             .expect("mapping is built by the runner");
+    }
+
+    #[test]
+    fn an_sql_step_takes_its_dsn_from_a_declared_secret_only() {
+        let step = |dsn: &str| {
+            json!({ "branch": { "processors": [ { "sql_select": {
+                "driver": "postgres", "dsn": dsn, "table": "stations", "columns": ["name"]
+            } } ] } })
+        };
+        let err = super::validate_processor("spec.steps", &step("postgres://u:pw@db/x"))
+            .expect_err("a literal dsn is refused")
+            .to_string();
+        assert!(err.contains("`dsn` of `sql_select`"), "{err}");
+        assert!(super::validate_processor("spec.steps", &step("${DB}x")).is_err());
+        super::validate_processor_reading("spec.steps", &step("${STATIONS_DB}"), &["STATIONS_DB"])
+            .expect("a declared secret variable is the dsn");
+    }
+
+    /// G-24/G-25 (T-7061): `javascript` stays refused as a raw author step, top level or nested;
+    /// it may only reach the runner through a reconciler-rendered Script reference.
+    #[test]
+    fn javascript_is_refused_as_a_raw_step_top_level_and_nested() {
+        let top = super::validate_processor(
+            "spec.steps",
+            &json!({ "javascript": { "code": "(() => { return this; })()" } }),
+        )
+        .expect_err("raw javascript is refused")
+        .to_string();
+        assert!(top.contains("processor `javascript`"), "{top}");
+
+        let nested = super::validate_processor(
+            "spec.steps",
+            &json!({ "try": [ { "javascript": { "code": "1" } } ] }),
+        )
+        .expect_err("javascript nested in try is refused")
+        .to_string();
+        assert!(nested.contains("`javascript` inside `try`"), "{nested}");
+    }
+}
+
+#[cfg(test)]
+mod script_step_tests {
+    use super::PipelineSpec;
+    use serde_json::{json, Value};
+
+    fn spec(extra: Value) -> PipelineSpec {
+        let mut spec = json!({
+            "class": "resident",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake" }]
+        });
+        spec.as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        serde_json::from_value(spec).expect("parses")
+    }
+
+    fn refusal(extra: Value) -> String {
+        spec(extra).validate().expect_err("refused").to_string()
+    }
+
+    const PIN: &str = r#"{ "name": "flag-ok", "version": "1.0.0" }"#;
+
+    /// PL-119 (T-7083): a script step and an applied script with a well-formed pin are valid.
+    #[test]
+    fn a_pinned_script_step_and_an_applied_script_are_valid() {
+        let pin: Value = serde_json::from_str(PIN).expect("pin");
+        spec(json!({
+            "steps": [{ "kind": "script", "scriptRef": pin }],
+            "scripts": [{ "scriptRef": pin, "applyTo": "before-output", "types": ["AirQualityObserved"] }]
+        }))
+        .validate()
+        .expect("valid");
+    }
+
+    /// PL-119: each broken field is refused by its name.
+    #[test]
+    fn each_broken_script_field_is_refused_by_name() {
+        let pin: Value = serde_json::from_str(PIN).expect("pin");
+        assert!(refusal(json!({ "steps": [{ "kind": "script" }] })).contains("scriptRef"));
+        assert!(refusal(json!({ "steps": [{ "kind": "bloblang", "bloblang": "root = this", "scriptRef": pin }] }))
+            .contains("only a `script` step"));
+        assert!(refusal(
+            json!({ "steps": [{ "kind": "script", "scriptRef": pin, "module": "m" }] })
+        )
+        .contains("`scriptRef` alone"));
+        assert!(refusal(json!({ "steps": [{ "kind": "script", "scriptRef": { "name": "flag-ok", "version": "latest" } }] }))
+            .contains("spec.steps.scriptRef.version"));
+        assert!(refusal(json!({ "scripts": [{ "scriptRef": pin, "applyTo": "steps-start", "types": ["not a type"] }] }))
+            .contains("not a type"));
+        let routed = json!({
+            "scripts": [{ "scriptRef": pin, "applyTo": "before-output" }],
+            "routes": [{ "name": "a", "when": "true", "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake" }] }]
+        });
+        assert!(refusal(routed).contains("spec.scripts.applyTo"));
+        let nine: Vec<Value> = (0..9)
+            .map(|_| json!({ "scriptRef": pin, "applyTo": "steps-start" }))
+            .collect();
+        assert!(refusal(json!({ "scripts": nine })).contains("at most 8"));
+    }
+
+    /// PL-119: the first shape takes no script.
+    #[test]
+    fn a_first_shape_pipeline_takes_no_script() {
+        let first: PipelineSpec = serde_json::from_value(json!({
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } },
+            "compute": { "kind": "script", "scriptRef": { "name": "flag-ok", "version": "1.0.0" } },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:air:intake"
+        }))
+        .expect("parses");
+        assert!(first
+            .validate()
+            .expect_err("refused")
+            .to_string()
+            .contains("spec.compute.kind"));
+    }
+}
+
+#[cfg(test)]
+mod literal_key_tests {
+    use super::validate_author_bloblang;
+
+    #[test]
+    fn a_key_written_into_the_mapping_is_refused() {
+        for mapping in [
+            r#"root = this.claims.sign_jwt_hs256("hunter2")"#,
+            r#"root = this.claims.sign_jwt_rs256(signing_secret: "a pasted private key")"#,
+            r#"root = this.token.parse_jwt_hs512("s3cret")"#,
+            r#"root = this.v.encrypt_aes("ctr", "0123456789abcdef".decode("hex"), $iv)"#,
+            r#"root = this.v.decrypt_aes("gcm", "k", "${! meta("iv") }")"#,
+            r#"root = this.claims.sign_jwt_es384($key)"#,
+            "root = this.claims.sign_jwt_hs256(",
+        ] {
+            let err = validate_author_bloblang("spec.compute.bloblang", mapping)
+                .expect_err(mapping)
+                .to_string();
+            assert!(err.contains("`${VAR}`"), "{mapping}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_key_from_a_secret_variable_or_a_public_key_passes() {
+        for mapping in [
+            r#"root = this.claims.sign_jwt_hs256("${HSL_JWT_SECRET}")"#,
+            r#"root = this.claims.sign_jwt_rs256(signing_secret: "${REGISTER_KEY}", headers: {"kid": "a"})"#,
+            r#"root = this.v.encrypt_aes("cbc", "${AES_KEY}".decode("hex"), this.iv.decode("hex"))"#,
+            r#"root = this.token.parse_jwt_rs256("-----BEGIN PUBLIC KEY-----")"#,
+            r#"root = this.claims.sign_jwt_hs256(this.a.or("b").string() + "${HSL_JWT_SECRET}")"#,
+        ] {
+            validate_author_bloblang("spec.compute.bloblang", mapping).expect(mapping);
+        }
     }
 }

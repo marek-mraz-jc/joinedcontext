@@ -1064,6 +1064,35 @@ impl Repository {
         self.org_domain.as_deref()
     }
 
+    /// The domains each Project publishes under, by project: its own `spec.domain` and its
+    /// Organization's (PF-122). A Policy URN binds in a project only under one of them; a project
+    /// with neither binds under [`Self::org_domain`], the installation's (T-6502). Several
+    /// Organizations make that domain another Organization's, so a check that renders every
+    /// project's URN with it disagrees with the gateway.
+    pub fn policy_ref_domains(&self) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+        fn spec<T: serde::de::DeserializeOwned>(resource: &LoadedResource) -> Option<T> {
+            serde_json::from_value(resource.manifest.spec.clone()).ok()
+        }
+        let organizations: BTreeMap<&str, jc_core::kinds::OrganizationSpec> = self
+            .iter()
+            .filter(|(id, _)| id.kind == "Organization")
+            .filter_map(|(id, resource)| Some((id.name.as_str(), spec(resource)?)))
+            .collect();
+        self.iter()
+            .filter(|(id, _)| id.kind == "Project")
+            .filter_map(|(id, resource)| {
+                let project = spec::<jc_core::kinds::ProjectSpec>(resource)?;
+                let organization = organizations.get(project.organization_ref.name());
+                let domains: std::collections::BTreeSet<String> = project
+                    .domain
+                    .into_iter()
+                    .chain(organization.map(|organization| organization.domain.clone()))
+                    .collect();
+                (!domains.is_empty()).then(|| (id.name.clone(), domains))
+            })
+            .collect()
+    }
+
     /// The hosts of the environment, by component; empty without an overlay.
     pub fn hosts(&self) -> &BTreeMap<String, String> {
         &self.hosts
@@ -1107,6 +1136,50 @@ impl Repository {
             .and_then(|resource| resource.manifest.spec.get("urnSegment"))
             .and_then(|pin| pin.as_str().map(str::to_owned));
         jc_core::kinds::urn_segment(project, name, pin.as_deref())
+    }
+
+    /// The Organization whose id opens the tenant of `project`'s spaces (PF-130, EP-188): the
+    /// Project's `spec.organizationRef`, that Organization's verified `spec.domain`, then
+    /// [`OrganizationId::from_domain`](jc_core::names::OrganizationId::from_domain). Read from
+    /// the repository only, with no installation or environment fallback: a project whose
+    /// Organization does not resolve gets no tenant, and the error says which link is missing.
+    pub fn space_organization(
+        &self,
+        project: &str,
+    ) -> std::result::Result<jc_core::names::OrganizationId, String> {
+        let org_scoped = |kind: &str, name: &str| {
+            let id = ResourceId::new(
+                "joinedcontext.com",
+                kind,
+                Some(ORG_NAMESPACE.to_owned()),
+                name,
+            );
+            self.resources.get(&id)
+        };
+        let named = org_scoped("Project", project)
+            .and_then(|loaded| loaded.manifest.spec.get("organizationRef"))
+            .and_then(|reference| {
+                reference
+                    .as_str()
+                    .or_else(|| reference.get("name").and_then(serde_json::Value::as_str))
+            })
+            .ok_or_else(|| {
+                format!(
+                    "project `{project}` has no Project manifest naming its `spec.organizationRef`"
+                )
+            })?;
+        let domain = org_scoped("Organization", named)
+            .and_then(|loaded| loaded.manifest.spec.get("domain"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "project `{project}` names Organization `{named}`, which the repository \
+                     does not hold with a `spec.domain`"
+                )
+            })?;
+        jc_core::names::OrganizationId::from_domain(domain).map_err(|err| {
+            format!("Organization `{named}` of project `{project}`: domain `{domain}`: {err}")
+        })
     }
 
     /// Iterates over all loaded resources in deterministic `ResourceId` sorted order (CC-18).

@@ -122,7 +122,8 @@
     "layers": "Map layers",
     "csrs": "Context sources",
     "health": "Health",
-    "repositories": "Repositories"
+    "repositories": "Repositories",
+    "scripts": "Scripts"
   },
   "auth": {
     "lead": "Sign in with your organisation account to manage this platform.",
@@ -325,6 +326,7 @@
     },
     "history": {
       "filter": "Filter the history",
+      "filtersToggle": "Filters",
       "kind": "Kind",
       "name": "Name contains",
       "apply": "Filter",
@@ -343,6 +345,7 @@
       "older": "Show older changes",
       "empty": "No change has been merged or rejected yet.",
       "emptyHint": "A change lands here with who decided it once it is approved or rejected on the Open tab.",
+      "noneMatchHint": "Clear the filters, or widen the dates, to see more of the decided changes.",
       "noneOnPage": "None of these changes is one you may read. Older ones may be.",
       "restore": "Restore",
       "restoreOf": "Restore {name}",
@@ -2410,7 +2413,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP endpoint",
       "websocket": "WebSocket stream",
-      "gtfs-rt": "GTFS-realtime feed"
+      "gtfs-rt": "GTFS-realtime feed",
+      "webhook": "Webhook (pushed events)"
     },
     "group": {
       "typed": "Common connections",
@@ -2437,7 +2441,8 @@
       "mqtt": "Subscribes to topics on a broker and hands every message to the pipeline that references it.",
       "http": "Polls a URL on the pipeline's own period.",
       "websocket": "Holds a socket open and reads the messages the server pushes.",
-      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it."
+      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it.",
+      "webhook": "Waits for a sender to post events; the page shows the address to give it once a pipeline reads the source."
     },
     "field": {
       "type": "Type",
@@ -2471,7 +2476,18 @@
       "broker": "Broker",
       "externalBroker": "External broker (URL and secret below)",
       "records": "Records are in",
-      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record."
+      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record.",
+      "format": "Body format",
+      "webhookAuth": "How the sender proves itself",
+      "webhookHmac": "Signed body (HMAC SHA-256)",
+      "webhookBearer": "Bearer token",
+      "maxBodyBytes": "Largest body (bytes)",
+      "maxInFlight": "Events at once"
+    },
+    "sheet": {
+      "label": "Sheet",
+      "help": "The sheet to read, by the name on its tab, for example Stations 2026; the first row of the sheet names the columns. Leave empty to read the first sheet.",
+      "problem": "A sheet name is 1 to 31 characters with none of : \\ / ? * [ ]."
     },
     "probe": {
       "title": "One fetch of the feed",
@@ -2490,6 +2506,18 @@
         "what": "A table published as a .csv file, read on every run.",
         "url": "Address of the CSV file",
         "urlHelp": "The address that downloads the file itself, starting with https://."
+      },
+      "xlsx": {
+        "title": "Spreadsheet (Excel, ODS) at an address",
+        "what": "A workbook published as .xlsx or .ods, one record per row of a sheet, read on every run.",
+        "url": "Address of the spreadsheet",
+        "urlHelp": "The address that downloads the file itself, starting with https://, for example https://data.example.org/stations.xlsx."
+      },
+      "shapefile": {
+        "title": "Shapefile (zipped) at an address",
+        "what": "A zip with one shapefile layer (.shp, .dbf, .prj), one GeoJSON feature per record in WGS 84, read on every run.",
+        "url": "Address of the zip",
+        "urlHelp": "The address that downloads the zip itself, starting with https://, for example https://data.example.org/kaupunginosat.zip. The .prj names the coordinate system, for example EPSG:3879 for Helsinki."
       },
       "json": {
         "title": "REST API (JSON)",
@@ -2522,7 +2550,8 @@
         "url": "Give a full address starting with https:// or http://.",
         "ckanDataset": "This is the dataset page, not a file. Open the CSV or JSON resource on it and copy its download address.",
         "layer": "Name the layer to read, or give the address of a GeoJSON file.",
-        "records": "Give the path as names joined by dots, for example data.stations."
+        "records": "Give the path as names joined by dots, for example data.stations.",
+        "secretKey": "Give the name of the entry inside the secret that holds the credential."
       }
     },
     "test": {
@@ -2531,7 +2560,8 @@
       "button": "Test connection",
       "running": "Testing…",
       "read": "Connected: {records, plural, one {# record} other {# records}} read ({bytes} bytes). The first one:",
-      "failed": "Nothing was read: {reason}. Check the address and the credentials, then test again."
+      "failed": "Nothing was read: {reason}. Check the address and the credentials, then test again.",
+      "pages": "Read {pages, plural, one {# page} other {# pages}}."
     },
     "usedBy": {
       "title": "Used by",
@@ -2541,6 +2571,176 @@
       "title": "Ready-made set-ups",
       "lead": "A set-up writes the source, its pipeline and its schedule in one change, from a few answers. Example: a city-bike GBFS feed polled every minute.",
       "back": "Back to data sources"
+    },
+    "preset": {
+      "title": "Open data API preset",
+      "hint": "For a CKAN, ArcGIS, OData, WFS, OGC API Features or SensorThings service: the platform pages it and finds the records itself, so a source with a preset needs no \"Paging\" and no \"Records are in\".",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (datasets or datastore rows)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Records per page",
+      "organization": "Organization",
+      "resourceId": "Resource ID",
+      "objectIdField": "Object ID field",
+      "outFields": "Fields read",
+      "typeNames": "Feature type",
+      "srsName": "Coordinate system",
+      "expand": "Related entities"
+    },
+    "paging": {
+      "title": "Paging",
+      "hint": "For a paged API no preset reads: how its next page is asked for. The connection test walks every page and says how many it read.",
+      "mode": "Next page by",
+      "modes": {
+        "page": "Page number",
+        "offset": "Offset and limit",
+        "cursor": "Cursor in the answer",
+        "link": "Link header (rel=next)",
+        "nextUrl": "Next URL in the answer"
+      },
+      "param": "Page parameter",
+      "start": "First page or offset",
+      "sizeParam": "Page size parameter",
+      "size": "Page size",
+      "offsetParam": "Offset parameter",
+      "limitParam": "Limit parameter",
+      "limit": "Limit",
+      "cursor": "Cursor path",
+      "cursorParam": "Cursor parameter",
+      "cursorHeader": "Cursor header",
+      "next": "Next link path",
+      "total": "Total path",
+      "more": "More pages path",
+      "maxPages": "Most pages",
+      "maxRecords": "Most records",
+      "delay": "Pause between pages"
+    },
+    "discover": {
+      "title": "Find in the service",
+      "hint": "Reads the service's own list once on the project's runner, public services only, and offers what this preset can read.",
+      "needs": "Choose an API under Open data API preset and type the service's URL to list what it offers.",
+      "button": "Find",
+      "running": "Reading the service…",
+      "pick": "Found {count, plural, one {# entry} other {# entries}}",
+      "pickHint": "Pick one; Use writes it into the form, where you can still change it.",
+      "use": "Use",
+      "useNeeds": "Pick an entry from the list first.",
+      "truncated": "The service lists more than the Portal reads; type a narrower URL if yours is missing.",
+      "none": "The service lists nothing this preset can read. Check the URL and the API kind.",
+      "failed": "Nothing was listed: {reason}. Check the URL and the API kind, then try again.",
+      "used": "Written into the form: {value}.",
+      "fields": {
+        "organization": "Organization",
+        "layer": "Layer",
+        "entitySet": "Entity set",
+        "typeNames": "Feature type",
+        "collection": "Collection",
+        "thing": "Thing"
+      },
+      "refused": "Ask a project administrator for a role that proposes data sources."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "What you connect",
+      "address": "Address and credential",
+      "discover": "Pick from the service",
+      "pagingTitle": "Pages",
+      "format": "Format",
+      "check": "Name and first rows",
+      "groups": {
+        "api": "Open data API, read page by page",
+        "file": "A file or a feed at an address",
+        "other": "Something else: a stream, a file server, a queue, a database or a webhook"
+      },
+      "otherHelp": "Opens the full form of that connection below: MQTT, SFTP, Kafka, a database and the others.",
+      "otherNone": "Choose a connection…",
+      "api": {
+        "ckan": "Every dataset of one organization in a CKAN portal.",
+        "arcgisFeature": "The features of one layer of an ArcGIS Feature Service.",
+        "odata": "The rows of one entity set of an OData v4 service.",
+        "wfs": "Every feature of one WFS 2.0 feature type, as GeoJSON.",
+        "ogcFeatures": "The items of one OGC API Features collection.",
+        "sensorThings": "The Things or Datastreams of a SensorThings service."
+      },
+      "apiUrl": "Address of the service",
+      "apiUrlHelp": {
+        "ckan": "The portal's address, for example https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "The FeatureServer address, for example https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "The service root ending in .svc, for example https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "The WFS address before the question mark, for example https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "The API's address, for example https://demo.pygeoapi.io/master.",
+        "sensorThings": "The address with its version, for example https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Credential",
+      "secretPublic": "None: a public source",
+      "secretHelp": "Pick the secret that holds the key or token; a password is never typed here.",
+      "secretNone": "This project's sources use no secret yet; a public source needs none. A source with a key gets its secret in the form below.",
+      "secretKeyHelp": "The entry inside the secret that holds the credential, for example token.",
+      "secretProbe": "A source with a credential is not fetched by the check; Test connection reads it once it is saved.",
+      "pagingHint": "Reads the first answer once on the project's runner and says how many pages a run reads.",
+      "pagingButton": "Find how it pages",
+      "pagingRunning": "Reading the first answer…",
+      "paging": {
+        "pages": "Reads {pages} pages of {onPage} ({total} records).",
+        "more": "Reads pages of {onPage} until the service says there are no more.",
+        "walk": "Follows the next page the service names, {onPage} records on the first.",
+        "totalOnly": "The first answer says {total} records in all, {onPage} on this page, but names no next page; set the paging in the form below.",
+        "once": "One answer holds everything: the address is read once per run.",
+        "skipped": "Could not tell: {reason}. Try again, or set the paging in the form below."
+      },
+      "allPages": "Read every page",
+      "allPagesHint": "Writes the paging into the form; untick to read the first page only.",
+      "presetPages": "The API kind pages the source itself, with the page size the service allows unless you set one in the form below.",
+      "oneRead": "A file or a feed is read whole on each run: there are no pages.",
+      "rows": "One record per row",
+      "rowsHint": "Each row of the CSV reaches the pipeline as one record keyed by the header's column names.",
+      "handoff": "Start a pipeline on {name}",
+      "picked": "Picked: {value}. Fill the form and check writes it into the form below."
+    },
+    "webhook": {
+      "title": "Where senders post",
+      "hint": "Paste the address of a pipeline into your sender. It sends POST requests with the header below.",
+      "header": "Header: {header}",
+      "maxBody": "Largest body: {bytes} bytes",
+      "noReaders": "No pipeline reads this source yet, so it has no address. Create a pipeline that reads it, then come back.",
+      "unpublished": "This installation publishes no address for webhooks. Ask an administrator to add the ingest entry to the deployment.",
+      "copy": "Copy address",
+      "copied": "Address copied",
+      "test": {
+        "title": "Send test event",
+        "hint": "Sends the body below to the pipeline you pick, signed the way your sender signs it. The event runs through the pipeline like a real one.",
+        "button": "Send test event",
+        "running": "Sending…",
+        "accepted": "Accepted ({status}): the pipeline took the event.",
+        "refused": "The runner answered {status}: {answer}",
+        "unauthorized": "The secret or the header this source names does not match what the runner holds: check both, then send again."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "One of the pipelines that read this source, for example ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Body",
+        "help": "The event as your sender would post it, for example the JSON of one uplink your provider documents."
+      }
+    },
+    "signatureHeader": {
+      "label": "Signature header",
+      "help": "The header your sender writes the signature into, for example X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Signing secret",
+      "help": "The secret holding the shared signing key, for example ttn-webhook with key secret. Add it under Secrets first."
+    },
+    "bearerToken": {
+      "label": "Token",
+      "help": "The secret holding the token the sender puts after Bearer, for example chirpstack with key token."
     }
   },
   "pipelines": {
@@ -2626,7 +2826,16 @@
       "modeChoice": {
         "upsert": "Create or merge",
         "replace": "Replace the whole entity",
-        "update-attrs": "Update attributes only"
+        "update-attrs": "Update attributes only",
+        "merge": "Merge into parts of attributes",
+        "backfill": "Add to history only"
+      },
+      "modeHint": {
+        "upsert": "Creates the entity or updates the attributes the record names; the other attributes stay.",
+        "replace": "The entity becomes exactly the record: attributes it does not name are removed. Use it only when this pipeline alone writes the entity.",
+        "update-attrs": "Updates the attributes the record names on the entity; the other attributes stay.",
+        "merge": "Deep-merges the record, so two pipelines can each write part of one attribute, for example address.streetAddress and address.postalCode.",
+        "backfill": "Adds past readings to the history only; the current value stays. Needs the temporal append operation in the Endpoint's Policy."
       },
       "lastRun": "Last run"
     },
@@ -2846,7 +3055,17 @@
       "lastSamples": "Last messages through this step",
       "lastSamplesNone": "Nothing has passed through this step yet.",
       "lastSamplesUnavailable": "The last messages are not available.",
-      "lastSamplesWithheld": "Withheld: the target endpoint hides attributes, and before the mapping they carry the source's own names. Select the output to see what was written."
+      "lastSamplesWithheld": "Withheld: the target endpoint hides attributes, and before the mapping they carry the source's own names. Select the output to see what was written.",
+      "tier": {
+        "forms": "Set up with a form",
+        "advanced": "Advanced: changes how messages flow",
+        "bloblang": "Written in Bloblang"
+      },
+      "tierHint": {
+        "forms": "No code: each opens a form with a hint per field, for example dedupe drops a record seen in the last hour.",
+        "advanced": "These have forms too, but they branch, loop or retry the steps inside them: a wrong setting can drop or repeat records. Run the pipeline test after each change.",
+        "bloblang": "A text box with hints: for mappings the mapper does not cover, for example root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Add a data source and a pipeline with the button, or ask the assistant to build one from what you already have.",
     "expiryRemoves": "Entities not updated for {window} are removed",
@@ -2882,7 +3101,23 @@
       "maskedKept": "{count, plural, one {# record stays on the list: a value of it was masked as a secret, and replaying it would write the mask. The pipeline's next read of its source brings it again.} other {# records stay on the list: a value of each was masked as a secret, and replaying them would write the mask. The pipeline's next read of its source brings them again.}}",
       "newest": "Newest",
       "older": "Older records",
-      "openRun": "Open its run"
+      "openRun": "Open its run",
+      "groups": {
+        "title": "By rule",
+        "lead": "Every kept record, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "export": "Export CSV",
+        "exporting": "Exporting…",
+        "exportHint": "Every kept record with its rule and reason, secrets masked and personal attributes left out. The file: {file}.",
+        "count": "{count, plural, one {# record} other {# records}}",
+        "allowed": "The model allows:",
+        "fix": {
+          "model": "Fix in the data model: it refuses this attribute or value. Widen the slot, or declare the attribute, if the source is right.",
+          "mapping": "Fix in the mapping: it writes a value of the wrong shape. Convert or map it to what the slot takes.",
+          "step": "Fix the step: a step of the pipeline failed on these records. Open a record's run to see the step's error.",
+          "runner": "The runner refused these records without a model rule. Open a record's run to see the runner's words."
+        },
+        "example": "Example"
+      }
     },
     "runs": {
       "open": "Runs and log",
@@ -3080,13 +3315,52 @@
         "title": "Lifetime",
         "hint": "When the entities, or some of their fields, leave the space. Saved as the pipeline's lifetime, never as mapping code.",
         "pickType": "Pick the target and the type the mapping writes first: the lifetime is set per type."
+      },
+      "sourceCheck": {
+        "title": "Check whole source",
+        "hint": "Runs the saved pipeline over every page of its source and counts what a live run would accept and reject, by rule. Nothing is written. It stops at 60 s or 50,000 records. Example: a CKAN source of 12 pages, 2,300 records.",
+        "run": "Check whole source",
+        "again": "Check again",
+        "running": "Reading every page of the source; this takes up to 60 s.",
+        "unsaved": "The check reads the saved pipeline: propose this one and check it once its change is merged.",
+        "failed": "The check did not run",
+        "counts": "{count, plural, one {# record} other {# records}}: {accepted, number} accepted, {rejected, number} rejected",
+        "complete": "Every page of the source was read; a live run would put the same records on the rejected list.",
+        "partial": "The check did not read the whole source, so the counts cover only the part it read. The reason is below.",
+        "rows": "{count, plural, one {# rejected record} other {First # rejected records}}",
+        "place": "Record {place}",
+        "more": "{count, plural, one {# more record is} other {# more records are}} counted in the groups above.",
+        "groupsLead": "Every record the check rejected, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "completeClean": "Every page of the source was read and no record breaks a rule: a live run would write them all.",
+        "retry": "Run it again once the reason above is resolved."
+      },
+      "schedule": {
+        "title": "When it runs",
+        "hint": "Pick how often in words; the next five starts show in your own time.",
+        "field": "Schedule",
+        "resident": "This pipeline runs all the time and writes each record as it arrives; set its class to scheduled under Basics to give it a schedule.",
+        "byPeriod": "The pipeline reads its source every {period}, as its period says. Add a schedule to run it at set times instead.",
+        "add": "Run on a schedule",
+        "remove": "Remove the schedule",
+        "floor": "This project lets a pipeline run at most {floor}.",
+        "belowFloor": "This schedule runs {gap}, more often than this project allows ({floor}). Pick a slower schedule or ask an admin to lower the project's minimum.",
+        "afterApply": "The first run starts at the first time listed above once the change is approved and applied.",
+        "hints": {
+          "field": "How often the pipeline reads its source, for example every day at 03:00. Times are UTC, as the runner reads them.",
+          "none": "No schedule: the pipeline runs when its source pushes records, for example an MQTT topic. Add a schedule for a source read on a clock, such as a CSV file."
+        },
+        "clock": {
+          "hours": "{count, plural, one {once an hour} other {every # hours}}",
+          "minutes": "{count, plural, one {every minute} other {every # minutes}}",
+          "seconds": "{count, plural, one {every second} other {every # seconds}}"
+        }
       }
     },
     "mapper": {
       "mode": "How each record becomes an entity",
       "modeMap": "Map fields",
       "modeCode": "Write Bloblang",
-      "modeMapHint": "Pick a record field, an expression, a fixed value or a point for each attribute.",
+      "modeMapHint": "Pick a record field for each attribute, with steps such as trim or translate values, a link to another entity, one field per language, a geometry, joined fields, an expression or a fixed value.",
       "modeCodeHint": "Write the Bloblang step yourself.",
       "type": "Entity type",
       "typeHint": "A type of the target space's data model; its attributes are listed below.",
@@ -3124,12 +3398,104 @@
         "notBoolean": "{field} holds “{value}”, which is not true or false; {name} takes true or false. Pick another field or change the sample.",
         "notValue": "{field} holds “{value}”; {name} takes one of {values}. Pick another field or change the sample.",
         "noId": "Choose the field each entity's id comes from.",
-        "notTime": "{field} holds {value}, which is no time: use RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds."
+        "notTime": "{field} holds {value}, which is no time: use RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds.",
+        "notShaped": "{field} holds “{value}”, which the date format of {name} cannot read. Pick the format the source writes."
       },
       "expiry": {
         "migrated": "The end time this step used to write is now the pipeline's lifetime, in the Lifetime step. It is saved with your next proposal.",
         "migrateField": "This step writes expiresAt from the record field {field}, and no date-time attribute is mapped from that field. Map it to a date-time attribute, pick an end in the Lifetime step, or drop the step's own lines.",
         "drop": "Drop the step's own expiresAt"
+      },
+      "geojson": "Geometry from a GeoJSON field…",
+      "wkt": "Geometry from a WKT field…",
+      "ref": "Link to a {target} by a key field…",
+      "languagesChoice": "One field per language…",
+      "concatChoice": "Several fields joined…",
+      "refField": "Key field of the {target}",
+      "languages": "Text per language",
+      "language": "Language",
+      "languageField": "Field for {tag}",
+      "languageRemove": "Remove the language {tag}",
+      "languageAdd": "Add a language",
+      "remove": "Remove",
+      "wktField": "WKT field",
+      "geojsonField": "GeoJSON field",
+      "crs": "Coordinate system of the source",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, degrees (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, degrees",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, metres",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugal, Galicia)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (central Spain)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Catalonia)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (western Germany)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (eastern Germany)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (Poland east, Slovakia east)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Finland)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Krovak (Slovakia, Czechia)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Switzerland)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Great Britain)"
+      },
+      "concat": "Fields to join",
+      "concatPart": "Field {number}",
+      "concatRemove": "Remove the field {field} from the join",
+      "concatAdd": "Add a field",
+      "separator": "Between the fields",
+      "separatorNone": "nothing",
+      "separatorSpace": "a space",
+      "transforms": "Transforms of {name}",
+      "transform": {
+        "trim": "Trim spaces",
+        "lower": "Lower case",
+        "upper": "Upper case",
+        "decimalComma": "Number with a decimal comma",
+        "date": "Date in a format",
+        "lookup": "Translate to the model's values",
+        "default": "Value when empty"
+      },
+      "transformHint": {
+        "trim": "Drops the spaces around the text: “ Bo ” becomes “Bo”.",
+        "lower": "Writes the text in lower case: “Bo” becomes “bo”.",
+        "upper": "Writes the text in upper case: “bo” becomes “BO”.",
+        "decimalComma": "Reads text such as 1.234,5 as the number 1234.5: dots and spaces are thousands, the comma is the decimal point.",
+        "lookup": "Each value the sample holds that the model lacks gets one of the model's values; any other value stays as it is."
+      },
+      "transformRemove": "Remove the step {what}",
+      "transformAdd": "Change the value",
+      "transformPick": "— add a step —",
+      "dateFormat": "Date format of the field",
+      "dateFormats": {
+        "0": "day.month.year, 20.10.2025",
+        "1": "day/month/year, 20/10/2025",
+        "2": "month/day/year, 10/20/2025",
+        "3": "year-month-day, 2025-10-20",
+        "4": "day.month.year hour:minute, 20.10.2025 14:30",
+        "5": "day/month/year hour:minute, 20/10/2025 14:30",
+        "6": "year-month-day hour:minute:second, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Value when the field is empty",
+      "lookupEmpty": "Every value of the sample is already one of the model's; read another sample to translate others.",
+      "lookupHint": "Source value → the model's value",
+      "lookupRow": "“{from}” becomes",
+      "lookupKeep": "— keep as it is —",
+      "observedAt": "Observed at, for {name}",
+      "hint": {
+        "concat": "The fields are joined in this order, the empty ones skipped; for example a street and a house number give C/ Major 1.",
+        "concatPart": "A field of the sample, for example ADRECA.",
+        "crs": "The system the source's coordinates are in; the runner writes WGS 84. For example Barcelona's open data uses ETRS89 / UTM 31N.",
+        "dateFormat": "How the source writes a date; the attribute gets ISO 8601, for example 20/10/2025 becomes 2025-10-20.",
+        "defaultValue": "Written when a record leaves the field empty, for example 0 or unknown.",
+        "geojsonField": "A field holding a GeoJSON geometry, as text or an object, for example a Point with coordinates [2.17, 41.38].",
+        "languageField": "The field holding the {tag} text, for example NAME_{tag}.",
+        "language": "A language tag, for example en or ca.",
+        "languages": "Pick a field for each language the source has, for example NOM_CA for ca and NOM_ES for es. An empty field is left out.",
+        "lookupRow": "One of the model's values, for example {example}.",
+        "observedAt": "Optional: a field holding when the value was measured, as RFC 3339 text such as 2026-10-20T14:30:00Z or Unix seconds; it becomes the attribute's observedAt.",
+        "refField": "The field holding the {target}'s own id in this space, for example a district code such as 01.",
+        "separator": "What stands between two joined fields, for example a comma and a space.",
+        "transformAdd": "Optional steps applied to the field in order, for example trim spaces, then translate values to the model's.",
+        "wktField": "A field holding Well-Known Text, for example POINT (2.17 41.38)."
       }
     },
     "debug": {
@@ -3511,7 +3877,7 @@
       "grants": "Grants",
       "byPolicy": "Granted by Policy {policy}",
       "fix": "Fix: {fix}",
-      "counts": "{sent} sent, {rejected} rejected, {failed} failed",
+      "counts": "{sent} sent, {rejected, number} rejected, {failed} failed",
       "perMinute": "{rate} records a minute",
       "openPipeline": "Open pipeline",
       "openRuns": "Runs",
@@ -4140,6 +4506,7 @@
       "search": "Search people",
       "show": "Show access",
       "failed": "Access could not be shown. Try again in a minute; the reason is below.",
+      "refused": "You may not see this access. Only an organization administrator explores another person's or account's access; the reason is below.",
       "nothing": "Reaches nothing",
       "nothingLead": "No Endpoint of this project admits them or grants them anything. Grant access with a Policy, a group or a role binding.",
       "space": "space {space}",
@@ -5838,7 +6205,10 @@
     "observedAt": "Observed",
     "unit": "Unit",
     "datasetId": "Dataset",
-    "empty": "No entities here.",
+    "empty": "No entities here yet. Data arrives through a data source, an import or a pipeline.",
+    "filtersMatchNothing": "None of the rows match your filters.",
+    "notSaved": "not saved",
+    "refusedNext": "Discard the changes to keep what is stored. If the reason says you may not write here, ask the Context Space's owner for access.",
     "loading": "Loading…",
     "filtering": "Filtering…",
     "previous": "Previous",
@@ -5849,6 +6219,7 @@
     "retry": "Try again",
     "busy": "the data source is busy right now",
     "timedOut": "the data source took too long to answer",
+    "unreachable": "the data source could not be reached",
     "filter": "Filter",
     "noFilter": "Any",
     "ops": {
@@ -6670,6 +7041,7 @@
       "failed": "Version {version} is not published while {failed} of its tests fail: {names}. Ask the assistant to fix them."
     },
     "publishOver": "This run has ended, so it has nothing to publish.",
+    "publishNotReady": "No version is ready to publish yet: Publish opens once its preview is built and its tests pass.",
     "failedNext": "Nothing was published. Open the Assistant page to build it again.",
     "failedOpen": "Build it again"
   },
@@ -7557,9 +7929,10 @@
       "type": "Entity type",
       "typeHelp": "Leave empty to ask about any type.",
       "submit": "Ask the gateway",
-      "failed": "The gateway could not be asked. Try again in a minute; the reason is below.",
+      "failed": "The gateway could not be asked. The reason and Retry are below.",
       "allowed": "Allowed",
       "refused": "Refused",
+      "refusedNext": "To allow it, add a grant for this person, group or role to a Policy of the Endpoint's space in the list above, then ask again.",
       "decidedBy": "Decided by the Policy",
       "reason": {
         "policy_grant_matched": "A Policy grants this action.",
@@ -8423,6 +8796,7 @@
       "measured": "Storage measured {at}; AI converted at {rate} {currency} for one US dollar.",
       "partial": "Some spaces or assistants did not answer; they count 0 here. Their reasons are in each project's lines.",
       "empty": "No project has a space or an assistant yet, so the whole month is the platform's. Create a Context Space in a project to see its share.",
+      "emptyAction": "Open the projects",
       "caption": "Costs per project, {month}",
       "project": "Project",
       "node": "Node share",
@@ -9072,6 +9446,11 @@
       "0": "0: at most once (may lose a message)",
       "1": "1: at least once (may repeat a message)",
       "2": "2: exactly once (slowest)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Spreadsheet (xlsx, ods)",
+      "shapefile": "Shapefile (zip)"
     }
   },
   "picker": {
@@ -10990,11 +11369,8 @@
       "copy": "Copy the command"
     },
     "claudeDesktop": {
-      "steps": "In Settings, Connectors, choose Add custom connector and paste the address. Or add this to claude_desktop_config.json (needs Node.js) and restart Claude Desktop.",
+      "steps": "Add this to claude_desktop_config.json (needs Node.js) and restart Claude Desktop.",
       "copy": "Copy the configuration"
-    },
-    "chatgpt": {
-      "steps": "In Settings, Apps and Connectors, turn on Developer mode, create a connector, paste the address and choose No authentication."
     },
     "generic": {
       "title": "Other MCP clients",
@@ -11705,10 +12081,6 @@
       "mcp-local": "Claude Code, VS Code and other local clients",
       "mcp-hub": "The organization's MCP hub",
       "mcp-mobile": "The mobile assistant"
-    },
-    "steps": {
-      "claudeAi": "Settings → Connectors → Add custom connector. Paste the address, choose Add, then Connect and sign in with your Portal account.",
-      "chatgpt": "Settings → Apps & Connectors → Advanced settings: turn on Developer mode. Then Create, paste the address, choose OAuth and sign in with your Portal account."
     },
     "call": {
       "at": "When",
@@ -12847,6 +13219,91 @@
       "noCatalogue": "This installation serves no open data catalogue yet, so this portal lists no datasets here. Ask your operator to enable the catalogue.",
       "toSources": "Go to Sources",
       "noCatalogueTitle": "No open data catalogue here yet"
+    }
+  },
+  "assistantGuides": {
+    "lead": "Where to click in each assistant, step by step:",
+    "noHost": "Paste the address into your assistant where it adds a custom connector or MCP server.",
+    "signIn": "This connector needs sign-in: where the assistant asks how to sign in, choose OAuth, then sign in with your Portal account.",
+    "list": "Setup steps per assistant",
+    "other": "Any other MCP client"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Script workbench",
+      "purpose": "Write the next version of a stored script, run its tests on the project's runner and propose it for review."
+    },
+    "empty": "No script yet: name one below, write its code and tests, then propose version 1.0.0.",
+    "field": {
+      "script": "Script",
+      "newScript": "New script",
+      "name": "Name",
+      "code": "Code",
+      "tests": "Tests",
+      "timeout": "Time per record (ms)",
+      "memory": "Memory per record (MiB)",
+      "version": "Version",
+      "target": "Move pins to"
+    },
+    "hint": {
+      "script": "Pick a script of this project to edit its next version, or start a new one.",
+      "name": "Lower-case letters, digits and dashes, e.g. sjtsk-to-wgs84.",
+      "code": "Code that reads the record and writes it back, e.g. record.checked = true. It reaches no network, file or secret.",
+      "tests": "A JSON list of tests, each with a name, an input record and the expected record, e.g. the starter list in the box.",
+      "timeout": "1 to 200, e.g. 50. Empty uses 50.",
+      "memory": "1 to 64, e.g. 32. Empty uses 32.",
+      "version": "MAJOR.MINOR.PATCH above the newest version, e.g. {version}.",
+      "target": "A published version, e.g. 1.1.0. Each moved pipeline runs it after the Change is approved."
+    },
+    "reason": {
+      "name": "Name the script with lower-case letters, digits and dashes.",
+      "code": "Write 1 to 65536 bytes of code.",
+      "tests": "Write the tests as a JSON list of objects with name, input and expected.",
+      "run": "Run the tests first.",
+      "versionFormat": "Write the version as MAJOR.MINOR.PATCH, e.g. 1.1.0.",
+      "versionOrder": "Pick a version above {version}.",
+      "timeout": "Write a whole number from 1 to 200.",
+      "memory": "Write a whole number from 1 to 64.",
+      "limits": "Fix the limits first.",
+      "pipelineRights": "Your role does not propose pipelines in this project.",
+      "pick": "Pick the pipelines to move.",
+      "failing": "{count, plural, one {# test fails: fix the code or the test.} other {# tests fail: fix the code or the tests.}}",
+      "runner": "The project's runner did not answer. Try again in a minute; if it keeps failing, ask your administrator to check the runner.",
+      "rightsNext": "Your role does not propose scripts in this project, so it cannot run their tests either. Ask a project administrator for a role that proposes Scripts, such as pipeline-editor.",
+      "proposed": "Edit the code to write the next version.",
+      "runFailed": "The tests did not run: fix what the message above says, then run them again."
+    },
+    "action": {
+      "run": "Run tests",
+      "propose": "Propose version {version}",
+      "move": "{count, plural, one {Move # pipeline to {version}} other {Move # pipelines to {version}}}"
+    },
+    "results": {
+      "caption": "Test results",
+      "test": "Test",
+      "verdict": "Result",
+      "output": "Output",
+      "time": "Time",
+      "pass": "Pass",
+      "fail": "Fail",
+      "changed": "Changed",
+      "outputOf": "Output of {test}",
+      "empty": "Run the tests to see each one's result here.",
+      "emptyTitle": "No result yet",
+      "millis": "{count} ms",
+      "changedNote": "A test marked Changed writes a different output than the newest stored version, {version}."
+    },
+    "proposed": "Version {version} is proposed. A second person approves it on the Approvals page; pipelines keep their pins until you move them.",
+    "used": {
+      "title": "Pipelines using {name}",
+      "caption": "Pipelines pinning {name}",
+      "emptyTitle": "No pipeline uses this script",
+      "empty": "Add a script step naming {name} to a pipeline, or apply it in the pipeline's scripts, to see it here.",
+      "pipeline": "Pipeline",
+      "pinned": "Pinned version",
+      "already": "Already on {version}.",
+      "moved": "Proposed one Change moving {names} to {version}.",
+      "onTarget": "On the target"
     }
   },
   "opendataPages": {

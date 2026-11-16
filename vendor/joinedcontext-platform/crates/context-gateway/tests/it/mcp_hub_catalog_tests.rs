@@ -66,6 +66,7 @@ fn endpoint(slug: &str, title: &str, space: &str, audience: Audience, role: &str
         title: [("en".to_owned(), title.to_owned())].into_iter().collect(),
         description: Default::default(),
         space: space.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(space).ok(),
         project: "mesto".to_owned(),
         audience,
         allowed_projects: Vec::new(),

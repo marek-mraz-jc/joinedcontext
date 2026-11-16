@@ -49,6 +49,7 @@ jobs:
         with:
           path: |
             crates/portal/ui/dist
+            crates/portal/ui/dist-explorer
             crates/portal/sdk/dist
           key: jc-ui-${{ hashFiles('crates/portal/ui/**', 'crates/portal/sdk/**') }}
       - if: steps.ui.outputs.cache-hit != 'true'
@@ -64,6 +65,7 @@ jobs:
           (cd sdk && pnpm install --frozen-lockfile)
           (cd ui && pnpm install --frozen-lockfile && pnpm build)
           test -s ui/dist/index.html && ls ui/dist/assets/*.js >/dev/null
+          test -s ui/dist-explorer/explorer.js && test -s ui/dist-explorer/explorer.css
           (cd sdk && pnpm build)
           for f in kit.js kit.css kit-worker.js runtime/runtime.json functions-server.js demos/index.html; do
             test -s "sdk/dist/$f"
@@ -75,11 +77,14 @@ jobs:
         with:
           path: |
             crates/portal/ui/dist
+            crates/portal/ui/dist-explorer
             crates/portal/sdk/dist
           key: ${{ steps.ui.outputs.cache-primary-key }}
       # The Dockerfile's toolchain (rust:1.99.0), so both ways of building the image use one compiler.
       - uses: ./.github/actions/rust
         with: { key: release, toolchain: "1.99.0" }
+      # jc embeds the explorer bundle from ui/dist-explorer (bins/jc/src/modules/viz.rs), cached with the UI.
+      - run: test -s crates/portal/ui/dist-explorer/explorer.js && test -s crates/portal/ui/dist-explorer/explorer.css
       - run: cargo build --release --locked -p jc -p kaisatsu-server
       - id: bin
         run: |

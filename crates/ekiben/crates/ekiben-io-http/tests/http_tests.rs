@@ -61,6 +61,10 @@ async fn start_mock_server() -> (String, Arc<AtomicUsize>) {
             }),
         )
         .route(
+            "/rows",
+            get(|| async { (StatusCode::OK, "id;name\r\n1;a\r\n2;b\r\n".to_string()) }),
+        )
+        .route(
             "/always-404",
             get(|| async { (StatusCode::NOT_FOUND, "not found".to_string()) }),
         )
@@ -587,6 +591,67 @@ async fn http_processor_branch_oauth2_extract_headers_and_retries() {
 
 /// Bento sends `Content-Type: application/octet-stream` with every one-message request whose
 /// headers name no type, an empty GET included (T-6624: 14 seed pipelines differed by it alone).
+/// `http_client` with `paginate` (T-7056): one page per read, then the end of input; a page the
+/// output nacked fails the next read, so the run is not reported complete.
+#[tokio::test]
+async fn the_paged_input_reads_each_page_once_and_a_nacked_page_fails_the_run() {
+    let app = Router::new().route(
+        "/pages",
+        get(
+            |axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| async move {
+                let page: usize = q.get("page").and_then(|p| p.parse().ok()).unwrap_or(0);
+                let items: Vec<usize> = if page < 3 { vec![page; 2] } else { vec![] };
+                Json(serde_json::json!({ "items": items }))
+            },
+        ),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    let (reg, _, sctx) = setup_contexts(true);
+    let build = || {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "http_client": {
+                "url": format!("{base}/pages"),
+                "verb": "GET",
+                "paginate": {"mode": "page", "records": "items", "size_param": "size", "size": 2}
+            }}),
+            "noop",
+            None,
+        )
+        .unwrap();
+        reg.build_input(&conf, &sctx).unwrap()
+    };
+
+    let mut input = build();
+    input.connect(&sctx).await.unwrap();
+    let mut pages = Vec::new();
+    let end = loop {
+        match input.read_batch(&sctx).await {
+            Ok((batch, ack)) => {
+                pages.push(batch[0].meta_get_str("http_page"));
+                ack.ack();
+            }
+            Err(e) => break e,
+        }
+    };
+    assert!(matches!(end, ekiben_core::CoreError::EndOfInput), "{end}");
+    // Pages 1 and 2 are full, page 3 is empty: the stop rule holds there.
+    assert_eq!(pages, ["1", "2", "3"]);
+
+    let mut input = build();
+    input.connect(&sctx).await.unwrap();
+    let (batch, ack) = input.read_batch(&sctx).await.unwrap();
+    ack.nack(ekiben_core::BatchError::new(batch, "broker refused"));
+    let err = match input.read_batch(&sctx).await {
+        Ok(_) => panic!("a read after a nacked page must fail"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("broker refused"), "{err}");
+}
+
 #[tokio::test]
 async fn an_empty_get_names_the_octet_stream_type_as_bento_does() {
     let (base_url, _) = start_mock_server().await;
@@ -706,6 +771,115 @@ async fn oauth2_sends_the_client_as_bento_does() {
         assert!(!res[0][0].is_errored(), "{refuse}");
         assert_eq!(*seen.lock().unwrap(), want, "{refuse}");
     }
+}
+
+/// `http_client` with `stream.enabled` splits the body with `stream.scanner` (`lines` when
+/// unset), each message keeping the response's metadata.
+#[tokio::test]
+async fn http_client_stream_splits_the_body_with_its_scanner() {
+    let (reg, _, sctx) = setup_contexts(true);
+    let (api, _) = start_mock_server().await;
+    let read_all = |stream: serde_json::Value| {
+        let conf = ComponentConfig::from_json_value(
+            &serde_json::json!({ "http_client": {"url": format!("{api}/rows"), "verb": "GET", "stream": stream}}),
+            "stdin",
+            None,
+        )
+        .unwrap();
+        let mut input = reg.build_input(&conf, &sctx).unwrap();
+        let sctx = sctx.clone();
+        async move {
+            let mut out = Vec::new();
+            for _ in 0..3 {
+                let (batch, _) = input.read_batch(&sctx).await.unwrap();
+                let p = &batch[0];
+                assert_eq!(p.meta_get_str("http_status_code"), "200");
+                out.push(String::from_utf8_lossy(&p.as_bytes_ref()).into_owned());
+            }
+            out
+        }
+    };
+    assert_eq!(
+        read_all(serde_json::json!({"enabled": true})).await,
+        ["id;name", "1;a", "2;b"]
+    );
+    let csv = serde_json::json!({"enabled": true, "scanner": {"csv": {"custom_delimiter": ";"}}});
+    let rows = read_all(csv).await;
+    assert_eq!(
+        rows[..2],
+        [r#"{"id":"1","name":"a"}"#, r#"{"id":"2","name":"b"}"#]
+    );
+
+    let bad = ComponentConfig::from_json_value(
+        &serde_json::json!({ "http_client": {"url": format!("{api}/rows"), "stream": {"enabled": true, "scanner": {"no_such": {}}}}}),
+        "stdin",
+        None,
+    )
+    .unwrap();
+    let err = reg
+        .build_input(&bad, &sctx)
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        err.contains("scanner type 'no_such' was not recognised"),
+        "{err}"
+    );
+}
+
+/// `oauth2.endpoint_params` join the token form (x/oauth2 `EndpointParams`, keys sorted as Go's
+/// `url.Values.Encode`); a value that is not a list of strings is refused by name.
+#[tokio::test]
+async fn oauth2_endpoint_params_join_the_token_request() {
+    let (reg, pctx, _) = setup_contexts(true);
+    let (base, seen) = token_server("params").await;
+    let (api, _) = start_mock_server().await;
+    let conf = |params: serde_json::Value| {
+        ComponentConfig::from_json_value(
+            &serde_json::json!({ "http": {
+                "url": format!("{api}/content-type"),
+                "verb": "GET",
+                "oauth2": {
+                    "enabled": true,
+                    "client_key": "params-client",
+                    "client_secret": "s",
+                    "token_url": format!("{base}/token"),
+                    "endpoint_params": params
+                }
+            }}),
+            "noop",
+            None,
+        )
+        .unwrap()
+    };
+    let proc = reg
+        .build_processor(
+            &conf(serde_json::json!({"resource": ["r1", "r2"], "audience": ["https://api.example.com"]})),
+            &pctx,
+            "0",
+        )
+        .unwrap();
+    let res = execute_all(&pctx, &[proc], vec![vec![Part::from_str("")]])
+        .await
+        .unwrap();
+    assert!(!res[0][0].is_errored());
+    assert_eq!(
+        *seen.lock().unwrap(),
+        ["Basic cGFyYW1zLWNsaWVudDpz|audience=https%3A%2F%2Fapi.example.com&grant_type=client_credentials&resource=r1&resource=r2"]
+    );
+    let err = reg
+        .build_processor(
+            &conf(serde_json::json!({"audience": "https://api.example.com"})),
+            &pctx,
+            "0",
+        )
+        .err()
+        .expect("refused")
+        .to_string();
+    assert!(
+        err.contains("oauth2.endpoint_params") && err.contains("audience is not"),
+        "{err}"
+    );
 }
 
 /// On jc-prod a project's pipelines asked the realm again at once after each 429 (1,262 token

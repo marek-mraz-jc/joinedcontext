@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The organization switcher as a person in two Organizations meets it (PF-124, ADR-N-058 section
 // 2.7). `vite preview` has no Portal API behind it, so the API is answered in the browser; the

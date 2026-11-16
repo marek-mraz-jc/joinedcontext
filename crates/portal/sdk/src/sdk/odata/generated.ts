@@ -4,11 +4,14 @@
 
 export interface AgentProfile {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -16,12 +19,15 @@ export interface AgentProfile {
 
 export interface App {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -29,12 +35,15 @@ export interface App {
 
 export interface AssistantDeployment {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -42,11 +51,14 @@ export interface AssistantDeployment {
 
 export interface Blueprint {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -54,36 +66,51 @@ export interface Blueprint {
 
 export interface Bundle {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
 }
 
 export interface Change {
+  author?: unknown | null;
+  createdAt?: unknown | null;
+  decision?: unknown | null;
+  files?: unknown | null;
   lane?: string | null;
   mergeRequest?: string | null;
+  metadata?: unknown | null;
   name: string;
   phase?: string | null;
+  planFields?: unknown | null;
   project: string;
   proposedBy?: string | null;
+  status?: unknown | null;
+  summary?: unknown | null;
   title?: string | null;
   url?: string | null;
+  waitsOn?: unknown | null;
   "@odata.etag"?: string;
 }
 
 export interface CkanInstance {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -91,11 +118,14 @@ export interface CkanInstance {
 
 export interface ContextBroker {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -103,12 +133,15 @@ export interface ContextBroker {
 
 export interface ContextSourceRegistration {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -116,12 +149,15 @@ export interface ContextSourceRegistration {
 
 export interface ContextSpace {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -129,12 +165,15 @@ export interface ContextSpace {
 
 export interface Dashboard {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -142,12 +181,15 @@ export interface Dashboard {
 
 export interface DataAgreement {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -155,12 +197,15 @@ export interface DataAgreement {
 
 export interface DataModel {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -168,12 +213,15 @@ export interface DataModel {
 
 export interface DataOffer {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -181,12 +229,15 @@ export interface DataOffer {
 
 export interface DataSource {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -194,11 +245,14 @@ export interface DataSource {
 
 export interface DataSpaceParticipant {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -206,11 +260,14 @@ export interface DataSpaceParticipant {
 
 export interface DelegationPolicy {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -218,12 +275,15 @@ export interface DelegationPolicy {
 
 export interface Endpoint {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -251,12 +311,15 @@ export interface EndpointRow {
 
 export interface Entity {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -264,11 +327,14 @@ export interface Entity {
 
 export interface Environment {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -276,11 +342,14 @@ export interface Environment {
 
 export interface Group {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -288,12 +357,15 @@ export interface Group {
 
 export interface KnowledgeSource {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -301,12 +373,15 @@ export interface KnowledgeSource {
 
 export interface Layer {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -314,12 +389,15 @@ export interface Layer {
 
 export interface Mapping {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -327,12 +405,15 @@ export interface Mapping {
 
 export interface McpServer {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -349,12 +430,15 @@ export interface Member {
 
 export interface ModelProjection {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -362,12 +446,15 @@ export interface ModelProjection {
 
 export interface MqttBroker {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -381,11 +468,14 @@ export interface Organization {
 
 export interface OrganizationRole {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -401,12 +491,15 @@ export interface Person {
 
 export interface Pipeline {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -414,12 +507,15 @@ export interface Pipeline {
 
 export interface Policy {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -427,11 +523,14 @@ export interface Policy {
 
 export interface Portal {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -469,12 +568,15 @@ export interface Revision {
 
 export interface Role {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -482,11 +584,14 @@ export interface Role {
 
 export interface RoleBinding {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -507,12 +612,31 @@ export interface Run {
 
 export interface ScopeDefinition {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
+  title?: string | null;
+  url?: string | null;
+  "@odata.etag"?: string;
+}
+
+export interface Script {
+  kind?: string | null;
+  metadata?: unknown | null;
+  name: string;
+  notServing?: string | null;
+  phase?: string | null;
+  project: string;
+  sourceUrl?: string | null;
+  space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -520,12 +644,15 @@ export interface ScopeDefinition {
 
 export interface ServiceAccount {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -533,12 +660,15 @@ export interface ServiceAccount {
 
 export interface SharedSpaceReference {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -546,12 +676,15 @@ export interface SharedSpaceReference {
 
 export interface Subscription {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -559,12 +692,15 @@ export interface Subscription {
 
 export interface SyncSource {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -572,11 +708,14 @@ export interface SyncSource {
 
 export interface UiSchema {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;
@@ -637,6 +776,7 @@ export interface EntitySets {
   roles: Role;
   runs: Run;
   scopedefinitions: ScopeDefinition;
+  scripts: Script;
   serviceaccounts: ServiceAccount;
   shared: SharedSpaceReference;
   spaces: ContextSpace;
@@ -693,6 +833,7 @@ export const ENTITY_KEYS: { readonly [S in keyof EntitySets]: readonly string[] 
   roles: ["project","name"],
   runs: ["project","id"],
   scopedefinitions: ["project","name"],
+  scripts: ["project","name"],
   serviceaccounts: ["project","name"],
   shared: ["project","name"],
   spaces: ["project","name"],
@@ -726,7 +867,7 @@ export interface Functions {
   jc_model_sdm_search: { q: string; subject?: string };
   jc_model_source_get: { name: string };
   jc_mqtt_captured: { limit?: number; name: string; topic?: string };
-  jc_organization_read: { aspect: string; cursor?: string; limit?: number };
+  jc_organization_read: { aspect: string; cursor?: string; endpoint?: string; group?: string; inProject?: string; limit?: number; month?: string; organization?: string; person?: string; profile?: string; run?: string; since?: string; space?: string; until?: string; verdict?: string };
   jc_person_get: { id: string };
   jc_person_list: { first?: number; max?: number; search?: string };
   jc_pipeline_inspect: { cursor?: number; limit?: number; name: string; view: string };
@@ -750,6 +891,14 @@ export interface Functions {
   jc_syncsource_status: { name: string };
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
+  portal_access_request_list: { endpoint: string };
+  portal_connector_list: Record<string, never>;
+  portal_endpoint_quality: { endpoint: string };
+  portal_notification_list: Record<string, never>;
+  portal_person_names: { ids?: string };
+  portal_preferences_get: Record<string, never>;
+  portal_secret_list: Record<string, never>;
+  portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
 }
 
 /** The entity types each function is bound to. */
@@ -776,9 +925,9 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_model_sdm_search: ["Project"],
   jc_model_source_get: ["Project"],
   jc_mqtt_captured: ["Project"],
-  jc_organization_read: ["Project"],
-  jc_person_get: ["Project"],
-  jc_person_list: ["Project"],
+  jc_organization_read: ["Organization"],
+  jc_person_get: ["Organization"],
+  jc_person_list: ["Organization"],
   jc_pipeline_inspect: ["Project"],
   jc_pipeline_logs: ["Project"],
   jc_pipeline_metrics: ["Project"],
@@ -800,6 +949,14 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_syncsource_status: ["Project"],
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
+  portal_access_request_list: ["Project"],
+  portal_connector_list: ["Organization"],
+  portal_endpoint_quality: ["Project"],
+  portal_notification_list: ["Organization"],
+  portal_person_names: ["Organization"],
+  portal_preferences_get: ["Organization"],
+  portal_secret_list: ["Project"],
+  portal_visualization_template: ["Organization"],
 };
 
 /** Each bound action and its parameters. */
@@ -811,6 +968,7 @@ export interface Actions {
   jc_change_revert_plan: { id: string; workspace?: string };
   jc_data_write: { action: string; endpoint: string; entities?: unknown; ids?: unknown; reason?: string };
   jc_datasource_check: { draft?: unknown; manifest?: unknown };
+  jc_datasource_discover: { kind: string; url: string };
   jc_draft_drop: { kind: string; name: string; workspace?: string };
   jc_draft_put: { expectedVersion?: number; kind: string; manifest: unknown; name: string; workspace?: string };
   jc_endpoint_propose: { allowedProjects?: unknown; audience?: string; contextSpace?: string; draft?: unknown; entityTypes?: unknown; hiddenAttributes?: unknown; manifest?: unknown; name?: string; rateLimits?: unknown; representations?: unknown; title?: string };
@@ -837,6 +995,7 @@ export interface Actions {
   jc_run_create: { appClass: string; appName: string; dataNeeds: unknown; endpointName?: string; endpointNames?: unknown; kind?: string; profile?: string; prompt: string; unattended?: boolean; visibility?: string };
   jc_run_message: { endpointNames?: unknown; id: string; text: string };
   jc_run_publish: { id: string };
+  jc_script_test: { code: string; limits?: unknown; tests: unknown };
   jc_space_complete: { description?: string; files?: unknown; propose?: boolean; space?: string; typeName?: string; upload?: boolean; url?: string };
   jc_syncsource_detach: { name: string };
   jc_syncsource_pause: { name: string; paused: boolean };
@@ -847,6 +1006,21 @@ export interface Actions {
   jc_workspace_preview_stop: { name: string };
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
+  portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_connector_revoke: { connector: string };
+  portal_notification_read: { notification: string };
+  portal_people_name_by_id: { dryRun?: boolean };
+  portal_people_remove: { body?: unknown };
+  portal_person_consent_revoke: { person: string; client: string };
+  portal_person_delete: { person: string };
+  portal_person_remove_second_factor: { person: string };
+  portal_person_resend_invitation: { person: string };
+  portal_person_reset_password: { person: string };
+  portal_preferences_recent: { body?: unknown };
+  portal_preferences_set: { body?: unknown };
+  portal_secret_set: { body?: unknown };
+  portal_serviceaccount_revoke: { account: string; body?: unknown };
+  portal_serviceaccount_secret_issue: { account: string };
   propose_create: { manifest?: unknown; dryRun?: boolean };
   propose_delete: { dryRun?: boolean };
   propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean };
@@ -862,6 +1036,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_change_revert_plan: ["Project"],
   jc_data_write: ["Project"],
   jc_datasource_check: ["Project"],
+  jc_datasource_discover: ["Project"],
   jc_draft_drop: ["Project"],
   jc_draft_put: ["Project"],
   jc_endpoint_propose: ["Project"],
@@ -872,11 +1047,11 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_model_sdm_import: ["Project"],
   jc_model_source_put: ["Project"],
   jc_mqtt_test_publish: ["Project"],
-  jc_person_create: ["Project"],
-  jc_person_disable: ["Project"],
-  jc_person_edit: ["Project"],
-  jc_person_enable: ["Project"],
-  jc_person_sign_out: ["Project"],
+  jc_person_create: ["Organization"],
+  jc_person_disable: ["Organization"],
+  jc_person_edit: ["Organization"],
+  jc_person_enable: ["Organization"],
+  jc_person_sign_out: ["Organization"],
   jc_pipeline_run: ["Project"],
   jc_pipeline_sample_source: ["Project"],
   jc_pipeline_test: ["Project"],
@@ -888,6 +1063,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_run_create: ["Project"],
   jc_run_message: ["Project"],
   jc_run_publish: ["Project"],
+  jc_script_test: ["Project"],
   jc_space_complete: ["Project"],
   jc_syncsource_detach: ["Project"],
   jc_syncsource_pause: ["Project"],
@@ -898,8 +1074,23 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_preview_stop: ["Project"],
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
+  portal_access_request_file: ["Project"],
+  portal_connector_revoke: ["Organization"],
+  portal_notification_read: ["Organization"],
+  portal_people_name_by_id: ["Organization"],
+  portal_people_remove: ["Organization"],
+  portal_person_consent_revoke: ["Organization"],
+  portal_person_delete: ["Organization"],
+  portal_person_remove_second_factor: ["Organization"],
+  portal_person_resend_invitation: ["Organization"],
+  portal_person_reset_password: ["Organization"],
+  portal_preferences_recent: ["Organization"],
+  portal_preferences_set: ["Organization"],
+  portal_secret_set: ["Project"],
+  portal_serviceaccount_revoke: ["Project"],
+  portal_serviceaccount_secret_issue: ["Project"],
   propose_create: ["Project"],
-  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
-  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
+  propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   reject: ["Change"],
 };

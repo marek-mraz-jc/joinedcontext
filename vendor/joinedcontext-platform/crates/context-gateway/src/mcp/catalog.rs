@@ -213,7 +213,15 @@ async fn read_public(
             "method": "tools/call",
             "params": { "name": "query_entities", "arguments": arguments },
         });
-        let answer = super::endpoint::member_call(gateway, endpoint, subject, message).await;
+        // A broker that does not answer holds this caller and every one waiting on READING for
+        // one member call's deadline per page, never its own 120 s; a large catalogue that
+        // answers each page in time is read whole.
+        let answer = tokio::time::timeout(
+            super::server::MEMBER_DEADLINE,
+            super::endpoint::member_call(gateway, endpoint, subject, message),
+        )
+        .await
+        .map_err(|_| "no answer within ten seconds".to_owned())?;
         let (page, next) = public_page(&answer)?;
         entities.extend(page);
         match next {
@@ -708,6 +716,7 @@ pub(crate) mod tests {
             title: BTreeMap::new(),
             description: BTreeMap::new(),
             space: "mesto-ovzdusie".to_owned(),
+            tenant: crate::middleware::tenancy::Tenant::segment("mesto-ovzdusie").ok(),
             project: "mesto".to_owned(),
             audience: Audience::Public,
             allowed_projects: Vec::new(),
@@ -794,6 +803,81 @@ pub(crate) mod tests {
             r#"searchText~="banska \D+";name=="Žilina""#
         );
         assert_eq!(folded_search("pm10>40"), "pm10>40");
+    }
+
+    /// A catalogue read that the broker never answers ends at one member call's deadline, and
+    /// the caller is answered the list it had (none here) instead of waiting on the broker.
+    #[tokio::test(start_paused = true)]
+    async fn a_public_catalogue_read_ends_at_the_member_deadline() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = silent.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = silent.accept().await {
+                held.push(socket);
+            }
+        });
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(format!("http://{address}")),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let mut endpoint = fixture();
+        endpoint.slug = "silentcatalogueaaaaaaaaaaa".to_owned();
+        endpoint.space = NAME.to_owned();
+        endpoint.audience = Audience::Public;
+        let reach = vec![(Arc::new(endpoint), Subject::anonymous())];
+        let asked = tokio::time::Instant::now();
+        let read = public_entities(&gateway, &reach).await;
+        assert!(read.is_empty());
+        assert!(
+            asked.elapsed() <= super::super::server::MEMBER_DEADLINE + Duration::from_secs(1),
+            "{:?}",
+            asked.elapsed()
+        );
+    }
+
+    /// A catalogue whose pages each answer within the member deadline is read whole, however
+    /// long all its pages take together.
+    #[tokio::test(start_paused = true)]
+    async fn a_slow_public_catalogue_is_read_page_by_page() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pages = Arc::new(AtomicUsize::new(0));
+        let served = Arc::clone(&pages);
+        let broker = axum::Router::new().fallback(move || {
+            let served = Arc::clone(&served);
+            async move {
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                let n = served.fetch_add(1, Ordering::SeqCst);
+                let mut content = json!({
+                    "entities": [{ "id": format!("urn:ngsi-ld:Dataset:{n}"), "type": "Dataset" }],
+                });
+                if n < 2 {
+                    content["nextCursor"] = json!(format!("c{n}"));
+                }
+                axum::Json(json!({ "jsonrpc": "2.0", "id": 1, "result": { "structuredContent": content } }))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, broker).await });
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(format!("http://{address}")),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let mut endpoint = fixture();
+        endpoint.slug = "slowcatalogueaaaaaaaaaaaaa".to_owned();
+        endpoint.space = NAME.to_owned();
+        endpoint.audience = Audience::Public;
+        let reach = vec![(Arc::new(endpoint), Subject::anonymous())];
+        let read = public_entities(&gateway, &reach).await;
+        assert_eq!(read.len(), 3, "{read:?}");
+        assert_eq!(pages.load(Ordering::SeqCst), 3);
     }
 
     #[test]

@@ -9,9 +9,14 @@ members = [
     "crates/ekiben-parquet",
     "crates/ekiben-protobuf",
     "crates/ekiben-text",
+    "crates/ekiben-js",
     "crates/ekiben-io-nats",
     "crates/ekiben-io-ngsild",
     "crates/ekiben-io-sql",
+    "crates/ekiben-io-s3",
+    "crates/ekiben-io-remote",
+    "crates/ekiben-io-amqp",
+    "crates/ekiben-io-sftp",
     "crates/ekiben-server",
     "crates/ekiben-testkit",
 ]
@@ -50,9 +55,14 @@ ekiben-io-file = { path = "crates/ekiben-io-file" }
 ekiben-parquet = { path = "crates/ekiben-parquet" }
 ekiben-protobuf = { path = "crates/ekiben-protobuf" }
 ekiben-text = { path = "crates/ekiben-text" }
+ekiben-js = { path = "crates/ekiben-js" }
 ekiben-io-nats = { path = "crates/ekiben-io-nats" }
 ekiben-io-ngsild = { path = "crates/ekiben-io-ngsild" }
 ekiben-io-sql = { path = "crates/ekiben-io-sql" }
+ekiben-io-s3 = { path = "crates/ekiben-io-s3" }
+ekiben-io-remote = { path = "crates/ekiben-io-remote" }
+ekiben-io-amqp = { path = "crates/ekiben-io-amqp" }
+ekiben-io-sftp = { path = "crates/ekiben-io-sftp" }
 ekiben-testkit = { path = "crates/ekiben-testkit" }
 
 tokio = { version = "1.54", features = ["full", "test-util"] }
@@ -70,6 +80,7 @@ regex = "1.13"
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 quick-xml = { version = "0.42", features = ["serialize"] }
+proj4rs = { version = "0.3.0", default-features = false }
 csv = "1.4"
 zip = { version = "9.2", default-features = false, features = ["deflate"] }
 tar = "0.4.46"
@@ -106,6 +117,11 @@ stacker = "0.1.25"
 smallvec = { version = "1.16", features = ["serde"] }
 async-trait = "0.1.92"
 futures = "0.3.34"
+# amqp_0_9 (T-7090): rustls on ring with the system roots, as the NATS client; tokio runtime.
+# sftp (T-7090): ring, no rsa (RUSTSEC-2023-0071): Ed25519 and ECDSA host and user keys.
+russh = { version = "=0.65.1", default-features = false, features = ["ring"] }
+russh-sftp = "=3.0.1"
+lapin = { version = "=4.12.3", default-features = false, features = ["default-runtime", "rustls", "rustls--ring", "rustls-native-certs"] }
 subtle = "2.6"
 glob = "0.3.4"
 async-nats = "0.51"
@@ -119,6 +135,12 @@ tempfile = "3.27"
 tokio-websockets = { version = "0.13.3", default-features = false, features = ["client", "server", "sha1_smol", "rand"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+# The ftp and imap inputs (ekiben-io-remote, T-7087): FTPS over the same tokio-rustls with ring,
+# IMAPS over tokio, attachments read by mail-parser; rcgen only for their tests' certificates.
+suppaftp = { version = "=12.2.1", default-features = false, features = ["tokio-rustls-ring"] }
+async-imap = { version = "=0.12.0", default-features = false, features = ["runtime-tokio"] }
+mail-parser = { version = "=1.0.1", default-features = false }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 rustls-pki-types = "1"
 # sql_* inputs and outputs (T-6834): postgres and mysql over sqlx, TLS on ring like the rest; sqlite over
 # rusqlite (bundled SQLite 3.54.1: sqlx 0.9 pins libsqlite3-sys < 0.38, which RUSTSEC-2026-0459 affects).

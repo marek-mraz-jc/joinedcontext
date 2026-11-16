@@ -83,10 +83,10 @@ A public Endpoint has its own **API documentation** page, generated from the End
 A public MCP server of a project has a page of its own at `/connect/{project}/{name}`, titled **Connect an AI assistant**. It needs no account and no key.
 
 1. Copy the **Connector address** with **Copy the address**.
-2. Under **Set up your client**, follow the section of your client: Claude Code (**Copy the command**), Claude Desktop (**Copy the configuration**), ChatGPT (steps to follow) or **Other MCP clients**.
+2. Under **Set up your client**, follow the link of your assistant. Each leads to its section of the open data portal's **MCP connector** page, `/connector#claude`, `/connector#chatgpt`, `/connector#grok` or `/connector#other`, which holds the clicks for that assistant; the page shows these links to a signed-in person. Claude Code takes the command under **Copy the command**, Claude Desktop the file under **Copy the configuration**, and **Other MCP clients** the JSON beside them.
 3. Ask the assistant the question the page suggests, such as "What data does this offer? Show me five records with a link to the source."
 
-The page says how many tools the server offers, that it is read-only, and how many requests a minute one network may send. When it says **Too many requests from your network right now**, wait the seconds it names. Signed-in people build their own connectors on **My MCP connectors**, described in [Working with AI Agents](08-working-with-ai-agents.md).
+The page says how many tools the server offers, that it is read-only, and how many requests a minute one network may send. When it says **Too many requests from your network right now**, wait the seconds it names. Signed-in people build their own connectors on **My MCP connectors**, described in [Working with AI Agents](08-working-with-ai-agents.md). Such a connector needs sign-in: follow the same `/connector` section, but where it says no sign-in choose OAuth and sign in with your Portal account.
 
 ## 6. Glossary and Accessibility Statement
 

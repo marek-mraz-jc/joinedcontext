@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5828: the Portal's style-src names no 'unsafe-inline'. `vite preview` sends no policy, so this
 // journey serves the shell as the Portal does (src/csp.rs): a fresh nonce written over the build's

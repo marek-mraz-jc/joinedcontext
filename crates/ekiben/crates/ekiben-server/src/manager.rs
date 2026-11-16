@@ -157,6 +157,9 @@ pub struct StreamManager {
     pub resources: ResourceManager,
     pub metrics_registry: MetricsRegistry,
     pub file_root: Option<std::path::PathBuf>,
+    /// Confines each organization's file components to `<file_root>/<org>` (streams mode with
+    /// organization tokens), so one organization never reads another's files.
+    org_file_roots: bool,
     /// Which process variables configs and `env()` read (E1); `true`/`false` convert as the old
     /// `allow_host_env` flag did.
     pub env_access: EnvAccess,
@@ -182,7 +185,55 @@ impl StreamManager {
             env_access: env_access.into(),
             persistence: None,
             admission: None,
+            org_file_roots: false,
         }
+    }
+
+    /// Gives each organization its own directory under the file root ([`Self::file_root_for`]).
+    pub fn with_org_file_roots(mut self) -> Self {
+        self.org_file_roots = true;
+        self
+    }
+
+    /// The directory `org`'s file components are confined to: the file root, or with
+    /// [`Self::with_org_file_roots`] its `<org>` subdirectory, created private on first use.
+    pub fn file_root_for(&self, org: &OrgId) -> Result<Option<std::path::PathBuf>, CoreError> {
+        if !self.org_file_roots {
+            return Ok(self.file_root.clone());
+        }
+        let denied = |reason: String| CoreError::AccessDenied {
+            org: org.0.clone(),
+            reason,
+        };
+        let root = self
+            .file_root
+            .as_ref()
+            .ok_or_else(|| denied("no file root is configured for organizations".to_string()))?;
+        let mut parts = std::path::Path::new(&org.0).components();
+        if !matches!(
+            (parts.next(), parts.next()),
+            (Some(std::path::Component::Normal(_)), None)
+        ) {
+            return Err(denied(format!(
+                "organization '{}' is not a directory name",
+                org.0
+            )));
+        }
+        let dir = root.join(&org.0);
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&dir).map_err(|e| {
+            denied(format!(
+                "cannot create the file directory of organization '{}': {e}",
+                org.0
+            ))
+        })?;
+        Ok(Some(dir))
     }
 
     /// Asks `admission` before every stream (posted, put, patched or restored) and every resource
@@ -282,7 +333,7 @@ impl StreamManager {
             metrics: StreamMetrics::new("resources", &org.0),
             label: String::new(),
             path: "resources".to_string(),
-            file_root: self.file_root.clone(),
+            file_root: self.file_root_for(org)?,
             env_vars: Arc::new(vars),
             shutdown_rx,
         };
@@ -320,7 +371,9 @@ impl StreamManager {
             metrics: StreamMetrics::new(id, &org.0),
             label: id.to_string(),
             path: format!("resources.{kind}.{id}"),
-            file_root: self.file_root.clone(),
+            file_root: self
+                .file_root_for(org)
+                .map_err(|e| ResourceError::Parse(e.to_string()))?,
             env_vars: Arc::new(HashMap::new()),
             shutdown_rx: rx,
         };
@@ -431,7 +484,7 @@ impl StreamManager {
             self.registry.clone(),
             self.resources.clone(),
             Some(&self.metrics_registry),
-            self.file_root.clone(),
+            self.file_root_for(&conf.org)?,
             self.env_access,
         )?;
         let metrics = handle.metrics.clone();
@@ -582,9 +635,59 @@ impl StreamManager {
     ) -> Result<Option<RunSummary>, CoreError> {
         // Refused before the running one stops, so a refused PUT leaves it as it was.
         self.admit(Some(id), &conf.raw_source)?;
-        self.delete(id, caller_org).await?;
+        if !self
+            .streams
+            .read()
+            .await
+            .contains_key(&stream_key(caller_org, id))
+        {
+            return Err(not_found(id));
+        }
         conf.org = caller_org.cloned().unwrap_or_default();
-        self.create_posted(id.to_string(), conf, posted).await
+        self.replace(id, caller_org, conf, posted).await
+    }
+
+    /// Replaces `old_org`'s stream `id` (if any) by `conf`. When the new version does not start,
+    /// the previous one comes back: a resident stream restarts from its config and is saved
+    /// again, a finished run keeps its record.
+    pub async fn replace(
+        &self,
+        id: &str,
+        old_org: Option<&OrgId>,
+        conf: StreamConfig,
+        posted: Option<JsonValue>,
+    ) -> Result<Option<RunSummary>, CoreError> {
+        let previous = match self.remove(id, old_org).await {
+            Ok(previous) => Some(previous),
+            Err(CoreError::KeyNotFound(_)) => None,
+            Err(e) => return Err(e),
+        };
+        let err = match self.create_posted(id.to_string(), conf, posted).await {
+            Ok(summary) => return Ok(summary),
+            Err(e) => e,
+        };
+        let Some((previous, was_resident)) = previous else {
+            return Err(err);
+        };
+        let restored = if was_resident {
+            self.create_posted(id.to_string(), previous.config, previous.posted)
+                .await
+                .map(|_| ())
+        } else {
+            let key = (previous.org.clone(), id.to_string());
+            let mut guard = self.streams.write().await;
+            guard.entry(key).or_insert(previous);
+            Ok(())
+        };
+        match restored {
+            Ok(()) => Err(err),
+            Err(e) => {
+                tracing::error!(stream = id, "previous version not restored: {e}");
+                Err(CoreError::other(format!(
+                    "{err}; the previous version could not be restored: {e}"
+                )))
+            }
+        }
     }
 
     /// Patches stream `id`'s configuration and restarts it (`PATCH /streams/{id}`).
@@ -612,8 +715,18 @@ impl StreamManager {
     /// Stops and removes the caller's stream `id` (`DELETE /streams/{id}`). Its counters stay
     /// in `/metrics` (and continue if the id is created again); its timings go.
     pub async fn delete(&self, id: &str, caller_org: Option<&OrgId>) -> Result<(), CoreError> {
+        self.remove(id, caller_org).await.map(|_| ())
+    }
+
+    /// [`Self::delete`], answering the removed stream (its handle gone) and whether it was
+    /// resident.
+    async fn remove(
+        &self,
+        id: &str,
+        caller_org: Option<&OrgId>,
+    ) -> Result<(ManagedStream, bool), CoreError> {
         let key = stream_key(caller_org, id);
-        let removed = {
+        let mut removed = {
             let mut guard = self.streams.write().await;
             if !guard.contains_key(&key) {
                 return Err(not_found(id));
@@ -626,11 +739,13 @@ impl StreamManager {
             guard.remove(&key).ok_or_else(|| not_found(id))?
         };
 
-        if let Some(handle) = removed.handle {
+        let handle = removed.handle.take();
+        let was_resident = handle.is_some();
+        if let Some(handle) = handle {
             let _ = handle.stop(Duration::from_secs(5)).await;
         }
         self.metrics_registry.stream_deleted(&key.0 .0, id);
-        Ok(())
+        Ok((removed, was_resident))
     }
 
     /// Active streams that are not connected on both input and output (`GET /ready`), as

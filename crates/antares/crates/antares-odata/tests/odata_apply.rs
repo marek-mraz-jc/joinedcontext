@@ -737,6 +737,26 @@ async fn a_chain_of_compute_is_refused_before_it_outgrows_the_evaluator() -> Res
     Ok(())
 }
 
+/// Each `concat` keeps its input while its sequences run over a copy: nesting is bounded, so
+/// one request holds a bounded number of copies of what the scan read.
+#[tokio::test]
+async fn concat_nests_at_most_two_deep() -> Result<(), String> {
+    let (_b, app) = broker(false).await?;
+    assert_eq!(
+        ids(&app, "concat(concat(identity,filter(false)),filter(false))")
+            .await?
+            .len(),
+        5
+    );
+    let uri = format!(
+        "{ROOT}/Car?$apply=concat(concat(concat(identity,filter(false)),filter(false)),filter(false))"
+    );
+    let (status, body) = send(&app, Method::GET, &uri, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("TooComplexQuery"), "{body}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_chain_of_concat_is_refused_before_it_outgrows_one_scan() -> Result<(), String> {
     let (_b, app) = broker(false).await?;

@@ -317,7 +317,8 @@ describe("the registrations page", () => {
     const row = (await screen.findByText("zvolen-ovzdusie")).closest("tr") as HTMLElement;
     expect(within(row).getByText("ovzdusie")).toBeInTheDocument();
     expect(within(row).getByText(en.registrations.targetKind.endpoint)).toBeInTheDocument();
-    expect(within(row).getByText("https://ngsi.zvolen.sk")).toBeInTheDocument();
+    // Host and path, as the Data sources table shows an address (T-4991): the scheme and any password stay out.
+    expect(within(row).getByText("ngsi.zvolen.sk")).toBeInTheDocument();
     expect(within(row).getByText("AirQualityObserved, WeatherObserved")).toBeInTheDocument();
   });
 

@@ -155,6 +155,159 @@ fn an_http_connection_becomes_an_http_client_poll() {
     assert_eq!(rendered(&source(HTTP), "aq-opendata"), HTTP_INPUT);
 }
 
+/// PL-122: a webhook becomes the managed `http_server` on the shared ingest listener: POST
+/// only at `/{source}`, the credential as an interpolation, both caps and no `sync_response` (the listener answers 200); never an
+/// `address`, a certificate or `public`.
+#[test]
+fn a_webhook_becomes_the_managed_http_server_of_the_ingest_listener() {
+    const HMAC: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: ttn-uplinks, namespace: bb-ovzdusie }
+spec:
+  type: webhook
+  webhook:
+    auth:
+      hmac: { header: X-Hub-Signature-256, secretRef: { name: ttn, key: secret } }
+    maxBodyBytes: 65536
+"#;
+    assert_eq!(
+        rendered(&source(HMAC), "ttn-uplinks"),
+        r#"http_server:
+  path: /ttn-uplinks
+  allowed_verbs:
+  - POST
+  auth:
+    hmac:
+      header: X-Hub-Signature-256
+      secret: ${DS_TTN_UPLINKS_SECRET}
+      algorithm: sha256
+  max_body_bytes: 65536
+  max_in_flight: 64
+"#
+    );
+    const BEARER: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: chirpstack, namespace: bb-ovzdusie }
+spec:
+  type: webhook
+  webhook:
+    auth:
+      bearer: { tokenRef: { name: chirpstack, key: token } }
+"#;
+    let text = rendered(&source(BEARER), "chirpstack");
+    assert!(
+        text.contains("  auth:\n    bearer: ${DS_CHIRPSTACK_TOKEN}\n"),
+        "{text}"
+    );
+    for never in ["address", "cert_file", "key_file", "ws_path", "public"] {
+        assert!(!text.contains(never), "{never}: {text}");
+    }
+}
+
+/// T-7056: `spec.http.paging` becomes the runner's `paginate` option, its fields in the
+/// runner's snake_case and `records` taken from `spec.http.records`.
+const ARCGIS: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: DataSource
+metadata: { name: parks, namespace: bb-ovzdusie }
+spec:
+  type: http
+  http:
+    url: https://services.arcgis.com/x/FeatureServer/0/query?where=1%3D1&f=geojson&outSR=4326
+    records: features
+    paging:
+      mode: offset
+      offsetParam: resultOffset
+      limitParam: resultRecordCount
+      limit: 1000
+      more: exceededTransferLimit
+      orderBy: { param: orderByFields, value: OBJECTID }
+      maxPages: 200
+      delay: 200ms
+"#;
+
+const ARCGIS_PAGINATE: &str = r#"mode: offset
+offset_param: resultOffset
+limit_param: resultRecordCount
+more: exceededTransferLimit
+delay: 200ms
+limit: 1000
+max_pages: 200
+records: features
+order_by:
+  param: orderByFields
+  value: OBJECTID
+"#;
+
+#[test]
+fn http_paging_becomes_the_runners_paginate_option() {
+    let input = input_of(&source(ARCGIS), &context("parks"));
+    let paginate = &input["http_client"]["paginate"];
+    assert_eq!(
+        serde_norway::to_string(paginate).expect("serializes"),
+        ARCGIS_PAGINATE
+    );
+    // Without paging the poll renders as before: no `paginate` key.
+    assert!(rendered(&source(HTTP), "aq-opendata")
+        .find("paginate")
+        .is_none());
+}
+
+#[test]
+fn http_paging_outside_its_schema_is_refused_naming_the_field() {
+    let refused = |paging: &str, extra: &str| {
+        let yaml = format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\n\
+             metadata: {{ name: p, namespace: bb-ovzdusie }}\n\
+             spec:\n  type: http\n  http:\n    url: https://example.org/items\n{extra}    paging: {paging}\n"
+        );
+        ResourceEnvelope::<DataSourceSpec>::from_yaml(&yaml)
+            .expect("parses")
+            .validate()
+            .expect_err("refused")
+            .to_string()
+    };
+    let records = "    records: items\n";
+    for (paging, extra, field) in [
+        (
+            "{ mode: page, limit: 10 }",
+            records,
+            "spec.http.paging.limit",
+        ),
+        ("{ mode: offset }", records, "spec.http.paging.limit"),
+        ("{ mode: offset, limit: 10 }", "", "spec.http.records"),
+        (
+            "{ mode: cursor, cursor: next }",
+            "",
+            "spec.http.paging.cursorParam",
+        ),
+        ("{ mode: nextUrl }", "", "spec.http.paging.next"),
+        (
+            "{ mode: link, maxPages: 10001 }",
+            "",
+            "spec.http.paging.maxPages",
+        ),
+        ("{ mode: link, delay: 5m }", "", "spec.http.paging.delay"),
+        ("{ mode: link, more: \"a b\" }", "", "spec.http.paging.more"),
+        (
+            "{ mode: cursor, cursor: c, cursorHeader: \"X Bad\" }",
+            "",
+            "spec.http.paging.cursorHeader",
+        ),
+        ("{ mode: link }", "    format: csv\n", "spec.http.paging"),
+    ] {
+        let err = refused(paging, extra);
+        assert!(err.contains(field), "{paging}: {err}");
+    }
+    // An unknown field is refused by name too.
+    let err = ResourceEnvelope::<DataSourceSpec>::from_yaml(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata: { name: p, namespace: b }\n\
+         spec:\n  type: http\n  http:\n    url: https://example.org/items\n    paging: { mode: link, pages: 3 }\n",
+    )
+    .expect_err("unknown field")
+    .to_string();
+    assert!(err.contains("pages"), "{err}");
+}
+
 #[test]
 fn a_websocket_connection_becomes_a_websocket_input() {
     assert_eq!(rendered(&source(WEB_SOCKET), "aq-stream"), WEB_SOCKET_INPUT);
@@ -535,6 +688,107 @@ fn a_csv_http_body_reaches_the_steps_one_row_per_message() {
     );
 }
 
+/// T-7058: a spreadsheet body splits the same way, through ekiben's `unarchive` format `xlsx`.
+#[test]
+fn an_xlsx_http_body_reaches_the_steps_one_row_per_message() {
+    let spec = source(&CSV_HTTP.replace("format: csv", "format: xlsx"));
+    let out = render(
+        "pipeline:\n  processors:\n    - mapping: root = this\n",
+        &spec,
+        &context("stations-csv"),
+    )
+    .expect("renders");
+    let doc: serde_norway::Value = serde_norway::from_str(&out).expect("yaml");
+    let processors = doc["pipeline"]["processors"]
+        .as_sequence()
+        .expect("processors");
+    assert_eq!(
+        processors[2]["unarchive"]["format"].as_str(),
+        Some("xlsx"),
+        "{out}"
+    );
+}
+
+/// T-7089: a zipped shapefile body becomes one WGS 84 GeoJSON Feature per record through
+/// ekiben's `unarchive` format `shapefile`; it is not paged, split by `records`, or given a sheet.
+#[test]
+fn a_shapefile_http_body_reaches_the_steps_one_feature_per_message() {
+    let spec = source(&CSV_HTTP.replace("format: csv", "format: shapefile"));
+    let out = render(
+        "pipeline:\n  processors: []\n",
+        &spec,
+        &context("stations-csv"),
+    )
+    .expect("renders");
+    let doc: serde_norway::Value = serde_norway::from_str(&out).expect("yaml");
+    assert_eq!(
+        doc["pipeline"]["processors"][2]["unarchive"]["format"].as_str(),
+        Some("shapefile"),
+        "{out}"
+    );
+    for (field, yaml) in [
+        (
+            "spec.http.paging",
+            "format: shapefile\n    paging: { mode: link }",
+        ),
+        ("spec.http.sheet", "format: shapefile\n    sheet: Alueet"),
+        (
+            "spec.http.records",
+            "format: shapefile\n    records: features",
+        ),
+    ] {
+        let err =
+            ResourceEnvelope::<DataSourceSpec>::from_yaml(&CSV_HTTP.replace("format: csv", yaml))
+                .expect("parses")
+                .validate()
+                .expect_err(yaml)
+                .to_string();
+        assert!(err.contains(field), "{yaml}: {err}");
+    }
+}
+
+/// T-7086: `sheet` picks the sheet of an xlsx body by its tab name; it needs `format: xlsx` and a
+/// name a workbook can hold, and an xlsx body is not paged.
+#[test]
+fn an_xlsx_sheet_renders_by_name_and_is_refused_where_it_cannot_apply() {
+    let spec = source(&CSV_HTTP.replace("format: csv", "format: xlsx\n    sheet: Stations 2026"));
+    let out = render(
+        "pipeline:\n  processors: []\n",
+        &spec,
+        &context("stations-csv"),
+    )
+    .expect("renders");
+    let doc: serde_norway::Value = serde_norway::from_str(&out).expect("yaml");
+    assert_eq!(
+        doc["pipeline"]["processors"][2]["unarchive"]["format"].as_str(),
+        Some("xlsx:Stations 2026"),
+        "{out}"
+    );
+    for (field, yaml) in [
+        ("spec.http.sheet", "format: csv\n    sheet: Stations"),
+        ("spec.http.sheet", "sheet: Stations"),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"a:b\""),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"\""),
+        ("spec.http.sheet", "format: xlsx\n    sheet: \"'quoted'\""),
+        (
+            "spec.http.sheet",
+            "format: xlsx\n    sheet: abcdefghijklmnopqrstuvwxyz0123456",
+        ),
+        (
+            "spec.http.paging",
+            "format: xlsx\n    paging: { mode: link }",
+        ),
+    ] {
+        let err =
+            ResourceEnvelope::<DataSourceSpec>::from_yaml(&CSV_HTTP.replace("format: csv", yaml))
+                .expect("parses")
+                .validate()
+                .expect_err(yaml)
+                .to_string();
+        assert!(err.contains(field), "{yaml}: {err}");
+    }
+}
+
 /// PL-114, T-6572: a JSON body with `records` reaches the author's steps one element of that
 /// array per message, after the body bound (PL-113), so a GBFS feed of 460 stations is 460
 /// messages and none of them carries the whole 100 KB page.
@@ -573,10 +827,11 @@ fn a_json_http_body_with_records_reaches_the_steps_one_element_per_message() {
     assert_eq!(processors[5]["mapping"].as_str(), Some("root = this"));
 }
 
-/// PL-114: `csv` is the only body format; anything else is refused when the manifest is read.
+/// PL-114: `csv` and `xlsx` are the body formats; anything else is refused when the manifest is
+/// read.
 #[test]
 fn an_unknown_http_body_format_is_refused() {
-    let yaml = CSV_HTTP.replace("format: csv", "format: xlsx");
+    let yaml = CSV_HTTP.replace("format: csv", "format: parquet");
     assert!(ResourceEnvelope::<DataSourceSpec>::from_yaml(&yaml).is_err());
 }
 

@@ -907,9 +907,7 @@ impl HeldDelete<'_> {
                 }
             };
             let mut headers = HeaderMap::new();
-            if let Some(tenant) = self.headers.get(tenancy::TENANT) {
-                headers.insert(tenancy::TENANT, tenant.clone());
-            }
+            tenancy::copy_tenant(self.headers, &mut headers);
             tenancy::as_gateway(&mut headers);
             tenancy::keep_provenance(self.headers, &mut headers);
             if body.is_some() {

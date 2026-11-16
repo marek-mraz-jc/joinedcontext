@@ -259,6 +259,115 @@ async fn a_console_edit_is_overwritten_and_reported_and_an_unknown_address_is_on
     );
 }
 
+/// A realm listing more groups than one page holds: the managed group on the second page is
+/// found and filled, never created again.
+#[tokio::test]
+async fn a_managed_group_past_the_first_page_is_converged_not_created() {
+    let keycloak = realm().await;
+    let filler: Vec<Value> = (0..1000)
+        .map(|n| json!({ "id": format!("other-{n}"), "name": format!("other-{n}") }))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("first", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(filler)))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .and(query_param("first", "1000"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "g-late", "name": "city-leads", "attributes": { MANAGED_BY: [MANAGED_VALUE] } }
+        ])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups/g-late/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{LEAD}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": LEAD })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^{REALM}/users/.*/groups/.*$")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+
+    let mirror = mirror_with(vec![group("city-leads", &[LEAD])]);
+    let outcomes = sync(&keycloak).converge(&mirror).await;
+
+    assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    let wrote = wrote(&keycloak).await;
+    assert!(
+        !wrote.contains(&format!("POST {REALM}/groups")),
+        "{wrote:?}"
+    );
+    assert!(
+        wrote.contains(&format!("PUT {REALM}/users/{LEAD}/groups/g-late")),
+        "{wrote:?}"
+    );
+}
+
+/// A realm that ignores `first` and `max` (kaisatsu's compat listing) answers its whole list to
+/// every page: the run reads it once, finds the managed group past a page's length, and ends.
+#[tokio::test]
+async fn a_realm_that_ignores_paging_is_read_once_and_converged() {
+    let keycloak = realm().await;
+    let mut listed: Vec<Value> = (0..1200)
+        .map(|n| json!({ "id": format!("other-{n}"), "name": format!("other-{n}") }))
+        .collect();
+    listed[1100] = json!({ "id": "g-late", "name": "city-leads", "attributes": { MANAGED_BY: [MANAGED_VALUE] } });
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(listed)))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups/g-late/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/users/{LEAD}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": LEAD })))
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^{REALM}/users/.*/groups/.*$")))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&keycloak)
+        .await;
+
+    let mirror = mirror_with(vec![group("city-leads", &[LEAD])]);
+    let outcomes = sync(&keycloak).converge(&mirror).await;
+
+    assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    let listings = keycloak
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET" && r.url.path() == format!("{REALM}/groups"))
+        .count();
+    assert_eq!(
+        listings, 2,
+        "the second answer brings nothing new and ends the read"
+    );
+    let wrote = wrote(&keycloak).await;
+    assert!(
+        !wrote.contains(&format!("POST {REALM}/groups")),
+        "{wrote:?}"
+    );
+    assert!(
+        wrote.contains(&format!("PUT {REALM}/users/{LEAD}/groups/g-late")),
+        "{wrote:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_manifest_naming_members_by_e_mail_leaves_the_group_as_the_realm_holds_it() {
     let keycloak = realm().await;
@@ -423,6 +532,7 @@ fn derived(name: &str, member: &str, organization: Option<&str>) -> DerivedGroup
         name: name.to_owned(),
         members: [member.to_owned()].into_iter().collect(),
         jc_org: None,
+        jc_org_id: None,
         jc_groups: organization.map(|organization| format!("/{organization}/{name}")),
         second_factor: false,
     }
@@ -433,6 +543,7 @@ fn bound_group(organization: &str, member: &str) -> DerivedGroup {
         name: format!("{organization}_bound"),
         members: [member.to_owned()].into_iter().collect(),
         jc_org: Some(organization.to_owned()),
+        jc_org_id: None,
         jc_groups: None,
         second_factor: false,
     }
@@ -737,7 +848,7 @@ fn only_an_organization_scoped_binding_gives_the_organization() {
     let vendor = NEWCOMER;
     let world = || {
         vec![
-            organizational("Organization", "hel", json!({})),
+            organizational("Organization", "hel", json!({ "domain": "hel.fi" })),
             organizational("Organization", "espoo", json!({})),
             organizational("Project", "doprava", json!({ "organizationRef": "hel" })),
             organizational("Project", "tapiola", json!({ "organizationRef": "espoo" })),
@@ -776,8 +887,12 @@ fn only_an_organization_scoped_binding_gives_the_organization() {
     let all = groups(&mirror_with(world()));
     let hel = find(&all, "hel_bound");
     assert_eq!(hel.jc_org.as_deref(), Some("hel"));
+    // EP-188: the group names the Organization's id too, read from its domain; an
+    // Organization without one names none.
+    assert_eq!(hel.jc_org_id.as_deref(), Some("fi_hel"));
     assert_eq!(hel.members, [LEAD.to_owned()].into_iter().collect());
     let espoo = find(&all, "espoo_bound");
+    assert_eq!(espoo.jc_org_id, None);
     assert_eq!(espoo.jc_org.as_deref(), Some("espoo"));
     assert_eq!(espoo.members, [SNEAKY.to_owned()].into_iter().collect());
     // The vendor reaches the project by name, and no group that gives them `jc_org` holds them.

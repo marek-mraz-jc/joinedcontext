@@ -13,8 +13,8 @@
 use jc_core::kinds::data_source::{check_class, env_var_of, records_mapping};
 use jc_core::kinds::mqtt_broker;
 use jc_core::kinds::{
-    DataSourceSpec, DataSourceType, GtfsFeed, HttpArchive, HttpBodyFormat, IdMint, Mint,
-    PipelineSpec, TemplatePart,
+    DataSourceSpec, DataSourceType, GtfsFeed, HttpArchive, HttpBodyFormat, HttpPaging, IdMint,
+    Mint, PipelineSpec, TemplatePart,
 };
 use serde_norway::{Mapping, Value};
 
@@ -304,6 +304,9 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
         DataSourceType::GtfsRt => {
             input.insert(key("http_client"), Value::Mapping(gtfs(spec)));
         }
+        DataSourceType::Webhook => {
+            input.insert(key("http_server"), Value::Mapping(webhook(spec, context)));
+        }
         DataSourceType::Runner(name) => {
             let runner_val = spec
                 .input
@@ -321,16 +324,26 @@ pub fn input_of(spec: &DataSourceSpec, context: &InputContext) -> Value {
 /// GTFS-realtime prepends its protobuf decoder: the feed arrives as protobuf and every pipeline
 /// reading it would otherwise decode it again in its own mapping. An `http` connection refuses a
 /// body over its `maxBytes` (`body_bound`), then, with an `archive`, reads its named members
-/// (`archive_processors`), with `format: csv` splits it into one message per row and with
+/// (`archive_processors`), with `format: csv` or `xlsx` splits it into one message per row (a
+/// `shapefile` into one GeoJSON Feature per record) and with
 /// `records` into one message per element of that array (PL-114).
 pub fn prepended_processors(spec: &DataSourceSpec, context: &InputContext) -> Vec<Value> {
     if let (DataSourceType::Http, Some(http)) = (&spec.source_type, spec.http.as_ref()) {
+        let http = http.effective();
         let mut processors = body_bound(http.max_bytes());
         if let Some(archive) = &http.archive {
             processors.extend(archive_processors(spec, archive, context));
         }
-        if http.format == Some(HttpBodyFormat::Csv) {
-            processors.push(csv_rows());
+        match http.format {
+            Some(HttpBodyFormat::Csv) => processors.push(rows_of("csv")),
+            // A named sheet goes as `xlsx:<sheet>`, which validate keeps to a tab name a workbook
+            // can hold (`sheet_name_gap`), so no `:` splits it again (T-7086).
+            Some(HttpBodyFormat::Xlsx) => processors.push(rows_of(&match &http.sheet {
+                Some(sheet) => format!("xlsx:{sheet}"),
+                None => "xlsx".to_string(),
+            })),
+            Some(HttpBodyFormat::Shapefile) => processors.push(rows_of("shapefile")),
+            None => {}
         }
         if let Some(mapping) = http
             .records
@@ -384,9 +397,10 @@ fn json_records(mapping: String) -> [Value; 3] {
 }
 
 /// One message per CSV row, keyed by the header, as the `csv` input sends them (PL-114).
-fn csv_rows() -> Value {
+/// The `unarchive` that splits a body of `format` into one message per row.
+fn rows_of(format: &str) -> Value {
     let mut unarchive = Mapping::new();
-    unarchive.insert(key("format"), text("csv"));
+    unarchive.insert(key("format"), text(format));
     let mut processor = Mapping::new();
     processor.insert(key("unarchive"), Value::Mapping(unarchive));
     Value::Mapping(processor)
@@ -670,6 +684,7 @@ fn http(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
     let Some(connection) = &spec.http else {
         return Mapping::new();
     };
+    let connection = connection.effective();
     let mut out = Mapping::new();
     out.insert(key("url"), text(&connection.url));
     out.insert(
@@ -703,6 +718,59 @@ fn http(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
     if let Some(tls) = tls_block(spec, context, connection.url.starts_with("https://")) {
         out.insert(key("tls"), Value::Mapping(tls));
     }
+    if let Some(paging) = &connection.paging {
+        out.insert(
+            key("paginate"),
+            Value::Mapping(paginate(paging, connection.records.as_deref())),
+        );
+    }
+    out
+}
+
+/// The runner's `paginate` option (ekiben extension, T-7056) for `spec.http.paging`: the same
+/// fields in the runner's snake_case, with `records` taken from `spec.http.records`.
+fn paginate(paging: &HttpPaging, records: Option<&str>) -> Mapping {
+    let mut out = Mapping::new();
+    out.insert(key("mode"), text(paging.mode.as_str()));
+    let texts = [
+        ("param", &paging.param),
+        ("size_param", &paging.size_param),
+        ("offset_param", &paging.offset_param),
+        ("limit_param", &paging.limit_param),
+        ("cursor", &paging.cursor),
+        ("cursor_param", &paging.cursor_param),
+        ("cursor_header", &paging.cursor_header),
+        ("next", &paging.next),
+        ("total", &paging.total),
+        ("more", &paging.more),
+        ("delay", &paging.delay),
+    ];
+    for (name, value) in texts {
+        if let Some(value) = value {
+            out.insert(key(name), text(value));
+        }
+    }
+    let numbers = [
+        ("start", paging.start),
+        ("size", paging.size),
+        ("limit", paging.limit),
+        ("max_pages", paging.max_pages),
+        ("max_records", paging.max_records),
+    ];
+    for (name, value) in numbers {
+        if let Some(value) = value {
+            out.insert(key(name), Value::Number(value.into()));
+        }
+    }
+    if let Some(records) = records {
+        out.insert(key("records"), text(records));
+    }
+    if let Some(order) = &paging.order_by {
+        let mut by = Mapping::new();
+        by.insert(key("param"), text(&order.param));
+        by.insert(key("value"), text(&order.value));
+        out.insert(key("order_by"), Value::Mapping(by));
+    }
     out
 }
 
@@ -716,6 +784,44 @@ fn websocket(spec: &DataSourceSpec) -> Mapping {
         out.insert(key("open_message"), text(message));
         out.insert(key("open_message_type"), text("text"));
     }
+    out
+}
+
+/// The managed `http_server` of a webhook (PL-122, ADR-N-071): on the runner's shared ingest
+/// listener at `/{source}` of the stream, POST only, authenticated and capped. Never an
+/// `address`, a certificate or `public: true`, whatever the manifest holds.
+fn webhook(spec: &DataSourceSpec, context: &InputContext) -> Mapping {
+    let Some(connection) = &spec.webhook else {
+        return Mapping::new();
+    };
+    let mut auth = Mapping::new();
+    if let Some(hmac) = &connection.auth.hmac {
+        let mut block = Mapping::new();
+        block.insert(key("header"), text(&hmac.header));
+        block.insert(
+            key("secret"),
+            text(&interpolation(context.source, &hmac.secret_ref)),
+        );
+        block.insert(key("algorithm"), text("sha256"));
+        auth.insert(key("hmac"), Value::Mapping(block));
+    } else if let Some(bearer) = &connection.auth.bearer {
+        auth.insert(
+            key("bearer"),
+            text(&interpolation(context.source, &bearer.token_ref)),
+        );
+    }
+    let mut out = Mapping::new();
+    out.insert(key("path"), text(&format!("/{}", context.source)));
+    out.insert(key("allowed_verbs"), Value::Sequence(vec![text("POST")]));
+    out.insert(key("auth"), Value::Mapping(auth));
+    out.insert(
+        key("max_body_bytes"),
+        Value::Number(connection.max_body_bytes().into()),
+    );
+    out.insert(
+        key("max_in_flight"),
+        Value::Number(u64::from(connection.max_in_flight()).into()),
+    );
     out
 }
 

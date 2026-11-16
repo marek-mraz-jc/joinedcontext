@@ -6,6 +6,7 @@ import type { CatalogInput } from "../src/schemas/kinds";
 import { toEnvelope, toForm } from "../src/pages/datasources/DataSourcesPage";
 import type { Manifest } from "../src/api/manifest";
 import bentoInputs from "../src/schemas/bento-inputs.json";
+import ekibenInputs from "../src/schemas/ekiben-inputs.json";
 
 const KAFKA_CATALOG_ENTRY: CatalogInput = {
   name: "kafka",
@@ -258,6 +259,44 @@ describe("runnerInputSchema pure function", () => {
  * into the manifest and into Git. The generator's `ALSO_SECRET` list marks them; these cases fail
  * if a regeneration drops it.
  */
+/**
+ * T-7092: the ftp and imap forms. Every field says what it takes with an example, the password is
+ * a secret reference and never a text box, the choices the runner takes are a dropdown, and
+ * tls: none says it needs the operator's allow_plain_ftp quota.
+ */
+describe("ekiben's ftp and imap inputs", () => {
+  const inputs = ekibenInputs.inputs as CatalogInput[];
+  const input = (name: string) => inputs.find((candidate) => candidate.name === name) as CatalogInput;
+
+  it("give every field a hint with an example", () => {
+    for (const { name, fields } of inputs) {
+      for (const field of fields) {
+        expect(field.description, `${name}.${field.path}`).toMatch(/for example|such as/);
+      }
+    }
+  });
+
+  it("take the password only as a secret reference and offer the runner's choices as a dropdown", () => {
+    const ftp = runnerInputSchema(input("ftp"));
+    expect((ftp.uiSchema as Record<string, Record<string, unknown>>).password["ui:widget"]).toBe("secretRef");
+    expect(ftp.schema.properties?.tls).toMatchObject({ type: "string", enum: ["explicit", "none"], default: "explicit" });
+    expect(JSON.stringify(ftp.schema.properties?.tls)).toContain("allow_plain_ftp");
+    expect(ftp.schema.required).toEqual(expect.arrayContaining(["address", "path"]));
+    expect(ftp.schema.required).not.toContain("password");
+    const imap = runnerInputSchema(input("imap"));
+    expect((imap.uiSchema as Record<string, Record<string, unknown>>).password["ui:widget"]).toBe("secretRef");
+    expect(imap.schema.properties?.after_ack).toMatchObject({ enum: ["seen", "move"], default: "seen" });
+    expect(imap.schema.required).toEqual(expect.arrayContaining(["address", "username", "password"]));
+  });
+
+  it("refuse a choice the runner does not take", () => {
+    const { schema } = runnerInputSchema(input("ftp"));
+    const ok = { address: "files.example.org:21", path: "/exports/*.csv", tls: "explicit" };
+    expect(validator.validateFormData(ok, schema).errors).toEqual([]);
+    expect(validator.validateFormData({ ...ok, tls: "implicit" }, schema).errors).not.toEqual([]);
+  });
+});
+
 describe("every field the catalog calls a secret renders as a reference (T-2239)", () => {
   const catalog = bentoInputs.inputs as CatalogInput[];
 
@@ -295,6 +334,27 @@ describe("every field the catalog calls a secret renders as a reference (T-2239)
       expect(field, `${name}.${path} is not in the catalog at all`).toBeDefined();
       expect(field?.secret, `${name}.${path} is offered as a plain value`).toBe(true);
     }
+  });
+});
+
+describe("the runner's own sftp fields (T-7090)", () => {
+  const sftp = (bentoInputs as { inputs: CatalogInput[] }).inputs.find((input) => input.name === "sftp");
+
+  it("asks for the host key pin, required, with an example", () => {
+    expect(sftp).toBeDefined();
+    const { schema, uiSchema } = runnerInputSchema(sftp as CatalogInput);
+    expect(schema.required).toContain("host_key_fingerprint");
+    const pin = (schema.properties as Record<string, { description?: string }>).host_key_fingerprint;
+    expect(pin.description).toContain("SHA256:");
+    const order = (uiSchema["ui:order"] as string[]) ?? [];
+    expect(order.indexOf("host_key_fingerprint")).toBe(order.indexOf("address") + 1);
+  });
+
+  it("takes a private key only as a secret reference", () => {
+    const { uiSchema } = runnerInputSchema(sftp as CatalogInput);
+    const creds = uiSchema.credentials as Record<string, Record<string, unknown>> | undefined;
+    expect(creds?.private_key?.["ui:widget"]).toBe("secretRef");
+    expect(creds?.password?.["ui:widget"]).toBe("secretRef");
   });
 });
 

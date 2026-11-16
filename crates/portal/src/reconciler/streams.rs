@@ -576,7 +576,8 @@ impl StreamDeployer {
             "{}/internal/pipelines/{project}/{pipeline}/rejected",
             internal.trim_end_matches('/')
         );
-        if !crate::pipeline_validation::insert_stage(stream, &schema, &sink) {
+        let linkml = schemas.stage_linkml(project, space);
+        if !crate::pipeline_validation::insert_stage(stream, &schema, linkml.as_deref(), &sink) {
             tracing::warn!(
                 project,
                 pipeline,
@@ -727,6 +728,13 @@ impl StreamDeployer {
                         continue;
                     }
                 };
+                // Each Script pin becomes its version's `javascript` processor, digest checked
+                // (PL-120); a pin that does not hold renders no stream.
+                let mut spec = spec;
+                if let Err(err) = crate::scripts::inline(mirror, &ns, &mut spec) {
+                    outcomes.push((ns.clone(), name, StreamOutcome::Error(err)));
+                    continue;
+                }
 
                 let first = spec.sources().into_iter().next();
                 let ds_ref_name = first
@@ -764,6 +772,15 @@ impl StreamDeployer {
 
                 let stream_spaces = StreamSpaces::of(mirror, &ns, &spec);
                 let spaces = &stream_spaces.spaces;
+                // `unitCode: model` (G-15) is written as the code the space's model declares.
+                if let Some(schemas) = self.model_schemas().filter(|_| !spec.attributes.is_empty())
+                {
+                    for space in spaces {
+                        if let Some(model) = schemas.get(&ns, space) {
+                            jcctl::attributes::resolve_units(&mut spec, &model);
+                        }
+                    }
+                }
                 // Every output's Endpoint, from the mirror (PL-52, PL-55).
                 let slugs: Result<Vec<String>, String> = spec
                     .outputs()
@@ -4451,6 +4468,9 @@ output:
             serde_json::json!({ "generate": { "interval": "1s", "count": 3 } }),
             serde_json::json!({ "label": "input_0", "file": { "paths": ["/data/x.json"] } }),
             serde_json::json!({ "broker": { "inputs": [{ "file": {} }, { "csv": {} }] } }),
+            // T-7092: ekiben's own ftp and imap inputs read once per run and end.
+            serde_json::json!({ "ftp": { "address": "files.example.org:21", "path": "/x/*.csv" } }),
+            serde_json::json!({ "imap": { "address": "imap.example.org:993" } }),
         ] {
             assert!(input_ends_by_itself(&finite), "{finite} finishes");
         }
@@ -5308,6 +5328,63 @@ output:
         assert!(!identity::replaces_any(&plain));
     }
 
+    /// G-17: a `merge` or `backfill` output is written by the `ngsi_ld` processor under the
+    /// write's own label (so its `jc_refused_<label>` metadata reaches the outcome sink as the
+    /// branch's did), through the same Endpoint base, credential, egress limit and refusal
+    /// codes; the upsert outputs beside it keep the branch around the `http` upsert.
+    #[test]
+    fn a_merge_or_backfill_output_is_written_by_the_ngsi_ld_processor() {
+        let spec = second_shape(serde_json::json!({
+            "class": "resident",
+            "period": "30s",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "gbfs" } }],
+            "steps": [{ "kind": "bloblang", "bloblang": "root = this" }],
+            "routes": [
+                { "name": "hot", "when": "this.t > 30",
+                  "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:alerts:hot", "mode": "backfill" }] }
+            ],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki:ops", "mode": "merge" }]
+        }));
+        let stream = render_routed(&spec);
+        fn at<'a>(value: &'a Value, label: &str) -> Option<&'a Value> {
+            match value {
+                Value::Object(map) if map.get("label").and_then(Value::as_str) == Some(label) => {
+                    Some(value)
+                }
+                Value::Object(map) => map.values().find_map(|v| at(v, label)),
+                Value::Array(items) => items.iter().find_map(|v| at(v, label)),
+                _ => None,
+            }
+        }
+        for (label, slug, operation) in [
+            ("write_0", "opsslug", "merge"),
+            ("route_0_write_0", "hotslug", "temporal_append"),
+        ] {
+            let write = at(&stream, label).expect("the write is labelled");
+            assert!(write.get("branch").is_none(), "{label}: {write}");
+            let ngsi_ld = &write["ngsi_ld"];
+            assert_eq!(ngsi_ld["operation"], operation, "{label}");
+            assert_eq!(
+                ngsi_ld["url"],
+                format!("${{JC_GATEWAY_URL}}/api/endpoint/{slug}/ngsi-ld/v1")
+            );
+            assert_eq!(ngsi_ld["drop_on"], serde_json::json!([400, 413, 422]));
+            assert_eq!(ngsi_ld["timeout"], "30s");
+            assert_eq!(ngsi_ld["rate_limit"], identity::egress_label("helsinki"));
+            // The pipeline's own client, as the upsert's (PL-19); never a secret literal.
+            assert_eq!(ngsi_ld["oauth2"], identity::pipeline_oauth2("helsinki"));
+        }
+        // A replay of a backfill's rejected records appends to history too.
+        let replay =
+            identity::replay_output("helsinki", "opsslug", jc_core::kinds::OutputMode::Backfill);
+        assert_eq!(replay["ngsi_ld"]["operation"], "temporal_append");
+        assert!(
+            identity::replay_output("helsinki", "opsslug", jc_core::kinds::OutputMode::Upsert)
+                .get("http_client")
+                .is_some()
+        );
+    }
+
     /// PL-73: each record takes the first route whose `when` holds, runs that route's steps, and
     /// is written through that route's outputs; the rest go through the default lane.
     #[test]
@@ -5425,6 +5502,7 @@ output:
             bloblang: None,
             kpi: None,
             datacube: None,
+            script_ref: None,
         })];
         assert!(!eligible(&wasm));
     }
@@ -5841,6 +5919,58 @@ output:
             .position(|p| p["label"] == LIFETIME_LABEL)
     }
 
+    /// G-15: `spec.attributes` renders one `attributes` step right before the history and
+    /// lifetime steps (PL-107 order), naming the pipeline's own datasetId; a pipeline without
+    /// rules renders none.
+    #[test]
+    fn attribute_rules_render_one_step_before_history_and_lifetime() {
+        let ds = helsinki_datasource_spec();
+        let mut value = serde_json::to_value(with_lifetime(
+            &helsinki_pipeline_spec(),
+            &serde_json::json!([{ "type": "Bus", "entity": { "rolling": "PT1H" } }]),
+        ))
+        .expect("serializes");
+        value["history"] = serde_json::json!([{ "type": "Bus", "attributes": [{ "names": ["speed"], "keep": "every", "observedAt": "received" }] }]);
+        value["attributes"] = serde_json::json!([{ "type": "Bus", "systemMembers": "strip",
+            "rules": [{ "names": ["position"], "observedAt": "now", "datasetId": "pipeline" }] }]);
+        let spec: PipelineSpec = serde_json::from_value(value).expect("a PipelineSpec");
+        let stream = render_stream(
+            &spec,
+            "buses",
+            "helsinki",
+            &ds,
+            "hsl-citybikes-free",
+            "busslug",
+            None,
+        )
+        .expect("renders");
+        let labels = processor_labels(&stream);
+        let at = labels
+            .iter()
+            .position(|l| l == ATTRIBUTES_LABEL)
+            .expect("an attributes step");
+        assert_eq!(labels[at + 1], HISTORY_LABEL, "{labels:?}");
+        assert_eq!(labels[at + 2], LIFETIME_LABEL, "{labels:?}");
+        let text = stream["pipeline"]["processors"][at]["mapping"]
+            .as_str()
+            .expect("a mapping");
+        assert!(text.contains("urn:jc:pipeline:buses"), "{text}");
+        assert!(text.contains("root.createdAt = deleted()"), "{text}");
+        let plain = render_stream(
+            &helsinki_pipeline_spec(),
+            "buses",
+            "helsinki",
+            &ds,
+            "hsl-citybikes-free",
+            "busslug",
+            None,
+        )
+        .expect("renders");
+        assert!(!processor_labels(&plain)
+            .iter()
+            .any(|l| l == ATTRIBUTES_LABEL));
+    }
+
     #[test]
     fn each_lifetime_mode_renders_its_golden_stream() {
         let ds = helsinki_datasource_spec();
@@ -5934,6 +6064,7 @@ output:
         assert!(crate::pipeline_validation::insert_stage(
             &mut stream,
             &schema,
+            None,
             "http://portal/rejected"
         ));
         let labels = processor_labels(&stream);

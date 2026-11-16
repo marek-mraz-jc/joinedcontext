@@ -13,7 +13,10 @@ pub mod password;
 pub mod totp;
 pub mod webauthn;
 
-pub use jose::{DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_with_jwk};
+pub use jose::{
+    DecodedHeader, JwtHeader, sign_jwt, verify_jwt, verify_jwt_allowing_expired,
+    verify_jwt_with_jwk,
+};
 pub use keys::{Kek, KeyManager, PublicJwk, PublicJwkSet, SIGNING_ALGORITHMS};
 pub use password::{
     PasswordVerifyOutcome, PolicyViolation, check_password_policy, first_policy_violation,

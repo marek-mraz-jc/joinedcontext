@@ -84,6 +84,7 @@ fn endpoint(slug: &str, assignee: &str) -> Endpoint {
         title: std::collections::BTreeMap::new(),
         description: std::collections::BTreeMap::new(),
         space: SPACE.to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment(SPACE).ok(),
         project: PROJECT.to_owned(),
         audience: Audience::Organization,
         allowed_projects: Vec::new(),
@@ -112,9 +113,13 @@ fn endpoint(slug: &str, assignee: &str) -> Endpoint {
 /// A directory of this test's own, removed by the operating system rather than by a `Drop`
 /// nobody would see fail.
 fn tempdir() -> std::path::PathBuf {
+    // Tests run on parallel threads of one process, where two clock readings can be equal: the
+    // counter keeps each test's repository its own.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "jc-ds-{}-{:?}",
+        "jc-ds-{}-{}-{:?}",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("a clock after 1970")

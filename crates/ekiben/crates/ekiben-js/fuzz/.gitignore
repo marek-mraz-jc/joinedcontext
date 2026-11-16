@@ -1,0 +1,6 @@
+target/
+artifacts/
+# libFuzzer writes the inputs it finds into corpus/script; only the seeds are committed.
+corpus/script/*
+!corpus/script/seed-*
+coverage/

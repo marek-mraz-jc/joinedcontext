@@ -194,7 +194,8 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   const lead = rowNumbers ? 1 : 0;
   // Edit mode needs a place to write: without one the grid is a reader, whatever the config says.
   // A source that takes no writes switches the feature off, whatever the config says (SDK-29).
-  const editing = options.config.mode === "edit" && Boolean(options.source.patch);
+  // An open dataset read without a session never offers a write, whatever the config says (T-7063).
+  const editing = options.config.mode === "edit" && Boolean(options.source.patch) && !publicView;
   // Which columns open: the config's own list, which `parseGridConfig` requires in edit mode, so a
   // grid never opens a column nobody named.
   const accessFailed = hostAccess === null ? labels.error : ownFailed;

@@ -963,6 +963,8 @@ async fn compat_create_user(
                 managed_by: group.managed_by.clone(),
             },
         ))?;
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &group)
+            .await?;
         joins.push(group.id);
     }
     user.service_account_client_id = None;
@@ -1549,11 +1551,12 @@ async fn compat_list_groups(
     Ok(Json(groups))
 }
 
-/// Group attributes the token mappers read as organization membership (`jc_org`) and groups
-/// (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
+/// Group attributes the token mappers read as organization membership (`jc_org`, its id
+/// `jc_org_id`) and groups (`jc_groups`), and the sign-in rule the Portal writes from an Organization's manifest
 /// (`jc.secondFactor`): an organization admin dropping it would lower the rule outside its Change.
-const MEMBERSHIP_ATTRIBUTES: [&str; 3] = [
+const MEMBERSHIP_ATTRIBUTES: [&str; 4] = [
     "jc_org",
+    "jc_org_id",
     "jc_groups",
     kaisatsu_oidc::ORG_SECOND_FACTOR_ATTRIBUTE,
 ];
@@ -1568,6 +1571,12 @@ fn guard_group_write(
     group: &mut GroupRepresentation,
     existing: Option<&GroupRepresentation>,
 ) -> Result<()> {
+    // The path is built from the name, and the path's root names the group's Organization.
+    if group.name.contains('/') || group.name.chars().any(char::is_control) {
+        return Err(KaisatsuError::BadRequest(
+            "name: a group name holds no '/' or control character, e.g. 'field-staff'".into(),
+        ));
+    }
     group.realm_roles = existing.map(|e| e.realm_roles.clone()).unwrap_or_default();
     group.client_roles = existing.map(|e| e.client_roles.clone()).unwrap_or_default();
     group.sub_groups = Vec::new();
@@ -2674,6 +2683,32 @@ async fn compat_list_client_mappers(
     Ok(Json(client.protocol_mappers))
 }
 
+/// The client attribute by which a deployment's realm file lets the Portal add audiences to a
+/// client it did not create (an imported pipeline client, T-6972): its value is `joinedcontext`.
+pub const AUDIENCES_MANAGED_BY: &str = "audiences-managed-by";
+
+/// Whether `ctx` is the Portal (`view-clients`) adding one audience to a client the realm file
+/// marked [`AUDIENCES_MANAGED_BY`]: an `oidc-audience-mapper` naming a custom audience and no
+/// client's. Every other write on an unmarked client stays refused (T-2725).
+fn portal_adds_audience(
+    ctx: &RequestCtx,
+    client: &ClientRepresentation,
+    mapper: &ProtocolMapperRepresentation,
+) -> bool {
+    ctx.principal.has_realm_mgmt_role("view-clients")
+        && client
+            .attributes
+            .get(AUDIENCES_MANAGED_BY)
+            .map(String::as_str)
+            == Some("joinedcontext")
+        && mapper.protocol_mapper == "oidc-audience-mapper"
+        && mapper
+            .config
+            .get("included.custom.audience")
+            .is_some_and(|a| !a.is_empty())
+        && !mapper.config.contains_key("included.client.audience")
+}
+
 async fn compat_create_client_mapper(
     State(state): State<AdminState>,
     Path((realm, uuid)): Path<(String, String)>,
@@ -2696,7 +2731,7 @@ async fn compat_create_client_mapper(
         .get_client_by_uuid(&realm, allowed.as_deref(), &uuid)
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
-    check_decision(state.authorizer.check(
+    let decision = state.authorizer.check(
         &ctx,
         Action::Update,
         &ObjectTarget::Application {
@@ -2705,7 +2740,22 @@ async fn compat_create_client_mapper(
             client_id: client.client_id.clone(),
             managed_by: client.managed_by.clone(),
         },
-    ))?;
+    );
+    if !decision.allowed && portal_adds_audience(&ctx, &client, &mapper) {
+        // The exception adds a mapper; it never replaces one of the import's.
+        if client
+            .protocol_mappers
+            .iter()
+            .any(|m| m.name == mapper.name)
+        {
+            return Err(KaisatsuError::Conflict(format!(
+                "the client already holds a mapper named {}",
+                mapper.name
+            )));
+        }
+    } else {
+        check_decision(decision)?;
+    }
     if mapper.id.is_empty() {
         mapper.id = uuid::Uuid::now_v7().to_string();
     }

@@ -13,7 +13,8 @@ use dataroom_core::{
 use dataroom_rdf::turtle::parse_turtle_checked;
 use dataroom_rdf::{ns, RdfGraph, RdfLimits, SubjectNode, Term};
 use regex::RegexBuilder;
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const SH: &str = ns::SHACL;
 const SH_LEGACY: &str = "http://www.w3.org/ns/shacl#";
@@ -103,6 +104,9 @@ pub struct ShapeConstraints {
     pub max_count: Option<usize>,
     pub min_length: Option<usize>,
     pub max_length: Option<usize>,
+    /// `sh:minInclusive` and `sh:maxInclusive`, read as numbers (the subset compares numbers only).
+    pub min_inclusive: Option<f64>,
+    pub max_inclusive: Option<f64>,
     /// `sh:pattern` and its regex, compiled once with its `sh:flags` (`None`: it does not compile).
     pub pattern: Option<(String, Option<regex::Regex>)>,
     pub in_values: Option<Vec<Term>>,
@@ -427,6 +431,11 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
     let max_length = g
         .first_object(subj, &sh("maxLength"))
         .and_then(|t| t.string_value().parse::<usize>().ok());
+    let bound = |name: &str| {
+        g.first_object(subj, &sh(name))
+            .and_then(|t| t.string_value().parse::<f64>().ok())
+    };
+    let (min_inclusive, max_inclusive) = (bound("minInclusive"), bound("maxInclusive"));
     let pattern = g.first_object(subj, &sh("pattern")).map(|p| {
         let flags = g
             .first_object(subj, &sh("flags"))
@@ -509,6 +518,8 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
         max_count,
         min_length,
         max_length,
+        min_inclusive,
+        max_inclusive,
         pattern,
         in_values,
         has_value,
@@ -564,6 +575,10 @@ pub fn validate_graph_against_shapes(
             )]),
         });
     }
+    let eval = Eval {
+        graph: shapes,
+        conforms: RefCell::default(),
+    };
     for shape in shapes.node_shapes.values().filter(|_| usable.is_ok()) {
         let mut focus_nodes: Vec<Term> = Vec::new();
         for class_iri in &shape.target_classes {
@@ -581,7 +596,7 @@ pub fn validate_graph_against_shapes(
         }
 
         for focus in focus_nodes {
-            validate_node_shape(data, shapes, shape, &focus, &mut findings);
+            validate_node_shape(data, &eval, shape, &focus, &mut findings);
         }
     }
 
@@ -611,7 +626,7 @@ pub fn validate_graph_against_shapes(
 
 fn validate_node_shape(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     shape: &NodeShape,
     focus: &Term,
     findings: &mut Vec<ShaclFinding>,
@@ -692,7 +707,7 @@ fn validate_node_shape(
 
 fn validate_property_shape(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     ps: &PropertyShape,
     focus: &Term,
     is_lang_string_prop: bool,
@@ -828,7 +843,7 @@ fn validate_property_shape(
 #[allow(clippy::too_many_arguments)]
 fn check_value_constraints(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     c: &ShapeConstraints,
     focus: &Term,
     val: &Term,
@@ -947,6 +962,36 @@ fn check_value_constraints(
                 message: default_msg(
                     &c.message,
                     format!("Value length {char_len} exceeds maxLength {max_l}"),
+                ),
+            });
+        }
+    }
+
+    // 4b. minInclusive / maxInclusive: a value that is no number is not comparable, a violation
+    let number = match val {
+        Term::Literal(lit) => lit.value.parse::<f64>().ok(),
+        _ => None,
+    };
+    for (bound, component, below) in [
+        (c.min_inclusive, "MinInclusiveConstraintComponent", true),
+        (c.max_inclusive, "MaxInclusiveConstraintComponent", false),
+    ] {
+        let Some(bound) = bound else { continue };
+        let ok = number.is_some_and(|n| if below { n >= bound } else { n <= bound });
+        if !ok {
+            findings.push(ShaclFinding {
+                focus_node: focus.string_value().to_owned(),
+                result_path: path.map(str::to_owned),
+                value: Some(val.string_value().to_owned()),
+                source_constraint_component: sh(component),
+                source_shape: shape_id.to_owned(),
+                severity,
+                message: default_msg(
+                    &c.message,
+                    format!(
+                        "Value {val} is not {} {bound}",
+                        if below { "at least" } else { "at most" }
+                    ),
                 ),
             });
         }
@@ -1096,21 +1141,35 @@ fn check_value_constraints(
     }
 }
 
+/// One validation's shapes graph and the answers of [`conforms_to_shape_ref`] so far: a shape's
+/// verdict on a value depends on nothing else, so shapes that share references (`sh:or` over a
+/// DAG) are checked once per value instead of once per path to them.
+struct Eval<'a> {
+    graph: &'a ShapesGraph,
+    conforms: RefCell<HashMap<(SubjectNode, Term), bool>>,
+}
+
 fn conforms_to_shape_ref(
     data: &RdfGraph,
-    shapes: &ShapesGraph,
+    shapes: &Eval<'_>,
     shape_ref: &SubjectNode,
     val: &Term,
 ) -> bool {
+    let key = (shape_ref.clone(), val.clone());
+    if let Some(known) = shapes.conforms.borrow().get(&key) {
+        return *known;
+    }
     let mut temp_findings = Vec::new();
-    if let Some(ns_item) = shapes.node_shapes.get(shape_ref) {
+    if let Some(ns_item) = shapes.graph.node_shapes.get(shape_ref) {
         validate_node_shape(data, shapes, ns_item, val, &mut temp_findings);
-    } else if let Some(ps_item) = shapes.property_shapes.get(shape_ref) {
+    } else if let Some(ps_item) = shapes.graph.property_shapes.get(shape_ref) {
         validate_property_shape(data, shapes, ps_item, val, false, &mut temp_findings);
     }
-    !temp_findings
+    let conforms = !temp_findings
         .iter()
-        .any(|f| f.severity == ShaclSeverity::Violation)
+        .any(|f| f.severity == ShaclSeverity::Violation);
+    shapes.conforms.borrow_mut().insert(key, conforms);
+    conforms
 }
 
 /// Compiles an `sh:pattern` with its `sh:flags` (XPath `i`, `s`, `m`, `x`, `q`); an unknown flag
@@ -1150,6 +1209,8 @@ fn is_xsd_timezone(tz: &str) -> bool {
     }
 }
 
+const XSD_FLOAT: &str = "http://www.w3.org/2001/XMLSchema#float";
+
 fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool {
     if expected_dt == ns::RDF_LANG_STRING {
         return lit.language.as_ref().is_some_and(|l| !l.is_empty());
@@ -1160,7 +1221,7 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
     match expected_dt {
         ns::XSD_INTEGER => lit.value.parse::<i128>().is_ok(),
         ns::XSD_NON_NEGATIVE_INTEGER => lit.value.parse::<u128>().is_ok(),
-        ns::XSD_DECIMAL | ns::XSD_DOUBLE => lit.value.parse::<f64>().is_ok(),
+        ns::XSD_DECIMAL | ns::XSD_DOUBLE | XSD_FLOAT => lit.value.parse::<f64>().is_ok(),
         ns::XSD_BOOLEAN => matches!(lit.value.as_str(), "true" | "false" | "1" | "0"),
         ns::XSD_DATE => lit.value.get(..10).is_some_and(|date| {
             chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
@@ -1543,5 +1604,32 @@ mod tests {
         assert!(conforms(""));
         assert!(!conforms("0G"));
         assert!(!conforms("ABC"));
+    }
+
+    /// Shapes that share their references (a DAG) cost one check per shape and value: 28 layers
+    /// of two `sh:or` branches each, every branch failing, answer at once.
+    #[test]
+    fn shared_shape_references_are_checked_once_per_value() {
+        let layers = 28;
+        let mut body = String::from(
+            "ex:Root a sh:NodeShape ; sh:targetNode ex:x ; sh:or ( ex:S1a ex:S1b ) .\n",
+        );
+        for i in 1..layers {
+            for side in ["a", "b"] {
+                body.push_str(&format!(
+                    "ex:S{i}{side} a sh:NodeShape ; sh:or ( ex:S{n}a ex:S{n}b ) .\n",
+                    n = i + 1
+                ));
+            }
+        }
+        for side in ["a", "b"] {
+            body.push_str(&format!(
+                "ex:S{layers}{side} a sh:NodeShape ; sh:nodeKind sh:Literal .\n"
+            ));
+        }
+        let started = std::time::Instant::now();
+        let rep = report(&body, "ex:x ex:p 1 .");
+        assert_eq!(components(&rep), vec!["OrConstraintComponent"]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 }

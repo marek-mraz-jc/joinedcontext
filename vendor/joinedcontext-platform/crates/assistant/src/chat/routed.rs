@@ -2464,10 +2464,13 @@ pub(super) async fn model_of(ask: &Ask<'_>, connector: &Connected) -> Option<std
 }
 
 /// [`model_of`] whether or not the deployment offers `describe_schema` to its model: the
-/// personal marks are read from it for every answer read with the person's token.
+/// personal marks are read from it for every answer read with the person's token. The broker
+/// serves the model as the caller reads it, so a person's model is read for that person and never
+/// kept, like a person's `tools/list`.
 async fn schema_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Arc<str>> {
+    let shared = connector.surface.token.is_none();
     let key = format!("{}/{}", ask.deployment, connector.surface.slug.as_str());
-    if let Some(kept) = ask.cache.model_of(&key) {
+    if let Some(kept) = ask.cache.model_of(&key).filter(|_| shared) {
         return kept;
     }
     let read = async {
@@ -2484,7 +2487,9 @@ async fn schema_of(ask: &Ask<'_>, connector: &Connected) -> Option<std::sync::Ar
         (document.len() <= MODEL_BYTES).then(|| std::sync::Arc::from(document))
     };
     let model = read.await;
-    ask.cache.keep_model(&key, model.clone());
+    if shared {
+        ask.cache.keep_model(&key, model.clone());
+    }
     model
 }
 

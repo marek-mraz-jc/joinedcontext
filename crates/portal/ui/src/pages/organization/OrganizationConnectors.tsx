@@ -2,8 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import { personLabel, usePersonNames } from "../../api/personNames";
 import type { components } from "../../api/schema";
@@ -26,17 +26,28 @@ type Usage = components["schemas"]["ConnectorUsage"];
 
 const STATES = ["active", "expired", "revoked"] as const;
 type State = (typeof STATES)[number];
-const TONE: Record<State, BadgeTone> = { active: "success", expired: "neutral", revoked: "neutral" };
+const TONE: Record<State, BadgeTone> = {
+  active: "success",
+  expired: "neutral",
+  revoked: "neutral",
+};
 
 const QUERY = ["organizationConnectors"] as const;
 
 /** Whether a row matches the filter text: its name, owner, owner's name or an allowed client. */
-function matches(row: Usage, text: string, names: Map<string, string>): boolean {
+function matches(
+  row: Usage,
+  text: string,
+  names: Map<string, string>,
+): boolean {
   const wanted = text.trim().toLowerCase();
   if (wanted === "") return true;
-  return [row.name, row.owner, names.get(row.owner) ?? "", ...row.allowedClients].some((value) =>
-    value.toLowerCase().includes(wanted),
-  );
+  return [
+    row.name,
+    row.owner,
+    names.get(row.owner) ?? "",
+    ...row.allowedClients,
+  ].some((value) => value.toLowerCase().includes(wanted));
 }
 
 /**
@@ -55,7 +66,11 @@ export function OrganizationConnectors(): JSX.Element {
   const overview = useQuery({
     queryKey: QUERY,
     enabled: administers,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/connectors")),
+    queryFn: async () =>
+      (await door(
+        "portal_connector_list",
+        {},
+      )) as RestAnswer<"organization_connectors">,
   });
   const [text, setText] = useState("");
   const [state, setState] = useState<State | "">("active");
@@ -63,7 +78,7 @@ export function OrganizationConnectors(): JSX.Element {
   const [revoking, setRevoking] = useState<Usage | null>(null);
   const revoke = useMutation({
     mutationFn: async (id: string) =>
-      unwrap(await api.DELETE("/api/v1/organization/connectors/{id}", { params: { path: { id } } })),
+      doorAction("portal_connector_revoke", { connector: id }),
     onSuccess: async () => {
       setRevoking(null);
       await queryClient.invalidateQueries({ queryKey: QUERY });
@@ -73,11 +88,19 @@ export function OrganizationConnectors(): JSX.Element {
   const items = overview.data?.items ?? [];
   const names = usePersonNames(items.map((row) => row.owner));
   const shown = items.filter(
-    (row) => (state === "" || row.state === state) && (!flaggedOnly || row.flagged) && matches(row, text, names),
+    (row) =>
+      (state === "" || row.state === state) &&
+      (!flaggedOnly || row.flagged) &&
+      matches(row, text, names),
   );
-  const flagged = items.filter((row) => row.flagged && row.state === "active").length;
+  const flagged = items.filter(
+    (row) => row.flagged && row.state === "active",
+  ).length;
   const when = (at: string) =>
-    new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(at));
+    new Intl.DateTimeFormat(locale, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(at));
 
   if (permissions.isLoading) {
     return (
@@ -88,17 +111,28 @@ export function OrganizationConnectors(): JSX.Element {
   }
 
   return (
-    <section className="space-y-4" aria-labelledby="organization-connectors-heading">
+    <section
+      className="space-y-4"
+      aria-labelledby="organization-connectors-heading"
+    >
       <div>
-        <h2 id="organization-connectors-heading" className="text-title font-semibold text-fg">
+        <h2
+          id="organization-connectors-heading"
+          className="text-title font-semibold text-fg"
+        >
           {t("organization.connectors.title")}
         </h2>
-        <p className="text-body text-fg-muted">{t("organization.connectors.lead")}</p>
+        <p className="text-body text-fg-muted">
+          {t("organization.connectors.lead")}
+        </p>
       </div>
       {!administers ? (
         <Alert tone="info">{t("organization.connectors.hidden")}</Alert>
       ) : overview.isError ? (
-        <PageFailed error={overview.error} onRetry={() => void overview.refetch()} />
+        <PageFailed
+          error={overview.error}
+          onRetry={() => void overview.refetch()}
+        />
       ) : (
         <>
           {flagged > 0 ? (
@@ -109,22 +143,35 @@ export function OrganizationConnectors(): JSX.Element {
               })}
             </Alert>
           ) : null}
-          {revoke.isError ? <Alert tone="danger">{revoke.error.message}</Alert> : null}
+          {revoke.isError ? (
+            <Alert tone="danger">{revoke.error.message}</Alert>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-start">
             <Field
               id="connectors-filter"
               label={t("organization.connectors.filter")}
               help={t("organization.connectors.filterHelp")}
             >
-              <Input id="connectors-filter" type="search" value={text} onChange={(e) => setText(e.target.value)} />
+              <Input
+                id="connectors-filter"
+                type="search"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
             </Field>
             <Field
               id="connectors-state"
               label={t("organization.connectors.state")}
               help={t("organization.connectors.stateHelp")}
             >
-              <Select id="connectors-state" value={state} onChange={(e) => setState(e.target.value as State | "")}>
-                <option value="">{t("organization.connectors.stateAny")}</option>
+              <Select
+                id="connectors-state"
+                value={state}
+                onChange={(e) => setState(e.target.value as State | "")}
+              >
+                <option value="">
+                  {t("organization.connectors.stateAny")}
+                </option>
                 {STATES.map((value) => (
                   <option key={value} value={value}>
                     {t(`organization.connectors.states.${value}`)}
@@ -159,7 +206,9 @@ export function OrganizationConnectors(): JSX.Element {
                 <>
                   <span className="font-medium">{row.name}</span>
                   <span className="block">
-                    <Badge tone={TONE[row.state as State] ?? "neutral"}>{t(`organization.connectors.states.${row.state}`)}</Badge>
+                    <Badge tone={TONE[row.state as State] ?? "neutral"}>
+                      {t(`organization.connectors.states.${row.state}`)}
+                    </Badge>
                     {row.writes ? (
                       <Badge tone="warning" className="ml-1">
                         {t("organization.connectors.writes")}
@@ -170,7 +219,12 @@ export function OrganizationConnectors(): JSX.Element {
               ),
             }}
             columns={[
-              { id: "owner", label: t("organization.connectors.owner"), filter: true, text: (row) => personLabel(row.owner, names) },
+              {
+                id: "owner",
+                label: t("organization.connectors.owner"),
+                filter: true,
+                text: (row) => personLabel(row.owner, names),
+              },
               {
                 id: "scope",
                 label: t("organization.connectors.scope"),
@@ -179,7 +233,16 @@ export function OrganizationConnectors(): JSX.Element {
                   <>
                     <span className="block">{row.segments.join(", ")}</span>
                     <span className="block text-caption text-fg-muted">
-                      {row.scope.map((item) => [item.project, item.space ?? item.endpoint ?? item.pipeline].filter(Boolean).join("/")).join(", ")}
+                      {row.scope
+                        .map((item) =>
+                          [
+                            item.project,
+                            item.space ?? item.endpoint ?? item.pipeline,
+                          ]
+                            .filter(Boolean)
+                            .join("/"),
+                        )
+                        .join(", ")}
                     </span>
                   </>
                 ),
@@ -187,13 +250,23 @@ export function OrganizationConnectors(): JSX.Element {
               {
                 id: "clients",
                 label: t("organization.connectors.clients"),
-                text: (row) => (row.allowedClients.length === 0 ? t("organization.connectors.anyClient") : row.allowedClients.join(", ")),
+                text: (row) =>
+                  row.allowedClients.length === 0
+                    ? t("organization.connectors.anyClient")
+                    : row.allowedClients.join(", "),
               },
               {
                 id: "lastCall",
                 label: t("organization.connectors.lastCall"),
                 text: (row) => row.lastUsedAt ?? "",
-                cell: (row) => (row.lastUsedAt ? <time dateTime={row.lastUsedAt}>{when(row.lastUsedAt)}</time> : t("organization.connectors.never")),
+                cell: (row) =>
+                  row.lastUsedAt ? (
+                    <time dateTime={row.lastUsedAt}>
+                      {when(row.lastUsedAt)}
+                    </time>
+                  ) : (
+                    t("organization.connectors.never")
+                  ),
               },
               {
                 id: "calls",
@@ -201,7 +274,10 @@ export function OrganizationConnectors(): JSX.Element {
                 numeric: true,
                 align: "right",
                 text: (row) => String(row.callsPerDay),
-                cell: (row) => t("organization.connectors.calls", { count: row.callsPerDay }),
+                cell: (row) =>
+                  t("organization.connectors.calls", {
+                    count: row.callsPerDay,
+                  }),
               },
               {
                 id: "denials",
@@ -211,8 +287,16 @@ export function OrganizationConnectors(): JSX.Element {
                 text: (row) => String(row.denialsPerDay),
                 cell: (row) => (
                   <>
-                    <span className="block">{t("organization.connectors.denials", { count: row.denialsPerDay })}</span>
-                    {row.flagged ? <Badge tone="danger">{t("organization.connectors.flagged")}</Badge> : null}
+                    <span className="block">
+                      {t("organization.connectors.denials", {
+                        count: row.denialsPerDay,
+                      })}
+                    </span>
+                    {row.flagged ? (
+                      <Badge tone="danger">
+                        {t("organization.connectors.flagged")}
+                      </Badge>
+                    ) : null}
                   </>
                 ),
               },
@@ -222,7 +306,9 @@ export function OrganizationConnectors(): JSX.Element {
                 <Button
                   size="sm"
                   variant="secondary"
-                  aria-label={t("organization.connectors.revokeLabel", { name: row.name })}
+                  aria-label={t("organization.connectors.revokeLabel", {
+                    name: row.name,
+                  })}
                   onClick={() => setRevoking(row)}
                 >
                   {t("organization.connectors.revoke")}
@@ -232,22 +318,34 @@ export function OrganizationConnectors(): JSX.Element {
             empty={
               <EmptyState
                 bare
-                title={t(items.length === 0 ? "organization.connectors.empty" : "organization.connectors.noMatch")}
-                description={t(items.length === 0 ? "organization.connectors.emptyHint" : "organization.connectors.noMatchHint")}
+                title={t(
+                  items.length === 0
+                    ? "organization.connectors.empty"
+                    : "organization.connectors.noMatch",
+                )}
+                description={t(
+                  items.length === 0
+                    ? "organization.connectors.emptyHint"
+                    : "organization.connectors.noMatchHint",
+                )}
               />
             }
           />
           <ConfirmDialog
             open={revoking !== null}
             onOpenChange={(open) => (open ? undefined : setRevoking(null))}
-            title={t("organization.connectors.confirmTitle", { name: revoking?.name ?? "" })}
+            title={t("organization.connectors.confirmTitle", {
+              name: revoking?.name ?? "",
+            })}
             description={t("organization.connectors.confirmText", {
               owner: revoking ? personLabel(revoking.owner, names) : "",
             })}
             confirmLabel={t("organization.connectors.revoke")}
             tone="danger"
             pending={revoke.isPending}
-            onConfirm={() => (revoking ? revoke.mutate(revoking.id) : undefined)}
+            onConfirm={() =>
+              revoking ? revoke.mutate(revoking.id) : undefined
+            }
           />
         </>
       )}

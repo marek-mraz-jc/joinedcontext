@@ -51,6 +51,7 @@ fn endpoint() -> Endpoint {
         title: Default::default(),
         description: Default::default(),
         space: "bikes".to_owned(),
+        tenant: context_gateway::middleware::tenancy::Tenant::segment("bikes").ok(),
         project: PROJECT.to_owned(),
         audience: Audience::Organization,
         allowed_projects: Vec::new(),

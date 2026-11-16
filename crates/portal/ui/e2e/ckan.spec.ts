@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-2849: the open-data page in a real browser, the API answered in the browser. What it shows of
 // `/ckan/status` (the catalogues, what each endpoint became in them, a publication whose catalogue

@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-2606, UI-76: Project settings in a real browser, the API answered in the browser as the other
 // mocked specs do. What the browser adds over the vitest suite: the redirect of an old Access

@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The space page's header (T-6092, T-6138, owner 2026-10-31): the name, the description behind the
 // info mark beside it (the purpose line the live walker reads), the state and the actions on one row.

@@ -86,6 +86,8 @@ jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git",
 # tag as jc-core on purpose: cargo keys a git source by its reference, so two tags of one
 # repository would pull two copies of `jc-core` and its types would stop matching.
 jcctl = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", default-features = false, features = ["utoipa"] }
+# The space's LinkML model the pipelines' stage and the broker check with (G-19, PL-59).
+linkml-model = { path = "../antares/crates/linkml-model", version = "0.3.0" }
 # The gateway's own write decision (evaluator, write guard), which the record check of a pipeline's
 # sample runs before a proposal (T-4840), and the app-variant matrix asserts (T-2705). Same rev as
 # jc-core.

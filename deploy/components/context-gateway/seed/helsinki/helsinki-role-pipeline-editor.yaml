@@ -7,5 +7,5 @@ metadata:
   namespace: org
 spec:
   rules:
-    - kinds: [Pipeline, DataSource]
+    - kinds: [Pipeline, DataSource, Script]
       verbs: [propose]

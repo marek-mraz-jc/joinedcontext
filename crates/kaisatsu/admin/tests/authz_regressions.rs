@@ -279,6 +279,7 @@ async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
             realm_id: "dev".into(),
             org_id: Some("helsinki".into()),
             username: "hel-root".into(),
+            enabled: true,
             realm_roles: vec!["realm-admin".into()],
             ..Default::default()
         })
@@ -305,10 +306,26 @@ async fn org_admin_cannot_reset_or_change_a_realm_admin_of_the_organization() {
             None,
         ),
         (Method::DELETE, "/admin/realms/dev/users/hel-root", None),
+        (
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Users/hel-root",
+            Some(json!({ "userName": "hel-root", "active": false,
+                         "emails": [{ "value": "other@example.test", "primary": true }] })),
+        ),
+        (
+            Method::PATCH,
+            "/api/v1/realms/dev/scim/v2/Users/hel-root",
+            Some(
+                json!({ "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                         "Operations": [{ "op": "replace", "path": "active", "value": false }] }),
+            ),
+        ),
     ] {
         let st = f.send(method.clone(), path, &t, body).await;
         assert_eq!(st, StatusCode::FORBIDDEN, "{method} {path}");
     }
+    let root = f.user("hel-root").await;
+    assert!(root.enabled && root.email.is_none());
     assert!(
         f.store
             .get_user_by_id("dev", None, "hel-root")
@@ -719,6 +736,233 @@ async fn a_disabled_or_unknown_realm_verifies_no_admin_token() {
     assert!(f.store.get_realm("no-such-realm").await.unwrap().is_none());
 }
 
+#[tokio::test]
+async fn a_people_manager_cannot_change_an_organization_admin() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_membership(Membership {
+            id: "m-pm-hel".into(),
+            realm_id: "dev".into(),
+            org_id: "helsinki".into(),
+            person_id: "pm-hel".into(),
+            org_roles: vec!["people-manager".into()],
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "pm-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let reset = json!({ "type": "password", "value": "Another-pass-123", "temporary": false });
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/org-admin-hel/reset-password",
+            &t,
+            Some(reset.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person/reset-password",
+            &t,
+            Some(reset.clone()),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    // The Organization's admin still resets its people manager.
+    let admin = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "pm-hel".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "pm-hel".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/pm-hel/reset-password",
+            &admin,
+            Some(reset),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
+    let f = Fixture::new().await;
+    for (id, roles) in [
+        ("g-admins", vec!["realm-admin".to_owned()]),
+        ("g-staff", Vec::new()),
+    ] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                name: id.into(),
+                path: format!("/helsinki/{id}"),
+                realm_roles: roles,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/org-admin-hel/groups/g-admins",
+            &t,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let st = f
+        .send(
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Groups/g-admins",
+            &t,
+            Some(json!({ "displayName": "g-admins", "members": [{ "value": "org-admin-hel" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(
+        f.store
+            .list_user_groups("dev", "org-admin-hel")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // A member gets the roles of the group's ancestors and of its role mappings too.
+    for (id, parent) in [("g-child", Some("g-admins")), ("g-mapped", None)] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                name: id.into(),
+                path: format!("/helsinki/{id}"),
+                parent_id: parent.map(str::to_owned),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    f.store
+        .add_role_mapping(RoleMappingRecord {
+            id: "m-1".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "group".into(),
+            principal_id: "g-mapped".into(),
+            role_id: "realm-admin".into(),
+            role_name: "realm-admin".into(),
+            client_uuid: None,
+        })
+        .await
+        .unwrap();
+    for group in ["g-child", "g-mapped"] {
+        let st = f
+            .send(
+                Method::PUT,
+                &format!("/admin/realms/dev/users/org-admin-hel/groups/{group}"),
+                &t,
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{group}");
+    }
+    // A refused SCIM write changes nothing of the group, and a refused join creates no person.
+    let st = f
+        .send(
+            Method::PUT,
+            "/api/v1/realms/dev/scim/v2/Groups/g-admins",
+            &t,
+            Some(json!({ "displayName": "renamed", "members": [{ "value": "org-admin-hel" }] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let kept = f
+        .store
+        .get_group("dev", None, "g-admins")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.name, "g-admins");
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/users",
+            &t,
+            Some(json!({ "username": "joiner", "groups": ["/helsinki/g-admins"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert!(
+        f.store
+            .get_user_by_username_or_email("dev", None, "joiner")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/users/hel-person/groups/g-staff",
+            &t,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn a_group_name_holds_no_path_separator() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    for name in ["espoo/staff", "line\nbreak"] {
+        let st = f
+            .send(
+                Method::POST,
+                "/admin/realms/dev/groups",
+                &t,
+                Some(json!({ "name": name })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{name}");
+    }
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/espoo/staff")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/groups",
+            &t,
+            Some(json!({ "name": "field-staff" })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+}
+
 /// Scope links, mappers, role holders and group members of an application or group were served
 /// to any signed-in member of its organization, and a member could attach any client scope (an
 /// audience, a role) to an application of the organization.
@@ -914,6 +1158,136 @@ async fn view_clients_neither_adopts_unmarked_clients_nor_reads_their_secret() {
         )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn view_clients_adds_only_an_audience_to_an_imported_client_marked_for_it() {
+    let f = Fixture::new().await;
+    let import = ProtocolMapperRepresentation {
+        id: "m-import".into(),
+        realm_id: "dev".into(),
+        name: "aud-old".into(),
+        protocol: "openid-connect".into(),
+        protocol_mapper: "oidc-audience-mapper".into(),
+        config: std::collections::BTreeMap::from([(
+            "included.custom.audience".to_owned(),
+            "old-endpoint".to_owned(),
+        )]),
+        ..Default::default()
+    };
+    for (id, mark) in [("uuid-bare", None), ("uuid-pl", Some("joinedcontext"))] {
+        f.store
+            .upsert_client(ClientRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                client_id: id.trim_start_matches("uuid-").into(),
+                managed_by: Some("apply".into()),
+                attributes: mark
+                    .map(|m| {
+                        std::collections::BTreeMap::from([(
+                            "audiences-managed-by".to_owned(),
+                            m.to_owned(),
+                        )])
+                    })
+                    .unwrap_or_default(),
+                protocol_mappers: vec![import.clone()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let t = f
+        .token(
+            "dev",
+            "portal-svc",
+            json!({ "resource_access": { "realm-management": { "roles": ["view-clients"] } } }),
+        )
+        .await;
+    let audience = |name: &str, audience: &str| {
+        json!({
+            "name": name,
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-audience-mapper",
+            "consentRequired": false,
+            "config": {
+                "included.custom.audience": audience,
+                "access.token.claim": "true",
+                "id.token.claim": "false",
+                "introspection.token.claim": "true",
+            },
+        })
+    };
+    let models = |uuid: &str| format!("/admin/realms/dev/clients/{uuid}/protocol-mappers/models");
+    // An unmarked imported client stays nobody's to write.
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-bare"),
+            &t,
+            Some(audience("aud-door", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // Another mapper kind, a client audience or a replaced import mapper: refused on the mark.
+    let roles = json!({
+        "name": "roles",
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-hardcoded-claim-mapper",
+        "consentRequired": false,
+        "config": { "claim.name": "jc_org", "claim.value": "helsinki" },
+    });
+    let mut client_audience = audience("aud-client", "door");
+    client_audience["config"]["included.client.audience"] = json!("realm-management");
+    for body in [roles, client_audience] {
+        let st = f
+            .send(Method::POST, &models("uuid-pl"), &t, Some(body))
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-pl"),
+            &t,
+            Some(audience("aud-old", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let st = f
+        .send(
+            Method::PUT,
+            &format!("{}/m-import", models("uuid-pl")),
+            &t,
+            Some(audience("aud-old", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    // The one write the mark allows: a new audience, the import's mappers kept.
+    let st = f
+        .send(
+            Method::POST,
+            &models("uuid-pl"),
+            &t,
+            Some(audience("aud-door", "door")),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let held = f
+        .store
+        .get_client_by_uuid("dev", None, "uuid-pl")
+        .await
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = held
+        .protocol_mappers
+        .iter()
+        .map(|m| m.name.as_str())
+        .collect();
+    assert_eq!(names, ["aud-old", "aud-door"]);
+    assert_eq!(
+        held.protocol_mappers[0].config["included.custom.audience"],
+        "old-endpoint"
+    );
 }
 
 #[tokio::test]

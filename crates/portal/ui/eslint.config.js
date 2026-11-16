@@ -4,7 +4,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  // dist-explorer: the open-data bundle scripts/explorer-bundle.sh builds and compares (T-6739).
+  // dist-explorer: the open-data bundle `pnpm build` writes and jc embeds (T-6739, T-7102).
   { ignores: ["dist", "dist-explorer"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,

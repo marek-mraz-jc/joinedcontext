@@ -654,6 +654,7 @@ async fn scim_put_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&existing)) {
         return Ok(resp);
     }
@@ -750,6 +751,7 @@ async fn scim_patch_user(
     if !dec.allowed {
         return Err(KaisatsuError::NotFound("user not found".into()));
     }
+    crate::operations::ensure_person_ceiling(&state, &ctx, &user).await?;
     if let Err(resp) = check_if_match(&headers, &user_etag(&user)) {
         return Ok(resp);
     }
@@ -1370,6 +1372,10 @@ async fn scim_put_group(
             "a group with this displayName exists: choose another name",
         ));
     }
+    if !payload.members.is_empty() {
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &grp)
+            .await?;
+    }
     let grp = state.oidc.store.upsert_group(grp).await?;
     record_admin_write(
         &state,
@@ -1607,6 +1613,13 @@ async fn scim_patch_group(
         }
     }
 
+    if member_ids
+        .iter()
+        .any(|uid| !cur_members.iter().any(|u| &u.id == uid))
+    {
+        crate::operations::ensure_may_join_group(&ctx, state.oidc.store.as_ref(), &realm, &grp)
+            .await?;
+    }
     if group_path_taken(&state, &realm, &grp.path, Some(&grp.id)).await? {
         return Ok(scim_error_response(
             StatusCode::CONFLICT,

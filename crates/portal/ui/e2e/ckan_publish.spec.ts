@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page, TestInfo } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4847: publishing a dataset to CKAN end to end in a real browser, the API answered in the
 // browser. A steward drafts the publication, edits it, sees the CKAN page it becomes, types the

@@ -1,6 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5015: app-air-weather-explorer's page on dev was 23,431 px at 1440. Its filter proof listed 50
 // entities with every attribute, and "Who may call it" printed each of the space's 40 policies with
@@ -71,10 +75,13 @@ for (const width of [1440, 400]) {
       }
       if (path === "/api/v1/projects") return json(list([{ name: "helsinki" }]));
       if (path === "/api/v1/projects/helsinki/endpoints/events") return json(ENDPOINT);
-      if (path === "/api/v1/projects/helsinki/endpoints/events/preview") {
-        const asked = route.request().postDataJSON() as { id?: string[]; limit: number };
+      // The gateway admits the steward (T-6802): the page reads through the Endpoint only after it says so.
+      if (path === "/api/v1/projects/helsinki/endpoints/events/admission") return json({ admitted: true });
+      const called = odataCall(route.request().url());
+      if (called?.name === "jc_endpoint_preview") {
+        const asked = called.params as { id?: string[]; limit: number };
         const served = asked.id ? EVENTS.filter((one) => asked.id?.includes(one.id)) : EVENTS;
-        return json({ count: EVENTS.length, entities: served.slice(0, asked.limit) });
+        return route.fulfill({ contentType: "application/json", body: odataBody({ count: EVENTS.length, entities: served.slice(0, asked.limit) }) });
       }
       if (path.endsWith("/projections")) return json(list([PROJECTION]));
       if (path.endsWith("/spaces")) return json(list([SPACE]));

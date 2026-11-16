@@ -4,6 +4,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import { narrowed } from "./stubQuery";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6328 (owner): a Bratislava KPI dataset on its Endpoint page. The filter row under the headers
 // filters a date column with a date picker and an enum column from its values; the header's funnel

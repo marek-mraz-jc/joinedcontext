@@ -1,0 +1,16 @@
+logger: {level: OFF}
+input:
+  generate:
+    count: 1
+    interval: ""
+    mapping: 'root = {"min": 2, "name": "doc-9"}'
+pipeline:
+  threads: 1
+  processors:
+    - sql_raw:
+        driver: mysql
+        dsn: ${MY_DSN}
+        query: "SELECT foo FROM footable WHERE bar = ?"
+        args_mapping: 'root = [ 99 ]'
+output:
+  stdout: {}

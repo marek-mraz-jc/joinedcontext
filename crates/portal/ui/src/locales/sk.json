@@ -122,7 +122,8 @@
     "layers": "Mapové vrstvy",
     "csrs": "Kontextové zdroje",
     "health": "Zdravie",
-    "repositories": "Repozitáre"
+    "repositories": "Repozitáre",
+    "scripts": "Skripty"
   },
   "auth": {
     "lead": "Prihláste sa účtom svojej organizácie a spravujte túto platformu.",
@@ -325,6 +326,7 @@
     },
     "history": {
       "filter": "Filtrovať históriu",
+      "filtersToggle": "Filtre",
       "kind": "Druh",
       "name": "Názov obsahuje",
       "apply": "Filtrovať",
@@ -343,6 +345,7 @@
       "older": "Zobraziť staršie zmeny",
       "empty": "Zatiaľ nebola zlúčená ani zamietnutá žiadna zmena.",
       "emptyHint": "Zmena sa tu objaví aj s tým, kto o nej rozhodol, keď ju na karte Otvorené schválite alebo zamietnete.",
+      "noneMatchHint": "Zrušte filtre alebo rozšírte obdobie, aby ste videli viac rozhodnutých zmien.",
       "noneOnPage": "Žiadnu z týchto zmien nemáte právo čítať. Staršie možno áno.",
       "restore": "Obnoviť",
       "restoreOf": "Obnoviť {name}",
@@ -2410,7 +2413,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP endpoint",
       "websocket": "WebSocket prúd",
-      "gtfs-rt": "GTFS-realtime zdroj"
+      "gtfs-rt": "GTFS-realtime zdroj",
+      "webhook": "Webhook (zasielané udalosti)"
     },
     "dialog": {
       "create": "Nový zdroj údajov",
@@ -2418,7 +2422,8 @@
       "mqtt": "Odoberá témy na brokeri a každú správu odovzdá pipeline, ktorá naň odkazuje.",
       "http": "Periodicky sťahuje URL v perióde samotnej pipeline.",
       "websocket": "Drží otvorený socket a číta správy, ktoré server posiela.",
-      "gtfs-rt": "Číta GTFS-realtime feed; protobuf sa dekóduje ešte pred pipeline."
+      "gtfs-rt": "Číta GTFS-realtime feed; protobuf sa dekóduje ešte pred pipeline.",
+      "webhook": "Čaká, kým odosielateľ pošle udalosti; keď zdroj číta pipeline, stránka ukáže adresu, ktorú mu dáte."
     },
     "field": {
       "type": "Typ",
@@ -2452,7 +2457,18 @@
       "broker": "Broker",
       "externalBroker": "Externý broker (URL a secret nižšie)",
       "records": "Záznamy sú v",
-      "recordsHelp": "Pre JSON odpoveď, ktorá má záznamy v poli, cesta k nemu, napríklad data.stations; každá položka je jeden záznam. Prázdne pole číta celú odpoveď ako jeden záznam."
+      "recordsHelp": "Pre JSON odpoveď, ktorá má záznamy v poli, cesta k nemu, napríklad data.stations; každá položka je jeden záznam. Prázdne pole číta celú odpoveď ako jeden záznam.",
+      "format": "Formát odpovede",
+      "webhookAuth": "Ako sa odosielateľ preukazuje",
+      "webhookHmac": "Podpísané telo (HMAC SHA-256)",
+      "webhookBearer": "Token nositeľa (Bearer)",
+      "maxBodyBytes": "Najväčšie telo (bajty)",
+      "maxInFlight": "Udalostí naraz"
+    },
+    "sheet": {
+      "label": "Hárok",
+      "help": "Hárok na čítanie podľa názvu na jeho záložke, napríklad Stanice 2026; prvý riadok hárka pomenúva stĺpce. Prázdne pole číta prvý hárok.",
+      "problem": "Názov hárka má 1 až 31 znakov bez : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Jedno stiahnutie feedu",
@@ -2491,6 +2507,18 @@
         "url": "Adresa súboru CSV",
         "urlHelp": "Adresa, ktorá stiahne samotný súbor, začína na https://."
       },
+      "xlsx": {
+        "title": "Tabuľka (Excel, ODS) na adrese",
+        "what": "Zošit zverejnený ako .xlsx alebo .ods, jeden záznam na riadok hárka, načítaný pri každom behu.",
+        "url": "Adresa tabuľky",
+        "urlHelp": "Adresa, ktorá stiahne samotný súbor, začína https://, napríklad https://data.example.org/stations.xlsx."
+      },
+      "shapefile": {
+        "title": "Shapefile (v zipe) na adrese",
+        "what": "Zip s jednou vrstvou shapefile (.shp, .dbf, .prj), jeden prvok GeoJSON na záznam vo WGS 84, načítaný pri každom behu.",
+        "url": "Adresa zipu",
+        "urlHelp": "Adresa, ktorá stiahne samotný zip, začína https://, napríklad https://data.example.org/mestske-casti.zip. Súbor .prj určuje súradnicový systém, napríklad EPSG:5514 pre S-JTSK."
+      },
       "json": {
         "title": "REST API (JSON)",
         "what": "API, ktoré odpovedá v JSON, čítané pri každom behu.",
@@ -2522,7 +2550,8 @@
         "url": "Zadajte celú adresu začínajúcu na https:// alebo http://.",
         "ckanDataset": "Toto je stránka datasetu, nie súbor. Otvorte na nej zdroj CSV alebo JSON a skopírujte jeho adresu na stiahnutie.",
         "layer": "Zadajte vrstvu, ktorú čítať, alebo adresu súboru GeoJSON.",
-        "records": "Zadajte cestu ako názvy spojené bodkami, napr. data.stations."
+        "records": "Zadajte cestu ako názvy spojené bodkami, napr. data.stations.",
+        "secretKey": "Uveďte položku v tajomstve, ktorá drží prístupový údaj."
       }
     },
     "test": {
@@ -2531,7 +2560,8 @@
       "button": "Otestovať pripojenie",
       "running": "Testuje sa…",
       "read": "Pripojené: {records, plural, one {načítaný # záznam} few {načítané # záznamy} other {načítaných # záznamov}} ({bytes} bajtov). Prvý z nich:",
-      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova."
+      "failed": "Nič sa nenačítalo: {reason}. Skontrolujte adresu a prihlasovacie údaje a otestujte znova.",
+      "pages": "Prečítané {pages, plural, one {# stránka} few {# stránky} other {# stránok}}."
     },
     "usedBy": {
       "title": "Používajú ho",
@@ -2541,6 +2571,176 @@
       "title": "Pripravené nastavenia",
       "lead": "Nastavenie zapíše zdroj, jeho pipeline aj plán v jednej zmene z niekoľkých odpovedí. Príklad: kanál GBFS mestských bicyklov načítaný každú minútu.",
       "back": "Späť na zdroje údajov"
+    },
+    "preset": {
+      "title": "Predvoľba otvoreného API",
+      "hint": "Pre službu CKAN, ArcGIS, OData, WFS, OGC API Features alebo SensorThings: platforma ju sama stránkuje a nájde záznamy. Pri voľbe predvoľby nechajte Stránkovanie a Záznamy sú v prázdne.",
+      "kind": "API",
+      "kinds": {
+        "ckan": "CKAN (dátové sady alebo riadky datastore)",
+        "arcgisFeature": "ArcGIS Feature Service",
+        "odata": "OData v4",
+        "wfs": "WFS 2.0",
+        "ogcFeatures": "OGC API Features",
+        "sensorThings": "OGC SensorThings"
+      },
+      "pageSize": "Záznamov na stránku",
+      "organization": "Organizácia",
+      "resourceId": "ID zdroja",
+      "objectIdField": "Pole ID objektu",
+      "outFields": "Čítané polia",
+      "typeNames": "Typ prvku",
+      "srsName": "Súradnicový systém",
+      "expand": "Súvisiace entity"
+    },
+    "paging": {
+      "title": "Stránkovanie",
+      "hint": "Pre stránkované API bez predvoľby: ako sa žiada o ďalšiu stránku. Test pripojenia prejde všetky stránky a povie, koľko ich prečítal.",
+      "mode": "Ďalšia stránka podľa",
+      "modes": {
+        "page": "Číslo stránky",
+        "offset": "Posun a limit",
+        "cursor": "Kurzor v odpovedi",
+        "link": "Hlavička Link (rel=next)",
+        "nextUrl": "Ďalšia URL v odpovedi"
+      },
+      "param": "Parameter stránky",
+      "start": "Prvá stránka alebo posun",
+      "sizeParam": "Parameter veľkosti stránky",
+      "size": "Veľkosť stránky",
+      "offsetParam": "Parameter posunu",
+      "limitParam": "Parameter limitu",
+      "limit": "Limit",
+      "cursor": "Cesta ku kurzoru",
+      "cursorParam": "Parameter kurzora",
+      "cursorHeader": "Hlavička kurzora",
+      "next": "Cesta k ďalšej URL",
+      "total": "Cesta k celkovému počtu",
+      "more": "Cesta k ďalším stránkam",
+      "maxPages": "Najviac stránok",
+      "maxRecords": "Najviac záznamov",
+      "delay": "Pauza medzi stránkami"
+    },
+    "discover": {
+      "title": "Nájsť v službe",
+      "hint": "Prečíta vlastný zoznam služby raz na runneri projektu, len verejné služby, a ponúkne, čo táto predvoľba vie čítať.",
+      "needs": "Zvoľte API v Predvoľbe otvoreného API a napíšte URL služby, aby ste videli, čo ponúka.",
+      "button": "Nájsť",
+      "running": "Čítam službu…",
+      "pick": "Nájdené {count, plural, one {# položka} few {# položky} other {# položiek}}",
+      "pickHint": "Vyberte jednu; Použiť ju zapíše do formulára, kde ju ešte môžete zmeniť.",
+      "use": "Použiť",
+      "useNeeds": "Najprv vyberte položku zo zoznamu.",
+      "truncated": "Služba vypisuje viac, než Portál číta; ak chýba vaša položka, zadajte užšiu URL.",
+      "none": "Služba nevypisuje nič, čo by táto predvoľba čítala. Skontrolujte URL a druh API.",
+      "failed": "Nič sa nevypísalo: {reason}. Skontrolujte URL a druh API a skúste to znova.",
+      "used": "Zapísané do formulára: {value}.",
+      "fields": {
+        "organization": "Organizácia",
+        "layer": "Vrstva",
+        "entitySet": "Sada entít",
+        "typeNames": "Typ prvku",
+        "collection": "Kolekcia",
+        "thing": "Thing"
+      },
+      "refused": "Požiadajte správcu projektu o rolu, ktorá navrhuje zdroje údajov."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "Čo pripájate",
+      "address": "Adresa a prístupový údaj",
+      "discover": "Výber zo služby",
+      "pagingTitle": "Stránky",
+      "format": "Formát",
+      "check": "Názov a prvé riadky",
+      "groups": {
+        "api": "API otvorených dát, čítané po stránkach",
+        "file": "Súbor alebo kanál na adrese",
+        "other": "Niečo iné: prúd, súborový server, front, databáza alebo webhook"
+      },
+      "otherHelp": "Otvorí nižšie celý formulár toho pripojenia: MQTT, SFTP, Kafka, databáza a ďalšie.",
+      "otherNone": "Vyberte pripojenie…",
+      "api": {
+        "ckan": "Všetky datasety jednej organizácie na portáli CKAN.",
+        "arcgisFeature": "Prvky jednej vrstvy služby ArcGIS Feature Service.",
+        "odata": "Riadky jednej množiny entít služby OData v4.",
+        "wfs": "Všetky prvky jedného typu WFS 2.0 ako GeoJSON.",
+        "ogcFeatures": "Položky jednej kolekcie OGC API Features.",
+        "sensorThings": "Veci alebo dátové prúdy služby SensorThings."
+      },
+      "apiUrl": "Adresa služby",
+      "apiUrlHelp": {
+        "ckan": "Adresa portálu, napríklad https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "Adresa FeatureServer, napríklad https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "Koreň služby končiaci na .svc, napríklad https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "Adresa WFS pred otáznikom, napríklad https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "Adresa API, napríklad https://demo.pygeoapi.io/master.",
+        "sensorThings": "Adresa s verziou, napríklad https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Prístupový údaj",
+      "secretPublic": "Žiadny: verejný zdroj",
+      "secretHelp": "Vyberte tajomstvo s kľúčom alebo tokenom; heslo sa sem nikdy nepíše.",
+      "secretNone": "Zdroje údajov tohto projektu zatiaľ nepoužívajú žiadne tajomstvo; verejný zdroj ho nepotrebuje. Zdroj s kľúčom dostane tajomstvo vo formulári nižšie.",
+      "secretKeyHelp": "Položka v tajomstve, ktorá drží prístupový údaj, napríklad token.",
+      "secretProbe": "Zdroj s prístupovým údajom kontrola nenačíta; po uložení ho načíta Otestovať pripojenie.",
+      "pagingHint": "Raz prečíta prvú odpoveď na bežci projektu a povie, koľko stránok beh prečíta.",
+      "pagingButton": "Zistiť stránkovanie",
+      "pagingRunning": "Čítam prvú odpoveď…",
+      "paging": {
+        "pages": "Prečíta {pages} stránok po {onPage} ({total} záznamov).",
+        "more": "Číta stránky po {onPage}, kým služba nepovie, že ďalšie nie sú.",
+        "walk": "Ide na ďalšiu stránku, ktorú služba uvedie, na prvej je {onPage} záznamov.",
+        "totalOnly": "Prvá odpoveď hovorí o {total} záznamoch spolu, {onPage} na tejto stránke, ale neuvádza ďalšiu stránku; nastavte stránkovanie vo formulári nižšie.",
+        "once": "Jedna odpoveď obsahuje všetko: adresa sa pri behu prečíta raz.",
+        "skipped": "Nedá sa zistiť: {reason}. Skúste to znova alebo nastavte stránkovanie vo formulári nižšie."
+      },
+      "allPages": "Čítať všetky stránky",
+      "allPagesHint": "Zapíše stránkovanie do formulára; bez neho sa prečíta len prvá stránka.",
+      "presetPages": "Druh API stránkuje zdroj sám, s veľkosťou stránky, ktorú služba dovolí, ak ju nenastavíte vo formulári nižšie.",
+      "oneRead": "Súbor alebo kanál sa pri každom behu prečíta celý: stránky nemá.",
+      "rows": "Jeden záznam na riadok",
+      "rowsHint": "Každý riadok CSV príde do pipeline ako jeden záznam s názvami stĺpcov z hlavičky.",
+      "handoff": "Spustiť pipeline nad {name}",
+      "picked": "Vybraté: {value}. Vyplniť formulár a skontrolovať ho zapíše do formulára nižšie."
+    },
+    "webhook": {
+      "title": "Kam odosielatelia posielajú",
+      "hint": "Adresu pipeline vložte do odosielateľa. Posiela požiadavky POST s hlavičkou nižšie.",
+      "header": "Hlavička: {header}",
+      "maxBody": "Najväčšie telo: {bytes} bajtov",
+      "noReaders": "Tento zdroj zatiaľ nečíta žiadna pipeline, preto nemá adresu. Vytvorte pipeline, ktorá ho číta, a vráťte sa.",
+      "unpublished": "Táto inštalácia nezverejňuje adresu pre webhooky. Požiadajte administrátora, aby do nasadenia pridal vstupný záznam.",
+      "copy": "Kopírovať adresu",
+      "copied": "Adresa skopírovaná",
+      "test": {
+        "title": "Poslať testovaciu udalosť",
+        "hint": "Pošle telo nižšie vybranej pipeline, podpísané tak, ako ho podpisuje váš odosielateľ. Udalosť prejde pipeline ako skutočná.",
+        "button": "Poslať testovaciu udalosť",
+        "running": "Posielam…",
+        "accepted": "Prijaté ({status}): pipeline udalosť prevzala.",
+        "refused": "Bežec odpovedal {status}: {answer}",
+        "unauthorized": "Tajomstvo alebo hlavička, ktoré tento zdroj uvádza, nezodpovedajú tomu, čo má bežec: skontrolujte obe a pošlite znova."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, ktoré čítajú tento zdroj, napríklad ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Telo",
+        "help": "Udalosť tak, ako by ju poslal odosielateľ, napríklad JSON jedného uplinku podľa dokumentácie poskytovateľa."
+      }
+    },
+    "signatureHeader": {
+      "label": "Hlavička s podpisom",
+      "help": "Hlavička, do ktorej odosielateľ zapisuje podpis, napríklad X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Podpisové tajomstvo",
+      "help": "Tajomstvo so zdieľaným podpisovým kľúčom, napríklad ttn-webhook s kľúčom secret. Najprv ho pridajte v časti Tajomstvá."
+    },
+    "bearerToken": {
+      "label": "Prístupový token",
+      "help": "Tajomstvo s tokenom, ktorý odosielateľ píše za Bearer, napríklad chirpstack s kľúčom token."
     }
   },
   "pipelines": {
@@ -2626,7 +2826,16 @@
       "modeChoice": {
         "upsert": "Vytvoriť alebo zlúčiť",
         "replace": "Nahradiť celú entitu",
-        "update-attrs": "Iba aktualizovať atribúty"
+        "update-attrs": "Iba aktualizovať atribúty",
+        "merge": "Zlúčiť do častí atribútov",
+        "backfill": "Iba pridať do histórie"
+      },
+      "modeHint": {
+        "upsert": "Vytvorí entitu alebo aktualizuje atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "replace": "Entita bude presne záznam: atribúty, ktoré neuvádza, sa odstránia. Iba keď entitu zapisuje len táto pipeline.",
+        "update-attrs": "Aktualizuje na entite atribúty, ktoré záznam uvádza; ostatné atribúty zostanú.",
+        "merge": "Hĺbkovo zlúči záznam, takže dve pipeline môžu zapisovať každá časť jedného atribútu, napríklad address.streetAddress a address.postalCode.",
+        "backfill": "Pridá minulé merania iba do histórie; aktuálna hodnota zostane. Vyžaduje operáciu pripájania k histórii v Policy endpointu."
       },
       "lastRun": "Posledný beh"
     },
@@ -2846,7 +3055,17 @@
       "lastSamples": "Posledné správy týmto krokom",
       "lastSamplesNone": "Týmto krokom zatiaľ nič neprešlo.",
       "lastSamplesUnavailable": "Posledné správy nie sú k dispozícii.",
-      "lastSamplesWithheld": "Skryté: cieľový endpoint skrýva atribúty a pred mapovaním nesú ešte názvy zo zdroja. Vyberte výstup a uvidíte, čo sa zapísalo."
+      "lastSamplesWithheld": "Skryté: cieľový endpoint skrýva atribúty a pred mapovaním nesú ešte názvy zo zdroja. Vyberte výstup a uvidíte, čo sa zapísalo.",
+      "tier": {
+        "forms": "Nastavenie formulárom",
+        "advanced": "Pokročilé: menia tok správ",
+        "bloblang": "Písané v Bloblangu"
+      },
+      "tierHint": {
+        "forms": "Bez kódu: každý otvorí formulár s nápovedou pri každom poli, napríklad dedupe zahodí záznam videný za poslednú hodinu.",
+        "advanced": "Aj tieto majú formuláre, ale vetvia, opakujú alebo skúšajú znova kroky v sebe: zlé nastavenie môže záznamy zahodiť alebo zopakovať. Po každej zmene spustite test pipeline.",
+        "bloblang": "Textové pole s nápovedou: pre mapovania, ktoré mapovač nepokrýva, napríklad root.name = this.name.uppercase()."
+      }
     },
     "emptyHint": "Pridajte zdroj údajov a pipeline tlačidlom, alebo požiadajte asistenta, aby ju postavil z toho, čo už máte.",
     "expiryRemoves": "Entity, ktoré sa neaktualizovali {window}, sa odstraňujú",
@@ -2882,7 +3101,23 @@
       "maskedKept": "{count, plural, one {# záznam zostáva v zozname: jeho hodnota bola zamaskovaná ako tajomstvo a opakovanie by zapísalo masku. Prinesie ho ďalšie čítanie zdroja.} few {# záznamy zostávajú v zozname: ich hodnoty boli zamaskované ako tajomstvo a opakovanie by zapísalo masku. Prinesie ich ďalšie čítanie zdroja.} other {# záznamov zostáva v zozname: ich hodnoty boli zamaskované ako tajomstvo a opakovanie by zapísalo masku. Prinesie ich ďalšie čítanie zdroja.}}",
       "newest": "Najnovšie",
       "older": "Staršie záznamy",
-      "openRun": "Otvoriť jeho beh"
+      "openRun": "Otvoriť jeho beh",
+      "groups": {
+        "title": "Podľa pravidla",
+        "lead": "Všetky uchované záznamy podľa porušeného pravidla a atribútu, najväčšia skupina prvá. Opravte najprv najväčšiu skupinu.",
+        "export": "Exportovať CSV",
+        "exporting": "Exportuje sa…",
+        "exportHint": "Všetky uchované záznamy s pravidlom a dôvodom, tajomstvá zamaskované a osobné atribúty vynechané. Súbor: {file}.",
+        "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamov}}",
+        "allowed": "Model povoľuje:",
+        "fix": {
+          "model": "Opravte v dátovom modeli: odmieta tento atribút alebo hodnotu. Ak je zdroj správny, rozšírte slot alebo atribút deklarujte.",
+          "mapping": "Opravte v mapovaní: zapisuje hodnotu nesprávneho tvaru. Preveďte ju alebo namapujte na to, čo slot prijíma.",
+          "step": "Opravte krok: krok pipeline na týchto záznamoch zlyhal. Chybu kroku nájdete v behu záznamu.",
+          "runner": "Runner tieto záznamy odmietol bez pravidla modelu. Jeho slová nájdete v behu záznamu."
+        },
+        "example": "Príklad"
+      }
     },
     "runs": {
       "open": "Behy a záznam",
@@ -3080,13 +3315,52 @@
         "title": "Životnosť",
         "hint": "Kedy entity alebo niektoré ich polia opustia priestor. Uloží sa ako životnosť pipeline, nikdy ako kód mapovania.",
         "pickType": "Najprv vyberte cieľ a typ, ktorý mapovanie zapisuje: životnosť sa nastavuje pre každý typ."
+      },
+      "sourceCheck": {
+        "title": "Skontrolovať celý zdroj",
+        "hint": "Spustí uloženú pipeline nad každou stranou zdroja a spočíta, čo by ostrý beh prijal a odmietol, podľa pravidla. Nič sa nezapíše. Zastaví sa po 60 s alebo 50 000 záznamoch. Príklad: zdroj CKAN s 12 stranami, 2 300 záznamov.",
+        "run": "Skontrolovať celý zdroj",
+        "again": "Skontrolovať znova",
+        "running": "Číta sa každá strana zdroja; trvá to najviac 60 s.",
+        "unsaved": "Kontrola číta uloženú pipeline: navrhnite túto a skontrolujte ju, keď sa jej zmena zlúči.",
+        "failed": "Kontrola sa nespustila",
+        "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamov}}: prijatých {accepted, number}, odmietnutých {rejected, number}",
+        "complete": "Prečítala sa každá strana zdroja; ostrý beh by dal na zoznam odmietnutých tie isté záznamy.",
+        "partial": "Kontrola neprečítala celý zdroj, takže počty pokrývajú len prečítanú časť. Dôvod je nižšie.",
+        "rows": "{count, plural, one {# odmietnutý záznam} few {Prvé # odmietnuté záznamy} other {Prvých # odmietnutých záznamov}}",
+        "place": "Záznam {place}",
+        "more": "{count, plural, one {Ďalší # záznam je započítaný} few {Ďalšie # záznamy sú započítané} other {Ďalších # záznamov je započítaných}} v skupinách vyššie.",
+        "groupsLead": "Každý záznam, ktorý kontrola odmietla, spočítaný podľa porušeného pravidla a atribútu, najväčšia skupina prvá. Opravte najprv najväčšiu skupinu.",
+        "completeClean": "Prečítala sa každá strana zdroja a žiadny záznam neporušuje pravidlo: ostrý beh by zapísal všetky.",
+        "retry": "Spustite ju znova, keď je dôvod vyššie vyriešený."
+      },
+      "schedule": {
+        "title": "Kedy beží",
+        "hint": "Vyberte slovami, ako často; ďalších päť spustení sa ukáže vo vašom čase.",
+        "field": "Rozvrh",
+        "resident": "Táto pipeline beží stále a zapisuje každý záznam, keď príde; na rozvrh nastavte v Základných údajoch triedu scheduled.",
+        "byPeriod": "Pipeline číta zdroj každých {period}, ako hovorí jej perióda. Pridajte rozvrh, ak má bežať v určených časoch.",
+        "add": "Spúšťať podľa rozvrhu",
+        "remove": "Odstrániť rozvrh",
+        "floor": "Tento projekt dovoľuje pipeline bežať najviac {floor}.",
+        "belowFloor": "Tento rozvrh beží {gap}, častejšie, ako projekt dovoľuje ({floor}). Vyberte pomalší rozvrh alebo požiadajte správcu o zníženie minima projektu.",
+        "afterApply": "Prvý beh sa spustí v prvom čase vyššie, keď je zmena schválená a nasadená.",
+        "hints": {
+          "field": "Ako často pipeline číta svoj zdroj, napríklad každý deň o 03:00. Časy sú v UTC, ako ich číta runner.",
+          "none": "Bez rozvrhu: pipeline beží, keď zdroj pošle záznamy, napríklad téma MQTT. Pridajte rozvrh pre zdroj čítaný podľa času, napríklad súbor CSV."
+        },
+        "clock": {
+          "hours": "{count, plural, one {raz za hodinu} few {každé # hodiny} other {každých # hodín}}",
+          "minutes": "{count, plural, one {každú minútu} few {každé # minúty} other {každých # minút}}",
+          "seconds": "{count, plural, one {každú sekundu} few {každé # sekundy} other {každých # sekúnd}}"
+        }
       }
     },
     "mapper": {
       "mode": "Ako sa z každého záznamu stane entita",
       "modeMap": "Priradiť polia",
       "modeCode": "Napísať Bloblang",
-      "modeMapHint": "Pre každý atribút vyberte pole záznamu, výraz, pevnú hodnotu alebo bod.",
+      "modeMapHint": "Pre každý atribút vyberte pole záznamu, s krokmi ako orezanie alebo preklad hodnôt, odkaz na inú entitu, pole pre každý jazyk, geometriu, spojené polia, výraz alebo pevnú hodnotu.",
       "modeCodeHint": "Krok v Bloblangu napíšte sami.",
       "type": "Typ entity",
       "typeHint": "Typ z dátového modelu cieľového priestoru; jeho atribúty sú nižšie.",
@@ -3124,12 +3398,104 @@
         "notBoolean": "{field} obsahuje „{value}“, čo nie je true ani false; {name} očakáva true alebo false. Vyberte iné pole alebo zmeňte vzorku.",
         "notValue": "{field} obsahuje „{value}“; {name} očakáva jednu z hodnôt {values}. Vyberte iné pole alebo zmeňte vzorku.",
         "noId": "Vyberte pole, z ktorého vznikne id každej entity.",
-        "notTime": "{field} obsahuje {value}, čo nie je čas: použite text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy."
+        "notTime": "{field} obsahuje {value}, čo nie je čas: použite text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy.",
+        "notShaped": "{field} obsahuje „{value}“, čo tvar dátumu pre {name} neprečíta. Vyberte tvar, aký zdroj píše."
       },
       "expiry": {
         "migrated": "Čas konca, ktorý tento krok zapisoval, je teraz životnosťou pipeline v kroku Životnosť. Uloží sa s vaším ďalším návrhom.",
         "migrateField": "Tento krok zapisuje expiresAt z poľa záznamu {field} a z neho sa nemapuje žiadny atribút s dátumom a časom. Namapujte ho na taký atribút, vyberte koniec v kroku Životnosť alebo zahoďte vlastné riadky kroku.",
         "drop": "Zahodiť vlastné expiresAt kroku"
+      },
+      "geojson": "Geometria z poľa GeoJSON…",
+      "wkt": "Geometria z poľa WKT…",
+      "ref": "Odkaz na {target} podľa kľúčového poľa…",
+      "languagesChoice": "Jedno pole na každý jazyk…",
+      "concatChoice": "Viac polí spojených…",
+      "refField": "Kľúčové pole entity {target}",
+      "languages": "Text pre každý jazyk",
+      "language": "Jazyk",
+      "languageField": "Pole pre {tag}",
+      "languageRemove": "Odstrániť jazyk {tag}",
+      "languageAdd": "Pridať jazyk",
+      "remove": "Odstrániť",
+      "wktField": "Pole WKT",
+      "geojsonField": "Pole GeoJSON",
+      "crs": "Súradnicový systém zdroja",
+      "crsName": {
+        "EPSG_4326": "EPSG:4326 · WGS 84, stupne (GPS)",
+        "EPSG_4258": "EPSG:4258 · ETRS89, stupne",
+        "EPSG_3857": "EPSG:3857 · Web Mercator, metre",
+        "EPSG_25829": "EPSG:25829 · ETRS89 / UTM 29N (Portugalsko, Galícia)",
+        "EPSG_25830": "EPSG:25830 · ETRS89 / UTM 30N (stredné Španielsko)",
+        "EPSG_25831": "EPSG:25831 · ETRS89 / UTM 31N (Barcelona, Katalánsko)",
+        "EPSG_25832": "EPSG:25832 · ETRS89 / UTM 32N (západné Nemecko)",
+        "EPSG_25833": "EPSG:25833 · ETRS89 / UTM 33N (východné Nemecko)",
+        "EPSG_25834": "EPSG:25834 · ETRS89 / UTM 34N (východné Poľsko, východné Slovensko)",
+        "EPSG_3879": "EPSG:3879 · ETRS89 / GK25 (Helsinki, Fínsko)",
+        "EPSG_3067": "EPSG:3067 · ETRS89 / TM35FIN (Fínsko)",
+        "EPSG_5514": "EPSG:5514 · S-JTSK / Křovák (Slovensko, Česko)",
+        "EPSG_2056": "EPSG:2056 · CH1903+ / LV95 (Švajčiarsko)",
+        "EPSG_27700": "EPSG:27700 · British National Grid (Veľká Británia)"
+      },
+      "concat": "Polia na spojenie",
+      "concatPart": "Pole {number}",
+      "concatRemove": "Odstrániť pole {field} zo spojenia",
+      "concatAdd": "Pridať pole",
+      "separator": "Medzi poľami",
+      "separatorNone": "nič",
+      "separatorSpace": "medzera",
+      "transforms": "Úpravy hodnoty {name}",
+      "transform": {
+        "trim": "Orezať medzery",
+        "lower": "Malé písmená",
+        "upper": "Veľké písmená",
+        "decimalComma": "Číslo s desatinnou čiarkou",
+        "date": "Dátum v tvare",
+        "lookup": "Preložiť hodnoty na hodnoty modelu",
+        "default": "Hodnota, keď je prázdne"
+      },
+      "transformHint": {
+        "trim": "Odstráni medzery okolo textu: „ Bo “ bude „Bo“.",
+        "lower": "Zapíše text malými písmenami: „Bo“ bude „bo“.",
+        "upper": "Zapíše text veľkými písmenami: „bo“ bude „BO“.",
+        "decimalComma": "Prečíta text ako 1.234,5 ako číslo 1234.5: bodky a medzery oddeľujú tisíce, čiarka je desatinná.",
+        "lookup": "Každá hodnota vzorky, ktorú model nemá, dostane jednu z hodnôt modelu; ostatné ostanú, ako sú."
+      },
+      "transformRemove": "Odstrániť krok {what}",
+      "transformAdd": "Upraviť hodnotu",
+      "transformPick": "— pridať krok —",
+      "dateFormat": "Tvar dátumu v poli",
+      "dateFormats": {
+        "0": "deň.mesiac.rok, 20.10.2025",
+        "1": "deň/mesiac/rok, 20/10/2025",
+        "2": "mesiac/deň/rok, 10/20/2025",
+        "3": "rok-mesiac-deň, 2025-10-20",
+        "4": "deň.mesiac.rok hodina:minúta, 20.10.2025 14:30",
+        "5": "deň/mesiac/rok hodina:minúta, 20/10/2025 14:30",
+        "6": "rok-mesiac-deň hodina:minúta:sekunda, 2025-10-20 14:30:00"
+      },
+      "defaultValue": "Hodnota pri prázdnom poli",
+      "lookupEmpty": "Každá hodnota vzorky už je hodnotou modelu; načítajte inú vzorku, ak chcete prekladať ďalšie.",
+      "lookupHint": "Hodnota zdroja → hodnota modelu",
+      "lookupRow": "„{from}“ bude",
+      "lookupKeep": "— ponechať —",
+      "observedAt": "Čas pozorovania pre {name}",
+      "hint": {
+        "concat": "Polia sa spoja v tomto poradí, prázdne sa vynechajú; napríklad ulica a číslo domu dajú C/ Major 1.",
+        "concatPart": "Pole vzorky, napríklad ADRECA.",
+        "crs": "Systém, v ktorom sú súradnice zdroja; runner zapisuje WGS 84. Napríklad otvorené dáta Barcelony používajú ETRS89 / UTM 31N.",
+        "dateFormat": "Ako zdroj zapisuje dátum; atribút dostane ISO 8601, napríklad 20/10/2025 bude 2025-10-20.",
+        "defaultValue": "Zapíše sa, keď záznam nechá pole prázdne, napríklad 0 alebo unknown.",
+        "geojsonField": "Pole s geometriou GeoJSON ako text alebo objekt, napríklad Point so súradnicami [2.17, 41.38].",
+        "languageField": "Pole s textom v jazyku {tag}, napríklad NAME_{tag}.",
+        "language": "Jazykový kód, napríklad en alebo ca.",
+        "languages": "Vyberte pole pre každý jazyk zdroja, napríklad NOM_CA pre ca a NOM_ES pre es. Prázdne pole sa vynechá.",
+        "lookupRow": "Jedna z hodnôt modelu, napríklad {example}.",
+        "observedAt": "Voliteľné: pole s časom merania hodnoty ako text RFC 3339, napríklad 2026-10-20T14:30:00Z, alebo Unix sekundy; stane sa observedAt atribútu.",
+        "refField": "Pole s vlastným id entity {target} v tomto priestore, napríklad kód mestskej časti ako 01.",
+        "separator": "Čo stojí medzi dvoma spojenými poľami, napríklad čiarka a medzera.",
+        "transformAdd": "Voliteľné kroky použité na pole v poradí, napríklad orezať medzery a potom preložiť hodnoty na hodnoty modelu.",
+        "wktField": "Pole s textom WKT, napríklad POINT (2.17 41.38)."
       }
     },
     "debug": {
@@ -3511,7 +3877,7 @@
       "grants": "Oprávnenia",
       "byPolicy": "Povolené politikou {policy}",
       "fix": "Oprava: {fix}",
-      "counts": "odoslané {sent}, odmietnuté {rejected}, zlyhané {failed}",
+      "counts": "odoslané {sent}, odmietnuté {rejected, number}, zlyhané {failed}",
       "perMinute": "{rate} záznamov za minútu",
       "openPipeline": "Otvoriť pipeline",
       "openRuns": "Behy",
@@ -4140,6 +4506,7 @@
       "search": "Hľadať osoby",
       "show": "Zobraziť prístup",
       "failed": "Prístup sa nepodarilo zobraziť. Skúste to znova o minútu; dôvod je nižšie.",
+      "refused": "Tento prístup nesmiete zobraziť. Prístup inej osoby alebo účtu prezerá len správca organizácie; dôvod je nižšie.",
       "nothing": "Nedosiahne nič",
       "nothingLead": "Žiadny Endpoint tohto projektu ich nepripúšťa ani im nič neudeľuje. Prístup udelíte politikou, skupinou alebo väzbou roly.",
       "space": "priestor {space}",
@@ -5838,7 +6205,10 @@
     "observedAt": "Pozorované",
     "unit": "Jednotka",
     "datasetId": "Dataset",
-    "empty": "Žiadne entity.",
+    "empty": "Zatiaľ tu nie sú žiadne entity. Údaje prichádzajú cez zdroj údajov, import alebo pipeline.",
+    "filtersMatchNothing": "Vašim filtrom nezodpovedá žiadny riadok.",
+    "notSaved": "neuložené",
+    "refusedNext": "Zahoďte zmeny a ponechajte uloženú hodnotu. Ak dôvod hovorí, že sem nesmiete zapisovať, požiadajte vlastníka kontextového priestoru o prístup.",
     "loading": "Načítavam…",
     "filtering": "Filtrujem…",
     "previous": "Predchádzajúca",
@@ -5849,6 +6219,7 @@
     "retry": "Skúsiť znova",
     "busy": "zdroj údajov je práve zaneprázdnený",
     "timedOut": "zdroj údajov neodpovedal včas",
+    "unreachable": "zdroj údajov je nedostupný",
     "filter": "Filter",
     "noFilter": "Ľubovoľné",
     "ops": {
@@ -6670,6 +7041,7 @@
       "failed": "Verzia {version} sa nezverejní, kým zlyháva {failed} jej testov: {names}. Požiadajte asistenta o opravu."
     },
     "publishOver": "Tento beh sa skončil, takže nemá čo zverejniť.",
+    "publishNotReady": "Zatiaľ nie je pripravená žiadna verzia na zverejnenie: Zverejniť sa sprístupní, keď bude zostavený jej náhľad a prejdú jej testy.",
     "failedNext": "Nič sa nezverejnilo. Na stránke Asistent aplikáciu zostavte znova.",
     "failedOpen": "Zostaviť znova"
   },
@@ -7557,9 +7929,10 @@
       "type": "Typ entity",
       "typeHelp": "Nechajte prázdne pre otázku na akýkoľvek typ.",
       "submit": "Opýtať sa brány",
-      "failed": "Bránu sa nepodarilo opýtať. Skúste to znova o minútu; dôvod je nižšie.",
+      "failed": "Bránu sa nepodarilo opýtať. Dôvod a Skúsiť znova nájdete nižšie.",
       "allowed": "Povolené",
       "refused": "Odmietnuté",
+      "refusedNext": "Ak to chcete povoliť, pridajte tejto osobe, skupine alebo role oprávnenie v zásade priestoru Endpointu v zozname vyššie a opýtajte sa znova.",
       "decidedBy": "Rozhodla Policy",
       "reason": {
         "policy_grant_matched": "Túto akciu povoľuje Policy.",
@@ -8423,6 +8796,7 @@
       "measured": "Úložisko zmerané {at}; AI prepočítané kurzom {rate} {currency} za jeden americký dolár.",
       "partial": "Niektoré priestory alebo asistenti neodpovedali; počítajú sa tu ako 0. Dôvody sú v riadkoch každého projektu.",
       "empty": "Žiadny projekt ešte nemá priestor ani asistenta, preto celý mesiac patrí platforme. Vytvorte v projekte Context Space a uvidíte jeho podiel.",
+      "emptyAction": "Otvoriť projekty",
       "caption": "Náklady podľa projektov, {month}",
       "project": "Projekt",
       "node": "Podiel na serveri",
@@ -9072,6 +9446,11 @@
       "0": "0: najviac raz (správa sa môže stratiť)",
       "1": "1: aspoň raz (správa sa môže zopakovať)",
       "2": "2: práve raz (najpomalšie)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Tabuľka (xlsx, ods)",
+      "shapefile": "Shapefile (zbalený v zip)"
     }
   },
   "picker": {
@@ -10990,11 +11369,8 @@
       "copy": "Kopírovať príkaz"
     },
     "claudeDesktop": {
-      "steps": "V Nastaveniach, časť Konektory, zvoľte Pridať vlastný konektor a vložte adresu. Alebo pridajte toto do claude_desktop_config.json (potrebuje Node.js) a reštartujte Claude Desktop.",
+      "steps": "Pridajte toto do claude_desktop_config.json (vyžaduje Node.js) a reštartujte Claude Desktop.",
       "copy": "Kopírovať konfiguráciu"
-    },
-    "chatgpt": {
-      "steps": "V Nastaveniach, časť Aplikácie a konektory, zapnite Režim vývojára, vytvorte konektor, vložte adresu a zvoľte Bez overenia."
     },
     "generic": {
       "title": "Iní klienti MCP",
@@ -11705,10 +12081,6 @@
       "mcp-local": "Claude Code, VS Code a iní lokálni klienti",
       "mcp-hub": "MCP hub organizácie",
       "mcp-mobile": "Mobilný asistent"
-    },
-    "steps": {
-      "claudeAi": "Settings → Connectors → Add custom connector. Vložte adresu, zvoľte Add, potom Connect a prihláste sa účtom Portálu.",
-      "chatgpt": "Settings → Apps & Connectors → Advanced settings: zapnite Developer mode. Potom Create, vložte adresu, zvoľte OAuth a prihláste sa účtom Portálu."
     },
     "call": {
       "at": "Kedy",
@@ -12847,6 +13219,91 @@
       "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tento portál tu nevypíše žiadne datasety. Požiadajte operátora o zapnutie katalógu.",
       "toSources": "Prejsť na Zdroje",
       "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát"
+    }
+  },
+  "assistantGuides": {
+    "lead": "Kam kliknúť v ktorom asistentovi, krok za krokom:",
+    "noHost": "Vložte adresu do asistenta tam, kde pridáva vlastný konektor alebo MCP server.",
+    "signIn": "Tento konektor vyžaduje prihlásenie: keď sa asistent spýta na spôsob prihlásenia, zvoľte OAuth a prihláste sa účtom Portálu.",
+    "list": "Postup pre jednotlivých asistentov",
+    "other": "Iný klient MCP"
+  },
+  "scripts": {
+    "workbench": {
+      "title": "Dielňa skriptov",
+      "purpose": "Napíšte ďalšiu verziu uloženého skriptu, spustite jeho testy na runneri projektu a navrhnite ju na posúdenie."
+    },
+    "empty": "Zatiaľ žiadny skript: pomenujte ho nižšie, napíšte kód a testy a navrhnite verziu 1.0.0.",
+    "field": {
+      "script": "Skript",
+      "newScript": "Nový skript",
+      "name": "Názov",
+      "code": "Kód",
+      "tests": "Testy",
+      "timeout": "Čas na záznam (ms)",
+      "memory": "Pamäť na záznam (MiB)",
+      "version": "Verzia",
+      "target": "Presunúť pripnutia na"
+    },
+    "hint": {
+      "script": "Vyberte skript projektu a upravte jeho ďalšiu verziu, alebo začnite nový.",
+      "name": "Malé písmená, číslice a pomlčky, napr. sjtsk-to-wgs84.",
+      "code": "Kód, ktorý číta záznam a zapisuje ho späť, napr. record.checked = true. Nedosiahne sieť, súbory ani tajomstvá.",
+      "tests": "Zoznam testov v JSON, každý s názvom, vstupným a očakávaným záznamom, napr. úvodný zoznam v poli.",
+      "timeout": "1 až 200, napr. 50. Prázdne znamená 50.",
+      "memory": "1 až 64, napr. 32. Prázdne znamená 32.",
+      "version": "MAJOR.MINOR.PATCH vyššia než najnovšia verzia, napr. {version}.",
+      "target": "Zverejnená verzia, napr. 1.1.0. Každá presunutá pipeline ju spustí po schválení zmeny."
+    },
+    "reason": {
+      "name": "Pomenujte skript malými písmenami, číslicami a pomlčkami.",
+      "code": "Napíšte 1 až 65536 bajtov kódu.",
+      "tests": "Napíšte testy ako zoznam JSON objektov s name, input a expected.",
+      "run": "Najprv spustite testy.",
+      "versionFormat": "Napíšte verziu ako MAJOR.MINOR.PATCH, napr. 1.1.0.",
+      "versionOrder": "Vyberte verziu vyššiu než {version}.",
+      "timeout": "Napíšte celé číslo od 1 do 200.",
+      "memory": "Napíšte celé číslo od 1 do 64.",
+      "limits": "Najprv opravte limity.",
+      "pipelineRights": "Vaša rola v tomto projekte nenavrhuje pipelines.",
+      "pick": "Vyberte pipelines na presun.",
+      "failing": "{count, plural, one {# test zlyhal: opravte kód alebo test.} few {# testy zlyhali: opravte kód alebo testy.} other {# testov zlyhalo: opravte kód alebo testy.}}",
+      "runner": "Runner projektu neodpovedal. Skúste to znova o minútu; ak to stále zlyháva, požiadajte správcu, aby runner skontroloval.",
+      "rightsNext": "Vaša rola v tomto projekte nenavrhuje skripty, preto nemôže spúšťať ani ich testy. Požiadajte správcu projektu o rolu, ktorá navrhuje skripty, ako je pipeline-editor.",
+      "proposed": "Upravte kód a napíšte ďalšiu verziu.",
+      "runFailed": "Testy sa nespustili: opravte, čo hovorí správa vyššie, a spustite ich znova."
+    },
+    "action": {
+      "run": "Spustiť testy",
+      "propose": "Navrhnúť verziu {version}",
+      "move": "{count, plural, one {Presunúť # pipeline na {version}} few {Presunúť # pipelines na {version}} other {Presunúť # pipelines na {version}}}"
+    },
+    "results": {
+      "caption": "Výsledky testov",
+      "test": "Názov testu",
+      "verdict": "Výsledok",
+      "output": "Výstup",
+      "time": "Čas",
+      "pass": "Prešiel",
+      "fail": "Zlyhal",
+      "changed": "Zmenené",
+      "outputOf": "Výstup testu {test}",
+      "empty": "Spustite testy a výsledok každého sa zobrazí tu.",
+      "emptyTitle": "Zatiaľ bez výsledku",
+      "millis": "{count} ms",
+      "changedNote": "Test označený Zmenené zapíše iný výstup než najnovšia uložená verzia {version}."
+    },
+    "proposed": "Verzia {version} je navrhnutá. Schváli ju druhá osoba na stránke Schválenia; pipelines si pripnutia nechajú, kým ich nepresuniete.",
+    "used": {
+      "title": "Pipelines používajúce {name}",
+      "caption": "Pipelines, ktoré pripínajú {name}",
+      "emptyTitle": "Tento skript nepoužíva žiadna pipeline",
+      "empty": "Pridajte do pipeline krok skriptu s názvom {name} alebo ho použite v jej skriptoch a objaví sa tu.",
+      "pipeline": "Pipeline",
+      "pinned": "Pripnutá verzia",
+      "already": "Už je na {version}.",
+      "moved": "Navrhnutá jedna zmena presúvajúca {names} na {version}.",
+      "onTarget": "Na cieľovej verzii"
     }
   },
   "opendataPages": {

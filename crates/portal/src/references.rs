@@ -109,6 +109,10 @@ fn fields(kind: &str) -> &'static [(&'static str, &'static str)] {
             ("spec.sources[].endpointRef", "Endpoint"),
             ("spec.compute.mappingRef", "Mapping"),
             ("spec.steps[].mappingRef", "Mapping"),
+            // The version a pin names, and whether it is published, is `scripts::check` (PL-119).
+            ("spec.steps[].scriptRef", "Script"),
+            ("spec.routes[].steps[].scriptRef", "Script"),
+            ("spec.scripts[].scriptRef", "Script"),
         ],
         "Subscription" => &[("spec.contextSpaceRef", "ContextSpace")],
         // A dashboard names no space of its own: it reads through the endpoints its widgets name.

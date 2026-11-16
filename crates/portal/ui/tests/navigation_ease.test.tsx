@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { doorsAsRest } from "./odata";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { CommandPalette, narrow } from "../src/navigation/CommandPalette";
@@ -65,6 +66,7 @@ function stub(preferences: object, seen: Seen = { puts: [], reports: [] }) {
       return json(list([]));
     }),
   );
+  doorsAsRest();
   return seen;
 }
 
@@ -255,6 +257,19 @@ describe("the shortcuts (T-3242)", () => {
     (document.getElementById("in-dialog") as HTMLButtonElement).focus();
     expect(shortcut(key({ key: "s", ctrlKey: true }))).toBe(true);
     expect(submitted).toEqual(["dialog"]);
+  });
+
+  it("submits no page form the focus is not in: a page's form may propose a Change", () => {
+    page(`<main><form id="page"><input id="name"/></form><button id="elsewhere">x</button></main>`);
+    const submitted: string[] = [];
+    document.getElementById("page")?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      submitted.push("page");
+    });
+    (document.getElementById("elsewhere") as HTMLButtonElement).focus();
+    expect(shortcut(key({ key: "s", ctrlKey: true }))).toBe(false);
+    expect(submitted).toEqual([]);
+    expect(available()).not.toContain("save");
   });
 
   it("saves nothing behind an open dialog that holds no form", () => {

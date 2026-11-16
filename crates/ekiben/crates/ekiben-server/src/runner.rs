@@ -395,7 +395,6 @@ async fn execute_stream_loop(
         pctx,
         paging,
         cpu_limit_ns: cpu_limit_ms.saturating_mul(1_000_000),
-        busy_ns: AtomicU64::new(0),
         stop: AtomicBool::new(false),
         taken: AtomicU64::new(0),
         in_flight: Arc::new(tokio::sync::Semaphore::new(workers * 2)),
@@ -482,9 +481,9 @@ struct WorkerPool {
     sctx: StreamContext,
     pctx: ProcContext,
     paging: Paging,
-    /// `max_cpu_time_ms_per_run`, charged with the time workers spend inside the processors.
+    /// `max_cpu_time_ms_per_run`, charged (`StreamMetrics::charge_processing`) with the time
+    /// workers spend inside the processors.
     cpu_limit_ns: u64,
-    busy_ns: AtomicU64,
     stop: AtomicBool,
     failure: std::sync::Mutex<Option<String>>,
     /// Sequence numbers handed out as batches are taken.
@@ -502,6 +501,9 @@ struct Processed {
     ack: AckResponder,
     /// The results as each is done; an `Err` ends them with the reason the run failed.
     results: mpsc::Receiver<Result<Batch, String>>,
+    /// Set by the worker once the pipeline ran to its end: results that close without it come
+    /// from a worker that died (a processor panicked).
+    finished: Arc<std::sync::atomic::AtomicBool>,
     slot: tokio::sync::OwnedSemaphorePermit,
 }
 
@@ -531,12 +533,14 @@ impl WorkerPool {
             tokio::task::yield_now().await;
             let (sorter, tagged_batch) = SortGroup::new(batch);
             let (results, rx) = mpsc::channel(PAGES_AHEAD);
+            let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let processed = Processed {
                 seq,
                 sorter,
                 tagged_batch: tagged_batch.clone(),
                 ack,
                 results: rx,
+                finished: finished.clone(),
                 slot,
             };
             if done.send(processed).await.is_err() {
@@ -544,7 +548,7 @@ impl WorkerPool {
             }
             let failed = if self.stop.load(Ordering::Acquire) {
                 Some("stream stopped".to_string())
-            } else if self.busy_ns.load(Ordering::Relaxed) > self.cpu_limit_ns {
+            } else if self.pctx.metrics.processing_ns() > self.cpu_limit_ns {
                 Some(format!(
                     "stream run exceeded per-run processing time budget ({} ms)",
                     self.cpu_limit_ns / 1_000_000
@@ -552,8 +556,11 @@ impl WorkerPool {
             } else {
                 self.run(tagged_batch, &results).await.err()
             };
-            if let Some(reason) = failed {
-                let _ = results.send(Err(reason)).await;
+            match failed {
+                Some(reason) => {
+                    let _ = results.send(Err(reason)).await;
+                }
+                None => finished.store(true, Ordering::Release),
             }
         }
     }
@@ -589,7 +596,7 @@ impl WorkerPool {
         })
         .await;
         let busy = (started.elapsed().as_nanos() as u64).saturating_sub(waited.into_inner());
-        self.busy_ns.fetch_add(busy, Ordering::Relaxed);
+        self.pctx.metrics.charge_processing(busy);
         res.map_err(|e| e.to_string())
     }
 
@@ -638,6 +645,13 @@ impl WorkerPool {
             // Freeing a batch's messages costs more than writing them (glibc frees memory
             // other threads allocated slowly): free on the blocking pool, in parallel.
             tokio::task::spawn_blocking(move || drop(out_batch));
+        }
+        if !p.finished.load(Ordering::Acquire) {
+            let reason = "a pipeline worker stopped before finishing the batch".to_string();
+            p.ack.nack(BatchError::new(p.tagged_batch, reason.clone()));
+            self.fail(reason);
+            self.stop.store(true, Ordering::Release);
+            return;
         }
         match batch_err {
             Some(b_err) => p.ack.nack(b_err),

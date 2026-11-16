@@ -1255,7 +1255,17 @@ pub async fn import(
     // Who may not import learns that before the body is read: a refused caller cannot make the
     // Portal buffer an upload of the organization's size (F-POR2-005).
     match query.format.as_deref() {
-        None => {}
+        None => {
+            // Each manifest is still checked on its own kind once the bundle is read (PF-50).
+            if !crate::permissions::for_request(&state, &user.0.identity, &project)
+                .may_propose_anything()
+            {
+                return Err(ApiError::Denied(format!(
+                    "Importing into project {project} needs a role with propose on the kinds \
+                     of the bundle (PF-50)."
+                )));
+            }
+        }
         Some("git") => {
             // Who may not open a project learns that and nothing else (PF-65).
             crate::api::projects::may_open(&state, &user.0.identity, None)?;

@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An agent account's Access view (T-4850, API/01 §52, AG-130…AG-132): its grants with their state,
 // the kind × verb matrix with the grant behind each cell, and Revoke now behind a confirmation.
@@ -58,7 +62,11 @@ async function stubApi(page: Page, access: { status: number; body: unknown }, ad
       ] });
     }
     if (path === "/api/v1/projects/helsinki/serviceaccounts") return json(list([ACCOUNT]));
-    if (path.endsWith("/serviceaccounts/vendor-ci/access")) return json(access.body, access.status);
+    if (odataCall(route.request().url())?.name === "jc_serviceaccount_access") {
+      return access.status === 200
+        ? route.fulfill({ status: 200, contentType: "application/json", body: odataBody(access.body) })
+        : json({ error: { code: "forbidden", message: (access.body as { detail: string }).detail, ...(access.body as object) } }, access.status);
+    }
     if (path === "/api/v1/organization/agents") return json({ items: [AGENT] });
     if (path.endsWith("/serviceaccounts/vendor-ci/revoke")) {
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "Change",

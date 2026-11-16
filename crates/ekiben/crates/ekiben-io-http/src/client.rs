@@ -19,6 +19,8 @@ use serde_json::Value as JsonValue;
 use tokio::sync::Mutex as AsyncMutex;
 use url::Url;
 
+use crate::paginate::PageRequest;
+
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 pub const MAX_REDIRECTS: usize = 5;
 
@@ -79,6 +81,32 @@ fn oauth2_form(oa: &OAuth2Config, in_params: bool) -> String {
         }
     }
     form.finish()
+}
+
+/// `oauth2.endpoint_params`: extra token request fields, each a list of strings
+/// (`audience: [https://api.example.com]`).
+fn oauth2_endpoint_params(
+    v: Option<&JsonValue>,
+) -> Result<HashMap<String, Vec<String>>, CoreError> {
+    const HINT: &str = "oauth2.endpoint_params maps a name to a list of strings, for example {audience: [https://api.example.com]}";
+    let Some(v) = v else {
+        return Ok(HashMap::new());
+    };
+    v.as_object()
+        .ok_or_else(|| CoreError::config(HINT))?
+        .iter()
+        .map(|(k, vs)| {
+            let vs = vs
+                .as_array()
+                .and_then(|a| {
+                    a.iter()
+                        .map(|v| v.as_str().map(String::from))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| CoreError::config(format!("{HINT}; {k} is not")))?;
+            Ok((k.clone(), vs))
+        })
+        .collect()
 }
 
 /// `Basic base64(QueryEscape(id) ":" QueryEscape(secret))`, x/oauth2's AuthStyleInHeader.
@@ -365,7 +393,7 @@ impl HttpClient {
                     client_secret,
                     token_url,
                     scopes,
-                    endpoint_params: HashMap::new(),
+                    endpoint_params: oauth2_endpoint_params(oa.get("endpoint_params"))?,
                 })
             } else {
                 None
@@ -440,6 +468,13 @@ impl HttpClient {
 
     pub fn raw_url(&self) -> &str {
         &self.raw_url
+    }
+
+    /// The configured `url` interpolated against `batch`.
+    pub fn resolve_url(&self, batch: &[Part]) -> Result<String, CoreError> {
+        self.url
+            .resolve_string(0, &PartsView(batch))
+            .map_err(|e| CoreError::other(format!("url interpolation error: {e}")))
     }
 
     fn check_status(&self, code: u16) -> (bool, RetryStrategy) {
@@ -589,13 +624,14 @@ impl HttpClient {
         &self,
         ref_batch: &[Part],
         batch_as_multipart: bool,
+        page: Option<&PageRequest>,
         org: &OrgContext,
     ) -> Result<(reqwest::RequestBuilder, String, Option<String>), CoreError> {
         let view = PartsView(ref_batch);
-        let resolved_url_str = self
-            .url
-            .resolve_string(0, &view)
-            .map_err(|e| CoreError::other(format!("url interpolation error: {e}")))?;
+        let resolved_url_str = match page {
+            Some(p) => p.url.to_string(),
+            None => self.resolve_url(ref_batch)?,
+        };
 
         let parsed_url = validate_resolved_url(&resolved_url_str, org)?;
         org.admit_http_request().await;
@@ -627,6 +663,9 @@ impl HttpClient {
                 has_content_type = true;
             }
             req = req.header(k, val);
+        }
+        for (k, v) in page.map(|p| p.headers.as_slice()).unwrap_or_default() {
+            req = req.header(k, v);
         }
 
         if let Some(first) = ref_batch.first() {
@@ -723,11 +762,26 @@ impl HttpClient {
     /// Executes an HTTP request with retries, rate limiting, and response size cap.
     pub async fn send(
         &self,
-        mut send_batch: Batch,
+        send_batch: Batch,
         batch_as_multipart: bool,
         org: &OrgContext,
         resources: &ResourceManager,
     ) -> Result<Batch, CoreError> {
+        self.send_page(send_batch, batch_as_multipart, None, org, resources)
+            .await
+            .map(|(batch, _)| batch)
+    }
+
+    /// [`Self::send`] with a page's URL and headers in place of the configured URL, answering
+    /// the response headers too (`paginate`).
+    pub async fn send_page(
+        &self,
+        mut send_batch: Batch,
+        batch_as_multipart: bool,
+        page: Option<&PageRequest>,
+        org: &OrgContext,
+        resources: &ResourceManager,
+    ) -> Result<(Batch, reqwest::header::HeaderMap), CoreError> {
         for p in &mut send_batch {
             let _ = p.as_bytes();
         }
@@ -738,7 +792,7 @@ impl HttpClient {
         loop {
             self.wait_rate_limit(org, resources, &send_batch).await?;
             let (req_builder, redacted_url, request_id) = self
-                .build_request(&send_batch, batch_as_multipart, org)
+                .build_request(&send_batch, batch_as_multipart, page, org)
                 .await?;
 
             match req_builder.send().await {
@@ -757,7 +811,8 @@ impl HttpClient {
                         {
                             tracing::info!(request_id = %id, url = %redacted_url, status = code, "http_client: jc's listener answered; each call of this stream is X-Request-Id {}-<n>", self.run);
                         }
-                        return Ok(self.response_to_batch(code, &headers, body_bytes));
+                        let batch = self.response_to_batch(code, &headers, body_bytes);
+                        return Ok((batch, headers));
                     }
 
                     let status_err = UnexpectedHttpStatusError {
@@ -899,6 +954,45 @@ pub fn validate_resolved_url(url_str: &str, org: &OrgContext) -> Result<Url, Cor
 
     org.check_http_host(host)?;
     Ok(parsed)
+}
+
+/// The three outbound clients of [`HttpClient`] for a component that builds its own requests
+/// (the S3 client): [`Self::for_url`] validates the URL as every `http_client` request is and
+/// hands the client whose resolver enforces the organization's outbound rule for that host.
+pub struct GuardedHttp {
+    public: reqwest::Client,
+    private_host: reqwest::Client,
+    open: reqwest::Client,
+}
+
+impl GuardedHttp {
+    pub fn new(timeout: Duration) -> Result<Self, CoreError> {
+        Ok(Self {
+            public: build_http(timeout, Reach::Public)?,
+            private_host: build_http(timeout, Reach::PrivateHost)?,
+            open: build_http(timeout, Reach::Open)?,
+        })
+    }
+
+    /// The checked URL and the client to send it with; a refused host is an error before any
+    /// connection is made.
+    pub fn for_url(
+        &self,
+        org: &OrgContext,
+        url: &str,
+    ) -> Result<(Url, &reqwest::Client), CoreError> {
+        let url = validate_resolved_url(url, org)?;
+        let client = if org.get_quotas().allow_private_ips {
+            &self.open
+        } else if url.host_str().is_some_and(|h| {
+            org.is_private_host_port_allowed(h, url.port_or_known_default().unwrap_or(0))
+        }) {
+            &self.private_host
+        } else {
+            &self.public
+        };
+        Ok((url, client))
+    }
 }
 
 /// What a client built by [`build_http`] may connect to.

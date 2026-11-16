@@ -45,6 +45,10 @@ use crate::store::{ListOptions, Mirror};
 /// `{project}/{name}`.
 pub const ACCOUNT_ATTRIBUTE: &str = "joinedcontext.serviceaccount";
 
+/// The client attribute by which a deployment's realm file lets the Portal add Endpoint audiences
+/// to an imported pipeline client it did not create (kaisatsu admits that one write, T-6972).
+pub const AUDIENCES_MANAGED_BY: &str = "audiences-managed-by";
+
 /// The one client scope an account's token carries (T-6051): `basic`, which writes `sub`. The
 /// realm's defaults would add `acr`, `email`, `profile`, `roles` (the `account` audience and the
 /// realm's default roles), `web-origins`, and `service_account` (`client_id`, `clientHost`,
@@ -408,7 +412,8 @@ fn mapping_text(
 /// Pipeline's own client) every Pipeline also gets `{project}-pl-{pipeline}` the same way, its
 /// audiences the Endpoints that Pipeline names: a Pipeline made after the realm import has no
 /// client of its own otherwise, and the runner refuses its stream (T-6899). An imported client
-/// of that id the wave did not create is served as it is ([`WorkloadClientSync::converge_one`]).
+/// of that id the wave did not create is served as it is, except that it gains the audience of
+/// an Endpoint its Pipeline names and it lacks ([`WorkloadClientSync::add_imported_audiences`]).
 fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos, own: bool) -> Vec<BoundAccount> {
     use crate::reconciler::streams::PIPELINE_ACCOUNT;
     use jc_core::kinds::pipeline_identity::{account_name, HARNESS};
@@ -453,6 +458,14 @@ fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos, own: bool) -> Vec<Bo
         });
     }
     accounts
+}
+
+/// Whether `account` is a project's `pipelines` account (declared or derived) or a Pipeline's
+/// own, with a client of its own rather than a Kubernetes binding.
+fn pipeline_client(account: &BoundAccount) -> bool {
+    (account.name == crate::reconciler::streams::PIPELINE_ACCOUNT
+        || jc_core::kinds::pipeline_identity::is_derived(&account.name))
+        && matches!(account.auth, Auth::External(_))
 }
 
 /// Whether `account` is a project's or a Pipeline's own pipeline client whose secret a host
@@ -877,13 +890,9 @@ impl WorkloadClientSync {
         // The realm's clients first: who already holds a subject decides a contested one.
         let listed = match self
             .admin
-            .send(
-                &token,
-                reqwest::Method::GET,
-                "/clients?briefRepresentation=false&max=2000",
-                None,
-            )
+            .get_all::<Value>(&token, "/clients?briefRepresentation=false")
             .await
+            .map(|listed| Some(Value::Array(listed)))
         {
             Ok(listed) => listed.unwrap_or(Value::Null),
             Err(err) => {
@@ -931,7 +940,20 @@ impl WorkloadClientSync {
                 Reach::Endpoint(slug) => vec![slug.clone()],
                 Reach::Internal => vec![crate::auth::internal::INTERNAL_AUDIENCE.to_owned()],
             };
-            let mut outcome = self.converge_one(&token, account, &audiences).await;
+            // What an imported pipeline client may gain: the Endpoints of its project among them.
+            let imported = if pipeline_client(account) {
+                let slugs = endpoint_slugs(mirror, &account.project);
+                audiences
+                    .iter()
+                    .filter(|a| slugs.values().any(|s| s == *a))
+                    .cloned()
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut outcome = self
+                .converge_one(&token, account, &audiences, &imported)
+                .await;
             if host && matches!(account.reach, Reach::Pipeline(_)) {
                 if outcome.error.is_none() {
                     self.read_host_secret(&token, account, &mut secrets, &mut outcome)
@@ -1190,11 +1212,83 @@ impl WorkloadClientSync {
         Ok(())
     }
 
+    /// Adds to an imported pipeline client (`client`, which the wave did not create) an audience
+    /// mapper for each Endpoint slug of `slugs` that no mapper of the client puts in its tokens
+    /// yet, and nothing else: no mapper is removed or changed, so what the import gave the
+    /// client stays. A Pipeline re-aimed after the import (an open-data Endpoint's write door,
+    /// EP-187, T-6972) otherwise writes with a token bound to the old Endpoint alone, and the
+    /// gateway refuses it with `token is not bound to this resource`. The slugs are the Endpoint
+    /// audiences a client the wave made for that account would get ([`named_endpoints`] for a
+    /// derived one, [`audiences`] for a declared `pipelines` account), never the Portal's or the
+    /// internal listener's.
+    async fn add_imported_audiences(
+        &self,
+        token: &str,
+        client: &Value,
+        slugs: &[String],
+        outcome: &mut ClientOutcome,
+    ) {
+        let Some(uuid) = client.get("id").and_then(Value::as_str) else {
+            outcome.error =
+                Some("the realm answered an imported pipeline client without an id".into());
+            return;
+        };
+        let at = format!("/clients/{uuid}/protocol-mappers/models");
+        let held: Vec<Value> = match self.admin.get(token, &at).await {
+            Ok(held) => held,
+            Err(err) => {
+                outcome.error = Some(format!("audiences of the imported client: {err}"));
+                return;
+            }
+        };
+        let marked = client
+            .get("attributes")
+            .and_then(|a| a.get(AUDIENCES_MANAGED_BY))
+            .and_then(Value::as_str)
+            == Some(MANAGED_VALUE);
+        for slug in slugs {
+            let want = audience_mapper(slug);
+            let present = held.iter().any(|m| {
+                m["name"] == want["name"]
+                    || (m["protocolMapper"] == "oidc-audience-mapper"
+                        && m["config"]["included.custom.audience"].as_str() == Some(slug.as_str()))
+            });
+            if present {
+                continue;
+            }
+            if !marked {
+                let id = client
+                    .get("clientId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(uuid);
+                outcome.error = Some(format!(
+                    "the imported client {id} puts no audience {slug} in its tokens, which its \
+                     Pipeline writes to, and the realm lets the Portal add none: give the client \
+                     the attribute {AUDIENCES_MANAGED_BY}: {MANAGED_VALUE} in the deployment's \
+                     realm file (deploy/rehearsal/rehearsal.py realms writes it) and apply it again"
+                ));
+                return;
+            }
+            if let Err(err) = self
+                .admin
+                .send(token, reqwest::Method::POST, &at, Some(&want))
+                .await
+            {
+                outcome.error = Some(format!("audience {slug} of the imported client: {err}"));
+                return;
+            }
+            outcome.drift.push(format!(
+                "the imported client put no audience {slug} in its tokens, which its Pipeline writes to; the audience was added"
+            ));
+        }
+    }
+
     async fn converge_one(
         &self,
         token: &str,
         account: &BoundAccount,
         audiences: &[String],
+        imported: &[String],
     ) -> ClientOutcome {
         let mut outcome = ClientOutcome::of(&account.label());
         let id = keycloak_client_id(&account.project, &account.name);
@@ -1219,8 +1313,15 @@ impl WorkloadClientSync {
             .and_then(Value::as_str);
         let uuid = match held.as_ref() {
             // The platform's own client of an external account (`keycloak-clients.yaml`) serves
-            // it as it is: its owner rotates it, so there is nothing to report.
-            Some(client) if account.binding().is_none() && !managed(client) => return outcome,
+            // it as it is: its owner rotates it, so there is nothing to report. An imported
+            // pipeline client only gains the Endpoints it writes to since the import.
+            Some(client) if account.binding().is_none() && !managed(client) => {
+                if !imported.is_empty() {
+                    self.add_imported_audiences(token, client, imported, &mut outcome)
+                        .await;
+                }
+                return outcome;
+            }
             Some(client) if !managed(client) || owner != Some(account.label().as_str()) => {
                 outcome.error = Some(format!(
                     "the realm holds a client {id} this wave did not create for this account; it \

@@ -132,8 +132,12 @@ pub struct Endpoint {
     /// The Endpoint's own `metadata.name`: with [`Self::project`], the readable
     /// `{project}/{name}` an agent may name it by (T-4748). Empty for a space's canonical surface.
     pub manifest_name: String,
-    /// The context space behind it, which becomes the pinned `NGSILD-Tenant` (EP-22).
+    /// The context space behind it, by its rendered segment (PF-84): what entity ids, policy
+    /// URNs and the space tables name it by.
     pub space: String,
+    /// The tenant every hop to the broker pins (EP-22, PF-130): `None` when the project's
+    /// Organization does not resolve, and then every request answers 503.
+    pub tenant: Option<crate::middleware::tenancy::Tenant>,
     /// The project the space belongs to, for audience checks (EP-14, EP-15).
     pub project: String,
     /// The endpoint's own `metadata.title` per locale; the DCAT record prefers it to the

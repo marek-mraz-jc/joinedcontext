@@ -23,6 +23,8 @@ pub mod compute;
 pub mod data_query;
 pub mod data_views;
 pub mod data_write;
+pub mod datasource_discover;
+pub mod datasource_paging;
 pub mod drafts;
 pub mod endpoint_reach;
 pub mod feed_shape;
@@ -822,6 +824,7 @@ fn init_registry() -> Vec<Operation> {
     operations.extend(space_reads::operations());
     operations.extend(administration::operations());
     operations.extend(repositories::operations());
+    operations.extend(datasource_discover::operations());
     operations
 }
 
@@ -1144,6 +1147,7 @@ mod tests {
             "jc_kpi_compute",
             "jc_manifest_dry_run",
             "jc_pipeline_test",
+            "jc_script_test",
             "jc_change_list",
             "jc_change_approve",
             "jc_datasource_check",

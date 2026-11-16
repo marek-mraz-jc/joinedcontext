@@ -134,7 +134,8 @@ impl Hubs {
         (subject, request_id): (Subject, Option<HeaderValue>),
         principal: String,
     ) -> Result<hub::Joined, Refused> {
-        let mut headers = upstream_headers(&endpoint.space, &subject).ok_or(Refused::NoIdentity)?;
+        let mut headers =
+            upstream_headers(endpoint.tenant.as_ref(), &subject).ok_or(Refused::NoIdentity)?;
         let key = hub_key(&endpoint.slug, &headers);
         let mut hubs = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let in_space: usize = hubs
@@ -363,10 +364,10 @@ type Upstream =
 /// The headers of a hub's upstream hops: the space's tenant and the caller's identity, as a REST
 /// read through the view carries them (T-4755). The broker's view and engine decide what the
 /// upstream subscription and its snapshot read, so a delivery holds only what this caller may
-/// read; nothing in the gateway cuts it again. `None` when the identity is no header value.
-fn upstream_headers(space: &str, subject: &Subject) -> Option<HeaderMap> {
+/// read; nothing in the gateway cuts it again. `None` when the Endpoint has no tenant.
+fn upstream_headers(tenant: Option<&tenancy::Tenant>, subject: &Subject) -> Option<HeaderMap> {
     let mut request = axum::extract::Request::new(Body::empty());
-    tenancy::pin_caller(&mut request, space, subject).ok()?;
+    tenancy::pin_caller(&mut request, tenant, subject).ok()?;
     let mut headers = std::mem::take(request.headers_mut());
     // Provenance names a writer and one request; the upstream writes nothing, and a hub is
     // shared by identity.
@@ -1178,8 +1179,12 @@ mod tests {
     /// broker cuts each delivery; callers share a hub only when the broker cannot tell them apart.
     #[test]
     fn the_upstream_speaks_as_the_caller_and_hubs_are_shared_by_identity() {
-        let anonymous = upstream_headers("helsinki", &Subject::anonymous()).expect("headers");
-        assert_eq!(anonymous[tenancy::TENANT], "helsinki");
+        let anonymous = upstream_headers(
+            tenancy::Tenant::segment("helsinki").ok().as_ref(),
+            &Subject::anonymous(),
+        )
+        .expect("headers");
+        assert_eq!(tenancy::pinned_tenant(&anonymous), Some("helsinki"));
         assert_eq!(anonymous["x-jc-roles"], "public");
         assert!(anonymous.get("x-jc-client").is_none(), "{anonymous:?}");
         assert!(
@@ -1192,7 +1197,8 @@ mod tests {
             roles: ["steward".to_owned()].into(),
             ..Subject::default()
         };
-        let person = upstream_headers("helsinki", &jana).expect("headers");
+        let person = upstream_headers(tenancy::Tenant::segment("helsinki").ok().as_ref(), &jana)
+            .expect("headers");
         // The broker matches a `user` assignee against the person's Keycloak id (PF-126).
         assert_eq!(
             person["x-jc-subject"],
@@ -1203,7 +1209,11 @@ mod tests {
             id: Some("0d5e2b7f-8a14-4e8a-9c61-3f2a9c1e7b4d".to_owned()),
             ..Subject::default()
         };
-        let reconciler = upstream_headers("helsinki", &reconciler).expect("headers");
+        let reconciler = upstream_headers(
+            tenancy::Tenant::segment("helsinki").ok().as_ref(),
+            &reconciler,
+        )
+        .expect("headers");
         assert_eq!(
             reconciler["x-jc-subject"],
             "service-account-portal-reconciler"
@@ -1214,14 +1224,19 @@ mod tests {
             service_account: Some(tenancy::GATEWAY_CLIENT.to_owned()),
             ..Subject::default()
         };
-        let posing = upstream_headers("helsinki", &posing).expect("headers");
+        let posing = upstream_headers(tenancy::Tenant::segment("helsinki").ok().as_ref(), &posing)
+            .expect("headers");
         assert!(posing.get("x-jc-client").is_none(), "{posing:?}");
 
-        let again = upstream_headers("helsinki", &Subject::anonymous()).expect("headers");
+        let again = upstream_headers(
+            tenancy::Tenant::segment("helsinki").ok().as_ref(),
+            &Subject::anonymous(),
+        )
+        .expect("headers");
         assert_eq!(hub_key("e", &anonymous), hub_key("e", &again));
         assert_ne!(hub_key("e", &anonymous), hub_key("e", &person));
         assert_ne!(hub_key("e", &anonymous), hub_key("f", &anonymous));
-        assert!(upstream_headers("bad\nspace", &Subject::anonymous()).is_none());
+        assert!(upstream_headers(None, &Subject::anonymous()).is_none());
 
         let subscription = upstream_subscription();
         assert_eq!(subscription["body"]["entities"], json!([{"type": "*"}]));
@@ -1317,7 +1332,7 @@ mod tests {
         );
 
         let person = upstream_headers(
-            "a",
+            tenancy::Tenant::segment("a").ok().as_ref(),
             &Subject {
                 user: Some("ana".into()),
                 id: Some("5b1e".into()),
@@ -1326,7 +1341,11 @@ mod tests {
         )
         .expect("headers");
         assert_eq!(caller_of(&person).as_deref(), Some("5b1e"));
-        let anonymous = upstream_headers("a", &Subject::anonymous()).expect("headers");
+        let anonymous = upstream_headers(
+            tenancy::Tenant::segment("a").ok().as_ref(),
+            &Subject::anonymous(),
+        )
+        .expect("headers");
         assert_eq!(caller_of(&anonymous), None);
     }
 

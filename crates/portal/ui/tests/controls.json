@@ -1304,12 +1304,22 @@
         "Button": 1
       },
       "tests": [
-        "context_sources_ui.test.tsx"
+        "context_sources_ui.test.tsx",
+        "datasource_presets.test.tsx",
+        "datasource_webhook_ui.test.tsx"
+      ]
+    },
+    "src/pages/datasources/WebhookPanel.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "datasource_webhook_ui.test.tsx"
       ]
     },
     "src/pages/datasources/DataSourcesPage.tsx": {
       "controls": {
-        "Button": 1
+        "Button": 2
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
@@ -1320,9 +1330,18 @@
         "runner_input_schema.test.ts"
       ]
     },
-    "src/pages/datasources/TemplateGallery.tsx": {
+    "src/pages/datasources/PresetDiscovery.tsx": {
       "controls": {
         "Button": 2
+      },
+      "tests": [
+        "datasource_presets.test.tsx"
+      ]
+    },
+    "src/pages/datasources/TemplateGallery.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 2
       },
       "tests": [
         "datasource_templates.test.tsx"
@@ -1996,11 +2015,20 @@
         "flow_map.test.tsx"
       ]
     },
+    "src/pages/pipelines/MapperSources.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "output_mapper_g18_ui.test.tsx"
+      ]
+    },
     "src/pages/pipelines/OutputMapper.tsx": {
       "controls": {
         "Button": 3
       },
       "tests": [
+        "output_mapper_g18_ui.test.tsx",
         "output_mapper_ui.test.tsx"
       ]
     },
@@ -2022,6 +2050,7 @@
         "pipeline_graph.test.ts",
         "pipeline_last_samples.test.tsx",
         "pipeline_step_form.test.tsx",
+        "processor_tiers.test.ts",
         "runner_lists.test.ts"
       ]
     },
@@ -2035,11 +2064,19 @@
     },
     "src/pages/pipelines/PipelineRejected.tsx": {
       "controls": {
-        "Button": 4,
+        "Button": 5,
         "Checkbox": 2
       },
       "tests": [
         "pipeline_rejected.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/SourceCheck.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "pipeline_source_check.test.tsx"
       ]
     },
     "src/pages/pipelines/PipelineHealth.tsx": {
@@ -2346,6 +2383,15 @@
         "workspaces_ui.test.tsx"
       ]
     },
+    "src/pages/scripts/ScriptsPage.tsx": {
+      "controls": {
+        "Button": 3,
+        "Checkbox": 1
+      },
+      "tests": [
+        "scripts_page.test.tsx"
+      ]
+    },
     "src/pages/secrets/SecretFormPage.tsx": {
       "controls": {
         "Button": 2
@@ -2381,7 +2427,7 @@
     },
     "src/routes/ApprovalsHistory.tsx": {
       "controls": {
-        "Button": 7
+        "Button": 8
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
@@ -2596,6 +2642,14 @@
         "access_requests.test.tsx",
         "pipeline_history.test.tsx",
         "workbench_target.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchSchedule.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "workbench_schedule.test.tsx"
       ]
     },
     "src/components/SpaceUsageInfo.tsx": {

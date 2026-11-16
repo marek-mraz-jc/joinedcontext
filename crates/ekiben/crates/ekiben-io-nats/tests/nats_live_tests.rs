@@ -401,6 +401,73 @@ async fn jetstream_bind_reads_an_existing_consumer_and_refuses_another_orgs() {
     assert!(missing.is_err(), "bind to a missing consumer fails");
 }
 
+/// `nats_request_reply` on a live server: the reply replaces the message and its headers become
+/// metadata; with nobody subscribed the message is marked failed, not left waiting.
+#[tokio::test]
+async fn nats_request_reply_on_a_live_server() {
+    use futures::StreamExt;
+    let Some(srv) = start_server("nats_request_reply", &[], &[]) else {
+        return;
+    };
+    let responder = async_nats::connect(&srv.url).await.unwrap();
+    let mut requests = responder.subscribe("org_a.echo").await.unwrap();
+    let replier = responder.clone();
+    tokio::spawn(async move {
+        while let Some(req) = requests.next().await {
+            let asked = req
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("asked_by"))
+                .map(|v| v.to_string());
+            let mut h = async_nats::HeaderMap::new();
+            h.insert("answered", asked.unwrap_or_default().as_str());
+            let body = String::from_utf8_lossy(&req.payload).to_uppercase();
+            replier
+                .publish_with_headers(req.reply.unwrap(), h, body.into())
+                .await
+                .unwrap();
+        }
+    });
+    responder.flush().await.unwrap();
+
+    let (reg, _sctx, pctx) = make_ctx("org-a", Some("org_a"));
+    let build = |subject: &str| {
+        reg.build_processor(
+            &conf(serde_json::json!({"nats_request_reply": {
+                "urls": [srv.url], "subject": subject, "timeout": "2s",
+                "headers": {"asked_by": "ekiben"}
+            }})),
+            &pctx,
+            "0",
+        )
+        .unwrap()
+    };
+    let res = ekiben_core::execute_all(
+        &pctx,
+        &[build("org_a.echo")],
+        vec![vec![Part::from_str("hello")]],
+    )
+    .await
+    .unwrap();
+    let p = &res[0][0];
+    assert!(!p.is_errored(), "{:?}", p.error_get());
+    assert_eq!(p.as_bytes_ref(), Bytes::from_static(b"HELLO"));
+    assert_eq!(p.meta_get_str("answered"), "ekiben");
+
+    let res = ekiben_core::execute_all(
+        &pctx,
+        &[build("org_a.nobody")],
+        vec![vec![Part::from_str("x")]],
+    )
+    .await
+    .unwrap();
+    let err = res[0][0]
+        .error_get()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("no responders"), "{err}");
+}
+
 #[tokio::test]
 async fn nats_kv_cache_processor_and_output_on_a_real_bucket() {
     let Some(srv) = start_server("nats_kv", &[], &[]) else {

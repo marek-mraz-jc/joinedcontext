@@ -4,6 +4,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import { narrowed } from "./stubQuery";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5082: an Endpoint's own page shows its rows, read with the person's own session through the
 // Endpoint. The endpoint orders the whole answer (`orderBy`), the address keeps the type, query and
@@ -66,6 +69,8 @@ async function stub(page: Page, entities: "rows" | "empty" | "refused" | "values
     if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "steward", name: "Steward", email: "s@hel.fi", roles: ["portal-editor"] });
     if (path === "/api/v1/projects") return json(list([{ name: "helsinki" }]));
     if (path === "/api/v1/projects/helsinki/endpoints/air") return json(ENDPOINT);
+    // The gateway admits the steward (T-6802): the page reads the rows only after it says so.
+    if (path === "/api/v1/projects/helsinki/endpoints/air/admission") return json({ admitted: true });
     return json(list([]));
   });
   await page.route("**/cs/**", (route) => route.fulfill({ contentType: "application/ld+json", body: "[]" }));

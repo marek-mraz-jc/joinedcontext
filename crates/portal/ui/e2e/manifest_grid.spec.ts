@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6115: Endpoints, Subscriptions, Data models and Pipelines are one grid (owner 2026-10-29).
 // Route stubs only: the shots show the grid at 1440 and 400, a filter chip, the cell panel with

@@ -201,11 +201,12 @@ impl OrganizationId {
             || !id.starts_with(|c: char| c.is_ascii_lowercase())
             || !id.contains('_')
             || !parts_ok
+            || id.starts_with("snap-")
         {
             return Err(Error::Name {
                 field: "organizationId",
                 value: id.to_string(),
-                reason: "must be a verified domain with its labels reversed and joined by `_` (`sk_bbsk` for bbsk.sk): [a-z][a-z0-9_-]{1,62} with a `_`",
+                reason: "must be a verified domain with its labels reversed and joined by `_` (`sk_bbsk` for bbsk.sk): [a-z][a-z0-9_-]{1,62} with a `_`, not starting `snap-`",
             });
         }
         Ok(Self(id.to_owned()))
@@ -242,6 +243,67 @@ impl std::str::FromStr for OrganizationId {
 }
 
 impl<'de> Deserialize<'de> for OrganizationId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = String::deserialize(d)?;
+        Self::parse(&raw).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A broker tenant (PF-130, EP-22): `{organization id}__{space segment}` (`sk_bbsk__mobility`),
+/// at most 63 + 2 + 63 = 128 characters. An [`OrganizationId`] never holds `__` and a space
+/// segment holds no `_`, so the name splits back at its first `__` into exactly one pair, and
+/// two Organizations never share a tenant.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct TenantName(String);
+
+impl TenantName {
+    /// The tenant of the space `segment` of Organization `org`.
+    pub fn new(org: &OrganizationId, segment: &str) -> Result<Self> {
+        validate_space_name(segment)?;
+        Ok(Self(format!("{org}__{segment}")))
+    }
+
+    /// Parses a tenant as written: splits at the first `__`, then checks each half by its own
+    /// grammar, so `sk_a` never matches `sk_ab__x` and no prefix compare is needed.
+    pub fn parse(raw: &str) -> Result<Self> {
+        let refused = || Error::Name {
+            field: "tenant",
+            value: raw.to_string(),
+            reason:
+                "must be `{organization id}__{space}` (`sk_bbsk__mobility`), at most 128 characters",
+        };
+        let (org, segment) = raw.split_once("__").ok_or_else(refused)?;
+        let org = OrganizationId::parse(org).map_err(|_| refused())?;
+        Self::new(&org, segment).map_err(|_| refused())
+    }
+
+    /// The Organization id half.
+    #[must_use]
+    pub fn organization(&self) -> &str {
+        self.0.split_once("__").map_or("", |(org, _)| org)
+    }
+
+    /// The space segment half.
+    #[must_use]
+    pub fn segment(&self) -> &str {
+        self.0.split_once("__").map_or("", |(_, segment)| segment)
+    }
+
+    /// The name as text, as the `NGSILD-Tenant` header carries it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TenantName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for TenantName {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
         let raw = String::deserialize(d)?;
         Self::parse(&raw).map_err(serde::de::Error::custom)
@@ -532,6 +594,108 @@ mod tests {
         let parsed: OrganizationId = serde_json::from_str("\"fi_hel\"").unwrap();
         assert_eq!(serde_json::to_string(&parsed).unwrap(), "\"fi_hel\"");
         assert!(serde_json::from_str::<OrganizationId>("\"hel\"").is_err());
+    }
+
+    /// Every string over `{a, 0, -, _}` up to `max` characters.
+    fn strings(max: usize) -> Vec<String> {
+        let mut all = vec![String::new()];
+        let mut last = vec![String::new()];
+        for _ in 0..max {
+            last = last
+                .iter()
+                .flat_map(|s| ['a', '0', '-', '_'].map(|c| format!("{s}{c}")))
+                .collect();
+            all.extend(last.iter().cloned());
+        }
+        all
+    }
+
+    /// PF-130: every Organization id and space segment up to 6 characters (plus the 63-character
+    /// boundary) mints a tenant that splits back into the same pair and that the broker's own
+    /// grammar accepts; every string up to 8 parses only as the pair that minted it.
+    #[test]
+    fn a_tenant_name_splits_back_into_its_organization_and_segment() {
+        let long_org = format!("{}_b", "a".repeat(61));
+        let long_segment = "s".repeat(63);
+        let mut ids: Vec<OrganizationId> = strings(6)
+            .iter()
+            .filter_map(|s| OrganizationId::parse(s).ok())
+            .collect();
+        ids.push(OrganizationId::parse(&long_org).expect("63-character id"));
+        let mut segments: Vec<String> = strings(6)
+            .into_iter()
+            .filter(|s| validate_space_name(s).is_ok())
+            .collect();
+        segments.push(long_segment.clone());
+        assert!(ids.len() > 100 && segments.len() > 100);
+        for org in &ids {
+            for segment in &segments {
+                let tenant = TenantName::new(org, segment).expect("valid pair");
+                let parsed = TenantName::parse(tenant.as_str())
+                    .unwrap_or_else(|e| panic!("{}: {e}", tenant.as_str()));
+                assert_eq!(
+                    (parsed.organization(), parsed.segment()),
+                    (org.as_str(), segment.as_str())
+                );
+                assert!(
+                    antares_model::id::TenantId::new(tenant.as_str()).is_ok(),
+                    "{tenant}"
+                );
+            }
+        }
+        let widest =
+            TenantName::new(&OrganizationId::parse(&long_org).unwrap(), &long_segment).unwrap();
+        assert_eq!(widest.as_str().len(), 128);
+        for raw in strings(8) {
+            if let Ok(tenant) = TenantName::parse(&raw) {
+                assert_eq!(tenant.as_str(), raw);
+                let org = OrganizationId::parse(tenant.organization()).expect(&raw);
+                assert_eq!(
+                    TenantName::new(&org, tenant.segment()).unwrap().as_str(),
+                    raw
+                );
+            }
+        }
+    }
+
+    /// PF-130: no `__`, two `__`, a `_` in the segment, an empty half, a bad id or segment, and
+    /// a name over 128 are refused; an id starting `snap-` (the broker's reserved prefix) is
+    /// refused while look-alikes pass; serde reads through the same parse.
+    #[test]
+    fn a_tenant_name_refuses_every_other_shape() {
+        let over = format!("{}_b__{}", "a".repeat(61), "s".repeat(64));
+        for bad in [
+            "sk_bbsk",
+            "sk_bbsk-mobility",
+            "sk_a__b__c",
+            "sk_a__b_c",
+            "__mobility",
+            "sk_a__",
+            "bbsk__mobility",
+            "Sk_a__x",
+            "sk_a__-x",
+            "sk_a__X",
+            "snap-a_b__x",
+            &over,
+            "default",
+            "",
+        ] {
+            assert!(TenantName::parse(bad).is_err(), "{bad}");
+        }
+        assert!(OrganizationId::parse("snap-a_b").is_err());
+        for good in ["snapx_b", "sk_snap-a"] {
+            assert!(OrganizationId::parse(good).is_ok(), "{good}");
+        }
+        let tenant = TenantName::parse("sk_bbsk__helsinki-mobility").unwrap();
+        assert_eq!(
+            (tenant.organization(), tenant.segment()),
+            ("sk_bbsk", "helsinki-mobility")
+        );
+        assert!(serde_json::from_str::<TenantName>("\"sk_bbsk-mobility\"").is_err());
+        assert_eq!(
+            serde_json::to_string(&tenant).unwrap(),
+            "\"sk_bbsk__helsinki-mobility\""
+        );
     }
 
     /// T-7007: no other name can take the shape of an Organization id. Every validator but the

@@ -495,6 +495,17 @@ async fn the_portal_publisher_converges_and_withdraws_against_dataroom() {
     .await;
     assert_eq!(back.expect("republished"), Outcome::Updated);
     assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_some());
+
+    // The binding withdraws but never purges (§5): `dataset_purge` is refused and the record stays.
+    let purge = reqwest::Client::new()
+        .post(format!("{base}/api/3/action/dataset_purge"))
+        .bearer_auth(TOKEN)
+        .json(&json!({ "id": PUBLIC_DATASET }))
+        .send()
+        .await
+        .expect("dataroom answers");
+    assert_eq!(purge.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(portal_dataset(&base, PUBLIC_DATASET).await.is_some());
 }
 
 /// ADR-N-068 (EP-175, EP-176, EP-178): one public Endpoint listing two datasets in

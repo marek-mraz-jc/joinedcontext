@@ -1,0 +1,8 @@
+{
+  "paginate": {
+    "mode": "next_url",
+    "next": "@iot.nextLink",
+    "records": "value"
+  },
+  "url": "https://iot.hamburg.de/v1.1/Things?%24filter=startswith%28name%2C%27StadtRad%27%29&%24select=%40iot.id%2Cname&%24top=150"
+}

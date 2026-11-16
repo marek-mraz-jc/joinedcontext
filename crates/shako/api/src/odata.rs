@@ -14,6 +14,7 @@
 use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, odata_error_response, resolve_and_authorize_repo,
+    stream_file_in_64k_chunks,
 };
 use axum::extract::{DefaultBodyLimit, Extension, Path, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -1160,10 +1161,10 @@ async fn odata_two_segment_get(
                 return match service::read_generic_file(&state, &ctx, &owner, &pkg, &ver, &file)
                     .await
                 {
-                    Ok(bytes) => (
+                    Ok(file) => (
                         StatusCode::OK,
                         [(header::CONTENT_TYPE, "application/octet-stream")],
-                        bytes,
+                        stream_file_in_64k_chunks(file),
                     )
                         .into_response(),
                     Err(e) => odata_error_response(&e),

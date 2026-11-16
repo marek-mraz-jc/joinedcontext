@@ -551,6 +551,22 @@ pub async fn run_current_state_contract(
         [live[0].as_str(), live[1].as_str(), live[2].as_str()],
         "an expired entity may neither be served nor consume a slot of the page"
     );
+    // the offset window too: what it serves and the total it names are live Entities only
+    let (sliced, total) = d
+        .list_slice(a, Kind::Entity, 0, 100_000)
+        .await
+        .expect("list_slice entities");
+    assert!(
+        sliced
+            .iter()
+            .all(|d| d["id"].as_str() != Some(expired.as_str())),
+        "an expired entity may not be served by a slice"
+    );
+    assert_eq!(
+        total,
+        sliced.len(),
+        "the total of a slice counts no expired entity"
+    );
 
     let mut walked: Vec<String> = Vec::new();
     let mut after = stem.clone();

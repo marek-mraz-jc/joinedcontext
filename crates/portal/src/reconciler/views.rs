@@ -1535,6 +1535,8 @@ pub struct ViewSync {
     /// not compiled again on every run.
     // ponytail: a Model Tools upgrade reaches an unchanged model when the Portal restarts.
     compiled: Mutex<BTreeMap<String, Compiled>>,
+    /// Where each space's compiled model also goes, for the pipelines' LinkML stage (G-19).
+    linkml: Option<Arc<crate::pipeline_validation::ModelSchemas>>,
     /// What the last run read, which a preview compiles its draft against (T-3802): the
     /// leader's converge and every follower's sync record it, so any replica previews (T-3820).
     last: Mutex<Option<Arc<Sources>>>,
@@ -1592,6 +1594,7 @@ impl ViewSync {
             model_tools: None,
             written_schemas: Mutex::default(),
             compiled: Mutex::default(),
+            linkml: None,
             last: Mutex::default(),
             confirmed: Mutex::default(),
         }
@@ -1613,6 +1616,12 @@ impl ViewSync {
     /// tenant's schema. Without it a space with a `dataModelRef` says its schema is not written.
     pub fn with_model_tools(mut self, url: impl Into<String>) -> Self {
         self.model_tools = Some(url.into().trim_end_matches('/').to_owned());
+        self
+    }
+
+    /// Hands each space's model, as compiled for its tenant, to the pipelines' stage (G-19).
+    pub fn with_linkml(mut self, schemas: Arc<crate::pipeline_validation::ModelSchemas>) -> Self {
+        self.linkml = Some(schemas);
         self
     }
 
@@ -1950,6 +1959,14 @@ impl ViewSync {
         // A tenant whose space lost its model, or is gone, keeps no compiled schema (T-4353).
         if pass == Pass::Whole {
             lock(&self.compiled).retain(|tenant, _| desired.schemas.contains_key(tenant));
+            if let Some(linkml) = &self.linkml {
+                linkml.retain_linkml(|project, space| {
+                    desired
+                        .schemas
+                        .values()
+                        .any(|(owner, _)| owner.project == project && owner.name == space)
+                });
+            }
         }
         let mut outcomes: BTreeMap<Owner, ViewOutcome> = BTreeMap::new();
         for (owner, reason) in &desired.refused {
@@ -2125,6 +2142,11 @@ impl ViewSync {
         for (tenant, (owner, model)) in &part.schemas {
             let outcome = match self.broker_schema(tenant, model).await {
                 Ok(schema) => {
+                    if let Some(linkml) = &self.linkml {
+                        let revision: String =
+                            model.digest().iter().map(|b| format!("{b:02x}")).collect();
+                        linkml.set_linkml(&owner.project, &owner.name, revision, &schema);
+                    }
                     self.put_if_changed(base, token, &format!("/q/schemas/{tenant}"), &schema)
                         .await
                 }
@@ -2681,10 +2703,23 @@ mod tests {
         let bus = json!({"id": "urn:ngsi-ld:Bus:7", "type": "Bus",
             "speed": {"type": "Property", "value": 41, "expiresAt": "2026-10-21T00:00:00Z"},
             "expiresAt": "2026-10-21T00:00:00Z"});
-        assert!(crate::record_check::judge_view(&view, "air-public", "Bus", &bus).is_empty());
+        assert!(crate::record_check::judge_view(
+            &view,
+            jc_core::kinds::Operation::UpsertBatch,
+            "air-public",
+            "Bus",
+            &bus
+        )
+        .is_empty());
         let mut stray = bus.clone();
         stray["pm25"] = json!({"type": "Property", "value": 3});
-        let findings = crate::record_check::judge_view(&view, "air-public", "Bus", &stray);
+        let findings = crate::record_check::judge_view(
+            &view,
+            jc_core::kinds::Operation::UpsertBatch,
+            "air-public",
+            "Bus",
+            &stray,
+        );
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert_eq!(findings[0].field, "pm25");
         assert!(findings[0]
@@ -2692,7 +2727,14 @@ mod tests {
             .starts_with("not writable through air-public"));
         let car = json!({"id": "urn:ngsi-ld:Car:1", "type": "Car", "speed": {"type": "Property", "value": 1}});
         assert_eq!(
-            crate::record_check::judge_view(&view, "air-public", "Car", &car)[0].field,
+            crate::record_check::judge_view(
+                &view,
+                jc_core::kinds::Operation::UpsertBatch,
+                "air-public",
+                "Car",
+                &car
+            )[0]
+            .field,
             "type",
             "the draft writes no Car any more"
         );

@@ -461,6 +461,18 @@ for (const [label, width, height] of [["desktop-1440", 1440, 900], ["phone-400",
   });
 }
 
+/**
+ * The targets left once a header's filter and menu glyphs are set aside: T-6781 keeps them 44 px
+ * high and 28 px wide (over WCAG 2.5.8's 24) so they sit beside the column's name. Each glyph
+ * still has to be 44 px high and at least 24 px wide.
+ */
+function beyondHeaderGlyphs(small: string[]): string[] {
+  return small.filter((line) => {
+    const glyph = /^(\d+)x(\d+) button "(Filter column|Column options): /.exec(line);
+    return !(glyph && Number(glyph[1]) >= 24 && Number(glyph[2]) >= 44);
+  });
+}
+
 // T-5596: on a touch screen every control of the space page is a finger's 44 px, the grid's
 // checkboxes through their labels, the crumbs, brand, back and CSV links through `touch-target`;
 // a tap beside a row's box ticks it and leaves the row closed. Nothing scrolls sideways.
@@ -474,7 +486,7 @@ test.describe("The space page at phone width with touch", () => {
       await expect(page.getByText("Workshop for Families").first()).toBeVisible();
       expect(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), "the phone is a touch screen").toBe(true);
 
-      expect(await smallTouchTargets(page), "every control is at least 44 x 44 px").toEqual([]);
+      expect(beyondHeaderGlyphs(await smallTouchTargets(page)), "every control is at least 44 x 44 px").toEqual([]);
       // The filter chips under the toolbar keep the finger's size too (T-6161).
       await openTool(page, "Filter");
       await page.getByRole("button", { name: "Add condition", exact: true }).click();
@@ -484,7 +496,7 @@ test.describe("The space page at phone width with touch", () => {
       await page.getByTestId("grid-toolbar").getByRole("button", { name: "Close" }).tap();
       await expect(page.getByRole("button", { name: "Add condition", exact: true })).toBeHidden();
       await expect(page.getByRole("list", { name: "Active filters" }).getByRole("listitem")).toHaveCount(3);
-      expect(await smallTouchTargets(page), "every chip control is at least 44 x 44 px").toEqual([]);
+      expect(beyondHeaderGlyphs(await smallTouchTargets(page)), "every chip control is at least 44 x 44 px").toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth), "nothing scrolls sideways").toBeLessThanOrEqual(width);
       // The box keeps its size: the label around it is what grew.
       const box = await page.getByRole("checkbox", { name: /^Select row: / }).first().boundingBox();

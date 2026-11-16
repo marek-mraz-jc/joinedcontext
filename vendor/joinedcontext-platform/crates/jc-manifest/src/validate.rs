@@ -328,6 +328,16 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
         });
     }
 
+    // Layout 2 refuses these while assembling; a layout 1 repository is checked here (CC-86).
+    if let Err(conflict) = crate::assemble::unique_slugs_and_identities(&repo) {
+        report.findings.push(Finding {
+            path: PathBuf::new(),
+            document: 1,
+            line: 1,
+            message: conflict.to_string(),
+        });
+    }
+
     for (id, path, why) in repo.unresolved_references() {
         let where_from = repo.get(id);
         report.findings.push(Finding {
@@ -549,6 +559,7 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
     for (location, message) in app_names_claimed_twice(&repo)
         .into_iter()
         .chain(space_segments_claimed_twice(&repo))
+        .chain(domains_claimed_twice(&repo))
         .chain(public_ids_claimed_twice(&repo))
     {
         report.findings.push(Finding {
@@ -985,6 +996,39 @@ fn space_segments_claimed_twice(repo: &Repository) -> Vec<(Location, String)> {
     )
 }
 
+/// Every `Organization` whose `spec.domain` another Organization also declares (EP-188,
+/// PF-130): the domain is the Organization id that opens every tenant of its spaces, so two
+/// Organizations of one domain would read and write each other's tenants.
+fn domains_claimed_twice(repo: &Repository) -> Vec<(Location, String)> {
+    let mut owners: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let organizations: Vec<_> = repo
+        .iter()
+        .filter(|(id, _)| id.kind == "Organization")
+        .filter_map(|(id, loaded)| {
+            let domain = loaded.manifest.spec.get("domain")?.as_str()?;
+            Some((id.name.as_str(), domain, loaded))
+        })
+        .collect();
+    for (name, domain, _) in &organizations {
+        owners.entry(domain).or_default().push(name);
+    }
+    organizations
+        .iter()
+        .filter_map(|(name, domain, loaded)| {
+            let claimants = owners.get(domain).filter(|c| c.len() > 1)?;
+            Some((
+                location_of(loaded),
+                format!(
+                    "Organization {name} declares the domain '{domain}', which Organizations {} \
+                     all declare; a domain names one Organization and opens the broker tenants \
+                     of its spaces, keep it on one and give the others their own (EP-188, PF-130)",
+                    claimants.join(" and ")
+                ),
+            ))
+        })
+        .collect()
+}
+
 /// Every `AssistantDeployment` whose `publicId` another deployment also declares, in this project
 /// or another (MF-52, T-3283): the chat route and the widget answer one deployment per id, so a
 /// second one would take the first's public address.
@@ -1263,6 +1307,8 @@ fn output_field(spec: &jc_core::kinds::PipelineSpec, index: usize) -> String {
 struct WriteBindings<'a> {
     repo: &'a Repository,
     org_domain: Option<&'a str>,
+    /// Each project's own domains, as the gateway binds a Policy URN (T-6502).
+    domains: BTreeMap<String, std::collections::BTreeSet<String>>,
     endpoints: BTreeMap<(String, String), jc_core::kinds::EndpointSpec>,
 }
 
@@ -1280,6 +1326,7 @@ impl<'a> WriteBindings<'a> {
         Self {
             repo,
             org_domain: repo.org_domain(),
+            domains: repo.policy_ref_domains(),
             endpoints,
         }
     }
@@ -1309,10 +1356,23 @@ impl<'a> WriteBindings<'a> {
         // (P-18, T-6736): `door` is that grant on that Endpoint.
         if let Some(refs) = spec.policy_refs().filter(|_| !door) {
             let segment = self.repo.space_segment(project, space);
+            // The gateway's rule (bound_policies): the project's own domains, else the
+            // installation's.
+            let domains = self.domains.get(project.as_str());
+            let domain = domains
+                .and_then(|domains| domains.first())
+                .map(String::as_str)
+                .or(self.org_domain);
             let ours = |reference: &jc_core::Urn| {
-                self.org_domain
-                    .is_none_or(|domain| reference.org_domain() == Some(domain))
-                    && reference.space() == Some(segment.as_str())
+                let domain_ok = match domains {
+                    Some(domains) => reference
+                        .org_domain()
+                        .is_some_and(|domain| domains.contains(domain)),
+                    None => self
+                        .org_domain
+                        .is_none_or(|domain| reference.org_domain() == Some(domain)),
+                };
+                domain_ok && reference.space() == Some(segment.as_str())
             };
             let named: Vec<_> = refs.iter().filter(|r| r.local_id() == name).collect();
             if named.is_empty() {
@@ -1324,7 +1384,7 @@ impl<'a> WriteBindings<'a> {
                     "names it as {}, which binds nothing: write \
                      urn:ngsi-ld:Policy:{}:{segment}:{name}",
                     named[0],
-                    self.org_domain.unwrap_or("{orgDomain}")
+                    domain.unwrap_or("{orgDomain}")
                 ));
             }
         }

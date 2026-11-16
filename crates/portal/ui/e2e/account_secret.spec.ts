@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A ServiceAccount's client secret (T-5626, PF-37, API/01 §52): an approver issues a new one on
 // the account's card behind a confirmation, sees it once with its client id and token URL, and
@@ -54,7 +58,7 @@ async function stubApi(page: Page, access: unknown, approver: boolean): Promise<
       ] });
     }
     if (path === "/api/v1/projects/helsinki/serviceaccounts") return json(list([ACCOUNT]));
-    if (path.endsWith("/serviceaccounts/vendor/access")) return json(access);
+    if (odataCall(request.url())?.name === "jc_serviceaccount_access") return route.fulfill({ status: 200, contentType: "application/json", body: odataBody(access) });
     if (path.endsWith("/serviceaccounts/vendor/secret") && request.method() === "POST") {
       issued.push(path);
       return json(ISSUED);

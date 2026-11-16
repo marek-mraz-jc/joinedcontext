@@ -13,6 +13,7 @@ websocket = ["dep:tokio-websockets", "dep:rustls", "dep:tokio-rustls", "dep:rust
 [dependencies]
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
+ekiben-io-file = { workspace = true }
 tokio = { workspace = true }
 hyper = { workspace = true }
 reqwest = { workspace = true }

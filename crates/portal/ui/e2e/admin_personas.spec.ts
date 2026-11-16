@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Owner order 2026-11-08 (jc-admin-ui, crates/portal/MCP-ADMIN.md): what a platform
 // administrator, an organization administrator and a project administrator do through the MCP

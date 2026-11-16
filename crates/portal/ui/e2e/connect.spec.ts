@@ -37,5 +37,42 @@ test("a visitor reads a public MCP connector's tools and copies its setup", asyn
     /^claude mcp add --transport http bbsk-otvorene-data https?:\/\/.+\/api\/mcp\/bbsk\/otvorene-data$/,
   );
   expect(cookies.every((cookie) => cookie === undefined)).toBe(true);
+  // A stranger's Portal knows no open data host: the page says where the address goes, no clicks.
+  await expect(page.getByText(/Paste the address into your assistant/)).toBeVisible();
+  await expect(page.getByRole("list", { name: "Setup steps per assistant" })).toHaveCount(0);
+  for (const width of [1440, 400]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({ path: test.info().outputPath(`connect-stranger-copied-${width}.png`), fullPage: true });
+  }
+  expect(await axeViolations(page)).toEqual([]);
+});
+
+// T-7043: a signed-in visitor gets the open data /connector page's section per assistant.
+test("a signed-in visitor follows a link to each assistant's steps", async ({ page }) => {
+  await page.route("**/api/v1/**", async (route) => {
+    if (new URL(route.request().url()).pathname === "/api/v1/organization/addresses") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [{ organization: "bbsk", title: "BBSK", addresses: [{ kind: "opendata", url: "https://data.bbsk.example/" }] }] }),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/problem+json", body: JSON.stringify({ title: "Not Found", status: 404 }) });
+  });
+  await page.route("**/api/mcp/bbsk/otvorene-data", async (route) => {
+    const { method } = route.request().postDataJSON() as { method: string };
+    const result = method === "initialize" ? { serverInfo: { name: "otvorene-data", title: "Open data" }, instructions: "" } : { tools: [] };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ jsonrpc: "2.0", id: 1, result }) });
+  });
+  for (const width of [1440, 400]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/connect/bbsk/otvorene-data?lang=en");
+    const guides = page.getByRole("list", { name: "Setup steps per assistant" });
+    for (const [name, id] of [["Claude", "claude"], ["ChatGPT", "chatgpt"], ["Grok", "grok"], ["Any other MCP client", "other"]]) {
+      await expect(guides.getByRole("link", { name: new RegExp(`^${name}`) })).toHaveAttribute("href", `https://data.bbsk.example/connector#${id}`);
+    }
+    await page.screenshot({ path: test.info().outputPath(`connect-guides-${width}.png`), fullPage: true });
+  }
   expect(await axeViolations(page)).toEqual([]);
 });

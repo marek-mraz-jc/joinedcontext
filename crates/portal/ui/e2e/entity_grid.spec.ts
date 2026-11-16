@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The journey over entity data (T-1437; UI-64, UI-67, UI-59). `vite preview` has no portal API and
 // no gateway behind it, so both are answered in the browser: the grid, the explorer around it and
@@ -141,6 +144,15 @@ interface Stub {
   reads: string[];
 }
 
+/**
+ * The attribute `name` of a recorded write's body: the grid writes `observedAt` beside `value`, and
+ * the order of an object's members is no part of the NGSI-LD contract.
+ */
+function written(write: string, name: string): Record<string, unknown> {
+  const body = write.slice(write.indexOf("{"), write.lastIndexOf(" reason="));
+  return (JSON.parse(body) as Record<string, Record<string, unknown>>)[name];
+}
+
 async function stubApi(page: Page, options: { write?: boolean } = {}): Promise<Stub> {
   const writes: string[] = [];
   const reads: string[] = [];
@@ -172,6 +184,10 @@ async function stubApi(page: Page, options: { write?: boolean } = {}): Promise<S
     }
     if (path.endsWith("/access")) {
       return json(grant(options.write === true));
+    }
+    // The gateway admits the person (T-6802): the Endpoint page reads its rows only after it says so.
+    if (path.endsWith("/admission")) {
+      return json({ admitted: true });
     }
     if (request.method() !== "GET") {
       // The reason travels with each write (DM-113), so it is kept beside the body.
@@ -346,7 +362,7 @@ test.describe("the entity grid", () => {
 
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toContain(`PATCH /api/endpoint/${SLUG}/ngsi-ld/v1/entities/`);
-    expect(writes[0]).toContain('"availableBikeNumber":{"type":"Property","value":4');
+    expect(written(writes[0], "availableBikeNumber")).toMatchObject({ type: "Property", value: 4 });
     expect(writes[0]).toContain('"observedAt"');
   });
 
@@ -451,7 +467,7 @@ for (const width of [1440, 400]) {
 
       await expect.poll(() => writes.length).toBe(1);
       expect(writes[0]).toContain(`PATCH /api/endpoint/${SLUG}/ngsi-ld/v1/entities/${encodeURIComponent(EMPTY_DOCK)}/attrs`);
-      expect(writes[0]).toContain('"availableBikeNumber":{"type":"Property","value":4');
+      expect(written(writes[0], "availableBikeNumber")).toMatchObject({ type: "Property", value: 4 });
       expect(writes[0]).toContain(`reason=${encodeURIComponent("Counter reset at 06:00")}`);
 
       const undo = page.getByRole("button", { name: "Undo" });
@@ -460,7 +476,7 @@ for (const width of [1440, 400]) {
       await page.screenshot({ path: `${SHOTS}/t4826-undo-steward-${width}.png` });
       await undo.click();
       await expect.poll(() => writes.length).toBe(2);
-      expect(writes[1]).toContain('"availableBikeNumber":{"type":"Property","value":0');
+      expect(written(writes[1], "availableBikeNumber")).toMatchObject({ type: "Property", value: 0 });
       expect(writes[1]).toContain(`reason=${encodeURIComponent("Undo: Counter reset at 06:00")}`);
       await expect(page.getByText("The change was undone.")).toBeVisible();
     });

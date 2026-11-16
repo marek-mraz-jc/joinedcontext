@@ -404,6 +404,12 @@ fn no_value_makes_a_helper_panic() {
         "root = this.v.ngsild_key_values()",
         "root = this.v.ngsild_normalized()",
         r#"root = ngsild_urn("T", this.v)"#,
+        r#"root = ngsild_ref("T", this.v)"#,
+        r#"root = ngsild_ref("T", "a", this.v)"#,
+        "root = ngsild_point(this.v, this.v)",
+        r#"root = ngsild_point(1, 2, this.v)"#,
+        "root = ngsild_multi(this.v)",
+        "root = ngsild_language_map(this.v)",
     ];
     for v in &values {
         for c in calls {

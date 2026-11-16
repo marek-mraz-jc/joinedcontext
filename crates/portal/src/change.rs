@@ -433,7 +433,9 @@ pub fn classify(kind: &str, op: Operation, spec: &serde_json::Value) -> Lane {
         | "Project"
         // The ceiling of every connector a person grants an AI client: what it may read and
         // write is access, reviewed like a Role (AG-151).
-        | "DelegationPolicy" => Lane::Red,
+        | "DelegationPolicy"
+        // Code the runner executes inside every pipeline that pins it (PL-121).
+        | "Script" => Lane::Red,
 
         "ContextSpace" if spec.get("isSandbox").and_then(|v| v.as_bool()) == Some(true) => {
             Lane::Green

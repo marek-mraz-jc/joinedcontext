@@ -38,6 +38,13 @@ describe("the OData client", () => {
     expect(page).toEqual({ value: [{ name: "pm10" }], count: 7, nextLink: undefined });
   });
 
+  it("reads one entity with the members a $select names", async () => {
+    const { transport, sent } = scripted({ status: 200, body: { name: "pm10", spec: { a: 1 } } });
+    const row = await odata("/api/v1/", { transport }).get("spaces", { project: "air", name: "pm10" }, ["name", "spec"]);
+    expect(sent[0].path).toBe("/api/v1/spaces(project='air',name='pm10')?$select=name%2Cspec");
+    expect(row).toEqual({ name: "pm10", spec: { a: 1 } });
+  });
+
   it("writes keys and literals as OData does", () => {
     expect(literal("it's")).toBe("'it''s'");
     expect(literal(3)).toBe("3");
@@ -82,6 +89,13 @@ describe("the OData client", () => {
     );
   });
 
+  it("calls a people function on the Organization singleton (T-7097)", async () => {
+    const { transport, sent } = scripted({ status: 200, body: { value: { items: [] } } });
+    const value = await odata("/bbsk/api/v1/", { transport }).organizationCall("jc_person_list", { search: "ana" });
+    expect(value).toEqual({ items: [] });
+    expect(sent[0].path).toBe("/bbsk/api/v1/Organization/JoinedContext.Portal.jc_person_list(search=@search)?@search='ana'");
+  });
+
   it("sends If-Match on a bound action and reads 428 and 412", async () => {
     const { transport, sent } = scripted(
       { status: 202, body: { name: "c-1" } },
@@ -92,7 +106,7 @@ describe("the OData client", () => {
       {
         status: 412,
         body: { error: { code: "precondition-failed", message: "changed", title: "Precondition Failed" } },
-        headers: { etag: '"new"' },
+        headers: { etag: '"new"', "x-request-id": "req-7" },
       },
     );
     const client = odata("/api/v1/", { transport });
@@ -108,7 +122,7 @@ describe("the OData client", () => {
     expect(required).toBeInstanceOf(ODataError);
     expect((required as ODataError).preconditionRequired).toBe(true);
     const stale = (await client.act("propose_delete", bound, {}, '"old"').catch((e: unknown) => e)) as ODataError;
-    expect([stale.stale, stale.etag, stale.code]).toEqual([true, '"new"', "precondition-failed"]);
+    expect([stale.stale, stale.etag, stale.code, stale.requestId]).toEqual([true, '"new"', "precondition-failed", "req-7"]);
   });
 
   it("maps the OData error object and a problem+json to one API/09 problem", async () => {

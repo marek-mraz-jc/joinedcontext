@@ -1,0 +1,348 @@
+// T-6812 (ADR-N-070, API/13 §2a, §2b): the Portal UI's one client of its Organization's OData
+// service. Reads of sets, the functions and the actions go through here; the REST doors in
+// client.ts shrink page group by page group under tests/odata_ratchet.test.ts.
+import {
+  odata,
+  ODataError,
+  originTransport,
+  type ODataModel,
+} from "@joinedcontext/sdk";
+import { ApiError, loginRedirectUrl, type WireProblem } from "./client";
+import { ORG_NAMESPACE } from "./manifest";
+import type { components, operations } from "./schema";
+import { announceSessionEnded } from "./sessionEnded";
+import { announceStepUp, stepUpUrl } from "./stepUp";
+
+/** The service root: the Portal serves its own Organization at its origin (API/15 §2). */
+export const ODATA_ROOT = "/api/v1/";
+
+const SECOND_FACTOR = "https://joinedcontext.com/errors/second-factor-required";
+
+/** The problem type of an answer, an OData error object's or a REST problem's. */
+function typeOf(body: unknown): unknown {
+  if (typeof body !== "object" || body === null) return undefined;
+  const error = (body as { error?: { type?: unknown } }).error;
+  return error?.type ?? (body as { type?: unknown }).type;
+}
+
+/**
+ * `fetch` with what every Portal request has: a 401 ends the session where the person is, and a
+ * decision that needs a second factor opens the step-up dialog (T-2747, T-5567), as api/client.ts
+ * does for the REST doors.
+ */
+async function portalFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  // One `Request` with an absolute address, as the REST client sends: jsdom has no base for a path.
+  const request =
+    input instanceof Request
+      ? input
+      : new Request(new URL(String(input), window.location.origin), init);
+  const response = await globalThis.fetch(request);
+  const here = `${window.location.pathname}${window.location.search}`;
+  if (response.status === 401 && window.location.pathname !== "/login") {
+    announceSessionEnded(loginRedirectUrl(here));
+  } else if (response.status === 403) {
+    const body: unknown = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    if (typeOf(body) === SECOND_FACTOR) announceStepUp(stepUpUrl(here));
+  }
+  return response;
+}
+
+const client = odata(ODATA_ROOT, { transport: originTransport(portalFetch) });
+/** The same service for a report sent as the tab closes: `keepalive` lets it finish (T-7101). */
+const closingClient = odata(ODATA_ROOT, {
+  transport: originTransport((input, init) =>
+    portalFetch(input, { ...init, keepalive: true }),
+  ),
+});
+
+/**
+ * A refusal of the service as every page reads one: an ApiError whose problem holds the OData
+ * error's API/09 members (`type`, `title`, `status`, `message` as `detail`), so a page shows its
+ * refusal, empty and retry states unchanged.
+ */
+export function toApiError(error: unknown): unknown {
+  if (!(error instanceof ODataError)) return error;
+  const problem: WireProblem = {
+    type: error.type,
+    title: error.title,
+    status: error.status,
+    detail: error.message,
+    // The fields a refusal names, as the REST problem's `errors` a page marks them by.
+    ...(error.details.length
+      ? {
+          errors: error.details.map(({ target, message }) => ({
+            path: target,
+            message,
+          })),
+        }
+      : {}),
+    ...(error.hint ? { hint: error.hint } : {}),
+  };
+  return new ApiError(error.status, error.message, problem, error.requestId);
+}
+
+async function refusedAs<T>(answer: Promise<T>): Promise<T> {
+  try {
+    return await answer;
+  } catch (error) {
+    throw toApiError(error);
+  }
+}
+
+type Functions = ODataModel.Functions;
+type Actions = ODataModel.Actions;
+
+/** The answer an operation documents in the REST contract, until T-7075 retires the REST types. */
+type Answer<O extends keyof operations> = operations[O] extends {
+  responses: { 200: { content: { "application/json": infer T } } };
+}
+  ? T
+  : never;
+
+/** Each function the UI calls and the shape of its answer: the same handler serves its REST door. */
+interface Answers {
+  jc_access_explore: Answer<"explore_access">;
+  jc_access_simulate: Answer<"simulate_access">;
+  jc_change_history: Answer<"list_change_history">;
+  jc_endpoint_preview: Answer<"preview_endpoint">;
+  jc_serviceaccount_access: Answer<"account_access">;
+}
+
+/**
+ * A bound function of `project`, e.g. `call("jc_change_history", "air", { page: 1 })`: its value
+ * is the operation's answer.
+ */
+export function call<F extends keyof Functions & string>(
+  name: F,
+  project: string,
+  params: Functions[F],
+): Promise<F extends keyof Answers ? Answers[F] : unknown> {
+  return refusedAs(client.call(name, project, params)) as Promise<
+    F extends keyof Answers ? Answers[F] : unknown
+  >;
+}
+
+/** Each Administration page's reading of `jc_organization_read` and its answer (T-7098). */
+interface Readings {
+  setup: Answer<"get_setup">;
+  health: Answer<"get_health">;
+  limits: Answer<"get_limits">;
+  brokers: Answer<"list_brokers">;
+  agents: Answer<"list_agents">;
+  agentActivity: Answer<"list_agent_activity">;
+  costs: Answer<"get_costs">;
+  addresses: Answer<"list_addresses">;
+  dataAccess: Answer<"get_data_access">;
+  widgetOptions: Answer<"list_options">;
+  personReadable: Answer<"get_person_readable">;
+}
+
+type ReadingParams = Omit<Functions["jc_organization_read"], "aspect">;
+
+/**
+ * One reading of the Organization's Administration pages, bound to its `Organization` singleton,
+ * e.g. `organizationReading("costs", { month: "2026-09" })`: the same handler serves its REST door.
+ */
+export function organizationReading<A extends keyof Readings>(
+  aspect: A,
+  params: ReadingParams = {},
+): Promise<Readings[A]> {
+  return refusedAs(
+    client.organizationCall("jc_organization_read", { ...params, aspect }),
+  ) as Promise<Readings[A]>;
+}
+
+/**
+ * A bound action on `bound` (`projects('air')`, an entity, a Change), with `ifMatch` the entity's
+ * `@odata.etag` where the action changes it.
+ */
+export function act<A extends keyof Actions & string>(
+  name: A,
+  bound: string,
+  params: Actions[A],
+  ifMatch?: string,
+): Promise<unknown> {
+  return refusedAs(client.act(name, bound, params, ifMatch));
+}
+
+/** The address an action of project `project` is bound to. */
+export function projectBound(project: string): string {
+  return `projects('${project.replaceAll("'", "''")}')`;
+}
+
+/** The `Organization` singleton the people's operations and the Organization's Portal doors are bound to. */
+export const ORGANIZATION = "Organization";
+
+/** The success body a REST operation documents, until T-7075 retires the REST types. */
+type Success<R> = R extends {
+  200: { content: { "application/json": infer T } };
+}
+  ? T
+  : R extends { 201: { content: { "application/json": infer T } } }
+    ? T
+    : R extends { 202: { content: { "application/json": infer T } } }
+      ? T
+      : null;
+
+/** What the REST operation `O` answers: the same handler answers its Portal door. */
+export type RestAnswer<O extends keyof operations> = operations[O] extends {
+  responses: infer R;
+}
+  ? Success<R>
+  : never;
+
+type Door<K> = K extends `portal_${string}` ? K : never;
+
+/**
+ * A Portal door's function (API/13 §2b, T-7100): a REST door no tool may answer, which the service
+ * runs for a person's session only, bound to the Organization or, with `project`, to that project:
+ * `door("portal_secret_list", {}, "air")`. A `204` of its REST door answers `null`.
+ */
+export function door<F extends Door<keyof Functions & string>>(
+  name: F,
+  params: Functions[F],
+  project?: string,
+): Promise<unknown> {
+  return refusedAs(
+    project === undefined
+      ? client.organizationCall(name, params)
+      : client.call(name, project, params),
+  );
+}
+
+/**
+ * A Portal door's action, e.g. `doorAction("portal_person_reset_password", { person: id })`;
+ * `closing` sends it with `keepalive`, for a report the tab makes as it is hidden or closed.
+ */
+export async function doorAction<A extends Door<keyof Actions & string>>(
+  name: A,
+  params: Actions[A],
+  project?: string,
+  closing = false,
+): Promise<unknown> {
+  const value = await refusedAs(
+    (closing ? closingClient : client).act(
+      name,
+      project === undefined ? ORGANIZATION : projectBound(project),
+      params,
+    ),
+  );
+  // The client reads a missing value as the whole body; a door's `null` stays `null`.
+  return typeof value === "object" &&
+    value !== null &&
+    "@odata.context" in value
+    ? null
+    : value;
+}
+
+type EntitySets = ODataModel.EntitySets;
+
+/**
+ * The sets whose rows are manifests every one of `joinedcontext.com/v1alpha1` (jc-core
+ * conversions: only a Pipeline may also be `v1alpha2`, so `pipelines` is no such set here).
+ */
+export type ManifestSet = Exclude<
+  keyof EntitySets & string,
+  | "pipelines"
+  | "changes"
+  | "endpointList"
+  | "entities"
+  | "members"
+  | "projects"
+  | "repositories"
+  | "revisions"
+  | "runs"
+>;
+
+type Manifest = components["schemas"]["ResourceEnvelope"];
+
+/** The members a manifest set answers when `$select` names them (T-7097, API/13 §2a). */
+const MANIFEST_MEMBERS = [
+  "name",
+  "kind",
+  "metadata",
+  "spec",
+  "status",
+] as const;
+
+const API_VERSION = "joinedcontext.com/v1alpha1";
+
+/** Each manifest a read answered and the `@odata.etag` of its row, for a write's `If-Match`. */
+const etags = new WeakMap<object, string>();
+
+/** The `@odata.etag` the service answered with `manifest`, a write's `If-Match`. */
+export function manifestEtag(manifest: object): string | undefined {
+  return etags.get(manifest);
+}
+
+interface ManifestRow {
+  kind?: unknown;
+  metadata?: unknown;
+  spec?: unknown;
+  status?: unknown;
+  "@odata.etag"?: string;
+}
+
+function asManifest(row: ManifestRow): Manifest {
+  const manifest = {
+    apiVersion: API_VERSION,
+    kind: row.kind,
+    metadata: row.metadata,
+    spec: row.spec ?? undefined,
+    status: row.status ?? null,
+  } as Manifest;
+  if (row["@odata.etag"]) etags.set(manifest, row["@odata.etag"]);
+  return manifest;
+}
+
+/** The Organization set of the `org` namespace's `plural`: its own Roles are `organizationRoles`. */
+function orgSet(plural: ManifestSet): ManifestSet {
+  return plural === "roles" ? "organizationRoles" : plural;
+}
+
+/**
+ * Every manifest of `plural` in `project` the caller may read, as the REST door's
+ * `GET /projects/{project}/{plural}` lists them (`items`): the project's navigation, or for the
+ * `org` namespace the Organization set of that name, with `$select` of the manifest's members.
+ */
+export async function listManifests(
+  project: string,
+  plural: ManifestSet,
+): Promise<{ items: Manifest[] }> {
+  // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
+  const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
+    project === ORG_NAMESPACE
+      ? client.from(orgSet(plural))
+      : client.under(project, plural);
+  const items: Manifest[] = [];
+  const rows = query.select(...MANIFEST_MEMBERS).all();
+  await refusedAs(
+    (async () => {
+      for await (const row of rows) items.push(asManifest(row as ManifestRow));
+    })(),
+  );
+  return { items };
+}
+
+/**
+ * The manifest `name` of `plural` in `project`, as the REST door's
+ * `GET /projects/{project}/{plural}/{name}` answers it; its row's ETag in {@link manifestEtag}.
+ */
+export async function readManifest(
+  project: string,
+  plural: ManifestSet,
+  name: string,
+): Promise<Manifest> {
+  const row = await refusedAs(
+    project === ORG_NAMESPACE
+      ? client.get(orgSet(plural), name, MANIFEST_MEMBERS)
+      : client.get(plural, { project, name }, MANIFEST_MEMBERS),
+  );
+  return asManifest(row as ManifestRow);
+}

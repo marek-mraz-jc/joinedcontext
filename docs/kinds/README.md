@@ -42,3 +42,4 @@ One page per kind of `apiVersion: joinedcontext.com/v1alpha1`, generated from th
 - [Dashboard](Dashboard.md): `dashboards`
 - [Layer](Layer.md): `layers`
 - [Portal](Portal.md): `portals`
+- [Script](Script.md): `scripts`

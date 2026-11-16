@@ -311,3 +311,31 @@ async fn without_the_harvest_grant_the_scheduler_runs_nothing() {
     assert_eq!(grant.catalogue_id, Some(w.cat));
     assert_eq!(subject.actor_id.as_deref(), Some(grant.principal.as_str()));
 }
+
+/// The harvest grant runs and reads a catalogue's sources; it changes, removes or administers
+/// none of them.
+#[test]
+fn the_harvest_grant_runs_and_reads_sources_only() {
+    use dataroom_core::{Action, Authorizer, ObjectTarget, RequestCtx};
+    let org = dataroom_core::OrgId::from_uuid(uuid::Uuid::new_v4());
+    let cat = dataroom_core::CatalogueId::from_uuid(uuid::Uuid::new_v4());
+    let (subject, grant) = harvest_principal(org, cat);
+    let authz = PolicyAuthorizer::new(vec![grant]);
+    let ctx = RequestCtx::new(org, cat, subject);
+    let target = ObjectTarget::HarvestSource {
+        org_id: org,
+        catalogue_id: cat,
+        source_id: "hs-hub".into(),
+    };
+    for action in [Action::Harvest, Action::Read] {
+        assert!(authz.check(&ctx, action, &target).allowed, "{action:?}");
+    }
+    for action in [
+        Action::Propose,
+        Action::Approve,
+        Action::Delete,
+        Action::Admin,
+    ] {
+        assert!(!authz.check(&ctx, action, &target).allowed, "{action:?}");
+    }
+}

@@ -1,0 +1,184 @@
+{
+ "features": [
+  {
+   "id": 121,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice IV",
+    "objectid": 121
+   }
+  },
+  {
+   "id": 122,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice VI",
+    "objectid": 122
+   }
+  },
+  {
+   "id": 123,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice VII",
+    "objectid": 123
+   }
+  },
+  {
+   "id": 124,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice II",
+    "objectid": 124
+   }
+  },
+  {
+   "id": 125,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Opava (nečleněná část města)",
+    "objectid": 125
+   }
+  },
+  {
+   "id": 126,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Malé Hoštice",
+    "objectid": 126
+   }
+  },
+  {
+   "id": 127,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Komárov",
+    "objectid": 127
+   }
+  },
+  {
+   "id": 128,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Suché Lazce",
+    "objectid": 128
+   }
+  },
+  {
+   "id": 129,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Podvihov",
+    "objectid": 129
+   }
+  },
+  {
+   "id": 130,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Zlatníky",
+    "objectid": 130
+   }
+  },
+  {
+   "id": 131,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Milostovice",
+    "objectid": 131
+   }
+  },
+  {
+   "id": 132,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Vlaštovičky",
+    "objectid": 132
+   }
+  },
+  {
+   "id": 133,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Vávrovice",
+    "objectid": 133
+   }
+  },
+  {
+   "id": 134,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Liberec-Vratislavice nad Nisou",
+    "objectid": 134
+   }
+  },
+  {
+   "id": 135,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Liberec (nečleněné město)",
+    "objectid": 135
+   }
+  },
+  {
+   "id": 136,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice III",
+    "objectid": 136
+   }
+  },
+  {
+   "id": 137,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice V",
+    "objectid": 137
+   }
+  },
+  {
+   "id": 138,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 10-Lhota",
+    "objectid": 138
+   }
+  },
+  {
+   "id": 139,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Plzeň 9-Malesice",
+    "objectid": 139
+   }
+  },
+  {
+   "id": 140,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Ústí nad Labem-město",
+    "objectid": 140
+   }
+  },
+  {
+   "id": 141,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice I",
+    "objectid": 141
+   }
+  },
+  {
+   "id": 142,
+   "type": "Feature",
+   "properties": {
+    "naz_mco": "Pardubice VIII",
+    "objectid": 142
+   }
+  }
+ ],
+ "type": "FeatureCollection",
+ "properties": {
+  "exceededTransferLimit": false
+ }
+}

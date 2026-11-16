@@ -77,6 +77,7 @@ const RegistrationsPage = lazy(() => import("./RegistrationsPage").then((module)
 const DataSourcesPage = lazy(() => import("../pages/datasources/DataSourcesPage").then((module) => ({ default: module.DataSourcesPage })));
 const AppsCatalog = lazy(() => import("../pages/apps/AppsCatalog").then((module) => ({ default: module.AppsCatalog })));
 const MqttBrokersPage = lazy(() => import("../pages/mqttbrokers/MqttBrokersPage").then((module) => ({ default: module.MqttBrokersPage })));
+const ScriptsPage = lazy(() => import("../pages/scripts/ScriptsPage").then((module) => ({ default: module.ScriptsPage })));
 const SyncSourcesPage = lazy(() => import("../pages/sync/SyncSourcesPage").then((module) => ({ default: module.SyncSourcesPage })));
 import { assistantDeploymentSchema, assistantDeploymentUiSchema, fromKindManifest, knowledgeSourceSchema, toKindManifest } from "../schemas/knowledge";
 import { kindNew } from "../kindWords";
@@ -101,6 +102,8 @@ const VIEWS: Record<string, ComponentType<{ project: string; edit?: string }>> =
   // A SyncSource is a running loop as well as a manifest, so its view carries the phase, the
   // revision it carries and the three buttons of MF-30.
   syncsources: SyncSourcesPage,
+  // The list, then the workbench that tests and proposes a version and moves pins (T-7084).
+  scripts: ScriptsPage,
 };
 
 /**

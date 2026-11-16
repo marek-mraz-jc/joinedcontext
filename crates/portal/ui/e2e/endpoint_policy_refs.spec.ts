@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6740 (P-18): an Endpoint names the Policies it serves. The editor offers the space's Policies
 // the person reads as checkboxes with a hint, says what to do when there is none, and a Policy's

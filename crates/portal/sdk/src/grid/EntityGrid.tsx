@@ -241,13 +241,14 @@ export function EntityGrid(props: EntityGridProps): React.JSX.Element {
       </div>
       {top && (
         // The target alone, read-only: its own type's columns, none of the host's per-type settings.
+        // Its own type's question too: the outer preset's q and attrs name the outer type.
         <GridBody
           key={`${top.urn}-${trail.length}`}
           source={props.source}
           labels={props.labels}
           locale={props.locale}
           termHref={props.termHref}
-          config={{ ...props.config, type: top.type, columns: [], mode: "view" }}
+          config={{ ...props.config, type: top.type, columns: [], mode: "view", filters: {} }}
           query={{ ids: [top.urn] }}
           filterRow={false}
           queryBox={false}

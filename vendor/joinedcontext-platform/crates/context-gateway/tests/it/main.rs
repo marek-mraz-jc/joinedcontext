@@ -189,6 +189,7 @@ mod subject_headers_tests;
 mod tabular_download_tests;
 mod temporal_tests;
 mod tenancy_middleware_tests;
+mod tenant_names_tests;
 mod token_tests;
 mod type_of_answer_tests;
 mod unit_code_tests;

@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The access side's references are picked, not typed (T-4947): a person from the realm's people,
 // a group or role from the organization's lists, an entity type from the project's models, a

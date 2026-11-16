@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -66,12 +66,51 @@ pub fn register(registry: &Registry) {
 /// Implements `generate` input (`internal/impl/pure/input_generate.go`).
 pub struct GenerateInput {
     exec: Executor,
-    interval: Option<Duration>,
+    timer: GenerateTimer,
     remaining: Option<usize>,
     batch_size: usize,
     first_run: bool,
-    auto_replay_nacks: bool,
-    replay_queue: VecDeque<Batch>,
+    replay: Option<Arc<NackReplay>>,
+}
+
+/// How `interval` paces the reads: a duration ticks after a free first batch, a cron schedule
+/// waits for its first activation (Bento's `firstIsFree: !isCron`).
+enum GenerateTimer {
+    None,
+    Every(Duration),
+    Cron(crate::cron::Schedule),
+}
+
+/// Nacked batches waiting to be sent again, at the pace of new ones.
+#[derive(Default)]
+struct NackReplay(std::sync::Mutex<VecDeque<Batch>>);
+
+impl NackReplay {
+    fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Batch>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn track(self: &Arc<Self>, batch: &Batch) -> AckResponder {
+        let this = self.clone();
+        let copy = batch.clone();
+        AckResponder::from_fn(move |res| {
+            if res.is_some() {
+                this.lock().push_back(copy);
+            }
+        })
+    }
+}
+
+/// Resolves once the stream is told to stop.
+async fn stopped(ctx: &StreamContext) {
+    let mut rx = ctx.shutdown_rx.clone();
+    while !*rx.borrow_and_update() {
+        if rx.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 impl GenerateInput {
@@ -87,14 +126,14 @@ impl GenerateInput {
             .ok_or_else(|| CoreError::config("generate input requires a 'mapping' field"))?;
         let exec = ctx.blobl_env.compile_mapping(mapping_str)?;
 
-        let interval = match obj.get("interval").and_then(JsonValue::as_str) {
-            Some(s) if !s.trim().is_empty() && s.trim() != "0" && s.trim() != "0s" => {
-                // In `render.rs`, `interval` can be a duration like `"60s"` or `"100ms"` or a cron string;
-                // if it's a duration string, parse it; if it's a cron expression, default interval to 60s in resident mode.
-                parse_duration_str(s).ok().or(Some(Duration::from_secs(60)))
-            }
-            _ => None,
+        // Bento's default is `1s`; an empty string generates as fast as the stream reads.
+        let interval = match obj.get("interval") {
+            None => "1s",
+            Some(v) => v
+                .as_str()
+                .ok_or_else(|| CoreError::config("generate input 'interval' must be a string"))?,
         };
+        let timer = generate_timer(interval)?;
 
         let count = obj.get("count").and_then(JsonValue::as_u64).unwrap_or(0) as usize;
         let remaining = if count > 0 { Some(count) } else { None };
@@ -110,14 +149,63 @@ impl GenerateInput {
 
         Ok(Self {
             exec,
-            interval,
+            timer,
             remaining,
             batch_size,
             first_run: true,
-            auto_replay_nacks,
-            replay_queue: VecDeque::new(),
+            // Decided (worker-t7078, owner may override): only an unlimited generate replays.
+            // ekiben's runner goes on after a failed write and reports the message as a failed
+            // run outcome, so a `count`-limited generate (the Portal's one-run shape) replaying
+            // a nack would turn a failed run into an endless one.
+            replay: (auto_replay_nacks && remaining.is_none()).then(Arc::default),
         })
     }
+
+    fn ack_for(&self, batch: &Batch) -> AckResponder {
+        match &self.replay {
+            Some(r) => r.track(batch),
+            None => AckResponder::noop(),
+        }
+    }
+
+    async fn wait_tick(&self, ctx: &StreamContext) -> Result<(), CoreError> {
+        let wait = match &self.timer {
+            GenerateTimer::None => return Ok(()),
+            GenerateTimer::Every(_) if self.first_run => return Ok(()),
+            GenerateTimer::Every(iv) => *iv,
+            GenerateTimer::Cron(s) => {
+                let now = Utc::now();
+                let at = s.next(now).ok_or_else(|| {
+                    CoreError::other("generate input: the cron interval never fires again")
+                })?;
+                (at - now).to_std().unwrap_or_default()
+            }
+        };
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => Ok(()),
+            _ = stopped(ctx) => Err(CoreError::EndOfInput),
+        }
+    }
+}
+
+/// Bento reads `interval` as a Go duration first, then as a cron expression.
+fn generate_timer(interval: &str) -> Result<GenerateTimer, CoreError> {
+    if interval.is_empty() {
+        return Ok(GenerateTimer::None);
+    }
+    let dur_err = match parse_duration_str(interval) {
+        Ok(d) if d.is_zero() => return Ok(GenerateTimer::None),
+        Ok(d) => return Ok(GenerateTimer::Every(d)),
+        Err(e) => e.to_string(),
+    };
+    crate::cron::parse(interval)
+        .map(GenerateTimer::Cron)
+        .map_err(|cron_err| {
+            CoreError::config(format!(
+                "failed to parse interval as duration string: {}, or as cron expression: {cron_err}",
+                dur_err.trim()
+            ))
+        })
 }
 
 #[async_trait]
@@ -130,30 +218,18 @@ impl Input for GenerateInput {
         &mut self,
         ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        if let Some(replayed) = self.replay_queue.pop_front() {
-            return Ok((replayed, AckResponder::noop()));
+        if self.remaining == Some(0) {
+            return Err(CoreError::EndOfInput);
         }
 
-        if let Some(rem) = self.remaining {
-            if rem == 0 {
-                return Err(CoreError::EndOfInput);
-            }
-        }
-
-        if !self.first_run {
-            if let Some(iv) = self.interval {
-                let mut rx = ctx.shutdown_rx.clone();
-                tokio::select! {
-                    _ = tokio::time::sleep(iv) => {}
-                    _ = rx.changed() => {
-                        if *rx.borrow() {
-                            return Err(CoreError::EndOfInput);
-                        }
-                    }
-                }
-            }
-        }
+        self.wait_tick(ctx).await?;
         self.first_run = false;
+
+        let replayed = self.replay.as_ref().and_then(|r| r.lock().pop_front());
+        if let Some(replayed) = replayed {
+            let ack = self.ack_for(&replayed);
+            return Ok((replayed, ack));
+        }
 
         let to_gen = match self.remaining {
             Some(rem) => {
@@ -182,21 +258,18 @@ impl Input for GenerateInput {
             }
         }
 
-        let _ = self.auto_replay_nacks;
-        Ok((batch, AckResponder::noop()))
+        let ack = self.ack_for(&batch);
+        Ok((batch, ack))
     }
 }
 
 #[derive(Clone, Debug)]
 enum FileScannerKind {
-    Lines,
+    Lines(crate::scanner_lines::LinesScanner),
     ToTheEnd,
     JsonDocuments,
-    Csv {
-        parse_header_row: bool,
-        delimiter: u8,
-        lazy_quotes: bool,
-    },
+    Csv(crate::scanner_csv::CsvScanner),
+    Switch(Vec<SwitchCase>),
     Tar,
     Chunker {
         size: usize,
@@ -212,14 +285,88 @@ enum FileScannerKind {
     XmlDocuments(crate::scanner_xml::XmlDocumentScanner),
 }
 
-/// Implements `file` and `csv` inputs (`internal/impl/io/input_file.go`).
+/// One `switch` case: the child scanner of the first case whose `re_match_name` matches the
+/// source's name (a file's path), a case without one matching every name.
+#[derive(Clone, Debug)]
+struct SwitchCase {
+    name: Option<regex::Regex>,
+    scanner: FileScannerKind,
+}
+
+/// Implements `file` and `csv` inputs (`internal/impl/io/input_file.go`): a reader thread scans
+/// one file at a time into a bounded channel, so a stream holds a batch or two of a file, never
+/// the whole file (the `to_the_end`, `tar`, `re_match` and `xml_documents` scanners excepted,
+/// whose message is the whole document or entry).
 pub struct FileInput {
     paths: VecDeque<PathBuf>,
     scanner: FileScannerKind,
     delete_on_finish: bool,
     batch_count: usize,
-    pending_batches: VecDeque<(Batch, Option<PathBuf>)>,
+    current: Option<ScanStream>,
 }
+
+/// The batches of one source as its reader thread scans them, with the next one held back when
+/// the input must know which batch is the last (`delete_on_finish`).
+struct ScanStream {
+    rx: tokio::sync::mpsc::Receiver<Result<Batch, CoreError>>,
+    path: Option<PathBuf>,
+    peeked: Option<Batch>,
+}
+
+impl ScanStream {
+    /// Starts a thread that opens a source and sends its parts in batches of `batch_count`.
+    fn spawn<R, F>(
+        open: F,
+        name: String,
+        scanner: FileScannerKind,
+        batch_count: usize,
+        path: Option<PathBuf>,
+    ) -> Self
+    where
+        R: std::io::Read,
+        F: FnOnce() -> Result<(R, Box<dyn Fn(&mut Part) + Send>), CoreError> + Send + 'static,
+    {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        std::thread::spawn(move || {
+            let res = open().and_then(|(src, annotate)| {
+                let mut reader = std::io::BufReader::with_capacity(SCAN_BUFFER, src);
+                let mut batch = Vec::with_capacity(batch_count);
+                scan_reader(&mut reader, &scanner, &name, &mut |mut p| {
+                    annotate(&mut p);
+                    batch.push(p);
+                    if batch.len() >= batch_count {
+                        let full = std::mem::replace(&mut batch, Vec::with_capacity(batch_count));
+                        tx.blocking_send(Ok(full))
+                            .map_err(|_| CoreError::other("the stream stopped reading"))?;
+                    }
+                    Ok(())
+                })?;
+                if !batch.is_empty() {
+                    let _ = tx.blocking_send(Ok(batch));
+                }
+                Ok(())
+            });
+            if let Err(e) = res {
+                let _ = tx.blocking_send(Err(e));
+            }
+        });
+        Self {
+            rx,
+            path,
+            peeked: None,
+        }
+    }
+
+    async fn recv(&mut self) -> Result<Option<Batch>, CoreError> {
+        if let Some(b) = self.peeked.take() {
+            return Ok(Some(b));
+        }
+        self.rx.recv().await.transpose()
+    }
+}
+
+/// Read buffer of a scanned source; a line or row may span several fills.
+const SCAN_BUFFER: usize = 64 * 1024;
 
 impl FileInput {
     pub fn from_config(conf: &ComponentConfig, ctx: &StreamContext) -> Result<Self, CoreError> {
@@ -251,7 +398,7 @@ impl FileInput {
             scanner,
             delete_on_finish,
             batch_count: 1,
-            pending_batches: VecDeque::new(),
+            current: None,
         })
     }
 
@@ -269,19 +416,7 @@ impl FileInput {
             _ => return Err(CoreError::config("csv input requires a 'paths' field")),
         };
         let paths = expand_paths(&raw_paths, ctx.file_root.as_deref())?;
-        let parse_header_row = obj
-            .get("parse_header_row")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(true);
-        let delimiter = obj
-            .get("delimiter")
-            .and_then(JsonValue::as_str)
-            .and_then(|s| s.bytes().next())
-            .unwrap_or(b',');
-        let lazy_quotes = obj
-            .get("lazy_quotes")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
+        let csv = crate::scanner_csv::CsvScanner::from_config(obj, "delimiter")?;
         let delete_on_finish = obj
             .get("delete_on_finish")
             .and_then(JsonValue::as_bool)
@@ -294,28 +429,22 @@ impl FileInput {
 
         Ok(Self {
             paths,
-            scanner: FileScannerKind::Csv {
-                parse_header_row,
-                delimiter,
-                lazy_quotes,
-            },
+            scanner: FileScannerKind::Csv(csv),
             delete_on_finish,
             batch_count,
-            pending_batches: VecDeque::new(),
+            current: None,
         })
     }
 
-    async fn load_next_file(&mut self) -> Result<bool, CoreError> {
-        let Some(next_path) = self.paths.pop_front() else {
-            return Ok(false);
-        };
-        let path_for_read = next_path.clone();
-        let scanner = self.scanner.clone();
-        let batch_count = self.batch_count;
-
-        let batches = tokio::task::spawn_blocking(move || -> Result<Vec<Batch>, CoreError> {
-            let metadata = std::fs::metadata(&path_for_read).map_err(|e| {
-                CoreError::other(format!("failed to stat '{}': {e}", path_for_read.display()))
+    fn open_next_file(&mut self) -> Option<ScanStream> {
+        let path = self.paths.pop_front()?;
+        let for_read = path.clone();
+        let open = move || {
+            let file = std::fs::File::open(&for_read).map_err(|e| {
+                CoreError::other(format!("failed to read '{}': {e}", for_read.display()))
+            })?;
+            let metadata = file.metadata().map_err(|e| {
+                CoreError::other(format!("failed to stat '{}': {e}", for_read.display()))
             })?;
             let mod_time: DateTime<Utc> = metadata
                 .modified()
@@ -323,44 +452,22 @@ impl FileInput {
                 .unwrap_or_else(|_| Utc::now());
             let mod_unix = mod_time.timestamp();
             let mod_rfc3339 = mod_time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            let path_str = path_for_read.to_string_lossy().into_owned();
-
-            let raw = std::fs::read(&path_for_read).map_err(|e| {
-                CoreError::other(format!("failed to read '{}': {e}", path_for_read.display()))
-            })?;
-
-            let annotate = |mut p: Part| -> Part {
+            let path_str = for_read.to_string_lossy().into_owned();
+            let annotate: Box<dyn Fn(&mut Part) + Send> = Box::new(move |p: &mut Part| {
                 p.meta_set_str("path", path_str.clone());
                 p.meta_set("mod_time_unix", Value::Int(mod_unix));
                 p.meta_set_str("mod_time", mod_rfc3339.clone());
-                p
-            };
-
-            let parts: Vec<Part> = scan_parts(raw, scanner)?
-                .into_iter()
-                .map(annotate)
-                .collect();
-
-            let mut out_batches = Vec::new();
-            for chunk in parts.chunks(batch_count.max(1)) {
-                out_batches.push(chunk.to_vec());
-            }
-            Ok(out_batches)
-        })
-        .await
-        .map_err(|e| CoreError::other(e.to_string()))??;
-
-        let total = batches.len();
-        for (i, b) in batches.into_iter().enumerate() {
-            let delete_target = if self.delete_on_finish && i + 1 == total {
-                Some(next_path.clone())
-            } else {
-                None
-            };
-            self.pending_batches.push_back((b, delete_target));
-        }
-
-        Ok(true)
+            });
+            Ok((file, annotate))
+        };
+        let name = path.to_string_lossy().into_owned();
+        Some(ScanStream::spawn(
+            open,
+            name,
+            self.scanner.clone(),
+            self.batch_count,
+            Some(path),
+        ))
     }
 }
 
@@ -375,111 +482,117 @@ impl Input for FileInput {
         _ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
         loop {
-            if let Some((batch, delete_path)) = self.pending_batches.pop_front() {
-                let ack = match delete_path {
-                    Some(p) => AckResponder::from_fn(move |err| {
-                        if err.is_none() {
+            if self.current.is_none() {
+                self.current = Some(self.open_next_file().ok_or(CoreError::EndOfInput)?);
+            }
+            let Some(cur) = self.current.as_mut() else {
+                continue;
+            };
+            let Some(batch) = cur.recv().await? else {
+                self.current = None;
+                continue;
+            };
+            if !self.delete_on_finish {
+                return Ok((batch, AckResponder::noop()));
+            }
+            // The file goes once its last batch is acked: look one batch ahead to know it.
+            match cur.recv().await? {
+                Some(next) => {
+                    cur.peeked = Some(next);
+                    return Ok((batch, AckResponder::noop()));
+                }
+                None => {
+                    let path = cur.path.take();
+                    self.current = None;
+                    let ack = AckResponder::from_fn(move |err| {
+                        if let (None, Some(p)) = (err, path) {
                             let _ = std::fs::remove_file(p);
                         }
-                    }),
-                    None => AckResponder::noop(),
-                };
-                return Ok((batch, ack));
-            }
-            if !self.load_next_file().await? {
-                return Err(CoreError::EndOfInput);
+                    });
+                    return Ok((batch, ack));
+                }
             }
         }
     }
 }
 
-/// Splits raw bytes into message parts with a file/stdin scanner.
-fn scan_parts(mut raw: Vec<u8>, scanner: FileScannerKind) -> Result<Vec<Part>, CoreError> {
-    let mut parts: Vec<Part> = Vec::new();
+/// Splits a source into message parts with a file/stdin scanner, calling `emit` with each part
+/// as it is read.
+fn scan_reader(
+    r: &mut dyn std::io::BufRead,
+    scanner: &FileScannerKind,
+    name: &str,
+    emit: &mut dyn FnMut(Part) -> Result<(), CoreError>,
+) -> Result<(), CoreError> {
+    use std::io::Read;
+    let io = |e: std::io::Error| CoreError::other(e.to_string());
+    let read_all = |r: &mut dyn std::io::BufRead| -> Result<Vec<u8>, CoreError> {
+        let mut raw = Vec::new();
+        r.read_to_end(&mut raw).map_err(io)?;
+        Ok(raw)
+    };
     match scanner {
         FileScannerKind::Decompress { algorithm, into } => {
-            return scan_parts(algorithm.decompress(&raw)?, *into);
+            let mut inner = std::io::BufReader::with_capacity(SCAN_BUFFER, algorithm.reader(r)?);
+            scan_reader(&mut inner, into, name, emit)
         }
         FileScannerKind::SkipBom { into } => {
-            let bom = raw.len() - crate::scanner_skip_bom::skip_bom(&raw).len();
-            raw.drain(..bom);
-            return scan_parts(raw, *into);
+            let mut head = Vec::with_capacity(4);
+            r.take(4).read_to_end(&mut head).map_err(io)?;
+            let rest = crate::scanner_skip_bom::skip_bom(&head).to_vec();
+            let mut inner =
+                std::io::BufReader::with_capacity(SCAN_BUFFER, Cursor::new(rest).chain(r));
+            scan_reader(&mut inner, into, name, emit)
         }
-        FileScannerKind::ReMatch(re) => {
-            parts.extend(re.split(&raw)?.into_iter().map(Part::new));
+        FileScannerKind::Switch(cases) => {
+            let case = cases
+                .iter()
+                .find(|c| c.name.as_ref().is_none_or(|re| re.is_match(name)))
+                .ok_or_else(|| {
+                    CoreError::other("source details did not match against any scanners")
+                })?;
+            scan_reader(r, &case.scanner, name, emit)
         }
-        FileScannerKind::XmlDocuments(xml) => {
-            parts.extend(xml.documents(&raw)?.into_iter().map(Part::from_structured));
-        }
-        FileScannerKind::ToTheEnd => {
-            parts.push(Part::new(Bytes::from(raw)));
-        }
-        FileScannerKind::Lines => {
-            let s = String::from_utf8_lossy(&raw);
-            for line in s.lines() {
-                parts.push(Part::from_str(line));
-            }
-        }
+        FileScannerKind::ReMatch(re) => re
+            .split(&read_all(r)?)?
+            .into_iter()
+            .try_for_each(|b| emit(Part::new(b))),
+        FileScannerKind::XmlDocuments(xml) => xml
+            .documents(&read_all(r)?)?
+            .into_iter()
+            .try_for_each(|v| emit(Part::from_structured(v))),
+        FileScannerKind::ToTheEnd => emit(Part::new(Bytes::from(read_all(r)?))),
+        FileScannerKind::Lines(lines) => lines.scan(r, &mut |b| emit(Part::new(b))),
         FileScannerKind::JsonDocuments => {
-            let stream =
-                serde_json::Deserializer::from_slice(&raw).into_iter::<serde_json::Value>();
-            for doc_res in stream {
-                let jv = doc_res.map_err(|e| CoreError::other(e.to_string()))?;
-                parts.push(Part::from_json(jv));
+            for doc in serde_json::Deserializer::from_reader(r).into_iter::<JsonValue>() {
+                emit(Part::from_json(
+                    doc.map_err(|e| CoreError::other(e.to_string()))?,
+                ))?;
             }
+            Ok(())
         }
-        FileScannerKind::Csv {
-            parse_header_row,
-            delimiter,
-            lazy_quotes,
-        } => {
-            let mut rdr = csv::ReaderBuilder::new()
-                .has_headers(false)
-                .delimiter(delimiter)
-                .flexible(lazy_quotes)
-                .from_reader(raw.as_slice());
-            let mut headers: Option<Vec<String>> = None;
-            for rec_res in rdr.records() {
-                let rec = rec_res.map_err(|e| CoreError::other(e.to_string()))?;
-                if parse_header_row && headers.is_none() {
-                    headers = Some(rec.iter().map(String::from).collect());
-                    continue;
-                }
-                if let Some(ref hdrs) = headers {
-                    let mut obj = BTreeMap::new();
-                    for (h, v) in hdrs.iter().zip(rec.iter()) {
-                        obj.insert(h.clone(), Value::String(v.to_string()));
-                    }
-                    parts.push(Part::from_structured(Value::Object(obj.into())));
-                } else {
-                    let arr: Vec<Value> =
-                        rec.iter().map(|v| Value::String(v.to_string())).collect();
-                    parts.push(Part::from_structured(Value::Array(arr.into())));
-                }
-            }
-        }
+        FileScannerKind::Csv(csv) => csv.scan(r, emit),
         FileScannerKind::Tar => {
-            let mut arch = tar::Archive::new(Cursor::new(raw.as_slice()));
-            for entry_res in arch
-                .entries()
-                .map_err(|e| CoreError::other(e.to_string()))?
-            {
-                let mut entry = entry_res.map_err(|e| CoreError::other(e.to_string()))?;
+            let mut arch = tar::Archive::new(r);
+            for entry in arch.entries().map_err(io)? {
                 let mut buf = Vec::new();
-                use std::io::Read;
-                entry
-                    .read_to_end(&mut buf)
-                    .map_err(|e| CoreError::other(e.to_string()))?;
-                parts.push(Part::new(Bytes::from(buf)));
+                entry.map_err(io)?.read_to_end(&mut buf).map_err(io)?;
+                emit(Part::new(Bytes::from(buf)))?;
             }
+            Ok(())
         }
-        FileScannerKind::Chunker { size } => {
-            for chunk in raw.chunks(size.max(1)) {
-                parts.push(Part::new(Bytes::copy_from_slice(chunk)));
+        FileScannerKind::Chunker { size } => loop {
+            let mut buf = Vec::with_capacity(*size);
+            (&mut *r)
+                .take(*size as u64)
+                .read_to_end(&mut buf)
+                .map_err(io)?;
+            if buf.is_empty() {
+                return Ok(());
             }
-        }
+            emit(Part::new(Bytes::from(buf)))?;
+        },
     }
-    Ok(parts)
 }
 
 fn expand_paths(
@@ -503,26 +616,105 @@ fn expand_paths(
     Ok(out)
 }
 
+/// A configured scanner for inputs outside this crate: `from_config` for those that fetch whole
+/// objects (aws_s3, sftp; Bento's default `to_the_end`), `lines_by_default` for those that read a
+/// stream or body (socket, `http_client`'s `stream`; default `lines`, the older `codec` honoured).
+#[derive(Clone, Debug)]
+pub struct Scanner(FileScannerKind);
+
+impl Scanner {
+    pub fn from_config(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        match obj.get("scanner").and_then(JsonValue::as_object) {
+            Some(s) => parse_scanner(s).map(Self),
+            None => Ok(Self(FileScannerKind::ToTheEnd)),
+        }
+    }
+
+    /// The scanner given when `obj` names none, for the stream inputs whose Bento default is
+    /// `lines`.
+    pub fn lines_by_default(obj: &serde_json::Map<String, JsonValue>) -> Result<Self, CoreError> {
+        parse_scanner_config(obj).map(Self)
+    }
+
+    /// The messages the scanner reads from `raw`; `name` is what `switch` cases match.
+    pub fn scan(&self, raw: &[u8], name: &str) -> Result<Vec<Part>, CoreError> {
+        let mut parts = Vec::new();
+        scan_reader(&mut &raw[..], &self.0, name, &mut |p| {
+            parts.push(p);
+            Ok(())
+        })?;
+        Ok(parts)
+    }
+
+    /// Whether this is the default `lines` split on `\n`, which a stream input splits as bytes
+    /// arrive; a `custom_delimiter` split reads the whole stream first.
+    pub fn is_lines(&self) -> bool {
+        matches!(&self.0, FileScannerKind::Lines(l) if l.splits_on_newline())
+    }
+}
+
 fn parse_scanner_config(
     obj: &serde_json::Map<String, JsonValue>,
 ) -> Result<FileScannerKind, CoreError> {
     if let Some(codec) = obj.get("codec").and_then(JsonValue::as_str) {
         return match codec {
             "all-bytes" | "to_the_end" => Ok(FileScannerKind::ToTheEnd),
-            "csv" => Ok(FileScannerKind::Csv {
-                parse_header_row: true,
-                delimiter: b',',
-                lazy_quotes: false,
-            }),
+            "csv" => Ok(FileScannerKind::Csv(Default::default())),
             "tar" => Ok(FileScannerKind::Tar),
-            _ => Ok(FileScannerKind::Lines),
+            _ => Ok(FileScannerKind::Lines(Default::default())),
         };
     }
     match obj.get("scanner").and_then(JsonValue::as_object) {
         Some(scanner_obj) => parse_scanner(scanner_obj),
-        None => Ok(FileScannerKind::Lines),
+        None => Ok(FileScannerKind::Lines(Default::default())),
     }
 }
+
+/// `switch`: a list of `{re_match_name, scanner}` cases (`internal/impl/pure/scanner_switch.go`).
+fn parse_switch(cases: &JsonValue) -> Result<FileScannerKind, CoreError> {
+    const HINT: &str =
+        "switch scanner takes a list of cases, for example [{re_match_name: '\\.csv$', scanner: {csv: {}}}]";
+    let cases = cases.as_array().ok_or_else(|| CoreError::config(HINT))?;
+    cases
+        .iter()
+        .map(|case| {
+            let obj = case.as_object().ok_or_else(|| CoreError::config(HINT))?;
+            let name = match obj.get("re_match_name").and_then(JsonValue::as_str) {
+                None | Some("") => None,
+                Some(pat) => Some(
+                    regex::RegexBuilder::new(pat)
+                        .size_limit(1 << 20)
+                        .build()
+                        .map_err(|e| {
+                            CoreError::config(format!("switch: invalid re_match_name {pat:?}: {e}"))
+                        })?,
+                ),
+            };
+            let scanner = obj
+                .get("scanner")
+                .and_then(JsonValue::as_object)
+                .ok_or_else(|| CoreError::config("switch: each case needs a scanner"))
+                .and_then(parse_scanner)?;
+            Ok(SwitchCase { name, scanner })
+        })
+        .collect::<Result<_, _>>()
+        .map(FileScannerKind::Switch)
+}
+
+/// Every scanner [`parse_scanner`] builds, as `ekiben list` prints them.
+pub const SCANNERS: &[&str] = &[
+    "chunker",
+    "csv",
+    "decompress",
+    "json_documents",
+    "lines",
+    "re_match",
+    "skip_bom",
+    "switch",
+    "tar",
+    "to_the_end",
+    "xml_documents",
+];
 
 /// One scanner object (`{<name>: {..}}`), nested ones (`into`) included.
 fn parse_scanner(
@@ -580,28 +772,18 @@ fn parse_scanner(
             .unwrap_or(1024) as usize;
         return Ok(FileScannerKind::Chunker { size });
     }
-    if let Some(csv_val) = scanner_obj.get("csv") {
-        let parse_header_row = csv_val
-            .get("parse_header_row")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(true);
-        let delimiter = csv_val
-            .get("custom_delimiter")
-            .and_then(JsonValue::as_str)
-            .and_then(|s| s.bytes().next())
-            .unwrap_or(b',');
-        let lazy_quotes = csv_val
-            .get("lazy_quotes")
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
-        return Ok(FileScannerKind::Csv {
-            parse_header_row,
-            delimiter,
-            lazy_quotes,
-        });
+    if let Some(conf) = field("csv") {
+        return Ok(FileScannerKind::Csv(
+            crate::scanner_csv::CsvScanner::from_config(conf, "custom_delimiter")?,
+        ));
     }
-    if scanner_obj.contains_key("lines") {
-        return Ok(FileScannerKind::Lines);
+    if let Some(conf) = field("lines") {
+        return Ok(FileScannerKind::Lines(
+            crate::scanner_lines::LinesScanner::from_config(conf)?,
+        ));
+    }
+    if let Some(cases) = scanner_obj.get("switch") {
+        return parse_switch(cases);
     }
     // A scanner ekiben does not build is refused, never read as lines.
     let name = scanner_obj.keys().next().map_or("", String::as_str);
@@ -987,15 +1169,11 @@ impl Input for ResourceInput {
     }
 }
 
-/// Implements `stdin` input (`internal/impl/io/input_stdin.go`): the `lines` scanner (default) streams one
-/// message per line; any other scanner reads stdin to its end first.
-const STDIN_BUFFER: usize = 1 << 20;
-
+/// Implements `stdin` input (`internal/impl/io/input_stdin.go`): a reader thread scans stdin
+/// (the `lines` scanner by default) and hands over each message as soon as it is read.
 pub struct StdinInput {
     scanner: FileScannerKind,
-    lines: Option<tokio::io::Lines<tokio::io::BufReader<tokio::io::Stdin>>>,
-    pending: VecDeque<Part>,
-    done: bool,
+    stream: Option<ScanStream>,
 }
 
 impl StdinInput {
@@ -1009,9 +1187,7 @@ impl StdinInput {
         let scanner = parse_scanner_config(conf.config.as_object().unwrap_or(&empty))?;
         Ok(Self {
             scanner,
-            lines: None,
-            pending: VecDeque::new(),
-            done: false,
+            stream: None,
         })
     }
 }
@@ -1026,35 +1202,18 @@ impl Input for StdinInput {
         &mut self,
         _ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        use tokio::io::{AsyncBufReadExt, AsyncReadExt};
-        if let Some(p) = self.pending.pop_front() {
-            return Ok((vec![p], AckResponder::noop()));
-        }
-        if self.done {
-            return Err(CoreError::EndOfInput);
-        }
-        if matches!(self.scanner, FileScannerKind::Lines) {
-            let lines = self.lines.get_or_insert_with(|| {
-                // tokio reads stdin on the blocking pool, one hop per buffer fill: a large
-                // buffer keeps the hops rare (8 KiB capped a stream at ~60k lines/s).
-                tokio::io::BufReader::with_capacity(STDIN_BUFFER, tokio::io::stdin()).lines()
-            });
-            return match lines.next_line().await {
-                Ok(Some(line)) => Ok((vec![Part::from_str(&line)], AckResponder::noop())),
-                Ok(None) => Err(CoreError::EndOfInput),
-                Err(e) => Err(CoreError::other(format!("failed to read stdin: {e}"))),
+        let scanner = &self.scanner;
+        let stream = self.stream.get_or_insert_with(|| {
+            let open = || {
+                let annotate: Box<dyn Fn(&mut Part) + Send> = Box::new(|_: &mut Part| {});
+                Ok((std::io::stdin(), annotate))
             };
-        }
-        let mut raw = Vec::new();
-        tokio::io::stdin()
-            .read_to_end(&mut raw)
-            .await
-            .map_err(|e| CoreError::other(format!("failed to read stdin: {e}")))?;
-        self.done = true;
-        self.pending = scan_parts(raw, self.scanner.clone())?.into();
-        match self.pending.pop_front() {
-            Some(p) => Ok((vec![p], AckResponder::noop())),
-            None => Err(CoreError::EndOfInput),
+            ScanStream::spawn(open, String::new(), scanner.clone(), 1, None)
+        });
+        match stream.recv().await {
+            Ok(Some(batch)) => Ok((batch, AckResponder::noop())),
+            Ok(None) => Err(CoreError::EndOfInput),
+            Err(e) => Err(CoreError::other(format!("failed to read stdin: {e}"))),
         }
     }
 }
@@ -1084,6 +1243,22 @@ mod scanner_config_tests {
     }
 
     #[test]
+    fn every_listed_scanner_is_built() {
+        let minimal = |name: &str| match name {
+            "chunker" => serde_json::json!({"size": 4}),
+            "decompress" => serde_json::json!({"algorithm": "gzip"}),
+            "re_match" => serde_json::json!({"pattern": "^x"}),
+            "switch" => serde_json::json!([{"scanner": {"lines": {}}}]),
+            "xml_documents" => serde_json::json!({"operator": "to_json"}),
+            _ => serde_json::json!({}),
+        };
+        for name in SCANNERS {
+            let conf = serde_json::json!({ "scanner": { *name: minimal(name) } });
+            assert!(scanner(conf).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
     fn an_unknown_scanner_is_refused_by_name() {
         let err =
             scanner(serde_json::json!({"scanner": {"regex_lines": {}}})).expect_err("refused");
@@ -1103,7 +1278,17 @@ mod scanner_config_tests {
         gz.write_all(b"#a\n#b\n").expect("gz");
         let mut raw = vec![0xEF, 0xBB, 0xBF];
         raw.extend(gz.finish().expect("gz"));
-        let parts = scan_parts(raw, scanner(conf).expect("scanner")).expect("parts");
+        let mut parts = Vec::new();
+        scan_reader(
+            &mut raw.as_slice(),
+            &scanner(conf).expect("scanner"),
+            "",
+            &mut |p| {
+                parts.push(p);
+                Ok(())
+            },
+        )
+        .expect("parts");
         let bodies: Vec<Bytes> = parts.iter().map(Part::as_bytes_ref).collect();
         assert_eq!(
             bodies,

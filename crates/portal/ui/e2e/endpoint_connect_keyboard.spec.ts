@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4975: the live walker found axe scrollable-region-focusable on an Endpoint's page at 400 px.
 // The "Connect an AI assistant" lines scroll sideways there, so each must take keyboard focus.
@@ -33,6 +36,11 @@ for (const width of [400, 1440]) {
       }
       if (path === "/api/v1/projects") return json({ apiVersion: API, kind: "List", items: [{ name: "helsinki" }] });
       if (path === "/api/v1/projects/helsinki/endpoints/bikes") return json(ENDPOINT);
+      // The connect lines show only to a person admitted to the Endpoint.
+      if (path === "/api/v1/projects/helsinki/endpoints/bikes/admission") return json({ admitted: true });
+      if (path === "/api/v1/organization/addresses") {
+        return json({ items: [{ organization: "hel", title: "Helsinki", addresses: [{ kind: "opendata", url: "https://opendata.hel.example/" }] }] });
+      }
       return json({ apiVersion: API, kind: "List", items: [] });
     });
 
@@ -42,6 +50,8 @@ for (const width of [400, 1440]) {
     await page.goto("/projects/helsinki/endpoints/bikes?lang=en");
     const section = page.getByRole("region", { name: "Connect an AI assistant" });
     await expect(section).toBeVisible();
+    // T-7043: the setup steps per assistant are links to the open data /connector page.
+    await expect(section.getByRole("link", { name: /^Grok/ })).toHaveAttribute("href", "https://opendata.hel.example/connector#grok");
     for (const line of await section.locator("pre").all()) {
       await line.focus();
       await expect(line).toBeFocused();

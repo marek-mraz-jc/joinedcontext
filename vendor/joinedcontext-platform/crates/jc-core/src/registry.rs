@@ -109,6 +109,7 @@ catalogue!(
     crate::kinds::DashboardSpec,
     crate::kinds::LayerSpec,
     crate::kinds::PortalSpec,
+    crate::kinds::ScriptSpec,
 );
 
 /// Looks a kind up by its manifest `kind` name (case-sensitive, as written in the file).

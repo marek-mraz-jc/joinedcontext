@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider, useMutation } from "@tanstack/react-q
 import { I18nextProvider } from "react-i18next";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { doorsAsRest } from "./odata";
 import i18n, { SUPPORTED_LOCALES } from "../src/i18n";
 import en from "../src/locales/en.json";
 import de from "../src/locales/de.json";
@@ -140,6 +141,7 @@ function show(props: Parameters<typeof SpacePage>[0] = {}, answers: { forms?: un
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
     }),
   );
+  doorsAsRest();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const rendered = render(
     <QueryClientProvider client={client}>
