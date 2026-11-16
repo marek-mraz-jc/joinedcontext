@@ -9958,7 +9958,8 @@
       "failed": "Posledné prechádzanie zlyhalo",
       "crawled": "Prejdený",
       "indexing": "Indexuje sa",
-      "read": "Prečítané"
+      "read": "Prečítané",
+      "noAssistant": "Bez asistenta"
     },
     "type": {
       "website": "Web",
@@ -10272,7 +10273,11 @@
       "none": "Na „{q}“ v tomto zdroji nič neodpovedá.",
       "hits": "Výsledky pre „{q}“"
     },
-    "languagesMore": "+{count} ďalšie"
+    "languagesMore": "+{count} ďalšie",
+    "noAssistant": {
+      "title": "Nie je pripojený znalostný asistent",
+      "hint": "Zdroje nižšie sú deklarované, no na tomto Portáli ich zatiaľ nič nečíta, neprehľadáva ani z nich neodpovedá. Operátor pripojí znalostného asistenta v nasadení Portálu; zdroje sa potom načítajú pri ďalšom plánovanom behu."
+    }
   },
   "mcp": {
     "title": "MCP servery",
@@ -11652,6 +11657,10 @@
         "cost": "Cena nebola zaznamenaná: poskytovateľ modelu pri týchto otázkach neposlal cenu.",
         "tokens": "Tokeny neboli zaznamenané: poskytovateľ modelu pri týchto otázkach neuviedol počty tokenov."
       }
+    },
+    "noAssistant": {
+      "title": "Nie je pripojený znalostný asistent",
+      "hint": "Tento Portál neukladá žiadnu konverzáciu, kým operátor v jeho nasadení nepripojí znalostného asistenta. Konverzácie návštevníkov sa potom objavia tu, tak dlho, ako ich drží transcriptRetention každého nasadenia."
     }
   },
   "retentionGuide": {

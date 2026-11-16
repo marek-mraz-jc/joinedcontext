@@ -180,14 +180,19 @@ export function ConversationsPage({
           className="mb-2"
         />
       </div>
-      {checking ? <p role="status">{t("permissions.checking")}</p> : <UsageSummary project={project} filter={shown} />}
+      {checking ? <p role="status">{t("permissions.checking")}</p> : null}
+      {/* The usage is the assistant's to count: asked once the list says one is connected (T-7123). */}
+      {list.isSuccess && list.data.configured ? <UsageSummary project={project} filter={shown} /> : null}
       {list.isError ? (
         <PageFailed error={list.error} onRetry={() => void list.refetch()}>
           {reasonOf(list.error, t("app.error.generic"))}
         </PageFailed>
       ) : null}
       {list.isLoading ? <p role="status">{t("app.loading")}</p> : null}
-      {list.isSuccess && items.length === 0 ? (
+      {list.isSuccess && !list.data.configured ? (
+        <EmptyState title={t("conversations.noAssistant.title")} description={t("conversations.noAssistant.hint")} icon="search" />
+      ) : null}
+      {list.isSuccess && list.data.configured && items.length === 0 ? (
         <EmptyState title={t("conversations.empty")} description={t("conversations.emptyHint")} icon="search" />
       ) : null}
       {items.length > 0 ? (

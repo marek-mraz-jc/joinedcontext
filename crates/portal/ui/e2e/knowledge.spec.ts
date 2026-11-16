@@ -78,7 +78,12 @@ const DETAIL = {
       tokensOut: null, reasoningTokens: null, costUsd: null }] }],
 };
 
-async function stubApi(p: Page, verbs: string[] = ["read", "propose"]): Promise<{ writes: { path: string; body: unknown }[] }> {
+async function stubApi(
+  p: Page,
+  verbs: string[] = ["read", "propose"],
+  // T-7123: what a Portal without a knowledge assistant answers for the two lists.
+  noAssistant = false,
+): Promise<{ writes: { path: string; body: unknown }[] }> {
   const writes: { path: string; body: unknown }[] = [];
   await p.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -103,6 +108,10 @@ async function stubApi(p: Page, verbs: string[] = ["read", "propose"]): Promise<
       });
     }
     if (url.pathname === "/api/v1/projects") return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [{ name: "helsinki" }] });
+    if (url.pathname === `${base}/sources` && noAssistant) {
+      return json({ items: SOURCES.items.map(({ source, type, startUrls, ckanInstanceRef, schedule, visibility }) => ({ source, type, startUrls, ckanInstanceRef, schedule, visibility, state: "no-assistant" })) });
+    }
+    if (url.pathname === `${base}/conversations` && noAssistant) return json({ items: [], nextCursor: null, assistant: "no-assistant" });
     if (url.pathname === `${base}/sources`) return json(SOURCES);
     if (url.pathname === `${base}/sources/hel-web/pages`) {
       return url.searchParams.get("parent") === "1"
@@ -196,6 +205,33 @@ test.describe("the knowledge sources", () => {
     await expect(p.locator("h1 + p")).toContainText("What visitors asked the project's assistants");
     await keep(p, "conversations-refused");
     expect(await axeViolations(p)).toEqual([]);
+  });
+
+  // T-7123: a Portal without a knowledge assistant is a normal configuration; both pages say so
+  // and the sources stay listed, at 1440 and on a phone.
+  test("without a knowledge assistant both pages say an operator connects one, and no read fails", async ({ page: p }) => {
+    const dir = process.env.JC_EVIDENCE_DIR;
+    if (dir) mkdirSync(dir, { recursive: true });
+    const failed: string[] = [];
+    p.on("response", (r) => {
+      if (r.status() >= 500) failed.push(`${r.status()} ${r.url()}`);
+    });
+    await stubApi(p, ["read", "propose", "approve"], true);
+    for (const width of [1440, 400]) {
+      await p.setViewportSize({ width, height: 900 });
+      await p.goto("/projects/helsinki/knowledge?lang=en");
+      await expect(p.getByText("No knowledge assistant is connected")).toBeVisible();
+      await expect(p.getByRole("link", { name: "hel-web" })).toBeVisible();
+      await expect(p.getByRole("button", { name: /^Crawl/ })).toHaveCount(0);
+      if (dir) await p.screenshot({ path: join(dir, `knowledge-${width}.png`), fullPage: true });
+      await p.goto("/projects/helsinki/knowledge/conversations?lang=en");
+      await expect(p.getByText("No knowledge assistant is connected")).toBeVisible();
+      if (dir) await p.screenshot({ path: join(dir, `conversations-${width}.png`), fullPage: true });
+      const sideways = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(sideways, "the page scrolls sideways").toBeLessThanOrEqual(0);
+    }
+    expect(await axeViolations(p)).toEqual([]);
+    expect(failed).toEqual([]);
   });
 
   // T-4265 (photo audit T-4160 #23): at 375 px both tables ran past their cards, the crawl time one

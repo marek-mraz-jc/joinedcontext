@@ -347,6 +347,27 @@ describe("the knowledge sources page (T-3057)", () => {
 });
 
 // T-6206: the sources are on the shared grid: search, sort by passages, filter by state.
+describe("a Portal without a knowledge assistant (T-7123)", () => {
+  beforeEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists the declared sources as having no assistant, says who connects one and offers no crawl", async () => {
+    const items = SOURCES.items.map((row) => ({ ...row, state: "no-assistant", lastCrawl: null, pages: null, documents: null, passages: null, embedded: null, job: null }));
+    renderAt("/projects/banskabystrica/knowledge", { sources: { code: 200, body: { items } } });
+    const table = await screen.findByRole("table", { name: "Knowledge sources" });
+    expect(screen.getByText("No knowledge assistant is connected")).toBeInTheDocument();
+    expect(screen.getByText(/An operator connects the knowledge assistant/)).toBeInTheDocument();
+    const web = within(table).getByRole("link", { name: "bb-web" }).closest("tr") as HTMLElement;
+    expect(within(web).getByText("No assistant")).toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /^Crawl/ })).toBeNull();
+    expect(screen.queryByText(/Failed to|try again/i)).toBeNull();
+  });
+});
+
 describe("the knowledge sources grid (T-6206)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");

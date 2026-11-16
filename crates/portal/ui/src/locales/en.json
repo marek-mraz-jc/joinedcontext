@@ -9958,7 +9958,8 @@
       "failed": "Last crawl failed",
       "crawled": "Crawled",
       "indexing": "Indexing",
-      "read": "Read"
+      "read": "Read",
+      "noAssistant": "No assistant"
     },
     "type": {
       "website": "Website",
@@ -10272,7 +10273,11 @@
       "none": "Nothing in this source answers “{q}”.",
       "hits": "Hits for “{q}”"
     },
-    "languagesMore": "+{count} more"
+    "languagesMore": "+{count} more",
+    "noAssistant": {
+      "title": "No knowledge assistant is connected",
+      "hint": "The sources below are declared, but nothing reads, crawls or answers from them on this Portal yet. An operator connects the knowledge assistant in the Portal's deployment; the sources are read at their next schedule after that."
+    }
   },
   "mcp": {
     "title": "MCP servers",
@@ -11652,6 +11657,10 @@
         "cost": "Cost not recorded: the model provider sent no price for these questions.",
         "tokens": "Tokens not recorded: the model provider reported no token counts for these questions."
       }
+    },
+    "noAssistant": {
+      "title": "No knowledge assistant is connected",
+      "hint": "This Portal stores no conversation until an operator connects the knowledge assistant in its deployment. Visitors' conversations appear here after that, for as long as each deployment's transcriptRetention keeps them."
     }
   },
   "retentionGuide": {
