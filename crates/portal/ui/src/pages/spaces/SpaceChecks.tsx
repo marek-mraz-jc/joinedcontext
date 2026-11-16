@@ -72,7 +72,7 @@ export function SpaceChecks({
 
   return (
     <div className="space-y-2">
-      <Table caption={t("spaces.quality.checks.caption")}>
+      <Table stack caption={t("spaces.quality.checks.caption")}>
         <TableHead>
           <TableHeaderCell>{t("spaces.quality.type")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.quality.rule")}</TableHeaderCell>
@@ -96,22 +96,22 @@ export function SpaceChecks({
         <TableBody>
           {data.rules.map((row) => (
             <TableRow key={`${row.type} ${row.rule}`}>
-              <TableCell>{row.type}</TableCell>
-              <TableCell>
+              <TableCell primary>{row.type}</TableCell>
+              <TableCell data-label={t("spaces.quality.rule")}>
                 <code>{row.rule}</code>
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("spaces.quality.attribute")}>
                 {row.attribute ? <code>{row.attribute}</code> : "—"}
               </TableCell>
-              <TableCell align="right">{rate(row["24h"])}</TableCell>
-              <TableCell align="right">{rate(row["7d"])}</TableCell>
-              <TableCell align="right">
+              <TableCell data-label={t("spaces.quality.checks.passDay")} align="right">{rate(row["24h"])}</TableCell>
+              <TableCell data-label={t("spaces.quality.checks.passWeek")} align="right">{rate(row["7d"])}</TableCell>
+              <TableCell data-label={t("spaces.quality.checks.rejected")} align="right">
                 {row["7d"].reject.toLocaleString(locale)}
               </TableCell>
-              <TableCell align="right">
+              <TableCell data-label={t("spaces.quality.checks.quarantined")} align="right">
                 {row["7d"].quarantine.toLocaleString(locale)}
               </TableCell>
-              <TableCell>
+              <TableCell data-label={t("spaces.quality.checks.lastRejected")}>
                 {row.lastRejected
                   ? when.format(new Date(row.lastRejected))
                   : "—"}

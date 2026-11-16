@@ -91,7 +91,7 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
         {report.truncated ? ` ${t("spaces.quality.truncated")}` : ""}
       </p>
       {report.rules.length > 0 ? (
-        <Table caption={t("spaces.quality.rulesCaption")}>
+        <Table stack caption={t("spaces.quality.rulesCaption")}>
           <TableHead>
             <TableHeaderCell>{t("spaces.quality.rule")}</TableHeaderCell>
             <TableHeaderCell>{t("spaces.quality.attribute")}</TableHeaderCell>
@@ -104,9 +104,9 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
                 <TableCell>
                   <code>{rule.rule}</code>
                 </TableCell>
-                <TableCell>{rule.path ? <code>{rule.path}</code> : t("spaces.quality.wholeEntity")}</TableCell>
-                <TableCell align="right">{rule.count.toLocaleString(locale)}</TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.quality.attribute")}>{rule.path ? <code>{rule.path}</code> : t("spaces.quality.wholeEntity")}</TableCell>
+                <TableCell data-label={t("spaces.quality.entities")} align="right">{rule.count.toLocaleString(locale)}</TableCell>
+                <TableCell data-label={t("spaces.quality.examples")}>
                   {rule.examples.length > 0 ? (
                     <ul className="space-y-0.5">
                       {rule.examples.map((id) => (
@@ -125,7 +125,7 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
         </Table>
       ) : null}
       {report.freshness.length > 0 ? (
-        <Table caption={t("spaces.quality.freshnessCaption")}>
+        <Table stack caption={t("spaces.quality.freshnessCaption")}>
           <TableHead>
             <TableHeaderCell>{t("spaces.quality.pipeline")}</TableHeaderCell>
             <TableHeaderCell>{t("spaces.quality.type")}</TableHeaderCell>
@@ -137,10 +137,10 @@ export function SpaceQuality({ project, space }: { project: string; space: strin
             {report.freshness.map((row) => (
               <TableRow key={row.pipeline}>
                 <TableCell primary>{row.pipeline}</TableCell>
-                <TableCell>{row.type || t("spaces.quality.anyType")}</TableCell>
-                <TableCell>{row.newest ? when.format(new Date(row.newest)) : "—"}</TableCell>
-                <TableCell>{row.targetSeconds == null ? "—" : duration(row.targetSeconds)}</TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.quality.type")}>{row.type || t("spaces.quality.anyType")}</TableCell>
+                <TableCell data-label={t("spaces.quality.newest")}>{row.newest ? when.format(new Date(row.newest)) : "—"}</TableCell>
+                <TableCell data-label={t("spaces.quality.target")}>{row.targetSeconds == null ? "—" : duration(row.targetSeconds)}</TableCell>
+                <TableCell data-label={t("spaces.quality.state")}>
                   <span className="inline-flex flex-wrap items-center gap-1">
                     <Badge tone={TONE[row.state]}>{t(`spaces.quality.states.${row.state}`)}</Badge>
                     {row.paused ? <Badge tone="warning">{t("spaces.quality.paused")}</Badge> : null}

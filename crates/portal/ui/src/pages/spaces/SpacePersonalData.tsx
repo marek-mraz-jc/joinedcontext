@@ -183,7 +183,7 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
           />
         </Field>
       </div>
-      <span className="flex flex-wrap gap-2">
+      <span className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-2">
         <PermissionGuard project={project} kind="ContextSpace" verb="approve">
           <Button
             variant="secondary"

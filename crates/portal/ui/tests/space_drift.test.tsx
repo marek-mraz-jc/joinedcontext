@@ -127,6 +127,10 @@ describe("drift on the space page (T-2867)", () => {
     expect(within(table).getByText(OURS.id)).toBeInTheDocument();
     expect(within(table).queryByText(ELSEWHERE.id)).toBeNull();
     expect(within(table).getByText("pm10.value")).toBeInTheDocument();
+    // T-7107 UI judge: below 640 px each row reads as a card, every value beside its column's name.
+    expect(table.closest("table")).toHaveClass("table-stack");
+    for (const r of within(table).getAllByRole("row").slice(1))
+      for (const c of within(r).getAllByRole("cell").slice(1)) expect(c).toHaveAttribute("data-label");
     expect(within(drift).getByText("1 entity differs from the repository.")).toBeInTheDocument();
 
     await userEvent.click(within(table).getByRole("button", { name: `Resolve the drift of ${OURS.id}` }));

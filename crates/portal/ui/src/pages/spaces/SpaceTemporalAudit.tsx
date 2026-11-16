@@ -129,7 +129,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
       {shown.length === 0 ? (
         <EmptyState bare title={t("spaces.temporal.noMatch")} description={t("spaces.temporal.noMatchHint")} />
       ) : (
-        <Table caption={t("spaces.temporal.caption")}>
+        <Table stack caption={t("spaces.temporal.caption")}>
           <TableHead>
             <TableHeaderCell>{t("spaces.temporal.attribute")}</TableHeaderCell>
             <TableHeaderCell>{t("spaces.temporal.verdictColumn")}</TableHeaderCell>
@@ -147,7 +147,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     </span>
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.verdictColumn")}>
                   <span className="flex flex-col items-start gap-1">
                     <Badge tone={TONE[row.verdict]}>{t(`spaces.temporal.verdict.${row.verdict}`)}</Badge>
                     {row.verdict !== "ok" && (
@@ -159,7 +159,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     )}
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.rows")}>
                   <span className="flex flex-col">
                     <span>{t(`spaces.temporal.recordMode.${row.record}`, { defaultValue: row.record })}</span>
                     <span className="text-caption text-fg-muted">
@@ -171,7 +171,7 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
                     </span>
                   </span>
                 </TableCell>
-                <TableCell>
+                <TableCell data-label={t("spaces.temporal.kept")}>
                   <span className="flex flex-col">
                     <span>{t("spaces.temporal.history", { history: duration(row.history) })}</span>
                     <span className="text-caption text-fg-muted">
