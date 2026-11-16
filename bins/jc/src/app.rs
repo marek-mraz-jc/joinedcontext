@@ -1421,8 +1421,15 @@ async fn build_gateway(
 ) -> Result<Router, StartError> {
     #[cfg(feature = "gateway")]
     {
-        modules::gateway::build(ctx, &cfg.organizations, cfg.portal_siblings, mount, hop, portal)
-            .await
+        modules::gateway::build(
+            ctx,
+            &cfg.organizations,
+            cfg.portal_siblings,
+            mount,
+            hop,
+            portal,
+        )
+        .await
     }
     #[cfg(not(feature = "gateway"))]
     {
