@@ -850,6 +850,12 @@ export function EndpointDataView({
   // The address is read once, as the view opens: the link this view writes back carries the
   // toolbar's query too, and reading it again would hand that query to the grid a second time.
   const [opening] = useState(link);
+  // A link that names a query opens with the query in sight, so whoever opened it reads why the rows
+  // are fewer than the whole set (T-7072).
+  const { onShowQuery } = tools.props;
+  useEffect(() => {
+    if (opening?.q) onShowQuery(true);
+  }, [opening, onShowQuery]);
   const { dropped, setDropped, defaults, preset } = useDefaultView(classView, gridColumns, enums, opening);
   const { opened, sortText } = gridState(view ?? preset, opening, columns);
   // The default filter's inputs open in the Filter panel; from the first default on, the panel is the reader's.
