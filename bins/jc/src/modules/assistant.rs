@@ -921,13 +921,13 @@ mod tests {
         let (_cfg, mut siblings, _setup, _d) = fixture();
         let none = |_: &str| None;
         let public = siblings.get(Module::Portal).unwrap().callable().to_owned();
-        let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &[], &none);
         assert_eq!(
             table["JC_PORTAL_BASE"], public,
             "no internal listener known"
         );
         siblings.portal_internal = Some("0.0.0.0:40125".parse().unwrap());
-        let table = proxy_lookup(&siblings, &setup::Realm::default(), &none);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &[], &none);
         assert_eq!(table["JC_PORTAL_BASE"], "http://127.0.0.1:40125");
     }
 
