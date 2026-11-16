@@ -7407,6 +7407,22 @@
       "previewEmpty": "Wählen Sie Endpoint, Typ und Attribut, um die Zeilen dieser Visualisierung zu sehen.",
       "noEndpointsTitle": "Keine Daten zum Darstellen",
       "noEndpoints": "Sie dürfen in diesem Projekt noch keinen Endpoint lesen. Fragen Sie den Projektinhaber nach Zugriff oder legen Sie zuerst einen Endpoint an."
+    },
+    "move": {
+      "title": "In ein Dashboard verschieben",
+      "lead": "Legt jedes hier gespeicherte Diagramm als Panel in ein Dashboard, Saved charts, vorgeschlagen als Änderung. Nach der Freigabe führen Sie dies erneut aus, um die enthaltenen Diagramme hier zu entfernen. Ein Diagramm, das es nicht enthält, bleibt hier.",
+      "check": "Verschieben prüfen",
+      "willPropose": "{before, plural, one {# gespeichertes Diagramm} other {# gespeicherte Diagramme}}: das Dashboard Saved charts erhält {panels, plural, one {# Panel} other {# Panels}}. Bis zur Freigabe wird nichts entfernt.",
+      "willRemove": "Das freigegebene Dashboard Saved charts enthält {count, plural, one {# dieser Diagramme} other {# dieser Diagramme}}; sie hier zu entfernen verliert nichts.",
+      "stay": "{count, plural, one {# Diagramm bleibt hier gespeichert} other {# Diagramme bleiben hier gespeichert}}:",
+      "propose": "Dashboard Saved charts vorschlagen",
+      "remove": "{count, plural, one {# verschobenes Diagramm entfernen} other {# verschobene Diagramme entfernen}}",
+      "proposedTitle": "Das Dashboard Saved charts wartet auf Freigabe",
+      "openChange": "Änderung öffnen",
+      "removed": "{count, plural, one {# verschobenes Diagramm entfernt} other {# verschobene Diagramme entfernt}}",
+      "removedLead": "Sie sind jetzt Panels des Dashboards Saved charts.",
+      "running": "Das Verschieben läuft; warten Sie auf die Antwort.",
+      "refusedTitle": "Das Verschieben lief nicht; nichts wurde geändert"
     }
   },
   "activity": {

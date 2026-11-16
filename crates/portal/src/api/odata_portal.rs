@@ -115,7 +115,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 171] = [
+pub static DOORS: [Door; 173] = [
     door(
         "portal_people_remove",
         Org,
@@ -1036,6 +1036,16 @@ pub static DOORS: [Door; 171] = [
         &[],
         Who::Own,
     ),
+    // The installation's Blueprints (the `org` namespace) the caller may run, for the flow
+    // gallery and the App generator: every signed-in person read them on REST (T-7143).
+    door(
+        "portal_blueprint_list",
+        Org,
+        Method::GET,
+        "/blueprints",
+        &[],
+        Who::Own,
+    ),
     door(
         "portal_access_request_incoming",
         Project,
@@ -1469,6 +1479,14 @@ pub static DOORS: [Door; 171] = [
         Method::PUT,
         "/projects/{project}/grafana/builder/{uid}",
         &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_saved_charts",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/saved-charts",
+        &[BODY],
         Who::ProjectReader,
     ),
     door(

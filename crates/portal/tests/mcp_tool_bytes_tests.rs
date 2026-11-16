@@ -83,8 +83,14 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// jc-core catalogued `Script` (T-7083, 8 bytes in the resource tools' kind enum) and with
 /// `jc_script_test` (T-7084, 1,018 bytes with the descriptions of its limits and tests): a Script
 /// version's tests on the runner before an agent proposes it, the only door to that route, its
-/// schema the route's bounds.
-const RATCHET: usize = 89_065;
+/// schema the route's bounds; 89,460 once `jc_project_import` took `manifests` and
+/// `spaceMapping` beside `bundle` (T-7143, 396 bytes): the Portal's JSON imports go through the
+/// action as through the REST door, and a bundle file is no longer the only way an agent imports;
+/// 89,505 once `jc_run_list` took `origin` (T-7145, 45 bytes): the runs set holds a live journey's
+/// test runs beside people's, as the REST list's `origin=all` did for the Assistant page (AG-93);
+/// 89,633 once `origin` and spaceMapping's `from` and `to` carried the descriptions
+/// ops_input_schema_tests requires of every input property (T-7143, 127 bytes).
+const RATCHET: usize = 89_634;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

@@ -3482,6 +3482,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/grafana/builder/saved-charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Saved Charts Into A Dashboard
+         * @description Moves the project's charts saved one by one into one builder dashboard, Saved charts. The first run proposes the dashboard as a Change; once it is merged, the next run removes each saved chart the merged file draws (same Endpoint, type, attribute, kind and title) and keeps every other one, with the reason. `dryRun` reports the counts and changes nothing. Needs propose on Dashboard and read on every Endpoint a chart names.
+         */
+        post: operations["builder_saved_charts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/grafana/builder/values": {
         parameters: {
             query?: never;
@@ -11457,6 +11477,12 @@ export interface components {
             /** @description The NGSI-LD entity as the person read it, normalized. */
             entity: Record<string, never>;
         };
+        /** @description A row that stays where it is, and why. */
+        Kept: {
+            id: string;
+            reason: string;
+            title: string;
+        };
         /**
          * @description What a visualization draws.
          * @enum {string}
@@ -13776,6 +13802,36 @@ export interface components {
             at: string;
             record: Record<string, never>;
         };
+        /** @description What moving the project's saved charts into the Saved charts dashboard does or did (T-7161). */
+        SavedChartsMove: {
+            /** @description The project's saved charts before the run. */
+            before: number;
+            change?: null | components["schemas"]["Change"];
+            dryRun: boolean;
+            /** @description The charts that stay saved, each with the reason. */
+            kept: components["schemas"]["Kept"][];
+            /** @description The charts the dashboard takes (propose) or that were removed, or would be (remove). */
+            moved: string[];
+            /** @description The dashboard's panels: planned when proposing, merged when removing. */
+            panels: number;
+            stage: components["schemas"]["SavedChartsStage"];
+            /** @description The Saved charts dashboard's uid, the same on every run. */
+            uid: string;
+        };
+        /**
+         * @description How a move of the saved charts runs: `dryRun` reports and changes nothing.
+         * @example {
+         *       "dryRun": true
+         *     }
+         */
+        SavedChartsRun: {
+            dryRun?: boolean;
+        };
+        /**
+         * @description Which step of the move a run took.
+         * @enum {string}
+         */
+        SavedChartsStage: "propose" | "remove";
         /**
          * @description What a workspace covers (CC-76, API/01 §22): the whole project, one space and what it
          *     holds, or a list of resources.
@@ -25927,6 +25983,105 @@ export interface operations {
             };
         };
     };
+    builder_saved_charts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavedChartsRun"];
+            };
+        };
+        responses: {
+            /** @description A dry run, or the removing run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedChartsMove"];
+                };
+            };
+            /** @description Proposed; waits for approval */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedChartsMove"];
+                };
+            };
+            /** @description A body that does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not build dashboards, or may not read an Endpoint a chart names */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project the caller has a part in */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No saved chart to move, a Change of the dashboard is open, or no dashboards service for the project */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A chart no longer fits: a source, type or attribute it names is gone; the errors name it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The forge, the database or the dashboards service did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     builder_values: {
         parameters: {
             query: {
@@ -36344,14 +36499,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                /**
-                 * @example {
-                 *       "bundle": "example"
-                 *     }
-                 */
+                /** @example {} */
                 "application/json": {
                     /** @description The bundle document an export answered */
-                    bundle: string;
+                    bundle?: string;
                     /**
                      * @description For a resource the project has; absent refuses the import
                      * @enum {string}
@@ -36359,8 +36510,17 @@ export interface operations {
                     conflictPolicy?: "fail" | "skip" | "replace" | "rename";
                     /** @description Answer the plan and write nothing */
                     dryRun?: boolean;
+                    /** @description Instead of a bundle */
+                    manifests?: Record<string, never>[];
                     /** @description Organisation ids are rewritten to; this one when absent */
                     orgDomain?: string;
+                    /** @description Space `from` lands on the project's `to` */
+                    spaceMapping?: {
+                        /** @description Space in the manifests */
+                        from: string;
+                        /** @description Space of this project */
+                        to: string;
+                    }[];
                 };
             };
         };
@@ -38524,6 +38684,8 @@ export interface operations {
                         createdBy?: string;
                         id: string;
                         kind?: string;
+                        /** @description person, or journey for a live journey's test run */
+                        origin?: string;
                         /** @description The preview once a version is built */
                         previewUrl?: string;
                         project?: string;
@@ -38606,6 +38768,11 @@ export interface operations {
                     /** @description Only the runs this caller started */
                     mine?: boolean;
                     /**
+                     * @description Whose runs; journey is a live test
+                     * @enum {unknown}
+                     */
+                    origin?: "person" | "journey" | "all";
+                    /**
                      * @description Only runs in this state
                      * @enum {string}
                      */
@@ -38628,6 +38795,8 @@ export interface operations {
                             createdBy?: string;
                             id: string;
                             kind?: string;
+                            /** @description person, or journey for a live journey's test run */
+                            origin?: string;
                             /** @description The preview once a version is built */
                             previewUrl?: string;
                             project?: string;

@@ -688,6 +688,10 @@ routes:
     values: {"uid": "jcd-0123456789abcdef"}
     note: "the fixture's forge takes the removal: `allow` answers 202"
     expect: [403, 403, 403, allow, 403, allow, 404, 403]
+  - route: POST /projects/{project}/grafana/builder/saved-charts
+    rule: "propose on Dashboard, then read on every Endpoint a saved chart names"
+    note: "the fixture has no database: `allow` answers 503"
+    expect: [403, 403, 403, allow, 403, allow, 404, 403]
   - route: GET /projects/{project}/grafana/builder/{uid}/versions
     rule: "project-read"
     values: {"uid": "jcd-0123456789abcdef"}
