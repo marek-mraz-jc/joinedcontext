@@ -334,7 +334,6 @@ export function DataGrid<T>({
             <td className="jc-data-grid-more-toggle">
               <button
                 type="button"
-                className="jc-grid-arrange-btn"
                 aria-expanded={open}
                 onClick={() =>
                   setOpened((was) => {

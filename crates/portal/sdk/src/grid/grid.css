@@ -3203,7 +3203,20 @@ a.jc-cell--link:focus-visible {
    search and an icon-only Arrange columns on one line. */
 @media (width <= 640px) {
   .jc-data-grid--stack tbody tr:not([data-open]) .jc-data-grid-more { display: none; }
-  .jc-data-grid--stack tbody td.jc-data-grid-more-toggle { display: block; padding-top: var(--jc-space-1, 4px); }
+  .jc-data-grid--stack tbody :is(td, th) { padding-block: 2px; }
+  .jc-data-grid--stack tbody th { font-weight: 600; padding-bottom: var(--jc-space-1, 4px); }
+  .jc-data-grid--stack tbody td.jc-data-grid-more-toggle { display: block; }
+  /* A text button, still a 32 px target: the card's own content stays the heavier mark. */
+  .jc-data-grid--stack .jc-data-grid-more-toggle button {
+    min-height: 32px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--jc-color-accent, #0b57d0);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
   .jc-data-grid--stack .jc-data-grid-toolbar { flex-wrap: nowrap; align-items: flex-start; }
   .jc-data-grid--stack .jc-data-grid-search { flex: 1 1 auto; min-width: 0; }
   .jc-data-grid--stack .jc-grid-arrange-toggle { margin-top: 18px; min-height: 36px; }
