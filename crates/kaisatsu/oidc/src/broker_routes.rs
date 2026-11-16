@@ -16,8 +16,7 @@ use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{
-    constant_time_str_eq, random_handle_256, sha256_hex, verify_and_maybe_rehash,
-    verify_jwt_with_jwk,
+    constant_time_str_eq, random_handle_256, verify_and_maybe_rehash, verify_jwt_with_jwk,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
