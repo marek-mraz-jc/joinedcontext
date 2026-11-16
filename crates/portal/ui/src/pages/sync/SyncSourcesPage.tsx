@@ -169,8 +169,6 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
-      {/* A tooltip is out of reach on a phone: a reader is told once, in words, why Add is closed. */}
-      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 
