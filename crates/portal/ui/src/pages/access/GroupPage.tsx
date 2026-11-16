@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { asManifests, isChange, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
 import { useProjects } from "../../api/projects";
@@ -29,7 +29,7 @@ import type { Place, RoleChoice } from "./groupRoles";
 import { useOrganizationName } from "../../api/projects";
 import { instancesReachedBy } from "../ckan/ckanAccess";
 import { GroupDatasets } from "../organization/DataAccess";
-import { listManifests, type ManifestSet, readManifest } from "../../api/odata";
+import { listChanges, listManifests, type ManifestSet, readManifest } from "../../api/odata";
 
 interface GroupSpec {
   description?: string;
@@ -93,8 +93,7 @@ export function GroupPage({ name }: { name: string }): JSX.Element {
   // manifest of an unmerged Change, so the page waits for its decision instead of guessing.
   const changes = useQuery({
     queryKey: queryKeys.changes(ORG_NAMESPACE),
-    queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project: ORG_NAMESPACE } } })),
+    queryFn: () => listChanges(ORG_NAMESPACE),
   });
   const waiting =
     (changes.data?.items ?? []).find((open) => {

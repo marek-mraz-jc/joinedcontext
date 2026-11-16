@@ -55,7 +55,7 @@ const APPROVED = {
   status: { lane: "yellow", phase: "Deploying", plan: { update: 1 } },
 };
 
-async function stubApi(page: Page): Promise<{ approvals: string[] }> {
+async function stubApi(page: Page, outside: unknown[] = []): Promise<{ approvals: string[] }> {
   const approvals: string[] = [];
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
@@ -71,6 +71,10 @@ async function stubApi(page: Page): Promise<{ approvals: string[] }> {
     }
     if (url.pathname === "/api/v1/projects") {
       return json(PROJECTS);
+    }
+    // The forge's merge requests that are not Changes: their own Portal door (T-7126).
+    if (url.pathname.endsWith("/changes/outside")) {
+      return json({ items: outside });
     }
     if (url.pathname.endsWith("/changes")) {
       return json({
@@ -118,6 +122,28 @@ test.describe("approvals", () => {
 
     await expect(page.getByText("Deploying")).toBeVisible();
     expect(approvals).toEqual(["/api/v1/projects/helsinki/changes/chg-1a2b3c4d/approve"]);
+  });
+
+  test("an administrator reads the open Changes and the forge's merge requests beside them (T-7126)", async ({ page }) => {
+    await stubApi(page, [
+      {
+        number: 12,
+        url: "https://gitea.example/city/helsinki-config/pulls/12",
+        author: "olli.outsider",
+        reason: "its author is not a writer of the project 'helsinki'; a binding granting propose on the project makes them one",
+      },
+    ]);
+    for (const width of [1440, 400]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/projects/helsinki/approvals?lang=en");
+      await expect(page.getByRole("link", { name: 'Update Endpoint "air-quality" (2 fields changed)' }).first()).toBeVisible();
+      await expect(page.getByText("1 merge request in the forge is not a Change")).toBeVisible();
+      await expect(page.getByRole("link", { name: /#12 by olli\.outsider/ })).toHaveAttribute(
+        "href",
+        "https://gitea.example/city/helsinki-config/pulls/12",
+      );
+      await page.screenshot({ path: test.info().outputPath(`approvals-outside-${width}.png`), fullPage: true });
+    }
   });
 
   test("at 400 px a long merge-request link and file path wrap inside the page (T-4976)", async ({ page }) => {

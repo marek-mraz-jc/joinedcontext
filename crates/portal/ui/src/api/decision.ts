@@ -6,8 +6,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "./client";
-import { approveChange, rejectChange } from "./odata";
+import { ApiError, queryKeys } from "./client";
+import { approveChange, listChanges, rejectChange } from "./odata";
 import type { components } from "./schema";
 import { approvalStanding } from "./approval";
 import { usePermissions } from "./permissions";
@@ -62,7 +62,7 @@ export function useDecision(project: string, id: string) {
 function useChangeList(project: string) {
   return useQuery({
     queryKey: queryKeys.changes(project),
-    queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/changes", { params: { path: { project } } })),
+    queryFn: () => listChanges(project),
     refetchInterval: 30_000,
   });
 }
