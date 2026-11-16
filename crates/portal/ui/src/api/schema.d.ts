@@ -13801,7 +13801,7 @@ export interface components {
             answer: string;
             /**
              * Format: int32
-             * @description The HTTP status the sender would have seen: 202 once the pipeline took the event.
+             * @description The HTTP status the sender would have seen: 200 once the pipeline took the event.
              */
             status: number;
         };
