@@ -2166,6 +2166,25 @@ async fn a_native_file_of_a_bundle_is_approved_as_the_kind_its_directory_names()
     assert!(merged(&server).await, "{body}");
 }
 
+/// T-6972: a repository file writes `{orgDomain}` where the domain goes (CC-74) and the loader
+/// renders it, so approval judges the file rendered: a Pipeline aimed at
+/// `urn:ngsi-ld:Endpoint:{orgDomain}:…` is no invalid URN.
+#[tokio::test]
+async fn a_file_that_writes_the_domain_placeholder_is_judged_as_the_loader_renders_it() {
+    let pipeline = PIPELINE_YAML
+        .replace("name: aq\n", "name: aq-door\n")
+        .replace("bb.sk", "{orgDomain}");
+    let (server, state) = bundle_of(
+        json!([{ "kinds": ["Pipeline"], "verbs": ["approve"] }]),
+        &[("projects/ovzdusie/pipelines/aq-door/pipeline.yaml", &pipeline)],
+    )
+    .await;
+    let (status, body) = approve_bundle(state, Some("aq")).await;
+
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert!(merged(&server).await, "{body}");
+}
+
 #[tokio::test]
 async fn a_file_of_no_kind_this_platform_serves_is_approved_by_nobody() {
     let (server, state) = bundle_of(
