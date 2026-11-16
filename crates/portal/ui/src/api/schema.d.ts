@@ -33335,14 +33335,24 @@ export interface operations {
                  */
                 "application/json": {
                     /**
-                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did
+                     * @description projects: the projects you may read; setup: first-start checklist; health: validation results; healthChecks: every project's checks; limits: quotas and use; brokers: brokers and sizes; agents: agent profiles and runs; agentActivity: what agent runs did; costs: a month's costs per project; addresses: the Organization's addresses; dataAccess: who reads which Endpoint; widgetOptions: home page Dashboards to pick; personReadable: what one person reads
                      * @enum {string}
                      */
-                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity";
+                    aspect: "projects" | "setup" | "health" | "healthChecks" | "limits" | "brokers" | "agents" | "agentActivity" | "costs" | "addresses" | "dataAccess" | "widgetOptions" | "personReadable";
                     /** @description agentActivity: nextCursor of the previous page */
                     cursor?: string;
+                    /** @description dataAccess: one Endpoint's row, by slug */
+                    endpoint?: string;
+                    /** @description dataAccess: one group's column */
+                    group?: string;
                     /** @description agentActivity: page size, default 20 */
                     limit?: number;
+                    /** @description costs: e.g. 2026-09, default last month */
+                    month?: string;
+                    /** @description widgetOptions: the Organization, by name */
+                    organization?: string;
+                    /** @description personReadable: the Keycloak user id */
+                    person?: string;
                 };
             };
         };

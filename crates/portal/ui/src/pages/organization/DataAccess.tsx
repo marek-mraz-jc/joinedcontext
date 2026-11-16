@@ -2,7 +2,8 @@ import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Alert,
@@ -27,7 +28,7 @@ export function dataAccessQuery(narrow: { group?: string; endpoint?: string } = 
   return {
     queryKey: ["organization", "data-access", narrow.group ?? null, narrow.endpoint ?? null] as const,
     queryFn: async () =>
-      shaped(await unwrap(await api.GET("/api/v1/organization/data-access", { params: { query: narrow } })), "rows"),
+      shaped(await organizationReading("dataAccess", narrow), "rows"),
     retry: false,
   };
 }
@@ -37,7 +38,7 @@ export function personReadableQuery(id: string) {
   return {
     queryKey: ["organization", "people", id, "readable"] as const,
     queryFn: async () =>
-      shaped(await unwrap(await api.GET("/api/v1/organization/people/{id}/readable", { params: { path: { id } } })), "datasets"),
+      shaped(await organizationReading("personReadable", { person: id }), "datasets"),
     retry: false,
   };
 }

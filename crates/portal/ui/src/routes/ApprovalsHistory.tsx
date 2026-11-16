@@ -4,6 +4,7 @@ import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { call } from "../api/odata";
 import { ownRights, usePermissions } from "../api/permissions";
 import { ChangeNotice } from "../components/ChangeNotice";
 import { changeSentence, landed } from "./changeWords";
@@ -70,6 +71,7 @@ export function ApprovalsHistory({
   const [draft, setDraft] = useState<Filter>(NO_FILTER);
   const [filter, setFilter] = useState<Filter>(NO_FILTER);
   const [opened, setOpened] = useState<string | null>(null);
+  const [filtersShown, setFiltersShown] = useState(false);
   const queryClient = useQueryClient();
   // A merged removal can be proposed again (T-3247): the new change waits for an approver.
   const restore = useMutation({
@@ -123,15 +125,7 @@ export function ApprovalsHistory({
       filter.until,
     ] as const,
     initialPageParam: 1,
-    queryFn: async ({ pageParam }) =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/history", {
-          params: {
-            path: { project },
-            query: { page: pageParam, ...filterQuery(filter) },
-          },
-        }),
-      ),
+    queryFn: ({ pageParam }) => call("jc_change_history", project, { page: pageParam, ...filterQuery(filter) }),
     getNextPageParam: (last) => last.next ?? undefined,
   });
 
@@ -184,7 +178,7 @@ export function ApprovalsHistory({
           <Button
             size="sm"
             variant="ghost"
-            className="mt-1"
+            className="mt-1 touch-size"
             aria-expanded={opened === change.metadata.name}
             onClick={() => setOpened(opened === change.metadata.name ? null : change.metadata.name)}
           >
@@ -287,11 +281,23 @@ export function ApprovalsHistory({
           {refused instanceof ApiError ? (refused.problem?.detail ?? refused.message) : t("app.error.generic")}
         </Alert>
       ) : null}
+      {/* On a phone the five filters fold behind one toggle, so the history starts on the first screen. */}
+      <Button
+        type="button"
+        variant="secondary"
+        className="self-start sm:hidden"
+        aria-expanded={filtersShown}
+        aria-controls={`${id}-filters`}
+        onClick={() => setFiltersShown(!filtersShown)}
+      >
+        {t("approvals.history.filtersToggle")}
+      </Button>
       <form
+        id={`${id}-filters`}
         role="search"
         aria-label={t("approvals.history.filter")}
         onSubmit={submit}
-        className="flex flex-wrap items-end gap-4"
+        className={`${filtersShown ? "flex" : "hidden sm:flex"} flex-wrap items-end gap-4`}
       >
         <Field id={`${id}-kind`} label={t("approvals.history.kind")}>
           <Select
@@ -376,7 +382,13 @@ export function ApprovalsHistory({
                   ? t("approvals.history.noneOnPage")
                   : t("approvals.history.empty")
             }
-            description={filtered || history.hasNextPage ? undefined : t("approvals.history.emptyHint")}
+            description={
+              filtered
+                ? t("approvals.history.noneMatchHint")
+                : history.hasNextPage
+                  ? undefined
+                  : t("approvals.history.emptyHint")
+            }
           />
         }
       />

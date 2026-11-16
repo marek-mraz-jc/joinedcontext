@@ -4,6 +4,7 @@ import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { useChosenOrganizationName } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
@@ -168,7 +169,7 @@ export function OrganizationSettings(): JSX.Element {
   // below and the range every numeric field of the form is held to (PF-97, PF-102).
   const limits = useQuery({
     queryKey: ["organization-limits"],
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/limits")),
+    queryFn: async () => organizationReading("limits"),
   });
   // With several Organizations: the one `?org=` chooses, else the installation's (ADR-N-058 2.7).
   const chosen = useChosenOrganizationName();
@@ -185,11 +186,7 @@ export function OrganizationSettings(): JSX.Element {
     queryKey: ["organization", "widget-options", organizationName],
     enabled: organizationName !== undefined,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/widgets/options", {
-          params: { query: { organization: organizationName ?? "" } },
-        }),
-      ),
+      organizationReading("widgetOptions", { organization: organizationName ?? "" }),
   });
   const widgets = (widgetOptions.data?.options ?? []).map((option) => ({
     reference: option.reference,

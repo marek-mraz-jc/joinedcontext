@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import en from "../src/locales/en.json";
 import { jsonResponse, list, renderRoute } from "./pageHarness";
+import { odataCall } from "./odata";
 import { narrowsAndOrders } from "./grid_checks";
 import { usesOfModel } from "../src/pages/models/modelUsage";
 import { yamlParts } from "../src/pages/models/ModelViews";
@@ -336,14 +337,14 @@ describe("a model's own page", () => {
   });
 
   it("reads its history as the model's closed Changes (T-4830)", async () => {
-    const { calls, fetchMock } = await renderRoute({ path: "/projects/helsinki/models/air", answer });
+    const { fetchMock } = await renderRoute({ path: "/projects/helsinki/models/air", answer });
     await userEvent.click(await screen.findByRole("tab", { name: en.models.page.view.history }));
-    await waitFor(() => expect(calls()).toContain("GET /api/v1/projects/helsinki/changes/history"));
-    const history = fetchMock.mock.calls
-      .map((call) => (call[0] as Request).url)
-      .find((url) => url.includes("/changes/history"));
-    const query = new URL(history ?? "").searchParams;
-    expect([query.get("kind"), query.get("name")]).toEqual(["DataModel", "air"]);
+    const history = () =>
+      fetchMock.mock.calls
+        .map((call) => odataCall((call[0] as Request).url))
+        .find((call) => call?.name === "jc_change_history");
+    await waitFor(() => expect(history()).toBeDefined());
+    expect(history()).toMatchObject({ project: "helsinki", params: { kind: "DataModel", name: "air" } });
   });
 
   it("says so for a model the project does not have", async () => {
