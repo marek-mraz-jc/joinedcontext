@@ -1,3 +1,4 @@
+import { listManifests, readManifest } from "../../api/odata";
 import { useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -283,20 +284,12 @@ export function PipelineOverview({ project, name }: { project: string; name: str
     retry: false,
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "pipelines", name } },
-        }),
-      ),
+      (await readManifest(project, "pipelines", name)),
   });
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      (await listManifests(project, "endpoints")),
   });
   const last = useLastRun(project, name);
   const counterSpec = pipeline.data?.spec as PipelineSpec | undefined;

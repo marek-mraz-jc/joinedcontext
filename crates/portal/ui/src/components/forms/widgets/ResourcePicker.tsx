@@ -1,3 +1,4 @@
+import { listManifests } from "../../../api/odata";
 import { useContext, useMemo } from "react";
 import type { ChangeEvent, FocusEvent, JSX } from "react";
 import { ariaDescribedByIds } from "@rjsf/utils";
@@ -5,7 +6,7 @@ import type { WidgetProps } from "@rjsf/utils";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../../api/client";
+import { queryKeys, reasonOf } from "../../../api/client";
 import { asManifests, localized } from "../../../api/manifest";
 import { Button, InlineError, Select } from "../../ui";
 import { useShownErrors } from "../touched";
@@ -106,11 +107,7 @@ function useResourceChoices(project: string | undefined, plural: string | undefi
   const query = useQuery({
     queryKey: queryKeys.list(project ?? "", plural ?? ""),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: project as string, plural: plural as string } },
-        }),
-      ),
+      (await listManifests(project as string, plural as string)),
     enabled: Boolean(project && plural),
   });
   const choices = useMemo(

@@ -1,9 +1,10 @@
+import { listManifests, act, call, projectBound, projectEtag } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ListFailed } from "../../components/forms/widgets/ListFailed";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { prune } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
 import { useProposal } from "../../api/proposal";
@@ -14,21 +15,9 @@ import { SYNC_ORIGINS, syncSourceSchema } from "../../schemas/kinds";
 import type { SyncOriginKind } from "../../schemas/kinds";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { ResourceRowActions } from "../../components/ResourceRowActions";
-import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { DeniedNote, PermissionGuard } from "../../components/ui/PermissionGuard";
 import type { components } from "../../api/schema";
-import {
-  Alert,
-  Button,
-  ConfirmDialog,
-  EmptyState,
-  ExternalLink,
-  Field,
-  PageFailed,
-  PageHeader,
-  PageLoading,
-  Select,
-  recordCard,
-} from "../../components/ui";
+import { Alert, Button, ConfirmDialog, EmptyState, ExternalLink, Field, PageFailed, PageHeader, PageLoading, Select, recordCard } from "../../components/ui";
 import { RecordLink } from "../../components/RecordLink";
 
 export function syncStatusKey(project: string, name: string) {
@@ -115,11 +104,7 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "syncsources"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "syncsources" } },
-        }),
-      ),
+      (await listManifests(project, "syncsources")),
   });
 
   const items = list.data?.items ?? [];
@@ -171,6 +156,9 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
+
+      {/* A disabled Add source says why in words, not only in its tooltip (T-6423). */}
+      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 
@@ -260,12 +248,7 @@ function SyncSourceCard({
 
   const status = useQuery({
     queryKey: syncStatusKey(project, name),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/syncsources/{name}/status", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: () => call("jc_syncsource_status", project, { name }),
   });
 
   const refresh = () => {
@@ -273,35 +256,22 @@ function SyncSourceCard({
   };
 
   const syncNow = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/sync", {
-          params: { path: { project, name } },
-        }),
-      ),
+    mutationFn: () => act("jc_syncsource_sync", projectBound(project), { name }),
     onSuccess: refresh,
   });
 
   const pause = useMutation({
-    mutationFn: async (paused: boolean) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/pause", {
-          params: { path: { project, name } },
-          body: { paused },
-        }),
-      ),
+    mutationFn: (paused: boolean) => act("jc_syncsource_pause", projectBound(project), { name, paused }),
     onSuccess: refresh,
   });
 
   const detach = useMutation({
+    // A Change-proposing action: its If-Match is the project's ETag (API/13 §2b).
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/syncsources/{name}/detach", {
-          params: { path: { project, name } },
-        }),
-      ),
+      act("jc_syncsource_detach", projectBound(project), { name }, await projectEtag(project)),
     onSuccess: (result) => {
-      const url = (result as { mergeRequest?: string } | undefined)?.mergeRequest;
+      // The operation answers the removal as its Change and the merge request's address (`url`).
+      const url = (result as { url?: string | null } | undefined)?.url;
       setDetached(url ?? null);
       refresh();
     },

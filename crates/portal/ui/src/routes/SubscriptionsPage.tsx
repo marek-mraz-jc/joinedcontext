@@ -1,10 +1,11 @@
+import { listManifests } from "../api/odata";
 import { useCreateFormFromDraft } from "../components/forms/FormRoute";
 import { RecordLink } from "../components/RecordLink";
 import { Fragment, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, problemOf, queryKeys, unwrap, whilePending } from "../api/client";
+import { problemOf, queryKeys, whilePending } from "../api/client";
 import { proposeChecked } from "../api/proposal";
 import { asManifests, isChange, localized, storedMetadata } from "../api/manifest";
 import type { Change, Manifest, ResourceProposal } from "../api/manifest";
@@ -15,13 +16,7 @@ import { ResourceFormDialog } from "../components/ResourceFormDialog";
 import { ManifestGrid } from "../components/grid/ManifestGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { subscriptionSchema, subscriptionUiSchema } from "../schemas/kinds";
-import {
-  Badge,
-  Button,
-  EmptyState,
-  Icon,
-  PageHeader,
-} from "../components/ui";
+import { Badge, Button, EmptyState, Icon, PageHeader } from "../components/ui";
 import { PermissionGuard } from "../components/ui/PermissionGuard";
 import { SPACE_LABEL } from "../schemas/modelprojection";
 import { endpointView } from "../components/ui/safeHref";
@@ -253,21 +248,13 @@ export function SubscriptionsPage({ project, edit }: { project: string; edit?: s
     queryKey: queryKeys.list(project, "subscriptions"),
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "subscriptions" } },
-        }),
-      ),
+      (await listManifests(project, "subscriptions")),
   });
 
   const spaces = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
   const spaceNames = asManifests(spaces.data?.items ?? []).map((space) => space.metadata.name);
   const subscriptions = asManifests(list.data?.items ?? []);

@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -569,20 +570,12 @@ export function PipelineStudio({
   const spaces = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      (await listManifests(project, "datamodels")),
   });
 
   const spaceList = useMemo(() => asManifests(spaces.data?.items ?? []), [spaces.data]);

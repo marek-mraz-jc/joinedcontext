@@ -1,9 +1,10 @@
 import { useId, useState } from "react";
+import { proposeDelete, type RestAnswer } from "../api/odata";
 import { PermissionGuard } from "./ui/PermissionGuard";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { ApiError, queryKeys } from "../api/client";
 import { isChange } from "../api/manifest";
 import type { Change } from "../api/manifest";
 import { usePermissions } from "../api/permissions";
@@ -52,23 +53,14 @@ export function DeleteResourceDialog({
     enabled: open,
     retry: false,
     queryFn: async () =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: home, plural, name }, query: { dryRun: "All" } },
-        }),
-      ),
+      (await proposeDelete(home, plural, name, { dryRun: true })) as RestAnswer<"delete_resource">,
   });
   const goesWith =
     preview.data && !isChange(preview.data) && "goesWith" in preview.data ? (preview.data.goesWith ?? []) : [];
 
   const remove = useMutation({
-    mutationFn: async () =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/{plural}/{name}", {
-          // The name typed back: an administrator's removal is approved with it (PF-58, CC-39).
-          params: { path: { project: home, plural, name }, query: { confirm: typed } },
-        }),
-      ),
+    // The name typed back: an administrator's removal is approved with it (PF-58, CC-39).
+    mutationFn: async () => proposeDelete(home, plural, name, { confirm: typed }),
     onSuccess: (result) => {
       if (isChange(result)) {
         setChange(result);

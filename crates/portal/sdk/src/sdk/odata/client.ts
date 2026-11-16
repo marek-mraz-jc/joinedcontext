@@ -32,14 +32,16 @@ export class ODataError extends Error {
   readonly details: { target: string; message: string }[];
   /** What the person can do next, when the service says. */
   readonly hint?: string;
+  /** Whether the answer said what went wrong; a bare `502` of the edge says nothing. */
+  readonly described: boolean;
 
   constructor(status: number, body: unknown, etag?: string, requestId?: string) {
     const error = (body as { error?: Record<string, unknown> } | null)?.error ?? {};
     const problem = (body ?? {}) as Record<string, unknown>;
     const text = (v: unknown) => (typeof v === "string" ? v : undefined);
-    const message =
-      text(error.message) ?? text(problem.detail) ?? text(problem.title) ?? `HTTP ${status}`;
-    super(message);
+    const said = text(error.message) ?? text(problem.detail) ?? text(problem.title);
+    super(said ?? `HTTP ${status}`);
+    this.described = said !== undefined;
     this.name = "ODataError";
     this.status = status;
     this.code = text(error.code) ?? text(problem.type)?.split("/").pop() ?? "invalid-request";
@@ -82,11 +84,16 @@ export function literal(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** The key predicate of `key`, e.g. `('air')` or `(project='air',name='pm10')`. */
+/**
+ * The key predicate of `key`, e.g. `('air')` or `(project='air',name='pm10')`. Each literal is
+ * percent-encoded, so a `/`, `?` or `#` in a name stays in its key and never moves the address
+ * (a name `a/../x` is `('a%2F..%2Fx')`, not a path up the service).
+ */
 export function keyPredicate(key: KeyOf): string {
-  if (typeof key !== "object") return `(${literal(key)})`;
+  const value = (v: unknown) => encodeURIComponent(literal(v));
+  if (typeof key !== "object") return `(${value(key)})`;
   return `(${Object.entries(key)
-    .map(([name, value]) => `${name}=${literal(value)}`)
+    .map(([name, v]) => `${name}=${value(v)}`)
     .join(",")})`;
 }
 

@@ -1,10 +1,11 @@
+import { listManifests } from "../api/odata";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { JSX, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
 import { asManifests, localized } from "../api/manifest";
 import { useAdministers } from "../api/permissions";
 import { useProjects } from "../api/projects";
@@ -234,7 +235,7 @@ function usePaletteRows(project: string, open: boolean, query: string): Row[] {
   const lists = useQueries({
     queries: KINDS.map((plural) => ({
       queryKey: queryKeys.list(project, plural),
-      queryFn: async () => unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+      queryFn: async () => (await listManifests(project, plural)),
       enabled: open && !isHiddenSection(plural, hidden),
       retry: false,
     })),

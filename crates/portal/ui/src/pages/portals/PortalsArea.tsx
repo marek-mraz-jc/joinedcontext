@@ -1,3 +1,4 @@
+import { readManifest } from "../../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -338,7 +339,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
     enabled: !creating && hosts.isSuccess,
     retry: false,
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project: ORG_NAMESPACE, plural: "portals", name } } })),
+      (await readManifest(ORG_NAMESPACE, "portals", name)),
   });
   const portals = useReadableList(ORG_NAMESPACE, "portals", "Portal", creating && hosts.isSuccess);
   const title = creating ? t("portals.editor.newTitle") : t("portals.editor.editTitle", { name });

@@ -1,8 +1,9 @@
+import { listManifests } from "../../api/odata";
 import { useMemo } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
 import { projectsQuery } from "../../api/projects";
 import { asManifests, localized } from "../../api/manifest";
 import { Combobox } from "./Combobox";
@@ -66,11 +67,7 @@ export function ResourceNamePicker({
     queries: lists.map((list) => ({
       queryKey: queryKeys.list(list.project, list.plural),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project: list.project, plural: list.plural } },
-          }),
-        ),
+        (await listManifests(list.project, list.plural)),
       enabled: Boolean(list.project && list.plural),
     })),
   });

@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { SpaceChanges } from "./SpaceChanges";
 import { SourceCheck } from "./SourceCheck";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -7,7 +8,7 @@ import { useTranslation } from "react-i18next";
 import { callOperation } from "../../api/operations";
 import { asManifests, refName } from "../../api/manifest";
 import type { Manifest } from "../../api/manifest";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { useModelSource } from "../../components/entities/filters";
 import { FormHeading } from "../../components/forms/FormRoute";
 import { Alert, Badge, Button, Card, Checkbox, Field, FilePicker, RadioGroup, Select, Textarea } from "../../components/ui";
@@ -538,20 +539,12 @@ export function PipelineWorkbench({
   const spaces = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      (await listManifests(project, "spaces")),
   });
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      (await listManifests(project, "datamodels")),
   });
   const spaceList = useMemo(() => asManifests(spaces.data?.items ?? []), [spaces.data]);
   const modelList = useMemo(() => asManifests(models.data?.items ?? []), [models.data]);

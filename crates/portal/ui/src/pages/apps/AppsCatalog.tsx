@@ -1,3 +1,4 @@
+import { listManifests } from "../../api/odata";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -256,11 +257,7 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "apps"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "apps" } },
-        }),
-      ),
+      (await listManifests(project, "apps")),
   });
 
   const runs = useQuery({
@@ -644,7 +641,7 @@ function LifecycleDialog({
     queryKey: queryKeys.list(project, "endpoints"),
     enabled: lifecycle === "published",
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural: "endpoints" } } })),
+      (await listManifests(project, "endpoints")),
   });
   // What the app lacks before it is published (AP-140): warnings may stay, a privacy problem not.
   const items =

@@ -805,6 +805,27 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     );
     let addressed = get(&state, Mode::Shared, "root", "/api/v1/projects('helsinki')").await;
     assert_eq!(addressed.status, StatusCode::OK, "{}", addressed.text);
+    // A manifest keyed with its project names that project's Organization too (T-7073): the UI
+    // reads one and binds its writes there.
+    let keyed = "/api/v1/spaces(project='helsinki',name='air')?$select=name,spec";
+    let one = get(&state, Mode::Shared, "root", keyed).await;
+    assert_eq!(one.status, StatusCode::OK, "{}", one.text);
+    let foreign = get(&state, Mode::Shared, "ba-only", keyed).await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    // A key's literal arrives percent-encoded (the SDK encodes it, so a `/` in a name stays in
+    // the key): the service reads it decoded.
+    let encoded = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/spaces(project='helsinki',name='%61ir')?$select=name",
+    )
+    .await;
+    assert_eq!(encoded.status, StatusCode::OK, "{}", encoded.text);
+    assert_eq!(encoded.json()["name"], "air", "{}", encoded.text);
+    // A key that names no project, or a navigation below one, decides nothing.
+    let unkeyed = get(&state, Mode::Shared, "root", "/api/v1/spaces('air')").await;
+    assert_eq!(unkeyed.status, StatusCode::NOT_FOUND, "{}", unkeyed.text);
 }
 
 /// A write as an action: POST with the session's CSRF token, `If-Match` when given.
@@ -1359,7 +1380,7 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
                 &state,
                 mode,
                 &cookie,
-                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata"),
+                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata,apiVersion"),
                 &[],
             )
             .await;
@@ -1381,7 +1402,7 @@ async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
                 )
                 .await;
                 let rest = rest.json();
-                for member in ["spec", "status", "metadata"] {
+                for member in ["spec", "status", "metadata", "apiVersion"] {
                     compared += 1;
                     if row[member] != rest[member] {
                         differ.push(format!(
