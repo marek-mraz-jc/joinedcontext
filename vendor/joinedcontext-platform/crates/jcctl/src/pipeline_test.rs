@@ -817,6 +817,7 @@ mod tests {
             url: None,
             format: SampleFormat::Csv,
             records: None,
+            sheet: None,
         };
         let capture = "http://portal:9090/internal/pipeline-tests/abc";
         let cuts = |config: &Value| -> Vec<String> {
