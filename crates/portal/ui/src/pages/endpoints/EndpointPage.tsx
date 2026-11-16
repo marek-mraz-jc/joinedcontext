@@ -10,7 +10,7 @@ import { ShareFlow } from "./ShareFlow";
 import { AccessRequestInbox } from "../pipelines/AccessRequests";
 import { ConnectAssistant } from "../../components/endpoints/ConnectAssistant";
 import { QueryCard } from "../../components/endpoints/QueryCard";
-import { ApiError, api, queryKeys, unwrap, whilePending } from "../../api/client";
+import { ApiError, queryKeys, whilePending } from "../../api/client";
 import { asManifests, isChange, localized, refName } from "../../api/manifest";
 import type { Change, ResourceProposal } from "../../api/manifest";
 import { proposeBundle, proposeChecked } from "../../api/proposal";
@@ -67,6 +67,7 @@ import {
 import { ResourcePageFailed } from "../../components/ui/PageState";
 import { andQ, areaQuery, queryFromFilters, ringOfBounds } from "@joinedcontext/sdk";
 import type { FilterOp } from "@joinedcontext/sdk";
+import { listManifests, readManifest } from "../../api/odata";
 
 /**
  * One endpoint, the whole window (T-2281, EP-51, UI-26, UI-61).
@@ -127,41 +128,25 @@ export function EndpointPage({
     // A change on its way polls until it lands (T-1392).
     refetchInterval: whilePending,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project, plural: "endpoints", name } },
-        }),
-      ),
+      readManifest(project, "endpoints", name),
   });
 
   const policies = useQuery({
     queryKey: queryKeys.list(project, "policies"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "policies" } },
-        }),
-      ),
+      listManifests(project, "policies"),
   });
 
   const spaces = useQuery({
     queryKey: queryKeys.list(project, "spaces"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "spaces" } },
-        }),
-      ),
+      listManifests(project, "spaces"),
   });
 
   const projections = useQuery({
     queryKey: queryKeys.list(project, "projections"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "projections" } },
-        }),
-      ),
+      listManifests(project, "projections"),
   });
 
   // The space's model, for an endpoint that names no projection yet: the filter editor starts from
@@ -169,11 +154,7 @@ export function EndpointPage({
   const models = useQuery({
     queryKey: queryKeys.list(project, "datamodels"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "datamodels" } },
-        }),
-      ),
+      listManifests(project, "datamodels"),
   });
   const endpointSpace = endpoint.data ? spaceOf(endpoint.data as Manifest) : undefined;
   const spaceModel = asManifests(models.data?.items ?? []).find(

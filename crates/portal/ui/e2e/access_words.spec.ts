@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Access tables in plain words (T-4990): Policies, Settings > Your access, Organization > Roles,
 // the domain card and the organization's service accounts, read as a steward reads them, at 1440

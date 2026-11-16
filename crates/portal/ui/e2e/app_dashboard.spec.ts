@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A dashboard App edited without code (T-6402): on the App page a person opens Edit the
 // dashboard, adds a computed column, a filter, a colour rule, a chart and a tile, previews the

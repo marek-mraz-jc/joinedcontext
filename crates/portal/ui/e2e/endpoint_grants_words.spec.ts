@@ -1,6 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5592: helsinki-bikes-ops' page as a viewer sees it. "Who may call it" names who may write
 // `status` in words, the greyed header actions say why, and the page is no wider than a 400 px phone

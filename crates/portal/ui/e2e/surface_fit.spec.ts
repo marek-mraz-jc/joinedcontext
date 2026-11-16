@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Endpoint form greys out a surface the space's data model cannot serve (EP-125, T-5299), from
 // GET …/spaces/{space}/surface-fit, against a stubbed API as representation_outputs.spec.ts does.

@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // An administrator of an Organization other than the installation's (ADR-N-058 section 2.4,
 // T-5248) opens Administration and finds that Organization's members, groups and settings, and

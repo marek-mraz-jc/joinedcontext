@@ -7,6 +7,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const SHOTS = process.env.T5617_SHOTS ?? "test-results/use-template";
 const API = "joinedcontext.com/v1alpha1";

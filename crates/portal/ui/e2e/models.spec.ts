@@ -4,6 +4,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Data models page as a person meets it (T-2765, T-2762; DM-61, DM-62): the list of the project's
 // models, one click to a model's own page, and its diagram, form and YAML. `vite preview` has no

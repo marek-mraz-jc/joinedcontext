@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A ServiceAccount's client secret (T-5626, PF-37, API/01 §52): an approver issues a new one on
 // the account's card behind a confirmation, sees it once with its client id and token URL, and

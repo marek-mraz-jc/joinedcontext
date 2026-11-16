@@ -29,6 +29,7 @@ import type { Place, RoleChoice } from "./groupRoles";
 import { useOrganizationName } from "../../api/projects";
 import { instancesReachedBy } from "../ckan/ckanAccess";
 import { GroupDatasets } from "../organization/DataAccess";
+import { listManifests, type ManifestSet, readManifest } from "../../api/odata";
 
 interface GroupSpec {
   description?: string;
@@ -49,16 +50,12 @@ interface Proposal {
   create: boolean;
 }
 
-function useList(project: string, plural: string, enabled = true) {
+function useList(project: string, plural: ManifestSet, enabled = true) {
   return useQuery({
     queryKey: queryKeys.list(project, plural),
     enabled,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural } },
-        }),
-      ),
+      listManifests(project, plural),
   });
 }
 
@@ -78,11 +75,7 @@ export function GroupPage({ name }: { name: string }): JSX.Element {
   const group = useQuery({
     queryKey: queryKeys.resource(ORG_NAMESPACE, "groups", name),
     queryFn: async () =>
-      unwrap<unknown>(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "groups", name } },
-        }),
-      ),
+      readManifest(ORG_NAMESPACE, "groups", name),
     retry: false,
   });
   const bindings = useList(ORG_NAMESPACE, "rolebindings");
@@ -91,11 +84,7 @@ export function GroupPage({ name }: { name: string }): JSX.Element {
     queries: (projects.data ?? []).map((project) => ({
       queryKey: queryKeys.list(project, "apps"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "apps" } },
-          }),
-        ),
+        listManifests(project, "apps"),
     })),
   });
 
@@ -439,11 +428,7 @@ function PlatformRoles({
     queries: (projects.data ?? []).map((project) => ({
       queryKey: queryKeys.list(project, "roles"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "roles" } },
-          }),
-        ),
+        listManifests(project, "roles"),
     })),
   });
 
@@ -735,11 +720,7 @@ function CkanInstancesReached({ group, bindings }: { group: string; bindings: Ma
     queries: (projects.data ?? []).map((project) => ({
       queryKey: queryKeys.list(project, "ckaninstances"),
       queryFn: async () =>
-        unwrap(
-          await api.GET("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural: "ckaninstances" } },
-          }),
-        ),
+        listManifests(project, "ckaninstances"),
     })),
   });
   const instances = lists.flatMap((query, index) =>

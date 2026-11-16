@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5014: a `<pre>` that scrolls is reachable by keyboard and named (CodeBlock), at desktop and
 // phone width. jsdom has no layout and axe skips scrollable-region-focusable there; a browser

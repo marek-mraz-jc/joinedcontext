@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6095 (owner 2026-10-29): a list page is one compact line (title, description on hover, search,
 // primary action) with the rows right below; a row opens by its name and keeps one ⋯ menu, with

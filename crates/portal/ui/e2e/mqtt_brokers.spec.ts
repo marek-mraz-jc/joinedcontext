@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-3839: a project's MQTT brokers and who talks to whom, then an MQTT data source that reads
 // one of them. `vite preview` has no Portal API behind it, so the browser answers it; the clicks,

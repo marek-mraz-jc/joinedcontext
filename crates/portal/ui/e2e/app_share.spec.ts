@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Sharing an App (T-4913; AP-173, AP-174): an owner opens Share on a card, reads whom each choice
 // reaches, proposes the organization and sees it wait for approval; a person of another project

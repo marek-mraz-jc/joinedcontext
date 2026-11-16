@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Endpoints page over T-4497's generated catalogue (T-4544, EP-01): 10,000 Endpoints in one
 // project, titled as the gateway's generator titles them (its topics, the 518 places read from

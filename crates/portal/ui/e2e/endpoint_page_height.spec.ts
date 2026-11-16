@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5015: app-air-weather-explorer's page on dev was 23,431 px at 1440. Its filter proof listed 50
 // entities with every attribute, and "Who may call it" printed each of the space's 40 policies with

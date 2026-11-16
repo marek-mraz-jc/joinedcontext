@@ -3,7 +3,7 @@ import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, queryKeys, unwrap } from "../../api/client";
-import { call } from "../../api/odata";
+import { call, listManifests } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE, type Manifest } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -89,21 +89,13 @@ function Panel({ project }: { project: string }): JSX.Element {
   const endpoints = useQuery({
     queryKey: queryKeys.list(project, "endpoints"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "endpoints" } },
-        }),
-      ),
+      listManifests(project, "endpoints"),
   });
   const accounts = useQuery({
     queryKey: queryKeys.list(project, "serviceaccounts"),
     enabled: kind === "serviceAccount",
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "serviceaccounts" } },
-        }),
-      ),
+      listManifests(project, "serviceaccounts"),
   });
   const people = useQuery({
     queryKey: queryKeys.peoplePage(search.trim(), 0),

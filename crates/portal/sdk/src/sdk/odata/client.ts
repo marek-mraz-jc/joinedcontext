@@ -192,13 +192,22 @@ export class ODataClient {
     return new Query<EntitySets[S]>(this, `projects${keyPredicate(project)}/${nav}`);
   }
 
-  /** One entity by its key; its `@odata.etag` is what a bound action sends as `If-Match`. */
-  async get<S extends keyof EntitySets & string>(set: S, key: KeyOf): Promise<EntitySets[S]> {
+  /**
+   * One entity by its key, with `select` its `$select` (members a list leaves out, such as a
+   * manifest's `spec`, answer only when named); its `@odata.etag` is what a bound action sends as
+   * `If-Match`.
+   */
+  async get<S extends keyof EntitySets & string>(
+    set: S,
+    key: KeyOf,
+    select?: readonly string[],
+  ): Promise<EntitySets[S]> {
     const members = ENTITY_KEYS[set];
     if (typeof key === "object" && members.some((m) => !(m in key))) {
       throw new ODataError(400, { error: { code: "invalid-request", message: `${set} is keyed by (${members.join(",")})` } });
     }
-    const { body } = await this.send("GET", `${set}${keyPredicate(key)}`);
+    const query = select?.length ? `?$select=${encodeURIComponent(select.join(","))}` : "";
+    const { body } = await this.send("GET", `${set}${keyPredicate(key)}${query}`);
     return body as EntitySets[S];
   }
 
