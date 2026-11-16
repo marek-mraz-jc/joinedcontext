@@ -114,7 +114,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 177] = [
+pub static DOORS: [Door; 178] = [
     door(
         "portal_people_remove",
         Org,
@@ -1534,6 +1534,14 @@ pub static DOORS: [Door; 177] = [
         Method::PUT,
         "/projects/{project}/grafana/builder/{uid}",
         &[UID, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_grafana_builder_saved_charts",
+        Project,
+        Method::POST,
+        "/projects/{project}/grafana/builder/saved-charts",
+        &[BODY],
         Who::ProjectReader,
     ),
     door(

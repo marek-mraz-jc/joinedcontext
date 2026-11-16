@@ -61,6 +61,16 @@
         "routes": [
           "DELETE /api/v1/projects/{project}/grafana/builder/{uid}"
         ]
+      },
+      "move-saved": {
+        "live": {
+          "spec": "grafana.spec.ts",
+          "test": "a steward checks moving the saved charts into one dashboard"
+        },
+        "personOnly": "moving the saved charts into the Saved charts dashboard is a person's call on the Grafana page, proposed as a Change a reviewer approves",
+        "routes": [
+          "POST /api/v1/projects/{project}/grafana/builder/saved-charts"
+        ]
       }
     },
     "mqttbroker": {
