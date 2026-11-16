@@ -1440,6 +1440,14 @@
         "grafana_page.test.tsx"
       ]
     },
+    "src/pages/grafana/DashboardHistory.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "dashboard_history.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardList.tsx": {
       "controls": {
         "Button": 4
