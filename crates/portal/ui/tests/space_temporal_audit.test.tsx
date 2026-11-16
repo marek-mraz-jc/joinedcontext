@@ -106,7 +106,7 @@ describe("the temporal audit of a space (T-4844)", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(2);
     await userEvent.selectOptions(screen.getByLabelText(T.pipelineFilter), "air-quality");
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
-    await userEvent.selectOptions(screen.getByLabelText(T.verdictFilter), "duplicates-rows");
+    await userEvent.click(screen.getByRole("button", { name: `${T.verdict["duplicates-rows"]}: 1` }));
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByText(T.noMatch)).toBeInTheDocument();
   });
@@ -123,18 +123,17 @@ describe("the temporal audit of a space (T-4844)", () => {
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(4);
     await userEvent.click(screen.getByRole("button", { name: "Hide the OK rows" }));
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
-    // A chip is a toggle: pressed, it lists its verdict alone and sets the verdict select.
+    // A chip is a toggle: pressed, it lists its verdict alone.
+    expect(screen.getByRole("list", { name: T.verdictFilter })).toHaveAccessibleDescription(T.chipsHint);
     const ok = screen.getByRole("button", { name: `${T.verdict.ok}: 2` });
     expect(ok).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(ok);
     expect(ok).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByLabelText(T.verdictFilter)).toHaveValue("ok");
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(3);
     expect(screen.queryByRole("button", { name: /OK rows/ })).not.toBeInTheDocument();
     // Pressed again, every verdict is listed and the OK rows fold again.
     await userEvent.click(ok);
     expect(ok).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByLabelText(T.verdictFilter)).toHaveValue("");
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
     await expectNoAxeViolations(container);
   });

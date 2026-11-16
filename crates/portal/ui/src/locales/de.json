@@ -1356,7 +1356,7 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "Alle Pipelines",
       "verdictFilter": "Urteil",
-      "allVerdicts": "Alle Urteile",
+      "chipsHint": "Tippen Sie auf ein Urteil, um nur seine Zeilen zu zeigen; erneut tippen zeigt alle Urteile.",
       "showOk": "{count, plural, one {Die # OK-Zeile zeigen} other {Die # OK-Zeilen zeigen}}",
       "hideOk": "OK-Zeilen ausblenden",
       "noMatch": "Keine Zeile passt zu diesen Filtern",

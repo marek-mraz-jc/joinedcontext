@@ -1356,7 +1356,7 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "All pipelines",
       "verdictFilter": "Verdict",
-      "allVerdicts": "All verdicts",
+      "chipsHint": "Tap a verdict to list only its rows; tap it again to list every verdict.",
       "showOk": "{count, plural, one {Show the # OK row} other {Show the # OK rows}}",
       "hideOk": "Hide the OK rows",
       "noMatch": "No row matches these filters",

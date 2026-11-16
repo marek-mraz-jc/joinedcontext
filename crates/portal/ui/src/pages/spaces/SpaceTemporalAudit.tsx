@@ -8,6 +8,7 @@ import {
   Alert,
   Badge,
   Button,
+  Icon,
   EmptyState,
   Field,
   PageFailed,
@@ -104,17 +105,30 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
   return (
     <div className="space-y-3">
       <p className="text-body text-fg-muted">{t("spaces.temporal.lead")}</p>
-      <ul className="flex flex-wrap gap-2" aria-label={t("spaces.temporal.summary")}>
+      <div className="space-y-1">
+        <p id="temporal-verdicts" className="text-caption font-medium text-fg">
+          {t("spaces.temporal.verdictFilter")}
+        </p>
+        <p id="temporal-verdicts-hint" className="text-caption text-fg-muted">
+          {t("spaces.temporal.chipsHint")}
+        </p>
+      </div>
+      <ul
+        className="flex flex-wrap gap-2"
+        aria-labelledby="temporal-verdicts"
+        aria-describedby="temporal-verdicts-hint"
+      >
         {VERDICTS.map((v) => (
           <li key={v}>
             {/* A chip filters the list by its verdict; pressed again it lists every verdict. */}
             <Button
-              variant="ghost"
-              size="xs"
+              variant="secondary"
+              size="sm"
               aria-pressed={verdict === v}
               onClick={() => setVerdict(verdict === v ? ALL : v)}
-              className={`rounded-full px-0.5 ${verdict === v ? "ring-2 ring-border-focus" : ""}`}
+              className={`rounded-full ${verdict === v ? "border-primary-soft-fg bg-primary-soft" : ""}`}
             >
+              {verdict === v && <Icon name="check" aria-hidden className="size-3.5" />}
               <Badge tone={TONE[v]}>{t("spaces.temporal.count", { verdict: t(`spaces.temporal.verdict.${v}`), n: verdicts[v] ?? 0 })}</Badge>
             </Button>
           </li>
@@ -130,16 +144,6 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
             {pipelines.map((name) => (
               <option key={name} value={name}>
                 {name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field id="temporal-verdict" label={t("spaces.temporal.verdictFilter")}>
-          <Select id="temporal-verdict" value={verdict} onChange={(e) => setVerdict(e.target.value)}>
-            <option value={ALL}>{t("spaces.temporal.allVerdicts")}</option>
-            {VERDICTS.map((v) => (
-              <option key={v} value={v}>
-                {t(`spaces.temporal.verdict.${v}`)}
               </option>
             ))}
           </Select>

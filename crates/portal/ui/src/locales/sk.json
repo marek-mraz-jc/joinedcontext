@@ -1356,7 +1356,7 @@
       "pipelineFilter": "Pipeline",
       "allPipelines": "Všetky pipeline",
       "verdictFilter": "Verdikt",
-      "allVerdicts": "Všetky verdikty",
+      "chipsHint": "Ťuknutím na verdikt zobrazíte len jeho riadky; ďalším ťuknutím opäť všetky verdikty.",
       "showOk": "{count, plural, one {Zobraziť # riadok v poriadku} few {Zobraziť # riadky v poriadku} other {Zobraziť # riadkov v poriadku}}",
       "hideOk": "Skryť riadky v poriadku",
       "noMatch": "Týmto filtrom nezodpovedá žiadny riadok",
