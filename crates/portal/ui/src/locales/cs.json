@@ -13432,7 +13432,7 @@
   "backups": {
     "loading": "Načítá se záloha…",
     "unreadable": "Zálohu se nepodařilo načíst. Zkuste to za minutu.",
-    "lead": "Kopie konfigurace této organizace jako soubory s jejich identifikátory ve vašem vlastním S3 bucketu: její nastavení, role, přiřazení a manifesty každého projektu s jejich schématy. Bez dat entit, bez kódu, bez hodnot tajemství. Bucket uchovává každou verzi, takže i smazanou zálohu lze obnovit.",
+    "lead": "Kopie konfigurace této organizace jako soubory s jejich identifikátory ve vašem vlastním S3 bucketu: její nastavení, role, přiřazení, její lidé (pouze identifikátor, uživatelské jméno a e-mail) a manifesty každého projektu s jejich schématy. Bez dat entit, bez kódu, bez hodnot tajemství. Bucket uchovává každou verzi, takže i smazanou zálohu lze obnovit.",
     "runs": {
       "title": "Běhy",
       "scheduled": "Běží každých {hours} hodin a vždy, když stisknete Spustit nyní.",
@@ -13482,6 +13482,11 @@
       "organization": "Nastavení organizace",
       "counts": "{created} vytvořit, {changed} změnit, {unchanged} beze změny",
       "organizationNote": "Nastavení organizace se odsud nemění: stáhněte tuto verzi a navrhněte její soubory organization/ na kartě Nastavení.",
+      "people": "Lidé",
+      "peopleNote": "Obnova nikdy nevytváří lidi.",
+      "invite": "Pozvat je v části Lidé",
+      "peopleCounts": "{present} z {total} lidí této verze je dnes v organizaci; {missing} k ručnímu pozvání",
+      "sameButPeople": "V konfiguraci není co obnovit.",
       "proposed": "Navrženo jako změna. Jiný správce ji schválí ve Změnách.",
       "propose": "Navrhnout obnovu",
       "close": "Zavřít",

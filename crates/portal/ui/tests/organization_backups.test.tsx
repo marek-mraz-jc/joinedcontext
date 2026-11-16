@@ -2,6 +2,7 @@
  * T-7154: Administration → Backups. Nothing set up says what to do; a field the server refuses is
  * marked under that field; a saved bucket never shows its secret; a deleted backup says its
  * versions are kept; and nothing is fetched for anybody but an administrator.
+ * T-7164: a restore lists the version's people missing today to invite by hand, never proposes them.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -52,6 +53,22 @@ function render(permissions: Effective, target: unknown, refuse = false, deleted
         return json(TARGET);
       }
       if (url.pathname === "/api/v1/organization/backups/configuration") return json({ target, log: [] });
+      if (url.pathname.endsWith("/restore"))
+        return json({
+          organization: "bbsk",
+          versionId: "v1",
+          takenAt: "2026-11-16T09:00:00Z",
+          changes: 0,
+          groups: [
+            {
+              name: "organization/people",
+              created: ["aino <aino@example.org>"],
+              changed: [],
+              unchanged: 3,
+              note: "a restore never creates people: invite these by hand on People",
+            },
+          ],
+        });
       if (url.pathname.endsWith("/versions"))
         return json({
           versioning: "Enabled",
@@ -108,6 +125,22 @@ describe("Administration → Backups", () => {
     render(ADMIN, TARGET, false, true);
     expect(await screen.findByText(en.backups.versions.deletedHint)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: en.backups.versions.restore })).toBeInTheDocument();
+  });
+
+  it("lists the version's people missing today to invite by hand, and proposes no restore for them", async () => {
+    const { container } = render(ADMIN, TARGET, false, true);
+    fireEvent.click(await screen.findByRole("button", { name: en.backups.versions.restore }));
+    const plan = await screen.findByTestId("backup-restore-plan");
+    expect(await screen.findByText(en.backups.restore.people)).toBeInTheDocument();
+    expect(screen.getByText("aino <aino@example.org>")).toBeInTheDocument();
+    expect(screen.getByText("3 of the 4 people in this version are in the Organization today; 1 to invite by hand")).toBeInTheDocument();
+    expect(screen.getByText(en.backups.restore.sameButPeople)).toBeInTheDocument();
+    expect(screen.queryByText(en.backups.restore.same)).toBeNull();
+    expect(screen.getByText(en.backups.restore.peopleNote, { exact: false })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: en.backups.restore.invite })).toHaveAttribute("href", "/organization/people");
+    expect(plan).not.toHaveTextContent(en.backups.restore.organizationNote);
+    expect(screen.queryByRole("button", { name: en.backups.restore.propose })).toBeNull();
+    await expectNoAxeViolations(container);
   });
 
   it("fetches nothing of the backup for a person who does not administer the Organization", async () => {

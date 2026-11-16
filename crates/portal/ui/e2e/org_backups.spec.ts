@@ -72,6 +72,13 @@ async function stubApi(page: Page, bucket: Bucket, admin = true): Promise<void> 
           groups: [
             { name: "bbsk", created: [], changed: [], unchanged: 14 },
             { name: "organization", created: [], changed: [], unchanged: 6 },
+            {
+              name: "organization/people",
+              created: ["aino <aino@example.org>"],
+              changed: [],
+              unchanged: 3,
+              note: "a restore never creates people: invite these by hand on People",
+            },
           ],
         }),
       );
@@ -127,7 +134,11 @@ test.describe("Administration → Backups (T-7154)", () => {
       await shot(page, `backups-filled-${width}`);
 
       await page.getByRole("button", { name: "Restore this version" }).click();
-      await expect(page.getByText("Nothing to restore: the Organization is as it was in this version.")).toBeVisible();
+      await expect(page.getByText("Nothing in the configuration to restore.")).toBeVisible();
+      await expect(page.getByText("aino <aino@example.org>")).toBeVisible();
+      await expect(page.getByText(/A restore never creates people/)).toBeVisible();
+      await expect(page.getByRole("link", { name: "Invite them on People" })).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
       await shot(page, `backups-restore-${width}`);
       await page.getByRole("button", { name: "Close" }).first().click();
 

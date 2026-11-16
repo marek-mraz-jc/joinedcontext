@@ -520,7 +520,7 @@ pub struct RestorePlan {
 #[derive(Debug, Default, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanGroup {
-    /// `organization`, or a project's name.
+    /// `organization`, `organization/people`, or a project's name.
     pub name: String,
     pub created: Vec<String>,
     pub changed: Vec<String>,
@@ -604,6 +604,51 @@ fn project_archive(files: &BTreeMap<String, Vec<u8>>, project: &str) -> Result<V
             .map_err(|e| ApiError::Internal(format!("archive failed: {e}")))?;
     }
     Ok(writer.finish().map_err(failed)?.into_inner())
+}
+
+/// The plan group of the people a bundle names; the slash keeps it apart from any project name.
+const PEOPLE: &str = "organization/people";
+
+/// The bundle's people missing from the Organization today, by id: a restore never creates a
+/// person, so they are listed to invite by hand (T-7164). `None` when the bundle has no people or
+/// the Organization's people cannot be read here.
+async fn people_plan(
+    state: &AppState,
+    organization: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Result<Option<PlanGroup>, ApiError> {
+    let Some(raw) = files.get(org_backup::PEOPLE_PATH) else {
+        return Ok(None);
+    };
+    let saved: Vec<org_backup::Person> =
+        serde_norway::from_slice(raw).map_err(|_| ApiError::Unprocessable {
+            detail: "the bundle's organization/people.yaml is not a list of people".into(),
+            errors: vec!["version: unreadable organization/people.yaml".into()],
+        })?;
+    let Some(today) = org_backup::people_of(state, organization).await? else {
+        return Ok(None);
+    };
+    Ok(Some(missing_people(&saved, &today)))
+}
+
+fn missing_people(saved: &[org_backup::Person], today: &[org_backup::Person]) -> PlanGroup {
+    let (present, missing): (Vec<_>, Vec<_>) = saved
+        .iter()
+        .partition(|person| today.iter().any(|now| now.id == person.id));
+    PlanGroup {
+        name: PEOPLE.into(),
+        created: missing
+            .iter()
+            .map(|person| match &person.email {
+                Some(email) => format!("{} <{email}>", person.username),
+                None => person.username.clone(),
+            })
+            .collect(),
+        unchanged: present.len(),
+        note: (!missing.is_empty())
+            .then(|| "a restore never creates people: invite these by hand on People".into()),
+        ..Default::default()
+    }
 }
 
 async fn plan(
@@ -705,6 +750,9 @@ async fn plan(
         group.name = project.to_owned();
         compare(state, &envelope, project, group);
     }
+    if let Some(group) = people_plan(state, organization, &files).await? {
+        groups.insert(PEOPLE.into(), group);
+    }
     if let Some(group) = groups.get_mut("organization") {
         if !group.created.is_empty() || !group.changed.is_empty() {
             group.note = Some(
@@ -715,7 +763,10 @@ async fn plan(
         }
     }
     if apply {
-        for group in groups.values_mut().filter(|g| g.name != "organization") {
+        for group in groups
+            .values_mut()
+            .filter(|g| g.name != "organization" && g.name != PEOPLE)
+        {
             if group.created.is_empty() && group.changed.is_empty() {
                 continue;
             }
@@ -744,6 +795,7 @@ async fn plan(
     }
     let changes = groups
         .values()
+        .filter(|g| g.name != PEOPLE)
         .map(|g| g.created.len() + g.changed.len())
         .sum();
     Ok(RestorePlan {
@@ -843,4 +895,40 @@ pub fn router() -> Router<AppState> {
             "/organization/backups/configuration/bundle",
             delete(soft_delete),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn person(id: &str, username: &str, email: Option<&str>) -> org_backup::Person {
+        org_backup::Person {
+            id: id.into(),
+            username: username.into(),
+            email: email.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn a_restore_lists_people_missing_today_to_invite_and_creates_none() {
+        let saved = [
+            person("u1", "aino", Some("aino@example.org")),
+            person("u2", "kai", None),
+            person("u3", "eero", Some("eero@example.org")),
+        ];
+        // u2 is there today under a new username: the same id is the same person.
+        let today = [person("u2", "kai.k", None), person("u9", "new", None)];
+        let group = missing_people(&saved, &today);
+        assert_eq!(group.name, PEOPLE);
+        assert_eq!(
+            group.created,
+            ["aino <aino@example.org>", "eero <eero@example.org>"]
+        );
+        assert!(group.changed.is_empty() && group.change.is_none());
+        assert_eq!(group.unchanged, 1);
+        assert!(group.note.is_some_and(|n| n.contains("by hand")));
+
+        let all_there = missing_people(&saved[1..2], &today);
+        assert!(all_there.created.is_empty() && all_there.note.is_none());
+    }
 }

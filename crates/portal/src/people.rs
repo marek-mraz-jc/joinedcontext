@@ -540,6 +540,56 @@ impl Admin<'_> {
             .map(|_| true)
     }
 
+    /// Every person of the realm (an Organization's own realm holds that Organization's people
+    /// only), page by page.
+    pub async fn everyone(&self) -> Result<Vec<KcUser>, PeopleError> {
+        self.pages("/users").await
+    }
+
+    /// The people of `/{organization}/members`; `None` when the realm has no such group.
+    pub async fn members_of(&self, organization: &str) -> Result<Option<Vec<KcUser>>, PeopleError> {
+        let found: Vec<GroupNode> = self
+            .json("/groups?search=members&exact=true&briefRepresentation=true&max=1000")
+            .await?;
+        let Some(group) = find_group(&found, &format!("/{organization}/members")) else {
+            return Ok(None);
+        };
+        let group = segment(&group)?;
+        self.pages(&format!("/groups/{group}/members"))
+            .await
+            .map(Some)
+    }
+
+    /// Reads a user listing of the Admin API to its end, `PAGE` at a time.
+    async fn pages(&self, path: &str) -> Result<Vec<KcUser>, PeopleError> {
+        const PAGE: usize = 500;
+        // ponytail: 200 pages (100 000 people) per realm, past that a backup of people streams.
+        const MAX_PAGES: usize = 200;
+        let mut all = Vec::new();
+        for page in 0..MAX_PAGES {
+            let request = self.request(Method::GET, path).query(&[
+                ("first", (page * PAGE).to_string()),
+                ("max", PAGE.to_string()),
+                ("briefRepresentation", "true".to_owned()),
+            ]);
+            let users: Vec<KcUser> = self
+                .send(request)
+                .await?
+                .json()
+                .await
+                .map_err(|err| PeopleError::Unreachable(err.to_string()))?;
+            let last = users.len() < PAGE;
+            all.extend(users);
+            if last {
+                return Ok(all);
+            }
+        }
+        Err(PeopleError::Unreachable(format!(
+            "{path} lists more than {} people",
+            PAGE * MAX_PAGES
+        )))
+    }
+
     pub async fn delete(&self, id: &str) -> Result<(), PeopleError> {
         self.send(self.request(Method::DELETE, &format!("/users/{}", segment(id)?)))
             .await

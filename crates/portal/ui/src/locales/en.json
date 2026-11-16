@@ -13432,7 +13432,7 @@
   "backups": {
     "loading": "Loading the backup…",
     "unreadable": "The backup could not be read. Try again in a minute.",
-    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings and each project's manifests with their schemas. No entity data, no code, no secret values. The bucket keeps every version, so a deleted backup can still be restored.",
+    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings, its people (id, username and e-mail only) and each project's manifests with their schemas. No entity data, no code, no secret values. The bucket keeps every version, so a deleted backup can still be restored.",
     "runs": {
       "title": "Runs",
       "scheduled": "Runs every {hours} hours, and whenever you press Run now.",
@@ -13482,6 +13482,11 @@
       "organization": "Organization settings",
       "counts": "{created} to create, {changed} to change, {unchanged} as they are",
       "organizationNote": "Organization settings are not changed from here: download this version and propose its organization/ files on the Settings tab.",
+      "people": "People",
+      "peopleNote": "A restore never creates people.",
+      "invite": "Invite them on People",
+      "peopleCounts": "{present} of the {total} people in this version are in the Organization today; {missing} to invite by hand",
+      "sameButPeople": "Nothing in the configuration to restore.",
       "proposed": "Proposed as a Change. Another administrator approves it in Changes.",
       "propose": "Propose the restore",
       "close": "Close",

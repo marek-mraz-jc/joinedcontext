@@ -616,6 +616,54 @@ pub struct Index {
     pub items: Vec<IndexItem>,
 }
 
+/// Where the Organization's people sit in a bundle (T-7164).
+pub const PEOPLE_PATH: &str = "organization/people.yaml";
+
+/// One person of `organization/people.yaml`: the id, username and e-mail and nothing else, so no
+/// credential, second factor, session or attribute of the realm reaches a bundle (T-7164).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Person {
+    pub id: String,
+    pub username: String,
+    pub email: Option<String>,
+}
+
+/// The people of `organization`: everyone in its own realm when it has one (T-7142), else the
+/// members of `/{organization}/members` in the installation realm. `None` when this Portal has no
+/// admin client for that realm, or the installation realm has no members group for it.
+pub async fn people_of(
+    state: &AppState,
+    organization: &str,
+) -> Result<Option<Vec<Person>>, ApiError> {
+    let users = match state.organization_realms.get(organization) {
+        Some(realm) => match realm.people.as_ref() {
+            Some(people) => Some(people.admin().await?.everyone().await?),
+            None => None,
+        },
+        None => match state.people.as_deref() {
+            Some(people) => people.admin().await?.members_of(organization).await?,
+            None => None,
+        },
+    };
+    Ok(users.map(persons))
+}
+
+/// The column allow-list of a person, sorted by id, each person once.
+fn persons(users: Vec<crate::people::KcUser>) -> Vec<Person> {
+    let mut people: Vec<Person> = users
+        .into_iter()
+        .map(|user| Person {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+        })
+        .collect();
+    people.sort_by(|a, b| a.id.cmp(&b.id));
+    people.dedup_by(|a, b| a.id == b.id);
+    people
+}
+
 /// Where an Organization-level manifest sits in the bundle.
 fn organization_path(envelope: &ResourceEnvelope) -> String {
     let plural = crate::resource::by_kind(&envelope.kind)
@@ -632,24 +680,34 @@ const README_LEFT_OUT: &str = "\
   blocks, pipeline stream bodies (`bento.yaml`). The Pipeline and App manifests stay and name
   what they run by id and version.
 - Secret values: a credential field stays with an empty value, a `secretRef` stays as it is.
-- People's credentials, second factors and sessions: people are not in this bundle.
+- People's credentials, second factors, sessions and every other field of a person:
+  `organization/people.yaml` holds each person's id, username and e-mail only. A restore never
+  creates a person: the plan lists the people missing today, to invite by hand.
 - Other Organizations, and the installation's own settings.
 ";
 
 /// The README of a bundle: what each folder holds, and what is left out on purpose.
-fn readme(index: &Index, projects: &[(String, String)]) -> String {
+fn readme(index: &Index, projects: &[(String, String)], has_people: bool) -> String {
     let mut text = format!(
         "# Configuration backup of {}\n\nTaken {} by {}. `index.yaml` lists every manifest with \
          its kind, id, path and revision.\n\n## What is inside\n\n\
          - `organization/`: the Organization's own manifests (the Organization, its Portal hosts \
          and branding, roles, role bindings, groups, catalogue connections and the other \
          settings of the Administration page), one file per manifest named by its id.\n\
+         - `organization/people.yaml`: the Organization's people, each as id, username and \
+         e-mail.\n\
          - `schemas/kinds/`: the JSON Schema of every Organization-level kind in `organization/`.\n\
          - `projects/<name>/`: each project's configuration export at the commit `index.yaml` \
          names, with its own `bundle.yaml`, README and schemas (kinds and data models: LinkML \
          and JSON Schema).\n\n",
         index.organization, index.taken_at, index.taken_by
     );
+    if !has_people {
+        text.push_str(
+            "This bundle holds no `organization/people.yaml`: the Portal that took it reads no \
+             people of this Organization (no Keycloak admin client, or no members group).\n\n",
+        );
+    }
     if !projects.is_empty() {
         text.push_str("Projects:\n\n");
         for (project, commit) in projects {
@@ -690,6 +748,12 @@ pub async fn build_bundle(
             path,
             revision: String::new(),
         });
+    }
+    let people = people_of(state, organization).await?;
+    if let Some(people) = &people {
+        let text = serde_norway::to_string(people).map_err(zip_error)?;
+        writer.start_file(PEOPLE_PATH, options).map_err(zip_error)?;
+        writer.write_all(text.as_bytes()).map_err(zip_error)?;
     }
     for kind in &kinds {
         if let Some(schema) = jc_core::registry::schema_of(kind) {
@@ -753,7 +817,7 @@ pub async fn build_bundle(
         .map_err(zip_error)?;
     writer.start_file("README.md", options).map_err(zip_error)?;
     writer
-        .write_all(readme(&index, &projects).as_bytes())
+        .write_all(readme(&index, &projects, people.is_some()).as_bytes())
         .map_err(zip_error)?;
     let cursor = writer.finish().map_err(zip_error)?;
     Ok((cursor.into_inner(), index))
@@ -1024,5 +1088,125 @@ mod tests {
         }
         let fine = url::Url::parse("https://s3.eu-central-1.amazonaws.com").ok();
         assert!(fine.is_some_and(|url| egress.check(&url).is_ok()));
+    }
+
+    /// A realm of the installation with the members groups of two Organizations, `hel` and
+    /// `esp`, and one person in both. Keycloak answers each user with more than the three fields.
+    async fn two_organizations() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/jc/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "access_token": "t" })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/jc/groups"))
+            .and(query_param("search", "members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": "g-esp", "path": "/esp", "subGroups": [
+                    { "id": "g-esp-members", "path": "/esp/members" } ] },
+                { "id": "g-hel", "path": "/hel", "subGroups": [
+                    { "id": "g-hel-members", "path": "/hel/members" } ] }
+            ])))
+            .mount(&realm)
+            .await;
+        let user = |id: &str, name: &str| {
+            serde_json::json!({
+                "id": id, "username": name, "email": format!("{name}@example.org"),
+                "firstName": "First", "lastName": "Last", "enabled": true,
+                "totp": true, "credentials": [{ "type": "password", "value": "hunter2" }],
+                "attributes": { "phone": ["+358 40 123"] }, "requiredActions": ["CONFIGURE_TOTP"]
+            })
+        };
+        for (group, users) in [
+            (
+                "g-hel-members",
+                vec![user("u-hel", "aino"), user("u-both", "kai")],
+            ),
+            (
+                "g-esp-members",
+                vec![user("u-both", "kai"), user("u-esp", "eero")],
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/jc/groups/{group}/members")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(Value::Array(users)))
+                .mount(&realm)
+                .await;
+        }
+        realm
+    }
+
+    async fn people_yaml(realm: &wiremock::MockServer, organization: &str) -> Option<String> {
+        let people = crate::people::People::new(
+            &format!("{}/realms/jc", realm.uri()),
+            "portal".into(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        let admin = people.admin().await.expect("a token");
+        let users = admin
+            .members_of(organization)
+            .await
+            .expect("the realm answers")?;
+        Some(serde_norway::to_string(&persons(users)).expect("yaml"))
+    }
+
+    #[tokio::test]
+    async fn an_organization_bundle_holds_its_people_as_id_username_and_email_only() {
+        let realm = two_organizations().await;
+        let hel = people_yaml(&realm, "hel")
+            .await
+            .expect("hel has a members group");
+        let esp = people_yaml(&realm, "esp")
+            .await
+            .expect("esp has a members group");
+
+        // No person of the other Organization, by id, username or e-mail.
+        for other in ["u-esp", "eero"] {
+            assert!(!hel.contains(other), "{other} in hel's people: {hel}");
+        }
+        assert!(!esp.contains("u-hel") && !esp.contains("aino"), "{esp}");
+
+        // Each entry holds the three allowed keys and nothing else.
+        for text in [&hel, &esp] {
+            let entries: Vec<serde_json::Map<String, Value>> =
+                serde_norway::from_str(text).expect("a list of people");
+            assert_eq!(entries.len(), 2, "{text}");
+            for entry in &entries {
+                let keys: std::collections::BTreeSet<&str> =
+                    entry.keys().map(String::as_str).collect();
+                assert_eq!(keys, ["email", "id", "username"].into(), "{text}");
+            }
+            for secret in [
+                "hunter2",
+                "totp",
+                "credentials",
+                "phone",
+                "First",
+                "CONFIGURE_TOTP",
+            ] {
+                assert!(!text.contains(secret), "{secret} in {text}");
+            }
+        }
+
+        // A member of both Organizations is in both bundles under the same id.
+        let kai = |text: &str| -> Vec<Person> {
+            serde_norway::from_str::<Vec<Person>>(text)
+                .expect("people")
+                .into_iter()
+                .filter(|p| p.username == "kai")
+                .collect()
+        };
+        assert_eq!(kai(&hel), kai(&esp));
+        assert_eq!(kai(&hel)[0].id, "u-both");
+
+        // An Organization without a members group has no people here: no file, never everyone.
+        assert_eq!(people_yaml(&realm, "turku").await, None);
     }
 }
