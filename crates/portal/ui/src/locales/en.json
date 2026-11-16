@@ -7830,7 +7830,7 @@
       "type": "Entity type",
       "typeHelp": "Leave empty to ask about any type.",
       "submit": "Ask the gateway",
-      "failed": "The gateway could not be asked.",
+      "failed": "The gateway could not be asked. The reason and Retry are below.",
       "allowed": "Allowed",
       "refused": "Refused",
       "refusedNext": "To allow it, add a grant for this person, group or role to a Policy of the Endpoint's space in the list above, then ask again.",

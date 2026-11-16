@@ -7830,7 +7830,7 @@
       "type": "Entitätstyp",
       "typeHelp": "Leer lassen, um nach jedem Typ zu fragen.",
       "submit": "Gateway fragen",
-      "failed": "Das Gateway konnte nicht gefragt werden.",
+      "failed": "Das Gateway konnte nicht gefragt werden. Den Grund und Erneut versuchen finden Sie unten.",
       "allowed": "Erlaubt",
       "refused": "Abgelehnt",
       "refusedNext": "Um es zu erlauben, fügen Sie dieser Person, Gruppe oder Rolle eine Berechtigung in einer Policy des Raums des Endpoints in der Liste oben hinzu und fragen Sie erneut.",
