@@ -11,7 +11,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
-import { api, unwrap, reasonOf } from "../../api/client";
+import { reasonOf } from "../../api/client";
+import { doorAction } from "../../api/odata";
 import { readModelSource, writeModelSource } from "../../api/datamodelSource";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
@@ -83,7 +84,7 @@ export function ShareWithOrganization({
   const [open, setOpen] = useState(false);
   const share = useMutation({
     mutationFn: async (): Promise<Change> =>
-      unwrap(await api.POST("/api/v1/projects/{project}/datamodels/{name}/share", { params: { path: { project, name } } })),
+      (await doorAction("portal_model_share", { name }, project)) as Change,
     onSettled: () => setOpen(false),
   });
   const reason =

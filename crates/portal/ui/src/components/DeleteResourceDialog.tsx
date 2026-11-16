@@ -15,7 +15,7 @@ export interface ResourceTarget {
   project: string;
   /** The kind as the permissions name it, e.g. `Pipeline`. */
   kind: string;
-  /** The plural of `/api/v1/projects/{project}/{plural}`. */
+  /** The kind's plural, its set's name on the OData service, e.g. `endpoints`. */
   plural: string;
   name: string;
   /** What the person calls it; the name when there is no title. */

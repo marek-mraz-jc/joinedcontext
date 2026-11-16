@@ -916,6 +916,58 @@ pub static DOORS: &[Door] = &[
         &[BODY],
         Who::ProjectReader,
     ),
+    // A project's duplicate, a blueprint's flow, a pipeline's test run, a model's share and a
+    // calendar output's preview (T-7175). The registry's jc_flow_start and jc_pipeline_test
+    // answer through ops::call, not these pages' REST handlers, so each runs its REST door.
+    door(
+        "portal_project_duplicate",
+        Project,
+        Method::POST,
+        "/projects/{project}/duplicate",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_flow_start",
+        Project,
+        Method::POST,
+        "/projects/{project}/flows",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_pipeline_test",
+        Project,
+        Method::POST,
+        "/projects/{project}/pipelines/test",
+        &[BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_model_share",
+        Project,
+        Method::POST,
+        "/projects/{project}/datamodels/{name}/share",
+        &[NAME],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_endpoint_ical_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/endpoints/{name}/ical-preview",
+        &[NAME, BODY],
+        Who::ProjectReader,
+    ),
+    // The Organization page's Endpoints tab: every project's Endpoints, for its administrator.
+    door(
+        "portal_endpoint_list_all",
+        Org,
+        Method::GET,
+        "/endpoints",
+        &[],
+        Who::Administrator,
+    ),
     door(
         "portal_space_temporal_audit",
         Project,

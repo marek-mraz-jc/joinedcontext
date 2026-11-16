@@ -1,10 +1,10 @@
-import { listManifests } from "../api/odata";
+import { door, listManifests, type RestAnswer } from "../api/odata";
 import { useState } from "react";
 import type { JSX } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../api/client";
+import { queryKeys } from "../api/client";
 import { asManifests, localized } from "../api/manifest";
 import type { Manifest } from "../api/manifest";
 import { RepresentationSummary, servedRepresentations } from "../components/endpoints/links";
@@ -38,7 +38,7 @@ export function AllEndpointsPage(): JSX.Element {
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "sk";
   const endpoints = useQuery({
     queryKey: queryKeys.allEndpoints(),
-    queryFn: async () => unwrap(await api.GET("/api/v1/endpoints")),
+    queryFn: async () => (await door("portal_endpoint_list_all", {})) as RestAnswer<"list_endpoints_everywhere">,
   });
 
   const header = (
