@@ -120,12 +120,13 @@ test("a RAG-only assistant previews its sources and no Endpoint", async ({ page 
 test("a data-only assistant previews the Endpoints its selector reaches", async ({ page }) => {
   await stubApi(page);
   await page.route(
-    (url) => url.pathname.endsWith("/knowledge/deployments/context"),
+    // The preview's Portal door (T-7111), met as its REST door.
+    (url) => url.pathname.endsWith(".portal_knowledge_context_preview"),
     (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(contextOf({ spec: { select: {} } })) }),
   );
   await page.goto(`/projects/${PROJECT}/assistantdeployments/new?lang=en`);
   const preview = page.getByRole("region", { name: "What the assistant will know" });
-  await expect(preview.getByRole("cell", { name: "Regional roads" })).toBeVisible();
+  await expect(preview.getByRole("rowheader", { name: "Regional roads" })).toBeVisible();
   await expect(preview.getByText("Transport").first()).toBeVisible();
   await page.screenshot({ path: `${process.env.SHOTS_DIR ?? "test-results"}/t4693-preview-data.png`, fullPage: false });
 });
