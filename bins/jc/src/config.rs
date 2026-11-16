@@ -905,10 +905,24 @@ fn check_organizations(
             .into_iter()
             .filter(|m| m.bound && m.prefix.is_none());
         let own: Vec<&str> = whole.map(|m| m.host).chain(h.apps.as_deref()).collect();
+        // The registry's label rules, as the Portal holds them on every write (T-7129 §1).
+        let rules = jc_router::registry::Rules {
+            base_domain: bare_host(base_host),
+            login_host: bare_host(login_host),
+            reserved: jc_core::names::RESERVED_LABELS,
+        };
         for host in own {
             let bare = bare_host(host).to_owned();
-            if let Some(other) = hosts.insert(bare, org.name.clone()) {
+            if let Some(other) = hosts.insert(bare.clone(), org.name.clone()) {
                 return bad(format!("{name}: host '{host}' is also a host of {other}"));
+            }
+            let entry = jc_router::registry::Entry {
+                host: &bare,
+                organization: name,
+                sign_in: h.idm.as_deref() == Some(host),
+            };
+            if let Err(e) = jc_router::registry::check_labels(&rules, &entry) {
+                return bad(format!("{name}: {e}"));
             }
         }
         if shared {
@@ -2819,6 +2833,40 @@ path_prefix = "/api/endpoint"
         assert!(err.contains("installation's realm"), "{err}");
     }
 
+    /// T-7135 (T-7129 §1, §7): the registry's label rules hold on the jc.toml seed as at the
+    /// Portal's door: a reserved label under the installation's domain and `idm.` other than as
+    /// the sign-in host are refused at start.
+    #[test]
+    fn the_seed_refuses_what_the_registry_refuses() {
+        let with = |hosts: &str| {
+            format!(
+                "base_host = \"city.example\"\n[[organizations]]\nname = \"zilina\"\n\
+                 catalogue_id = \"00000000-0000-7000-8000-0000000000c1\"\nhosts = {{ {hosts} }}\n"
+            )
+        };
+        for (hosts, refused) in [
+            (
+                "portal = \"api.city.example\"",
+                "the label 'api' under city.example is reserved",
+            ),
+            (
+                "portal = \"login.city.example\"",
+                "the label 'login' under city.example is reserved",
+            ),
+            (
+                "portal = \"smartcity.zilina.sk\", api = \"idm.zilina.sk\"",
+                "idm. names a sign-in host",
+            ),
+        ] {
+            let err = orgs(&with(hosts)).unwrap_err().to_string();
+            assert!(err.contains(refused), "{hosts}: {err}");
+        }
+        orgs(&with(
+            "portal = \"smartcity.zilina.city.example\", idm = \"idm.zilina.city.example\"",
+        ))
+        .expect("own labels");
+    }
+
     /// `host = "auto"` (T-6991 §2): five origins from `base_host`, none of the customer's.
     #[test]
     fn auto_derives_the_five_origins_and_refuses_overlaps() {
@@ -2854,7 +2902,11 @@ path_prefix = "/api/endpoint"
         // A shared host or the sign-in host is no Organization's own.
         let own = "[[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000c3\"\n";
         for (host, says) in [
-            ("api.city.example", "shared host of host = \"auto\""),
+            // A shared host of `auto` carries a reserved label, refused as the registry does.
+            (
+                "api.city.example",
+                "the label 'api' under city.example is reserved",
+            ),
             ("idm.city.example", "also a host of login_host"),
             ("zilina.city.example", "also a host of zilina"),
         ] {

@@ -2735,6 +2735,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-router"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "ipnet",
+ "serde",
+ "thiserror 2.0.20",
+ "tower",
+]
+
+[[package]]
 name = "jc-secret"
 version = "0.1.0"
 dependencies = [
@@ -2899,6 +2910,7 @@ dependencies = [
  "http-body-util",
  "jc-chart",
  "jc-core",
+ "jc-router",
  "jcctl",
  "jsonschema",
  "jsonwebtoken",

@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 mod hosts;
+pub mod registry;
 pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
