@@ -4,7 +4,7 @@ import type { JSX } from "react";
 import type { TFunction } from "i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
 import { asManifests, isChange, localized, ORG_NAMESPACE, storedMetadata } from "../../api/manifest";
 import { useReadableList } from "../../api/permissions";
 import { personLabel, usePersonNames } from "../../api/personNames";
@@ -27,6 +27,7 @@ import { OPERATION_PRESETS } from "../../components/forms/widgets/accessPresets"
 import { AccountAccess } from "./AccountAccess";
 import { AccountSecret } from "./AccountSecret";
 import type { Change, Manifest, ResourceProposal } from "../../api/manifest";
+import { listManifests } from "../../api/odata";
 
 interface Credential {
   kind?: string;
@@ -285,11 +286,7 @@ export function ServiceAccounts({ project }: { project: string }): JSX.Element {
   const list = useQuery({
     queryKey: queryKeys.list(project, "serviceaccounts"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural: "serviceaccounts" } },
-        }),
-      ),
+      listManifests(project, "serviceaccounts"),
   });
 
   // The role is picked from the roles there are (T-2758): the organization's templates, which a
