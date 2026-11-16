@@ -1173,7 +1173,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         tracing::info!(%at, modules = ?hosted, "in-pod listener on loopback");
     }
     if cfg.roles.contains(&Module::Portal) {
-        siblings.organization_portals = installation_portals(&cfg);
+        siblings.organization_portals = installation_portals(cfg);
     }
     let tasks = TaskTracker::new();
     #[cfg(feature = "model-tools")]
