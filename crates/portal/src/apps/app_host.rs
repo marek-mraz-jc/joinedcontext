@@ -421,8 +421,8 @@ mod login {
     use serde::Deserialize;
 
     use super::problem;
-    use crate::auth::session::now_unix;
     use crate::auth::realms::app_oidc;
+    use crate::auth::session::now_unix;
     use crate::config::OidcConfig;
     use crate::reconciler::app_clients::client_id;
     use crate::state::AppState;

@@ -415,7 +415,14 @@ async fn asked(keycloak: &MockServer) -> Vec<String> {
         .await
         .unwrap_or_default()
         .iter()
-        .map(|r| format!("{} {}?{}", r.method, r.url.path(), r.url.query().unwrap_or("")))
+        .map(|r| {
+            format!(
+                "{} {}?{}",
+                r.method,
+                r.url.path(),
+                r.url.query().unwrap_or("")
+            )
+        })
         .collect()
 }
 
@@ -466,7 +473,9 @@ async fn an_organizations_realm_holds_its_own_apps_clients_alone() {
     assert!(run.secrets.get("trams").is_none());
     let calls = asked(&installation).await;
     assert!(
-        calls.iter().all(|call| !call.contains("clientId=app-trams")),
+        calls
+            .iter()
+            .all(|call| !call.contains("clientId=app-trams")),
         "{calls:?}"
     );
     assert!(wrote(&installation)

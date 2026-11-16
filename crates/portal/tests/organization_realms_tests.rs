@@ -327,7 +327,10 @@ async fn an_apps_sign_in_goes_to_its_organizations_realm() {
             location.starts_with(&format!("{realm}/protocol/openid-connect/auth?")),
             "{app}: {location}"
         );
-        assert!(location.contains(&format!("client_id=app-{app}")), "{location}");
+        assert!(
+            location.contains(&format!("client_id=app-{app}")),
+            "{location}"
+        );
     }
 }
 
