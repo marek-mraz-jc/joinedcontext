@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
 import { PageFailed } from "../../components/ui/PageState";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { mayRead, useAdministers, usePermissions } from "../../api/permissions";
@@ -104,11 +104,7 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
   const manifests = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "projects"),
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "projects" } },
-        }),
-      ),
+      listManifests(ORG_NAMESPACE, "projects"),
   });
   const bindings = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "rolebindings"),

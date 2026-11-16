@@ -822,7 +822,7 @@ for (const width of [1440, 400]) {
       spec: { domain, locales, defaultLocale: locales[0] },
     });
     await page.route(
-      (url) => url.pathname === "/api/v1/projects" || url.pathname.endsWith("/organizations"),
+      (url) => ["/api/v1/projects", "/api/v1/Organization"].includes(url.pathname) || url.pathname.endsWith("/organizations"),
       (route) =>
         route.fulfill({
           contentType: "application/json",

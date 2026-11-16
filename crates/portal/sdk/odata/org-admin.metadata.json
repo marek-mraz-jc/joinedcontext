@@ -1211,7 +1211,19 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "title": {
         "$Nullable": true
       }
@@ -1486,6 +1498,10 @@
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.McpServer"
       },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "mqttbrokers": {
         "$Collection": true,
         "$Kind": "NavigationProperty",
@@ -1558,6 +1574,14 @@
         "$Collection": true,
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.ContextSpace"
+      },
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "subscriptions": {
         "$Collection": true,

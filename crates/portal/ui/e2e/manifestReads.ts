@@ -11,10 +11,10 @@ import { manifestAnswer, manifestAsRest } from "../tests/odata";
 type Fulfil = Parameters<Route["fulfill"]>[0];
 
 /** The stub's answer to the REST read, as the service answers the manifest read. */
-async function asService(route: Route, options: Fulfil, one: boolean): Promise<void> {
+async function asService(route: Route, options: Fulfil, one: boolean, organization?: boolean): Promise<void> {
   const status = options?.status ?? 200;
   const body = options?.json !== undefined ? JSON.stringify(options.json) : (options?.body ?? "null");
-  const answer = await manifestAnswer(new Response(body, { status }), one);
+  const answer = await manifestAnswer(new Response(body, { status }), one, organization);
   await route.fulfill({ status: answer.status, contentType: "application/json", body: await answer.text() });
 }
 
@@ -31,7 +31,7 @@ function wrap(handler: Handler): Handler {
     const facade = new Proxy(route, {
       get: (target, name) => {
         if (name === "request") return () => asked;
-        if (name === "fulfill") return (options: Fulfil) => asService(target, options, read.one);
+        if (name === "fulfill") return (options: Fulfil) => asService(target, options, read.one, read.organization);
         const member = Reflect.get(target, name) as unknown;
         return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(target) : member;
       },

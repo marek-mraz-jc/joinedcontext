@@ -211,9 +211,10 @@ export class ODataClient {
     return body as EntitySets[S];
   }
 
-  /** A singleton, `me` or `Organization`. */
-  async singleton<S extends keyof Singletons & string>(name: S): Promise<Singletons[S]> {
-    const { body } = await this.send("GET", name);
+  /** A singleton, `me` or `Organization`, with `select` its members to answer. */
+  async singleton<S extends keyof Singletons & string>(name: S, select?: readonly string[]): Promise<Singletons[S]> {
+    const query = select?.length ? `?$select=${encodeURIComponent(select.join(","))}` : "";
+    const { body } = await this.send("GET", `${name}${query}`);
     return body as Singletons[S];
   }
 

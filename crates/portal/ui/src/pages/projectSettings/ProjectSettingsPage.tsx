@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { readManifest } from "../../api/odata";
 import { localized, ORG_NAMESPACE, plainTitle } from "../../api/manifest";
 import { useProjectOrganization, useProjectTitles } from "../../api/projects";
 import { administersOrganization, readsOnceKnown, usePermissions } from "../../api/permissions";
@@ -185,18 +186,15 @@ function General({ project }: { project: string }): JSX.Element {
   // may not read: asked only once the organization's permissions say so, or the API's 404 would
   // read as a project that is gone (jc-portal-refusals, as `useReadableList` asks a list).
   const reads = readsOnceKnown(usePermissions(ORG_NAMESPACE), "Project");
-  const hidden = reads === false;
   const projectTitle = useProjectTitles();
   const manifest = useQuery({
     queryKey: [...queryKeys.list(ORG_NAMESPACE, "projects"), project],
     enabled: reads === true,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}/{name}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "projects", name: project } },
-        }),
-      ),
+      readManifest(ORG_NAMESPACE, "projects", project),
   });
+  // A manifest the person may not read after all (a narrowed grant) shows what the list shows.
+  const hidden = reads === false || manifest.isError;
   // The project's own Organization: with several, the first of the list is another body's.
   const { organization } = useProjectOrganization(project);
   const orgSpec = (organization?.spec ?? {}) as { domain?: string; projects?: { visibility?: string } };

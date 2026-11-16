@@ -200,7 +200,19 @@
         "name"
       ],
       "$Kind": "EntityType",
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "title": {
         "$Nullable": true
       }
@@ -241,6 +253,10 @@
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.Endpoint"
       },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
       "organization": {
         "$Nullable": true
@@ -268,6 +284,14 @@
         "$Collection": true,
         "$Kind": "NavigationProperty",
         "$Type": "JoinedContext.Portal.ContextSpace"
+      },
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "title": {
         "$Nullable": true
