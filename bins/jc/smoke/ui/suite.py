@@ -89,7 +89,11 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
 # "Scope of jc on dev"): its answers behind the Portal's knowledge pages are proven on dev, not on
 # the rehearsal, so a 5xx of one of them is a named skip, as the names suite's search_documents.
 KEPT_ASSISTANT = "kept component: assistant (stays a separate component on dev; the rehearsal runs no assistant)"
-ASSISTANT_PATH = re.compile(r"^http-5xx: \d+ [A-Z]+ /api/v1/projects/[^/]+/knowledge(/|\?|$)")
+# The REST address and the Portal's OData door for it (T-7111 moved the pages to the doors, T-7123).
+ASSISTANT_PATH = re.compile(
+    r"^http-5xx: \d+ [A-Z]+ /api/v1/projects"
+    r"(/[^/]+/knowledge(/|\?|$)|\('[^']+'\)/JoinedContext\.Portal\.portal_knowledge_)"
+)
 
 
 def kept_component(finding: str) -> bool:

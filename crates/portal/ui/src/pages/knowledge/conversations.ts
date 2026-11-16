@@ -162,9 +162,14 @@ export function filterQuery(filter: ConversationFilter): ConversationQuery {
 export async function listConversations(
   project: string,
   filter: ConversationFilter,
-): Promise<{ items: ConversationRow[]; nextCursor: string | null }> {
-  const answer = (await door("portal_knowledge_conversation_list", { ...filterQuery(filter) }, project)) as { items?: ConversationRow[]; nextCursor?: string | null } | null;
-  return { items: Array.isArray(answer?.items) ? answer.items : [], nextCursor: answer?.nextCursor ?? null };
+): Promise<{ items: ConversationRow[]; nextCursor: string | null; configured: boolean }> {
+  const answer = (await door("portal_knowledge_conversation_list", { ...filterQuery(filter) }, project)) as { items?: ConversationRow[]; nextCursor?: string | null; assistant?: string } | null;
+  return {
+    items: Array.isArray(answer?.items) ? answer.items : [],
+    nextCursor: answer?.nextCursor ?? null,
+    // A Portal without a knowledge assistant stores no conversation (T-7123).
+    configured: answer?.assistant !== "no-assistant",
+  };
 }
 
 /** p50, p90 and max of a time; null with no turn. */

@@ -299,6 +299,10 @@ def test_a_page_whose_only_finding_is_the_assistants_5xx_is_a_kept_component_ski
     assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge?x=1")
     assert not suite.kept_component("http-5xx: 503 POST /api/v1/projects/bbsk/endpoints/a/preview")
     assert not suite.kept_component("http: 404 GET /api/v1/projects/bbsk/knowledge/sources")
+    assert suite.kept_component(
+        "http-5xx: 503 GET /api/v1/projects('helsinki')/JoinedContext.Portal.portal_knowledge_usage(deployment='a')")
+    assert not suite.kept_component(
+        "http-5xx: 503 GET /api/v1/projects('helsinki')/JoinedContext.Portal.portal_pipeline_metrics(pipeline='a')")
 
     class Loc:
         first = property(lambda self: self)

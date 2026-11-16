@@ -150,6 +150,10 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
+/// What a list answers for a source or the conversations when this Portal has no knowledge
+/// assistant address: a normal configuration, never a 503 (T-7123).
+pub(crate) const NO_ASSISTANT: &str = "no-assistant";
+
 /// Asks `jc-assistant` at `path` (under `/internal/v1/projects/`) with the Portal's own token and
 /// returns its status and body. Its `401` is this Portal's misconfiguration, not the caller's.
 pub(crate) async fn ask(
@@ -286,7 +290,7 @@ fn summary(name: &str, spec: &KnowledgeSourceSpec) -> Value {
     get,
     path = "/api/v1/projects/{project}/knowledge/sources",
     summary = "List Knowledge Sources",
-    description = "Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl (API/01 §34).",
+    description = "Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl, `state: no-assistant` on each when this Portal has no knowledge assistant (API/01 §34).",
     tag = "knowledge",
     params(("project" = String, Path, description = "Project name")),
     responses(
@@ -302,18 +306,25 @@ pub async fn list_sources(
     Path(project): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     readable(&state, &user, &project)?;
-    let (_, held) = ask(
-        &state,
-        reqwest::Method::GET,
-        &format!("{project}/knowledge/sources"),
-        None,
-    )
-    .await?;
-    let held = held
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    // A Portal without a knowledge assistant still lists what the project declares; each source
+    // says no assistant holds it (T-7123).
+    let held = if state.config.knowledge_url.is_none() {
+        None
+    } else {
+        let (_, held) = ask(
+            &state,
+            reqwest::Method::GET,
+            &format!("{project}/knowledge/sources"),
+            None,
+        )
+        .await?;
+        Some(
+            held.get("items")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+        )
+    };
     let items: Vec<Value> = state
         .mirror
         .list(&project, "KnowledgeSource", &ListOptions::default())
@@ -322,6 +333,10 @@ pub async fn list_sources(
         .filter_map(|env| {
             let spec: KnowledgeSourceSpec = serde_json::from_value(env.spec).ok()?;
             let mut item = summary(&env.metadata.name, &spec);
+            let Some(held) = &held else {
+                item["state"] = json!(NO_ASSISTANT);
+                return Some(item);
+            };
             match held.iter().find(|h| {
                 h.get("source").and_then(Value::as_str) == Some(env.metadata.name.as_str())
             }) {
@@ -1126,7 +1141,7 @@ pub(super) async fn audited(
     get,
     path = "/api/v1/projects/{project}/knowledge/conversations",
     summary = "List Stored Conversations",
-    description = "The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99).",
+    description = "The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99). With no knowledge assistant configured: no items and `assistant: no-assistant`.",
     tag = "knowledge",
     params(("project" = String, Path, description = "Project name"), ConversationFilter),
     responses(
@@ -1145,6 +1160,12 @@ pub async fn list_conversations(
 ) -> Result<Json<Value>, ApiError> {
     administers(&state, &user, &project, Verb::Approve)?;
     admitted(&user.0.identity.subject, Instant::now())?;
+    if state.config.knowledge_url.is_none() {
+        // Nothing stored and nothing read: no assistant ever held a conversation here (T-7123).
+        return Ok(Json(
+            json!({ "items": [], "nextCursor": null, "assistant": NO_ASSISTANT }),
+        ));
+    }
     let path = format!("{project}/knowledge/conversations");
     let query = |r: reqwest::RequestBuilder| r.query(&filter);
     let (_, body) = ask_with(&state, reqwest::Method::GET, &path, LIST_TIME, query).await?;

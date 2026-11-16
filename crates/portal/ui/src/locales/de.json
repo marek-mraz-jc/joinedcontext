@@ -9958,7 +9958,8 @@
       "failed": "Letzter Durchlauf fehlgeschlagen",
       "crawled": "Durchlaufen",
       "indexing": "Wird indexiert",
-      "read": "Gelesen"
+      "read": "Gelesen",
+      "noAssistant": "Kein Assistent"
     },
     "type": {
       "website": "Website",
@@ -10272,7 +10273,11 @@
       "none": "Nichts in dieser Quelle beantwortet „{q}“.",
       "hits": "Treffer für „{q}“"
     },
-    "languagesMore": "+{count} weitere"
+    "languagesMore": "+{count} weitere",
+    "noAssistant": {
+      "title": "Kein Wissensassistent verbunden",
+      "hint": "Die Quellen unten sind deklariert, doch auf diesem Portal liest, durchsucht oder beantwortet sie noch nichts. Ein Operator verbindet den Wissensassistenten in der Bereitstellung des Portals; danach werden die Quellen beim nächsten geplanten Lauf gelesen."
+    }
   },
   "mcp": {
     "title": "MCP-Server",
@@ -11652,6 +11657,10 @@
         "cost": "Kosten nicht erfasst: Der Modellanbieter hat für diese Fragen keinen Preis gesendet.",
         "tokens": "Tokens nicht erfasst: Der Modellanbieter hat für diese Fragen keine Tokenzahlen gemeldet."
       }
+    },
+    "noAssistant": {
+      "title": "Kein Wissensassistent verbunden",
+      "hint": "Dieses Portal speichert keine Unterhaltung, bis ein Operator in seiner Bereitstellung den Wissensassistenten verbindet. Danach erscheinen die Unterhaltungen der Besucher hier."
     }
   },
   "retentionGuide": {
