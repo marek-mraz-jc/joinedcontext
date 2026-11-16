@@ -249,6 +249,7 @@ function Reference({ value }: { value: string }): JSX.Element {
       <Button
         size="sm"
         variant="ghost"
+        className="touch-size"
         aria-label={t("app.error.copyReference", { reference: value })}
         onClick={() => {
           void navigator.clipboard

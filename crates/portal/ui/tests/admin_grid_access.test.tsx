@@ -13,6 +13,7 @@ import en from "../src/locales/en.json";
 import { App } from "../src/App";
 import { AccountAccess } from "../src/pages/access/AccountAccess";
 import { answeringChecks } from "./checks";
+import { odataCall, odataError, odataValue } from "./odata";
 
 const API = "joinedcontext.com/v1alpha1";
 const list = (items: unknown[]) => ({ apiVersion: API, kind: "List", items });
@@ -23,7 +24,14 @@ function stub(answer: Answer, failing?: string) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const request = typeof input === "string" || input instanceof URL ? null : input;
-      const path = new URL(request ? request.url : String(input), window.location.origin).pathname;
+      const url = new URL(request ? request.url : String(input), window.location.origin);
+      // An OData function answers under its name (T-6812), e.g. `jc_serviceaccount_access`.
+      const called = odataCall(url)?.name;
+      if (called) {
+        if (failing === called) return odataError(503, "unavailable", "The store did not answer.");
+        return odataValue(answer(called) ?? list([]));
+      }
+      const path = url.pathname;
       const json = (body: unknown, status = 200, type = "application/json") =>
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
       if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "jana", roles: [] });
@@ -209,7 +217,7 @@ describe("An account's access matrix on the grid", () => {
   function show(grants: unknown[], failing?: string) {
     stub(
       (path) =>
-        path.endsWith("/access")
+        path === "jc_serviceaccount_access"
           ? { account: "vendor-ci", project: "helsinki", delegates: false, mayPropose: true, mayRevoke: false, grants }
           : undefined,
       failing,
@@ -245,7 +253,7 @@ describe("An account's access matrix on the grid", () => {
   });
 
   it("shows the API's reason when the read fails", async () => {
-    show([], "/access");
+    show([], "jc_serviceaccount_access");
     expect(await screen.findByText(/The store did not answer/)).toBeInTheDocument();
   });
 });

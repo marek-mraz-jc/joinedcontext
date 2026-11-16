@@ -26,8 +26,14 @@ export class ODataError extends Error {
   readonly title: string;
   /** The current `ETag` a `412` answers, to read the entity again with. */
   readonly etag?: string;
+  /** The edge's `X-Request-Id` of the answer, the reference a person quotes when reporting it. */
+  readonly requestId?: string;
+  /** Each field the refusal names: its `target` (`spec.name`) and what is wrong with it. */
+  readonly details: { target: string; message: string }[];
+  /** What the person can do next, when the service says. */
+  readonly hint?: string;
 
-  constructor(status: number, body: unknown, etag?: string) {
+  constructor(status: number, body: unknown, etag?: string, requestId?: string) {
     const error = (body as { error?: Record<string, unknown> } | null)?.error ?? {};
     const problem = (body ?? {}) as Record<string, unknown>;
     const text = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -40,6 +46,12 @@ export class ODataError extends Error {
     this.type = text(error.type) ?? text(problem.type) ?? `https://joinedcontext.com/errors/${this.code}`;
     this.title = text(error.title) ?? text(problem.title) ?? "Error";
     this.etag = etag;
+    this.requestId = requestId;
+    this.details = (Array.isArray(error.details) ? error.details : []).flatMap((d: unknown) => {
+      const { target, message } = (d ?? {}) as Record<string, unknown>;
+      return typeof target === "string" && typeof message === "string" ? [{ target, message }] : [];
+    });
+    this.hint = text(error.hint) ?? text(problem.hint);
   }
 
   /** `412`: the entity changed since it was read. */
@@ -249,7 +261,7 @@ export class ODataClient {
     if (ifMatch) headers["If-Match"] = ifMatch;
     const response = await this.transport({ method, path, body: method === "POST" ? (body ?? {}) : undefined, headers });
     if (response.status < 200 || response.status >= 300) {
-      throw new ODataError(response.status, response.body, response.headers?.etag);
+      throw new ODataError(response.status, response.body, response.headers?.etag, response.headers?.["x-request-id"]);
     }
     return response;
   }

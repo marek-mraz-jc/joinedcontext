@@ -53,6 +53,7 @@ use crate::api::odata::{
     MAX_TOP, NAMESPACE, SERVED,
 };
 use crate::api::odata_ops;
+use crate::api::odata_portal;
 use crate::api::ops::caller_of;
 use crate::auth::session::{CurrentUser, Front};
 use crate::ops::Caller;
@@ -2047,14 +2048,21 @@ fn manifest_kind(set: &ListSet) -> bool {
     !set.endpoint_list && crate::resource::by_kind(&set.type_name).is_some()
 }
 
+/// The registry's operations and the Portal doors a caller's `$metadata` offers.
+type Offered<'a> = (
+    &'a [&'static crate::ops::Operation],
+    &'a [&'static odata_portal::Door],
+);
+
 /// The CSDL XML of the caller: the bound actions they may call inside the schema.
 fn xml_for(
     base: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> String {
-    let mut actions = odata_ops::xml(offered);
+    let mut actions = odata_ops::xml(offered.0);
+    actions.push_str(&odata_portal::xml(offered.1));
     for (name, binding, parameters) in bound_actions(rights, visible) {
         actions.push_str(&format!(
             r#"<Action Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="{binding}" Nullable="false"/>"#
@@ -2079,13 +2087,16 @@ fn json_for(
     base: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> String {
     let Ok(mut doc) = serde_json::from_str::<Value>(base) else {
         return base.to_owned();
     };
     if let Some(schema) = doc.get_mut(NAMESPACE).and_then(Value::as_object_mut) {
-        for (name, overload) in odata_ops::json(offered) {
+        for (name, overload) in odata_ops::json(offered.0)
+            .into_iter()
+            .chain(odata_portal::json(offered.1))
+        {
             schema.insert(name.to_owned(), Value::Array(vec![overload]));
         }
         for (name, binding, parameters) in bound_actions(rights, visible) {
@@ -2114,7 +2125,7 @@ fn metadata(
     query: &str,
     rights: &Rights,
     visible: &BTreeSet<String>,
-    offered: &[&'static crate::ops::Operation],
+    offered: Offered<'_>,
 ) -> Response {
     let json_asked = query.split('&').any(|p| {
         p.split_once('=').is_some_and(|(n, v)| {
@@ -2235,6 +2246,19 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
             "this address serves several Organizations; read one at /{org}/api/v1/",
         ));
     };
+    if let Some((entity, name)) = called.as_ref().or(action.as_ref()) {
+        if name.starts_with(odata_portal::PREFIX) {
+            let call = Call {
+                state: &state,
+                user,
+                front,
+                org: &org,
+                headers: &parts.headers,
+                body,
+            };
+            return portal_door(call, entity, name, &query, called.is_some()).await;
+        }
+    }
     if let Some((entity, call)) = called {
         return function(&state, user, front, &org, &entity, &call, &query).await;
     }
@@ -2269,12 +2293,13 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         let people = crate::permissions::installation_organization(&state.mirror).as_deref()
             == Some(org.as_str());
         let offered = odata_ops::offered(&state, &user, front, &projects, people);
+        let doors = odata_portal::offered(&state, &user, front, &org, people, !projects.is_empty());
         return metadata(
             &parts.headers,
             &query,
             &rights(&state, &user, &org),
             &visible_sets(&state, &user, &org, &projects),
-            &offered,
+            (&offered, &doors),
         );
     }
     if rel.is_empty() {
@@ -2809,6 +2834,151 @@ async fn operation_action(call: Call<'_>, entity: &str, name: &str) -> Response 
         Err(refusal) => *refusal,
     }
 }
+
+/// A Portal door (API/13 §2b, T-7100): `GET` of a `portal_*` function or `POST` of a `portal_*`
+/// action, answered for a person's browser session only by its REST door's handler, routed by the
+/// API router itself, so its permission check, lane, status and refusal are the REST door's.
+async fn portal_door(
+    call: Call<'_>,
+    entity: &str,
+    called: &str,
+    query: &str,
+    function: bool,
+) -> Response {
+    let Call {
+        state,
+        user,
+        front,
+        org,
+        headers,
+        body,
+    } = call;
+    let answer = async {
+        if !odata_portal::is_person_session(&user, front) {
+            let (status, slug, message) = odata_portal::bearer_refusal();
+            return Err(Box::new(error(status, slug, &message)));
+        }
+        let (name, params) = if function {
+            odata_ops::function_call(called, query)
+                .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?
+        } else {
+            (called.to_owned(), action_parameters(&body)?)
+        };
+        let door = odata_portal::find(&name)
+            .filter(|door| door.is_function() == function)
+            .ok_or_else(|| {
+                no(not_found(format!(
+                    "the service has no {} {name}; $metadata lists the ones you may call",
+                    if function { "function" } else { "action" }
+                )))
+            })?;
+        let project = door_target(state, &user, org, entity, door)?;
+        let rest = odata_portal::rest(door, project.as_deref(), &params)
+            .map_err(|(status, slug, message)| Box::new(error(status, slug, &message)))?;
+        let mut request = Request::builder()
+            .method(door.method.clone())
+            .uri(rest.path_and_query);
+        for (name, value) in headers {
+            if ![
+                header::CONTENT_TYPE,
+                header::CONTENT_LENGTH,
+                header::ACCEPT,
+                header::IF_MATCH,
+            ]
+            .contains(name)
+                && !name.as_str().starts_with("odata-")
+            {
+                request = request.header(name, value);
+            }
+        }
+        request = request.header(header::ACCEPT, "application/json");
+        if rest.body.is_some() {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+        }
+        let request = request
+            .body(Body::from(rest.body.unwrap_or_default()))
+            .map_err(|_| no(bad(format!("{name}: a parameter is no valid address"))))?;
+        // ponytail: the API router is built per door call (a person's click, never a hot path);
+        // keep one in AppState if a profile ever shows it.
+        let mut router = crate::api::router().with_state(state.clone());
+        let Ok(response) = tower::Service::call(&mut router, request).await;
+        Ok::<_, Refused>(response)
+    };
+    match answer.await {
+        Ok(response) if response.status().is_success() => door_answer(state, response).await,
+        Ok(response) => as_odata_error(response).await,
+        Err(refusal) => *refusal,
+    }
+}
+
+/// An action's parameters: its JSON object body, or none.
+fn action_parameters(body: &[u8]) -> Result<Map<String, Value>, Refused> {
+    if body.is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(params)) => Ok(params),
+        _ => Err(no(bad(
+            "an action's parameters are a JSON object, as $metadata names them",
+        ))),
+    }
+}
+
+/// The project a door call runs in: none for the installation's `Organization`, else the
+/// project `entity` names, readable in `org`.
+fn door_target(
+    state: &AppState,
+    user: &CurrentUser,
+    org: &str,
+    entity: &str,
+    door: &odata_portal::Door,
+) -> Result<Option<String>, Refused> {
+    let name = door.name;
+    match door.bound {
+        odata_portal::Bound::Organization => {
+            let installation = crate::permissions::installation_organization(&state.mirror);
+            if entity == ORGANIZATION && installation.as_deref() == Some(org) {
+                Ok(None)
+            } else {
+                Err(no(not_found(format!(
+                    "{name} is bound to the installation's Organization, e.g. \
+                     Organization/{NAMESPACE}.{name}"
+                ))))
+            }
+        }
+        odata_portal::Bound::Project if entity == ORGANIZATION => Err(no(not_found(format!(
+            "{name} is bound to a project, e.g. projects('air')/{NAMESPACE}.{name}"
+        )))),
+        odata_portal::Bound::Project => operation_project(state, user, org, entity).map(Some),
+    }
+}
+
+/// A door's REST success as the service answers a function or action: its body under `value`
+/// (`204` as `200` with `null`), the REST answer's `Cache-Control` kept, so a temporary password
+/// is never cached.
+async fn door_answer(state: &AppState, response: Response) -> Response {
+    let status = match response.status() {
+        StatusCode::NO_CONTENT => StatusCode::OK,
+        status => status,
+    };
+    let cache = response.headers().get(header::CACHE_CONTROL).cloned();
+    let bytes = axum::body::to_bytes(response.into_body(), MAX_ANSWER)
+        .await
+        .unwrap_or_default();
+    let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let body = json!({
+        "@odata.context": format!("{}$metadata#Edm.Untyped", service_root(state)),
+        "value": value,
+    });
+    let mut answer = (status, headers(JSON), body.to_string()).into_response();
+    if let Some(cache) = cache {
+        answer.headers_mut().insert(header::CACHE_CONTROL, cache);
+    }
+    answer
+}
+
+/// The most a Portal door's REST answer may weigh.
+const MAX_ANSWER: usize = 16 << 20;
 
 /// The compat negotiation in front of `/api/v1` (API/13 §2a).
 pub async fn negotiate(State(state): State<AppState>, request: Request, next: Next) -> Response {

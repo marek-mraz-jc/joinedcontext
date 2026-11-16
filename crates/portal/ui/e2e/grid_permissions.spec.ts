@@ -102,6 +102,8 @@ async function stub(page: Page, persona: Persona, rows: number): Promise<Stubbed
     if (path.endsWith(`/api/endpoint/${SLUG}/access/attributes`)) return json({ type: TYPE, attributes: decisions(persona) });
     if (path.endsWith("/access/check")) return json({ decision: persona === "editor" });
     if (path.endsWith("/access/v1/evaluations")) return json({ evaluations: (JSON.parse(route.request().postData() ?? "{}").evaluations as unknown[]).map(() => ({ decision: persona === "editor" })) });
+    // The gateway admits the person (T-6802): the Endpoint page reads its rows only after it says so.
+    if (path.endsWith("/admission")) return json({ admitted: true });
     if (path.endsWith("/access")) return json({ permissions: [{ resource: { type: TYPE }, actions: ["queryEntity"], attributes: "*" }], prohibitions: [] });
     if (path.endsWith(`/endpoints/helsinki-bikes`)) {
       return json(manifest("Endpoint", "helsinki-bikes", { contextSpaceRef: "mobility", slug: SLUG, audience: "project-list", enabledRepresentations: ["ngsi-ld", "csv"] }));

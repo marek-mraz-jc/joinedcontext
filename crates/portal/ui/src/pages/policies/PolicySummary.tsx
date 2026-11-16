@@ -7,7 +7,8 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
+import { queryKeys } from "../../api/client";
+import { call } from "../../api/odata";
 import type { PolicyForm } from "../../routes/PoliciesPage";
 import { day, policySentence } from "./policySentence";
 
@@ -22,12 +23,7 @@ function LastChange({ project, name, locale }: { project: string; name: string; 
   const history = useQuery({
     queryKey: [...queryKeys.changes(project), "history", "Policy", name, "latest"] as const,
     retry: false,
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/changes/history", {
-          params: { path: { project }, query: { kind: "Policy", name } },
-        }),
-      ),
+    queryFn: () => call("jc_change_history", project, { kind: "Policy", name }),
   });
   if (history.isPending) return <>{t("app.loading")}</>;
   const last = (history.data?.items ?? []).find(

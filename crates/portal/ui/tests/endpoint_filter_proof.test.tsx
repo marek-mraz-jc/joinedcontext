@@ -21,12 +21,14 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
 import { alignRows, hiddenOf, shownValue } from "../src/pages/endpoints/FilterProof";
+import { odataCall, odataError, odataValue } from "./odata";
 
 const PROJECT = "helsinki";
 const NAME = "helsinki-events";
 const SLUG = "k7m2qz4tv6xh3n5jb2ryd3wcfa";
 /** The Portal's preview of the Endpoint's draft (API/01 §40, T-3802). */
-const PREVIEW = `/api/v1/projects/${PROJECT}/endpoints/${NAME}/preview`;
+/** The preview of the OData service, as `sent` records a call of it. */
+const PREVIEW = "jc_endpoint_preview";
 const SEGMENT = "helsinki";
 
 const IDENTITY = {
@@ -163,7 +165,9 @@ function renderPage({
     const url = new URL(request.url, window.location.origin);
     const path = url.pathname;
     const text = request.method === "GET" ? "" : await request.clone().text();
-    sent.push({ path: `${path}${url.search}`, body: text ? (JSON.parse(text) as Record<string, unknown>) : {} });
+    // A function of the OData service is recorded by its name, its arguments as the body.
+    const called = odataCall(url);
+    sent.push(called ? { path: called.name, body: called.params } : { path: `${path}${url.search}`, body: text ? (JSON.parse(text) as Record<string, unknown>) : {} });
     const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
       new Response(JSON.stringify(body), {
         status,
@@ -186,17 +190,17 @@ function renderPage({
         ? json(QUERIES_EVENTS)
         : json({ permissions: [{ resource: { type: "WeatherObserved" }, actions: ["queryEntity"] }] });
     }
-    if (path === PREVIEW) {
+    if (called?.name === PREVIEW) {
       if (preview === "refuses") {
-        return json({ title: "Bad Request", detail: "projection.filter.q: an empty query string filters nothing" }, 400);
+        return odataError(400, "invalid-request", "projection.filter.q: an empty query string filters nothing");
       }
       if (preview === "fails") {
-        return json({ title: "Service Unavailable", status: 503, detail: "the broker did not answer; try again shortly" }, 503);
+        return odataError(503, "internal-error", "the broker did not answer; try again shortly");
       }
-      const asked = JSON.parse(text) as { id?: string[]; limit: number };
+      const asked = called.params as { id?: string[]; limit: number };
       // Only the upcoming concert passes the filter; asked for both ids, it answers one.
       const served = asked.id ? [concertServed].filter((one) => asked.id?.includes(one.id)) : [concertServed];
-      return json({ count: 1, entities: served.slice(0, asked.limit) });
+      return odataValue({ count: 1, entities: served.slice(0, asked.limit) });
     }
     if (path === `/api/endpoint/${SLUG}/ngsi-ld/v1/entities`) {
       return json([concertServed], 200, { "NGSILD-Results-Count": "1" });

@@ -3,8 +3,9 @@ import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap, reasonOf } from "../../api/client";
+import { reasonOf } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
+import { doorAction, type RestAnswer } from "../../api/odata";
 import { allows, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import { Alert, Button } from "../../components/ui";
@@ -23,11 +24,9 @@ export function NameById(): JSX.Element | null {
   const [proposed, setProposed] = useState(false);
   const run = useMutation({
     mutationFn: async (dryRun: boolean) =>
-      unwrap(
-        await api.POST("/api/v1/organization/people/name-by-id", {
-          params: { query: { dryRun } },
-        }),
-      ),
+      (await doorAction("portal_people_name_by_id", {
+        dryRun,
+      })) as RestAnswer<"name_by_id">,
     onSuccess: (answer, dryRun) => {
       setPlan(answer);
       setProposed(!dryRun);

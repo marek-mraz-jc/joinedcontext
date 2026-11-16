@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import i18n from "../i18n";
-import { api, unwrap } from "./client";
+import { door, type RestAnswer } from "./odata";
 import { ORG_NAMESPACE } from "./manifest";
 import { usePermissions } from "./permissions";
 
@@ -44,11 +44,9 @@ export function usePersonNames(ids: readonly string[]): Map<string, string> {
     retry: false,
     staleTime: 60_000,
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/people/names", {
-          params: { query: { ids: wanted } },
-        }),
-      ),
+      (await door("portal_person_names", {
+        ids: wanted,
+      })) as RestAnswer<"person_names">,
   });
   return useMemo(
     () =>
@@ -70,8 +68,12 @@ export function personLabel(id: string, names: Map<string, string>): string {
 }
 
 /** Every person id inside a sentence (a server's message) written as `personLabel` writes it. */
-export function withPersonNames(text: string, names: Map<string, string>): string {
-  return text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) =>
-    personLabel(id, names),
+export function withPersonNames(
+  text: string,
+  names: Map<string, string>,
+): string {
+  return text.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g,
+    (id) => personLabel(id, names),
   );
 }
