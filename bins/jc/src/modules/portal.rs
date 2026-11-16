@@ -57,8 +57,7 @@ pub async fn build(
     wire_siblings: bool,
     orgs: &[crate::config::OrganizationSection],
     organizations: BTreeMap<String, String>,
-    registry: Vec<SeedHost>,
-    hosts: Option<jc_router::HostSwap>,
+    registry: HostRegistry,
     mount: Mount,
     shutdown: &CancellationToken,
 ) -> Result<(Router, Option<std::net::SocketAddr>), StartError> {
@@ -101,7 +100,7 @@ pub async fn build(
     let _ = joinedcontext_portal::health_probe::MARK.set(crate::access::probe_mark().to_owned());
     let state = AppState::from_config(config).await.map_err(err)?;
     if let Some(pool) = &state.db {
-        let added = joinedcontext_portal::host_registry::seed(pool, &registry)
+        let added = joinedcontext_portal::host_registry::seed(pool, &registry.seed)
             .await
             .map_err(|e| {
                 err(format!(
@@ -110,7 +109,7 @@ pub async fn build(
             })?;
         tracing::info!(
             added,
-            of = registry.len(),
+            of = registry.seed.len(),
             "host registry: jc.toml hosts seeded"
         );
     }
@@ -120,7 +119,7 @@ pub async fn build(
     }
     let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
-    if let (Some(pool), Some(hosts)) = (&state.db, hosts) {
+    if let (Some(pool), Some(hosts)) = (&state.db, registry.hosts) {
         tokio::spawn(watch_registry(pool.clone(), hosts, shutdown.clone()));
     }
     let token = shutdown.clone();
@@ -133,6 +132,14 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// The host registry as the Portal's build gets it (T-7129 §1): the jc.toml hosts it seeds, and
+/// the router's host table it then keeps on the registry's served rows.
+pub struct HostRegistry {
+    pub seed: Vec<SeedHost>,
+    /// `None` where no router swaps its table (no Organizations, or a Portal built in line).
+    pub hosts: Option<jc_router::HostSwap>,
 }
 
 /// How often jc rebuilds its host table from the registry without a notification.

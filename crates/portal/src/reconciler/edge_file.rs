@@ -360,9 +360,12 @@ fn routable(host: &str) -> bool {
                 && l.len() <= 63
                 && !l.starts_with('-')
                 && !l.ends_with('-')
-                && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         })
-        && labels.last().is_some_and(|tld| tld.bytes().any(|b| b.is_ascii_lowercase()))
+        && labels
+            .last()
+            .is_some_and(|tld| tld.bytes().any(|b| b.is_ascii_lowercase()))
 }
 
 /// Adds a route to jc for each served host of the registry (T-7129 §2, T-7137): a copy of the
@@ -1233,8 +1236,7 @@ routes:
         ]
         .map(str::to_owned)
         .to_vec();
-        let composed =
-            compose_hosts(&base, &[], &EdgeLimits::default(), &hosts).expect("composes");
+        let composed = compose_hosts(&base, &[], &EdgeLimits::default(), &hosts).expect("composes");
         let file = parsed(&composed.file);
         let routes = file["routes"].as_array().expect("routes");
         for route in routes {
@@ -1273,8 +1275,13 @@ routes:
     /// name, and the served file stays as it was.
     #[test]
     fn a_base_without_the_jc_route_is_refused_once_the_registry_serves_a_host() {
-        let err = compose_hosts(BASE, &[], &EdgeLimits::default(), &["data.zilina.sk".into()])
-            .expect_err("no jc route");
+        let err = compose_hosts(
+            BASE,
+            &[],
+            &EdgeLimits::default(),
+            &["data.zilina.sk".into()],
+        )
+        .expect_err("no jc route");
         assert!(err.to_string().contains("routes entry jc"), "{err}");
         compose_hosts(BASE, &[], &EdgeLimits::default(), &[]).expect("no host, no jc route needed");
     }

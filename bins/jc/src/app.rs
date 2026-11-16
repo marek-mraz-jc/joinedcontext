@@ -1438,8 +1438,10 @@ async fn portal_attempt(
                     .chain(modules::portal::limits_vars(&cfg))
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
-                modules::portal::registry_seed(&cfg),
-                shared.hosts.clone(),
+                modules::portal::HostRegistry {
+                    seed: modules::portal::registry_seed(&cfg),
+                    hosts: shared.hosts.clone(),
+                },
                 mount,
                 &shutdown,
             ));
