@@ -71,7 +71,7 @@ fn orgs(all: &[(&str, &str)]) -> Mirror {
         mirror.upsert(ResourceEnvelope {
             api_version: API_VERSION.to_owned(),
             kind: "Organization".to_owned(),
-            metadata: ObjectMeta::new(name, ORG_NAMESPACE),
+            metadata: ObjectMeta::new(*name, ORG_NAMESPACE),
             spec: serde_json::json!({ "domain": domain }),
             status: None,
         });
@@ -193,9 +193,10 @@ async fn one_host_one_organization_also_when_two_writes_race() {
         proposal(&host, "alpha", None),
         proposal(&host, "beta", None),
     );
+    let mirror = Mirror::new();
     let (a, b) = tokio::join!(
-        propose(&pool, &Mirror::new(), &RULES, &alpha),
-        propose(&pool, &Mirror::new(), &RULES, &beta),
+        propose(&pool, &mirror, &RULES, &alpha),
+        propose(&pool, &mirror, &RULES, &beta),
     );
     let lost = match (a, b) {
         (Ok(()), Err(e)) | (Err(e), Ok(())) => e,
