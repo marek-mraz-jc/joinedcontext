@@ -4,6 +4,7 @@ import { CellInspector } from "./CellInspector";
 import { EntityHistory } from "./EntityHistory";
 import { GridPending } from "./GridReview";
 import { noRow } from "./useGridAccess";
+import { readable, readableName } from "./readableName";
 import { RowDetail } from "./RowDetail";
 import type { RichRow } from "./model";
 import type { UseEntityGridOptions } from "./useEntityGrid";
@@ -66,6 +67,8 @@ export function GridDetail({ view }: { view: GridView }): React.JSX.Element | nu
       name={rowName(detailRow)}
       columns={columns}
       renderValue={detailValue}
+      // A field the table left out keeps the grid's label; one that has only its name reads in words (T-7112).
+      labelOf={(attr) => (view.hiddenLabel(attr) === readableName(attr) ? readable(attr) : view.hiddenLabel(attr))}
       labels={{
         rowDetail: labels.rowDetail,
         close: labels.close,

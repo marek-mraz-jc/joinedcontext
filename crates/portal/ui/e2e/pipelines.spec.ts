@@ -143,7 +143,7 @@ test.describe("pipelines", () => {
 
     await page.goto("/projects/banskabystrica/pipelines?lang=en");
     const row = page.getByRole("row").filter({ hasText: "Air quality MQTT" });
-    await expect(row.getByText("resident")).toBeVisible();
+    await expect(row.getByText("Always running")).toBeVisible();
     await expect(row.getByText(/128,425/)).toBeVisible();
     // The row polls the runner every 15 s since T-4817; the number has to change on its own.
     await page.clock.fastForward(15_000);

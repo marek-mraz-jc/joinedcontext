@@ -13,6 +13,24 @@ describe("the grid at a phone's width", () => {
     expect(narrow).toMatch(/\.jc-grid td\.jc-grid-pinned[^{]*\{[^}]*min-width:\s*min\(25vw, 7rem\)/);
   });
 
+  // T-7112: the cut head and the tail of an id each underlined alone read as two links.
+  it("underlines an id once, across its cut head and its tail", () => {
+    const id = css.match(/\.jc-grid-id\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(id).toMatch(/background:\s*linear-gradient\(currentColor/);
+    // The line ends with the id's text: a short id (SK0321) is not underlined to the column's floor.
+    expect(id).toMatch(/width:\s*fit-content/);
+    const button = css.match(/\.jc-grid-open:has\(> \.jc-grid-id\)\s*\{[^}]*\}/)?.[0] ?? "";
+    expect(button).toMatch(/min-width:\s*min\(20ch, 40vw\)/);
+    expect(button).toMatch(/text-decoration:\s*none/);
+    expect(css.match(/\.jc-grid-id > span\s*\{[^}]*\}/)?.[0]).toMatch(/text-decoration:\s*none/);
+  });
+
+  // T-7112: a row's History tab drew bare radios run together; the window is one segmented control.
+  it("draws the history window as one segmented control wherever the history shows", () => {
+    expect(css).toMatch(/\n\.jc-grid-history \.jc-grid-history-windows label:has\(input:checked\)\s*\{/);
+    expect(css).not.toMatch(/\.jc-grid-attr-view \.jc-grid-history > fieldset/);
+  });
+
   it("shadows the right edge while the table scrolls on", () => {
     const scroll = css.match(/\.jc-grid-scroll\s*\{[^}]*\}/)?.[0] ?? "";
     expect(scroll).toMatch(/background:[^;]*\blocal\b[^;]*\bscroll\b/s);

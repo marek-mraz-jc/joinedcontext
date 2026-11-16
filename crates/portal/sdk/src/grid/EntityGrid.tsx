@@ -11,7 +11,7 @@ import type { AccessAction, AccessExplanation } from "./CellInspector";
 import type { AttributeAccess } from "./source";
 import type { RowDetailTab } from "./RowDetail";
 import type { ValueRule } from "./rules";
-import { TypeChoiceCell } from "./GridFilterRow";
+import { AreaButton, TypeChoiceCell } from "./GridFilterRow";
 import type { TypeChoice } from "./GridFilterRow";
 import { GridCellPanels, GridDetail } from "./GridDetail";
 import { GridMapPanel } from "./GridMapPanel";
@@ -170,6 +170,12 @@ export interface EntityGridProps extends UseEntityGridOptions {
   publicView?: boolean;
 }
 
+/** The labels the grid shows its columns by: the reader's own over the config's. */
+function labelsOf(props: EntityGridProps): Record<string, string> {
+  const own = Object.fromEntries(props.config.columns.flatMap((column) => (column.label ? [[column.attr, column.label]] : [])));
+  return { ...own, ...props.layout?.labels };
+}
+
 /** One target opened from a relationship cell: the step of the breadcrumb back (G-R2GRID2-017). */
 interface DrillStep {
   urn: string;
@@ -249,6 +255,10 @@ export function EntityGrid(props: EntityGridProps): React.JSX.Element {
           locale={props.locale}
           termHref={props.termHref}
           config={{ ...props.config, type: top.type, columns: [], mode: "view", filters: {} }}
+          // A target of the grid's own type (an area's parent area) reads under the grid's labels,
+          // never its raw attribute names (T-7112). ponytail: another type's labels are the host's
+          // model's; a host prop naming them per type when one asks.
+          layout={top.type === outerType ? { labels: labelsOf(props) } : undefined}
           query={{ ids: [top.urn] }}
           filterRow={false}
           queryBox={false}
@@ -315,10 +325,12 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
  * another, then each value every loaded row holds, by its column's label.
  */
 function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
-  const { props, labels, options, shared } = view;
+  const { props, labels, options, shared, asText } = view;
   const type = options.config.type;
   const oneType = !type.includes(",");
-  if (!props.compact || (!oneType && !shared.some((each) => each.value !== ""))) return null;
+  // A phone's table has no filter row (T-6748): its area picker stands here, by the place's label (T-7072).
+  const places = asText ? [] : shared.filter((each) => each.place);
+  if (!props.compact || (!oneType && places.length === 0 && !shared.some((each) => each.value !== ""))) return null;
   const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   return (
     <div className="jc-grid-typeline">
@@ -332,6 +344,12 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
         <span key={each.attr} className="jc-grid-typeline__part">
           <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
           <span>{each.value}</span>
+        </span>
+      ))}
+      {places.map((each) => (
+        <span key={`area-${each.attr}`} className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
+          <AreaButton view={view} attr={each.attr} />
         </span>
       ))}
     </div>

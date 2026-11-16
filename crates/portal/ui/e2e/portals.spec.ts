@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6875 (ODP-15): the Portals area on stubbed routes. Every state of the list and the editor at
 // 1440 and 400 px, and one create, edit and delete journey whose requests are each a checked

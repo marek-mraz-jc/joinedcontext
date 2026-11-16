@@ -31,10 +31,12 @@ interface SchemaIndex {
   models?: { name?: string; version?: number }[];
 }
 
-/** What a link to this view holds (T-5082): the type, the query as typed, and the order. */
+/** What a link to this view holds (T-5082): the type, the query as typed, the search, and the order. */
 export interface DataLink {
   type?: string;
   q?: string;
+  /** The search box's words (T-7112): they open in the box, not as a query the reader never typed. */
+  search?: string;
   /** `attr` or `attr;desc`, as `orderBy` takes it (CIM 009 4.23). */
   sort?: string;
   /** The reader removed the model's default filter (DM-135): the link opens without it. */
@@ -309,10 +311,19 @@ function webLink(value: unknown, text: string): JSX.Element | string {
 export function fieldsOf(definition: unknown, attributes: string[]): FieldRow[] {
   const properties = ((definition ?? {}) as { properties?: Record<string, unknown> }).properties ?? {};
   return attributes.map((name) => {
-    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown };
+    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown; "x-ngsi-ld-kind"?: unknown };
     const branch = Array.isArray(property.anyOf) ? ((property.anyOf.find((each) => each && typeof each === "object") ?? {}) as typeof property) : property;
     const ref = typeof branch.$ref === "string" ? branch.$ref.split("/").pop() : undefined;
-    const kind = typeof branch.format === "string" ? branch.format : typeof branch.type === "string" ? branch.type : ref ?? "";
+    // A Relationship holds a URN, which its schema types as a `uri`: the grid names and opens its
+    // target, so it is never printed as an address (T-7072).
+    const kind =
+      property["x-ngsi-ld-kind"] === "Relationship"
+        ? "relationship"
+        : typeof branch.format === "string"
+          ? branch.format
+          : typeof branch.type === "string"
+            ? branch.type
+            : ref ?? "";
     return { name, kind, description: typeof property.description === "string" ? property.description : "" };
   });
 }
@@ -408,7 +419,11 @@ function DataActions({
 }
 
 export interface EndpointDataViewProps {
-  project: string;
+  /**
+   * The project the endpoint belongs to; a catalogue visitor may not know it (T-7072). Without it
+   * the grid keeps its layout under `catalogue` and its map draws no basemap, which is a project's.
+   */
+  project?: string;
   /** The endpoint's slug: the grid reads through it, never through a URL of its own (EP-55). */
   slug: string;
   /** `spec.projection.hiddenAttributes`, including what the open form has ticked but not saved. */
@@ -826,7 +841,7 @@ export function EndpointDataView({
     queryFn: () => fetchJson(`${root}/api/endpoint/${encodeURIComponent(slug)}/widget.json`),
   });
   // The space's toolbar over this grid (T-6303), its state held by the toolbar's own hook.
-  const tools = useDataToolbarState();
+  const tools = useDataToolbarState(link?.search);
   const phone = useIsPhone();
   const { extras, group } = tools;
   const { types, type, columns, klass, view: classView, slots, shape, hiddenNow, shownColumns, enums, relations, links, kinds, gridColumns } =
@@ -837,16 +852,25 @@ export function EndpointDataView({
   // The address is read once, as the view opens: the link this view writes back carries the
   // toolbar's query too, and reading it again would hand that query to the grid a second time.
   const [opening] = useState(link);
+  // A link that names a query opens with the query in sight, so whoever opened it reads why the rows
+  // are fewer than the whole set (T-7072).
+  const { onShowQuery } = tools.props;
+  useEffect(() => {
+    if (opening?.q) onShowQuery(true);
+  }, [opening, onShowQuery]);
   const { dropped, setDropped, defaults, preset } = useDefaultView(classView, gridColumns, enums, opening);
   const { opened, sortText } = gridState(view ?? preset, opening, columns);
   // The default filter's inputs open in the Filter panel; from the first default on, the panel is the reader's.
   tools.adoptDefault(groupOf(preset?.filters));
   const allAsked = andQ(asked, tools.q);
+  // The link keeps the search apart from the query, so a reopened view fills the search box (T-7112).
+  const linkQ = andQ(asked, tools.filterQ);
+  const linkSearch = tools.search.trim() || undefined;
   const filtered = opened.filterText !== null || conditionCount(group) > 0;
   const sortKeys = useMemo(() => sortKeysOf(opened.sort, tools.thenBy), [opened.sort, tools.thenBy]);
   useEffect(() => {
-    if (type) onLink?.({ type: type.name, q: allAsked || undefined, sort: sortText, ...(dropped ? { noDefault: true } : {}) });
-  }, [type, allAsked, sortText, dropped, onLink]);
+    if (type) onLink?.({ type: type.name, q: linkQ || undefined, ...(linkSearch ? { search: linkSearch } : {}), sort: sortText, ...(dropped ? { noDefault: true } : {}) });
+  }, [type, linkQ, linkSearch, sortText, dropped, onLink]);
   const map = useMemo(() => (type ? mapDefaultsOf(widget.data, type.name) : undefined), [widget.data, type]);
   useRowCard(type?.name, klass, slots, shape, kinds, enums, i18n.language, map, onCard);
   const onQuery = useCallback((query: { q?: string }) => setAsked(query.q), []);
@@ -966,7 +990,10 @@ export function EndpointDataView({
       ) : (
         <PortalEntityGrid
           key={`${slug}-${type.name}`}
-          project={project}
+          project={project ?? "catalogue"}
+          // The basemap is a project's (AP-67): with none known the map draws the points on a plain
+          // ground rather than fail on a style nobody can read (T-7072).
+          {...(project ? {} : { basemap: undefined })}
           config={config}
           // The type is picked in the grid's Type column, like on a space (owner 2026-11-01).
           typeChoice={{
@@ -999,6 +1026,8 @@ export function EndpointDataView({
           rowTone={tools.rowTone}
           rowSize={tools.rowSize}
           query={tools.query}
+          // A search or a filter panel condition that leaves no row says so, not "no entities yet" (T-7072).
+          emptyText={tools.q ? t("entityGrid.filtersMatchNothing") : undefined}
          
           queryBox={tools.showQuery}
           filterRow={!phone}

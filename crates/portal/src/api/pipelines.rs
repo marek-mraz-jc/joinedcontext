@@ -507,26 +507,7 @@ pub async fn metrics_for(
         template.replace("{project}", project).trim_end_matches('/')
     );
 
-    let response = runner_http(&state.config)
-        .get(&url)
-        .send()
-        .await
-        .map_err(|err| {
-            // The URL names an internal service; the reason is logged, the caller learns only that
-            // the runner is unreachable.
-            tracing::warn!(project = %project, error = %err, "pipeline runner metrics unreachable");
-            ApiError::Unavailable("the pipeline runner did not answer".into())
-        })?;
-    if !response.status().is_success() {
-        tracing::warn!(project = %project, status = %response.status(), "pipeline runner metrics refused");
-        return Err(ApiError::Unavailable(
-            "the pipeline runner did not answer".into(),
-        ));
-    }
-    let body = response.text().await.map_err(|err| {
-        tracing::warn!(project = %project, error = %err, "pipeline runner metrics unreadable");
-        ApiError::Unavailable("the pipeline runner did not answer".into())
-    })?;
+    let body = read_metrics(&runner_http(&state.config), &url, project).await?;
 
     // The runner knows the stream by its project-qualified id; the answer names the pipeline.
     let mut metrics = scrape(
@@ -536,6 +517,35 @@ pub async fn metrics_for(
     );
     metrics.pipeline = name.to_owned();
     Ok(metrics)
+}
+
+/// Reads the runner's metrics text. A runner that drops the connection or runs past
+/// [`SCRAPE_TIMEOUT`] mid-answer (a stream restarting, a busy host: T-7114) is asked once more;
+/// a GET of counters changes nothing, so the second ask is safe, and one is the bound. A runner
+/// that answers with an error status is not asked again.
+async fn read_metrics(
+    http: &reqwest::Client,
+    url: &str,
+    project: &str,
+) -> Result<String, ApiError> {
+    let unavailable = || ApiError::Unavailable("the pipeline runner did not answer".into());
+    for attempt in 1..=2 {
+        // The URL names an internal service; the reason is logged, the caller learns only that
+        // the runner did not answer.
+        let error = match http.get(url).send().await {
+            Ok(response) if !response.status().is_success() => {
+                tracing::warn!(project = %project, status = %response.status(), "pipeline runner metrics refused");
+                return Err(unavailable());
+            }
+            Ok(response) => match response.text().await {
+                Ok(body) => return Ok(body),
+                Err(err) => format!("unreadable: {err}"),
+            },
+            Err(err) => format!("unreachable: {err}"),
+        };
+        tracing::warn!(project = %project, attempt, error = %error, "pipeline runner metrics failed");
+    }
+    Err(unavailable())
 }
 
 #[utoipa::path(

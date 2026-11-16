@@ -241,6 +241,8 @@ describe("EntityHistory", () => {
       />,
     );
     expect(await screen.findByText("my chart of 2")).toBeInTheDocument();
+    // The window is the segmented control in every place the history shows, a row's tab included (T-7112).
+    expect(screen.getAllByRole("radio")[0].closest("fieldset")).toHaveClass("jc-grid-history-windows");
   });
 });
 

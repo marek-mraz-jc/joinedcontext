@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError, queryKeys, reasonOf } from "../../api/client";
 import { prune } from "../../api/manifest";
 import type { Change } from "../../api/manifest";
+import { usePermissions } from "../../api/permissions";
 import { useProposal } from "../../api/proposal";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { useCreateForm } from "../../components/forms/FormRoute";
@@ -123,29 +124,42 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
     setForm(EMPTY_FORM);
   });
 
+  // The origin is the first step of adding a source: a role that may not add one is not offered it.
+  const mayAdd = usePermissions(project).can("SyncSource", "propose");
+
   return (
     <section aria-label={t("syncSources.title")} className="space-y-6">
       <PageHeader
         compact
         title={t("syncSources.title")}
         description={t("syncSources.intro")}
+        // A disabled Add source or Detach says why in words, not only in its tooltip (T-6423).
+        // Why Add is closed, and why Detach is once there is a source to detach.
+        note={
+          <>
+            <DeniedNote project={project} kind="SyncSource" verb="propose" />
+            {items.length > 0 ? <DeniedNote project={project} kind="SyncSource" verb="delete" /> : null}
+          </>
+        }
         actions={
-          <div className="flex items-end gap-2">
+          <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
             {/* The shared Field, not a hand-made label: it ties the label to the control and
                 carries whatever a message later needs to hang off (UI-01, UI-04). */}
-            <Field id="sync-origin-kind" label={t("syncSources.origin")}>
-              <Select
-                id="sync-origin-kind"
-                value={origin}
-                onChange={(event) => setOrigin(event.target.value as SyncOriginKind)}
-              >
-                {SYNC_ORIGINS.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {t(`syncSources.originKind.${kind}`)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+            {mayAdd ? (
+              <Field id="sync-origin-kind" label={t("syncSources.addFrom")} className="min-w-0 flex-1 sm:flex-none">
+                <Select
+                  id="sync-origin-kind"
+                  value={origin}
+                  onChange={(event) => setOrigin(event.target.value as SyncOriginKind)}
+                >
+                  {SYNC_ORIGINS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {t(`syncSources.originKind.${kind}`)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             {/* Each button asks for the verb its route checks (UI-44): a viewer reads why it is
                 closed instead of meeting a 403 after filling the form. */}
             <PermissionGuard project={project} kind="SyncSource" verb="propose">
@@ -156,11 +170,6 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
           </div>
         }
       />
-      {/* A tooltip is out of reach on a phone: a reader is told once, in words, why Add is closed. */}
-      <DeniedNote project={project} kind="SyncSource" verb="propose" />
-
-      {/* A disabled Add source says why in words, not only in its tooltip (T-6423). */}
-      <DeniedNote project={project} kind="SyncSource" verb="propose" />
 
       {change ? <ChangeNotice change={change} project={project} /> : null}
 

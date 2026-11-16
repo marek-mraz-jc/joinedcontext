@@ -10,6 +10,11 @@
   border-radius: var(--jc-radius-md, 4px);
   overflow: hidden;
 }
+/* An open Arrange columns panel is taller than a grid of a few rows: the grid lets it hang below
+   its edge instead of cutting off the panel's last controls, Observed and the other extra details (T-7072). */
+.jc-grid:has(.jc-grid-arrange-panel) {
+  overflow: visible;
+}
 
 .jc-grid[data-density="compact"] {
   --jc-grid-cell-padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
@@ -727,11 +732,10 @@
   align-items: start;
 }
 
-.jc-grid--map-right > .jc-grid-toolbar,
-.jc-grid--map-right > .jc-grid-pending,
-.jc-grid--map-right > .jc-grid-pager,
-.jc-grid--map-right > .jc-grid-empty,
-.jc-grid--map-right > .jc-grid-loading {
+/* Only the rows and the map share a line: every other part (the toolbar, the notes above the rows,
+   the type line, the pager, the states) runs the full width, so a note never takes the rows' cell
+   and pushes the table beside the map's (T-7072). */
+.jc-grid--map-right > :not(.jc-grid-scroll, .jc-grid-map) {
   grid-column: 1 / -1;
 }
 
@@ -2333,6 +2337,33 @@ a.jc-cell--link:focus-visible {
   font: inherit;
   cursor: pointer;
 }
+@media (max-width: 639.98px) {
+  .jc-grid-arrange-toggle {
+    min-width: 44px;
+    justify-content: center;
+  }
+  /* A host's tools take the row, the toggle sits at its end, a hidden-fields line goes under both. */
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) > .jc-grid-arrange {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .jc-grid-toolbar:has(> .jc-data-grid-tools) > :not(.jc-data-grid-tools, .jc-grid-arrange) {
+    grid-column: 1 / -1;
+  }
+  .jc-grid-arrange-toggle .jc-grid-arrange-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
 .jc-grid-arrange-btn:focus-visible,
 .jc-grid-arrange-panel :is(button, input, select):focus-visible {
   outline: 2px solid var(--jc-color-accent, #0066cc);
@@ -2770,13 +2801,23 @@ a.jc-cell--link:focus-visible {
 
 /* The id cell (T-6328): the head is cut with "…", the tail that tells rows apart (`101.2012`) never is. */
 /* A floor, or a wide table squeezed the column until the tail that tells rows apart was cut (T-6454). */
+.jc-grid-open:has(> .jc-grid-id) {
+  min-width: min(20ch, 40vw);
+  /* The id draws its own one line: the button's would be drawn per part beside it. */
+  text-decoration: none;
+}
 .jc-grid-id {
   display: flex;
-  min-width: min(20ch, 40vw);
+  /* As wide as the id, so the line under it ends with its text; the floor is the button's. */
+  width: fit-content;
   max-width: 100%;
+  /* One line under the whole id, across the gap the cut head leaves before its tail: each part
+     underlined alone read as two links (T-7112). */
+  text-decoration: none;
+  background: linear-gradient(currentColor, currentColor) left bottom / 100% 1px no-repeat;
 }
 .jc-grid-id > span {
-  text-decoration: inherit;
+  text-decoration: none;
   white-space: nowrap;
 }
 .jc-grid-id-head {
@@ -3000,7 +3041,7 @@ a.jc-cell--link:focus-visible {
   font-size: 1rem;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+.jc-grid-history .jc-grid-history-windows {
   display: inline-flex;
   border: 1px solid var(--jc-color-line, #cbd5e1);
   border-radius: var(--jc-radius-md, 6px);
@@ -3009,30 +3050,30 @@ a.jc-cell--link:focus-visible {
   gap: 2px;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label {
+.jc-grid-history .jc-grid-history-windows label {
   padding: 0.25rem 0.75rem;
   border-radius: calc(var(--jc-radius-md, 6px) - 2px);
   cursor: pointer;
   font-size: 0.875rem;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type input {
+.jc-grid-history .jc-grid-history-windows input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:checked) {
+.jc-grid-history .jc-grid-history-windows label:has(input:checked) {
   background: var(--jc-color-accent, #0066cc);
   color: #ffffff;
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type label:has(input:focus-visible) {
+.jc-grid-history .jc-grid-history-windows label:has(input:focus-visible) {
   outline: 2px solid var(--jc-color-accent, #0066cc);
   outline-offset: 2px;
 }
 
-.jc-grid-attr-view .jc-grid-history-versions {
+.jc-grid-history-versions {
   display: flex;
   align-items: center;
   gap: var(--jc-space-2, 8px);
@@ -3047,7 +3088,7 @@ a.jc-cell--link:focus-visible {
   color: var(--jc-color-muted, #666);
 }
 
-.jc-grid-attr-view .jc-grid-history > fieldset:first-of-type {
+.jc-grid-history .jc-grid-history-windows {
   width: fit-content;
 }
 

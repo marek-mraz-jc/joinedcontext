@@ -10,6 +10,7 @@ import { EntityGrid } from "../src/grid/EntityGrid";
 import { parseGridConfig } from "../src/grid/config";
 import { fixtureSource } from "../src/grid/source";
 import type { EntitySource } from "../src/grid/source";
+import type { FilterColumn } from "../src/grid/filters";
 import { toRichRow } from "../src/grid/model";
 import { DEFAULT_LABELS } from "../src/grid/useEntityGrid";
 import { enumOptions } from "../src/enums";
@@ -81,6 +82,37 @@ describe("relationship targets (G-R2GRID2-017)", () => {
     fireEvent.click(within(trail).getByRole("button", { name: `← ${DEFAULT_LABELS.drillBack}` }));
     await waitFor(() => expect(screen.queryByRole("navigation", { name: DEFAULT_LABELS.drillTrail })).toBeNull());
     expect(within(shown()[0] as HTMLElement).getByText("Station 3")).toBeInTheDocument();
+  });
+
+  it("labels a target of the grid's own type as the grid does, never by raw names (T-7112)", async () => {
+    const areas = [
+      { id: "urn:ngsi-ld:Area:sk03", type: "Area", areaCode: prop("SK03"), refParent: { type: "Relationship", object: "urn:ngsi-ld:Area:sk" } },
+      { id: "urn:ngsi-ld:Area:sk", type: "Area", areaCode: prop("SK"), surfaceArea: prop(49035) },
+    ];
+    render(<EntityGrid config={gridOf("Area", [{ attr: "areaCode", label: "Area code" }, { attr: "refParent", label: "Parent area" }])} source={fixtureSource(areas)} />);
+    fireEvent.click(await screen.findByRole("button", { name: `${DEFAULT_LABELS.openTarget}: Area · sk` }));
+    await screen.findByRole("navigation", { name: DEFAULT_LABELS.drillTrail });
+    const target = [...document.querySelectorAll(".jc-grid")].find((grid) => !grid.closest("[hidden]")) as HTMLElement;
+    await within(target).findByText("SK");
+    const heads = within(target).getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    expect(heads.some((head) => head.includes("Area code"))).toBe(true);
+    expect(heads.some((head) => head.includes("areaCode"))).toBe(false);
+  });
+
+  it("calls a column text only as a guess until a row holds it (T-7112)", async () => {
+    const reported: FilterColumn[][] = [];
+    const config = parseGridConfig({ source: { kind: "fixture", name: "t" }, type: "Area", columns: [{ attr: "areaCode", label: "Area code", format: "text" }, { attr: "location", label: "Location" }], pageSize: 50 }).config!;
+    const { unmount } = render(<EntityGrid config={config} source={fixtureSource([])} onFilterColumns={(next) => reported.push(next)} />);
+    await waitFor(() => expect(reported.at(-1)?.find((column) => column.attr === "location")?.guessed).toBe(true));
+    // A format says text, not whether the text is a language map: before any row that is a guess too.
+    expect(reported.at(-1)?.find((column) => column.attr === "areaCode")?.guessed).toBe(true);
+    unmount();
+    reported.length = 0;
+    const placed = [{ id: "urn:ngsi-ld:Area:sk", type: "Area", areaCode: prop("SK"), location: { type: "GeoProperty", value: { type: "Point", coordinates: [19.7, 48.7] } } }];
+    render(<EntityGrid config={config} source={fixtureSource(placed)} onFilterColumns={(next) => reported.push(next)} />);
+    // A row told the grid what both hold: no guess is left, and the place is no text to search.
+    await waitFor(() => expect(reported.at(-1)?.some((column) => column.guessed)).toBe(false));
+    expect(reported.at(-1)?.find((column) => column.attr === "location")?.kind ?? "geo").not.toBe("text");
   });
 
   it("opens a target with none of the outer type's preset conditions or attributes", async () => {

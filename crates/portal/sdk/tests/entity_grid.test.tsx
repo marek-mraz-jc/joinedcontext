@@ -244,7 +244,7 @@ describe("EntityGrid", () => {
     expect(screen.getByRole("heading", { name: "Details: Kamppi" })).toHaveFocus();
     // The grid's columns, then what the entity carries beyond them.
     const terms = Array.from(panel.querySelectorAll("dt")).map((dt) => dt.textContent);
-    expect(terms).toEqual(["Name", "Bikes", "location", "refDevice"]);
+    expect(terms).toEqual(["Name", "Bikes", "Location", "Ref device"]);
 
     const bikes = panel.querySelector<HTMLInputElement>("dd input")!;
     fireEvent.change(bikes, { target: { value: "7" } });
@@ -388,6 +388,26 @@ describe("EntityGrid", () => {
     await screen.findByText("Kamppi");
     await screen.findByText(`${bikeEntities.length} loaded · ${DEFAULT_LABELS.noTotal}`);
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps the total of a slow count that lands after the person paged on (T-7072)", async () => {
+    // jc-dev, 9,247 street lights: Next pressed before the count answered left page 2 at "more may follow".
+    const many = Array.from({ length: 5 }, (_, i) => ({ id: `urn:ngsi-ld:BikeHireDockingStation:hel:helsinki:00${i}`, type: "BikeHireDockingStation", name: { type: "Property", value: `Dock ${i}` } }));
+    const paged = parseGridConfig({ source: { kind: "fixture", name: "slow" }, type: "BikeHireDockingStation", columns: [{ attr: "name", label: "Name" }], pageSize: 2 }).config!;
+    const fixture = fixtureSource(many);
+    let answerCount: () => void = () => undefined;
+    const slow = { ...fixture, query: async (q: Parameters<typeof fixture.query>[0], page: Parameters<typeof fixture.query>[1]) => {
+      const answer = await fixture.query(q, page);
+      if (page.count === false) return { ...answer, total: undefined };
+      await new Promise<void>((resolve) => { answerCount = resolve; });
+      return answer;
+    } };
+    render(<EntityGrid config={paged} source={slow} />);
+    await screen.findByText("Dock 0");
+    fireEvent.click(screen.getByRole("button", { name: /^Next/ }));
+    await screen.findByText("Dock 2");
+    answerCount();
+    expect(await screen.findByText(/5 matching/)).toBeInTheDocument();
   });
 
   // T-3097: a scrolling grid draws the rows in sight and loads the next page as the person nears

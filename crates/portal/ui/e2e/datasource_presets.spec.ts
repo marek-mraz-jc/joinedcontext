@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
-// The DataSource doors run through the OData service (T-7117); the stubs answer their REST doors.
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-7076: an http source with an open data API preset. The steward picks the API, Find in the

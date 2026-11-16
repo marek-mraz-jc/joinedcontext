@@ -53,3 +53,14 @@ export function toggled(search: CatalogueSearch, facet: FacetName, value: string
 export function narrowed(search: CatalogueSearch): boolean {
   return Boolean(search.q) || FACETS.some((facet) => (search[facet]?.length ?? 0) > 0);
 }
+
+/**
+ * A dataset's data view as the address carries it (T-7072): `?type=…&q=…&search=…&sort=…`, as the
+ * endpoint page keeps them (T-5082), so a filtered, ordered table is a link a visitor hands on. The
+ * search box's words travel apart from the query (T-7112), so the reopened box shows them. Only the
+ * view travels: the read stays the opener's own session, never a token in the address.
+ */
+export function parseDataViewSearch(search: Record<string, unknown>): { type?: string; q?: string; search?: string; sort?: string } {
+  const text = (value: unknown, max: number) => (typeof value === "string" && value.trim() !== "" ? value.slice(0, max) : undefined);
+  return { type: text(search.type, 200), q: text(search.q, 2000), search: text(search.search, 200), sort: text(search.sort, 200) };
+}

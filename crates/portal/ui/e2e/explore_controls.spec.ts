@@ -2,6 +2,10 @@ import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5622: the explorer's controls in plain words. Types the Endpoint grants come first, the rest
 // in a group of their own; attributes read by the model's label; an App's Endpoint sits under

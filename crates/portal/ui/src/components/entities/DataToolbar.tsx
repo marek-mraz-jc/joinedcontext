@@ -78,8 +78,10 @@ export function sortKeysOf(sort: SortKey | null | undefined, thenBy: SortKey[]):
  * The toolbar's own state (T-6303): the hidden fields and colours, the filter panel, the keys after
  * the header's sort, the groups, the row size, the search (asked 400 ms after the last key) and the
  * query box. `query` is what the filters and the search ask the grid, `rowTone` the colour rules.
+ * `opening` is the search a shared link carries (T-7112): it opens typed in the box, never folded
+ * into the link's query, so the reader sees the word the sender searched for.
  */
-export function useDataToolbarState() {
+export function useDataToolbarState(opening?: string) {
   const { t } = useTranslation();
   const [extras, setExtras] = useState<ViewExtras>({});
   // Null until the reader or the page's default filter sets it, so a default opens in the panel once.
@@ -88,8 +90,8 @@ export function useDataToolbarState() {
   const [thenBy, setThenBy] = useState<SortKey[]>([]);
   const [groupBy, setGroupBy] = useState<string[]>([]);
   const [rowSize, setRowSize] = useState<RowSize>("small");
-  const [searchText, setSearchText] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchText, setSearchText] = useState(opening ?? "");
+  const [search, setSearch] = useState(opening ?? "");
   const [showQuery, setShowQuery] = useState(false);
   useEffect(() => {
     const wait = setTimeout(() => setSearch(searchText), 400);
@@ -101,7 +103,8 @@ export function useDataToolbarState() {
     (next: FilterColumn[]) => setFilterColumns((before) => (JSON.stringify(before) === JSON.stringify(next) ? before : next)),
     [],
   );
-  const q = useMemo(() => andQ(queryFromGroup(filterColumns, group), searchQuery(search, filterColumns)), [filterColumns, group, search]);
+  const filterQ = useMemo(() => queryFromGroup(filterColumns, group), [filterColumns, group]);
+  const q = useMemo(() => andQ(filterQ, searchQuery(search, filterColumns)), [filterQ, filterColumns, search]);
   const query = useMemo(() => (q ? { q } : undefined), [q]);
   const rowTone = useCallback(
     (row: RichRow) => {
@@ -138,7 +141,7 @@ export function useDataToolbarState() {
     showQuery,
     onShowQuery: setShowQuery,
   };
-  return { props, extras, group, thenBy, setThenBy, groupBy, rowSize, showQuery, onFilterColumns, q, query, rowTone, hide, reset, adoptDefault };
+  return { props, extras, group, thenBy, setThenBy, groupBy, rowSize, showQuery, onFilterColumns, q, filterQ, search, query, rowTone, hide, reset, adoptDefault };
 }
 
 export function DataToolbar(props: DataToolbarProps): JSX.Element {
