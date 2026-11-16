@@ -1276,6 +1276,471 @@ async fn every_role_reads_every_set_as_rest_and_mcp_answer_it() {
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
+/// T-7097: a manifest kind's entity answers `spec`, `status` and `metadata` when `$select` names
+/// them, each what the REST door's `GET …/{plural}/{name}` answers the same caller, through a
+/// navigation, the organization-wide set, a key and an Organization set; without `$select` a
+/// row stays thin, and the ETag is the same either way.
+#[tokio::test]
+async fn a_manifests_spec_status_and_metadata_answer_as_the_rest_door() {
+    let state = state();
+    let space: joinedcontext_portal::resource::ResourceEnvelope = serde_json::from_value(json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "ContextSpace",
+        "metadata": { "name": "air", "namespace": "helsinki", "title": "Air quality",
+                      "labels": { "team": "air" } },
+        "spec": { "isSandbox": true, "description": "Air sensors" },
+        "status": { "phase": "Live" }
+    }))
+    .expect("envelope");
+    state.mirror.upsert(space);
+    let mode = Mode::Host("hel");
+    let sets: Vec<String> = joinedcontext_portal::resource::kinds()
+        .filter(|info| !matches!(info.scope, jc_core::Scope::Organization))
+        .map(|info| info.plural.to_owned())
+        .collect();
+    let mut differ = Vec::new();
+    let mut compared = 0;
+    for who in ["hel-only", "hel-editor", "root"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        for plural in &sets {
+            let odata = send(
+                &state,
+                mode,
+                &cookie,
+                &format!("/api/v1/projects('helsinki')/{plural}?$select=name,spec,status,metadata"),
+                &[],
+            )
+            .await;
+            if !odata.status.is_success() {
+                continue;
+            }
+            for row in odata.json()["value"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                let name = row["name"].as_str().unwrap_or_default();
+                let rest = send(
+                    &state,
+                    mode,
+                    &cookie,
+                    &format!("/api/v1/projects/helsinki/{plural}/{name}"),
+                    &[],
+                )
+                .await;
+                let rest = rest.json();
+                for member in ["spec", "status", "metadata"] {
+                    compared += 1;
+                    if row[member] != rest[member] {
+                        differ.push(format!(
+                            "{who} {plural}/{name} {member}: OData {} / REST {}",
+                            row[member], rest[member]
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+    assert!(compared >= 27, "only {compared} members compared");
+
+    let rest = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects/helsinki/spaces/air",
+    )
+    .await
+    .json();
+    assert_eq!(rest["spec"]["description"], "Air sensors", "{rest}");
+    let thin = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/spaces(project='helsinki',name='air')",
+    )
+    .await;
+    assert_eq!(thin.status, StatusCode::OK, "{}", thin.text);
+    for member in ["spec", "status", "metadata"] {
+        assert!(thin.json().get(member).is_none(), "{member}: {}", thin.text);
+    }
+    let keyed = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/spaces(project='helsinki',name='air')?$select=name,spec,metadata",
+    )
+    .await;
+    assert_eq!(keyed.status, StatusCode::OK, "{}", keyed.text);
+    let body = keyed.json();
+    assert_eq!(body["spec"], rest["spec"], "{}", keyed.text);
+    assert_eq!(body["metadata"], rest["metadata"], "{}", keyed.text);
+    assert!(body.get("status").is_none(), "{}", keyed.text);
+    assert_eq!(
+        body["@odata.etag"],
+        thin.json()["@odata.etag"],
+        "the ETag is the projection's, whatever $select asks"
+    );
+    assert!(
+        body["@odata.context"]
+            .as_str()
+            .is_some_and(|c| c.ends_with("spaces(name,spec,metadata)/$entity")),
+        "{}",
+        keyed.text
+    );
+
+    // An Organization set: the binding's manifest, as the org namespace's REST door reads it.
+    let binding = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/rolebindings('hel-editor-hel')?$select=name,spec",
+    )
+    .await;
+    assert_eq!(binding.status, StatusCode::OK, "{}", binding.text);
+    let rest = get(
+        &state,
+        mode,
+        "root",
+        &format!("/api/v1/projects/{ORG_NAMESPACE}/rolebindings/hel-editor-hel"),
+    )
+    .await;
+    assert_eq!(binding.json()["spec"], rest.json()["spec"], "{}", rest.text);
+
+    // The model says so: untyped properties, which a reader's $metadata declares too.
+    let model = get(&state, mode, "hel-only", "/api/v1/$metadata?$format=json").await;
+    let space = &model.json()["JoinedContext.Portal"]["ContextSpace"];
+    for member in ["spec", "status", "metadata"] {
+        assert_eq!(space[member]["$Type"], "Edm.Untyped", "{member}: {space}");
+    }
+    // Another Organization's key and an unknown one answer the same.
+    let foreign = get(
+        &state,
+        Mode::Host("ba"),
+        "ba-only",
+        "/api/v1/spaces(project='helsinki',name='air')?$select=spec",
+    )
+    .await;
+    let unknown = get(
+        &state,
+        Mode::Host("ba"),
+        "ba-only",
+        "/api/v1/spaces(project='nowhere',name='air')?$select=spec",
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    assert_eq!(foreign.status, unknown.status);
+}
+
+/// T-7097: a Change's detail answers when `$select` names it, member for member what the REST
+/// door's `GET …/changes/{id}` answers; the list stays thin without it.
+#[tokio::test]
+async fn a_changes_detail_answers_as_the_rest_door() {
+    let shako = MockServer::start().await;
+    let repo = common::REPO;
+    let branch = "portal/create-contextspace-mobility-11111111";
+    let pull = json!({
+        "Number": 1, "HtmlUrl": "https://shako.example/pulls/1", "State": "open",
+        "Title": "create ContextSpace mobility", "Head": branch, "Base": "main",
+        "CreatedAt": "2026-09-06T09:14:22Z", "Author": "jana", "AuthorName": "Jana",
+        "AuthorEmail": "jana@hel.fi", "Mergeable": true, "Merged": false
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [pull] })))
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/PullRequests(1)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pull.clone()))
+        .mount(&shako)
+        .await;
+    let file = "projects/helsinki/spaces/mobility/space.yaml";
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/PullRequests(1)/Files")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "value": [{ "Filename": file, "Status": "added" }] })),
+        )
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-1",
+            "Content": base64::engine::general_purpose::STANDARD.encode(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  \
+                 name: mobility\n  namespace: helsinki\nspec:\n  isSandbox: true\n",
+            )
+        })))
+        .mount(&shako)
+        .await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = state().with_shako(Arc::new(client));
+    let mode = Mode::Host("hel");
+    let rest = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects/helsinki/changes",
+    )
+    .await;
+    assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
+    let id = rest.json()["items"][0]["metadata"]["name"]
+        .as_str()
+        .expect("one change")
+        .to_owned();
+    let thin = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    assert_eq!(thin.status, StatusCode::OK, "{}", thin.text);
+    assert!(
+        thin.json()["value"][0].get("summary").is_none(),
+        "{}",
+        thin.text
+    );
+    let members = [
+        "metadata",
+        "status",
+        "summary",
+        "author",
+        "createdAt",
+        "planFields",
+        "files",
+        "waitsOn",
+        "decision",
+    ];
+    let detail = get(
+        &state,
+        mode,
+        "hel-only",
+        &format!(
+            "/api/v1/changes(project='helsinki',name='{id}')?$select=name,{}",
+            members.join(",")
+        ),
+    )
+    .await;
+    assert_eq!(detail.status, StatusCode::OK, "{}", detail.text);
+    let rest = get(
+        &state,
+        mode,
+        "hel-only",
+        &format!("/api/v1/projects/helsinki/changes/{id}"),
+    )
+    .await;
+    assert_eq!(rest.status, StatusCode::OK, "{}", rest.text);
+    let (odata, rest) = (detail.json(), rest.json());
+    assert!(
+        rest["summary"].is_object() && rest["files"].is_array(),
+        "{rest}"
+    );
+    for member in members {
+        assert_eq!(
+            odata[member],
+            rest.get(member).cloned().unwrap_or(Value::Null),
+            "{member}"
+        );
+    }
+    // Who reads no project of helsinki reads none of it.
+    let foreign = get(
+        &state,
+        Mode::Host("ba"),
+        "ba-only",
+        &format!("/api/v1/changes(project='helsinki',name='{id}')?$select=summary"),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+}
+
+/// T-7097: a refusal naming fields keeps them over OData, as the REST door's `errors[]`: each a
+/// detail with its target, the first the error's own, beside the problem's hint.
+#[tokio::test]
+async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
+    let state = state();
+    let odata = get(
+        &state,
+        Mode::Host("hel"),
+        "hel-only",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_schema_get(kind=1)",
+    )
+    .await;
+    let rest = act(
+        &state,
+        "hel-only",
+        "/api/v1/projects/helsinki/ops/jc_schema_get",
+        None,
+        json!({ "kind": 1 }),
+    )
+    .await;
+    assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
+    let (problem, error) = (rest.json(), odata.json()["error"].clone());
+    let paths: Vec<Value> = problem["errors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|e| e["path"].clone())
+        .collect();
+    assert!(!paths.is_empty(), "{}", rest.text);
+    let targets: Vec<Value> = error["details"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|d| d["target"].clone())
+        .collect();
+    assert_eq!(targets, paths, "{}", odata.text);
+    assert_eq!(error["target"], paths[0], "{}", odata.text);
+    assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
+}
+
+/// T-7097: the people's operations are bound to the `Organization` singleton of the installation's
+/// Organization and answer as their REST doors; no project binds them, and another
+/// Organization's singleton answers as an unknown operation does.
+#[tokio::test]
+async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors() {
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    let ada = json!({ "id": "sub-ada", "username": "ada", "firstName": "Ada",
+                      "lastName": "Lovelace", "email": "ada@hel.fi", "enabled": true });
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([ada])))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users/sub-ada"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ada.clone()))
+        .mount(&kc)
+        .await;
+    let mut state = state();
+    state.people = People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    state.mirror.upsert(envelope(
+        "Role",
+        "person-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "Person"], "verbs": ["read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "hel-people",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "sub-ppl" }], "role": "person-reader",
+                "scope": { "organization": "hel" } }),
+    ));
+    let mode = Mode::Host("hel");
+    let bound = |text: &str, name: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let admin = get(&state, mode, "ppl", "/api/v1/$metadata").await;
+    assert!(
+        bound(&admin.text, "jc_person_list", "Organization"),
+        "{}",
+        admin.text
+    );
+    assert!(
+        bound(&admin.text, "jc_person_get", "Organization"),
+        "{}",
+        admin.text
+    );
+    assert!(
+        !bound(&admin.text, "jc_person_list", "Project"),
+        "{}",
+        admin.text
+    );
+    // A reader of Person writes nobody: no person action in their model.
+    assert!(!admin.text.contains("jc_person_create"), "{}", admin.text);
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata").await;
+    assert!(!viewer.text.contains("jc_person_"), "{}", viewer.text);
+
+    for (odata_uri, rest_uri) in [
+        (
+            "/api/v1/Organization/JoinedContext.Portal.jc_person_list(search=@s)?@s='ada'",
+            "/api/v1/organization/people?search=ada",
+        ),
+        (
+            "/api/v1/Organization/JoinedContext.Portal.jc_person_get(id='sub-ada')",
+            "/api/v1/organization/people/sub-ada",
+        ),
+    ] {
+        for who in ["ppl", "hel-only"] {
+            let odata = get(&state, mode, who, odata_uri).await;
+            let rest = get(&state, mode, who, rest_uri).await;
+            assert_eq!(
+                odata.status, rest.status,
+                "{who} {odata_uri}: {} / {}",
+                odata.text, rest.text
+            );
+            if who == "ppl" {
+                assert_eq!(odata.status, StatusCode::OK, "{odata_uri}: {}", odata.text);
+                assert_eq!(odata.json()["value"], rest.json(), "{odata_uri}");
+            }
+        }
+    }
+
+    let without_trace = |answer: &Answer| {
+        let mut body = answer.json();
+        if let Some(error) = body["error"].as_object_mut() {
+            error.remove("trace_id");
+        }
+        body.to_string()
+    };
+    // Bound to a project it is no operation there.
+    let on_project = get(
+        &state,
+        mode,
+        "ppl",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_person_list()",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    // ba is no installation Organization: its singleton holds no people, as no name it lacks.
+    let foreign = get(
+        &state,
+        Mode::Host("ba"),
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.jc_person_list()",
+    )
+    .await;
+    let unknown = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.jc_person_list_all()",
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    assert_eq!(without_trace(&foreign), without_trace(&unknown));
+    let ba_model = get(&state, Mode::Host("ba"), "root", "/api/v1/$metadata").await;
+    assert!(!ba_model.text.contains("jc_person_"), "{}", ba_model.text);
+}
+
 /// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
 /// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
 #[tokio::test]

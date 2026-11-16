@@ -1310,7 +1310,7 @@
     },
     "src/pages/datasources/DataSourcesPage.tsx": {
       "controls": {
-        "Button": 1
+        "Button": 2
       },
       "tests": [
         "admin_grid_brokers.test.tsx",
@@ -1331,7 +1331,8 @@
     },
     "src/pages/datasources/TemplateGallery.tsx": {
       "controls": {
-        "Button": 2
+        "Button": 3,
+        "Checkbox": 2
       },
       "tests": [
         "datasource_templates.test.tsx"

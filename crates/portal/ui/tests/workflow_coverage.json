@@ -653,7 +653,8 @@
         },
         "assistant": "jc_datasource_check",
         "routes": [
-          "POST /api/v1/projects/{project}/datasources/{name}/test"
+          "POST /api/v1/projects/{project}/datasources/{name}/test",
+          "POST /api/v1/projects/{project}/datasource-paging"
         ]
       },
       "discover": {
