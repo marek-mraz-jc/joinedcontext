@@ -169,16 +169,16 @@ fn import_input_schema() -> Value {
             ),
             "manifests": {
                 "type": "array",
-                "description": "The manifests themselves, instead of a bundle",
-                "items": super::bounds::manifest("One manifest of the import"),
+                "description": "Instead of a bundle",
+                "items": { "type": "object", "maxProperties": super::bounds::MANIFEST_MEMBERS },
                 "maxItems": IMPORT_MANIFESTS
             },
             "spaceMapping": {
                 "type": "array",
-                "description": "Spaces the bundle names that are not copied: each reference to `from` lands on the project's space `to`",
+                "description": "Space `from` lands on the project's `to`",
                 "items": {
                     "type": "object",
-                    "properties": { "from": text("A space the bundle names", NAME), "to": text("The project's space it lands on", NAME) },
+                    "properties": { "from": { "type": "string", "maxLength": NAME }, "to": { "type": "string", "maxLength": NAME } },
                     "required": ["from", "to"],
                     "additionalProperties": false
                 },
@@ -192,8 +192,7 @@ fn import_input_schema() -> Value {
             },
             "dryRun": { "type": "boolean", "description": "Answer the plan and write nothing" }
         },
-        "description": "One of bundle and manifests",
-        "additionalProperties": false
+                "additionalProperties": false
     })
 }
 

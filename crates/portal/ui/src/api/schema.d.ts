@@ -35479,14 +35479,10 @@ export interface operations {
         };
         requestBody: {
             content: {
-                /**
-                 * @example {
-                 *       "bundle": "example"
-                 *     }
-                 */
+                /** @example {} */
                 "application/json": {
                     /** @description The bundle document an export answered */
-                    bundle: string;
+                    bundle?: string;
                     /**
                      * @description For a resource the project has; absent refuses the import
                      * @enum {string}
@@ -35494,8 +35490,15 @@ export interface operations {
                     conflictPolicy?: "fail" | "skip" | "replace" | "rename";
                     /** @description Answer the plan and write nothing */
                     dryRun?: boolean;
+                    /** @description Instead of a bundle */
+                    manifests?: Record<string, never>[];
                     /** @description Organisation ids are rewritten to; this one when absent */
                     orgDomain?: string;
+                    /** @description Space `from` lands on the project's `to` */
+                    spaceMapping?: {
+                        from: string;
+                        to: string;
+                    }[];
                 };
             };
         };

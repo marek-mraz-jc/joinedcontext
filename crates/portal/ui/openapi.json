@@ -30594,9 +30594,7 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "example": {
-                "bundle": "example"
-              },
+              "example": {},
               "schema": {
                 "additionalProperties": false,
                 "properties": {
@@ -30619,15 +30617,44 @@
                     "description": "Answer the plan and write nothing",
                     "type": "boolean"
                   },
+                  "manifests": {
+                    "description": "Instead of a bundle",
+                    "items": {
+                      "maxProperties": 5,
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
+                  },
                   "orgDomain": {
                     "description": "Organisation ids are rewritten to; this one when absent",
                     "maxLength": 253,
                     "type": "string"
+                  },
+                  "spaceMapping": {
+                    "description": "Space `from` lands on the project's `to`",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "from": {
+                          "maxLength": 253,
+                          "type": "string"
+                        },
+                        "to": {
+                          "maxLength": 253,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
                   }
                 },
-                "required": [
-                  "bundle"
-                ],
                 "type": "object"
               }
             }
