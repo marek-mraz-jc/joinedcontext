@@ -721,7 +721,11 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
         "{}",
         refused.text
     );
-    assert!(refused.text.contains("version: "), "{}", refused.text);
+    assert!(
+        refused.text.contains(r#""path":"version""#),
+        "{}",
+        refused.text
+    );
     assert!(
         !refused.text.contains("bravo-town") && !refused.text.contains("unchanged"),
         "{}",
