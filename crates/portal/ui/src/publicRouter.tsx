@@ -4,7 +4,7 @@ import type { RouterHistory } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
 import { PublicFrame } from "./components/layout/PublicFrame";
 import { ChunkFailed, ErrorPage, errorReference, isChunkLoadError } from "./components/ErrorBoundary";
-import { parseCatalogueSearch } from "./pages/catalogue/search";
+import { parseCatalogueSearch, parseDataViewSearch } from "./pages/catalogue/search";
 import { catalogueQuery, datasetQuery } from "./pages/catalogue/queries";
 import { NotFoundState } from "./components/NotFoundState";
 
@@ -104,6 +104,7 @@ const catalogueDatasetRoute = createRoute({
 const catalogueEndpointRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/catalogue/endpoint/$slug",
+  validateSearch: parseDataViewSearch,
   component: function PublicCatalogueEndpointRoute() {
     const { slug } = catalogueEndpointRoute.useParams();
     return (

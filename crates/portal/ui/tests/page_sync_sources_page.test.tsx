@@ -105,7 +105,7 @@ describe("the sync sources page", () => {
     const add = await screen.findByRole("button", { name: en.syncSources.add });
     expect(add).toBeInTheDocument();
     // The choice is a labelled control, not a bare select under a line of text (UI-04).
-    expect(screen.getByLabelText(en.syncSources.origin)).toHaveValue("git");
+    expect(await screen.findByLabelText(en.syncSources.addFrom)).toHaveValue("git");
     const user = userEvent.setup();
     await user.click(add);
     expect(
@@ -184,10 +184,12 @@ describe("the sync sources page", () => {
   it("closes each write control to a role without its verb, and says which verb", async () => {
     renderSync({ rows: 1, permissions: { project: PROJECT, bootstrap: false, grants: [] } });
     const reason = (verb: string) =>
-      `Disabled: your role does not permit '${verb}' on 'SyncSource' in this project`;
+      `Your role in ${PROJECT} cannot ${en.permissions.action[verb as "propose" | "delete"]} sync sources. Whoever manages the project can grant it.`;
     await waitFor(() => {
       expectDenied(screen.getByRole("button", { name: en.syncSources.add }), reason("propose"));
     });
+    // The origin is the first step of adding one: a role that may not add is not offered it.
+    expect(screen.queryByLabelText(en.syncSources.addFrom)).toBeNull();
     expectDenied(await screen.findByRole("button", { name: en.syncSources.syncNow }), reason("propose"));
     expectDenied(screen.getByRole("button", { name: en.syncSources.pause }), reason("propose"));
     expectDenied(screen.getByRole("button", { name: en.syncSources.detach }), reason("delete"));
@@ -246,7 +248,7 @@ describe("the sync sources page", () => {
     await screen.findByRole("button", { name: en.syncSources.syncNow });
     expect(document.activeElement).toBe(document.body);
     const reached = await tabOrder(container, 60);
-    expect(reached).toContain(screen.getByLabelText(en.syncSources.origin));
+    expect(reached).toContain(screen.getByLabelText(en.syncSources.addFrom));
     expect(reached).toContain(screen.getByRole("button", { name: en.syncSources.add }));
     expect(reached).toContain(screen.getByRole("button", { name: en.syncSources.syncNow }));
   });

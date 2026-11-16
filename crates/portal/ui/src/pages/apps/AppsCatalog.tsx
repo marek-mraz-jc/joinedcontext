@@ -17,7 +17,7 @@ import { usePermissions } from "../../api/permissions";
 import { appSchema, appUiSchema } from "../../schemas/kinds";
 import { fromAppEnvelope, toAppEnvelope } from "./appForm";
 import type { AppForm } from "./appForm";
-import { PermissionGuard } from "../../components/ui/PermissionGuard";
+import { deniedReason, PermissionGuard, DeniedNote } from "../../components/ui/PermissionGuard";
 import { LifecycleBadge } from "../../components/status/LifecycleBadge";
 import { AppCheckChip, useAppChecks } from "./AppCheckChip";
 import type { AppCheck } from "./AppCheckChip";
@@ -315,7 +315,21 @@ export function AppsCatalog({ project }: { project: string }): JSX.Element {
   if (list.isError) {
     return (
       <div className="space-y-4">
-        <PageHeader compact title={t("apps.title")} description={t("apps.subtitle")} />
+        {/* A role that may not add an app meets the generator closed with its reason, as on every
+            list; one that may is shown it again once the catalogue it builds into has loaded. */}
+        <PageHeader
+          compact
+          title={t("apps.title")}
+          description={t("apps.subtitle")}
+          note={<DeniedNote project={project} kind="App" verb="propose" />}
+          actions={
+            mayBuild ? undefined : (
+              <PermissionGuard project={project} kind="App" verb="propose">
+                <Button>{t("apps.newAction")}</Button>
+              </PermissionGuard>
+            )
+          }
+        />
         <PageFailed
           error={list.error}
           onRetry={() => {
@@ -751,7 +765,7 @@ function AppCardActions({
   const run = build.data?.run ?? null;
   const running = run !== null && runState(run) === "building";
   const mayPropose = permissions.can("App", "propose");
-  const denied = t("permissions.denied", { verb: "propose", kind: "App" });
+  const denied = deniedReason(t, project, "propose", "App");
 
   const openReason = openBlockedReason(app, run, t);
 

@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The data workspace's states T-5064 did not shoot (T-5093): the form labelled by the model, the
 // dark theme, a 10 000-row type, two sessions on one cell, an Endpoint answering 502, and the empty

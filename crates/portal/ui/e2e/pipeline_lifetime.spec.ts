@@ -4,6 +4,10 @@ import { generate } from "../src/pages/pipelines/outputMapper";
 import type { Attribute } from "../src/pages/pipelines/outputMapper";
 import { digestOf } from "../src/api/digest";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4839, T-4842: the workbench's Lifetime step writes the pipeline's `spec.lifetime` (PL-80), and
 // a T-4822 step that wrote its own `expiresAt` moves into it on open. The API is answered in

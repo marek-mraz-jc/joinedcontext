@@ -33,6 +33,32 @@ import { ResourcePageFailed } from "../components/ui/PageState";
 type ChangeProposal = components["schemas"]["ChangeProposal"];
 type ChangeFile = components["schemas"]["ChangeFile"];
 
+/** Who decided a closed change, when and why (T-7071): the author reads the rejecter's reason here. */
+function Decided({
+  decision,
+  rejected,
+  locale,
+}: {
+  decision: components["schemas"]["ChangeDecision"];
+  rejected: boolean;
+  locale: string;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const title = t(rejected ? "approvals.decision.rejectedTitle" : "approvals.decision.approvedTitle");
+  const at = decision.at ? new Date(decision.at).toLocaleString(locale) : null;
+  return (
+    <Alert role="note" aria-label={title} tone={rejected ? "warning" : "success"} title={title}>
+      <p>{at ? t("approvals.decision.byAt", { by: decision.by, at }) : t("approvals.decision.by", { by: decision.by })}</p>
+      {rejected ? (
+        <>
+          <p>{decision.reason ? t("approvals.decision.reason", { reason: decision.reason }) : t("approvals.decision.noReason")}</p>
+          <p>{t("approvals.decision.rejectedNext")}</p>
+        </>
+      ) : null}
+    </Alert>
+  );
+}
+
 /** The list page of the changed resource: the folder of its file, `projects/{project}/{plural}/…`. */
 function pluralOf(change: ChangeProposal): string | undefined {
   const kind = changedKind(change);
@@ -109,9 +135,13 @@ export function ApprovalDetailPage({
   const standing = proposal
     ? approvalStanding(permissions, identity?.email ?? undefined, proposal)
     : { block: null, ownAsAdministrator: false };
-  const disabledReason = standing.block ? t(`approvals.${standing.block}`) : null;
-
   const decision = useDecision(project, id);
+  const disabledReason = standing.block
+    ? t(`approvals.${standing.block}`)
+    : decision.refused
+      ? decision.error
+      : null;
+
   const approveMutation = decision.approve;
   const rejectMutation = decision.reject;
   const actionError = decision.error;
@@ -158,7 +188,7 @@ export function ApprovalDetailPage({
   // The proposer withdraws their own change, whoever approves it: closing never merges (T-6535).
   const own = isOwn(identity?.email, proposal);
   const words = rejectWords(own);
-  const canReject = own ? isPendingApproval && !isMutating : canAct;
+  const canReject = own ? isPendingApproval && !isMutating && !decision.refused : canAct;
 
   const summaryText = t(
     proposal.summary.key,
@@ -316,6 +346,10 @@ export function ApprovalDetailPage({
         <PlanDiffViewer fields={selected ? selected.fields : proposal.planFields} />
       </section>
 
+      {proposal.decision && !isPendingApproval ? (
+        <Decided decision={proposal.decision} rejected={proposal.status.phase === "Rejected"} locale={locale} />
+      ) : null}
+
       {files
         .filter((file) => file.kind === "Endpoint" && file.operation !== "Delete" && publishes(file))
         .map((file) => (
@@ -392,7 +426,7 @@ export function ApprovalDetailPage({
               // The same sentence the Approve button carries when a role or the authorship is
               // what refuses the action; a phase that simply has nothing to reject says nothing,
               // because that is not a refusal (UI-44).
-              disabledReason={own ? undefined : (disabledReason ?? undefined)}
+              disabledReason={own && !decision.refused ? undefined : (disabledReason ?? undefined)}
               loading={rejectMutation.isPending}
               onClick={() => setRejecting(true)}
             >

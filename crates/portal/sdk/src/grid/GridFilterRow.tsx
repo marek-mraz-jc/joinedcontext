@@ -7,7 +7,7 @@ import type { GridView } from "./useGridView";
 
 /** The filter row (T-4883): one control per column, an area picker on a geo column, the type choice on Type. */
 export function GridFilterRow({ view }: { view: GridView }): React.JSX.Element | null {
-  const { props, filterable, labels, columns, kindOf, asText, grid, areaMap, setAreaMap } = view;
+  const { props, filterable, labels, columns, kindOf, asText, grid } = view;
   const { filterRow = true, rowNumbers, typeChoice } = props;
   const { state, setFilter } = grid;
   if (!filterRow || filterable.size === 0) return null;
@@ -18,23 +18,10 @@ export function GridFilterRow({ view }: { view: GridView }): React.JSX.Element |
         const column = filterable.get(col.key);
         const className = `jc-grid-filter${col.pinned ? " jc-grid-pinned" : ""}`;
         if (col.attr && !col.meta && kindOf.get(col.key) === "geo" && !asText) {
-          const drawn = grid.area?.geoproperty === col.attr;
           return (
             <th key={`filter-${col.key}`} className={className} data-filter-for={col.key}>
               <div className="jc-grid-filter-cell">
-                <button
-                  type="button"
-                  className="jc-grid-area-button"
-                  aria-pressed={drawn || areaMap === col.attr}
-                  onClick={() => {
-                    if (drawn) {
-                      grid.setArea(null);
-                      setAreaMap(null);
-                    } else setAreaMap(areaMap === col.attr ? null : col.attr!);
-                  }}
-                >
-                  {drawn ? labels.areaClear : labels.areaPick}
-                </button>
+                <AreaButton view={view} attr={col.attr} />
               </div>
             </th>
           );
@@ -248,3 +235,24 @@ function FilterCell({
  * to say why. Without a rule the stored value's shape is the guide.
  */
 /** A cell's stored value as its text box shows it: the value, not the unit beside it. */
+
+/** Draws an area on `attr`'s map, or removes the one drawn: the filter row's, and a phone's type line's (T-7072). */
+export function AreaButton({ view, attr }: { view: GridView; attr: string }): React.JSX.Element {
+  const { labels, grid, areaMap, setAreaMap } = view;
+  const drawn = grid.area?.geoproperty === attr;
+  return (
+    <button
+      type="button"
+      className="jc-grid-area-button"
+      aria-pressed={drawn || areaMap === attr}
+      onClick={() => {
+        if (drawn) {
+          grid.setArea(null);
+          setAreaMap(null);
+        } else setAreaMap(areaMap === attr ? null : attr);
+      }}
+    >
+      {drawn ? labels.areaClear : labels.areaPick}
+    </button>
+  );
+}

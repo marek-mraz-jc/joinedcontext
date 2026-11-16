@@ -91,6 +91,8 @@ export interface ManifestGridProps<T> {
   searchLabel: string;
   /** The page's header around the toolbar, so search and Filter share the title's row (owner 2026-10-31). */
   header?: (toolbar: ReactNode) => ReactNode;
+  /** The page's own filters, first in the grid's toolbar row beside Filter and Arrange columns. */
+  tools?: ReactNode;
   /** Where cell edits go; without it the cell panel only reads. */
   edit?: {
     project: string;
@@ -280,7 +282,15 @@ export function ManifestGrid<T>(props: ManifestGridProps<T>): JSX.Element {
         <Input type="search" aria-label={searchLabel} placeholder={searchLabel} value={ownSearch} onChange={(event) => typeSearch(event.target.value)} />
       </div>
     ) : null;
-  const tools = <GridToolbar caption={caption} rows={rows} all={all} columns={columns} filters={filters} setFilters={setFilters} />;
+  const own = <GridToolbar caption={caption} rows={rows} all={all} columns={columns} filters={filters} setFilters={setFilters} />;
+  const tools = props.tools ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {props.tools}
+      {own}
+    </div>
+  ) : (
+    own
+  );
   return (
     <div className="flex flex-col gap-3" data-manifest-grid={storageKey}>
       {props.header ? props.header(toolbar) : toolbar}

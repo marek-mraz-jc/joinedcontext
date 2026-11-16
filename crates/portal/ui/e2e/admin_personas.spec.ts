@@ -54,6 +54,9 @@ const READS: Record<Persona, string[]> = {
 /** The project each persona walks. */
 export const HOME: Record<Persona, string> = { platform: "helsinki", organization: "ovzdusie", project: "helsinki" };
 
+/** The PF-59 refusal of a project the person reads none of (locale form.projectHidden). */
+const PROJECT_HIDDEN =
+  "This project is not open to you: it does not exist, or nobody shared it with you. Check the name in the address, or ask whoever manages the project.";
 const NO_NEW_PROJECT = "A new project belongs to the installation's Organization; ask its administrators.";
 
 /** One request to read a space of the persona's project (PL-90), as the owners' list shows it. */
@@ -256,7 +259,8 @@ async function propose(
     await expect(option, `${pick.field}: ${(await select.locator("option").allTextContents()).join(" | ")}`).toBeAttached();
     await select.selectOption((await option.getAttribute("value")) ?? "");
   }
-  await form.getByRole("button", { name: "Check" }).click();
+  // `exact`: a pipeline form also offers "Check whole source", the saved pipeline's check.
+  await form.getByRole("button", { name: "Check", exact: true }).click();
   const submit = form.getByRole("button", { name: "Propose change" });
   await expect(submit).not.toHaveAttribute("aria-disabled", "true", { timeout: 15_000 });
   await submit.click();
@@ -321,10 +325,11 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("Ask the installation's administrators")).toBeVisible();
       await shot(page, `organization-refused-installation-${width}`);
       await page.goto("/projects/helsinki/spaces?lang=en");
-      await expect(page.getByRole("alert")).toContainText("project 'helsinki' not found");
-      await expect(page.getByRole("heading", { level: 1, name: "Context Spaces" })).toBeVisible();
-      // No create control is offered in a project out of reach; the API's 404 stays the guard.
-      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveAttribute("aria-disabled", "true");
+      // Hidden and missing read the same (PF-59): the not-found page, in a project the person reads
+      // (Shell frameFor), with no list and no create control; the API's 404 stays the guard.
+      await expect(page.getByRole("heading", { level: 1, name: "This page does not exist" })).toBeVisible();
+      await expect(page.getByText(PROJECT_HIDDEN)).toBeVisible();
+      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveCount(0);
       await shot(page, `organization-refused-other-project-${width}`);
       expect(writes.filter((w) => w.includes("/projects/helsinki/"))).toEqual([]);
     });
@@ -337,10 +342,11 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("This page is for organization administrators.")).toBeVisible();
       await shot(page, `project-refused-organization-${width}`);
       await page.goto("/projects/ovzdusie/spaces?lang=en");
-      await expect(page.getByRole("alert")).toContainText("project 'ovzdusie' not found");
-      await expect(page.getByRole("heading", { level: 1, name: "Context Spaces" })).toBeVisible();
-      // No create control is offered in a project out of reach; the API's 404 stays the guard.
-      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveAttribute("aria-disabled", "true");
+      // Hidden and missing read the same (PF-59): the not-found page, in a project the person reads
+      // (Shell frameFor), with no list and no create control; the API's 404 stays the guard.
+      await expect(page.getByRole("heading", { level: 1, name: "This page does not exist" })).toBeVisible();
+      await expect(page.getByText(PROJECT_HIDDEN)).toBeVisible();
+      await expect(page.getByRole("button", { name: "New Context Space" })).toHaveCount(0);
       await shot(page, `project-refused-other-project-${width}`);
       expect(writes.filter((w) => w.includes("/projects/org/") || w.includes("/projects/ovzdusie/"))).toEqual([]);
     });

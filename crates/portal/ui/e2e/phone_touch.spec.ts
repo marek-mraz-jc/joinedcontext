@@ -2,6 +2,10 @@
 // pages are read with an empty project, which is what a newcomer's phone shows first.
 import { expect, test } from "@playwright/test";
 import { smallTouchTargets } from "./touch";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 const PROJECT = "helsinki";
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@hel.fi", roles: ["portal-editor"] };

@@ -15,7 +15,7 @@ import type { Verdict } from "../api/drafts";
 import { useOrgDomain, useProjectOrganization, useProjects } from "../api/projects";
 import { takePrefill } from "../assistant/state";
 import { useProjectUsage } from "../components/ProjectQuota";
-import { PermissionGuard } from "../components/ui/PermissionGuard";
+import { deniedReason, PermissionGuard } from "../components/ui/PermissionGuard";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
 import { ChangeNotice } from "../components/ChangeNotice";
@@ -387,7 +387,7 @@ function EndpointRowActions({
   const slug = (endpoint.spec as { slug?: string }).slug ?? "";
   const target: ResourceTarget = { project, kind: "Endpoint", plural: "endpoints", name, label };
   const denied = (verb: "propose" | "delete") =>
-    permissions.can("Endpoint", verb) ? undefined : t("permissions.denied", { verb, kind: "Endpoint" });
+    permissions.can("Endpoint", verb) ? undefined : deniedReason(t, project, verb, "Endpoint");
 
   // One menu per row (T-6095): the row itself opens the endpoint, its data is on that page, and the
   // Git file is an item here instead of an icon column.
@@ -1750,7 +1750,7 @@ export function EndpointsPage({ project, edit }: { project: string; edit?: strin
                     disabledReason={
                       permissions.can("Endpoint", "propose")
                         ? undefined
-                        : t("permissions.denied", { verb: "propose", kind: "Endpoint" })
+                        : deniedReason(t, project, "propose", "Endpoint")
                     }
                   />
                 </div>

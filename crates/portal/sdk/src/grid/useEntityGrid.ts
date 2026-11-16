@@ -1022,6 +1022,8 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
   const [, setOrderRefusals] = useState(0);
   const cancelledRef = useRef(false);
   const nonceRef = useRef(0);
+  /** The read a total belongs to: the question's last count, which a page change keeps (T-7072). */
+  const countRef = useRef(0);
   /** The question (its nonce) a further page is on its way for, so a second call waits for it. */
   const pageAskedRef = useRef<number | null>(null);
 
@@ -1214,13 +1216,17 @@ export function useEntityGrid(options: UseEntityGridOptions): EntityGrid {
     const from = virtual && !paged ? 0 : offset;
     if (from === 0) {
       setTotal(undefined);
+      // Its answer stands for the question, not for the page: a person who pages on before a slow
+      // count lands still gets the total (T-7072); only a new question or a reload drops it.
+      const count = nonce;
+      countRef.current = count;
       // The total has a read of its own beside the rows (T-6541): a count walks the whole match and
       // can outlast the gateway's 10 s cut (Praha Tree: 503 after 10 s, the rows alone in 0.2 s), so
       // a failed or slow count costs the footer its total, never the page its rows.
       source
         .query({ ...gridQuery, orderBy: undefined }, { offset: 0, limit: 0, count: true })
         .then((counted) => {
-          if (cancelledRef.current || nonceRef.current !== nonce || counted.total === undefined) return;
+          if (cancelledRef.current || countRef.current !== count || counted.total === undefined) return;
           const total = counted.total;
           setTotal(total);
           setRows((loaded) => {

@@ -313,7 +313,7 @@ export function DataGrid<T>({
   return (
     <div className={`jc-grid jc-data-grid${stack ? " jc-data-grid--stack" : ""}`} data-density="comfortable">
       <div className="jc-grid-toolbar jc-data-grid-toolbar">
-        {tools}
+        {tools ? <div className="jc-data-grid-tools">{tools}</div> : null}
         {!noSearch && (
           <div className="jc-data-grid-search">
             <label htmlFor={`${id}-search`} className="jc-data-grid-search-label">{labels.searchRows}</label>

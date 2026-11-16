@@ -3,6 +3,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { greenVerdict, isCheck } from "./verdict";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // A control that cannot act says why and keeps its place in the tab order (UI-44, T-7048): an
 // agent run's Publish while the run builds, while its tests hold it and once the run is over; a

@@ -44,6 +44,21 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(heads(container)[0]).toMatch(/^Title/);
   });
 
+  it("offers the area picker on the line above, since a phone's table has no filter row (T-7072)", async () => {
+    const placed = entities.map((each, i) => ({ ...each, location: { type: "GeoProperty", value: { type: "Point", coordinates: [24.93 + i / 100, 60.17] } } }));
+    const located = parseGridConfig({
+      source: { kind: "fixture", name: "t" },
+      type: "PointOfInterest",
+      columns: [{ attr: "title", label: "Title", pinned: true }, { attr: "location", label: "Location" }],
+      pageSize: 10,
+    }).config!;
+    const { container } = render(<EntityGrid config={located} source={fixtureSource(placed)} compact filterRow={false} />);
+    const pick = await screen.findByRole("button", { name: "Pick area on map" });
+    expect(container.querySelector(".jc-grid-typeline")).toContainElement(pick);
+    expect(container.querySelector(".jc-grid-typeline")).toHaveTextContent("Location");
+    expect(pick).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("drops a field empty on every row, without a word on the line above", async () => {
     const blank = entities.map((each) => ({ ...each, category: { type: "Property", value: "" } }));
     const { container } = render(<EntityGrid config={config} source={fixtureSource(blank)} compact filterRow={false} />);

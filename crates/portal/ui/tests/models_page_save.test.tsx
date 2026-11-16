@@ -10,6 +10,7 @@ import { rememberPrefill, settlePrefill } from "../src/assistant/state";
 import en from "../src/locales/en.json";
 import { ModelsPage } from "../src/pages/models/ModelsPage";
 import { parseModel } from "../src/pages/models/linkml";
+import { deniedReason } from "../src/components/ui/PermissionGuard";
 
 const PUBLISHED_LINKML = `id: https://example.org/models/air-quality
 name: air-quality
@@ -575,7 +576,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
 
     renderWithClient(<ModelsPage project="ovzdusie" baseline={{ name: "air-quality", version: "1.0.0", lifecycle: "published" }} />);
 
-    const reason = en.permissions.denied.replaceAll("''", "'").replace("{verb}", "propose").replace("{kind}", "DataModel");
+    const reason = deniedReason(i18n.t, "ovzdusie", "propose", "DataModel");
     for (const name of [en.models.source.saveCheck, PROPOSE]) {
       const button = await screen.findByRole("button", { name });
       await waitFor(() => expect(button).toHaveAttribute("aria-disabled", "true"));

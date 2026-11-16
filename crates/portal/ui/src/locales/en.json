@@ -287,6 +287,15 @@
     "withdrawn": "You withdrew this change. It was closed without merging, and your reason is on its record.",
     "withdrawReason": "Why are you withdrawing it?",
     "withdrawReasonHint": "Recorded on the change, for example: proposed the wrong model version.",
+    "decision": {
+      "rejectedTitle": "Rejected",
+      "approvedTitle": "Approved",
+      "by": "Decided by {by}.",
+      "byAt": "Decided by {by} on {at}.",
+      "reason": "Reason: {reason}",
+      "noReason": "No reason was given.",
+      "rejectedNext": "Nothing this change proposed was applied. To try again, fix what the reason names in the resource and save it: that proposes a new change."
+    },
     "rejectCancel": "Cancel",
     "rejectReasonHint": "The author reads it on the change and needs it to fix the change.",
     "filterMine": "Only mine",
@@ -2748,11 +2757,11 @@
     "title": "Pipelines",
     "empty": "This project has no pipeline yet.",
     "class": {
-      "resident": "resident",
+      "resident": "Always running",
       "residentHelp": "Runs continuously in the project's Bento runner.",
-      "scheduled": "scheduled",
+      "scheduled": "On a schedule",
       "scheduledHelp": "Runs on a schedule and stops between runs.",
-      "auto": "auto",
+      "auto": "Automatic",
       "autoHelp": "The reconciler picks: resident under 30 seconds or push-based, scheduled otherwise."
     },
     "field": {
@@ -6068,6 +6077,7 @@
     "intro": "A sync source keeps this project aligned with something outside the repository: another Git repository, a published bundle, or another instance's public API. Every run is an import, and every run that changes something opens one merge request.",
     "empty": "This project syncs from nothing yet.",
     "origin": "Origin",
+    "addFrom": "Add a source from",
     "revision": "Source revision",
     "status": "Status",
     "mergeRequest": "Open merge request",
@@ -6664,6 +6674,7 @@
     "noMatch": "Nothing matches this query; change or remove a filter.",
     "technical": "Technical details (JSON-LD)",
     "copyJson": "Copy JSON-LD",
+    "backToRow": "Back to the entity you came from",
     "endpointApps": "Applications",
     "unknownType": "There is no type {type} in this space",
     "unknownTypeHint": "The address names a type this space does not have. Pick one of its types:"
@@ -7194,7 +7205,7 @@
   "permissions": {
     "unchecked": "Your access could not be checked just now. You can still fill in the form: the server checks your rights again when you propose.",
     "checking": "Checking your access…",
-    "denied": "Disabled: your role does not permit ''{verb}'' on ''{kind}'' in this project",
+    "denied": "Your role in {project} cannot {action} {kinds}. Whoever manages the project can grant it.",
     "deniedOrganization": "Only an organization administrator can {action} {kinds}.",
     "action": {
       "read": "see",
@@ -8256,6 +8267,7 @@
         "localeHelp": "The language of the sign-in pages and the realm’s e-mails for this person.",
         "localeRealm": "The realm’s default",
         "emailInvalid": "Type an e-mail address such as jana.novakova@example.org.",
+        "emailTakenNext": "Find this person in the People list and give them a role from their page.",
         "required": "Required."
       },
       "language": {

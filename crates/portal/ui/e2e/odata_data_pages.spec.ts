@@ -105,6 +105,11 @@ async function stub(
     }
     if (path === "/api/v1/projects") return json({ apiVersion: API, kind: "ProjectList", items: [{ name: "helsinki" }] });
     if (path === "/api/v1/preferences") return json({ firstRunDismissed: true });
+    // The latest run of each pipeline: a live stream has written its records four minutes ago.
+    if (path.endsWith("/pipeline-runs")) {
+      const at = new Date(Date.now() - 4 * 60_000).toISOString();
+      return json({ items: [{ pipeline: "air-feed", run: { run: at, firstAt: at, lastAt: at, sent: 128, rejected: 0, failed: 0 } }] });
+    }
     return json({ apiVersion: API, kind: "List", items: [] });
   });
   return asked;
@@ -152,6 +157,9 @@ for (const width of [1440, 400]) {
       const card = page.getByText("regional-models").first();
       await expect(card).toBeVisible();
       await expect(page.getByText("Every 30 minutes").first()).toBeVisible();
+      // An editor who may not delete meets Detach closed, and the page says why in words.
+      await expect(page.getByRole("button", { name: "Detach" }).first()).toBeDisabled();
+      await expect(page.getByText(/Your role in helsinki cannot delete sync sources\./).first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shoot(page, "syncsources-filled", width, card);
       await page.getByRole("button", { name: "Pause" }).first().click();
@@ -182,7 +190,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByRole("button", { name: "Add source" }).first()).toBeDisabled();
-      await expect(page.getByText(/your role does not permit/i).first()).toBeVisible();
+      await expect(page.getByText(/Your role in helsinki cannot add or change sync sources\./).first()).toBeVisible();
       await shoot(page, "syncsources-refused", width, refused);
     });
 
@@ -209,6 +217,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByRole("button", { name: "New pipeline" }).first()).toBeDisabled();
+      await expect(page.getByRole("tab", { name: "Data flow map" })).toHaveCount(0);
       await shoot(page, "pipelines-refused", width, refused);
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { [PIPELINES]: failure });
@@ -239,6 +248,8 @@ for (const width of [1440, 400]) {
       await page.goto("/projects/helsinki/apps?lang=en");
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
+      await expect(page.getByText(/Your role in helsinki cannot add or change applications\./).first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Generate your own app" }).first()).toBeDisabled();
       await shoot(page, "apps-refused", width, refused);
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { [APPS]: failure });

@@ -20,6 +20,7 @@ import { shippedForms } from "../schemas/forms";
 import { useBranding } from "../branding";
 import type { UiSchema } from "./forms/types";
 import type { ResourceTarget } from "./DeleteResourceDialog";
+import { kindPlural } from "../kindWords";
 import { Alert, Badge, Button, PageFailed, PageLoading } from "./ui";
 import { FormFrame, useFormRoute } from "./forms/FormRoute";
 import type { EditableForm } from "./EditResourceDialog";
@@ -273,7 +274,7 @@ export function EditResourceDialogBody({
         readOnly ? (
           <>
             <Badge tone="neutral">{t("resourceEdit.readOnlyBadge")}</Badge>{" "}
-            {t("resourceEdit.readOnly", { kind: target.kind })}
+            {t("resourceEdit.readOnly", { kind: kindPlural(target.kind, t) })}
           </>
         ) : (
           t("resourceEdit.lead")

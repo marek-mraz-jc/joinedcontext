@@ -270,8 +270,6 @@ function NewPersonForm({
   const [project, setProject] = useState("");
   const [role, setRole] = useState<InviteRole>("viewer");
   const [tried, setTried] = useState(false);
-  const errors = tried ? validate(form, t) : {};
-
   const create = useMutation({
     // The answer may carry the temporary password: it is not kept in the mutation cache.
     gcTime: 0,
@@ -316,6 +314,14 @@ function NewPersonForm({
       onCreated(invitation);
     },
   });
+  // A taken address is the E-mail field's error (409), with where to go instead, until it is changed.
+  const takenEmail =
+    create.error instanceof ApiError && create.error.status === 409 ? create.variables?.email.trim() : undefined;
+  const taken =
+    takenEmail !== undefined && takenEmail === form.email.trim()
+      ? `${reasonOf(create.error, t("app.error.generic")).replace(/\.?$/, ".")} ${t("organization.people.form.emailTakenNext")}`
+      : undefined;
+  const errors: FormErrors = { ...(tried ? validate(form, t) : {}), ...(taken ? { email: taken } : {}) };
 
   const close = (next: boolean) => {
     if (!next) {
@@ -396,7 +402,7 @@ function NewPersonForm({
             }))}
           />
         ) : null}
-        {create.error ? (
+        {create.error && takenEmail === undefined ? (
           <Alert tone="danger" role="alert">
             {reasonOf(create.error, t("app.error.generic"))}
           </Alert>

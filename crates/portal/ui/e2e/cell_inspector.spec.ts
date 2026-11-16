@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The cell inspector in the explorer (T-5528): what a person may do with each attribute, as the
 // Endpoint decides it, and why. `vite preview` has no gateway, so its answers are stubbed in the

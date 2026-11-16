@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The Scripts page (T-7084, PL-118…PL-121) on `vite preview` with the API answered from the
 // browser, as approvals.spec.ts does: an author edits a stored script, runs its tests, sees the

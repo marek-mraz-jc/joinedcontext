@@ -2,6 +2,10 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // EP-187 (T-6972): an open-data Endpoint only reads. The reconciler marks it `OpenData` (the
 // page's badge) and, when it binds a write Policy, `Degraded` (the warning with the server's
