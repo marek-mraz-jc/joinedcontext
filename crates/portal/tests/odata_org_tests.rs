@@ -1604,6 +1604,20 @@ async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
     assert_eq!(error["hint"], problem["hint"], "{}", odata.text);
 }
 
+/// `value` with each RFC 3339 instant as one token: two reads of a live reading differ in when.
+fn timeless(value: Value) -> Value {
+    match value {
+        Value::String(text) if chrono::DateTime::parse_from_rfc3339(&text).is_ok() => {
+            json!("<instant>")
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(timeless).collect()),
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, timeless(v))).collect())
+        }
+        other => other,
+    }
+}
+
 /// T-7098: the Administration pages' readings are the Organization's: `jc_organization_read`,
 /// bound to the `Organization` singleton, answers each aspect with its REST door's status, its
 /// body or its refusal's sentence, for an administrator and for a viewer, and no project binds it.
@@ -1673,7 +1687,11 @@ async fn the_organizations_readings_answer_as_their_rest_doors() {
             );
             answered.insert((who, rest.status.as_u16()));
             if rest.status.is_success() {
-                assert_eq!(odata.json()["value"], rest.json(), "{who} {rest_uri}");
+                assert_eq!(
+                    timeless(odata.json()["value"].clone()),
+                    timeless(rest.json()),
+                    "{who} {rest_uri}"
+                );
             } else {
                 assert_eq!(
                     odata.json()["error"]["message"],
@@ -1719,7 +1737,7 @@ async fn the_organizations_readings_answer_as_their_rest_doors() {
     .await;
     assert_eq!(
         misplaced.status,
-        StatusCode::BAD_REQUEST,
+        StatusCode::UNPROCESSABLE_ENTITY,
         "{}",
         misplaced.text
     );
