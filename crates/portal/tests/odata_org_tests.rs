@@ -122,18 +122,21 @@ fn state() -> AppState {
     state
 }
 
-/// How the request reached the Portal: on an Organization's bound host, or on jc's shared host
-/// with the Organization's path segment already read off by jc's registry.
+/// How the request reached the Portal: on an Organization's bound host, on jc's shared host
+/// with the Organization's path segment already read off by jc's registry, or on the shared
+/// host with no Organization in the path (the Portal UI's own origin there, API/15 §6).
 #[derive(Clone, Copy, Debug)]
 enum Mode {
     Host(&'static str),
     Path(&'static str),
+    Shared,
 }
 
 impl Mode {
     fn org(self) -> &'static str {
         match self {
             Self::Host(org) | Self::Path(org) => org,
+            Self::Shared => "",
         }
     }
 }
@@ -197,7 +200,7 @@ async fn send(
         .header(header::COOKIE, cookie);
     request = match mode {
         Mode::Host(org) => request.header(header::HOST, if org == "hel" { HEL } else { BA }),
-        Mode::Path(_) => request.header(header::HOST, SHARED),
+        Mode::Path(_) | Mode::Shared => request.header(header::HOST, SHARED),
     };
     for (name, value) in extra {
         request = request.header(*name, *value);
@@ -735,24 +738,66 @@ async fn metadata_service_document_and_rest_compat_share_the_root() {
     assert_eq!(alias.status, StatusCode::OK, "{}", alias.text);
 }
 
-/// The deployment's own address of a jc with several Organizations names none: the service
-/// there answers 404 and points at `/{org}/api/v1/`, it never picks one.
+/// The deployment's own address of a jc with several Organizations, where the Portal UI calls
+/// `/api/v1/` (T-6812, train smoke 43797017131 answered 404 there): the project the path names
+/// gives the Organization, else the caller's only one, else the installation's, as the REST doors
+/// on that host answer; with none of these the service answers 404 and points at `/{org}/api/v1/`.
 #[tokio::test]
-async fn an_unpinned_request_with_several_organizations_reads_none() {
+async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installations_organization() {
     let state = state();
-    let cookie = cookies(&state.config, person("root", &[ROOTS]), "").await;
-    let response = server::app(state.clone())
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/projects?$top=5")
-                .header(header::HOST, SHARED)
-                .header(header::COOKIE, &cookie)
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let projects = |answer: &Answer| names(&answer.json(), "name");
+    // root belongs to every Organization: the installation's (hel) answers.
+    let root = get(&state, Mode::Shared, "root", "/api/v1/projects?$top=5").await;
+    assert_eq!(root.status, StatusCode::OK, "{}", root.text);
+    assert_eq!(projects(&root), ["helsinki"]);
+    let both = get(&state, Mode::Shared, "both", "/api/v1/projects?$top=5").await;
+    assert_eq!(projects(&both), ["helsinki"], "{}", both.text);
+    // A person of one Organization reads their own.
+    let ba = get(&state, Mode::Shared, "ba-only", "/api/v1/projects?$top=5").await;
+    assert_eq!(ba.status, StatusCode::OK, "{}", ba.text);
+    assert_eq!(projects(&ba), ["bratislava"]);
+    // The project in the path names its Organization, in both key forms.
+    for uri in [
+        "/api/v1/projects('bratislava')",
+        "/api/v1/projects/bratislava?$select=name",
+        "/api/v1/projects('bratislava')/JoinedContext.Portal.jc_schema_get(kind='Endpoint')",
+    ] {
+        let answer = get(&state, Mode::Shared, "root", uri).await;
+        assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
+    }
+    // ... and the caller's rights still decide: hel's project is no ba person's.
+    let foreign = get(
+        &state,
+        Mode::Shared,
+        "ba-only",
+        "/api/v1/projects('helsinki')",
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    // A call bound to the installation's Organization answers as its REST door on this host.
+    let rest = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/organization/people/names?ids=a",
+    )
+    .await;
+    let odata = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.portal_person_names(ids=@ids)?@ids='a'",
+    )
+    .await;
+    assert_eq!(odata.status, rest.status, "{} / {}", odata.text, rest.text);
+    // No installation claim and a caller of several: the address names none.
+    state
+        .mirror
+        .upsert(envelope("Organization", "hel", ORG_NAMESPACE, json!({})));
+    let none = get(&state, Mode::Shared, "root", "/api/v1/projects?$top=5").await;
+    assert_eq!(none.status, StatusCode::NOT_FOUND, "{}", none.text);
+    let addressed = get(&state, Mode::Shared, "root", "/api/v1/projects('helsinki')").await;
+    assert_eq!(addressed.status, StatusCode::OK, "{}", addressed.text);
 }
 
 /// A write as an action: POST with the session's CSRF token, `If-Match` when given.

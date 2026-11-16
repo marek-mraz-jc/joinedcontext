@@ -645,13 +645,45 @@ fn headers(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 3]
 
 const JSON: &str = "application/json;odata.metadata=minimal";
 
-/// The Organization of the running request: its pin, else the installation's when it holds one.
-fn organization(state: &AppState) -> Option<String> {
-    crate::organization_host::organization().or_else(|| {
-        (!crate::permissions::several_organizations(&state.mirror))
-            .then(|| crate::permissions::installation_organization(&state.mirror))
-            .flatten()
-    })
+/// The Organization the request at `rel` reads (API/15 §6, a host serving several): its pin,
+/// else the Organization of the project the path names, else the caller's only one, else the
+/// installation's, as the REST compat doors on that host answer. None when none of these names
+/// one; rights are checked per caller after it either way.
+fn organization(state: &AppState, user: &CurrentUser, rel: &str) -> Option<String> {
+    let mirror = &state.mirror;
+    crate::organization_host::organization()
+        .or_else(|| {
+            addressed_project(rel)
+                .and_then(|project| crate::permissions::organization_of(mirror, project))
+        })
+        .or_else(|| {
+            let mut own = crate::permissions::organizations(mirror)
+                .into_iter()
+                .map(|(name, _)| name)
+                .filter(|name| {
+                    crate::permissions::belongs_to_organization(
+                        mirror,
+                        &state.config.bootstrap_admins,
+                        &user.0.identity,
+                        name,
+                    )
+                });
+            match (own.next(), own.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        })
+        .or_else(|| crate::permissions::installation_organization(mirror))
+}
+
+/// The project a service path starts with, `projects('x')…` or `projects/x…`.
+fn addressed_project(rel: &str) -> Option<&str> {
+    let rest = rel.strip_prefix("projects")?;
+    let name = match rest.strip_prefix("('") {
+        Some(quoted) => quoted.split_once("')")?.0,
+        None => rest.strip_prefix('/')?.split(['/', '?']).next()?,
+    };
+    is_dns1123(name).then_some(name)
 }
 
 /// The public root of the service: the Organization host's base (the registry's, never the
@@ -2241,9 +2273,10 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     };
     // Front's rejection is Infallible.
     let Ok(front) = Front::from_request_parts(&mut parts, &state).await;
-    let Some(org) = organization(&state) else {
+    let Some(org) = organization(&state, &user, &rel) else {
         return refused(not_found(
-            "this address serves several Organizations; read one at /{org}/api/v1/",
+            "this address serves several Organizations and names none of yours; read one at \
+             /{org}/api/v1/",
         ));
     };
     if let Some((entity, name)) = called.as_ref().or(action.as_ref()) {
