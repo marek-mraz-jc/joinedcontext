@@ -105,6 +105,11 @@ async function stub(
     }
     if (path === "/api/v1/projects") return json({ apiVersion: API, kind: "ProjectList", items: [{ name: "helsinki" }] });
     if (path === "/api/v1/preferences") return json({ firstRunDismissed: true });
+    // The latest run of each pipeline: a live stream has written its records four minutes ago.
+    if (path.endsWith("/pipeline-runs")) {
+      const at = new Date(Date.now() - 4 * 60_000).toISOString();
+      return json({ items: [{ pipeline: "air-feed", run: { run: at, firstAt: at, lastAt: at, sent: 128, rejected: 0, failed: 0 } }] });
+    }
     return json({ apiVersion: API, kind: "List", items: [] });
   });
   return asked;
@@ -212,6 +217,7 @@ for (const width of [1440, 400]) {
       const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
       await expect(page.getByRole("button", { name: "New pipeline" }).first()).toBeDisabled();
+      await expect(page.getByRole("tab", { name: "Data flow map" })).toHaveCount(0);
       await shoot(page, "pipelines-refused", width, refused);
       await page.unrouteAll({ behavior: "ignoreErrors" });
       await stub(page, { [PIPELINES]: failure });

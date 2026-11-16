@@ -442,29 +442,32 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
       {/* A reader's New, Pause and Resume are refused: the page says why once, in words. */}
       <DeniedNote project={project} kind="Pipeline" verb="propose" />
 
-      <Tabs
-        id="pipeline-views"
-        label={t("pipelines.map.views")}
-        tabs={[
-          { value: "list", label: t("pipelines.map.view.list") },
-          { value: "map", label: t("pipelines.map.view.map") },
-          // Each source's health (T-5048) is for stewards: the server refuses anyone else.
-          ...(steward
-            ? [{ value: "health" as const, label: t("pipelines.map.view.health") }]
-            : []),
-        ]}
-        value={view}
-        onChange={(next) => {
-          setView(next);
-          rememberView(next);
-        }}
-      />
+      {/* The map and the health view draw the same pipelines: a list that cannot be read offers neither. */}
+      {list.isError ? null : (
+        <Tabs
+          id="pipeline-views"
+          label={t("pipelines.map.views")}
+          tabs={[
+            { value: "list", label: t("pipelines.map.view.list") },
+            { value: "map", label: t("pipelines.map.view.map") },
+            // Each source's health (T-5048) is for stewards: the server refuses anyone else.
+            ...(steward
+              ? [{ value: "health" as const, label: t("pipelines.map.view.health") }]
+              : []),
+          ]}
+          value={view}
+          onChange={(next) => {
+            setView(next);
+            rememberView(next);
+          }}
+        />
+      )}
 
-      {view === "health" && steward ? (
+      {view === "health" && steward && !list.isError ? (
         <div {...tabPanelProps("pipeline-views", "health")}>
           <PipelineHealthView project={project} onOpenRuns={setRunsOf} />
         </div>
-      ) : view === "map" ? (
+      ) : view === "map" && !list.isError ? (
         <div {...tabPanelProps("pipeline-views", "map")}>
           <FlowMapView
             project={project}
@@ -479,7 +482,7 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
           />
         </div>
       ) : (
-      <div {...tabPanelProps("pipeline-views", "list")} className="flex flex-col gap-section">
+      <div {...(list.isError ? {} : tabPanelProps("pipeline-views", "list"))} className="flex flex-col gap-section">
       {residentFull ? (
         <Alert role="status" tone="warning">
           {t("quota.dimensionExceeded", {
