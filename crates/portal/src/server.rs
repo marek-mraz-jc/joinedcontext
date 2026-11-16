@@ -373,6 +373,8 @@ pub fn spawn_background(state: &AppState) {
 
     // A data subject's erasures, asked again each minute until every store is done (T-4668).
     crate::erasure::spawn_periodic(state.clone());
+    // Each Organization's scheduled configuration backup, claimed by one replica (T-7154).
+    crate::org_backup::spawn_schedule(state.clone());
     // The assistant's kept answers, forgotten when a Policy or an Endpoint changes (T-4731).
     crate::answers::spawn_periodic(state.clone());
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).

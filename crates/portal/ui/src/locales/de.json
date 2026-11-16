@@ -8172,7 +8172,8 @@
       "agents": "Agenten",
       "costs": "Kosten",
       "connectors": "Konnektoren",
-      "data-access": "Datenzugriff"
+      "data-access": "Datenzugriff",
+      "backups": "Sicherungen"
     },
     "settings": {
       "title": "Einstellungen",
@@ -8854,7 +8855,7 @@
       "access": "Wer zur Organisation gehört und was jede Person, Gruppe und jedes Dienstkonto darf. Jede Änderung wird vorgeschlagen und genehmigt.",
       "projects": "Was alle Projekte der Organisation halten und veröffentlichen, an einem Ort.",
       "platform": "Was die Installation für jedes Projekt betreibt: Broker, Umgebungen, Datenraum-Mitgliedschaft, Zustand und Kosten.",
-      "settings": "Domain, Sprachen, Kontakte, Regeln und Grenzen der Organisation und was der Einrichtung noch fehlt."
+      "settings": "Domain, Sprachen, Kontakte, Regeln und Grenzen der Organisation, ihre Konfigurationssicherungen und was der Einrichtung noch fehlt."
     },
     "kindHidden": "Hier sieht sie nur eine Organisationsadministration, deren Rolle {kinds} umfasst. Bitten Sie die Organisationsadministration, sie Ihrer Rolle hinzuzufügen.",
     "agents": {
@@ -13426,6 +13427,98 @@
     "phase": {
       "merged": "veröffentlicht",
       "rejected": "abgelehnt"
+    }
+  },
+  "backups": {
+    "loading": "Sicherung wird geladen…",
+    "unreadable": "Die Sicherung konnte nicht gelesen werden. Versuchen Sie es in einer Minute erneut.",
+    "lead": "Eine Kopie der Konfiguration dieser Organisation als Dateien mit ihren Kennungen in Ihrem eigenen S3-Bucket: ihre Einstellungen, Rollen, Zuweisungen und die Manifeste jedes Projekts mit ihren Schemas. Keine Entitätsdaten, kein Code, keine geheimen Werte. Der Bucket behält jede Version, sodass auch eine gelöschte Sicherung wiederhergestellt werden kann.",
+    "runs": {
+      "title": "Läufe",
+      "scheduled": "Läuft alle {hours} Stunden und immer, wenn Sie Jetzt ausführen drücken.",
+      "off": "Der Zeitplan ist aus: Nichts läuft, bis Sie ihn einschalten oder Jetzt ausführen drücken. Bucket und Versionen bleiben.",
+      "now": "Jetzt ausführen",
+      "running": "Läuft…",
+      "failed": "Der Lauf wurde nicht abgeschlossen. Prüfen Sie den Bucket unten und drücken Sie erneut Jetzt ausführen.",
+      "never": "Noch kein Lauf. Drücken Sie Jetzt ausführen für die erste Sicherung.",
+      "lastOk": "Letzter Lauf {at} durch {by}: {size} hochgeladen.",
+      "lastFailed": "Letzter Lauf {at} durch {by} fehlgeschlagen: {reason}. Korrigieren Sie den Bucket unten und drücken Sie Jetzt ausführen.",
+      "done": "Sicherung als neue Version hochgeladen."
+    },
+    "log": {
+      "title": "Wer hat was getan ({count})",
+      "ok": "Erledigt",
+      "failed": "Fehlgeschlagen: siehe Grund daneben",
+      "action": {
+        "run": "Sicherung",
+        "delete": "Löschen",
+        "plan": "Wiederherstellungsprüfung",
+        "restore": "Wiederherstellung"
+      }
+    },
+    "versions": {
+      "title": "Versionen",
+      "lead": "Jede Sicherung, die der Bucket behält, die neueste zuerst. Ältere Versionen entfallen nach der eingestellten Aufbewahrung.",
+      "versioningOn": "Versionierung an",
+      "versioningOff": "Versionierung aus: Sicherungen werden abgelehnt",
+      "lockOn": "Object Lock an",
+      "lockOff": "Kein Object Lock",
+      "empty": "Noch keine Version im Bucket",
+      "emptyHint": "Drücken Sie oben Jetzt ausführen, um die erste hochzuladen.",
+      "deleted": "Gelöscht",
+      "current": "Aktuell",
+      "download": "Herunterladen",
+      "restore": "Diese Version wiederherstellen",
+      "delete": "Sicherung löschen",
+      "deleteTitle": "Die aktuelle Sicherung löschen?",
+      "deleteHint": "Der Bucket schreibt eine Löschmarkierung und behält jede ältere Version, sodass Sie eine wiederherstellen können, bis die Aufbewahrung sie entfernt.",
+      "deletedHint": "Die Sicherung ist gelöscht. Jede ältere Version bleibt: Stellen Sie unten eine wieder her oder drücken Sie Jetzt ausführen für eine neue."
+    },
+    "restore": {
+      "title": "Diese Version wiederherstellen",
+      "taken": "Erstellt {at}.",
+      "planning": "Diese Version wird mit der heutigen Organisation verglichen…",
+      "same": "Nichts wiederherzustellen: Die Organisation ist so, wie sie in dieser Version war.",
+      "organization": "Einstellungen der Organisation",
+      "counts": "{created} anzulegen, {changed} zu ändern, {unchanged} unverändert",
+      "organizationNote": "Die Einstellungen der Organisation werden hier nicht geändert: Laden Sie diese Version herunter und schlagen Sie ihre organization/-Dateien im Tab Einstellungen vor.",
+      "proposed": "Als Änderung vorgeschlagen. Ein anderer Administrator genehmigt sie unter Änderungen.",
+      "propose": "Wiederherstellung vorschlagen",
+      "close": "Schließen",
+      "project": "Projekt {project}"
+    },
+    "form": {
+      "title": "Bucket und Zeitplan",
+      "leadNew": "Wohin die Sicherungen gehen. Der Bucket muss die Versionierung eingeschaltet haben; die Seite prüft das vor dem Speichern.",
+      "leadSaved": "Ändern Sie, wohin die Sicherungen gehen, wie oft und wie lange ältere Versionen bleiben.",
+      "emptyTitle": "Noch keine Sicherung eingerichtet",
+      "emptyHint": "Tragen Sie unten Ihren S3-Bucket ein und speichern Sie. Drücken Sie dann Jetzt ausführen für die erste Sicherung.",
+      "endpoint": "S3-Adresse",
+      "region": "Region",
+      "bucket": "Bucket",
+      "prefix": "Ordner",
+      "accessKeyId": "Zugriffsschlüssel-ID",
+      "secretAccessKey": "Geheimer Zugriffsschlüssel",
+      "secretKept": "Gespeichert; geben Sie einen neuen ein, um ihn zu ersetzen",
+      "everyHours": "Ausführen alle (Stunden)",
+      "keepDays": "Ältere Versionen behalten (Tage)",
+      "enabled": "Geplante Sicherungen an",
+      "save": "Speichern",
+      "saving": "Bucket wird geprüft…",
+      "saved": "Gespeichert. Der Bucket hat mit eingeschalteter Versionierung geantwortet.",
+      "failed": "Der Bucket wurde nicht gespeichert. Prüfen Sie die Felder oben und speichern Sie erneut.",
+      "invalid": "Nicht gespeichert: {field} muss korrigiert werden, siehe die Zeile darunter."
+    },
+    "hint": {
+      "endpoint": "Die https-Adresse des S3-Dienstes, zum Beispiel https://s3.eu-central-1.amazonaws.com",
+      "region": "Die Region des Buckets, zum Beispiel eu-central-1",
+      "bucket": "Der Name des Buckets, zum Beispiel stadt-sicherungen",
+      "prefix": "Ein Ordner im Bucket, der auf / endet, zum Beispiel joinedcontext/. Leer für die Wurzel des Buckets.",
+      "accessKeyId": "Die Schlüssel-ID eines Kontos, das in den Bucket schreiben darf, zum Beispiel AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Wird versiegelt gespeichert und nie wieder angezeigt. Leer lassen, um den gespeicherten zu behalten.",
+      "everyHours": "1 bis 672 Stunden, zum Beispiel 24 für einmal täglich",
+      "keepDays": "1 bis 3650 Tage, zum Beispiel 90",
+      "enabled": "Aus behält den Bucket und jede Version; Jetzt ausführen funktioniert weiter."
     }
   }
 }

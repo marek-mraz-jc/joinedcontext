@@ -88,6 +88,7 @@ pub mod odata_org;
 pub mod odata_portal;
 pub mod opendata_pages;
 pub mod ops;
+pub mod org_backups;
 pub mod organization_addresses;
 pub mod organization_ids;
 pub mod organization_limits;
@@ -218,6 +219,7 @@ pub fn router() -> Router<AppState> {
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())
+        .merge(org_backups::router())
         .merge(opendata_pages::router())
         .merge(organization_ids::router())
         .merge(organization_addresses::router())

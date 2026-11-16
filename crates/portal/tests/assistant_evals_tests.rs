@@ -57,7 +57,7 @@ const UNRECORDED_CASES_ON_2026_10_06: usize = 5;
 /// Workflows the matrix gained after 2026-09-25, each still owing its first recording, with the
 /// task that added it. They are counted apart, so the 23 of that day can still only fall; an entry
 /// goes the moment its recording lands, and the guard below refuses one that is recorded.
-const UNRECORDED_LATER: [(&str, &str); 8] = [
+const UNRECORDED_LATER: [(&str, &str); 9] = [
     ("knowledge", "T-3057"),
     ("navigation", "T-3238"),
     ("feedback", "T-3272"),
@@ -66,6 +66,7 @@ const UNRECORDED_LATER: [(&str, &str); 8] = [
     ("mqttbroker", "T-4880"),
     ("endpoint-access", "T-5615"),
     ("grafana", "T-6509"),
+    ("organization-backup", "T-7154"),
 ];
 
 /// Case conversations added after 2026-10-06, each owing its recording with the task that added
