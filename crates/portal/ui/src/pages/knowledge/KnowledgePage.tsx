@@ -22,6 +22,7 @@ import { sum } from "./IndexStatus";
 
 /** How a source stands: never crawled, waiting, being read, read, or failed with its reason. */
 export function standing(row: KnowledgeSourceRow): { key: string; tone: BadgeTone } {
+  if (row.state === "no-assistant") return { key: "knowledge.state.noAssistant", tone: "neutral" };
   // Nobody crawls an upload source: it holds files or none, and its passages are searchable or still waiting (T-4869).
   if (row.type === "upload") {
     if (!row.documents) return { key: "knowledge.files.none", tone: "neutral" };
@@ -84,6 +85,9 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
     },
   });
   const rows = sources.data ?? [];
+  // A Portal without a knowledge assistant still lists the declared sources; nothing reads or
+  // crawls them until an operator connects one (T-7123).
+  const noAssistant = rows.some((row) => row.state === "no-assistant");
   const navigate = useNavigate();
   // The page's one action, in its header and in its empty state (T-3246).
   const addSource = (
@@ -142,11 +146,16 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
           {t("knowledge.queued", { source: queued })}
         </Alert>
       ) : null}
+      {noAssistant ? (
+        <Alert role="status" tone="info" title={t("knowledge.noAssistant.title")}>
+          {t("knowledge.noAssistant.hint")}
+        </Alert>
+      ) : null}
       {sources.isLoading ? <p role="status">{t("app.loading")}</p> : null}
       {!sources.isLoading && !sources.isError && rows.length === 0 ? (
         <EmptyState title={t("knowledge.empty")} description={t("knowledge.emptyHint")} icon="search" action={addSource} />
       ) : null}
-      {rows.length > 0 ? (
+      {rows.length > 0 && !noAssistant ? (
         <p role="status" className="text-caption text-fg-muted">
           {t("knowledge.index.totals", {
             pages: sum(rows, "pages"),
@@ -269,7 +278,7 @@ export function KnowledgePage({ project }: { project: string }): JSX.Element {
             },
           ]}
           actions={(row) => (
-            <RowActions label={row.source} actions={[]} primary={row.type === "upload" ? undefined : (
+            <RowActions label={row.source} actions={[]} primary={row.type === "upload" || row.state === "no-assistant" ? undefined : (
               <PermissionGuard project={project} kind="KnowledgeSource" verb="propose">
                 <Button
                   variant="secondary"

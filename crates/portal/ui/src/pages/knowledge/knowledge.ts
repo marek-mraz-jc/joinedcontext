@@ -17,7 +17,8 @@ export interface SourceJob {
 export interface KnowledgeSourceRow {
   source: string;
   type: "website" | "ckan" | "catalogue" | "guide" | "upload";
-  state: "crawled" | "not-crawled";
+  /** `no-assistant`: this Portal has no knowledge assistant to read the source (T-7123). */
+  state: "crawled" | "not-crawled" | "no-assistant";
   startUrls: string[];
   ckanInstanceRef: string | null;
   /** The spaces a `catalogue` source reads; empty is every space of the project (AG-116). */

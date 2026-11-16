@@ -179,12 +179,21 @@ def test_the_project_pages_follow_walk_routes_ts():
     assert walk.PROJECT_PAGES == re.findall(r'"([^"]+)"', block)
 
 
+# The edit pages read a draft through the OData door since T-7119 (T-7127).
+DRAFT_GET = "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_draft_get(kind=@kind,name=@name)"
+
+
 @pytest.mark.parametrize("who,status,url,ok", [
     ("viewer", 403, "http://x/api/v1/projects/p/policies", True),
     ("outsider", 403, "http://x/api/v1/projects/p/policies", True),
     ("admin", 403, "http://x/api/v1/projects/p/policies", False),
     ("admin", 404, "http://x/api/v1/projects/p/drafts/Space/a", True),
     ("admin", 404, "http://x/api/v1/projects/p/spaces/a", False),
+    ("admin", 404, DRAFT_GET + "?@kind='Endpoint'&@name='app-air-quality'", True),
+    ("viewer", 404, DRAFT_GET, True),
+    ("admin", 400, DRAFT_GET, False),
+    ("admin", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_draft_list()", False),
+    ("admin", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_resource_get(kind=@kind,name=@name)", False),
     ("admin", 410, "http://x/api/v1/anything", True),
     ("outsider", 404, "http://x/api/v1/projects/p/spaces", True),
     ("outsider", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.portal_secret_list()", True),
@@ -299,6 +308,10 @@ def test_a_page_whose_only_finding_is_the_assistants_5xx_is_a_kept_component_ski
     assert suite.kept_component("http-5xx: 503 GET /api/v1/projects/bbsk/knowledge?x=1")
     assert not suite.kept_component("http-5xx: 503 POST /api/v1/projects/bbsk/endpoints/a/preview")
     assert not suite.kept_component("http: 404 GET /api/v1/projects/bbsk/knowledge/sources")
+    assert suite.kept_component(
+        "http-5xx: 503 GET /api/v1/projects('helsinki')/JoinedContext.Portal.portal_knowledge_usage(deployment='a')")
+    assert not suite.kept_component(
+        "http-5xx: 503 GET /api/v1/projects('helsinki')/JoinedContext.Portal.portal_pipeline_metrics(pipeline='a')")
 
     class Loc:
         first = property(lambda self: self)

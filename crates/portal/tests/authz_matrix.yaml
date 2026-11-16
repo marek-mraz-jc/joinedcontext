@@ -989,8 +989,8 @@ routes:
     note: "the fixture holds no AssistantDeployment, so a caller the rule admits meets 404 after the check passed; knowledge_api_tests holds the rule with one"
   - route: GET /projects/{project}/knowledge/conversations
     rule: "project-verb:approve:AssistantDeployment"
-    expect: [401, 403, 403, 403, 403, 503, 403, 403]
-    note: "503 after the check: no knowledge assistant in the fixture; assistant_conversations holds the rule with one (T-4670)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "allow after the check: with no knowledge assistant in the fixture the list answers empty, never 503 (T-7123); assistant_conversations holds the rule with one (T-4670)"
   - route: GET /projects/{project}/knowledge/conversations/usage
     rule: "project-verb:approve:AssistantDeployment"
     expect: [401, 403, 403, 403, 403, 503, 403, 403]

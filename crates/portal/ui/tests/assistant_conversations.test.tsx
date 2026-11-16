@@ -121,6 +121,8 @@ const SAME = {
 let deployments: string[] = ["obcan"];
 /** A second page of the list behind cursor `c2`; null keeps the list one page long. */
 let secondPage: typeof LIST | null = null;
+/** The list a Portal without a knowledge assistant answers (T-7123); false asks the assistant. */
+let noAssistant = false;
 
 function renderAs(verbs: string[], link: { open?: string; against?: string } = {}) {
   const calls: { method: string; url: URL }[] = [];
@@ -143,6 +145,7 @@ function renderAs(verbs: string[], link: { open?: string; against?: string } = {
       : url.pathname.endsWith("/same") ? SAME
       : url.pathname.endsWith(TWO) ? OTHER
       : url.pathname.endsWith(ONE) ? DETAIL
+      : noAssistant ? { items: [], nextCursor: null, assistant: "no-assistant" }
       : secondPage && url.searchParams.get("cursor") === "c2" ? secondPage
       : secondPage ? { ...LIST, nextCursor: "c2" } : LIST;
     return Promise.resolve(
@@ -165,6 +168,7 @@ function renderAs(verbs: string[], link: { open?: string; against?: string } = {
 }
 
 afterEach(() => {
+  noAssistant = false;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -282,6 +286,16 @@ describe("Asistent → Konverzácie", () => {
     // T-5328: the refused page still says what it is for under its title.
     expect(screen.getByRole("heading", { level: 1, name: "Conversations" }).nextElementSibling).toHaveTextContent(i18n.t("conversations.intro"));
     expect(calls.filter((c) => c.url.pathname.includes("/conversations"))).toEqual([]);
+  });
+
+  it("says no knowledge assistant is connected and asks for no usage when the Portal has none (T-7123)", async () => {
+    noAssistant = true;
+    const calls = renderAs(["read", "approve"]);
+    expect(await screen.findByText(i18n.t("conversations.noAssistant.title"))).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("conversations.noAssistant.hint"))).toBeInTheDocument();
+    expect(screen.queryByText(i18n.t("conversations.empty"))).toBeNull();
+    expect(screen.getByLabelText(i18n.t("conversations.filter.q"))).not.toBeVisible();
+    expect(calls.some((c) => c.url.pathname.endsWith("/conversations/usage"))).toBe(false);
   });
 
   it("asks the recorded list once per typed search, not once per key (F-R2UI3-009)", async () => {

@@ -23,7 +23,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
 import type { Page, Response } from "@playwright/test";
-import { OWN_ROUTES, unexcused } from "../../tests/pageChecks";
+import { OWN_ROUTES, missingDraftRead, unexcused } from "../../tests/pageChecks";
 import type { Excused } from "../../tests/pageChecks";
 import { STEWARD, VIEWER, afterSelfReload, hiddenSections, inHiddenSection, journeyMarkerOnPortalOnly, judgeOpened, openToWalk, signIn } from "./portal";
 import type { Opened } from "./portal";
@@ -75,9 +75,7 @@ function expected(who: string, response: Response): boolean {
   const status = response.status();
   if (status === 403 && who === "viewer") return true;
   if (status === 404 && /\/cs\/[^/]+\/ngsi-ld\/v1\/entities\?/.test(response.url())) return true;
-  // An edit form asks for the person's draft of the item first; none yet is the 404 (T-3852).
-  if (status === 404 && response.request().method() === "GET" && /\/drafts\/[A-Za-z]+\/[^/?]+$/.test(new URL(response.url()).pathname))
-    return true;
+  if (missingDraftRead(status, response.request().method(), response.url())) return true;
   return status === 410 || (status === 404 && /\/agent-runs\/[^/]+\/(preview|events)/.test(response.url()));
 }
 

@@ -2365,6 +2365,52 @@ async fn a_portal_door_answers_a_persons_session_only() {
     );
 }
 
+/// T-7123 (train smoke 43855275572): the knowledge pages' list doors on a Portal with no
+/// knowledge assistant answer what the project declares, never a 503.
+#[tokio::test]
+async fn the_knowledge_list_doors_answer_without_a_knowledge_assistant() {
+    let state = state();
+    assert!(state.config.knowledge_url.is_none());
+    state.mirror.upsert(envelope(
+        "KnowledgeSource",
+        "guide",
+        "helsinki",
+        json!({ "source": "guide", "visibility": "public" }),
+    ));
+    let mode = Mode::Host("hel");
+    let sources = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.portal_knowledge_source_list()",
+    )
+    .await;
+    assert_eq!(sources.status, StatusCode::OK, "{}", sources.text);
+    assert!(
+        sources.text.contains("\"no-assistant\""),
+        "{}",
+        sources.text
+    );
+    let conversations = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.portal_knowledge_conversation_list()",
+    )
+    .await;
+    assert_eq!(
+        conversations.status,
+        StatusCode::OK,
+        "{}",
+        conversations.text
+    );
+    assert!(
+        conversations.text.contains("\"no-assistant\""),
+        "{}",
+        conversations.text
+    );
+}
+
 /// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
 /// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
 #[tokio::test]

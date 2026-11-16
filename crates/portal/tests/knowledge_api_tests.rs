@@ -554,6 +554,8 @@ async fn the_assistants_answers_reach_the_caller_as_the_portals() {
     let mut config = (*without.config).clone();
     config.knowledge_url = None;
     without.config = std::sync::Arc::new(config);
+    let before = asked(&r.assistant).await;
+    // T-7123: no assistant is a normal configuration; the lists say so, never a 503.
     let none = common::send(
         &without,
         admin(),
@@ -562,8 +564,49 @@ async fn the_assistants_answers_reach_the_caller_as_the_portals() {
         None,
     )
     .await;
-    assert_eq!(none.status, 503);
-    assert!(none.text.contains("JC_PORTAL_KNOWLEDGE_URL"));
+    assert_eq!(none.status, 200, "{}", none.text);
+    let body: Value = serde_json::from_str(&none.text).expect("json");
+    let states: Vec<&Value> = body["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|i| &i["state"])
+        .collect();
+    assert_eq!(states.len(), 5, "every declared source: {body}");
+    assert!(
+        states.iter().all(|s| **s == json!("no-assistant")),
+        "{body}"
+    );
+    let conversations = common::send(
+        &without,
+        admin(),
+        "GET",
+        "/api/v1/projects/helsinki/knowledge/conversations",
+        None,
+    )
+    .await;
+    assert_eq!(conversations.status, 200, "{}", conversations.text);
+    let body: Value = serde_json::from_str(&conversations.text).expect("json");
+    assert_eq!(
+        body,
+        json!({ "items": [], "nextCursor": null, "assistant": "no-assistant" })
+    );
+    // A read that needs the assistant's own answer still says what is missing.
+    let usage = common::send(
+        &without,
+        admin(),
+        "GET",
+        "/api/v1/projects/helsinki/knowledge/deployments/public/usage",
+        None,
+    )
+    .await;
+    assert_eq!(usage.status, 503);
+    assert!(usage.text.contains("JC_PORTAL_KNOWLEDGE_URL"));
+    assert_eq!(
+        asked(&r.assistant).await,
+        before,
+        "nobody asked the assistant"
+    );
 }
 
 const CHAT: &str = "/api/v1/projects/helsinki/knowledge/deployments/public/chat";

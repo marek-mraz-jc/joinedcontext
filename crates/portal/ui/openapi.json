@@ -15045,7 +15045,7 @@
           {
             "name": "format",
             "in": "query",
-            "description": "'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87)",
+            "description": "'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87); 'files': a zip of files of the project's repository, written as they are (MF-63)",
             "required": false,
             "schema": {
               "type": "string"
@@ -15177,7 +15177,7 @@
           "knowledge"
         ],
         "summary": "List Stored Conversations",
-        "description": "The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99).",
+        "description": "The project's stored assistant conversations, redacted, newest first or the most expensive first, with the cursor of the next page (API/05 §3.1). Needs `approve` on AssistantDeployment; every call is recorded (API/01 §34, AG-99). With no knowledge assistant configured: no items and `assistant: no-assistant`.",
         "operationId": "list_conversations",
         "parameters": [
           {
@@ -16427,7 +16427,7 @@
           "knowledge"
         ],
         "summary": "List Knowledge Sources",
-        "description": "Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl (API/01 §34).",
+        "description": "Every KnowledgeSource the project declares, with what the assistant holds of it: pages, documents, passages, the last crawl and the last job; `state: not-crawled` before its first crawl, `state: no-assistant` on each when this Portal has no knowledge assistant (API/01 §34).",
         "operationId": "list_sources",
         "parameters": [
           {

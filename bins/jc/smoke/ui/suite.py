@@ -80,7 +80,10 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
         return True
     if status == 404 and re.search(r"/cs/[^/]+/ngsi-ld/v1/entities\?", url):
         return True
-    if status == 404 and method == "GET" and re.search(r"/drafts/[A-Za-z]+/[^/?]+$", path):
+    # No draft saved yet: the edit page reads it through the REST door or, since T-7119, through
+    # the OData door's jc_draft_get (T-7127). Every other 4xx of either door stays a failure.
+    if status == 404 and method == "GET" and re.search(
+            r"/drafts/[A-Za-z]+/[^/?]+$|/api/v1/projects\('[^']+'\)/JoinedContext\.Portal\.jc_draft_get\(", path):
         return True
     return status == 410 or (status == 404 and re.search(r"/agent-runs/[^/]+/(preview|events)", url) is not None)
 
@@ -89,7 +92,11 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
 # "Scope of jc on dev"): its answers behind the Portal's knowledge pages are proven on dev, not on
 # the rehearsal, so a 5xx of one of them is a named skip, as the names suite's search_documents.
 KEPT_ASSISTANT = "kept component: assistant (stays a separate component on dev; the rehearsal runs no assistant)"
-ASSISTANT_PATH = re.compile(r"^http-5xx: \d+ [A-Z]+ /api/v1/projects/[^/]+/knowledge(/|\?|$)")
+# The REST address and the Portal's OData door for it (T-7111 moved the pages to the doors, T-7123).
+ASSISTANT_PATH = re.compile(
+    r"^http-5xx: \d+ [A-Z]+ /api/v1/projects"
+    r"(/[^/]+/knowledge(/|\?|$)|\('[^']+'\)/JoinedContext\.Portal\.portal_knowledge_)"
+)
 
 
 def kept_component(finding: str) -> bool:
