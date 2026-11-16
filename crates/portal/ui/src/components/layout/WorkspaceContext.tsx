@@ -22,7 +22,7 @@ export function setActiveWorkspace(name: string | null): void {
 
 /**
  * Middleware that appends `?workspace=<name>` to resource-list/read/write requests when a
- * workspace is active. It matches paths under `/api/v1/projects/{project}/` for the resource
+ * workspace is active. It matches a project's resource paths for the resource
  * kinds jc-core defines (every `PLURAL` of its kinds that lives in a project), and never touches
  * ops, drafts, changes, workspaces, import or other non-resource routes: the import door takes no
  * workspace, so a bundle is proposed on the project.

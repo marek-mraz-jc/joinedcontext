@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import type { JSX } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { doorAction, type RestAnswer } from "../../api/odata";
 import { isChange, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { ChangeNotice } from "../../components/ChangeNotice";
@@ -54,9 +55,9 @@ export function Instantiate({
     mutationFn: async (parameters: Parameters) => {
       setError(null);
       setViolations([]);
-      return unwrap(
-        await api.POST("/api/v1/projects/{project}/flows", {
-          params: { path: { project } },
+      return (await doorAction(
+        "portal_flow_start",
+        {
           body: {
             blueprint: blueprint.metadata.name,
             // The version the form was generated from: expanding these values against a
@@ -64,8 +65,9 @@ export function Instantiate({
             version: spec.version ?? "",
             parameters,
           },
-        }),
-      );
+        },
+        project,
+      )) as RestAnswer<"start_flow">;
     },
     onSuccess: (result) => {
       if (isChange(result)) {

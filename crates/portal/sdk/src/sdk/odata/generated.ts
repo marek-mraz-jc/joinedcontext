@@ -996,6 +996,7 @@ export interface Functions {
   portal_endpoint_access_attribute: { endpoint: string; type?: string; attribute?: string; action?: string };
   portal_endpoint_access_matrix: { endpoint: string; kind?: string };
   portal_endpoint_admission: { endpoint: string };
+  portal_endpoint_list_all: Record<string, never>;
   portal_endpoint_quality: { endpoint: string };
   portal_endpoint_usage: { endpoint: string; days?: number };
   portal_erasure_get: { space: string; id: string };
@@ -1159,6 +1160,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_endpoint_access_attribute: ["Project"],
   portal_endpoint_access_matrix: ["Project"],
   portal_endpoint_admission: ["Project"],
+  portal_endpoint_list_all: ["Organization"],
   portal_endpoint_quality: ["Project"],
   portal_endpoint_usage: ["Project"],
   portal_erasure_get: ["Project"],
@@ -1326,11 +1328,13 @@ export interface Actions {
   portal_datasource_test_event: { name: string; body?: unknown };
   portal_drift_adopt: { space: string; id: string };
   portal_drift_revert: { space: string; id: string };
+  portal_endpoint_ical_preview: { name: string; body?: unknown };
   portal_endpoint_render: { body?: unknown };
   portal_erasure_approve: { space: string; id: string; body?: unknown };
   portal_erasure_decline: { space: string; id: string; body?: unknown };
   portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
   portal_feedback_send: { body?: unknown };
+  portal_flow_start: { body?: unknown };
   portal_grafana_builder_create: { body?: unknown };
   portal_grafana_builder_preview: { body?: unknown };
   portal_grafana_builder_restore: { uid: string; sha: string };
@@ -1349,6 +1353,7 @@ export interface Actions {
   portal_mcp_elicitation_decide: { projectName: string; id: string; body?: unknown };
   portal_model_compile: { body?: unknown };
   portal_model_import: { body?: unknown };
+  portal_model_share: { name: string };
   portal_mqtt_captured_clear: { broker: string };
   portal_mqtt_device_propose: { broker: string; body?: unknown };
   portal_mqtt_test_publish: { broker: string; body?: unknown };
@@ -1379,11 +1384,13 @@ export interface Actions {
   portal_pipeline_source_decide: { pipeline: string; body?: unknown };
   portal_pipeline_template_create: { body?: unknown };
   portal_pipeline_template_delete: { id: string };
+  portal_pipeline_test: { body?: unknown };
   portal_portal_source_run: { name: string; source: string };
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
   portal_project_delete: Record<string, never>;
+  portal_project_duplicate: { body?: unknown };
   portal_project_repoint: { body?: unknown };
   portal_run_answer: { id: string; body?: unknown };
   portal_run_message: { id: string; body?: unknown };
@@ -1481,11 +1488,13 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_datasource_test_event: ["Project"],
   portal_drift_adopt: ["Project"],
   portal_drift_revert: ["Project"],
+  portal_endpoint_ical_preview: ["Project"],
   portal_endpoint_render: ["Project"],
   portal_erasure_approve: ["Project"],
   portal_erasure_decline: ["Project"],
   portal_erasure_file: ["Project"],
   portal_feedback_send: ["Organization"],
+  portal_flow_start: ["Project"],
   portal_grafana_builder_create: ["Project"],
   portal_grafana_builder_preview: ["Project"],
   portal_grafana_builder_restore: ["Project"],
@@ -1504,6 +1513,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_mcp_elicitation_decide: ["Organization"],
   portal_model_compile: ["Organization"],
   portal_model_import: ["Organization"],
+  portal_model_share: ["Project"],
   portal_mqtt_captured_clear: ["Project"],
   portal_mqtt_device_propose: ["Project"],
   portal_mqtt_test_publish: ["Project"],
@@ -1534,11 +1544,13 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_source_decide: ["Project"],
   portal_pipeline_template_create: ["Project"],
   portal_pipeline_template_delete: ["Project"],
+  portal_pipeline_test: ["Project"],
   portal_portal_source_run: ["Organization"],
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
   portal_project_delete: ["Project"],
+  portal_project_duplicate: ["Project"],
   portal_project_repoint: ["Project"],
   portal_run_answer: ["Project"],
   portal_run_message: ["Project"],

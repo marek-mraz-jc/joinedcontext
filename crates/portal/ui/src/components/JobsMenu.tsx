@@ -3,7 +3,7 @@ import type { JSX } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../api/client";
+import { door } from "../api/odata";
 import type { components } from "../api/schema";
 import { dismissJob, finishJob, markJobsSeen, progressOf, useJobs } from "../jobs";
 import type { Job, JobOutcome } from "../jobs";
@@ -63,11 +63,7 @@ export function JobsMenu(): JSX.Element | null {
       refetchIntervalInBackground: true,
       queryFn: async (): Promise<Standing> => {
         if (job.kind === "appBuild") {
-          const build = (await unwrap(
-            await api.GET("/api/v1/projects/{project}/apps/{name}/build", {
-              params: { path: { project: job.project, name: job.name } },
-            }),
-          )) as AppBuild;
+          const build = (await door("portal_app_build", { name: job.name }, job.project)) as AppBuild;
           return buildStanding(job, build);
         }
         // One list per project and interval, however many of its sources are building: the
