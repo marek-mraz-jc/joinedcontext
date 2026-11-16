@@ -4,6 +4,7 @@
  * header's menu counts the unread and marks one read when it is opened.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { doorsAsRest } from "./odata";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -70,6 +71,7 @@ describe("comments on an entity", () => {
       return json(listed);
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<CommentsPanel project="helsinki" space="air" urn={URN} />);
 
     const list = await screen.findByRole("list", { name: "Comments" });
@@ -97,6 +99,7 @@ describe("comments on an entity", () => {
       return json([comment(3, true, "mine")]);
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<CommentsPanel project="helsinki" space="air" urn={URN} />);
     const remove = await screen.findByRole("button", { name: /Remove your comment of/ });
     await userEvent.click(remove);
@@ -108,6 +111,7 @@ describe("comments on an entity", () => {
 
   it("does not post an empty comment", async () => {
     vi.stubGlobal("fetch", vi.fn(() => json([])));
+    doorsAsRest();
     wrap(<CommentsPanel project="helsinki" space="air" urn={URN} />);
     expect(await screen.findByText("No comments yet.")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Add a comment"), "   ");
@@ -133,6 +137,7 @@ describe("notifications", () => {
       return path.endsWith("/alerts/notices") ? json({ items: [notice], unread: 1 }) : json({ items: [], unread: 0 });
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<NotificationsMenu project="helsinki" />);
     await userEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
     expect(await screen.findByRole("menuitem", { name: /bikes: it writes nothing/ })).toBeInTheDocument();
@@ -163,6 +168,7 @@ describe("notifications", () => {
         : json({ items: [item], unread: 1 });
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<NotificationsMenu project="helsinki" />);
     const button = await screen.findByRole("button", { name: "Notifications, 1 unread" });
     await userEvent.click(button);
@@ -186,6 +192,7 @@ describe("notifications", () => {
       return new URL(request.url).pathname.endsWith("/alerts/notices") ? json({ items: [], unread: 0 }) : json({ items, unread: 3 });
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<NotificationsMenu project="helsinki" />);
     await userEvent.click(await screen.findByRole("button", { name: "Notifications, 3 unread" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: /Marek opened change cr-12 in helsinki through connector doprava-in-claude/ }));
@@ -206,6 +213,7 @@ describe("notifications", () => {
       return new URL(request.url).pathname.endsWith("/alerts/notices") ? json({ items: [], unread: 0 }) : json({ items: [item], unread: 1 });
     });
     vi.stubGlobal("fetch", fetchMock);
+    doorsAsRest();
     wrap(<NotificationsMenu project="ovzdusie" />);
     await userEvent.click(await screen.findByRole("button", { name: "Notifications, 1 unread" }));
     await userEvent.click(
@@ -217,6 +225,7 @@ describe("notifications", () => {
 
   it("says when there is nothing new", async () => {
     vi.stubGlobal("fetch", vi.fn(() => json({ items: [], unread: 0 })));
+    doorsAsRest();
     wrap(<NotificationsMenu project="helsinki" />);
     await userEvent.click(await screen.findByRole("button", { name: "Notifications" }));
     expect(await screen.findByText("Nothing new.")).toBeInTheDocument();

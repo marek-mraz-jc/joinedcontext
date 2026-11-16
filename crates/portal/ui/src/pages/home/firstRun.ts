@@ -5,8 +5,8 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { savePreferences } from "../../navigation/places";
+import { queryKeys } from "../../api/client";
+import { readPreferences, savePreferences } from "../../navigation/places";
 
 export function useFirstRun(): { shown: boolean; dismiss: () => void; restore: () => void } {
   const queryClient = useQueryClient();
@@ -14,7 +14,7 @@ export function useFirstRun(): { shown: boolean; dismiss: () => void; restore: (
   const preferences = useQuery({
     queryKey: queryKeys.preferences(),
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/preferences", {})),
+    queryFn: readPreferences,
   });
   const save = useMutation({
     mutationFn: (dismissed: boolean) => savePreferences({ firstRunDismissed: dismissed }),
