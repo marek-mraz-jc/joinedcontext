@@ -51,7 +51,8 @@ export function AddDevice({
   if (options.isPending) return <Skeleton className="h-8 w-40" />;
   if (options.isError || !options.data.mayAdd) {
     return (
-      <Alert tone="info" data-device="refused">
+      // A missing right is no success: neutral, a failed read a warning (T-7113 judge).
+      <Alert tone={options.isError ? "warning" : "neutral"} data-device="refused">
         {options.isError ? options.error.message : t("mqttbrokers.device.mayNot", { broker })}
       </Alert>
     );
