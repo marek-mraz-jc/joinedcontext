@@ -25867,7 +25867,7 @@ export interface operations {
             query?: {
                 /** @description Set to 'All' to validate and plan without proposing */
                 dryRun?: string;
-                /** @description 'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87) */
+                /** @description 'git': the archive of a format=git export, landing as the new project of the path (layout 2); 'app': the archive of an App export, landing as a new App of the project (UI-87); 'files': a zip of files of the project's repository, written as they are (MF-63) */
                 format?: string;
             };
             header?: never;

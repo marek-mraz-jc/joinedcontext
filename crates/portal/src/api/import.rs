@@ -436,10 +436,13 @@ fn parse_archive(bytes: &[u8]) -> Result<Vec<Incoming>, ApiError> {
     Ok(incoming)
 }
 
+/// A file of an archive: its enclosed path and its bytes, `None` when its stream does not read.
+pub(crate) type ArchiveEntry = (String, Option<Vec<u8>>);
+
 /// Every file entry of a zip archive by its enclosed path, with its bytes, or `None` for a
 /// stream that does not read back; directories are left out. The entry count, an escaping
 /// path, a symbolic link and the unpacked size are refused here, for every archive import.
-pub(crate) fn archive_entries(bytes: &[u8]) -> Result<Vec<(String, Option<Vec<u8>>)>, ApiError> {
+pub(crate) fn archive_entries(bytes: &[u8]) -> Result<Vec<ArchiveEntry>, ApiError> {
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
         .map_err(|err| ApiError::BadRequest(format!("the archive did not open: {err}")))?;
     if archive.len() > MAX_ARCHIVE_ENTRIES {
