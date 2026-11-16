@@ -17,6 +17,7 @@ import {
   rejectChange,
   listRuns,
 } from "../src/api/odata";
+import { importBody } from "../src/api/proposal";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
 import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
@@ -177,6 +178,30 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_app_restore");
     await expect(sent[1].json()).resolves.toEqual({ name: "air-map", body: { commit: "abc1234" } });
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_app_templates()");
+  });
+
+  it("imports manifests through the project's jc_project_import with its If-Match, a check as dryRun (T-7143)", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer the action from the REST import's stub.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return request.method === "GET"
+        ? new Response(JSON.stringify({ "@odata.etag": 'W/"p1"', name: "air" }), {
+            headers: { "Content-Type": "application/json" },
+          })
+        : odataValue({ created: ["air"] });
+    });
+    const space = { apiVersion: "joinedcontext.com/v1alpha1", kind: "ContextSpace", metadata: { name: "air" }, spec: {} };
+    await expect(
+      importBody("air", { manifests: [space], conflictPolicy: "fail", spaceMapping: [] }, true),
+    ).resolves.toEqual({ created: ["air"] });
+    expect(new URL(sent[0].url).pathname).toBe("/api/v1/projects('air')");
+    expect(sent[1].method).toBe("POST");
+    expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.jc_project_import");
+    expect(sent[1].headers.get("If-Match")).toBe('W/"p1"');
+    // An empty spaceMapping is left out; the REST door's `?dryRun=All` is the action's `dryRun`.
+    await expect(sent[1].json()).resolves.toEqual({ manifests: [space], dryRun: true, conflictPolicy: "fail" });
   });
 
   it("reads a Change by its key with every member of the REST door, and decides it with its actions or the org namespace's doors (T-7122)", async () => {

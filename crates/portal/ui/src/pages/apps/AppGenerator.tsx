@@ -1,4 +1,4 @@
-import { act, listManifests, projectBound } from "../../api/odata";
+import { act, door, listManifests, projectBound, type RestAnswer } from "../../api/odata";
 import { useId, useRef, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -387,7 +387,7 @@ export function AppGenerator({
 
   const blueprints = useQuery({
     queryKey: ["blueprints"],
-    queryFn: async () => unwrap(await api.GET("/api/v1/blueprints", {})),
+    queryFn: async () => (await door("portal_blueprint_list", {})) as RestAnswer<"list_blueprints">,
   });
 
   const { endpoints, choices, endpoint, slug, access, schema, extraEndpoints, types, kept, chosenPreset, needs } = useAppNeeds(

@@ -204,6 +204,8 @@ const OPERATIONS: Record<string, Door> = {
   jc_syncsource_pause: ["POST", "/projects/{project}/syncsources/{name}/pause", ["paused"]],
   jc_ckan_status: ["GET", "/projects/{project}/ckan/status"],
   jc_datasource_discover: ["POST", "/projects/{project}/datasource-discovery", ["kind", "url"]],
+  // A JSON import of manifests (T-7143); its `dryRun` is the REST door's `?dryRun=All`.
+  jc_project_import: ["POST", "/projects/{project}/import", ["manifests", "conflictPolicy", "orgDomain", "spaceMapping"]],
 
   // The Portal doors of a space's person records, its drift and a person's alerts (T-7105).
   portal_space_quality: ["GET", "/projects/{project}/spaces/{space}/quality"],
@@ -276,6 +278,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_app_rename_shapes: ["POST", "/projects/{project}/apps/rename-shapes"],
   portal_app_from_template: ["POST", "/projects/{project}/app-templates/{name}/apps"],
   portal_app_templates: ["GET", "/app-templates"],
+  portal_blueprint_list: ["GET", "/blueprints"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
   portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
   portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
@@ -529,7 +532,9 @@ export async function doorAsRest(
       for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
         for (const each of [picked].flat()) rest.searchParams.append(`var-${variable}`, each);
     else if (door[2]?.includes(name)) members[name] = value;
-    else rest.searchParams.set(name, String(value));
+    else if (name === "dryRun" && found[2] === "jc_project_import") {
+      if (value === true) rest.searchParams.set(name, "All");
+    } else rest.searchParams.set(name, String(value));
   }
   if (Object.keys(members).length) body = JSON.stringify(members);
   rest.pathname = `/api/v1${path}`;

@@ -114,7 +114,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 161] = [
+pub static DOORS: [Door; 162] = [
     door(
         "portal_people_remove",
         Org,
@@ -978,6 +978,15 @@ pub static DOORS: [Door; 161] = [
         "/app-templates",
         &[],
         Who::Own,
+    ),
+    // The Organization's Blueprints the caller may run, for the flow gallery (T-7143).
+    door(
+        "portal_blueprint_list",
+        Org,
+        Method::GET,
+        "/blueprints",
+        &[],
+        Who::Person,
     ),
     door(
         "portal_access_request_incoming",
