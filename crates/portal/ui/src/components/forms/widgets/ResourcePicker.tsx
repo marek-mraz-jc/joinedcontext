@@ -15,7 +15,7 @@ import { FormProjectContext } from "./ModelWidgets";
 /**
  * A parameter whose choices are the project's own manifests of one kind (CC-24).
  *
- * The schema names the plural segment of `/api/v1/projects/{project}/{plural}`; the chosen
+ * The schema names the kind's plural (its set on the OData service, e.g. `spaces`); the chosen
  * manifest's name is the value. The list comes back already narrowed to what the caller may
  * read, so the picker shows nobody an object they could not open themselves, and the server
  * validates the value against the same schema either way.

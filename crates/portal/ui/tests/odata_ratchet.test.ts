@@ -63,6 +63,10 @@ export const STAY_REST: { why: string; shapes: string[] }[] = [
     shapes: ["/api/v1/app-templates/{}/screenshot/1440", "/api/v1/projects/{}/basemap/default/style.json"],
   },
   {
+    why: "an App preview's calls of its own functions, which the App's code addresses by path and query, relayed as it sent them (as its Endpoint calls go to /api/endpoint/)",
+    shapes: ["/api/v1/projects/{}/agent-runs/{}/functions/"],
+  },
+  {
     why: "server-sent event streams: a run's, the drafts', the activity feed's, a paired tab's, a space's live view, an assistant's answer",
     shapes: [
       "/api/v1/projects/{}/agent-runs/{}/events",

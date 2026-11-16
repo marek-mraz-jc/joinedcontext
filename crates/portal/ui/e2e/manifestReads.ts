@@ -1,5 +1,5 @@
 import type { Page, Request, Route } from "@playwright/test";
-import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, proposalAsRest } from "../tests/odata";
+import { actsOnEntity, answerShape, asOData, callsOperation, doorAsRest, manifestAnswer, manifestAsRest, odataCall, proposalAsRest } from "../tests/odata";
 
 // T-7103: the pages read a kind's manifests through the Organization's OData service ($select of
 // spec, status, metadata: api/odata.ts listManifests, readManifest). The server proves each answers
@@ -142,6 +142,15 @@ export function changeAt(id: string, action?: "approve" | "reject"): (url: URL) 
     (decodeURIComponent(url.pathname).startsWith("/api/v1/changes(project=") && decodeURIComponent(url.pathname).endsWith(key));
 }
 
+/**
+ * A REST address ending in `rest`, or the Portal door `door` that stands for it (T-7176), for a
+ * `page.route` whose stub answers the REST door: Playwright matches the address the page sent, the
+ * stub meets the REST one.
+ */
+export function restOrDoor(rest: string, door: string): (url: URL) => boolean {
+  return (url) => decodeURIComponent(url.pathname).endsWith(rest) || odataCall(url)?.name === door;
+}
+
 export function manifestReadsAsRest(page: Page): void {
   asRest(page, manifestCall);
 }
@@ -149,10 +158,12 @@ export function manifestReadsAsRest(page: Page): void {
 /**
  * The same for the Portal doors `tests/odata.ts` DOORS names (T-7110): a spec whose stub answers
  * a door's REST address calls this before its `page.route`; a spec answering the service itself
- * does not.
+ * does not, or names in `only` the doors its stub answers by their REST address, e.g.
+ * `doorsAsRest(page, ["portal_permissions_me"])` (T-7176).
  */
-export function doorsAsRest(page: Page): void {
-  asRest(page, portalDoor);
+export function doorsAsRest(page: Page, only?: readonly string[]): void {
+  // `only` names the doors to translate, for a spec that answers the other doors as the service.
+  asRest(page, only ? async (request) => (only.includes(odataCall(request.url())?.name ?? "") ? portalDoor(request) : undefined) : portalDoor);
 }
 
 function asRest(page: Page, translate: Translate): void {

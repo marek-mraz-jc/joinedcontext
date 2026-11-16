@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -154,7 +154,7 @@ test.describe("the knowledge sources", () => {
     await stubApi(p, ["read"]);
     let release: () => void = () => undefined;
     const held = new Promise<void>((resolve) => (release = resolve));
-    await p.route("**/api/v1/projects/helsinki/permissions/me", async (route) => {
+    await p.route(restOrDoor("/projects/helsinki/permissions/me", "portal_permissions_me"), async (route) => {
       await held;
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(grants(["read"])) });
     });

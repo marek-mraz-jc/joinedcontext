@@ -324,6 +324,17 @@ const OPERATIONS: Record<string, Door> = {
   portal_assistant_access: ["GET", "/projects/{project}/assistant/access"],
   portal_conversation_start: ["POST", "/projects/{project}/assistant/conversations"],
   portal_endpoint_render: ["POST", "/projects/{project}/assistant/propose-endpoint"],
+  portal_project_duplicate: ["POST", "/projects/{project}/duplicate"],
+  portal_flow_start: ["POST", "/projects/{project}/flows"],
+  portal_pipeline_test: ["POST", "/projects/{project}/pipelines/test"],
+  portal_model_share: ["POST", "/projects/{project}/datamodels/{name}/share"],
+  portal_endpoint_ical_preview: ["POST", "/projects/{project}/endpoints/{name}/ical-preview"],
+  portal_endpoint_list_all: ["GET", "/endpoints"],
+  portal_permissions_me: ["GET", "/projects/{project}/permissions/me"],
+  portal_operation_run: ["POST", "/projects/{project}/ops/{name}"],
+  portal_model_source: ["GET", "/projects/{project}/datamodels/{name}/source"],
+  portal_preview_error_report: ["POST", "/projects/{project}/agent-runs/{id}/preview-errors"],
+  portal_preview_observation_report: ["POST", "/projects/{project}/agent-runs/{id}/preview-observations"],
   portal_app_templates: ["GET", "/app-templates"],
   portal_blueprint_list: ["GET", "/blueprints"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
@@ -709,10 +720,12 @@ export function manifestAsRest(
 /** A REST manifest as the service's row of it with `$select` of the manifest's members. */
 function manifestRow(
   manifest: Record<string, unknown>,
+  etag?: string | null,
 ): Record<string, unknown> {
   const metadata = (manifest.metadata ?? {}) as { name?: string };
   return {
-    "@odata.etag": `W/"${metadata.name ?? ""}"`,
+    // The stub's own ETag when it gave one, as the REST read's If-Match carried it.
+    "@odata.etag": etag ?? `W/"${metadata.name ?? ""}"`,
     name: metadata.name,
     kind: manifest.kind,
     apiVersion: manifest.apiVersion ?? null,
@@ -746,10 +759,10 @@ export async function manifestAnswer(
       ? manifestRow(items[0])
       : { name: "org", metadata: null, spec: null, status: null }
     : one
-    ? manifestRow(body)
+    ? manifestRow(body, rest.headers.get("ETag"))
     : {
         value: ((body.items ?? []) as Record<string, unknown>[]).map(
-          manifestRow,
+          (item) => manifestRow(item),
         ),
       };
   return new Response(JSON.stringify(answer), {

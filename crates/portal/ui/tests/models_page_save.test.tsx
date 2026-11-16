@@ -120,7 +120,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     const fetchMock = vi.fn().mockImplementation((req: RequestInfo | URL) => {
       const urlStr = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
       if (urlStr.includes("/datamodels/air-quality/source")) {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/spaces") || urlStr.includes("/endpoints")) {
         return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
@@ -165,7 +165,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     const fetchMock = vi.fn().mockImplementation((req: RequestInfo | URL) => {
       const urlStr = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
       if (urlStr.includes("/datamodels/air-quality/source")) {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/spaces")) {
         return Promise.resolve(new Response(JSON.stringify(list([space])), { status: 200 }));
@@ -203,7 +203,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
       const method = init?.method ?? (req instanceof Request ? req.method : "GET");
 
       if (urlStr.includes("/datamodels/air-quality/source") && method === "GET") {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/datamodels/air-quality/source") && method === "PUT") {
         return Promise.resolve(
@@ -262,7 +262,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
   it("keeps Propose closed on an unedited model, then shows the diff and the version an edit makes (T-4830)", async () => {
     global.fetch = vi.fn().mockImplementation((req: RequestInfo | URL) => {
       const url = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
-      if (url.includes("/datamodels/air-quality/source")) return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+      if (url.includes("/datamodels/air-quality/source")) return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
     });
     const view = renderWithClient(
@@ -291,7 +291,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
       const method = init?.method ?? (req instanceof Request ? req.method : "GET");
 
       if (urlStr.includes("/datamodels/air-quality/source") && method === "GET") {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/datamodels/air-quality/source") && method === "PUT") {
         return Promise.resolve(
@@ -348,7 +348,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
       const urlStr = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
       const method = init?.method ?? (req instanceof Request ? req.method : "GET");
       if (urlStr.includes("/datamodels/air-quality/source") && method === "GET") {
-        return Promise.resolve(new Response(broken, { status: 200 }));
+        return Promise.resolve(new Response(broken, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/spaces") || urlStr.includes("/endpoints")) {
         return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
@@ -375,7 +375,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
       const urlStr = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
       const method = init?.method ?? (req instanceof Request ? req.method : "GET");
       if (urlStr.includes("/datamodels/air-quality/source") && method === "GET") {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       if (urlStr.includes("/datamodels/air-quality/source") && method === "PUT") {
         return Promise.resolve(
@@ -426,7 +426,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
           return Promise.resolve(new Response(JSON.stringify({ kind: "Change", metadata: { name: "mr-9" } }), { status: 202 }));
         }
         if (url.includes("/datamodels/air-quality/source")) {
-          return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+          return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
         }
         if (url.includes("/datamodels")) {
           const model = {
@@ -568,7 +568,7 @@ describe("ModelsPage save and source loading (DM-56)", () => {
         return Promise.resolve(new Response(JSON.stringify(reader), { status: 200, headers: { "Content-Type": "application/json" } }));
       }
       if (urlStr.includes("/datamodels/air-quality/source")) {
-        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200 }));
+        return Promise.resolve(new Response(PUBLISHED_LINKML, { status: 200, headers: { "Content-Type": "text/yaml" } }));
       }
       return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
     });

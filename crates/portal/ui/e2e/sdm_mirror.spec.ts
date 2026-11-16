@@ -2,6 +2,10 @@
 // models that did not convert named with why, then the import renamed in the editor before Save.
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { doorsAsRest } from "./manifestReads";
+
+// T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
 
 const PROJECT = "banskabystrica";
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@bb.sk", roles: ["portal-editor"] };

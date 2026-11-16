@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // T-0643: Pipeline flow canvas e2e journey (UI-49, PL-43, PL-44).
 // Validates dragging palette stage onto SVG canvas, inline bloblang editing,
@@ -74,6 +75,8 @@ const CHANGE = {
 };
 
 async function stubApi(page: Page, getTestTrace: () => unknown) {
+  // The stub answers the REST addresses; the pages call the OData service's doors (T-7175).
+  manifestReadsAsRest(page);
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;

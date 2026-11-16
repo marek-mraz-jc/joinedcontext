@@ -2,15 +2,16 @@ import { useId, useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../api/client";
+import { ApiError, queryKeys } from "../api/client";
+import { doorAction, type RestAnswer } from "../api/odata";
 import type { Change } from "../api/manifest";
 import { ChangeNotice } from "./ChangeNotice";
 import { nameProblem } from "./layout/NewProject";
 import { Alert, Button, Dialog, Field, Input } from "./ui";
 
 /**
- * Duplicating a project (PF-89, T-2643): the new slug and its title, then one
- * `POST /api/v1/projects/{project}/duplicate`. The Portal copies the repository with its history
+ * Duplicating a project (PF-89, T-2643): the new slug and its title, then one call of the
+ * project's `portal_project_duplicate` door. The Portal copies the repository with its history
  * and proposes the copy's registry entry; the copy's endpoints answer at slugs of their own.
  */
 export function DuplicateProjectDialog({
@@ -32,12 +33,11 @@ export function DuplicateProjectDialog({
 
   const duplicate = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/duplicate", {
-          params: { path: { project } },
-          body: { name, displayName: displayName.trim() === "" ? undefined : displayName, parameters: {} },
-        }),
-      ),
+      (await doorAction(
+        "portal_project_duplicate",
+        { body: { name, displayName: displayName.trim() === "" ? undefined : displayName, parameters: {} } },
+        project,
+      )) as RestAnswer<"duplicate_project">,
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects() });
       setChange(result);

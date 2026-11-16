@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
-import { changeAt, manifestReadsAsRest } from "./manifestReads";
+import { changeAt, manifestReadsAsRest, restOrDoor } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -378,7 +378,7 @@ test.describe("approvals", () => {
         decision: { by: "jana.kovacova@banskabystrica.sk", at: "2026-11-10T09:30:00Z" },
       });
       await stubApi(page);
-      await page.route("**/permissions/me", (route) =>
+      await page.route(restOrDoor("/permissions/me", "portal_permissions_me"), (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ project: "helsinki", grants: [{ rule: { kinds: ["Pipeline"], verbs: ["propose"] } }] }) }),
       );
       await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>

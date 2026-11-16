@@ -1,4 +1,6 @@
-import { api, unwrap } from "./client";
+import { api, ApiError, unwrap } from "./client";
+import { ORG_NAMESPACE } from "./manifest";
+import { door } from "./odata";
 import { asProblem, type ProblemDetails } from "./client";
 import type { Change } from "./manifest";
 import type { components } from "./schema";
@@ -21,13 +23,21 @@ const asYaml = { bodySerializer: (body: string) => body, headers: { "Content-Typ
  * from a lost connection (T-6950).
  */
 export async function readModelSource(project: string, name: string): Promise<string> {
-  return unwrap(
-    await api.GET(SOURCE, {
-      params: { path: { project, name } },
-      headers: { Accept: "text/yaml, text/plain, */*" },
-      parseAs: "text",
-    }),
-  );
+  // ponytail: the Organization's own models (the `org` namespace) are no project the door binds
+  // to; they keep the REST read until a door on the Organization reads them (T-7177).
+  if (project === ORG_NAMESPACE) {
+    return unwrap(
+      await api.GET(SOURCE, {
+        params: { path: { project, name } },
+        headers: { Accept: "text/yaml, text/plain, */*" },
+        parseAs: "text",
+      }),
+    );
+  }
+  const source = await door("portal_model_source", { name }, project);
+  // The route answers text/yaml, which the door hands back as a string; anything else is no source.
+  if (typeof source !== "string") throw new ApiError(502, `The source of ${name} came back as no text.`);
+  return source;
 }
 
 /** What one source write came back with: the check's verdict, the Change, or why it was refused. */

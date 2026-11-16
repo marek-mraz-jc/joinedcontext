@@ -1,6 +1,6 @@
 {
-  "restPaths": 22,
-  "restCalls": 39,
+  "restPaths": 6,
+  "restCalls": 14,
   "fetchFiles": [
     "api/access.ts",
     "api/client.ts",
@@ -22,7 +22,6 @@
     "pages/endpoints/EndpointDocs.tsx",
     "pages/endpoints/EndpointPage.tsx",
     "pages/endpoints/FilterProof.tsx",
-    "pages/endpoints/ModelPicker.tsx",
     "pages/endpoints/SchemaProjectionPanel.tsx",
     "pages/endpoints/ShareFlow.tsx",
     "pages/endpoints/developerSamples.ts",

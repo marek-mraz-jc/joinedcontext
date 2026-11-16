@@ -1,7 +1,7 @@
-import { listManifests } from "./odata";
+import { door, listManifests, type RestAnswer } from "./odata";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, ApiError, queryKeys, unwrap } from "./client";
+import { ApiError, queryKeys } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
 import type { components } from "./schema";
 
@@ -159,12 +159,7 @@ export function emptyGrantsRetry(
 export function usePermissions(project: string) {
   const query = useQuery({
     queryKey: queryKeys.permissions(project),
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/permissions/me", {
-          params: { path: { project } },
-        }),
-      ),
+    queryFn: async () => (await door("portal_permissions_me", {}, project)) as RestAnswer<"permissions_me">,
     enabled: project !== "",
     // A refused or failed read stays the answer for every control mounted after it: asked again on
     // each mount, it went back to pending (no document), and a refusal that mounts on the answer

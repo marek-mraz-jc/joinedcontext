@@ -4,7 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
-import { manifestReadsAsRest } from "./manifestReads";
+import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
@@ -438,8 +438,8 @@ test.describe("a model change is proposed, and read back (T-4830)", () => {
       await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: odataBody(list([PUBLISHED_CHANGE])) }),
       );
-      await page.route("**/api/v1/projects/helsinki/datamodels/helsinki-kpi/source", (route) =>
-        route.fulfill({ status: 200, contentType: "text/plain", body: KPI_LINKML }),
+      await page.route(restOrDoor("/projects/helsinki/datamodels/helsinki-kpi/source", "portal_model_source"), (route) =>
+        route.fulfill({ status: 200, contentType: "text/yaml", body: KPI_LINKML }),
       );
 
       await page.goto("/projects/helsinki/models/helsinki-kpi?tab=form&lang=en");
@@ -565,7 +565,7 @@ test.describe("a model source that cannot be read (T-6950)", () => {
         // A one-line linkml is a reference, not inline YAML: the page reads the source route. With
         // propose granted, Edit model is closed only by the unread source.
         await stubKpi(page, ["read", "propose"], "helsinki-kpi");
-        await page.route("**/datamodels/helsinki-kpi/source", (route) =>
+        await page.route(restOrDoor("/datamodels/helsinki-kpi/source", "portal_model_source"), (route) =>
           route.fulfill({
             status,
             contentType: "application/problem+json",
@@ -605,7 +605,7 @@ test.describe("the model editor's import dialog, inherited fields and read-only 
       await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
       await stubKpi(page, ["read", "propose"], INHERITING_LINKML);
       // Registered after stubKpi, so it answers first: the editor reads the committed source.
-      await page.route("**/datamodels/helsinki-kpi/source", (route) =>
+      await page.route(restOrDoor("/datamodels/helsinki-kpi/source", "portal_model_source"), (route) =>
         route.fulfill({ status: 200, contentType: "text/yaml", body: INHERITING_LINKML }),
       );
       await page.goto("/projects/helsinki/models?new=sdm&lang=en");
@@ -1270,7 +1270,7 @@ test.describe("value structures and the link form of Add field (T-6344)", () => 
       await page.setViewportSize({ width, height: width > 600 ? 900 : 860 });
       await stubKpi(page, ["read", "propose"]);
       // A regex, not a glob: tests/gates.ts strips comments by regex, and a glob there ends one.
-      await page.route(/\/datamodels\/helsinki-kpi\/source$/, (route) =>
+      await page.route(restOrDoor("/datamodels/helsinki-kpi/source", "portal_model_source"), (route) =>
         route.fulfill({ status: 200, contentType: "text/yaml", body: KPI_LINKML }),
       );
       await page.goto("/projects/helsinki/models?edit=helsinki-kpi&lang=en");
