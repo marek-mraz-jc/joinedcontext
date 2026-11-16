@@ -1128,6 +1128,10 @@ routes:
   - route: GET /projects/{project}/changes/history/export
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/changes/outside
+    rule: "project-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "an organization administrator gets the forge's merge requests no Change holds, every other reader [] (T-7126)"
   - route: GET /projects/{project}/changes/{id}
     rule: "project-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
