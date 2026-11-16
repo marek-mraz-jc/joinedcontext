@@ -77,17 +77,21 @@ function ProjectSelector({ active }: { active: string }) {
           // The trigger is the sidebar's width, so a long name is cut there; the full name is
           // in the hint and in the menu, which wraps it (T-7148).
           title={titled ? `${title} (${active})` : active}
-          className="w-full justify-start gap-2.5 px-2.5 text-left"
+          // `h-auto!`: the control's fixed height held one line; the title takes two (T-7148).
+          className="h-auto! min-h-control-lg w-full justify-start gap-2.5 px-2.5 py-1.5 text-left"
         >
           <span
             aria-hidden="true"
             data-testid="project-initials"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold text-primary-fg"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-caption font-bold tracking-tighter text-primary-fg"
           >
             {initials(title)}
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-body font-semibold text-fg">{title}</span>
+            {/* A title wraps at its words to two lines; a slug is one word, cut on one line. */}
+            <span className={clsx("text-body font-semibold leading-snug text-fg", titled ? "line-clamp-2" : "block truncate")}>
+              {title}
+            </span>
             {/* The slug under the title, the name every path and manifest uses (T-4243); a
                 project without a title is its slug, said once on one line (T-7148). */}
             {titled ? <span className="block truncate font-mono text-caption text-fg-muted">{active}</span> : null}
@@ -95,9 +99,9 @@ function ProjectSelector({ active }: { active: string }) {
           <Icon name="chevronDown" className="size-4 shrink-0 text-fg-subtle" />
         </Button>
       </MenuTrigger>
-      {/* At least the trigger's width (Radix publishes it), else 24rem or the screen less its
+      {/* At least the trigger's width (Radix publishes it), else 28rem or the screen less its
           gutter: the sidebar-wide menu cut the one name it listed (T-7148). */}
-      <MenuContent align="start" className="w-[max(var(--radix-dropdown-menu-trigger-width),min(24rem,calc(100vw-2rem)))]">
+      <MenuContent align="start" className="w-[max(var(--radix-dropdown-menu-trigger-width),min(28rem,calc(100vw-2rem)))]">
         <MenuLabel>{t("nav.projects")}</MenuLabel>
         {projects.map((project) => {
           const current = project === active;

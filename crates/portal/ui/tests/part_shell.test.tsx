@@ -337,9 +337,11 @@ describe("the shell against the UI contract", () => {
 
     const switcher = screen.getByRole("button", { name: i18n.t("nav.projects") });
     await waitFor(() => expect(switcher).toHaveAttribute("title", `${LONG_TITLE} (${LONG})`));
+    // A title wraps to two lines in the button, at its words.
+    expect(within(switcher).getByText(LONG_TITLE)).toHaveClass("line-clamp-2");
     await user.click(switcher);
     const menu = await screen.findByRole("menu");
-    expect(menu.className).toContain("24rem");
+    expect(menu.className).toContain("28rem");
     const row = within(menu).getByRole("menuitem", { name: new RegExp(LONG_TITLE) });
     expect(row).toHaveAttribute("title", `${LONG_TITLE} (${LONG})`);
     expect(within(row).getByText(LONG_TITLE)).toBeInTheDocument();
@@ -415,7 +417,7 @@ describe("the shell against the UI contract", () => {
 
     expect(screen.getAllByText(BRANDING.shortName).length).toBeGreaterThan(0);
     const switcher = screen.getByRole("button", { name: i18n.t("nav.projects") });
-    // The name is cut in the button rather than pushing the account menu off the header.
+    // The slug is cut in the button rather than pushing the sections down; the hint holds it whole.
     expect(switcher.querySelector(".truncate")).not.toBeNull();
     const logo = document.querySelector("header img");
     if (logo) {
