@@ -3036,7 +3036,23 @@
       "maskedKept": "{count, plural, one {# záznam zůstává v seznamu: jeho hodnota byla zamaskována jako tajemství a opakování by zapsalo masku. Přinese ho další čtení zdroje.} few {# záznamy zůstávají v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.} other {# záznamů zůstává v seznamu: jejich hodnoty byly zamaskovány jako tajemství a opakování by zapsalo masku. Přinese je další čtení zdroje.}}",
       "newest": "Nejnovější",
       "older": "Starší záznamy",
-      "openRun": "Otevřít jeho běh"
+      "openRun": "Otevřít jeho běh",
+      "groups": {
+        "title": "Podle pravidla",
+        "lead": "Všechny uchované záznamy podle porušeného pravidla a atributu, největší skupina první. Opravte nejdřív největší skupinu.",
+        "export": "Exportovat CSV",
+        "exporting": "Exportuje se…",
+        "exportHint": "Všechny uchované záznamy s pravidlem a důvodem, tajemství zamaskovaná a osobní atributy vynechané. Soubor: {file}.",
+        "count": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}",
+        "allowed": "Model povoluje:",
+        "fix": {
+          "model": "Opravte v datovém modelu: odmítá tento atribut nebo hodnotu. Je-li zdroj správný, rozšiřte slot nebo atribut deklarujte.",
+          "mapping": "Opravte v mapování: zapisuje hodnotu špatného tvaru. Převeďte ji nebo namapujte na to, co slot přijímá.",
+          "step": "Opravte krok: krok pipeline na těchto záznamech selhal. Chybu kroku najdete v běhu záznamu.",
+          "runner": "Runner tyto záznamy odmítl bez pravidla modelu. Jeho slova najdete v běhu záznamu."
+        },
+        "example": "Příklad"
+      }
     },
     "runs": {
       "open": "Běhy a záznam",
@@ -3234,6 +3250,24 @@
         "title": "Životnost",
         "hint": "Kdy entity nebo některá jejich pole opustí prostor. Uloží se jako životnost pipeline, nikdy jako kód mapování.",
         "pickType": "Nejprve vyberte cíl a typ, který mapování zapisuje: životnost se nastavuje pro každý typ."
+      },
+      "sourceCheck": {
+        "title": "Zkontrolovat celý zdroj",
+        "hint": "Spustí uloženou pipeline nad každou stránkou zdroje a spočítá, co by ostrý běh přijal a odmítl, podle pravidla. Nic se nezapíše. Zastaví se po 60 s nebo 50 000 záznamech. Příklad: zdroj CKAN s 12 stránkami, 2 300 záznamů.",
+        "run": "Zkontrolovat celý zdroj",
+        "again": "Zkontrolovat znovu",
+        "running": "Čte se každá stránka zdroje; trvá to nejvýše 60 s.",
+        "unsaved": "Kontrola čte uloženou pipeline: navrhněte tuto a zkontrolujte ji, až se její změna sloučí.",
+        "failed": "Kontrola se nespustila",
+        "counts": "{count, plural, one {# záznam} few {# záznamy} other {# záznamů}}: přijato {accepted, number}, odmítnuto {rejected, number}",
+        "complete": "Přečetla se každá stránka zdroje; ostrý běh by dal na seznam odmítnutých tytéž záznamy.",
+        "partial": "Kontrola nepřečetla celý zdroj, takže počty pokrývají jen přečtenou část. Důvod je níže.",
+        "rows": "{count, plural, one {# odmítnutý záznam} few {První # odmítnuté záznamy} other {Prvních # odmítnutých záznamů}}",
+        "place": "Záznam {place}",
+        "more": "{count, plural, one {Další # záznam je započítán} few {Další # záznamy jsou započítány} other {Dalších # záznamů je započítáno}} ve skupinách výše.",
+        "groupsLead": "Každý záznam, který kontrola odmítla, spočítaný podle porušeného pravidla a atributu, největší skupina první. Opravte nejprve největší skupinu.",
+        "completeClean": "Přečetla se každá stránka zdroje a žádný záznam neporušuje pravidlo: ostrý běh by zapsal všechny.",
+        "retry": "Spusťte ji znovu, až bude důvod výše vyřešen."
       },
       "schedule": {
         "title": "Kdy běží",
@@ -3778,7 +3812,7 @@
       "grants": "Oprávnění",
       "byPolicy": "Povoleno politikou {policy}",
       "fix": "Oprava: {fix}",
-      "counts": "odesláno {sent}, odmítnuto {rejected}, selhalo {failed}",
+      "counts": "odesláno {sent}, odmítnuto {rejected, number}, selhalo {failed}",
       "perMinute": "{rate} záznamů za minutu",
       "openPipeline": "Otevřít pipeline",
       "openRuns": "Běhy",

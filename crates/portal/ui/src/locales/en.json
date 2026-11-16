@@ -3036,7 +3036,23 @@
       "maskedKept": "{count, plural, one {# record stays on the list: a value of it was masked as a secret, and replaying it would write the mask. The pipeline's next read of its source brings it again.} other {# records stay on the list: a value of each was masked as a secret, and replaying them would write the mask. The pipeline's next read of its source brings them again.}}",
       "newest": "Newest",
       "older": "Older records",
-      "openRun": "Open its run"
+      "openRun": "Open its run",
+      "groups": {
+        "title": "By rule",
+        "lead": "Every kept record, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "export": "Export CSV",
+        "exporting": "Exporting…",
+        "exportHint": "Every kept record with its rule and reason, secrets masked and personal attributes left out. The file: {file}.",
+        "count": "{count, plural, one {# record} other {# records}}",
+        "allowed": "The model allows:",
+        "fix": {
+          "model": "Fix in the data model: it refuses this attribute or value. Widen the slot, or declare the attribute, if the source is right.",
+          "mapping": "Fix in the mapping: it writes a value of the wrong shape. Convert or map it to what the slot takes.",
+          "step": "Fix the step: a step of the pipeline failed on these records. Open a record's run to see the step's error.",
+          "runner": "The runner refused these records without a model rule. Open a record's run to see the runner's words."
+        },
+        "example": "Example"
+      }
     },
     "runs": {
       "open": "Runs and log",
@@ -3234,6 +3250,24 @@
         "title": "Lifetime",
         "hint": "When the entities, or some of their fields, leave the space. Saved as the pipeline's lifetime, never as mapping code.",
         "pickType": "Pick the target and the type the mapping writes first: the lifetime is set per type."
+      },
+      "sourceCheck": {
+        "title": "Check whole source",
+        "hint": "Runs the saved pipeline over every page of its source and counts what a live run would accept and reject, by rule. Nothing is written. It stops at 60 s or 50,000 records. Example: a CKAN source of 12 pages, 2,300 records.",
+        "run": "Check whole source",
+        "again": "Check again",
+        "running": "Reading every page of the source; this takes up to 60 s.",
+        "unsaved": "The check reads the saved pipeline: propose this one and check it once its change is merged.",
+        "failed": "The check did not run",
+        "counts": "{count, plural, one {# record} other {# records}}: {accepted, number} accepted, {rejected, number} rejected",
+        "complete": "Every page of the source was read; a live run would put the same records on the rejected list.",
+        "partial": "The check did not read the whole source, so the counts cover only the part it read. The reason is below.",
+        "rows": "{count, plural, one {# rejected record} other {First # rejected records}}",
+        "place": "Record {place}",
+        "more": "{count, plural, one {# more record is} other {# more records are}} counted in the groups above.",
+        "groupsLead": "Every record the check rejected, counted by the rule it broke and the attribute, the largest first. Fix the largest group first.",
+        "completeClean": "Every page of the source was read and no record breaks a rule: a live run would write them all.",
+        "retry": "Run it again once the reason above is resolved."
       },
       "schedule": {
         "title": "When it runs",
@@ -3778,7 +3812,7 @@
       "grants": "Grants",
       "byPolicy": "Granted by Policy {policy}",
       "fix": "Fix: {fix}",
-      "counts": "{sent} sent, {rejected} rejected, {failed} failed",
+      "counts": "{sent} sent, {rejected, number} rejected, {failed} failed",
       "perMinute": "{rate} records a minute",
       "openPipeline": "Open pipeline",
       "openRuns": "Runs",

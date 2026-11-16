@@ -104,6 +104,9 @@ pub struct ShapeConstraints {
     pub max_count: Option<usize>,
     pub min_length: Option<usize>,
     pub max_length: Option<usize>,
+    /// `sh:minInclusive` and `sh:maxInclusive`, read as numbers (the subset compares numbers only).
+    pub min_inclusive: Option<f64>,
+    pub max_inclusive: Option<f64>,
     /// `sh:pattern` and its regex, compiled once with its `sh:flags` (`None`: it does not compile).
     pub pattern: Option<(String, Option<regex::Regex>)>,
     pub in_values: Option<Vec<Term>>,
@@ -428,6 +431,11 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
     let max_length = g
         .first_object(subj, &sh("maxLength"))
         .and_then(|t| t.string_value().parse::<usize>().ok());
+    let bound = |name: &str| {
+        g.first_object(subj, &sh(name))
+            .and_then(|t| t.string_value().parse::<f64>().ok())
+    };
+    let (min_inclusive, max_inclusive) = (bound("minInclusive"), bound("maxInclusive"));
     let pattern = g.first_object(subj, &sh("pattern")).map(|p| {
         let flags = g
             .first_object(subj, &sh("flags"))
@@ -510,6 +518,8 @@ fn parse_constraints(g: &RdfGraph, subj: &SubjectNode) -> ShapeConstraints {
         max_count,
         min_length,
         max_length,
+        min_inclusive,
+        max_inclusive,
         pattern,
         in_values,
         has_value,
@@ -957,6 +967,36 @@ fn check_value_constraints(
         }
     }
 
+    // 4b. minInclusive / maxInclusive: a value that is no number is not comparable, a violation
+    let number = match val {
+        Term::Literal(lit) => lit.value.parse::<f64>().ok(),
+        _ => None,
+    };
+    for (bound, component, below) in [
+        (c.min_inclusive, "MinInclusiveConstraintComponent", true),
+        (c.max_inclusive, "MaxInclusiveConstraintComponent", false),
+    ] {
+        let Some(bound) = bound else { continue };
+        let ok = number.is_some_and(|n| if below { n >= bound } else { n <= bound });
+        if !ok {
+            findings.push(ShaclFinding {
+                focus_node: focus.string_value().to_owned(),
+                result_path: path.map(str::to_owned),
+                value: Some(val.string_value().to_owned()),
+                source_constraint_component: sh(component),
+                source_shape: shape_id.to_owned(),
+                severity,
+                message: default_msg(
+                    &c.message,
+                    format!(
+                        "Value {val} is not {} {bound}",
+                        if below { "at least" } else { "at most" }
+                    ),
+                ),
+            });
+        }
+    }
+
     // 5. pattern
     if let Some((pat, Some(re))) = &c.pattern {
         if !re.is_match(val.string_value()) {
@@ -1169,6 +1209,8 @@ fn is_xsd_timezone(tz: &str) -> bool {
     }
 }
 
+const XSD_FLOAT: &str = "http://www.w3.org/2001/XMLSchema#float";
+
 fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool {
     if expected_dt == ns::RDF_LANG_STRING {
         return lit.language.as_ref().is_some_and(|l| !l.is_empty());
@@ -1179,7 +1221,7 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
     match expected_dt {
         ns::XSD_INTEGER => lit.value.parse::<i128>().is_ok(),
         ns::XSD_NON_NEGATIVE_INTEGER => lit.value.parse::<u128>().is_ok(),
-        ns::XSD_DECIMAL | ns::XSD_DOUBLE => lit.value.parse::<f64>().is_ok(),
+        ns::XSD_DECIMAL | ns::XSD_DOUBLE | XSD_FLOAT => lit.value.parse::<f64>().is_ok(),
         ns::XSD_BOOLEAN => matches!(lit.value.as_str(), "true" | "false" | "1" | "0"),
         ns::XSD_DATE => lit.value.get(..10).is_some_and(|date| {
             chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()

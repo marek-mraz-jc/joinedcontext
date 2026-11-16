@@ -3036,7 +3036,23 @@
       "maskedKept": "{count, plural, one {# Datensatz bleibt in der Liste: ein Wert wurde als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt ihn erneut.} other {# Datensätze bleiben in der Liste: ein Wert wurde jeweils als Geheimnis maskiert, und eine Wiederholung würde die Maske schreiben. Das nächste Lesen der Quelle bringt sie erneut.}}",
       "newest": "Neueste",
       "older": "Ältere Datensätze",
-      "openRun": "Seinen Lauf öffnen"
+      "openRun": "Seinen Lauf öffnen",
+      "groups": {
+        "title": "Nach Regel",
+        "lead": "Alle aufbewahrten Datensätze nach verletzter Regel und Attribut, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "export": "CSV exportieren",
+        "exporting": "Wird exportiert…",
+        "exportHint": "Alle aufbewahrten Datensätze mit Regel und Grund, Geheimnisse maskiert und personenbezogene Attribute ausgelassen. Die Datei: {file}.",
+        "count": "{count, plural, one {# Datensatz} other {# Datensätze}}",
+        "allowed": "Das Modell erlaubt:",
+        "fix": {
+          "model": "Im Datenmodell beheben: Es lehnt dieses Attribut oder diesen Wert ab. Ist die Quelle richtig, erweitern Sie den Slot oder deklarieren Sie das Attribut.",
+          "mapping": "Im Mapping beheben: Es schreibt einen Wert falscher Form. Wandeln Sie ihn um oder bilden Sie ihn auf das ab, was der Slot annimmt.",
+          "step": "Den Schritt beheben: Ein Schritt der Pipeline ist an diesen Datensätzen gescheitert. Den Fehler zeigt der Lauf des Datensatzes.",
+          "runner": "Der Runner hat diese Datensätze ohne Modellregel abgelehnt. Seine Worte zeigt der Lauf des Datensatzes."
+        },
+        "example": "Beispiel"
+      }
     },
     "runs": {
       "open": "Läufe und Protokoll",
@@ -3234,6 +3250,24 @@
         "title": "Lebensdauer",
         "hint": "Wann die Entitäten oder einige ihrer Felder den Raum verlassen. Gespeichert als Lebensdauer der Pipeline, nie als Mapping-Code.",
         "pickType": "Wählen Sie zuerst das Ziel und den Typ, den das Mapping schreibt: Die Lebensdauer gilt je Typ."
+      },
+      "sourceCheck": {
+        "title": "Ganze Quelle prüfen",
+        "hint": "Führt die gespeicherte Pipeline über jede Seite ihrer Quelle aus und zählt, was ein echter Lauf annehmen und ablehnen würde, nach Regel. Nichts wird geschrieben. Sie endet nach 60 s oder 50 000 Datensätzen. Beispiel: eine CKAN-Quelle mit 12 Seiten, 2 300 Datensätze.",
+        "run": "Ganze Quelle prüfen",
+        "again": "Erneut prüfen",
+        "running": "Jede Seite der Quelle wird gelesen; das dauert bis zu 60 s.",
+        "unsaved": "Die Prüfung liest die gespeicherte Pipeline: schlagen Sie diese vor und prüfen Sie sie, sobald ihre Änderung zusammengeführt ist.",
+        "failed": "Die Prüfung lief nicht",
+        "counts": "{count, plural, one {# Datensatz} other {# Datensätze}}: {accepted, number} angenommen, {rejected, number} abgelehnt",
+        "complete": "Jede Seite der Quelle wurde gelesen; ein echter Lauf würde dieselben Datensätze auf die Liste der abgelehnten setzen.",
+        "partial": "Die Prüfung hat nicht die ganze Quelle gelesen, die Zahlen decken nur den gelesenen Teil. Der Grund steht unten.",
+        "rows": "{count, plural, one {# abgelehnter Datensatz} other {Die ersten # abgelehnten Datensätze}}",
+        "place": "Datensatz {place}",
+        "more": "{count, plural, one {# weiterer Datensatz ist} other {# weitere Datensätze sind}} in den Gruppen oben gezählt.",
+        "groupsLead": "Jeder Datensatz, den die Prüfung abgelehnt hat, nach verletzter Regel und Attribut gezählt, die größte Gruppe zuerst. Beheben Sie zuerst die größte Gruppe.",
+        "completeClean": "Jede Seite der Quelle wurde gelesen und kein Datensatz verletzt eine Regel: ein echter Lauf würde alle schreiben.",
+        "retry": "Führen Sie sie erneut aus, sobald der Grund oben behoben ist."
       },
       "schedule": {
         "title": "Wann sie läuft",
@@ -3778,7 +3812,7 @@
       "grants": "Berechtigungen",
       "byPolicy": "Erlaubt durch Policy {policy}",
       "fix": "Behebung: {fix}",
-      "counts": "{sent} gesendet, {rejected} abgelehnt, {failed} fehlgeschlagen",
+      "counts": "{sent} gesendet, {rejected, number} abgelehnt, {failed} fehlgeschlagen",
       "perMinute": "{rate} Datensätze pro Minute",
       "openPipeline": "Pipeline öffnen",
       "openRuns": "Läufe",

@@ -129,6 +129,135 @@ async fn a_caller_without_read_on_the_pipeline_is_told_it_is_not_there() {
     assert_eq!(missing.status, StatusCode::NOT_FOUND);
 }
 
+const GROUPS: &str = "/api/v1/projects/helsinki/pipelines/stations/rejected/groups";
+const EXPORT: &str = "/api/v1/projects/helsinki/pipelines/stations/rejected/export";
+
+/// G-21: the groups count every kept record by rule and path, the largest first, with its
+/// newest examples masked and where the fix belongs; a caller without read is told the pipeline
+/// is not there.
+#[tokio::test]
+async fn a_reader_sees_the_rejected_records_grouped_by_rule_and_path() {
+    let state = world().await;
+    state
+        .rejected
+        .reject(
+            "helsinki",
+            "stations",
+            &json!({ "type": "Station", "status": "gone" }),
+            &Reason {
+                rule: "sh:in".into(),
+                path: "status".into(),
+                message: "status is not one of the values the model lists".into(),
+                step: None,
+                run: None,
+            },
+        )
+        .await
+        .expect("kept");
+    let answer = send(&state, person("jana"), "GET", GROUPS, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let answer: Value = serde_json::from_str(&answer.text).expect("json");
+    assert_eq!(answer["total"], 4);
+    let groups = answer["groups"].as_array().expect("groups");
+    let counted: Vec<(&str, &str, u64, &str)> = groups
+        .iter()
+        .map(|g| {
+            (
+                g["rule"].as_str().unwrap_or_default(),
+                g["path"].as_str().unwrap_or_default(),
+                g["count"].as_u64().unwrap_or_default(),
+                g["fix"].as_str().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        counted,
+        [
+            ("sh:datatype", "capacity", 3, "mapping"),
+            ("sh:in", "status", 1, "mapping")
+        ]
+    );
+    assert_eq!(groups[0]["examples"].as_array().map(Vec::len), Some(3));
+    assert_eq!(groups[0]["examples"][0]["record"]["n"], 2, "newest first");
+    assert!(!answer.to_string().contains("hunter2"), "masked: {answer}");
+
+    for path in [GROUPS, EXPORT] {
+        let refused = send(&state, person("mikko"), "GET", path, None).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::NOT_FOUND,
+            "{path}: {}",
+            refused.text
+        );
+        assert!(!refused.text.contains("capacity"));
+    }
+}
+
+/// G-21, PL-110: the export is every kept record as CSV, secrets masked as kept, the attributes
+/// the project's model marks personal withheld, and a cell a spreadsheet would run as a formula
+/// quoted.
+#[tokio::test]
+async fn the_export_is_csv_with_secrets_masked_and_personal_attributes_withheld() {
+    let shako = common::forge().await;
+    Mock::given(method("GET"))
+        .and(path_regex(r"Shako\.File\(Path=@p,Ref=@r\)$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "sha-src",
+            "Content": common::encode(
+                "id: https://hel.fi/bikes\nname: bikes\nclasses:\n  Station:\n    slots: [owner, capacity]\nslots:\n  owner:\n    annotations: { personalData: true }\n  capacity: { range: integer }\n"
+            )
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = common::state_on(&shako);
+    seed(&state).await;
+    state.mirror.upsert(envelope(
+        "DataModel",
+        "bikes",
+        "helsinki",
+        json!({ "contextSpaceRef": "pyorat", "linkml": "bikes.linkml.yaml", "version": "1.0.0", "lifecycle": "published" }),
+    ));
+    state
+        .rejected
+        .reject(
+            "helsinki",
+            "stations",
+            &json!({ "id": "urn:ngsi-ld:Station:1", "type": "Station",
+                "owner": { "type": "Property", "value": "Matti Meikäläinen" },
+                "capacity": { "type": "Property", "value": "=1+1" } }),
+            &Reason {
+                rule: "sh:datatype".into(),
+                path: "capacity".into(),
+                message: "=HYPERLINK(\"x\")".into(),
+                step: Some(1),
+                run: None,
+            },
+        )
+        .await
+        .expect("kept");
+    let answer = send(&state, person("jana"), "GET", EXPORT, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let lines: Vec<&str> = answer.text.split("\r\n").collect();
+    assert_eq!(lines[0], "id,at,rule,path,step,run,message,record");
+    assert_eq!(
+        lines.len(),
+        6,
+        "a header, four records and the last line end: {lines:?}"
+    );
+    assert!(
+        lines[1].contains(",2,,\"'=HYPERLINK(\"\"x\"\")\","),
+        "{}",
+        lines[1]
+    );
+    assert!(!answer.text.contains("Matti"), "withheld: {}", answer.text);
+    assert!(
+        answer.text.contains("=1+1"),
+        "a value inside the record JSON is kept"
+    );
+    assert!(!answer.text.contains("hunter2"), "masked: {}", answer.text);
+}
+
 /// A state whose pipeline writes through an Endpoint into a space with a compiled model, and a
 /// runner at `runner`; `jana` reads pipelines, `eeva` also proposes them.
 async fn retry_world(runner: &MockServer) -> AppState {
