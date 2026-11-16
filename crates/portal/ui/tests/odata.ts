@@ -10,8 +10,9 @@ export interface ODataCall {
   params: Record<string, unknown>;
 }
 
+/** A call bound to a project, or to the `Organization` singleton (its `project` is ""). */
 const BOUND =
-  /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/JoinedContext\.Portal\.(\w+)(?:\(([^)]*)\))?$/;
+  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(\w+)(?:\(([^)]*)\))?$/;
 
 /** A literal of an alias: text in quotes, a number, a boolean, `null` or JSON. */
 function literal(text: string): unknown {
@@ -38,7 +39,7 @@ export function odataCall(
     if (value !== null) params[name] = literal(value);
   }
   if (typeof body === "object" && body !== null) Object.assign(params, body);
-  return { project: bound[1].replaceAll("''", "'"), name: bound[2], params };
+  return { project: (bound[1] ?? "").replaceAll("''", "'"), name: bound[2], params };
 }
 
 /** The body of the service's answer to a function or action: the operation's value under `value`. */
