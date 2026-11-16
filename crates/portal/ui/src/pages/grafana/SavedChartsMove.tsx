@@ -64,11 +64,11 @@ export function SavedChartsMove({ project }: { project: string }): JSX.Element {
       ) : null}
       {run.isError ? <InlineError>{reasonOf(run.error)}</InlineError> : null}
       <div className="flex flex-wrap gap-2">
-        <Button variant="secondary" size="sm" onClick={() => run.mutate(true)} disabled={run.isPending}>
+        <Button variant="secondary" size="sm" onClick={() => run.mutate(true)} disabled={run.isPending} disabledReason={run.isPending ? t("grafana.move.running") : undefined}>
           {t("grafana.move.check")}
         </Button>
         {checked && checked.moved.length > 0 ? (
-          <Button variant="primary" size="sm" onClick={() => run.mutate(false)} disabled={run.isPending}>
+          <Button variant="primary" size="sm" onClick={() => run.mutate(false)} disabled={run.isPending} disabledReason={run.isPending ? t("grafana.move.running") : undefined}>
             {checked.stage === "propose" ? t("grafana.move.propose") : t("grafana.move.remove", { count: checked.moved.length })}
           </Button>
         ) : null}

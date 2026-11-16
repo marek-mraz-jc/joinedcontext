@@ -14161,6 +14161,129 @@
         }
       }
     },
+    "/api/v1/projects/{project}/grafana/builder/saved-charts": {
+      "post": {
+        "tags": [
+          "grafana"
+        ],
+        "summary": "Move Saved Charts Into A Dashboard",
+        "description": "Moves the project's charts saved one by one into one builder dashboard, Saved charts. The first run proposes the dashboard as a Change; once it is merged, the next run removes each saved chart the merged file draws (same Endpoint, type, attribute, kind and title) and keeps every other one, with the reason. `dryRun` reports the counts and changes nothing. Needs propose on Dashboard and read on every Endpoint a chart names.",
+        "operationId": "builder_saved_charts",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SavedChartsRun"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "A dry run, or the removing run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedChartsMove"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Proposed; waits for approval",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedChartsMove"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A body that does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not build dashboards, or may not read an Endpoint a chart names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project the caller has a part in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No saved chart to move, a Change of the dashboard is open, or no dashboards service for the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A chart no longer fits: a source, type or attribute it names is gone; the errors name it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The forge, the database or the dashboards service did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/grafana/builder/values": {
       "get": {
         "tags": [
@@ -55574,6 +55697,26 @@
         },
         "additionalProperties": false
       },
+      "Kept": {
+        "type": "object",
+        "description": "A row that stays where it is, and why.",
+        "required": [
+          "id",
+          "title",
+          "reason"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "Kind": {
         "type": "string",
         "description": "What a visualization draws.",
@@ -61466,6 +61609,87 @@
             "type": "object"
           }
         }
+      },
+      "SavedChartsMove": {
+        "type": "object",
+        "description": "What moving the project's saved charts into the Saved charts dashboard does or did (T-7161).",
+        "required": [
+          "uid",
+          "stage",
+          "dryRun",
+          "before",
+          "panels",
+          "moved",
+          "kept"
+        ],
+        "properties": {
+          "before": {
+            "type": "integer",
+            "description": "The project's saved charts before the run.",
+            "minimum": 0
+          },
+          "change": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Change",
+                "description": "The Change a proposing run opened."
+              }
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Kept"
+            },
+            "description": "The charts that stay saved, each with the reason."
+          },
+          "moved": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The charts the dashboard takes (propose) or that were removed, or would be (remove)."
+          },
+          "panels": {
+            "type": "integer",
+            "description": "The dashboard's panels: planned when proposing, merged when removing.",
+            "minimum": 0
+          },
+          "stage": {
+            "$ref": "#/components/schemas/SavedChartsStage"
+          },
+          "uid": {
+            "type": "string",
+            "description": "The Saved charts dashboard's uid, the same on every run."
+          }
+        }
+      },
+      "SavedChartsRun": {
+        "type": "object",
+        "description": "How a move of the saved charts runs: `dryRun` reports and changes nothing.",
+        "properties": {
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "dryRun": true
+        }
+      },
+      "SavedChartsStage": {
+        "type": "string",
+        "description": "Which step of the move a run took.",
+        "enum": [
+          "propose",
+          "remove"
+        ]
       },
       "Scope": {
         "oneOf": [

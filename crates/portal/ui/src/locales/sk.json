@@ -7420,7 +7420,8 @@
       "proposedTitle": "Dashboard Saved charts čaká na schválenie",
       "openChange": "Otvoriť zmenu",
       "removed": "{count, plural, one {Odstránený # presunutý graf} few {Odstránené # presunuté grafy} other {Odstránených # presunutých grafov}}",
-      "removedLead": "Sú to teraz panely dashboardu Saved charts."
+      "removedLead": "Sú to teraz panely dashboardu Saved charts.",
+      "running": "Presun beží; počkajte na odpoveď."
     }
   },
   "activity": {

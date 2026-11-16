@@ -7420,7 +7420,8 @@
       "proposedTitle": "Nástěnka Saved charts čeká na schválení",
       "openChange": "Otevřít změnu",
       "removed": "{count, plural, one {Odebrán # přesunutý graf} few {Odebrány # přesunuté grafy} other {Odebráno # přesunutých grafů}}",
-      "removedLead": "Jsou to nyní panely nástěnky Saved charts."
+      "removedLead": "Jsou to nyní panely nástěnky Saved charts.",
+      "running": "Přesun běží; počkejte na odpověď."
     }
   },
   "activity": {

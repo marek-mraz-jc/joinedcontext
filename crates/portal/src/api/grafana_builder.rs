@@ -1327,6 +1327,7 @@ pub async fn builder_restore(
 /// How a move of the saved charts runs: `dryRun` reports and changes nothing.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schema(example = json!({ "dryRun": true }))]
 pub struct SavedChartsRun {
     #[serde(default)]
     pub dry_run: bool,

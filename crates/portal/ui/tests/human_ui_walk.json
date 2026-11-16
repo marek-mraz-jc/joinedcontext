@@ -2917,6 +2917,22 @@
         "evidence/T-7150/history-reader-400.png"
       ]
     },
+    "src/pages/grafana/SavedChartsMove.tsx": {
+      "walkedBy": "worker-t7159 (stub walk, T-7161)",
+      "date": "2026-11-16",
+      "screenshots": [
+        "evidence/T-7161/move-checked-1440.png",
+        "evidence/T-7161/move-checked-400.png",
+        "evidence/T-7161/move-proposed-1440.png",
+        "evidence/T-7161/move-proposed-400.png",
+        "evidence/T-7161/move-remove-checked-1440.png",
+        "evidence/T-7161/move-remove-checked-400.png",
+        "evidence/T-7161/move-removed-1440.png",
+        "evidence/T-7161/move-removed-400.png",
+        "evidence/T-7161/move-refused-1440.png",
+        "evidence/T-7161/move-refused-400.png"
+      ]
+    },
     "src/components/forms/SchemaForm.tsx": {
       "walkedBy": "worker-t6779 (stub walk: the fix summary of a refused form, T-6772)",
       "date": "2026-11-11",

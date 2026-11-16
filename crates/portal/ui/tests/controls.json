@@ -1448,6 +1448,14 @@
         "dashboard_history.test.tsx"
       ]
     },
+    "src/pages/grafana/SavedChartsMove.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "saved_charts_move.test.tsx"
+      ]
+    },
     "src/pages/grafana/DashboardList.tsx": {
       "controls": {
         "Button": 4

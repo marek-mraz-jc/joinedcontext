@@ -7420,7 +7420,8 @@
       "proposedTitle": "The Saved charts dashboard waits for approval",
       "openChange": "Open the change",
       "removed": "{count, plural, one {Removed # moved chart} other {Removed # moved charts}}",
-      "removedLead": "They are panels of the Saved charts dashboard now."
+      "removedLead": "They are panels of the Saved charts dashboard now.",
+      "running": "The move is running; wait for its answer."
     }
   },
   "activity": {
