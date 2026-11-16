@@ -16,7 +16,10 @@ from urllib.parse import unquote
 
 import pytest
 
-VIZ = Path(__file__).resolve().parents[5] / "vendor" / "viz"
+ROOT = Path(__file__).resolve().parents[5]
+VIZ = ROOT / "vendor" / "viz"
+# The explorer bundle is the Portal UI's build, the copy bins/jc/build.rs embeds (T-7102).
+EXPLORER = ROOT / "crates" / "portal" / "ui" / "dist-explorer"
 SLUG = "a1b2c3d4e5f6a7b8"
 EVENTS = [
     {"type": "Feature", "id": f"urn:ngsi-ld:Event:{n}", "geometry": {"type": "Point", "coordinates": at},
@@ -30,6 +33,10 @@ SHOTS = os.environ.get("SHOTS_DIR")
 
 
 def serve(style_ok):
+    # build.rs leaves empty placeholders without a UI build: an empty bundle is a missing one.
+    missing = [n for n in ("explorer.js", "explorer.css") if not (EXPLORER / n).is_file() or not (EXPLORER / n).stat().st_size]
+    if missing:
+        pytest.fail(f"{EXPLORER} lacks {', '.join(missing)}: run `pnpm install --frozen-lockfile && pnpm build` in crates/portal/ui (and crates/portal/sdk) first", pytrace=False)
     """explore.html with jc's meta naming this server as api and tiles; `style_ok()` says whether the basemap style answers."""
 
     class H(BaseHTTPRequestHandler):
@@ -50,7 +57,10 @@ def serve(style_ok):
             api = f"/api/endpoint/{SLUG}/ngsi-ld/v1/"
             if path.startswith("/viz/"):
                 rel = path[len("/viz/"):]
-                f = VIZ / rel if rel.startswith(("vendor/", "explorer/")) else VIZ / "site" / rel
+                if rel.startswith("explorer/"):
+                    f = EXPLORER / rel[len("explorer/"):]
+                else:
+                    f = VIZ / rel if rel.startswith("vendor/") else VIZ / "site" / rel
                 gz = f.with_name(f.name + ".gz")
                 if not f.is_file() and not gz.is_file():
                     return self.send(404, "text/plain", b"")
