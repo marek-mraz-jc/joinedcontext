@@ -92,8 +92,12 @@ export function SaveAsTemplate({ project, manifest }: { project: string; manifes
   const queryClient = useQueryClient();
   const [title, setTitle] = useState<string | null>(null);
   const save = useMutation({
-    mutationFn: (name: string) =>
-      doorAction("portal_pipeline_template_create", { body: { title: name, manifest: manifest() } }, project),
+    mutationFn: async (name: string) =>
+      (await doorAction(
+        "portal_pipeline_template_create",
+        { body: { title: name, manifest: manifest() } },
+        project,
+      )) as RestAnswer<"create_pipeline_template">,
     onSuccess: () => {
       setTitle(null);
       void queryClient.invalidateQueries({ queryKey: key(project) });

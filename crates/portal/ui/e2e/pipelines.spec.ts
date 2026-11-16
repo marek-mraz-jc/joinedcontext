@@ -123,6 +123,14 @@ async function stubApi(page: Page): Promise<{ writes: string[] }> {
     if (path.endsWith(`/changes/${EARLIER.metadata.name}/manifests`)) {
       return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", metadata: {}, items: [EARLIER_MANIFEST] });
     }
+    // The project list the shell checks the address against (red since the OData project read).
+    if (path === "/api/v1/projects") {
+      return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: [{ name: "banskabystrica" }] });
+    }
+    // These pipelines keep their mapping in the manifest: no bento.yaml beside it (PL-41).
+    if (path.endsWith("/bento")) {
+      return json({ type: "about:blank", title: "Not Found", status: 404, detail: "aq-mqtt-ingest has no bento.yaml" }, 404);
+    }
     if (path.endsWith("/pipelines")) {
       return json(PIPELINES);
     }
