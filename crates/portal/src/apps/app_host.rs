@@ -30,6 +30,10 @@
 //! token as its bearer, renewed by the refresh token when it expired (the client's lifespan is a
 //! minute, T-4914). Another App's cookie never reaches this host, and a session id is bound to its
 //! App, so one App's session never opens another.
+//!
+//! The realm is the App's (T-7165): its project's Organization's own when that Organization signs
+//! in through one (`auth::realms::of_app`), else the installation's. Sign-in, code, refresh, logout
+//! and the token check all go there, so a token of another realm never opens the App.
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -417,7 +421,9 @@ mod login {
     use serde::Deserialize;
 
     use super::problem;
+    use crate::auth::realms::app_oidc;
     use crate::auth::session::now_unix;
+    use crate::config::OidcConfig;
     use crate::reconciler::app_clients::client_id;
     use crate::state::AppState;
 
@@ -514,7 +520,7 @@ mod login {
     /// `302`-like redirect to the realm with the App's client, PKCE and a state bound to this
     /// browser by a short cookie. `back` is a path on the App's host, never another origin.
     pub(super) fn start(state: &AppState, name: &str, back: &str) -> Response {
-        let (Some(oidc), Some(origin)) = (state.config.oidc.as_ref(), origin(state, name)) else {
+        let (Some(oidc), Some(origin)) = (app_oidc(state, name), origin(state, name)) else {
             return problem(StatusCode::SERVICE_UNAVAILABLE, "sign-in is not configured");
         };
         let back = if back.starts_with('/') && !back.starts_with("//") && !back.contains('\\') {
@@ -571,14 +577,15 @@ mod login {
 
     /// The App client's secret, read from the realm with the Portal's own admin client (the
     /// identity that writes the App clients, AP-111) and kept for a few minutes.
-    async fn secret(state: &AppState, name: &str) -> Result<String, String> {
+    async fn secret(oidc: &OidcConfig, name: &str) -> Result<String, String> {
         let now = now_unix();
-        if let Some((value, until)) = SECRETS.lock().ok().and_then(|map| map.get(name).cloned()) {
+        // Keyed by realm too: an App moved to its Organization's realm never reuses the old secret.
+        let key = format!("{} {name}", oidc.issuer);
+        if let Some((value, until)) = SECRETS.lock().ok().and_then(|map| map.get(&key).cloned()) {
             if until > now {
                 return Ok(value);
             }
         }
-        let oidc = state.config.oidc.as_ref().ok_or("no realm")?;
         let admin = crate::reconciler::app_clients::Admin::new(
             &oidc.backchannel(),
             oidc.client_id.clone(),
@@ -603,7 +610,7 @@ mod login {
             .filter(|v| !v.is_empty())
             .ok_or("the realm answered no secret for the client")?;
         if let Ok(mut map) = SECRETS.lock() {
-            map.insert(name.to_owned(), (value.clone(), now + SECRET_SECS));
+            map.insert(key, (value.clone(), now + SECRET_SECS));
         }
         Ok(value)
     }
@@ -614,8 +621,8 @@ mod login {
         name: &str,
         grant: &[(&str, &str)],
     ) -> Result<Tokens, String> {
-        let oidc = state.config.oidc.as_ref().ok_or("no realm")?;
-        let secret = secret(state, name).await?;
+        let oidc = app_oidc(state, name).ok_or("no realm")?;
+        let secret = secret(&oidc, name).await?;
         let client = client_id(name);
         let mut form: Vec<(&str, &str)> = grant.to_vec();
         form.push(("client_id", &client));
@@ -640,15 +647,11 @@ mod login {
         answer.json::<Tokens>().await.map_err(|err| err.to_string())
     }
 
-    /// Whether `token` is an access token of App `name`'s own client (AP-92).
+    /// Whether `token` is an access token of App `name`'s own client in the App's realm (AP-92).
     async fn verified(state: &AppState, name: &str, token: &str) -> bool {
-        match state.bearer.as_ref() {
-            Some(bearer) => bearer
-                .verify_app_token(token, &client_id(name))
-                .await
-                .is_ok(),
-            None => false,
-        }
+        crate::auth::realms::verify_app_token(state, name, token)
+            .await
+            .is_ok()
     }
 
     fn session_of(name: &str, tokens: Tokens, now: i64, until: i64) -> Session {
@@ -798,7 +801,7 @@ mod login {
                 }
             }
         }
-        let target = match (state.config.oidc.as_ref(), origin(state, name)) {
+        let target = match (app_oidc(state, name), origin(state, name)) {
             (Some(oidc), Some(origin)) => url::Url::parse(&format!(
                 "{}/protocol/openid-connect/logout",
                 oidc.issuer.as_str().trim_end_matches('/')

@@ -61,6 +61,10 @@ pub struct Config {
     /// (`JC_OIDC_TOKEN_URL`, T-2272): the issuer is the address a browser uses, and a pod cannot
     /// dial its own cluster's ingress hostname. The issuer's own endpoint when none is named.
     pub oidc_token_url: Option<String>,
+    /// The realm of each Organization with its own sign-in host (`JC_OIDC_ORGANIZATION_REALMS`,
+    /// the gateway's shape, T-7144): a run of that Organization's person hands over a token of
+    /// it, and the proxy introspects and exchanges it there with its own client of that realm.
+    pub organization_realms: Vec<OrganizationRealm>,
     /// Whether a caller must arrive through the mesh with a Linkerd identity
     /// (`JC_REQUIRE_MESH_IDENTITY`, `true` or `false`; default on, F-PLT1-008). A run's ticket is
     /// then honoured from the run's own workload or the Portal's alone, so a ticket copied out of
@@ -122,6 +126,7 @@ impl std::fmt::Debug for Config {
             .field("model_provider", &self.model_provider)
             .field("model_routes", &self.model_routes)
             .field("oidc_token_url", &self.oidc_token_url)
+            .field("organization_realms", &self.organization_realms)
             .field("require_mesh_identity", &self.require_mesh_identity)
             .field("portal_client_id", &self.portal_client_id)
             .field("functions_identity", &self.functions_identity)
@@ -260,6 +265,8 @@ impl Config {
         // presented on every callback. The proxy asks the realm for a token of its own client now,
         // audience-bound to the Portal's internal listener, and it expires by itself.
         let oidc_token_url = lookup("JC_OIDC_TOKEN_URL").filter(|v| !v.trim().is_empty());
+        let organization_realms =
+            organization_realms(lookup("JC_OIDC_ORGANIZATION_REALMS"), &oidc_issuer)?;
         let require_mesh_identity = match lookup("JC_REQUIRE_MESH_IDENTITY").as_deref() {
             None | Some("true") => true,
             Some("false") => false,
@@ -309,6 +316,7 @@ impl Config {
             bind,
             portal_base,
             oidc_token_url,
+            organization_realms,
             gateway_base,
             forge_base,
             forge_repo,
@@ -361,21 +369,80 @@ impl Config {
         ));
         url.to_string()
     }
+}
 
-    /// The realm's introspection endpoint (RFC 7662), beside its token endpoint.
-    pub fn introspection_url(&self) -> String {
-        format!("{}/introspect", self.token_url())
+/// One Organization's own realm, as the gateway reads it (`JC_OIDC_ORGANIZATION_REALMS`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizationRealm {
+    /// The Organization (`[[organizations]] name`).
+    pub organization: String,
+    /// The `iss` its tokens carry (`https://idm.bbsk.sk/realms/bbsk`).
+    pub issuer: String,
+    /// Where its signing keys are read: `{back channel}/realms/{name}/protocol/openid-connect/certs`.
+    /// Its token endpoint is the sibling `…/token`, which the proxy dials.
+    pub jwks_url: String,
+}
+
+const CERTS: &str = "/protocol/openid-connect/certs";
+
+impl OrganizationRealm {
+    /// The realm's token endpoint at its back channel.
+    pub fn token_url(&self) -> String {
+        let base = self
+            .jwks_url
+            .strip_suffix("/certs")
+            .unwrap_or(&self.jwks_url);
+        format!("{base}/token")
     }
+}
 
-    /// The realm's revocation endpoint (RFC 7009): Keycloak serves it as a sibling of the token
-    /// endpoint, `…/protocol/openid-connect/revoke`.
-    pub fn revocation_url(&self) -> String {
-        let token = self.token_url();
-        match token.strip_suffix("/token") {
-            Some(base) => format!("{base}/revoke"),
-            None => format!("{token}/revoke"),
+/// `JC_OIDC_ORGANIZATION_REALMS`: each Organization once, each issuer once and never the
+/// installation's, http(s) URLs whose key URL ends in the realm's certs path.
+fn organization_realms(
+    raw: Option<String>,
+    installation: &Url,
+) -> Result<Vec<OrganizationRealm>, ConfigError> {
+    let Some(raw) = raw.filter(|raw| !raw.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let invalid = |reason: String| ConfigError::InvalidValue {
+        var: "JC_OIDC_ORGANIZATION_REALMS",
+        reason,
+    };
+    let realms: Vec<OrganizationRealm> = serde_json::from_str(&raw).map_err(|e| {
+        invalid(format!(
+            "a JSON list like [{{\"organization\":\"bbsk\",\"issuer\":\"https://idm.bbsk.sk/realms/bbsk\",\"jwks_url\":\"...\"}}]: {e}"
+        ))
+    })?;
+    let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
+    for (i, realm) in realms.iter().enumerate() {
+        let org = &realm.organization;
+        if org.trim().is_empty() || realms[..i].iter().any(|o| &o.organization == org) {
+            return Err(invalid(format!(
+                "Organization '{org}' is empty or listed twice"
+            )));
+        }
+        for url in [&realm.issuer, &realm.jwks_url] {
+            if Url::parse(url).map_or(true, |u| !matches!(u.scheme(), "http" | "https")) {
+                return Err(invalid(format!("{org}: '{url}' is not an http(s) URL")));
+            }
+        }
+        if !realm.jwks_url.ends_with(CERTS) {
+            return Err(invalid(format!(
+                "{org}: the key URL does not end in {CERTS}"
+            )));
+        }
+        if same(&realm.issuer, installation.as_str())
+            || realms[..i].iter().any(|o| same(&o.issuer, &realm.issuer))
+        {
+            return Err(invalid(format!(
+                "{org}: its issuer is the installation's or another Organization's, which would \
+                 let one realm's tokens count for two"
+            )));
         }
     }
+    Ok(realms)
 }
 
 fn read_secret(
