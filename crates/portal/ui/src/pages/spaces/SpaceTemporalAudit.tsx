@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ApiError } from "../../api/client";
 import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
@@ -10,7 +9,7 @@ import {
   Badge,
   EmptyState,
   Field,
-  InlineError,
+  PageFailed,
   Select,
   Table,
   TableBody,
@@ -61,9 +60,14 @@ export function SpaceTemporalAudit({ project, space }: { project: string; space:
     );
   }
   if (audit.isError) {
-    const error = audit.error;
-    const detail = error instanceof ApiError ? (error.problem?.detail ?? error.message) : String(error);
-    return <InlineError>{t("spaces.temporal.failed", { detail })}</InlineError>;
+    return (
+      <PageFailed
+        error={audit.error}
+        onRetry={() => {
+          void audit.refetch();
+        }}
+      />
+    );
   }
   // An answer without a field reads as nothing of it, never as a crash of the whole tab.
   const rows = audit.data.rows ?? [];

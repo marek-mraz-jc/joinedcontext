@@ -1341,7 +1341,6 @@
       "lead": "Každý atribut, který pipeline zapisuje do tohoto prostoru, jak jej prostor zaznamenává a odkud bere čas každého řádku. Verdikt jiný než OK říká, co změnit.",
       "summary": "Řádky podle verdiktu",
       "count": "{verdict}: {n}",
-      "failed": "Audit se nepodařilo načíst: {detail}. Zkuste stránku načíst znovu.",
       "empty": "Do tohoto prostoru nezapisuje žádná pipeline, kterou můžete číst",
       "emptyHint": "Pipeline, jejíž cílový Endpoint patří tomuto prostoru, se zde zobrazí s každým atributem, který mapuje.",
       "unread": "Mapování {pipelines} se nepodařilo načíst z repozitáře, jeho řádky chybí. Zkuste stránku načíst znovu.",
