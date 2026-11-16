@@ -78,13 +78,24 @@ describe("relationship targets (G-R2GRID2-017)", () => {
     expect(within(shown()[0] as HTMLElement).queryByText("Station 3")).toBeNull();
     // Only the opened target: no other company of the type.
     expect(within(shown()[0] as HTMLElement).queryByText("Company 4")).toBeNull();
-    // The target's own columns, which no model labels, read in words, not as raw names (T-7112).
-    const targetHeads = within(shown()[0] as HTMLElement).getAllByRole("columnheader").map((th) => th.textContent ?? "");
-    expect(targetHeads.some((head) => head.includes("Revenue"))).toBe(true);
-    expect(targetHeads.some((head) => head.includes("revenue"))).toBe(false);
     fireEvent.click(within(trail).getByRole("button", { name: `← ${DEFAULT_LABELS.drillBack}` }));
     await waitFor(() => expect(screen.queryByRole("navigation", { name: DEFAULT_LABELS.drillTrail })).toBeNull());
     expect(within(shown()[0] as HTMLElement).getByText("Station 3")).toBeInTheDocument();
+  });
+
+  it("labels a target of the grid's own type as the grid does, never by raw names (T-7112)", async () => {
+    const areas = [
+      { id: "urn:ngsi-ld:Area:sk03", type: "Area", areaCode: prop("SK03"), refParent: { type: "Relationship", object: "urn:ngsi-ld:Area:sk" } },
+      { id: "urn:ngsi-ld:Area:sk", type: "Area", areaCode: prop("SK"), surfaceArea: prop(49035) },
+    ];
+    render(<EntityGrid config={gridOf("Area", [{ attr: "areaCode", label: "Area code" }, { attr: "refParent", label: "Parent area" }])} source={fixtureSource(areas)} />);
+    fireEvent.click(await screen.findByRole("button", { name: `${DEFAULT_LABELS.openTarget}: Area · sk` }));
+    await screen.findByRole("navigation", { name: DEFAULT_LABELS.drillTrail });
+    const target = [...document.querySelectorAll(".jc-grid")].find((grid) => !grid.closest("[hidden]")) as HTMLElement;
+    await within(target).findByText("SK");
+    const heads = within(target).getAllByRole("columnheader").map((th) => th.textContent ?? "");
+    expect(heads.some((head) => head.includes("Area code"))).toBe(true);
+    expect(heads.some((head) => head.includes("areaCode"))).toBe(false);
   });
 
   it("opens a target with none of the outer type's preset conditions or attributes", async () => {
@@ -242,15 +253,15 @@ describe("missing and partial data (G-R2GRID2-020)", () => {
     expect(container.querySelector(".jc-cell--number")).toBeNull();
   });
 
-  it("puts an attribute the config does not list after the listed ones, by its name in words", async () => {
+  it("puts an attribute the config does not list after the listed ones, by its own name", async () => {
     const row = { id: "urn:ngsi-ld:Road:e", type: "Road", name: prop("Extra"), speed: prop(5), extraNote: prop("x") };
     const config = parseGridConfig({ source: { kind: "fixture", name: "t" }, type: "Road", pageSize: 50 }).config!;
     render(<EntityGrid config={config} source={fixtureSource([row])} />);
     await screen.findByText("Extra");
     const headers = screen.getAllByRole("columnheader").map((header) => header.textContent ?? "");
     const at = (text: string) => headers.findIndex((header) => header.includes(text));
-    expect(headers.slice(0, 3)).toEqual(["ID", "Type", expect.stringContaining("Name")]);
-    expect(at("Speed")).toBeGreaterThan(2);
-    expect(at("Extra note")).toBeGreaterThan(at("Speed"));
+    expect(headers.slice(0, 3)).toEqual(["ID", "Type", expect.stringContaining("name")]);
+    expect(at("speed")).toBeGreaterThan(2);
+    expect(at("extraNote")).toBeGreaterThan(at("speed"));
   });
 });

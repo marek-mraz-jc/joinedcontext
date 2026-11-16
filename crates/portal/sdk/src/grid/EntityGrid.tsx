@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { RichRow, RichCell } from "./model";
 import type { ColumnLayout, GridLabels, GridRefusal, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
-import { DEFAULT_LABELS, readable } from "./useEntityGrid";
+import { DEFAULT_LABELS, readableName } from "./useEntityGrid";
 import { targetName } from "./cells";
 import type { FilterColumn } from "./filters";
 import type { GridMapLabels } from "./GridMap";
@@ -170,6 +170,12 @@ export interface EntityGridProps extends UseEntityGridOptions {
   publicView?: boolean;
 }
 
+/** The labels the grid shows its columns by: the reader's own over the config's. */
+function labelsOf(props: EntityGridProps): Record<string, string> {
+  const own = Object.fromEntries(props.config.columns.flatMap((column) => (column.label ? [[column.attr, column.label]] : [])));
+  return { ...own, ...props.layout?.labels };
+}
+
 /** One target opened from a relationship cell: the step of the breadcrumb back (G-R2GRID2-017). */
 interface DrillStep {
   urn: string;
@@ -249,6 +255,10 @@ export function EntityGrid(props: EntityGridProps): React.JSX.Element {
           locale={props.locale}
           termHref={props.termHref}
           config={{ ...props.config, type: top.type, columns: [], mode: "view", filters: {} }}
+          // A target of the grid's own type (an area's parent area) reads under the grid's labels,
+          // never its raw attribute names (T-7112). ponytail: another type's labels are the host's
+          // model's; a host prop naming them per type when one asks.
+          layout={top.type === outerType ? { labels: labelsOf(props) } : undefined}
           query={{ ids: [top.urn] }}
           filterRow={false}
           queryBox={false}
@@ -321,7 +331,7 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
   // A phone's table has no filter row (T-6748): its area picker stands here, by the place's label (T-7072).
   const places = asText ? [] : shared.filter((each) => each.place);
   if (!props.compact || (!oneType && places.length === 0 && !shared.some((each) => each.value !== ""))) return null;
-  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readable(attr);
+  const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   return (
     <div className="jc-grid-typeline">
       {oneType ? (

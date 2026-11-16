@@ -4,7 +4,7 @@ import { columnKind } from "./cells";
 import type { ColumnKind } from "./cells";
 import { columnValues } from "./columnValues";
 import type { FilterColumn } from "./filters";
-import { readable } from "./readableName";
+import { readableName } from "./readableName";
 import type { ValueRule } from "./rules";
 import { MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, NAME_COLUMN } from "./useEntityGrid";
 import type { ColumnLayout, EntityGrid as EntityGridApi, MetaKey, UseEntityGridOptions, VisibleColumn } from "./useEntityGrid";
@@ -100,7 +100,7 @@ export function useColumnControls(
     tableRef.current?.querySelector<HTMLElement>(`th[data-col-attr="${shownAgain.replace(/["\\]/g, "\\$&")}"] .jc-grid-meta-btn`)?.focus();
   }, [shownAgain]);
   const hiddenLabel = (attr: string): string =>
-    layout.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readable(attr);
+    layout.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   const renameColumn = useCallback((attr: string, text: string | undefined) => {
     const { [attr]: _gone, ...rest } = layout.labels ?? {};
     setLayout({ ...layout, labels: text === undefined ? rest : { ...rest, [attr]: text } });

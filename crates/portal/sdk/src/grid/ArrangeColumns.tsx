@@ -8,7 +8,7 @@
 import React, { useState } from "react";
 import { ArrangePanel } from "./ArrangePanel";
 import type { ArrangeItem } from "./ArrangePanel";
-import { readable } from "./readableName";
+import { readableName } from "./readableName";
 import { NAME_COLUMN } from "./useEntityGrid";
 import type { GridLabels, MetaKey } from "./useEntityGrid";
 import type { GridView } from "./useGridView";
@@ -26,7 +26,7 @@ export function ArrangeColumns({ view }: { view: GridView }): React.JSX.Element 
   const { options, grid, labels, columns, order, firstMovable, layout, setLayout, ownHidden, hideColumn, showColumns, renameColumn, baseLabel, handleMetaCheck } = view;
   const [metaFor, setMetaFor] = useState<string>("");
   if (order.length === 0) return null;
-  const modelLabel = (attr: string): string => options.config.columns.find((column) => column.attr === attr)?.label ?? readable(attr);
+  const modelLabel = (attr: string): string => options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   const shownLabel = (attr: string): string => {
     const col = columns.find((each) => each.attr === attr && each.meta === null);
     return layout.labels?.[attr] ?? (col ? baseLabel(col) : modelLabel(attr));

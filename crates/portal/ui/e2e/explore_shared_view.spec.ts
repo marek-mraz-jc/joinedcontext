@@ -145,4 +145,26 @@ for (const width of [1440, 400]) {
     await expect(page.getByRole("button", { name: "Back to the entity you came from" })).toHaveCount(0);
     await page.screenshot({ path: `${SHOTS}/relationship-back-${width}.png`, fullPage: true });
   });
+
+  // T-7112: the signed-in member (demo.viewer, a member of helsinki) reads one dock whole. A field the
+  // phone's table left out reads in words, and the history window is one control with room per choice.
+  test(`a member reads a dock's fields and its history window at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stub(page);
+    await page.goto(ADDRESS);
+    await page.getByRole("button", { name: "Open: Dock 2" }).first().click();
+    const dock = page.getByRole("dialog", { name: "Details: Dock 2" });
+    await expect(dock).toBeVisible();
+    // Every dock names the same station: on a phone it leaves the table, and the detail still labels it.
+    if (width < 640) await expect(dock.getByText("Ref station", { exact: true })).toBeVisible();
+    await page.screenshot({ path: `${SHOTS}/member-fields-${width}.png`, fullPage: true });
+    await dock.getByRole("tab", { name: "History" }).click();
+    const windows = dock.locator(".jc-grid-history-windows");
+    await expect(windows).toBeVisible();
+    // A segmented control: the radios themselves are hidden, each choice a padded label.
+    await expect(windows.getByRole("radio", { name: "Last day" })).toBeChecked();
+    expect(await windows.locator("label").first().evaluate((label) => parseFloat(getComputedStyle(label).paddingLeft))).toBeGreaterThan(4);
+    expect(await axeViolations(page)).toEqual([]);
+    await page.screenshot({ path: `${SHOTS}/member-history-${width}.png`, fullPage: true });
+  });
 }
