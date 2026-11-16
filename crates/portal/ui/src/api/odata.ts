@@ -98,6 +98,30 @@ export function call<F extends keyof Functions & string>(
   return refusedAs(client.call(name, project, params)) as Promise<F extends keyof Answers ? Answers[F] : unknown>;
 }
 
+/** Each Administration page's reading of `jc_organization_read` and its answer (T-7098). */
+interface Readings {
+  setup: Answer<"get_setup">;
+  health: Answer<"get_health">;
+  limits: Answer<"get_limits">;
+  brokers: Answer<"list_brokers">;
+  agents: Answer<"list_agents">;
+  costs: Answer<"get_costs">;
+  addresses: Answer<"list_addresses">;
+  dataAccess: Answer<"get_data_access">;
+  widgetOptions: Answer<"list_options">;
+  personReadable: Answer<"get_person_readable">;
+}
+
+type ReadingParams = Omit<Functions["jc_organization_read"], "aspect">;
+
+/**
+ * One reading of the Organization's Administration pages, bound to its `Organization` singleton,
+ * e.g. `organizationReading("costs", { month: "2026-09" })`: the same handler serves its REST door.
+ */
+export function organizationReading<A extends keyof Readings>(aspect: A, params: ReadingParams = {}): Promise<Readings[A]> {
+  return refusedAs(client.organizationCall("jc_organization_read", { ...params, aspect })) as Promise<Readings[A]>;
+}
+
 /**
  * A bound action on `bound` (`projects('air')`, an entity, a Change), with `ifMatch` the entity's
  * `@odata.etag` where the action changes it.

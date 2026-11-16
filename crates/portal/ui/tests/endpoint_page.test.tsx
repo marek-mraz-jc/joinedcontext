@@ -25,7 +25,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
-import { odataCall, odataValue } from "./odata";
+import { asOData, odataCall, odataValue, readingAsRest } from "./odata";
 
 const PROJECT = "banskabystrica";
 const NAME = "ovzdusie-public";
@@ -178,8 +178,8 @@ function renderPage({
       return json({ admitted: true });
     }
     // Who reads the Endpoint is the Organization administrators' (T-6412): this caller is refused.
-    if (path === "/api/v1/organization/data-access") {
-      return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403);
+    if (readingAsRest(url)?.pathname === "/api/v1/organization/data-access") {
+      return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403).then(asOData);
     }
     if (path.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`)) {
       if (counts === null) {

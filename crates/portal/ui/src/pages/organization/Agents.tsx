@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, unwrap } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import i18n from "../../i18n";
 import { isChange, ORG_NAMESPACE } from "../../api/manifest";
 import { AccountAccess } from "../access/AccountAccess";
@@ -50,7 +51,7 @@ function useAgents() {
   return useQuery({
     queryKey: ["organizationAgents"],
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/agents")),
+    queryFn: async () => organizationReading("agents"),
   });
 }
 

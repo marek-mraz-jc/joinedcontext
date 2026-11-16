@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, unwrap, reasonOf } from "../../api/client";
+import { organizationReading } from "../../api/odata";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
@@ -53,7 +54,7 @@ export function Costs(): JSX.Element {
   const costs = useQuery({
     queryKey: ["organizationCosts", month],
     enabled: administers && month !== "",
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/costs", { params: { query: { month } } })),
+    queryFn: async () => organizationReading("costs", { month }),
   });
 
   if (permissions.isLoading) {
