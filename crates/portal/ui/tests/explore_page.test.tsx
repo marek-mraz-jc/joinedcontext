@@ -399,7 +399,7 @@ describe("the row detail of the explorer (T-5619)", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByRole("tab", { name: en.entityGrid.rowFields })).toHaveAttribute("aria-selected", "true");
     expect(within(dialog).getByRole("tab", { name: en.entityGrid.history })).toBeInTheDocument();
-    expect(within(dialog).getByText("availableBikeNumber")).toBeInTheDocument();
+    expect(within(dialog).getByText("Available bike number")).toBeInTheDocument();
     expect(dialog.textContent).not.toContain("@context");
     expect(dialog.textContent).not.toContain(ROW.id);
     expect(document.querySelector("pre")).toBeNull();
