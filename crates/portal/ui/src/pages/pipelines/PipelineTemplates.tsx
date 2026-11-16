@@ -8,7 +8,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap, reasonOf } from "../../api/client";
+import { queryKeys, reasonOf } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { Manifest } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
 import { Alert, Button, Field, Input } from "../../components/ui";
@@ -36,15 +37,10 @@ export function TemplateList({ project, onUse }: { project: string; onUse: (form
   const templates = useQuery({
     queryKey: key(project),
     queryFn: async () =>
-      unwrap(await api.GET("/api/v1/projects/{project}/pipelinetemplates", { params: { path: { project } } })),
+      (await door("portal_pipeline_template_list", {}, project)) as RestAnswer<"list_pipeline_templates">,
   });
   const remove = useMutation({
-    mutationFn: async (id: string) =>
-      unwrap(
-        await api.DELETE("/api/v1/projects/{project}/pipelinetemplates/{id}", {
-          params: { path: { project, id } },
-        }),
-      ),
+    mutationFn: (id: string) => doorAction("portal_pipeline_template_delete", { id }, project),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: key(project) }),
   });
   const items = templates.data?.items ?? [];
@@ -97,13 +93,11 @@ export function SaveAsTemplate({ project, manifest }: { project: string; manifes
   const [title, setTitle] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: async (name: string) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/pipelinetemplates", {
-          params: { path: { project } },
-          // A free-form object in the published schema, typed as `Record<string, never>` there.
-          body: { title: name, manifest: manifest() as unknown as Record<string, never> },
-        }),
-      ),
+      (await doorAction(
+        "portal_pipeline_template_create",
+        { body: { title: name, manifest: manifest() } },
+        project,
+      )) as RestAnswer<"create_pipeline_template">,
     onSuccess: () => {
       setTitle(null);
       void queryClient.invalidateQueries({ queryKey: key(project) });

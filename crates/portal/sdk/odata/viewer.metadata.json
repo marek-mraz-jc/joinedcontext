@@ -2729,6 +2729,27 @@
         }
       }
     ],
+    "portal_flow_map": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_grafana_builder": [
       {
         "$IsBound": true,
@@ -4106,6 +4127,27 @@
         }
       }
     ],
+    "portal_pipeline_bento": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "pipeline",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_pipeline_health": [
       {
         "$IsBound": true,
@@ -4423,6 +4465,64 @@
             "$Name": "pipeline",
             "$Nullable": false,
             "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_pipeline_template_create": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_pipeline_template_delete": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_pipeline_template_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
           }
         ],
         "$ReturnType": {
@@ -4959,6 +5059,32 @@
           },
           {
             "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_type_attributes": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "type",
             "$Nullable": false,
             "$Type": "Edm.String"
           }

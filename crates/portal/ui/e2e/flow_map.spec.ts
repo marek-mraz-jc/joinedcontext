@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page, TestInfo } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
 
 // T-4862: the data flow map of helsinki, from the HSL MQTT feed and a platform broker through the
 // pipelines into the spaces, and on through a derived and two KPI pipelines. `vite preview` has
@@ -90,6 +91,8 @@ const datasource = (name: string) => ({
 });
 
 async function stubApi(page: Page, map: unknown = MAP): Promise<void> {
+  // The page reads the map through the service's portal_flow_map door (T-7120).
+  manifestReadsAsRest(page);
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const json = (body: unknown, status = 200) =>
@@ -178,12 +181,14 @@ test.describe("data flow map", () => {
     for (const width of [1440, 400]) {
       await page.setViewportSize({ width, height: 800 });
       await stubApi(page);
-      await page.route("**/flow-map*", (route) =>
-        route.fulfill({
-          status: 503,
-          contentType: "application/problem+json",
-          body: JSON.stringify({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "The mirror is not loaded yet." }),
-        }),
+      await page.route("**/api/v1/**", (route) =>
+        new URL(route.request().url()).pathname.endsWith("/flow-map")
+          ? route.fulfill({
+              status: 503,
+              contentType: "application/problem+json",
+              body: JSON.stringify({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "The mirror is not loaded yet." }),
+            })
+          : route.fallback(),
       );
       await page.goto(`/projects/${PROJECT}/pipelines?view=map&lang=en`);
       await expect(page.getByRole("alert")).toContainText("The mirror is not loaded yet.");

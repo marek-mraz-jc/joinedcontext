@@ -3158,10 +3158,11 @@ async fn door_answer(state: &AppState, response: Response) -> Response {
         status => status,
     };
     let cache = response.headers().get(header::CACHE_CONTROL).cloned();
+    let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
     let bytes = axum::body::to_bytes(response.into_body(), MAX_ANSWER)
         .await
         .unwrap_or_default();
-    let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    let value = door_value(content_type.as_ref(), &bytes);
     let body = json!({
         "@odata.context": format!("{}$metadata#Edm.Untyped", service_root(state)),
         "value": value,
@@ -3171,6 +3172,19 @@ async fn door_answer(state: &AppState, response: Response) -> Response {
         answer.headers_mut().insert(header::CACHE_CONTROL, cache);
     }
     answer
+}
+
+/// A REST answer's body as the door's `value`: its JSON, or the text of a file it answers (a
+/// pipeline's bento.yaml) as a JSON string (T-7120).
+fn door_value(content_type: Option<&HeaderValue>, bytes: &[u8]) -> Value {
+    let text = content_type
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("text/"));
+    if text {
+        Value::String(String::from_utf8_lossy(bytes).into_owned())
+    } else {
+        serde_json::from_slice(bytes).unwrap_or(Value::Null)
+    }
 }
 
 /// The most a Portal door's REST answer may weigh.
@@ -3263,6 +3277,18 @@ mod tests {
             Some("$top=1"),
             &none
         ));
+    }
+
+    #[test]
+    fn a_door_answers_a_file_as_its_text() {
+        let yaml = HeaderValue::from_static("text/yaml; charset=utf-8");
+        let json = HeaderValue::from_static("application/json");
+        assert_eq!(
+            door_value(Some(&yaml), b"input:\n  stdin: {}\n"),
+            Value::String("input:\n  stdin: {}\n".into())
+        );
+        assert_eq!(door_value(Some(&json), br#"{"a":1}"#), json!({"a": 1}));
+        assert_eq!(door_value(None, b""), Value::Null);
     }
 
     #[test]

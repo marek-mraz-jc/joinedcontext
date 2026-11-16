@@ -8,6 +8,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import type { Manifest } from "../src/api/manifest";
 import { SaveAsTemplate, TemplateList, formOfTemplate } from "../src/pages/pipelines/PipelineTemplates";
+import { doorsAsRest } from "./odata";
 
 // T-3976: a project's own templates in the gallery, saved from the editor; using one fills the
 // form with the shape and leaves the source and the target to pick.
@@ -41,7 +42,8 @@ function stub(items: unknown[]) {
       if (request.method === "DELETE") return new Response(null, { status: 204 });
       return new Response(JSON.stringify({ items }), { status: 200 });
     }),
-  );
+  );  // The page calls the service's portal_pipeline_template_* doors; each reaches its REST door here.
+  doorsAsRest();
 }
 
 function wrap(node: ReactNode) {

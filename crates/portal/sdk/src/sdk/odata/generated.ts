@@ -948,6 +948,7 @@ export interface Functions {
   portal_endpoint_quality: { endpoint: string };
   portal_erasure_get: { space: string; id: string };
   portal_erasure_list: { space: string };
+  portal_flow_map: { space?: string };
   portal_grafana_builder: Record<string, never>;
   portal_grafana_builder_get: { uid: string };
   portal_grafana_dashboard: { uid: string };
@@ -985,6 +986,7 @@ export interface Functions {
   portal_person_names: { ids?: string };
   portal_pipeline_access_request_endpoints: { pipeline: string };
   portal_pipeline_access_request_list: { pipeline: string };
+  portal_pipeline_bento: { pipeline: string };
   portal_pipeline_health: Record<string, never>;
   portal_pipeline_latest_runs: Record<string, never>;
   portal_pipeline_metrics: { pipeline: string };
@@ -995,6 +997,7 @@ export interface Functions {
   portal_pipeline_samples: { pipeline: string };
   portal_pipeline_source_deletes: { pipeline: string };
   portal_pipeline_stats: { pipeline: string };
+  portal_pipeline_template_list: Record<string, never>;
   portal_portal_datasets: { name: string; offset?: number; limit?: number };
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
@@ -1005,6 +1008,7 @@ export interface Functions {
   portal_space_source_removals: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
   portal_trash_list: { space: string };
+  portal_type_attributes: { space: string; type: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
 }
 
@@ -1067,6 +1071,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_endpoint_quality: ["Project"],
   portal_erasure_get: ["Project"],
   portal_erasure_list: ["Project"],
+  portal_flow_map: ["Project"],
   portal_grafana_builder: ["Project"],
   portal_grafana_builder_get: ["Project"],
   portal_grafana_dashboard: ["Project"],
@@ -1104,6 +1109,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_person_names: ["Organization"],
   portal_pipeline_access_request_endpoints: ["Project"],
   portal_pipeline_access_request_list: ["Project"],
+  portal_pipeline_bento: ["Project"],
   portal_pipeline_health: ["Project"],
   portal_pipeline_latest_runs: ["Project"],
   portal_pipeline_metrics: ["Project"],
@@ -1114,6 +1120,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_pipeline_samples: ["Project"],
   portal_pipeline_source_deletes: ["Project"],
   portal_pipeline_stats: ["Project"],
+  portal_pipeline_template_list: ["Project"],
   portal_portal_datasets: ["Organization"],
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
@@ -1124,6 +1131,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_space_source_removals: ["Project"],
   portal_space_temporal_audit: ["Project"],
   portal_trash_list: ["Project"],
+  portal_type_attributes: ["Project"],
   portal_visualization_template: ["Organization"],
 };
 
@@ -1224,6 +1232,8 @@ export interface Actions {
   portal_pipeline_run_start: { pipeline: string };
   portal_pipeline_source_check: { pipeline: string };
   portal_pipeline_source_decide: { pipeline: string; body?: unknown };
+  portal_pipeline_template_create: { body?: unknown };
+  portal_pipeline_template_delete: { id: string };
   portal_portal_source_run: { name: string; source: string };
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
@@ -1340,6 +1350,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_run_start: ["Project"],
   portal_pipeline_source_check: ["Project"],
   portal_pipeline_source_decide: ["Project"],
+  portal_pipeline_template_create: ["Project"],
+  portal_pipeline_template_delete: ["Project"],
   portal_portal_source_run: ["Organization"],
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
