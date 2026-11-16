@@ -249,18 +249,19 @@ describe("the data section of an endpoint", () => {
   it("opens a link's search in the search box and keeps it out of the link's query (T-7112)", async () => {
     const user = userEvent.setup();
     const links: DataLink[] = [];
-    // As jc-dev's street lights: a text name and a place. The place is no text to search, which the
-    // grid only knows once a row arrived: a search asked before it put `location~=` in the query and
-    // matched nothing.
+    // As jc-dev's street lights: a name in languages, a provider and a place. What each holds the grid
+    // knows once a row arrived: a search asked before it put `location~=` and `name~=` (not
+    // `name[*]~=`) in the query, matched nothing, and the empty answer never taught the grid.
     const light = {
       id: "urn:ngsi-ld:Streetlight:zilina:032",
       type: "Streetlight",
-      name: { type: "Property", value: "Street light 032.2010" },
+      name: { type: "LanguageProperty", languageMap: { sk: "Svetlo 032.2010" } },
+      dataProvider: { type: "Property", value: "Mesto Žilina" },
       location: { type: "GeoProperty", value: { type: "Point", coordinates: [18.71, 49.2] } },
     };
     const lights = (url: URL) => {
-      if (url.pathname.endsWith("/schema/v3/json-schema")) return json({ $defs: { Streetlight: { properties: { name: {}, location: {} } } } });
-      if (url.pathname.endsWith("/access/attributes")) return json({ type: "Streetlight", attributes: ["name", "location"].map((name) => ({ name, read: true, write: false, delete: false, reason: "not_in_grant" })) });
+      if (url.pathname.endsWith("/schema/v3/json-schema")) return json({ $defs: { Streetlight: { properties: { name: {}, dataProvider: { type: "string" }, location: {} } } } });
+      if (url.pathname.endsWith("/access/attributes")) return json({ type: "Streetlight", attributes: ["name", "dataProvider", "location"].map((name) => ({ name, read: true, write: false, delete: false, reason: "not_in_grant" })) });
       if (url.pathname.includes("/ngsi-ld/v1/entities")) return new Response(JSON.stringify([light]), { status: 200, headers: { "Content-Type": "application/json", "NGSILD-Results-Count": "1" } });
       return answer(url);
     };
@@ -268,8 +269,9 @@ describe("the data section of an endpoint", () => {
     const box = await screen.findByRole("searchbox", { name: en.spaces.toolbar.search });
     expect(box).toHaveValue("032");
     // The rows are the searched ones; the place never joins the search, and the link carries the words.
-    await waitFor(() => expect(entityReads().some((url) => url.searchParams.get("q") === 'name~="(?i)032"')).toBe(true));
-    expect(entityReads().some((url) => (url.searchParams.get("q") ?? "").includes("location"))).toBe(false);
+    const asked = () => entityReads().flatMap((url) => url.searchParams.get("q") ?? []);
+    await waitFor(() => expect(asked()).toContain('(name[*]~="(?i)032"|dataProvider~="(?i)032")'));
+    expect(asked().every((q) => q.includes('name[*]~="(?i)032"') && !q.includes("location"))).toBe(true);
     await waitFor(() => expect(links.at(-1)).toEqual({ type: "Streetlight", search: "032" }));
     // A new word replaces it in the link, once typing settles.
     await user.clear(box);

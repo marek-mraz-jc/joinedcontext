@@ -101,9 +101,11 @@ describe("relationship targets (G-R2GRID2-017)", () => {
 
   it("calls a column text only as a guess until a row holds it (T-7112)", async () => {
     const reported: FilterColumn[][] = [];
-    const config = gridOf("Area", [{ attr: "areaCode", label: "Area code" }, { attr: "location", label: "Location" }]);
+    const config = parseGridConfig({ source: { kind: "fixture", name: "t" }, type: "Area", columns: [{ attr: "areaCode", label: "Area code", format: "text" }, { attr: "location", label: "Location" }], pageSize: 50 }).config!;
     const { unmount } = render(<EntityGrid config={config} source={fixtureSource([])} onFilterColumns={(next) => reported.push(next)} />);
     await waitFor(() => expect(reported.at(-1)?.find((column) => column.attr === "location")?.guessed).toBe(true));
+    // A format says text, not whether the text is a language map: before any row that is a guess too.
+    expect(reported.at(-1)?.find((column) => column.attr === "areaCode")?.guessed).toBe(true);
     unmount();
     reported.length = 0;
     const placed = [{ id: "urn:ngsi-ld:Area:sk", type: "Area", areaCode: prop("SK"), location: { type: "GeoProperty", value: { type: "Point", coordinates: [19.7, 48.7] } } }];

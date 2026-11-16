@@ -264,9 +264,10 @@ export interface FilterColumn {
   /** A `date` column whose values carry a time: its filter picks a date and a time. */
   datetime?: boolean;
   /**
-   * Text only as a guess: no format names the kind and no row read so far held the attribute. The
+   * Text only as a guess: no row read so far, or no format names the kind and no row held it. The
    * search leaves it out (T-7112): a link's search asked before the first rows put a regular
-   * expression over `location`, matched nothing, and the empty answer never taught the grid its kind.
+   * expression over `location` and `name` (a language map), matched nothing, and the empty answer
+   * never taught the grid either kind.
    */
   guessed?: boolean;
 }
