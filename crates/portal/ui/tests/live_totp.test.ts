@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 import { answerOtp, totp, unusedCode } from "../e2e/live/totp";
 
 const RFC_SEED = "12345678901234567890123456789012";
+/** The RFC 6238 SHA-1 key "12345678901234567890" in base32, as an authenticator app is shown it. */
+const RFC_SHA1_BASE32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
 /** A Keycloak page that shows the TOTP form or not, and records what was typed and clicked. */
 function fakePage(otpShown: boolean) {
@@ -30,6 +32,21 @@ describe("totp", () => {
     // Appendix B: T = 59 s gives 46119246 and T = 1111111109 s 68084774; six digits keep the tail.
     expect(totp(RFC_SEED, Math.floor(59 / 30))).toBe("119246");
     expect(totp(RFC_SEED, Math.floor(1111111109 / 30))).toBe("084774");
+  });
+
+  it("matches the RFC 6238 SHA-1 vectors for a base32 seed, as kaisatsu enrols it", () => {
+    // Appendix B: T = 59 s gives 94287082, T = 1111111109 s 07081804, T = 2000000000 s 69279037.
+    expect(totp(RFC_SHA1_BASE32, Math.floor(59 / 30))).toBe("287082");
+    expect(totp(RFC_SHA1_BASE32, Math.floor(1111111109 / 30))).toBe("081804");
+    expect(totp(RFC_SHA1_BASE32, Math.floor(2000000000 / 30))).toBe("279037");
+  });
+
+  it("reads a base32 seed grouped or padded, and keeps a mixed-case seed the realm's raw form", () => {
+    const step = Math.floor(59 / 30);
+    expect(totp("GEZD GNBV GY3T QOJQ GEZD GNBV GY3T QOJQ", step)).toBe("287082");
+    // A Keycloak seed (random letters of both cases) is never read as base32.
+    expect(totp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJq", step)).not.toBe(totp(RFC_SHA1_BASE32, step));
+    expect(totp("GEZDGNBVGY3TQOJQ====", step)).toBe(totp("GEZDGNBVGY3TQOJQ", step));
   });
 });
 
