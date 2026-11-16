@@ -1040,6 +1040,7 @@ export interface Functions {
   portal_mqtt_watch: { broker: string; account?: string; since?: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
+  portal_organization_address_list: Record<string, never>;
   portal_organization_change_get: { id: string };
   portal_organization_change_history: { page?: number; kind?: string; name?: string };
   portal_organization_change_list: Record<string, never>;
@@ -1204,6 +1205,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_mqtt_watch: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
+  portal_organization_address_list: ["Organization"],
   portal_organization_change_get: ["Organization"],
   portal_organization_change_history: ["Organization"],
   portal_organization_change_list: ["Organization"],
