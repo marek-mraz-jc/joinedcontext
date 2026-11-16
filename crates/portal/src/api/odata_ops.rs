@@ -1,6 +1,6 @@
 //! The registry's operations on the Organization's OData service (API/13 §2b, T-6815): every
-//! operation that is no entity set is a function or an action bound to a project, generated from
-//! the registry, so no operation has a handler of its own here.
+//! operation that is no entity set is a function or an action bound to a project (the people's
+//! to the `Organization`, [`ORGANIZATION_BOUND`]), generated from the registry, so no operation has a handler of its own here.
 //!
 //! - A read-only operation with arguments is a bound function, called with `GET`, and so is an
 //!   entity read whose set has not landed yet ([`SERVED_AS_SETS`]):
@@ -26,6 +26,7 @@ use crate::api::odata::{edm_type, identifier, NAMESPACE};
 use crate::api::ops::{caller_of, respond};
 use crate::auth::session::{CurrentUser, Front};
 use crate::ops::{self, Operation};
+use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
 
 /// API/13 §2b, entity set, singleton or navigation: read as sets, never called here.
@@ -184,6 +185,29 @@ pub const OTHER_ACTIONS: [&str; 33] = [
     "jc_data_write",
 ];
 
+/// The operations on the Organization's people (API/13 §2a): bound to the `Organization`
+/// singleton, since a person belongs to the Organization and to no project (T-7097), and
+/// offered on the installation's Organization only, whose realm they run in.
+pub const ORGANIZATION_BOUND: [&str; 7] = [
+    "jc_person_list",
+    "jc_person_get",
+    "jc_person_create",
+    "jc_person_edit",
+    "jc_person_disable",
+    "jc_person_enable",
+    "jc_person_sign_out",
+];
+
+/// The entity type the operation `name` is bound to: the `Organization` or a `Project`.
+fn binding(name: &str) -> String {
+    let ty = if ORGANIZATION_BOUND.contains(&name) {
+        "Organization"
+    } else {
+        "Project"
+    };
+    format!("{NAMESPACE}.{ty}")
+}
+
 /// How a registry operation is called on a project.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Form {
@@ -210,12 +234,15 @@ pub fn form(name: &str) -> Option<Form> {
 }
 
 /// The operations the caller may run in a project of `org` they read: what their `$metadata`
-/// offers, by [`ops::listing`] (the profile and the route's cheap check, AG-63).
+/// offers, by [`ops::listing`] (the profile and the route's cheap check, AG-63). The
+/// [`ORGANIZATION_BOUND`] ones only where `people` (the installation's Organization), each by
+/// its REST door's own check: read on Person for a read, [`ops::may_try`] for a write.
 pub(crate) fn offered(
     state: &AppState,
     user: &CurrentUser,
     front: Front,
     projects: &[String],
+    people: bool,
 ) -> Vec<&'static Operation> {
     let caller = caller_of(user.clone(), front);
     let mut names = std::collections::BTreeSet::new();
@@ -226,10 +253,24 @@ pub(crate) fn offered(
                 .map(|summary| summary.name),
         );
     }
+    let identity = &user.0.identity;
+    let organization_offers = |op: &Operation| {
+        people
+            && caller.may_run(op).is_ok()
+            && ops::may_try(op, identity, state, ORG_NAMESPACE, None).is_ok()
+            && (!op.annotations.read_only_hint
+                || crate::api::people::allow(state, identity, jc_core::kinds::Verb::Read).is_ok())
+    };
     ops::registry()
         .iter()
         .filter(|op| form(op.name).is_some() && identifier(op.name))
-        .filter(|op| names.contains(op.name))
+        .filter(|op| {
+            if ORGANIZATION_BOUND.contains(&op.name) {
+                organization_offers(op)
+            } else {
+                names.contains(op.name)
+            }
+        })
         .collect()
 }
 
@@ -268,8 +309,9 @@ pub(crate) fn xml(offered: &[&'static Operation]) -> String {
             None => continue,
         };
         out.push_str(&format!(
-            r#"<{element} Name="{}" IsBound="true"><Parameter Name="bindingParameter" Type="{NAMESPACE}.Project" Nullable="false"/>"#,
-            op.name
+            r#"<{element} Name="{}" IsBound="true"><Parameter Name="bindingParameter" Type="{}" Nullable="false"/>"#,
+            op.name,
+            binding(op.name)
         ));
         for (member, ty, required) in parameters_of(op) {
             let nullable = if required { r#" Nullable="false""# } else { "" };
@@ -292,7 +334,7 @@ pub(crate) fn json(offered: &[&'static Operation]) -> Vec<(&'static str, Value)>
                 _ => "Action",
             };
             let mut params = vec![json!({ "$Name": "bindingParameter",
-                "$Type": format!("{NAMESPACE}.Project"), "$Nullable": false })];
+                "$Type": binding(op.name), "$Nullable": false })];
             params.extend(parameters_of(op).into_iter().map(|(member, ty, required)| {
                 json!({ "$Name": member, "$Type": ty, "$Nullable": !required })
             }));
