@@ -6,10 +6,10 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
 import i18n from "../../i18n";
 import type { components } from "../../api/schema";
-import { organizationReading } from "../../api/odata";
+import { act, organizationReading, projectBound } from "../../api/odata";
 import {
   Alert,
   Badge,
@@ -475,11 +475,7 @@ function StopRun({ run }: { run: ActivityRun }): JSX.Element {
   const [open, setOpen] = useState(false);
   const stop = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/agent-runs/{id}/cancel", {
-          params: { path: { project: run.project, id: run.id } },
-        }),
-      ),
+      act("jc_run_cancel", projectBound(run.project), { id: run.id }),
     onSuccess: async () => {
       setOpen(false);
       await Promise.all([
