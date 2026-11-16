@@ -72,7 +72,7 @@ function McpDecision<Q extends Asked>({
               tone={answered === "accept" ? "success" : "info"}
               title={t(answered === "accept" ? "mcpElicitation.accepted" : "mcpElicitation.declined")}
             >
-              {t("mcpElicitation.backToClient")}
+              {t(answered === "accept" ? "mcpElicitation.backToClient" : "mcpElicitation.backToClientDeclined")}
             </Alert>
           ) : (
             <EmptyState
@@ -134,7 +134,7 @@ function McpDecision<Q extends Asked>({
           tone={asked.decision === "accept" ? "success" : "info"}
           title={t(asked.decision === "accept" ? "mcpElicitation.accepted" : "mcpElicitation.declined")}
         >
-          {t("mcpElicitation.backToClient")}
+          {t(asked.decision === "accept" ? "mcpElicitation.backToClient" : "mcpElicitation.backToClientDeclined")}
         </Alert>
       ) : null}
       {decide.isError ? (

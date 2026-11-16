@@ -80,8 +80,12 @@ describe("the MCP question page", () => {
     await expectNoViolations(container);
     await userEvent.click(screen.getByRole("button", { name: en.mcpElicitation.accept }));
     expect(await screen.findByText(en.mcpElicitation.accepted)).toBeInTheDocument();
+    expect(screen.getByText(en.mcpElicitation.backToClient)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: en.mcpElicitation.decline }));
     expect(await screen.findByText(en.mcpElicitation.declined)).toBeInTheDocument();
+    // A decline says the call does not run, never the accepted words (T-7132 UI judge).
+    expect(screen.getByText(en.mcpElicitation.backToClientDeclined)).toBeInTheDocument();
+    expect(screen.queryByText(en.mcpElicitation.backToClient)).toBeNull();
     expect(posted).toEqual([{ decision: "accept" }, { decision: "decline" }]);
   });
 
