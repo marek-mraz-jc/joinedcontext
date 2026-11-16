@@ -57,11 +57,13 @@ export async function journeyMarkerOnPortalOnly(context: BrowserContext, portalH
 
 /** The two demo people of the Load journey: one proposes, the other approves (CC-34). */
 // The two approvers hold the realm role `mfa-required` (deployment T-5120): their sign-in asks for a
-// TOTP code, computed from the seed in PORTAL_TOTP / APPROVER_TOTP (e2e/live/totp.ts).
-export const STEWARD = { user: "demo.steward@hel.fi", password: process.env.PORTAL_PASSWORD ?? "", totp: process.env.PORTAL_TOTP ?? "" };
+// TOTP code, computed from the seed in PORTAL_TOTP / APPROVER_TOTP (e2e/live/totp.ts). PORTAL_USER and
+// VIEWER_USER (+ VIEWER_TOTP) sign in other people in those parts, e.g. jc-dev's walker-admin and
+// walker-viewer (Secret walker-personas).
+export const STEWARD = { user: process.env.PORTAL_USER || "demo.steward@hel.fi", password: process.env.PORTAL_PASSWORD ?? "", totp: process.env.PORTAL_TOTP ?? "" };
 export const APPROVER = { user: "demo.approver@hel.fi", password: process.env.APPROVER_PASSWORD ?? "", totp: process.env.APPROVER_TOTP ?? "" };
 /** A person who may read the projects and change nothing. */
-export const VIEWER = { user: "demo.viewer@hel.fi", password: process.env.VIEWER_PASSWORD ?? "" };
+export const VIEWER = { user: process.env.VIEWER_USER || "demo.viewer@hel.fi", password: process.env.VIEWER_PASSWORD ?? "", totp: process.env.VIEWER_TOTP ?? "" };
 /**
  * The person who proposes and decides nothing (T-2231): bound to `editor` alone, so their own
  * change is the plain CC-34 refusal rather than the PF-58 administrator exception the steward

@@ -2,7 +2,8 @@
  * The second factor of a demo person who must sign in with TOTP (deployment T-5120: holders of the
  * realm role `mfa-required`, so demo.steward and demo.approver). The seed is the `totp` key of
  * Secret keycloak-user-<name>, handed in by environment (PORTAL_TOTP, APPROVER_TOTP) and never
- * logged.
+ * logged. A person who enrolled an authenticator app with kaisatsu (jc-dev's walker personas,
+ * Secret walker-personas) hands in the base32 key its set-up page showed.
  */
 import { createHmac } from "node:crypto";
 import { closeSync, openSync } from "node:fs";
@@ -12,11 +13,28 @@ import type { Page } from "@playwright/test";
 
 const STEP_S = 30;
 
-/** RFC 6238 over the seed's UTF-8 bytes with HMAC-SHA256, 6 digits: the realm's OTP policy. */
+/** An authenticator-app key: RFC 4648 base32, upper case, maybe grouped by spaces and padded. */
+const BASE32 = /^[A-Z2-7]+=*$/;
+
+function base32Bytes(key: string): Buffer {
+  let bits = "";
+  for (const c of key.replace(/=+$/, "")) bits += "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(c).toString(2).padStart(5, "0");
+  return Buffer.from(bits.match(/.{8}/g)?.map((byte) => parseInt(byte, 2)) ?? []);
+}
+
+/**
+ * RFC 6238, 6 digits, 30 s. A base32 key (kaisatsu's enrolment: "Algorithm: SHA1") is decoded
+ * and signed with HMAC-SHA1; any other seed is the Keycloak demo realm's: its UTF-8 bytes with
+ * HMAC-SHA256 (otpPolicyAlgorithm HmacSHA256). Keycloak's seeds mix both cases, so they never
+ * read as base32.
+ */
 export function totp(seed: string, step: number): string {
   const counter = Buffer.alloc(8);
   counter.writeBigUInt64BE(BigInt(step));
-  const mac = createHmac("sha256", Buffer.from(seed, "utf8")).update(counter).digest();
+  const key = seed.replace(/\s+/g, "");
+  const mac = BASE32.test(key)
+    ? createHmac("sha1", base32Bytes(key)).update(counter).digest()
+    : createHmac("sha256", Buffer.from(seed, "utf8")).update(counter).digest();
   const offset = mac[mac.length - 1] & 0x0f;
   return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
 }
