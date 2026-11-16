@@ -1304,7 +1304,8 @@
         "Button": 1
       },
       "tests": [
-        "context_sources_ui.test.tsx"
+        "context_sources_ui.test.tsx",
+        "datasource_presets.test.tsx"
       ]
     },
     "src/pages/datasources/DataSourcesPage.tsx": {
@@ -1318,6 +1319,14 @@
         "page_data_sources_page.test.tsx",
         "raw_values_on_pages.test.tsx",
         "runner_input_schema.test.ts"
+      ]
+    },
+    "src/pages/datasources/PresetDiscovery.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "datasource_presets.test.tsx"
       ]
     },
     "src/pages/datasources/TemplateGallery.tsx": {
@@ -1987,11 +1996,20 @@
         "flow_map.test.tsx"
       ]
     },
+    "src/pages/pipelines/MapperSources.tsx": {
+      "controls": {
+        "Button": 5
+      },
+      "tests": [
+        "output_mapper_g18_ui.test.tsx"
+      ]
+    },
     "src/pages/pipelines/OutputMapper.tsx": {
       "controls": {
         "Button": 3
       },
       "tests": [
+        "output_mapper_g18_ui.test.tsx",
         "output_mapper_ui.test.tsx"
       ]
     },
@@ -2013,6 +2031,7 @@
         "pipeline_graph.test.ts",
         "pipeline_last_samples.test.tsx",
         "pipeline_step_form.test.tsx",
+        "processor_tiers.test.ts",
         "runner_lists.test.ts"
       ]
     },
@@ -2587,6 +2606,14 @@
         "access_requests.test.tsx",
         "pipeline_history.test.tsx",
         "workbench_target.test.tsx"
+      ]
+    },
+    "src/pages/pipelines/WorkbenchSchedule.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "workbench_schedule.test.tsx"
       ]
     },
     "src/components/SpaceUsageInfo.tsx": {

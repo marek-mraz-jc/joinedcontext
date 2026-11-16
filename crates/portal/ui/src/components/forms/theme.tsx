@@ -267,6 +267,8 @@ function Cells({
       {properties.map((prop) => (
         <div
           key={prop.name}
+          // A hidden field takes no cell, or its gap and its empty cell stay as a blank band (T-7076).
+          hidden={prop.hidden}
           className={clsx(
             "min-w-0",
             (properties.length === 1 || !scalar(schema, uiSchema, prop.name)) && "col-span-full",

@@ -8,10 +8,11 @@ import type { ErrorSchema } from "@rjsf/utils";
 import { SchemaForm } from "../../components/forms/SchemaForm";
 import { AttributePicker } from "../../components/pickers/AttributePicker";
 import { TypePicker } from "../../components/pickers/TypePicker";
-import { CodeBlock, Button, Field, Input, Select, Tabs, tabPanelProps, Textarea } from "../../components/ui";
+import { Alert, CodeBlock, Button, Field, Input, Select, Tabs, tabPanelProps, Textarea } from "../../components/ui";
 import processorCatalogue from "../../schemas/bento-processors.json";
+import processorTiers from "../../schemas/processor-tiers.json";
 import { COMPUTE_KINDS, OUTPUT_MODES, YamlFieldError } from "../../schemas/kinds";
-import { RUNNER_PROCESSORS } from "../../schemas/runner";
+import { offeredProcessor } from "../../schemas/runner";
 import type { OutputForm, PipelineForm, RouteForm, SourceForm, StepForm } from "./PipelineEditor";
 import { spaceOf } from "../spaces/spaceFacts";
 import { sourceKindOf } from "./PipelineStudio";
@@ -30,7 +31,7 @@ export interface Processor {
 
 /** The palette: the Bento catalogue kept to the processors the runner builds (T-6825). A step
  * already written with another one still draws, and the server refuses it on save. */
-const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => RUNNER_PROCESSORS.has(name));
+const paletteProcessors = (processorCatalogue as Processor[]).filter(({ name }) => offeredProcessor(name));
 
 /** The runner's processors by category, in the catalogue's order (PL-56). */
 export const PROCESSOR_GROUPS: { category: string; processors: Processor[] }[] = (() => {
@@ -41,12 +42,27 @@ export const PROCESSOR_GROUPS: { category: string; processors: Processor[] }[] =
   return [...groups].map(([category, processors]) => ({ category, processors }));
 })();
 
+export type ProcessorTier = "forms" | "advanced" | "bloblang";
+
+/**
+ * The palette's three tiers (G-23, processor-tiers.json): set up with a form and no code first,
+ * then the ones that change how messages flow, then the ones written in Bloblang.
+ */
+export const PROCESSOR_TIERS: { tier: ProcessorTier; processors: Processor[] }[] = (["forms", "advanced", "bloblang"] as const).map((tier) => ({
+  tier,
+  processors: processorTiers[tier].flatMap((name) => paletteProcessors.filter((processor) => processor.name === name)),
+}));
+
 const PROCESSOR_NAMES = new Set((processorCatalogue as Processor[]).map(({ name }) => name));
 const PROCESSOR_COUNT = paletteProcessors.length;
 
 /** The runner's summary as plain words: its Markdown links keep their text and lose the target. */
 export const plainSummary = (summary: string): string =>
-  summary.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  summary
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\b_([^_]+)_\b/g, "$1");
 
 /**
  * A step node is `step-<index into form.processors>`, a second source `source-<index into
@@ -1486,18 +1502,15 @@ export function PipelineFlow({
           {t("pipelines.flow.processors")} ({PROCESSOR_COUNT})
         </summary>
         <p className="text-caption text-fg-muted">{t("pipelines.flow.processorsHint")}</p>
-        {PROCESSOR_GROUPS.map(({ category, processors }) => (
-          <details key={category} className="rounded-md border border-border bg-surface">
-            <summary className="focus-ring cursor-pointer rounded-md px-2 py-1 text-caption font-medium text-fg">
-              {category} ({processors.length})
-            </summary>
-            <ul className="flex flex-col gap-1 p-2" aria-label={category}>
+        {PROCESSOR_TIERS.map(({ tier, processors }) => {
+          const list = (
+            <ul className="flex flex-col gap-3 p-2 sm:gap-1" aria-label={t(`pipelines.flow.tier.${tier}`)}>
               {processors.map((processor) => (
-                <li key={processor.name} className="flex items-baseline gap-2">
+                <li key={processor.name} className="flex flex-col gap-0.5 sm:grid sm:grid-cols-[13rem_minmax(0,1fr)] sm:items-baseline sm:gap-2">
                   <Button
                     size="sm"
                     variant="secondary"
-                    className="shrink-0 font-mono"
+                    className="shrink-0 self-start justify-self-start font-mono"
                     data-testid={`palette-processor-${processor.name}`}
                     draggable
                     onDragStart={(e) => {
@@ -1507,14 +1520,35 @@ export function PipelineFlow({
                   >
                     + {processor.name}
                   </Button>
-                  <span className="text-caption text-fg-muted">
-                    {plainSummary(processor.summary)}
+                  <span className="max-w-prose text-caption text-fg-muted">
+                    {processor.category} · {plainSummary(processor.summary)}
                   </span>
                 </li>
               ))}
             </ul>
-          </details>
-        ))}
+          );
+          // The forms tier is what most steps need: open under the fold. The others are one more
+          // fold away, each saying what it asks of the person (G-23).
+          return tier === "forms" ? (
+            <section key={tier} aria-labelledby="flow-tier-forms" data-testid="palette-tier-forms" className="rounded-md border border-border bg-surface">
+              <h4 id="flow-tier-forms" className="px-2 pt-1 text-caption font-semibold text-fg">
+                {t("pipelines.flow.tier.forms")} ({processors.length})
+              </h4>
+              <p className="px-2 text-caption text-fg-muted">{t("pipelines.flow.tierHint.forms")}</p>
+              {list}
+            </section>
+          ) : (
+            <details key={tier} className="rounded-md border border-border bg-surface" data-testid={`palette-tier-${tier}`}>
+              <summary className="focus-ring cursor-pointer rounded-md px-2 py-1 text-body font-medium text-fg">
+                {t(`pipelines.flow.tier.${tier}`)} ({processors.length})
+              </summary>
+              <Alert tone={tier === "advanced" ? "warning" : "info"} className="mx-2">
+                {t(`pipelines.flow.tierHint.${tier}`)}
+              </Alert>
+              {list}
+            </details>
+          );
+        })}
       </details>
     </div>
   );

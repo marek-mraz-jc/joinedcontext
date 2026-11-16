@@ -53,6 +53,15 @@ impl Conn {
         dsn_key: &str,
         ctx: &StreamContext,
     ) -> Result<Self, CoreError> {
+        Self::from_parts(obj, dsn_key, ctx.file_root.as_deref())
+    }
+
+    /// As [`Self::from_config`] for a component built without a stream context (processors).
+    pub fn from_parts(
+        obj: &serde_json::Map<String, JsonValue>,
+        dsn_key: &str,
+        file_root: Option<&std::path::Path>,
+    ) -> Result<Self, CoreError> {
         let driver = Driver::parse(
             obj.get("driver")
                 .and_then(JsonValue::as_str)
@@ -63,17 +72,22 @@ impl Conn {
             .get(dsn_key)
             .and_then(JsonValue::as_str)
             .ok_or_else(|| CoreError::config(format!("field {dsn_key} is required")))?;
-        let (target, parse_time) = conn_fields::parse_dsn(driver, dsn, ctx.file_root.as_deref())?;
+        let (target, parse_time) = conn_fields::parse_dsn(driver, dsn, file_root)?;
         Ok(Self {
             driver,
             target,
             parse_time,
-            settings: ConnSettings::from_config(obj, ctx.file_root.as_deref())?,
+            settings: ConnSettings::from_config(obj, file_root)?,
         })
     }
 
     pub async fn open(&self, ctx: &StreamContext) -> Result<Db, CoreError> {
-        let db = conn_fields::open(&self.target, &self.settings, &ctx.org).await?;
+        self.open_for(&ctx.org).await
+    }
+
+    /// Opens the pool for `org`: its outbound rule judges the DSN's host first.
+    pub async fn open_for(&self, org: &Arc<ekiben_core::OrgContext>) -> Result<Db, CoreError> {
+        let db = conn_fields::open(&self.target, &self.settings, org).await?;
         self.settings.apply(&db).await;
         Ok(db)
     }

@@ -11,7 +11,7 @@ use axum::{Json, Router};
 use jc_core::kinds::data_source::{refused_target, DataSourceSpec, DataSourceType};
 use jc_core::kinds::{PipelineSpec, Verb};
 use jcctl::bento::{input_of, prepended_processors, InputContext};
-use jcctl::pipeline_test::{harness, Sample, SampleFormat, FETCH_FAILED};
+use jcctl::pipeline_test::{harness, Sample, SampleFormat, TestTrace, FETCH_FAILED};
 use serde_json::{json, Value};
 
 use crate::api::dry_run::Probe;
@@ -19,6 +19,7 @@ use crate::api::pipeline_test::{answer_of, run_stream};
 use crate::auth::session::Identity;
 use crate::auth::CurrentUser;
 use crate::error::{ApiError, ProblemDetails};
+use crate::ops::datasource_discover::{self, DiscoverRequest, Discovery};
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -36,12 +37,14 @@ pub(crate) fn connection_test(
     source: &DataSourceSpec,
     capture: &str,
 ) -> Result<Value, ApiError> {
-    // The envelope the capture route reads: the record as text, or the read's error, worded as
-    // the probe words a failed fetch.
+    // The envelope the capture route reads: the record as text and the pages a paged source's
+    // walk read (`http_page_count`, ekiben paginate.rs), or the read's error, worded as the probe
+    // words a failed fetch.
     let envelope = format!(
         concat!(
             "root = {{}}\n",
             "root.input = if errored() {{ \"\" }} else {{ content().string().slice(0, {}) }}\n",
+            "root.output = if errored() {{ deleted() }} else {{ {{\"pages\": @http_page_count}} }}\n",
             "root.error = if errored() {{ \"{}\" + error() }} else {{ null }}"
         ),
         RECORD_BYTES, FETCH_FAILED
@@ -251,14 +254,93 @@ pub async fn test_datasource(
         connection_test(&name, &project, &source, capture)
     })
     .await?;
-    Ok(Json(answer_of(trace)))
+    let pages = pages_of(&trace);
+    let mut probe = answer_of(trace);
+    if probe.skipped.is_none() {
+        probe.pages = pages;
+    }
+    Ok(Json(probe))
+}
+
+/// The pages a paged source's walk read, as its records carry them; `None` for an unpaged read.
+fn pages_of(trace: &TestTrace) -> Option<usize> {
+    trace
+        .mapping
+        .iter()
+        .filter_map(|out| out["pages"].as_u64())
+        .max()
+        .and_then(|pages| usize::try_from(pages).ok())
+}
+
+/// `POST /api/v1/projects/{project}/datasource-discovery` (T-7076, G-08).
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/datasource-discovery",
+    summary = "Data Source Discovery",
+    description = "Lists what a public service offers an http preset: organizations, layers, \
+                   entity sets, feature types, collections or Things.",
+    tag = "datasources",
+    params(("project" = String, Path, description = "Project slug")),
+    request_body = DiscoverRequest,
+    responses(
+        (status = 200, description = "The choices, or `skipped` with the reason in plain words", body = Discovery),
+        (status = 400, description = "The URL does not name a service of the kind, or names one the runner may not reach", body = ProblemDetails),
+        (status = 401, description = "Unauthorized", body = ProblemDetails),
+        (status = 403, description = "No grant proposes a DataSource in this project", body = ProblemDetails),
+        (status = 409, description = "A test of this project is already running", body = ProblemDetails),
+        (status = 503, description = "No pipeline runner is configured, or it did not answer", body = ProblemDetails)
+    )
+)]
+pub async fn discover_datasource(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    Json(request): Json<DiscoverRequest>,
+) -> Result<Json<Discovery>, ApiError> {
+    Ok(Json(
+        discovery(&state, &user.0.identity, &project, request).await?,
+    ))
+}
+
+/// The listing behind the route and `jc_datasource_discover`: the propose grant, the URL's
+/// shape, the public-only check, then one read on the runner.
+pub async fn discovery(
+    state: &AppState,
+    identity: &Identity,
+    project: &str,
+    request: DiscoverRequest,
+) -> Result<Discovery, ApiError> {
+    if !is_dns1123(project) {
+        return Err(ApiError::NotFound(format!("project '{project}' not found")));
+    }
+    // A listing is read to write a source: the caller who may propose one reads it.
+    crate::permissions::for_request(state, identity, project).check(
+        "DataSource",
+        Verb::Propose,
+        None,
+    )?;
+    let url = datasource_discover::listing_url(request.kind, &request.url)
+        .map_err(|why| ApiError::BadRequest(format!("url: {why}")))?;
+    crate::ops::pipeline_steps::sample_address(url.as_str(), "/url")
+        .await
+        .map_err(crate::ops::OpError::into_api_error)?;
+    let trace = run_stream(state, project, |capture| {
+        datasource_discover::listing_read(&url, capture)
+    })
+    .await?;
+    Ok(datasource_discover::discovery_of(request.kind, &url, trace))
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route(
-        "/projects/{project}/datasources/{name}/test",
-        post(test_datasource),
-    )
+    Router::new()
+        .route(
+            "/projects/{project}/datasources/{name}/test",
+            post(test_datasource),
+        )
+        .route(
+            "/projects/{project}/datasource-discovery",
+            post(discover_datasource),
+        )
 }
 
 #[cfg(test)]
@@ -280,6 +362,30 @@ mod tests {
         assert_eq!(fetch["timeout"], "3s");
         assert_eq!(fetch["retries"], 0);
         assert_eq!(config["output"]["http_client"]["url"], "http://portal/x");
+    }
+
+    #[test]
+    fn a_paged_source_walks_every_page_in_the_fetch_and_the_answer_counts_them() {
+        let source = spec(json!({ "type": "http", "http": {
+            "url": "https://demo.pygeoapi.io/master/collections/lakes/items",
+            "preset": { "kind": "ogcFeatures", "pageSize": 10 }
+        } }));
+        let config =
+            connection_test("lakes", "helsinki", &source, "http://portal/x").expect("config");
+        let fetch = &config["pipeline"]["processors"][0]["http"];
+        assert!(fetch.get("paginate").is_some(), "{fetch}");
+        assert!(config["pipeline"].to_string().contains("@http_page_count"));
+        let captured = |pages: Option<u64>| pages.map_or(Value::Null, |p| json!({ "pages": p }));
+        let trace = TestTrace {
+            mapping: vec![captured(Some(3)), captured(Some(3)), captured(None)],
+            ..TestTrace::default()
+        };
+        assert_eq!(pages_of(&trace), Some(3));
+        let unpaged = TestTrace {
+            mapping: vec![json!({ "pages": null })],
+            ..TestTrace::default()
+        };
+        assert_eq!(pages_of(&unpaged), None);
     }
 
     #[test]
@@ -466,8 +572,54 @@ mod tests {
             refused,
             Err(ApiError::Denied(_) | ApiError::Forbidden)
         ));
-        let unavailable =
-            test_datasource(CurrentUser(session("dev@hel.fi")), State(state), path()).await;
+        let unavailable = test_datasource(
+            CurrentUser(session("dev@hel.fi")),
+            State(state.clone()),
+            path(),
+        )
+        .await;
         assert!(matches!(unavailable, Err(ApiError::Unavailable(_))));
+
+        // Discovery: a reader and a stranger are refused before any address is read, an author
+        // with a URL of another kind learns what to fix, and a good one reaches the runner.
+        let ask = |kind: &str, url: &str| {
+            Json(
+                serde_json::from_value::<DiscoverRequest>(json!({ "kind": kind, "url": url }))
+                    .expect("request"),
+            )
+        };
+        let discover = |email: &str, kind: &str, url: &str| {
+            discover_datasource(
+                CurrentUser(session(email)),
+                State(state.clone()),
+                Path("oulu".to_owned()),
+                ask(kind, url),
+            )
+        };
+        for email in ["reader@hel.fi", "stranger@hel.fi"] {
+            assert!(
+                matches!(
+                    discover(email, "ckan", "https://feeds.example/").await,
+                    Err(ApiError::Denied(_) | ApiError::Forbidden)
+                ),
+                "{email}"
+            );
+        }
+        assert!(matches!(
+            discover("dev@hel.fi", "arcgisFeature", "https://feeds.example/MapServer").await,
+            Err(ApiError::BadRequest(why)) if why.contains("FeatureServer")
+        ));
+        assert!(matches!(
+            discover("dev@hel.fi", "ogcFeatures", "http://10.0.0.8/collections").await,
+            Err(ApiError::Unprocessable { .. })
+        ));
+        assert!(matches!(
+            discover("dev@hel.fi", "ckan", "https://feeds.example/").await,
+            Err(ApiError::Unavailable(_))
+        ));
+        assert!(serde_json::from_value::<DiscoverRequest>(
+            json!({ "kind": "shapefile", "url": "https://x.example" })
+        )
+        .is_err());
     }
 }

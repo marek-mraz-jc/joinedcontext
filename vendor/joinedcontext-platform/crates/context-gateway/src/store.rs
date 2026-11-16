@@ -908,7 +908,7 @@ fn endpoints_from(
     let ckan_pages = dataset_pages(jc_manifest::catalogue::of_repository(repo, None).0);
 
     let mut endpoints = Vec::new();
-    let policy_domains = policy_ref_domains(repo);
+    let policy_domains = repo.policy_ref_domains();
     for (id, resource) in repo.iter() {
         if id.kind != "Endpoint" {
             continue;
@@ -1438,30 +1438,6 @@ fn of_own_project(mut spec: PolicySpec, project: &str) -> PolicySpec {
         spec.assignee.id = format!("{project}/{}", spec.assignee.id);
     }
     spec
-}
-
-/// The domains each Project publishes under: its own `spec.domain` and its Organization's
-/// (PF-122). An installation holds several Organizations, so the one domain the load renders
-/// `{orgDomain}` with is not every Endpoint's (T-6502).
-fn policy_ref_domains(repo: &Repository) -> BTreeMap<String, BTreeSet<String>> {
-    let organizations: BTreeMap<&str, OrganizationSpec> = repo
-        .iter()
-        .filter(|(id, _)| id.kind == "Organization")
-        .filter_map(|(id, resource)| Some((id.name.as_str(), spec_of(&resource.manifest)?)))
-        .collect();
-    repo.iter()
-        .filter(|(id, _)| id.kind == "Project")
-        .filter_map(|(id, resource)| {
-            let spec = spec_of::<ProjectSpec>(&resource.manifest)?;
-            let organization = organizations.get(spec.organization_ref.name());
-            let domains: BTreeSet<String> = spec
-                .domain
-                .into_iter()
-                .chain(organization.map(|organization| organization.domain.clone()))
-                .collect();
-            (!domains.is_empty()).then(|| (id.name.clone(), domains))
-        })
-        .collect()
 }
 
 /// The Policies an endpoint with `spec.policyRefs` (or `policyRef`) evaluates, every rule of each
