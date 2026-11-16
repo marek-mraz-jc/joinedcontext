@@ -2776,6 +2776,8 @@ a.jc-cell--link:focus-visible {
 /* A floor, or a wide table squeezed the column until the tail that tells rows apart was cut (T-6454). */
 .jc-grid-open:has(> .jc-grid-id) {
   min-width: min(20ch, 40vw);
+  /* The id draws its own one line: the button's would be drawn per part beside it. */
+  text-decoration: none;
 }
 .jc-grid-id {
   display: flex;
