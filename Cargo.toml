@@ -18,6 +18,7 @@ members = [
   "crates/shared/jc-secret",
   "crates/shared/jc-door",
   "crates/shared/jc-chart",
+  "crates/shared/ekiben-linkml",
   "crates/embedder",
   "crates/kaisatsu/core",
   "crates/kaisatsu/crypto",

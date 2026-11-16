@@ -38810,6 +38810,150 @@
         }
       }
     },
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/export": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Export Rejected Records",
+        "description": "Every record the pipeline holds rejected (at most 1000), newest first, as CSV: its rule, attribute, step, run, message and the record as JSON, secrets masked as they were kept and the attributes the project's models mark personal withheld (G-21, PL-61, PL-110). Needs read on the pipeline.",
+        "operationId": "export_rejected",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "text/csv, one row per rejected record",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The list or a model could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/pipelines/{name}/rejected/groups": {
+      "get": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Group Rejected Records",
+        "description": "Every record the pipeline holds rejected, counted by the rule it broke and the attribute it broke it at, the largest group first, each with its newest three records (secrets masked), where the fix belongs and, for an enum, the values the model allows (G-21, PL-61). Needs read on the pipeline.",
+        "operationId": "get_rejected_groups",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RejectedGroups"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The list could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/pipelines/{name}/rejected/retry": {
       "post": {
         "tags": [
@@ -39251,6 +39395,98 @@
           },
           "404": {
             "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/pipelines/{name}/source-check": {
+      "post": {
+        "tags": [
+          "pipelines"
+        ],
+        "summary": "Check Whole Source",
+        "description": "Runs the saved pipeline over every page of its http DataSource as a dry run on the project's runner and counts what a live run would accept and reject, by rule and attribute, with the first 1000 rejected records (secrets masked). Nothing is written. Ends at 60 s or 50 000 records and holds the project's one pipeline test slot (G-21, G-07). Needs read on the pipeline.",
+        "operationId": "check_source",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Pipeline name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden: the CSRF token is missing or does not match, or the caller lacks the verb this write needs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pipeline not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The pipeline reads no saved http DataSource, or a test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
             "content": {
               "application/json": {
                 "schema": {
@@ -59352,6 +59588,86 @@
           }
         }
       },
+      "RejectedGroup": {
+        "type": "object",
+        "description": "One rule broken at one path, how often and its newest records (G-21): what the rejected list\nis grouped by, counted over every record kept, not a page.",
+        "required": [
+          "rule",
+          "path",
+          "count",
+          "examples"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "examples": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rejected"
+            },
+            "description": "The group's newest records, at most [`EXAMPLES`]."
+          },
+          "path": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          }
+        }
+      },
+      "RejectedGroupView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/RejectedGroup"
+          },
+          {
+            "type": "object",
+            "required": [
+              "fix"
+            ],
+            "properties": {
+              "allowed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The values the model allows at `path`, for an `sh:in` group."
+              },
+              "fix": {
+                "type": "string",
+                "description": "Where the fix belongs: `model` (the space's data model refuses the value or the\nattribute), `mapping` (the mapping writes the wrong shape), `step` (a step of the pipeline\nfailed) or `runner` (the runner refused it without a model rule)."
+              }
+            }
+          }
+        ],
+        "description": "One group with where its fix belongs."
+      },
+      "RejectedGroups": {
+        "type": "object",
+        "description": "The rejected list grouped by rule and path (G-21): what a steward fixes first.",
+        "required": [
+          "groups",
+          "total"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectedGroupView"
+            },
+            "description": "The largest group first, at most 50."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many records the pipeline holds, at most 1000 (PL-61).",
+            "minimum": 0
+          }
+        }
+      },
       "RejectedPage": {
         "type": "object",
         "description": "One page of a pipeline's rejected records.",
@@ -60506,6 +60822,64 @@
           }
         },
         "additionalProperties": false
+      },
+      "SourceCheck": {
+        "type": "object",
+        "description": "What the whole-source check found (G-21).",
+        "required": [
+          "records",
+          "accepted",
+          "rejected",
+          "complete",
+          "groups",
+          "rows",
+          "errors"
+        ],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records the space's model takes.",
+            "minimum": 0
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "Whether the whole source was read: `false` when 60 s or 50 000 records ended the check\nfirst, or the source's read failed, so the counts cover part of it."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What stopped the source or the runner, in words a person can act on."
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectedGroupView"
+            },
+            "description": "The rejected records counted by rule and attribute, the largest first, each with its\nfirst three records, where the fix belongs and, for an enum, the values the model allows."
+          },
+          "records": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records the steps made, each checked: `accepted` plus `rejected`.",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records a live run would put on the rejected list.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Rejected"
+            },
+            "description": "The first 1000 rejected records, secrets masked; `id` is the record's place in the run."
+          }
+        }
       },
       "SourceChoice": {
         "type": "string",

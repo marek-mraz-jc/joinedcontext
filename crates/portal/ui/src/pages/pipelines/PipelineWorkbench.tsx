@@ -1,4 +1,5 @@
 import { SpaceChanges } from "./SpaceChanges";
+import { SourceCheck } from "./SourceCheck";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -1235,7 +1236,7 @@ export function PipelineWorkbench({
         ) : null}
       </Step>
       <p className="text-caption text-fg-subtle">{t("pipelines.workbench.target.save")}</p>
-
+      <SourceCheck project={project} pipeline={pipeline} />
 
       {children}
     </div>
