@@ -50,6 +50,20 @@ export function useOrganizations() {
 }
 
 /**
+ * The `Organization` manifests the person reads, as `GET /projects/org/organizations` lists them:
+ * the service's own Organization when they see one, every one they see when they see several
+ * (T-7104): the service's at once, the list once the projects list shows several.
+ */
+export function useOrganizationManifests() {
+  const owners = useOrganizations();
+  const several = (owners.data?.organizations.length ?? 0) > 1;
+  return useQuery({
+    queryKey: [...queryKeys.list(ORG_NAMESPACE, "organizations"), several ? "several" : "one"],
+    queryFn: async () => listOrganizations(several),
+  });
+}
+
+/**
  * The Organization `?org=` names when it is one the person sees among two or more (PF-124,
  * ADR-N-058 section 2.7), else `undefined`: what the Administration lists show (T-5248).
  */
@@ -118,12 +132,7 @@ export function useOrganizationName(project: string): string | undefined {
 export function useProjectOrganization(project: string): { organization: Manifest | undefined; settled: boolean } {
   const owners = useOrganizations();
   const name = organizationNameOf(owners.data, project);
-  // Organizations live in the organization's own namespace.
-  const organizations = useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
-    queryFn: async () =>
-      listOrganizations(),
-  });
+  const organizations = useOrganizationManifests();
   const items = asManifests(organizations.data?.items ?? []);
   const organization = name !== undefined ? items.find((item) => item.metadata.name === name) : items.length === 1 ? items[0] : undefined;
   return { organization, settled: !owners.isPending && !organizations.isPending };

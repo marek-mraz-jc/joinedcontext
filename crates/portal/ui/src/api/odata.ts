@@ -375,21 +375,26 @@ export async function readManifest(
 /**
  * The Organization this service serves, as the REST door's `GET /projects/org/organizations`
  * lists it (`items`): its `Organization` singleton with `$select` of the manifest's members, none
- * when the caller may not read its manifest (T-7104).
+ * when the caller may not read its manifest; with `several`, or on an address that serves no one
+ * Organization, the REST list (T-7104).
  */
-export async function listOrganizations(): Promise<{ items: Manifest[] }> {
+export async function listOrganizations(several = false): Promise<{ items: Manifest[] }> {
+  const rest = async () =>
+    unwrap(
+      await api.GET("/api/v1/projects/{project}/{plural}", {
+        params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
+      }),
+    );
+  // A person who sees several Organizations chooses among them (`?org=`, ADR-N-058 section 2.7):
+  // the service serves one, so the REST list holds them all.
+  if (several) return rest();
   let row: ManifestRow;
   try {
     row = (await client.singleton(ORGANIZATION, ["name", "spec", "status", "metadata"])) as ManifestRow;
   } catch (error) {
     // An address of several Organizations serves no one's service: the installation's
     // administrators choose among them there (`?org=`, ADR-N-058 section 2.7), so its REST list.
-    if (error instanceof ODataError && error.code === SEVERAL_ORGANIZATIONS)
-      return unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project: ORG_NAMESPACE, plural: "organizations" } },
-        }),
-      );
+    if (error instanceof ODataError && error.code === SEVERAL_ORGANIZATIONS) return rest();
     throw toApiError(error);
   }
   return { items: row.metadata == null ? [] : [asManifest(row, ORGANIZATION)] };

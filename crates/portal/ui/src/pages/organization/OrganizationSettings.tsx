@@ -3,10 +3,9 @@ import { Fragment } from "react";
 import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { queryKeys } from "../../api/client";
-import { listOrganizations, organizationReading } from "../../api/odata";
+import { organizationReading } from "../../api/odata";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
-import { useChosenOrganizationName } from "../../api/projects";
+import { useChosenOrganizationName, useOrganizationManifests } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
 import { EmptyState, Skeleton } from "../../components/ui";
@@ -156,11 +155,7 @@ function creationOf(t: (key: string, options?: Record<string, unknown>) => strin
  */
 export function OrganizationSettings(): JSX.Element {
   const { t, i18n } = useTranslation();
-  const organizations = useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
-    queryFn: async () =>
-      listOrganizations(),
-  });
+  const organizations = useOrganizationManifests();
   // The catalog with the operator's bounds and the values in force (API/01 §28): the sections
   // below and the range every numeric field of the form is held to (PF-97, PF-102).
   const limits = useQuery({

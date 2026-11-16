@@ -1,7 +1,7 @@
 import type { JSX } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "../../api/client";
 import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
@@ -33,10 +33,10 @@ export function AskAdmins({
   const { t } = useTranslation();
   const { own } = useAdministers();
   const organizations = useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
+    // The service's Organization: the caller's own, else the installation's (T-6812), as below.
+    queryKey: [...queryKeys.list(ORG_NAMESPACE, "organizations"), "one"],
     retry: false,
-    queryFn: async () =>
-      listOrganizations(),
+    queryFn: async () => listOrganizations(),
   });
   const items = asManifests(organizations.data?.items ?? []);
   const organization =

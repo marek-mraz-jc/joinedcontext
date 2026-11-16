@@ -1,11 +1,9 @@
 import { useState } from "react";
 import type { JSX } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { ApiError, queryKeys } from "../../api/client";
-import { listOrganizations } from "../../api/odata";
-import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
-import { useChosenOrganizationName } from "../../api/projects";
+import { ApiError } from "../../api/client";
+import { asManifests } from "../../api/manifest";
+import { useChosenOrganizationName, useOrganizationManifests } from "../../api/projects";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Button, Icon } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui";
@@ -19,11 +17,7 @@ const TONE: Record<Verification["state"], BadgeTone> = {
 };
 
 function useOrganizations() {
-  return useQuery({
-    queryKey: queryKeys.list(ORG_NAMESPACE, "organizations"),
-    queryFn: async () =>
-      listOrganizations(),
-  });
+  return useOrganizationManifests();
 }
 
 /** The TXT record, exactly as it is to be published, and a button that copies exactly that. */
