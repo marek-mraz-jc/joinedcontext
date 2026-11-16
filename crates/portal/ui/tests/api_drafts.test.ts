@@ -1,5 +1,6 @@
 /**
- * The draft calls go through the typed client (UI-07, CC-76).
+ * The draft calls go through the OData service's registry operations (T-7119), in the copy the
+ * person works in (UI-07, CC-76).
  *
  * A raw `fetch` skipped the client's middleware, so inside a workspace the form read and wrote
  * the project's own draft instead of the copy's, and an ended session answered the form with an
@@ -81,11 +82,13 @@ describe("drafts through the typed client", () => {
     await expect(getDraft("helsinki", "Endpoint", "bikes")).rejects.toMatchObject({ status: 403 });
   });
 
-  it("names the version it lost to on a conflict", async () => {
-    answer(409, { type: "https://joinedcontext.com/errors/draft-conflict", current: 7 });
+  // The form reloads the draft another window wrote on a 409 (useResourceDraft), so the
+  // conflict keeps its status through the OData service (T-7119).
+  it("throws a conflict with another window's write as 409", async () => {
+    answer(409, { type: "https://joinedcontext.com/errors/draft-conflict", title: "Conflict", current: 7 });
     await expect(putDraft("helsinki", "Endpoint", "bikes", {}, 3)).rejects.toMatchObject({
       status: 409,
-      current: 7,
+      message: "draft conflict",
     });
   });
 
@@ -101,7 +104,8 @@ describe("drafts through the typed client", () => {
     answer(400, { detail: "literal secret in field 'password' is forbidden; use secretRef instead (MF-24)" });
     await expect(putDraft("helsinki", "DataSource", "feed", {})).rejects.toMatchObject({
       status: 400,
-      detail: "literal secret in field 'password' is forbidden; use secretRef instead (MF-24)",
+      // The sentence a person reads: the requirement reference is the platform's own (forPeople).
+      detail: "literal secret in field 'password' is forbidden; use secretRef instead",
     });
   });
 

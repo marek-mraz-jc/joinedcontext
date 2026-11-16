@@ -1228,6 +1228,8 @@ export interface Actions {
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
   portal_preferences_set: { body?: unknown };
+  portal_run_answer: { id: string; body?: unknown };
+  portal_run_message: { id: string; body?: unknown };
   portal_secret_set: { body?: unknown };
   portal_serviceaccount_revoke: { account: string; body?: unknown };
   portal_serviceaccount_secret_issue: { account: string };
@@ -1342,6 +1344,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],
   portal_preferences_set: ["Organization"],
+  portal_run_answer: ["Project"],
+  portal_run_message: ["Project"],
   portal_secret_set: ["Project"],
   portal_serviceaccount_revoke: ["Project"],
   portal_serviceaccount_secret_issue: ["Project"],

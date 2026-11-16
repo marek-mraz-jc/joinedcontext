@@ -330,6 +330,15 @@ const OPERATIONS: Record<string, Door> = {
   jc_workspace_preview_get: ["GET", "/projects/{project}/workspaces/{name}/preview"],
   jc_workspace_preview_start: ["POST", "/projects/{project}/workspaces/{name}/preview"],
   jc_workspace_preview_stop: ["DELETE", "/projects/{project}/workspaces/{name}/preview"],
+  // The shared drafts and a run's turns (T-7119): the drafts' REST doors run the registry's
+  // operations; a run's answer and message are Portal doors, its cancel and publish operations.
+  jc_draft_get: ["GET", "/projects/{project}/drafts/{kind}/{name}"],
+  jc_draft_put: ["PUT", "/projects/{project}/drafts/{kind}/{name}", ["manifest", "expectedVersion"]],
+  jc_draft_drop: ["DELETE", "/projects/{project}/drafts/{kind}/{name}"],
+  jc_run_cancel: ["POST", "/projects/{project}/agent-runs/{id}/cancel"],
+  jc_run_publish: ["POST", "/projects/{project}/agent-runs/{id}/publish"],
+  portal_run_answer: ["POST", "/projects/{project}/agent-runs/{id}/answers"],
+  portal_run_message: ["POST", "/projects/{project}/agent-runs/{id}/messages"],
 };
 
 /**
@@ -337,11 +346,14 @@ const OPERATIONS: Record<string, Door> = {
  * workspace brought back answers the Change as every proposing operation does (api/mutate.rs
  * `ProposeOutcome::Change`).
  */
+function proposed(body: unknown): unknown {
+  const change = body as { metadata?: { name?: string }; status?: { lane?: string; mergeRequest?: string } } | null;
+  return { changeId: change?.metadata?.name, lane: change?.status?.lane, url: change?.status?.mergeRequest, change };
+}
+
 const ANSWERS: Record<string, (body: unknown) => unknown> = {
-  jc_workspace_propose: (body) => {
-    const change = body as { metadata?: { name?: string }; status?: { lane?: string; mergeRequest?: string } } | null;
-    return { changeId: change?.metadata?.name, lane: change?.status?.lane, url: change?.status?.mergeRequest, change };
-  },
+  jc_workspace_propose: proposed,
+  jc_run_publish: proposed,
 };
 
 /** The answer {@link ANSWERS} makes of the REST door's for the operation `request` calls, if any. */
@@ -477,11 +489,13 @@ export async function doorAsRest(
   }
   if (Object.keys(members).length) body = JSON.stringify(members);
   rest.pathname = `/api/v1${path}`;
-  return new Request(rest, {
-    method: door[0],
-    body,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-  });
+  // The service sends the REST handler the call's own headers (the session, the CSRF token),
+  // never its OData content headers (odata_org.rs `portal_door`).
+  const headers = new Headers(request.headers);
+  for (const name of ["content-type", "content-length", "accept", "if-match"]) headers.delete(name);
+  for (const name of [...headers.keys()]) if (name.startsWith("odata-")) headers.delete(name);
+  if (body) headers.set("Content-Type", "application/json");
+  return new Request(rest, { method: door[0], body, headers });
 }
 
 const UNDER = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/(\w+)$/;

@@ -87,6 +87,7 @@ const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
 const BROKER: (&str, Place) = ("broker", Place::Path);
 const UID: (&str, Place) = ("uid", Place::Path);
 const NAME: (&str, Place) = ("name", Place::Path);
+const RUN: (&str, Place) = ("id", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -110,7 +111,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 130] = [
+pub static DOORS: [Door; 132] = [
     door(
         "portal_people_remove",
         Org,
@@ -943,6 +944,24 @@ pub static DOORS: [Door; 130] = [
         Method::GET,
         "/projects/{project}/knowledge/conversations/{conversation}/turns/{turn}/same",
         &[CONVERSATION, ("turn", Place::Path)],
+        Who::ProjectReader,
+    ),
+    // The registry's jc_run_answer and jc_run_message take no page or capabilities and hand the
+    // person's token to the run's proxy only from the REST door's headers (T-7119).
+    door(
+        "portal_run_answer",
+        Project,
+        Method::POST,
+        "/projects/{project}/agent-runs/{id}/answers",
+        &[RUN, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_run_message",
+        Project,
+        Method::POST,
+        "/projects/{project}/agent-runs/{id}/messages",
+        &[RUN, BODY],
         Who::ProjectReader,
     ),
     door(

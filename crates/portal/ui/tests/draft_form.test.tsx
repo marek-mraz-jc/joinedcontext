@@ -286,7 +286,8 @@ describe("ResourceFormDialog shared drafts and verdict gates (AG-61, AG-62, UI-4
     await act(async () => {
       await vi.advanceTimersByTimeAsync(700);
     });
-    const said = en.drafts.saveRefused.replace("{reason}", refusal);
+    // The person reads the server's sentence without its requirement reference (forPeople).
+    const said = en.drafts.saveRefused.replace("{reason}", refusal.replace(" (MF-24)", ""));
     expect(screen.getByText(said).closest("[role=alert]")).not.toBeNull();
 
     refuse = false;

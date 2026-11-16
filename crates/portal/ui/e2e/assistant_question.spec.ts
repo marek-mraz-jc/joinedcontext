@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+// The shared drafts and a run's turns go through the OData service (T-7119): its doors reach these REST stubs.
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The assistant asks which endpoints to read, and the person answers by clicking two of them
 // (UI-73, UI-74, T-1452): the built bundle, the API answered from the browser, and the run's
