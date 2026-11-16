@@ -10,6 +10,11 @@
   border-radius: var(--jc-radius-md, 4px);
   overflow: hidden;
 }
+/* An open Arrange columns panel is taller than a grid of a few rows: the grid lets it hang below
+   its edge instead of cutting off the panel's last controls, Observed and the other extra details (T-7072). */
+.jc-grid:has(.jc-grid-arrange-panel) {
+  overflow: visible;
+}
 
 .jc-grid[data-density="compact"] {
   --jc-grid-cell-padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
@@ -727,11 +732,10 @@
   align-items: start;
 }
 
-.jc-grid--map-right > .jc-grid-toolbar,
-.jc-grid--map-right > .jc-grid-pending,
-.jc-grid--map-right > .jc-grid-pager,
-.jc-grid--map-right > .jc-grid-empty,
-.jc-grid--map-right > .jc-grid-loading {
+/* Only the rows and the map share a line: every other part (the toolbar, the notes above the rows,
+   the type line, the pager, the states) runs the full width, so a note never takes the rows' cell
+   and pushes the table beside the map's (T-7072). */
+.jc-grid--map-right > :not(.jc-grid-scroll, .jc-grid-map) {
   grid-column: 1 / -1;
 }
 

@@ -6673,6 +6673,7 @@
     "noMatch": "Nothing matches this query; change or remove a filter.",
     "technical": "Technical details (JSON-LD)",
     "copyJson": "Copy JSON-LD",
+    "backToRow": "Back to the entity you came from",
     "endpointApps": "Applications",
     "unknownType": "There is no type {type} in this space",
     "unknownTypeHint": "The address names a type this space does not have. Pick one of its types:"

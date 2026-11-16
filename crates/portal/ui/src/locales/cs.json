@@ -6673,6 +6673,7 @@
     "noMatch": "Dotazu nic neodpovídá; změňte nebo odstraňte filtr.",
     "technical": "Technické podrobnosti (JSON-LD)",
     "copyJson": "Kopírovat JSON-LD",
+    "backToRow": "Zpět na entitu, ze které jste přišli",
     "endpointApps": "Aplikace",
     "unknownType": "Typ {type} v tomto prostoru neexistuje",
     "unknownTypeHint": "Adresa uvádí typ, který tento prostor nemá. Vyberte jeden z jeho typů:"
