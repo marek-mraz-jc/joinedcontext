@@ -1731,6 +1731,62 @@ async fn a_declared_or_imported_pipeline_client_is_not_derived_and_its_secret_no
     );
 }
 
+/// T-6972: on jc a Pipeline re-aimed after the realm import (here at an open-data Endpoint's
+/// write door, EP-187) keeps its imported own client, which gains the door's audience and loses
+/// nothing: the old Endpoint's mapper and the import's other mappers stay, the client itself is
+/// not rewritten and its secret not read. Without it the door refused every write of the
+/// Pipeline with `token is not bound to this resource` (train smoke f86bcc47).
+#[tokio::test]
+async fn an_imported_pipeline_client_gains_the_audience_of_its_re_aimed_endpoint_and_loses_nothing()
+{
+    const DOOR: &str = "d4wq6xm2tb7nc3vk5rzh2jyfa6";
+    let keycloak = realm(json!([])).await;
+    let mut imported = desired_external("zilina", "pl-drepo", &ClientCredential::Secret);
+    imported["id"] = json!("uuid-imported");
+    imported["attributes"] = json!({});
+    client_lookup(&keycloak, "zilina-pl-drepo", json!([imported])).await;
+    let mut name = audience_mapper(SLUG);
+    name["id"] = json!("m-old");
+    mappers(
+        &keycloak,
+        "uuid-imported",
+        json!([name, { "id": "m-name", "name": "client-name", "protocolMapper": "oidc-hardcoded-claim-mapper" }]),
+    )
+    .await;
+    let mut door = drepo();
+    door.spec["targetEndpoint"] =
+        json!("urn:ngsi-ld:Endpoint:zilina.sk:zilina-uniza:zilina-uniza-write");
+    let mirror = mirror_with(vec![
+        door,
+        endpoint("zilina", "zilina-uniza", "zilina-uniza", SLUG),
+        endpoint("zilina", "zilina-uniza-write", "zilina-uniza", DOOR),
+    ]);
+
+    let wave = sync(&keycloak)
+        .with_host_runner(true)
+        .with_own_pipeline_clients(true);
+    let outcomes = wave.converge(&mirror, &Bentos::new()).await;
+
+    let own = outcomes.iter().find(|o| o.app == "zilina/pl-drepo");
+    assert_eq!(own.map(|o| o.error.clone()), Some(None), "{outcomes:?}");
+    assert_eq!(audiences_of(&keycloak, "uuid-imported").await, vec![DOOR]);
+    let touched: Vec<String> = wrote(&keycloak)
+        .await
+        .into_iter()
+        .filter(|w| w.contains("uuid-imported"))
+        .collect();
+    assert_eq!(
+        touched,
+        [format!(
+            "POST {REALM}/clients/uuid-imported/protocol-mappers/models"
+        )],
+        "one mapper added, nothing removed or rewritten"
+    );
+    assert!(!wave
+        .host_secrets()
+        .contains_key("JC_PIPELINE_SECRET_ZILINA_PL_DREPO"));
+}
+
 /// T-6832: a deleted project's pipeline client goes with it, its tokens revoked by the wave's
 /// usual removal, and its secret leaves the runner in the same run.
 #[tokio::test]
