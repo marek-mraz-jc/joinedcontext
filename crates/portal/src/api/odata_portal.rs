@@ -114,7 +114,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 165] = [
+pub static DOORS: [Door; 166] = [
     door(
         "portal_people_remove",
         Org,
