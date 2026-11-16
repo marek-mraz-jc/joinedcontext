@@ -732,11 +732,10 @@
   align-items: start;
 }
 
-.jc-grid--map-right > .jc-grid-toolbar,
-.jc-grid--map-right > .jc-grid-pending,
-.jc-grid--map-right > .jc-grid-pager,
-.jc-grid--map-right > .jc-grid-empty,
-.jc-grid--map-right > .jc-grid-loading {
+/* Only the rows and the map share a line: every other part (the toolbar, the notes above the rows,
+   the type line, the pager, the states) runs the full width, so a note never takes the rows' cell
+   and pushes the table beside the map's (T-7072). */
+.jc-grid--map-right > :not(.jc-grid-scroll, .jc-grid-map) {
   grid-column: 1 / -1;
 }
 

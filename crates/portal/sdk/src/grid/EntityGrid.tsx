@@ -315,11 +315,11 @@ function GridBody(props: EntityGridProps & { onDrill?: (urn: string, type: strin
  * another, then each value every loaded row holds, by its column's label.
  */
 function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
-  const { props, labels, options, shared, columns, kindOf, asText } = view;
+  const { props, labels, options, shared, asText } = view;
   const type = options.config.type;
   const oneType = !type.includes(",");
   // A phone's table has no filter row (T-6748): its area picker stands here, by the place's label (T-7072).
-  const places = asText ? [] : columns.filter((col) => col.attr && !col.meta && kindOf.get(col.key) === "geo");
+  const places = asText ? [] : shared.filter((each) => each.place);
   if (!props.compact || (!oneType && places.length === 0 && !shared.some((each) => each.value !== ""))) return null;
   const labelOf = (attr: string) => options.layout?.labels?.[attr] ?? options.config.columns.find((column) => column.attr === attr)?.label ?? readableName(attr);
   return (
@@ -330,16 +330,16 @@ function GridTypeLine({ view }: { view: GridView }): React.JSX.Element | null {
           {props.typeChoice ? <TypeChoiceCell choice={props.typeChoice} /> : <span>{type}</span>}
         </span>
       ) : null}
-      {shared.filter((each) => each.value !== "" && !places.some((col) => col.attr === each.attr)).map((each) => (
+      {shared.filter((each) => each.value !== "").map((each) => (
         <span key={each.attr} className="jc-grid-typeline__part">
           <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
           <span>{each.value}</span>
         </span>
       ))}
-      {places.map((col) => (
-        <span key={`area-${col.key}`} className="jc-grid-typeline__part">
-          <span className="jc-grid-typeline__label">{col.label}</span>
-          <AreaButton view={view} attr={col.attr!} />
+      {places.map((each) => (
+        <span key={`area-${each.attr}`} className="jc-grid-typeline__part">
+          <span className="jc-grid-typeline__label">{labelOf(each.attr)}</span>
+          <AreaButton view={view} attr={each.attr} />
         </span>
       ))}
     </div>

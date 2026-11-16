@@ -108,6 +108,22 @@ for (const width of [1440, 400]) {
     await page.screenshot({ path: `${SHOTS}/shared-filter-${width}.png`, fullPage: true });
   });
 
+  test(`the link carries the order at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const reads = await stub(page);
+    await page.goto(ADDRESS);
+    await expect(page.getByRole("button", { name: "Open: Dock 2" }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Sort all rows by availableBikeNumber" }).click();
+    await expect(page).toHaveURL(/sort=availableBikeNumber(&|$)/);
+
+    // Reopened, the link asks the source in the same order.
+    const link = page.url();
+    reads.length = 0;
+    await page.goto(link);
+    await expect(page.getByRole("button", { name: "Open: Dock 2" }).first()).toBeVisible();
+    expect(reads.some((search) => search.includes("orderBy=availableBikeNumber"))).toBe(true);
+  });
+
   test(`follows a relationship and comes back at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await stub(page);
