@@ -11660,7 +11660,7 @@
     },
     "noAssistant": {
       "title": "Nie je pripojený znalostný asistent",
-      "hint": "Tento Portál neukladá žiadnu konverzáciu, kým operátor v jeho nasadení nepripojí znalostného asistenta. Konverzácie návštevníkov sa potom objavia tu, tak dlho, ako ich drží transcriptRetention každého nasadenia."
+      "hint": "Tento Portál neukladá žiadnu konverzáciu, kým operátor v jeho nasadení nepripojí znalostného asistenta. Konverzácie návštevníkov sa potom objavia tu."
     }
   },
   "retentionGuide": {

@@ -11660,7 +11660,7 @@
     },
     "noAssistant": {
       "title": "Kein Wissensassistent verbunden",
-      "hint": "Dieses Portal speichert keine Unterhaltung, bis ein Operator in seiner Bereitstellung den Wissensassistenten verbindet. Danach erscheinen die Unterhaltungen der Besucher hier, so lange die transcriptRetention jeder Bereitstellung sie behält."
+      "hint": "Dieses Portal speichert keine Unterhaltung, bis ein Operator in seiner Bereitstellung den Wissensassistenten verbindet. Danach erscheinen die Unterhaltungen der Besucher hier."
     }
   },
   "retentionGuide": {

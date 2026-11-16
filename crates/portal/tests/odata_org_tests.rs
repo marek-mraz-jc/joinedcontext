@@ -2325,9 +2325,6 @@ async fn a_portal_door_answers_a_persons_session_only() {
     );
 }
 
-/// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
-/// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
-
 /// T-7123 (train smoke 43855275572): the knowledge pages' list doors on a Portal with no
 /// knowledge assistant answer what the project declares, never a 503.
 #[tokio::test]
@@ -2374,6 +2371,8 @@ async fn the_knowledge_list_doors_answer_without_a_knowledge_assistant() {
     );
 }
 
+/// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
+/// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
 #[tokio::test]
 async fn every_role_acts_as_the_rest_door_decides() {
     let state = state();

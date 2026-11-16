@@ -104,10 +104,12 @@ export function ConversationsPage({
     );
   }
   const items = list.data?.items ?? [];
+  // Nothing to filter on a Portal without a knowledge assistant (T-7123 judge).
+  const unconnected = list.isSuccess && !list.data.configured;
   return (
     <section aria-label={t("conversations.title")} className="space-y-6">
       <PageHeader title={t("conversations.title")} description={t("conversations.intro")} />
-      <div className="flex flex-wrap items-end gap-3">
+      <div hidden={unconnected} className="flex flex-wrap items-end gap-3">
         <Field id="conv-q" label={t("conversations.filter.q")} className="w-64">
           <Input id="conv-q" type="search" value={typed} onChange={(e) => {
             setTyped(e.target.value);
@@ -189,7 +191,7 @@ export function ConversationsPage({
         </PageFailed>
       ) : null}
       {list.isLoading ? <p role="status">{t("app.loading")}</p> : null}
-      {list.isSuccess && !list.data.configured ? (
+      {unconnected ? (
         <EmptyState title={t("conversations.noAssistant.title")} description={t("conversations.noAssistant.hint")} icon="search" />
       ) : null}
       {list.isSuccess && list.data.configured && items.length === 0 ? (

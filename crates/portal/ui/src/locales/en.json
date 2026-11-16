@@ -11660,7 +11660,7 @@
     },
     "noAssistant": {
       "title": "No knowledge assistant is connected",
-      "hint": "This Portal stores no conversation until an operator connects the knowledge assistant in its deployment. Visitors' conversations appear here after that, for as long as each deployment's transcriptRetention keeps them."
+      "hint": "This Portal stores no conversation until an operator connects the knowledge assistant in its deployment. Visitors' conversations appear here after that."
     }
   },
   "retentionGuide": {

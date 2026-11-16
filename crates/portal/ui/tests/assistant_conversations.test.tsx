@@ -294,6 +294,7 @@ describe("Asistent → Konverzácie", () => {
     expect(await screen.findByText(i18n.t("conversations.noAssistant.title"))).toBeInTheDocument();
     expect(screen.getByText(i18n.t("conversations.noAssistant.hint"))).toBeInTheDocument();
     expect(screen.queryByText(i18n.t("conversations.empty"))).toBeNull();
+    expect(screen.getByLabelText(i18n.t("conversations.filter.q"))).not.toBeVisible();
     expect(calls.some((c) => c.url.pathname.endsWith("/conversations/usage"))).toBe(false);
   });
 
