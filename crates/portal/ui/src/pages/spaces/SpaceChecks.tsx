@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Table,
@@ -33,14 +33,7 @@ export function SpaceChecks({
   const checks = useQuery({
     queryKey: ["projects", project, "spaces", space, "quality", "checks"],
     queryFn: async (): Promise<Checks> =>
-      unwrap(
-        await api.GET(
-          "/api/v1/projects/{project}/spaces/{space}/quality/checks",
-          {
-            params: { path: { project, space } },
-          },
-        ),
-      ),
+      (await door("portal_space_quality_checks", { space }, project)) as Checks,
   });
 
   if (checks.isPending) {

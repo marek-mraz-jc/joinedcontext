@@ -8,7 +8,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { cellText, toRichRow } from "@joinedcontext/sdk";
 import portalI18n from "../../i18n";
-import { api, unwrap } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { EntitySource, RichRow } from "@joinedcontext/sdk";
 import { Alert, Button } from "../../components/ui";
@@ -48,25 +48,27 @@ export async function deleteRow(project: string, space: string, source: EntitySo
   if (!source.remove) throw new Error("this view cannot delete");
   // Refused before the copy is kept: the gateway would refuse the delete anyway (DM-113).
   if (reasonProblem(reason) !== null) throw new Error(`a delete names why in 1 to ${MAX_REASON} characters`);
-  const path = { project, space };
-  const kept = await api.POST("/api/v1/projects/{project}/spaces/{space}/trash", {
-    params: { path },
-    // The schema calls `entity` an object of no known members: an NGSI-LD entity is any.
-    body: { entity: writable(row.raw) as Record<string, never> },
-  });
-  if (!kept.data) {
-    const detail = (kept.error as { detail?: unknown } | undefined)?.detail;
-    throw new Error(typeof detail === "string" ? detail : `HTTP ${kept.response.status}`);
-  }
+  const kept = (await doorAction(
+    "portal_trash_keep",
+    { space, body: { entity: writable(row.raw) } },
+    project,
+  )) as RestAnswer<"keep">;
   try {
     await source.remove(row.id, reason);
   } catch (error) {
-    const forgot = await api.DELETE("/api/v1/projects/{project}/spaces/{space}/trash/{id}", {
-      params: { path: { ...path, id: kept.data.id } },
-    });
-    if (forgot.response.ok) throw error;
+    if ((await forget(project, space, kept.id)) === null) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(portalI18n.t("spaces.views.trashStray", { reason }));
+  }
+}
+
+/** Forgets the kept copy `id`: `null` once it is gone, else why not. */
+async function forget(project: string, space: string, id: number): Promise<string | null> {
+  try {
+    await doorAction("portal_trash_forget", { space, id: String(id) }, project);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -95,11 +97,7 @@ export function TrashPanel({
     queryKey: trashKey(project, space),
     retry: false,
     queryFn: async () => {
-      const answer: unknown = await unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/trash", {
-          params: { path: { project, space } },
-        }),
-      );
+      const answer: unknown = await door("portal_trash_list", { space }, project);
       // An answer of another shape is no list: the panel stays away rather than break the page.
       return Array.isArray(answer) ? (answer as components["schemas"]["TrashItem"][]) : [];
     },
@@ -139,11 +137,9 @@ export function TrashPanel({
                   setBusy(item.id);
                   try {
                     await restore(item.entity as Record<string, unknown>);
-                    const forgot = await api.DELETE("/api/v1/projects/{project}/spaces/{space}/trash/{id}", {
-                      params: { path: { project, space, id: item.id } },
-                    });
-                    if (!forgot.response.ok) {
-                      setRefused(t("spaces.views.restoredStray", { name, reason: `HTTP ${forgot.response.status}` }));
+                    const forgot = await forget(project, space, item.id);
+                    if (forgot !== null) {
+                      setRefused(t("spaces.views.restoredStray", { name, reason: forgot }));
                     }
                     await queryClient.invalidateQueries({ queryKey: trashKey(project, space) });
                     await queryClient.invalidateQueries({ queryKey: ["space-view-rows", space] });

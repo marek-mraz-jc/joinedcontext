@@ -1,6 +1,7 @@
 //! The Portal doors of the Organization's OData service (API/13 §2b, ADR-N-070 item 11, T-7100):
 //! the REST doors no tool may answer (route_coverage_tests.rs names each reason: a temporary
-//! password, a secret, a consent, a person's connector or access request, an agent's grant),
+//! password, a secret, a consent, a person's connector or access request, an agent's grant, a
+//! person's record about a space's data: comments, kept copies, erasures, alerts; T-7105),
 //! the Portal's own per-person readings, the open data pages editor's (T-7041) and the `org`
 //! namespace's own Changes, which the service's `changes` set (the projects' Changes) leaves out.
 //! None is a registry operation, so no MCP `tools/list` and no assistant names one; each
@@ -34,7 +35,7 @@ pub enum Who {
     /// Any person.
     Person,
     /// Any person, on any Organization they reach: their own notifications and preferences,
-    /// which belong to no Organization.
+    /// and alerts, which belong to no Organization.
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -75,6 +76,7 @@ const ACCOUNT: (&str, Place) = ("account", Place::Path);
 const PAGE: (&str, Place) = ("page", Place::Path);
 const LANG: (&str, Place) = ("lang", Place::Path);
 const CHANGE: (&str, Place) = ("id", Place::Path);
+const SPACE: (&str, Place) = ("space", Place::Path);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -98,7 +100,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 31] = [
+pub static DOORS: [Door; 57] = [
     door(
         "portal_people_remove",
         Org,
@@ -356,6 +358,214 @@ pub static DOORS: [Door; 31] = [
         "/projects/{project}/endpoints/{endpoint}/quality",
         &[ENDPOINT],
         Who::ProjectReader,
+    ),
+    door(
+        "portal_space_quality",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/quality",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_quality_checks",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/quality/checks",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_temporal_audit",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/temporal-audit",
+        &[SPACE, ("pipeline", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_retention_deleted",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/retention/deleted",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_retention_preview",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/retention/preview",
+        &[SPACE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_subject_export",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/subjects/export",
+        &[SPACE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_erasure_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/erasures",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_erasure_file",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/erasures",
+        &[SPACE, ("dryRun", Place::Query("Edm.String")), BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_erasure_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/erasures/{id}",
+        &[SPACE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_erasure_approve",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/erasures/{id}/approve",
+        &[SPACE, CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_erasure_decline",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/erasures/{id}/decline",
+        &[SPACE, CHANGE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_comment_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/comments",
+        &[SPACE, ("urn", Place::Query("Edm.String"))],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_comment_add",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/comments",
+        &[SPACE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_comment_remove",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/spaces/{space}/comments/{id}",
+        &[SPACE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_trash_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/trash",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_trash_keep",
+        Project,
+        Method::POST,
+        "/projects/{project}/spaces/{space}/trash",
+        &[SPACE, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_trash_forget",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/spaces/{space}/trash/{id}",
+        &[SPACE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_drift_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/drift",
+        &[],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_drift_revert",
+        Project,
+        Method::POST,
+        "/projects/{project}/drift/{space}/{id}/revert",
+        &[SPACE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_drift_adopt",
+        Project,
+        Method::POST,
+        "/projects/{project}/drift/{space}/{id}/adopt",
+        &[SPACE, CHANGE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_alert_list",
+        Org,
+        Method::GET,
+        "/alerts",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_alert_subscribe",
+        Org,
+        Method::PUT,
+        "/alerts",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_alert_unsubscribe",
+        Org,
+        Method::DELETE,
+        "/alerts/{id}",
+        &[CHANGE],
+        Who::Own,
+    ),
+    door(
+        "portal_alert_mute",
+        Org,
+        Method::POST,
+        "/alerts/{id}/mute",
+        &[CHANGE, BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_alert_notice_list",
+        Org,
+        Method::GET,
+        "/alerts/notices",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_alert_notice_read",
+        Org,
+        Method::POST,
+        "/alerts/notices/{id}/read",
+        &[CHANGE],
+        Who::Own,
     ),
 ];
 

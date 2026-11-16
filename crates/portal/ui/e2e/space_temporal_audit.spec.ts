@@ -4,6 +4,7 @@ import { axeViolations } from "./axe";
 import { manifestReadsAsRest } from "./manifestReads";
 
 // The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
+// A Portal door over OData (T-7105) reaches its REST door's stub below.
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The temporal audit on a space's Retention tab (T-4844): each attribute a pipeline writes, how

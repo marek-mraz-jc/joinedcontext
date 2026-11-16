@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import type { Manifest, ResourceProposal } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -115,11 +116,11 @@ export function SpaceRetention({
     retry: false,
     queryFn: async () =>
       (
-        await unwrap(
-          await api.GET("/api/v1/projects/{project}/spaces/{space}/retention/deleted", {
-            params: { path: { project, space } },
-          }),
-        )
+        (await door(
+          "portal_space_retention_deleted",
+          { space },
+          project,
+        )) as RestAnswer<"retention_deleted">
       ).counts,
   });
 
@@ -147,12 +148,11 @@ export function SpaceRetention({
   const preview = useMutation({
     mutationFn: async (rules: RetentionRule[]) =>
       (
-        await unwrap(
-          await api.POST("/api/v1/projects/{project}/spaces/{space}/retention/preview", {
-            params: { path: { project, space } },
-            body: { retention: rules as unknown as Record<string, unknown>[] },
-          }),
-        )
+        (await doorAction(
+          "portal_space_retention_preview",
+          { space, body: { retention: rules } },
+          project,
+        )) as RestAnswer<"preview_retention">
       ).counts,
     onSuccess: setCounts,
     onError: (error) => setProblem(said(error)),
@@ -398,7 +398,8 @@ export function SpaceRetention({
           <TableHeaderCell>{t("spaces.retention.current")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.retention.history")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.retention.record.column")}</TableHeaderCell>
-          <TableHeaderCell>{t("spaces.retention.deleted")}</TableHeaderCell>
+          {/* A column of its own width: squeezed at 400 px its header broke into single letters (T-7105 UI judge). */}
+          <TableHeaderCell className="min-w-40">{t("spaces.retention.deleted")}</TableHeaderCell>
         </TableHead>
         <TableBody>
           {rows.map((types) => [types[0], types] as const).map(([type, types]) => (

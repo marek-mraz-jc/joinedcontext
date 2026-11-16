@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { download } from "@joinedcontext/sdk";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import { useIdentity } from "../../auth/AuthProvider";
 import { Alert, Button, ConfirmDialog, Field, Input, PermissionGuard } from "../../components/ui";
 
@@ -69,7 +70,6 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
   const [preview, setPreview] = useState<Preview | null>(null);
   const [erasureId, setErasureId] = useState<string | null>(null);
 
-  const path = { project, space };
   const body = () => ({ subject: subject.trim(), reason: reason.trim() });
   const said = (error: unknown) =>
     error instanceof ApiError ? (error.problem?.detail ?? error.message) : String(error);
@@ -86,12 +86,9 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
 
   const exportRecords = useMutation({
     mutationFn: async () =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/subjects/export", {
-          params: { path },
-          body: body(),
-        }),
-      )) as { entities?: unknown[] },
+      (await doorAction("portal_space_subject_export", { space, body: body() }, project)) as {
+        entities?: unknown[];
+      },
     onSuccess: (answer) => {
       // The file exists only in this browser: the Portal keeps no export (DM-126).
       download(
@@ -105,11 +102,10 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
 
   const dryRun = useMutation({
     mutationFn: async () =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/erasures", {
-          params: { path, query: { dryRun: "All" } },
-          body: body(),
-        }),
+      (await doorAction(
+        "portal_erasure_file",
+        { space, dryRun: "All", body: body() },
+        project,
       )) as Preview,
     onSuccess: setPreview,
     onError: (error) => setProblem(said(error)),
@@ -117,12 +113,7 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
 
   const erase = useMutation({
     mutationFn: async () =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/erasures", {
-          params: { path },
-          body: body(),
-        }),
-      )) as Erasure,
+      (await doorAction("portal_erasure_file", { space, body: body() }, project)) as Erasure,
     onSuccess: (started) => {
       setPreview(null);
       setErasureId(started.id);
@@ -144,11 +135,7 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
     retry: false,
     refetchInterval: (query) => (query.state.data?.state === "open" ? 5_000 : false),
     queryFn: async () =>
-      (await unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/erasures/{id}", {
-          params: { path: { project, space, id: erasureId ?? "" } },
-        }),
-      )) as Erasure,
+      (await door("portal_erasure_get", { space, id: erasureId ?? "" }, project)) as Erasure,
   });
   const shown = erasure.data ?? (erase.data?.id === erasureId ? erase.data : undefined);
 
@@ -156,9 +143,7 @@ export function SpacePersonalData({ project, space }: { project: string; space: 
     queryKey: ["projects", project, "spaces", space, "erasures"],
     retry: false,
     queryFn: async () =>
-      (await unwrap(await api.GET("/api/v1/projects/{project}/spaces/{space}/erasures", { params: { path } }))) as {
-        items: Erasure[];
-      },
+      (await door("portal_erasure_list", { space }, project)) as { items: Erasure[] },
   });
 
   // A 403 on the list is the role, not a fault: said as a quiet line, never a red alert.
@@ -327,15 +312,13 @@ function ErasureProposals({
     setTouched(false);
     setProblem(null);
   };
-  const path = (id: string) => ({ project, space, id });
 
   const approve = useMutation({
     mutationFn: async (id: string) =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/erasures/{id}/approve", {
-          params: { path: path(id) },
-          body: { subject: typed.trim() },
-        }),
+      (await doorAction(
+        "portal_erasure_approve",
+        { space, id, body: { subject: typed.trim() } },
+        project,
       )) as Erasure,
     onSuccess: (approved) => {
       close();
@@ -345,11 +328,10 @@ function ErasureProposals({
   });
   const decline = useMutation({
     mutationFn: async (id: string) =>
-      (await unwrap(
-        await api.POST("/api/v1/projects/{project}/spaces/{space}/erasures/{id}/decline", {
-          params: { path: path(id) },
-          body: { reason: why.trim() },
-        }),
+      (await doorAction(
+        "portal_erasure_decline",
+        { space, id, body: { reason: why.trim() } },
+        project,
       )) as Erasure,
     onSuccess: (declined) => {
       close();

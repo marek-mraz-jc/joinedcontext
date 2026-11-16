@@ -136,6 +136,7 @@ describe("delete and the trash (T-3107)", () => {
     const item = { id: 4, urn: station(1).id, type: "BikeHireDockingStation", entity: { id: station(1).id, type: "BikeHireDockingStation", name: { type: "Property", value: "Station 1" } }, deletedAt: "2026-10-06T19:20:00Z", expiresAt: "2026-11-05T19:20:00Z" };
     vi.stubGlobal(
       "fetch",
+      // The copy's forget reaches its REST door through the Portal door; its refusal is said in the door's words.
       vi.fn((input: RequestInfo | URL) => ((input as Request).method === "DELETE" ? json({ title: "down" }, 500) : json([item]))),
     );
     render(
@@ -148,7 +149,7 @@ describe("delete and the trash (T-3107)", () => {
     const panel = await screen.findByTestId("view-trash");
     await userEvent.click(within(panel).getByText("Deleted entities (1)"));
     await userEvent.click(within(panel).getByRole("button", { name: "Put back Station 1" }));
-    expect(await within(panel).findByText(/Station 1 is back, but its copy stays among your deleted entities \(HTTP 500\)/)).toBeInTheDocument();
+    expect(await within(panel).findByText(/Station 1 is back, but its copy stays among your deleted entities \(down\)/)).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 });

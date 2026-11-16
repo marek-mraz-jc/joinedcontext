@@ -937,8 +937,14 @@ export interface Functions {
   jc_workspace_compare: { name: string };
   jc_workspace_preview_get: { name: string };
   portal_access_request_list: { endpoint: string };
+  portal_alert_list: Record<string, never>;
+  portal_alert_notice_list: Record<string, never>;
+  portal_comment_list: { space: string; urn?: string };
   portal_connector_list: Record<string, never>;
+  portal_drift_list: Record<string, never>;
   portal_endpoint_quality: { endpoint: string };
+  portal_erasure_get: { space: string; id: string };
+  portal_erasure_list: { space: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_organization_change_get: { id: string };
@@ -948,6 +954,11 @@ export interface Functions {
   portal_person_names: { ids?: string };
   portal_preferences_get: Record<string, never>;
   portal_secret_list: Record<string, never>;
+  portal_space_quality: { space: string };
+  portal_space_quality_checks: { space: string };
+  portal_space_retention_deleted: { space: string };
+  portal_space_temporal_audit: { space: string; pipeline?: string };
+  portal_trash_list: { space: string };
   portal_visualization_template: { template: string; x?: string; y?: string; color?: string; facet?: string };
 }
 
@@ -1000,8 +1011,14 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   jc_workspace_compare: ["Project"],
   jc_workspace_preview_get: ["Project"],
   portal_access_request_list: ["Project"],
+  portal_alert_list: ["Organization"],
+  portal_alert_notice_list: ["Organization"],
+  portal_comment_list: ["Project"],
   portal_connector_list: ["Organization"],
+  portal_drift_list: ["Project"],
   portal_endpoint_quality: ["Project"],
+  portal_erasure_get: ["Project"],
+  portal_erasure_list: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_organization_change_get: ["Organization"],
@@ -1011,6 +1028,11 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_person_names: ["Organization"],
   portal_preferences_get: ["Organization"],
   portal_secret_list: ["Project"],
+  portal_space_quality: ["Project"],
+  portal_space_quality_checks: ["Project"],
+  portal_space_retention_deleted: ["Project"],
+  portal_space_temporal_audit: ["Project"],
+  portal_trash_list: ["Project"],
   portal_visualization_template: ["Organization"],
 };
 
@@ -1062,7 +1084,18 @@ export interface Actions {
   jc_workspace_propose: { name: string };
   jc_workspace_update_from_main: { name: string; resolutions?: unknown };
   portal_access_request_file: { endpoint: string; body?: unknown };
+  portal_alert_mute: { id: string; body?: unknown };
+  portal_alert_notice_read: { id: string };
+  portal_alert_subscribe: { body?: unknown };
+  portal_alert_unsubscribe: { id: string };
+  portal_comment_add: { space: string; body?: unknown };
+  portal_comment_remove: { space: string; id: string };
   portal_connector_revoke: { connector: string };
+  portal_drift_adopt: { space: string; id: string };
+  portal_drift_revert: { space: string; id: string };
+  portal_erasure_approve: { space: string; id: string; body?: unknown };
+  portal_erasure_decline: { space: string; id: string; body?: unknown };
+  portal_erasure_file: { space: string; dryRun?: string; body?: unknown };
   portal_notification_read: { notification: string };
   portal_opendata_page_preview: { body?: unknown };
   portal_opendata_page_revert: { page: string; lang: string };
@@ -1079,6 +1112,10 @@ export interface Actions {
   portal_secret_set: { body?: unknown };
   portal_serviceaccount_revoke: { account: string; body?: unknown };
   portal_serviceaccount_secret_issue: { account: string };
+  portal_space_retention_preview: { space: string; body?: unknown };
+  portal_space_subject_export: { space: string; body?: unknown };
+  portal_trash_forget: { space: string; id: string };
+  portal_trash_keep: { space: string; body?: unknown };
   propose_create: { manifest?: unknown; dryRun?: boolean; confirm?: string };
   propose_delete: { dryRun?: boolean; confirm?: string };
   propose_update: { manifest?: unknown; patch?: unknown; dryRun?: boolean; confirm?: string };
@@ -1133,7 +1170,18 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   jc_workspace_propose: ["Project"],
   jc_workspace_update_from_main: ["Project"],
   portal_access_request_file: ["Project"],
+  portal_alert_mute: ["Organization"],
+  portal_alert_notice_read: ["Organization"],
+  portal_alert_subscribe: ["Organization"],
+  portal_alert_unsubscribe: ["Organization"],
+  portal_comment_add: ["Project"],
+  portal_comment_remove: ["Project"],
   portal_connector_revoke: ["Organization"],
+  portal_drift_adopt: ["Project"],
+  portal_drift_revert: ["Project"],
+  portal_erasure_approve: ["Project"],
+  portal_erasure_decline: ["Project"],
+  portal_erasure_file: ["Project"],
   portal_notification_read: ["Organization"],
   portal_opendata_page_preview: ["Organization"],
   portal_opendata_page_revert: ["Organization"],
@@ -1150,6 +1198,10 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_secret_set: ["Project"],
   portal_serviceaccount_revoke: ["Project"],
   portal_serviceaccount_secret_issue: ["Project"],
+  portal_space_retention_preview: ["Project"],
+  portal_space_subject_export: ["Project"],
+  portal_trash_forget: ["Project"],
+  portal_trash_keep: ["Project"],
   propose_create: ["Project"],
   propose_delete: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],
   propose_update: ["AgentProfile","App","AssistantDeployment","Blueprint","Bundle","CkanInstance","ContextBroker","ContextSourceRegistration","ContextSpace","Dashboard","DataAgreement","DataModel","DataOffer","DataSource","DataSpaceParticipant","DelegationPolicy","Endpoint","Entity","Environment","Group","KnowledgeSource","Layer","Mapping","McpServer","ModelProjection","MqttBroker","Organization","OrganizationRole","Pipeline","Policy","Portal","Role","RoleBinding","ScopeDefinition","Script","ServiceAccount","SharedSpaceReference","Subscription","SyncSource","UiSchema"],

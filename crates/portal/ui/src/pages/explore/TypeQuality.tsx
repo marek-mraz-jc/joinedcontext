@@ -8,7 +8,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
-import { api, unwrap } from "../../api/client";
+import { door } from "../../api/odata";
 import type { components } from "../../api/schema";
 import {
   Badge,
@@ -34,11 +34,7 @@ export function TypeQuality({ project, space, type }: { project: string; space: 
   const quality = useQuery({
     queryKey: ["projects", project, "spaces", space, "quality"],
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/spaces/{space}/quality", {
-          params: { path: { project, space } },
-        }),
-      ) as unknown,
+      (await door("portal_space_quality", { space }, project)) as unknown,
   });
 
   if (quality.isPending) {
