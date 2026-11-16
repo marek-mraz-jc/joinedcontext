@@ -327,7 +327,8 @@ export async function listManifests(
   project: string,
   plural: ManifestSet,
 ): Promise<{ items: Manifest[] }> {
-  const query =
+  // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
+  const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
     project === ORG_NAMESPACE
       ? client.from(orgSet(plural))
       : client.under(project, plural);
