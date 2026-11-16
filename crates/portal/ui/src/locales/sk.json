@@ -8160,7 +8160,8 @@
       "agents": "Agenti",
       "costs": "Náklady",
       "connectors": "Konektory",
-      "data-access": "Prístup k údajom"
+      "data-access": "Prístup k údajom",
+      "backups": "Zálohy"
     },
     "settings": {
       "title": "Nastavenia",
@@ -8842,7 +8843,7 @@
       "access": "Kto patrí do organizácie a čo smie každý človek, skupina a servisný účet. Každá zmena sa navrhne a schváli.",
       "projects": "Čo držia a zverejňujú všetky projekty organizácie, na jednom mieste.",
       "platform": "Čo inštalácia prevádzkuje pre každý projekt: brokery, prostredia, členstvo v dátovom priestore, stav a náklady.",
-      "settings": "Doména organizácie, jazyky, kontakty, pravidlá a limity a čo ešte chýba v nastavení."
+      "settings": "Doména organizácie, jazyky, kontakty, pravidlá a limity, zálohy konfigurácie a čo ešte chýba v nastavení."
     },
     "kindHidden": "Tu ich vidí len administrátor organizácie, ktorého rola zahŕňa {kinds}. Požiadajte administrátora organizácie, aby ich pridal do vašej roly.",
     "agents": {
@@ -13387,6 +13388,98 @@
     "phase": {
       "merged": "zverejnené",
       "rejected": "zamietnuté"
+    }
+  },
+  "backups": {
+    "loading": "Načítava sa záloha…",
+    "unreadable": "Zálohu sa nepodarilo načítať. Skúste to o minútu.",
+    "lead": "Kópia konfigurácie tejto organizácie ako súbory s ich identifikátormi vo vašom vlastnom S3 buckete: jej nastavenia, roly, priradenia a manifesty každého projektu s ich schémami. Bez údajov entít, bez kódu, bez hodnôt tajomstiev. Bucket uchováva každú verziu, takže aj zmazanú zálohu možno obnoviť.",
+    "runs": {
+      "title": "Behy",
+      "scheduled": "Beží každých {hours} hodín a vždy, keď stlačíte Spustiť teraz.",
+      "off": "Plán je vypnutý: nič nebeží, kým ho nezapnete alebo nestlačíte Spustiť teraz. Bucket a jeho verzie zostávajú.",
+      "now": "Spustiť teraz",
+      "running": "Prebieha…",
+      "failed": "Beh sa nedokončil. Skontrolujte bucket nižšie a stlačte znova Spustiť teraz.",
+      "never": "Zatiaľ žiadny beh. Stlačte Spustiť teraz pre prvú zálohu.",
+      "lastOk": "Posledný beh {at}, spustil {by}: nahraných {size}.",
+      "lastFailed": "Posledný beh {at}, spustil {by}, zlyhal: {reason}. Opravte bucket nižšie a stlačte Spustiť teraz.",
+      "done": "Záloha je nahraná ako nová verzia."
+    },
+    "log": {
+      "title": "Kto čo urobil ({count})",
+      "ok": "Hotovo",
+      "failed": "Zlyhalo: pozrite dôvod vedľa",
+      "action": {
+        "run": "Záloha",
+        "delete": "Zmazanie",
+        "plan": "Kontrola obnovy",
+        "restore": "Obnova"
+      }
+    },
+    "versions": {
+      "title": "Verzie",
+      "lead": "Každá záloha, ktorú bucket uchováva, od najnovšej. Staršie verzie odchádzajú po nastavenej dobe uchovania.",
+      "versioningOn": "Verzovanie zapnuté",
+      "versioningOff": "Verzovanie vypnuté: zálohy sa odmietajú",
+      "lockOn": "Object Lock zapnutý",
+      "lockOff": "Bez Object Lock",
+      "empty": "V buckete zatiaľ nie je žiadna verzia",
+      "emptyHint": "Stlačte vyššie Spustiť teraz a nahrajte prvú.",
+      "deleted": "Zmazaná",
+      "current": "Aktuálna",
+      "download": "Stiahnuť",
+      "restore": "Obnoviť túto verziu",
+      "delete": "Zmazať zálohu",
+      "deleteTitle": "Zmazať aktuálnu zálohu?",
+      "deleteHint": "Bucket zapíše značku zmazania a ponechá každú staršiu verziu, takže ju môžete obnoviť, kým ju neodstráni doba uchovania.",
+      "deletedHint": "Záloha je zmazaná. Každá staršia verzia ostáva: obnovte niektorú nižšie alebo stlačte Spustiť teraz pre novú."
+    },
+    "restore": {
+      "title": "Obnoviť túto verziu",
+      "taken": "Vytvorená {at}.",
+      "planning": "Porovnáva sa táto verzia s dnešnou organizáciou…",
+      "same": "Nie je čo obnoviť: organizácia je taká, aká bola v tejto verzii.",
+      "organization": "Nastavenia organizácie",
+      "counts": "{created} vytvoriť, {changed} zmeniť, {unchanged} bez zmeny",
+      "organizationNote": "Nastavenia organizácie sa odtiaľto nemenia: stiahnite túto verziu a navrhnite jej súbory organization/ na karte Nastavenia.",
+      "proposed": "Navrhnuté ako zmena. Iný správca ju schváli v Zmenách.",
+      "propose": "Navrhnúť obnovu",
+      "close": "Zavrieť",
+      "project": "Projekt {project}"
+    },
+    "form": {
+      "title": "Bucket a plán",
+      "leadNew": "Kam idú zálohy. Bucket musí mať zapnuté verzovanie; stránka to pred uložením overí.",
+      "leadSaved": "Zmeňte, kam idú zálohy, ako často a ako dlho zostávajú staršie verzie.",
+      "emptyTitle": "Záloha ešte nie je nastavená",
+      "emptyHint": "Vyplňte nižšie svoj S3 bucket a uložte. Potom stlačte Spustiť teraz pre prvú zálohu.",
+      "endpoint": "Adresa S3",
+      "region": "Región",
+      "bucket": "Bucket",
+      "prefix": "Priečinok",
+      "accessKeyId": "Identifikátor prístupového kľúča",
+      "secretAccessKey": "Tajný prístupový kľúč",
+      "secretKept": "Uložený; zadajte nový, ak ho chcete nahradiť",
+      "everyHours": "Spúšťať každých (hodín)",
+      "keepDays": "Uchovať staršie verzie (dní)",
+      "enabled": "Plánované zálohy zapnuté",
+      "save": "Uložiť",
+      "saving": "Overuje sa bucket…",
+      "saved": "Uložené. Bucket odpovedal so zapnutým verzovaním.",
+      "failed": "Bucket sa neuložil. Skontrolujte polia vyššie a uložte znova.",
+      "invalid": "Neuložené: pole {field} treba opraviť, pozrite riadok pod ním."
+    },
+    "hint": {
+      "endpoint": "Adresa https služby S3, napríklad https://s3.eu-central-1.amazonaws.com",
+      "region": "Región bucketu, napríklad eu-central-1",
+      "bucket": "Názov bucketu, napríklad mesto-zalohy",
+      "prefix": "Priečinok v buckete končiaci znakom /, napríklad joinedcontext/. Prázdne pre koreň bucketu.",
+      "accessKeyId": "Identifikátor kľúča účtu, ktorý smie zapisovať do bucketu, napríklad AKIAIOSFODNN7EXAMPLE",
+      "secretAccessKey": "Uloží sa zapečatený a už sa nezobrazí. Nechajte prázdne, ak chcete ponechať uložený.",
+      "everyHours": "1 až 672 hodín, napríklad 24 pre raz denne",
+      "keepDays": "1 až 3650 dní, napríklad 90",
+      "enabled": "Vypnutie ponechá bucket aj všetky verzie; Spustiť teraz funguje ďalej."
     }
   }
 }

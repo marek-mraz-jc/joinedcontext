@@ -3179,6 +3179,369 @@
         }
       }
     },
+    "/api/v1/organization/backups/configuration": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Read Configuration Backup",
+        "description": "The Organization's configuration backup target (never its secret key) and the newest runs, deletes and restores (T-7154).",
+        "operationId": "overview",
+        "responses": {
+          "200": {
+            "description": "Target and log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackupOverview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the request's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Set Configuration Backup Target",
+        "description": "Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).",
+        "operationId": "save",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The bucket's versioning is not on",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is not valid; `errors` names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No age key to seal the secret, or the bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/bundle": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Delete Configuration Backup",
+        "description": "A soft delete: the bucket keeps every version behind a delete marker until retention removes them, and any version can still be restored (T-7154).",
+        "operationId": "soft_delete",
+        "responses": {
+          "204": {
+            "description": "Delete marker written"
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or its versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/run": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Run Configuration Backup Now",
+        "description": "Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).",
+        "operationId": "run_now",
+        "responses": {
+          "200": {
+            "description": "The run's log entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogEntry"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or its bucket's versioning is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Configuration Backup Versions",
+        "description": "Every version and delete marker of the Organization's bundle in its bucket, newest first, with the bucket's versioning and Object Lock state (T-7154).",
+        "operationId": "versions",
+        "responses": {
+          "200": {
+            "description": "Versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The bucket cannot be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions/{version}": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Download Configuration Backup Version",
+        "description": "One version of the Organization's bundle, as the zip that was uploaded (T-7154).",
+        "operationId": "download",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The zip",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/configuration/versions/{version}/restore": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Restore Configuration Backup Version",
+        "description": "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).",
+        "operationId": "restore",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The plan, and the Changes once applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestorePlan"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A bundle of another Organization, or of a project it no longer has",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/brokers": {
       "get": {
         "tags": [
@@ -48676,6 +49039,31 @@
           }
         }
       },
+      "BackupOverview": {
+        "type": "object",
+        "description": "The page's state: the target (never its secret), the newest acts on it.",
+        "required": [
+          "log"
+        ],
+        "properties": {
+          "log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LogEntry"
+            }
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Target"
+              }
+            ]
+          }
+        }
+      },
       "BarChartOptions": {
         "type": "object",
         "description": "A bar chart's own choices: the text attribute that names each bar, one bar per entity.",
@@ -49335,6 +49723,37 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "BundleVersion": {
+        "type": "object",
+        "required": [
+          "versionId",
+          "lastModified",
+          "size",
+          "isLatest",
+          "deleteMarker"
+        ],
+        "properties": {
+          "deleteMarker": {
+            "type": "boolean",
+            "description": "A soft delete: the bundle reads as gone until a version is restored."
+          },
+          "isLatest": {
+            "type": "boolean"
+          },
+          "lastModified": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "versionId": {
+            "type": "string"
           }
         }
       },
@@ -55525,6 +55944,64 @@
           }
         }
       },
+      "LogEntry": {
+        "type": "object",
+        "description": "One audited act on an Organization's backup.",
+        "required": [
+          "id",
+          "organization",
+          "kind",
+          "action",
+          "actor",
+          "at",
+          "ok",
+          "bytes",
+          "objectKey",
+          "versionId",
+          "message"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`run`, `delete`, `restore-plan` or `restore`."
+          },
+          "actor": {
+            "type": "string",
+            "description": "Who: a username, or `schedule`."
+          },
+          "at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string",
+            "description": "What happened, in words; never a credential."
+          },
+          "objectKey": {
+            "type": "string"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "organization": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          }
+        }
+      },
       "LogoutTarget": {
         "type": "object",
         "description": "The URL the browser must visit to finish an RP-initiated logout at Keycloak.",
@@ -58602,6 +59079,47 @@
           }
         }
       },
+      "PlanGroup": {
+        "type": "object",
+        "required": [
+          "name",
+          "created",
+          "changed",
+          "unchanged"
+        ],
+        "properties": {
+          "change": {
+            "description": "The Change the restore proposed for this project, once applied; a second administrator\napproves it as any other Change."
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "`organization`, or a project's name."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this group needs done by hand: an Organization-level manifest is restored through\nthe Organization's own repository, never by this door."
+          },
+          "unchanged": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "PlanSummary": {
         "type": "object",
         "description": "Counts of planned resource mutations.",
@@ -60704,6 +61222,50 @@
         ],
         "description": "What a proposal of one resource sends: the manifest, and beside it the draft the form holds\n(AG-61) and the files the manifest names but cannot contain (DM-39). Both are taken out of the\nbody before it is read as an envelope; the type is what the OpenAPI document says, so the\ngenerated client sends them without a cast (T-1488)."
       },
+      "RestoreInput": {
+        "type": "object",
+        "properties": {
+          "apply": {
+            "type": "boolean",
+            "description": "`false` (the default) plans only; `true` proposes one Change per project, which another\nadministrator approves."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RestorePlan": {
+        "type": "object",
+        "description": "What restoring one version would change, per project and for the Organization's own\nmanifests: manifests that would be created or changed, and how many are as they are.",
+        "required": [
+          "organization",
+          "versionId",
+          "takenAt",
+          "groups",
+          "changes"
+        ],
+        "properties": {
+          "changes": {
+            "type": "integer",
+            "description": "Manifests created or changed in all groups: 0 means the Organization is as it was then.",
+            "minimum": 0
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanGroup"
+            }
+          },
+          "organization": {
+            "type": "string"
+          },
+          "takenAt": {
+            "type": "string",
+            "description": "When the bundle was taken."
+          },
+          "versionId": {
+            "type": "string"
+          }
+        }
+      },
       "RestoreRequest": {
         "type": "object",
         "required": [
@@ -62465,6 +63027,126 @@
           }
         }
       },
+      "Target": {
+        "type": "object",
+        "description": "Where an Organization's backup goes and when it runs. The secret access key is sealed with\nthe Portal's age key and never leaves this struct: it is not serialised.",
+        "required": [
+          "organization",
+          "kind",
+          "endpoint",
+          "region",
+          "bucket",
+          "prefix",
+          "accessKeyId",
+          "enabled",
+          "everyHours",
+          "keepDays",
+          "updatedBy",
+          "updatedAt"
+        ],
+        "properties": {
+          "accessKeyId": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "`https://s3.eu-central-1.amazonaws.com`, a MinIO or Ceph address."
+          },
+          "everyHours": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "keepDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "lastRunAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339; the start of the last scheduled or manual run."
+          },
+          "organization": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "The folder of the bucket every object of this backup lands under, e.g. `jc/`."
+          },
+          "region": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "updatedBy": {
+            "type": "string"
+          }
+        }
+      },
+      "TargetInput": {
+        "type": "object",
+        "description": "What an administrator sets. `secretAccessKey` is written only: absent keeps the saved one.",
+        "required": [
+          "endpoint",
+          "region",
+          "bucket",
+          "accessKeyId",
+          "enabled",
+          "everyHours",
+          "keepDays"
+        ],
+        "properties": {
+          "accessKeyId": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string",
+            "description": "`bb-backups`"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "`https://s3.eu-central-1.amazonaws.com`"
+          },
+          "everyHours": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "keepDays": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "`joinedcontext/`; empty for the bucket's root."
+          },
+          "region": {
+            "type": "string",
+            "description": "`eu-central-1`"
+          },
+          "secretAccessKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "Template": {
         "type": "object",
         "description": "One template as a person picks it (T-3263, AP-141): what it is for, for whom, and the data\nit needs; the source stays the model's.",
@@ -63227,6 +63909,30 @@
                 "description": "`None` when the bundle is unreachable or carries no `version.json`."
               }
             ]
+          }
+        }
+      },
+      "VersionList": {
+        "type": "object",
+        "description": "The versions of the bundle in the bucket, and what the bucket says of itself.",
+        "required": [
+          "versioning",
+          "objectLock",
+          "versions"
+        ],
+        "properties": {
+          "objectLock": {
+            "type": "boolean"
+          },
+          "versioning": {
+            "type": "string",
+            "description": "`Enabled`, `Suspended` or empty (never versioned)."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleVersion"
+            }
           }
         }
       },
