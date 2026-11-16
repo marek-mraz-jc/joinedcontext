@@ -218,14 +218,16 @@ pub static DOORS: [Door; 177] = [
         PEOPLE_WRITE,
     ),
     // The Organization reads of any page: the open data portals' hosts, the home page's widgets,
-    // the Organization's data models; each handler answers only what the person may read (T-7167).
+    // the Organization's data models. Each handler answers only what the person may read, a
+    // person of another Organization included (the home page asks on every visit), so they are
+    // `Own` (T-7130, T-7167).
     door(
         "portal_portal_host_list",
         Org,
         Method::GET,
         "/organization/portal-hosts",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_widget_list",
@@ -233,7 +235,7 @@ pub static DOORS: [Door; 177] = [
         Method::GET,
         "/organization/widgets",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_organization_model_list",
@@ -241,7 +243,7 @@ pub static DOORS: [Door; 177] = [
         Method::GET,
         "/organization/datamodels",
         &[("search", Place::Query("Edm.String"))],
-        Who::Person,
+        Who::Own,
     ),
     // A project's own row (its usage, quota and repository) and its deletion, which opens the
     // red-lane Change; the handlers check the read and the `org` namespace's rule (T-7167).
