@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, unwrap } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Button, Dialog, ExternalLink } from "../../components/ui";
 import { AppGenerator } from "./AppGenerator";
@@ -41,7 +41,7 @@ export function AppTemplates({ project, mayBuild }: { project: string; mayBuild:
   const templates = useQuery({
     queryKey: ["app-templates"],
     retry: false,
-    queryFn: async () => unwrap(await api.GET("/api/v1/app-templates", {})),
+    queryFn: async () => (await door("portal_app_templates", {})) as RestAnswer<"list_templates">,
   });
   const list = templates.data?.templates ?? [];
   if (list.length === 0) return null;

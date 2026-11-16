@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { door, type RestAnswer } from "../../api/odata";
 import { isChange, localized } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { proposeChecked } from "../../api/proposal";
@@ -54,12 +55,7 @@ export function ShareDialog({
 
   const audience = useQuery({
     queryKey: [...queryKeys.list(project, "apps"), name, "audience"],
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/apps/{name}/audience", {
-          params: { path: { project, name } },
-        }),
-      ),
+    queryFn: async () => (await door("portal_app_audience", { name }, project)) as RestAnswer<"app_audience">,
   });
 
   const propose = useMutation({

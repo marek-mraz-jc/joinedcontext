@@ -2,7 +2,8 @@ import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, type UseMutationResult } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { ApiError } from "../../api/client";
+import { door, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { Alert, Button, Card, CodeBlock, EmptyState, Field, Input, Select, Skeleton } from "../../components/ui";
 import { ChangeFollowCard } from "./ChangeFollowCard";
@@ -411,7 +412,7 @@ export function DashboardEditor({ project, name }: { project: string; name: stri
   const { t } = useTranslation();
   const loaded = useQuery({
     queryKey: ["projects", project, "apps", name, "dashboard"],
-    queryFn: async (): Promise<AppDashboard> => unwrap(await api.GET("/api/v1/projects/{project}/apps/{name}/dashboard", { params: { path: { project, name } } })),
+    queryFn: async (): Promise<AppDashboard> => (await door("portal_app_dashboard", { name }, project)) as AppDashboard,
     retry: false,
   });
   // What the person changed; until then the file as the server read it.
@@ -419,7 +420,7 @@ export function DashboardEditor({ project, name }: { project: string; name: stri
   const file = edited ?? ((loaded.data?.config ?? null) as unknown as DashboardFile | null);
   const send = useMutation({
     mutationFn: async (dryRun: boolean): Promise<Proposal> =>
-      unwrap(await api.POST("/api/v1/projects/{project}/apps/{name}/dashboard", { params: { path: { project, name } }, body: { config: file ?? {}, dryRun } })),
+      (await doorAction("portal_app_dashboard_propose", { name, body: { config: file ?? {}, dryRun } }, project)) as Proposal,
   });
   // A refusal moves focus to the first field it names, which may be a screen above the buttons.
   useEffect(() => {

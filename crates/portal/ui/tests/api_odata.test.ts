@@ -154,6 +154,26 @@ describe("the Portal's OData client (T-6812)", () => {
     });
   });
 
+  it("sends the Apps pages' doors to their own addresses: an App's name as a parameter, the templates on the Organization", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer these doors from their REST stubs.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return odataValue(request.method === "GET" ? { builds: [] } : { url: "https://forge/mr/1" });
+    });
+    await door("portal_app_builds", { name: "air/../x" }, "air");
+    await doorAction("portal_app_restore", { name: "air-map", body: { commit: "abc1234" } }, "air");
+    await door("portal_app_templates", {});
+    const builds = new URL(sent[0].url);
+    expect(builds.pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_app_builds(name=@name)");
+    // The name stays one quoted parameter: a `/` in it never reaches another address.
+    expect(builds.searchParams.get("@name")).toBe("'air/../x'");
+    expect(new URL(sent[1].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_app_restore");
+    await expect(sent[1].json()).resolves.toEqual({ name: "air-map", body: { commit: "abc1234" } });
+    expect(new URL(sent[2].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_app_templates()");
+  });
+
   it("reads a kind's manifests through the project's navigation, the org namespace's from its Organization set, page after page", async () => {
     const sent: Request[] = [];
     // Not vi.stubGlobal: tests/setup.ts would answer these reads from REST stubs.
