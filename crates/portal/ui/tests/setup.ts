@@ -94,6 +94,18 @@ if (typeof window !== "undefined") {
 // sees every call; a stub naming the project, answering no items, or marking its list
 // exact (EXACT_PROJECTS, an outsider's on purpose) is kept as it is.
 
+// A file that assigns its stub (`global.fetch = vi.fn(...)`) meets the same translation of the
+// service's addresses as one that stubs it (T-7073): the stub it reads back is its own, proxied.
+let assigned: unknown = globalThis.fetch;
+Object.defineProperty(globalThis, "fetch", {
+  configurable: true,
+  enumerable: true,
+  get: () => assigned,
+  set: (value: unknown) => {
+    assigned = typeof value === "function" && vi.isMockFunction(value) ? listingThePage(value as typeof fetch) : value;
+  },
+});
+
 const stubGlobal = vi.stubGlobal.bind(vi);
 vi.stubGlobal = (name: string | symbol | number, value: unknown) =>
   stubGlobal(name, name === "fetch" && typeof value === "function" ? listingThePage(value as typeof fetch) : value);
@@ -108,7 +120,16 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
       const [input] = args;
       // A propose_* action reaches it as the REST write the service runs for it (proposalAsRest).
       if (input instanceof Request && input.method === "POST" && input.url.includes("JoinedContext.Portal.propose_")) {
-        return proposalAsRest(input).then((rest) => Reflect.apply(target, self, rest ? [rest] : args));
+        // The service answers the door's success as it is and its refusal as an OData error.
+        return proposalAsRest(input).then(async (rest) => {
+          const answer = (await Reflect.apply(target, self, rest ? [rest] : args)) as Response;
+          if (!rest) return answer;
+          if (!answer.ok) return asOData(answer);
+          // The service answers JSON whatever a stub left its Content-Type.
+          const headers = new Headers(answer.headers);
+          headers.set("Content-Type", "application/json");
+          return new Response(answer.status === 204 ? null : await answer.text(), { status: answer.status, headers });
+        });
       }
       // A Portal door or a registry operation whose handler is a REST door's reaches it as that door,
       // its answer wrapped as the service wraps it (doorAsRest).

@@ -249,10 +249,8 @@ export async function unwrap<T>(result: {
   // A list the caller may not read answers 404 in the API's own words, which say neither what is
   // hidden nor why (PF-50). A person reads that it is not open to them, in their language; every
   // page that shows a list's refusal shows this (T-3147).
-  const hidden = status === 404 ? HIDDEN_LIST.exec(problem?.detail ?? "") : null;
-  if (hidden && problem) {
-    problem = { ...problem, detail: i18n.t("app.listHidden", { project: hidden[1] }) };
-  }
+  const hidden = hiddenList(status, problem);
+  if (hidden) problem = hidden;
   const message =
     problem?.detail ?? problem?.title ?? (result.response.statusText || `HTTP ${status}`);
 
@@ -261,8 +259,18 @@ export async function unwrap<T>(result: {
     message,
     problem,
     result.response.headers.get("x-request-id") ?? undefined,
-    hidden !== null,
+    hidden !== undefined,
   );
+}
+
+/**
+ * A list the caller may not read answers 404 in the API's own words, which say neither what is
+ * hidden nor why (PF-50): the problem in the person's words, or nothing for any other refusal.
+ * The OData client reads the service's refusal the same way (odata.ts toApiError).
+ */
+export function hiddenList(status: number, problem: WireProblem | undefined): WireProblem | undefined {
+  const hidden = status === 404 ? HIDDEN_LIST.exec(problem?.detail ?? "") : null;
+  return hidden && problem ? { ...problem, detail: i18n.t("app.listHidden", { project: hidden[1] }) } : undefined;
 }
 
 /** Phases a resource leaves by itself, without anyone acting. */

@@ -812,6 +812,17 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
     assert_eq!(one.status, StatusCode::OK, "{}", one.text);
     let foreign = get(&state, Mode::Shared, "ba-only", keyed).await;
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    // A key's literal arrives percent-encoded (the SDK encodes it, so a `/` in a name stays in
+    // the key): the service reads it decoded.
+    let encoded = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/spaces(project='helsinki',name='%61ir')?$select=name",
+    )
+    .await;
+    assert_eq!(encoded.status, StatusCode::OK, "{}", encoded.text);
+    assert_eq!(encoded.json()["name"], "air", "{}", encoded.text);
     // A key that names no project, or a navigation below one, decides nothing.
     let unkeyed = get(&state, Mode::Shared, "root", "/api/v1/spaces('air')").await;
     assert_eq!(unkeyed.status, StatusCode::NOT_FOUND, "{}", unkeyed.text);

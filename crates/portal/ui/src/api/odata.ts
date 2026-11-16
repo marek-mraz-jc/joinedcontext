@@ -8,8 +8,9 @@ import {
   originTransport,
   type ODataModel,
 } from "@joinedcontext/sdk";
-import { api, ApiError, loginRedirectUrl, unwrap, type WireProblem } from "./client";
+import { api, ApiError, hiddenList, loginRedirectUrl, unwrap, type WireProblem } from "./client";
 import { ORG_NAMESPACE } from "./manifest";
+import { activeWorkspace } from "../components/layout/WorkspaceContext";
 import type { components, operations } from "./schema";
 import { announceSessionEnded } from "./sessionEnded";
 import { announceStepUp, stepUpUrl } from "./stepUp";
@@ -71,6 +72,9 @@ const closingClient = odata(ODATA_ROOT, {
  */
 export function toApiError(error: unknown): unknown {
   if (!(error instanceof ODataError)) return error;
+  // A bare failure (the edge's 502, a body that is no error object) says nothing to show: the
+  // page says its own sentence for the status, as for a REST door's.
+  if (!error.described) return new ApiError(error.status, error.message, undefined, error.requestId);
   const problem: WireProblem = {
     type: error.type,
     title: error.title,
@@ -87,7 +91,8 @@ export function toApiError(error: unknown): unknown {
       : {}),
     ...(error.hint ? { hint: error.hint } : {}),
   };
-  return new ApiError(error.status, error.message, problem, error.requestId);
+  const hidden = hiddenList(error.status, problem);
+  return new ApiError(error.status, hidden?.detail ?? error.message, hidden ?? problem, error.requestId, hidden !== undefined);
 }
 
 async function refusedAs<T>(answer: Promise<T>): Promise<T> {
@@ -194,9 +199,17 @@ export async function projectEtag(project: string): Promise<string | undefined> 
   return row["@odata.etag"];
 }
 
+/**
+ * An OData text literal in an address: quoted, a quote doubled, percent-encoded so a `/`, `?` or
+ * `#` in a name stays in its key (the SDK's keyPredicate does the same).
+ */
+function quoted(text: string): string {
+  return encodeURIComponent(`'${text.replaceAll("'", "''")}'`);
+}
+
 /** The address an action of project `project` is bound to. */
 export function projectBound(project: string): string {
-  return `projects('${project.replaceAll("'", "''")}')`;
+  return `projects(${quoted(project)})`;
 }
 
 /** The `Organization` singleton the people's operations and the Organization's Portal doors are bound to. */
@@ -277,6 +290,51 @@ export type ManifestSet = Exclude<
   | "revisions"
   | "runs"
 >;
+
+/**
+ * Inside a workspace, a manifest is read and written in its branch (API/01 §22) through the REST
+ * doors with `?workspace=` (client.ts workspaceMiddleware): the service reads and binds only what
+ * the project holds, and a manifest drafted in the copy is not there.
+ * ponytail: the service has no binding of a workspace's copy yet; T-7073's split adds one.
+ */
+const inCopy = {
+  list: async (project: string, plural: string) =>
+    unwrap(await api.GET("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural } } })),
+  read: async (project: string, plural: string, name: string) =>
+    unwrap(await api.GET("/api/v1/projects/{project}/{plural}/{name}", { params: { path: { project, plural, name } } })),
+  write: async (
+    project: string,
+    plural: string,
+    body: { metadata: { name: string } },
+    { create, dryRun, ifMatch, name }: { create: boolean; dryRun: boolean; ifMatch?: string; name: string },
+  ): Promise<unknown> => {
+    const query = dryRun ? { dryRun: "All" } : undefined;
+    const manifest = body as components["schemas"]["ResourceProposal"];
+    return unwrap(
+      create
+        ? await api.POST("/api/v1/projects/{project}/{plural}", { params: { path: { project, plural }, query }, body: manifest })
+        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
+            params: { path: { project, plural, name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
+            body: manifest,
+          }),
+    );
+  },
+  remove: async (
+    project: string,
+    plural: string,
+    name: string,
+    { dryRun, ifMatch, confirm }: { dryRun: boolean; ifMatch?: string; confirm?: string },
+  ): Promise<unknown> =>
+    unwrap(
+      await api.DELETE("/api/v1/projects/{project}/{plural}/{name}", {
+        params: {
+          path: { project, plural, name },
+          query: { ...(dryRun ? { dryRun: "All" } : {}), ...(confirm ? { confirm } : {}) },
+          header: ifMatch ? { "If-Match": ifMatch } : undefined,
+        },
+      }),
+    ),
+};
 
 /** The sets of {@link ManifestSet}'s complement: their rows are no manifests. */
 const NOT_MANIFESTS: readonly string[] = [
@@ -372,6 +430,7 @@ export async function listManifests(
   project: string,
   of: string,
 ): Promise<{ items: Manifest[] }> {
+  if (activeWorkspace()) return inCopy.list(project, of);
   const plural = manifestSet(of);
   // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
   const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
@@ -380,7 +439,7 @@ export async function listManifests(
       : client.under(project, plural);
   const items: Manifest[] = [];
   const kind = KIND_OF[plural];
-  const rows = query.select(...(membersOf(plural) as never[])).all();
+  const rows = query.select(...membersOf(plural)).all();
   await refusedAs(
     (async () => {
       for await (const row of rows) {
@@ -408,6 +467,7 @@ export async function readManifest(
   of: string,
   name: string,
 ): Promise<Manifest> {
+  if (activeWorkspace()) return inCopy.read(project, of, name);
   const plural = manifestSet(of);
   const members = membersOf(plural);
   const row = (await refusedAs(
@@ -447,10 +507,7 @@ export async function listOrganizations(several = false): Promise<{ items: Manif
   return { items: row.metadata == null ? [] : [asManifest(row, ORGANIZATION)] };
 }
 
-/** An OData text literal: quoted, a quote doubled. */
-function quoted(text: string): string {
-  return `'${text.replaceAll("'", "''")}'`;
-}
+
 
 /** The address of manifest `name` of `plural` in `project`, the entity its write actions are bound to. */
 export function manifestBound(project: string, plural: ManifestSet, name: string): string {
@@ -489,6 +546,7 @@ export async function proposeManifest(
     name?: string;
   },
 ): Promise<unknown> {
+  if (activeWorkspace()) return inCopy.write(project, of, manifest, { create, dryRun, ifMatch, name });
   const plural = manifestSet(of);
   if (create) {
     return refusedAs(client.act("propose_create", projectBound(project), { manifest, dryRun }));
@@ -508,6 +566,7 @@ export async function proposeDelete(
   name: string,
   { dryRun = false, ifMatch, confirm }: { dryRun?: boolean; ifMatch?: string; confirm?: string } = {},
 ): Promise<unknown> {
+  if (activeWorkspace()) return inCopy.remove(project, of, name, { dryRun, ifMatch, confirm });
   const bound = manifestBound(project, manifestSet(of), name);
   return refusedAs(
     client.act("propose_delete", bound, { dryRun, ...(confirm ? { confirm } : {}) }, matching(ifMatch)),

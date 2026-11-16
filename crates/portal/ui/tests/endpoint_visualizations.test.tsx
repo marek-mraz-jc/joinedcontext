@@ -64,20 +64,18 @@ function respond(body: unknown, status = 200): Response {
 }
 
 describe("VisualizationsSection", () => {
-  let originalFetch: typeof global.fetch;
   let sent: { method: string; url: URL; body: string }[];
 
   beforeEach(async () => {
-    originalFetch = global.fetch;
     sent = [];
     await i18n.changeLanguage("en");
   });
   afterEach(() => {
-    global.fetch = originalFetch;
+    vi.unstubAllGlobals();
   });
 
   function mount(manifest: Manifest, canEdit: boolean) {
-    global.fetch = vi.fn(
+    vi.stubGlobal("fetch", vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit) => {
         const request =
           input instanceof Request
@@ -97,7 +95,7 @@ describe("VisualizationsSection", () => {
           202,
         );
       },
-    ) as typeof fetch;
+    ));
     render(
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider

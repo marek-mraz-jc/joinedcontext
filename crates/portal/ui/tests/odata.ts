@@ -84,9 +84,19 @@ export function odataError(
  * a problem document as the OData error object carrying its members.
  */
 export async function asOData(rest: Response): Promise<Response> {
+  const answer = await asODataBody(rest);
+  // The edge's reference of the answer, which a failure page shows (T-2747).
+  const id = rest.headers.get("x-request-id");
+  if (id) answer.headers.set("x-request-id", id);
+  return answer;
+}
+
+async function asODataBody(rest: Response): Promise<Response> {
   const body: unknown = await rest.json().catch(() => null);
   // A `204` of the REST door is the service's `200` with `null` (API/13 §2b).
   if (rest.ok) return odataValue(body, rest.status === 204 ? 200 : rest.status);
+  // A bare failure stays bare: the service passes on a door's answer that said nothing.
+  if (body === null) return new Response(null, { status: rest.status });
   const problem = (body ?? {}) as {
     type?: string;
     detail?: string;
@@ -462,9 +472,12 @@ export async function proposalAsRest(request: Request): Promise<Request | undefi
     at.origin,
   );
   if (params.dryRun) rest.searchParams.set("dryRun", "All");
-  const headers = new Headers();
-  const ifMatch = request.headers.get("If-Match");
-  if (ifMatch) headers.set("If-Match", ifMatch);
+  if (typeof (params as { confirm?: unknown }).confirm === "string")
+    rest.searchParams.set("confirm", (params as { confirm: string }).confirm);
+  // The session's headers as sent (the CSRF token, If-Match); the service's own are not the door's.
+  const headers = new Headers(request.headers);
+  headers.delete("OData-Version");
+  headers.delete("Content-Type");
   if (action === "propose_delete") return new Request(rest, { method: "DELETE", headers });
   const patch = action === "propose_update" && params.patch !== undefined;
   headers.set("Content-Type", patch ? "application/merge-patch+json" : "application/json");
