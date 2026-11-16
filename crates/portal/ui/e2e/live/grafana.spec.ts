@@ -10,9 +10,9 @@ test.describe("Grafana visualizations", () => {
   test("a person saves an Endpoint's data into Grafana and removes it", async ({ page }) => {
     test.setTimeout(120_000);
     await goSignedIn(page, EDITOR, ADDRESS);
-    await expect(page.getByRole("heading", { level: 1, name: "Grafana" })).toBeVisible();
-    const form = page.getByRole("button", { name: "Save to Grafana" });
-    const notReady = page.getByText("Grafana is not ready for this project");
+    await expect(page.getByRole("heading", { level: 1, name: "Dashboards" })).toBeVisible();
+    const form = page.getByRole("button", { name: "Save chart" });
+    const notReady = page.getByText("Dashboards are not ready for this project");
     await expect(form.or(notReady)).toBeVisible();
     if (await notReady.isVisible()) return;
 
@@ -31,7 +31,7 @@ test.describe("Grafana visualizations", () => {
 
     const saved = page.getByRole("listitem").filter({ hasText: title });
     await expect(saved).toBeVisible();
-    await expect(saved.getByRole("link", { name: `Open ${title} in Grafana` })).toHaveAttribute("href", /\/d\/pv-/);
+    await expect(saved.getByRole("link", { name: `Open ${title} in a new tab` })).toHaveAttribute("href", /\/d\/pv-/);
     await saved.getByRole("button", { name: `Remove ${title}` }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Remove from Grafana" }).click();
     await expect(saved).toHaveCount(0);

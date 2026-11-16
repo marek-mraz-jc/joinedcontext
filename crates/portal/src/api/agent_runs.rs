@@ -696,9 +696,10 @@ pub async fn create_run(
 
     // The workspace is where the ticket goes. Scheduling it is the last step, so a run that
     // could not be recorded never has a pod: the pod is what spends money.
+    // No namespace, no workspace: the caller drives the run with the ticket (T-7149).
     match kube::schedule_workspace_job(
-        state.kube.as_deref(),
-        &settings.namespace,
+        settings.namespace.as_ref().and(state.kube.as_deref()),
+        settings.namespace.as_deref().unwrap_or_default(),
         &settings.portal_namespace,
         &run,
         &ticket,
@@ -2069,8 +2070,13 @@ pub(crate) async fn end_run(
     // A run whose ticket this call killed also loses its pod, even when its status could not
     // move: the pod has nothing left to work with, and nothing else would delete it.
     if ended.is_ok() || ticket_was_live {
-        if let Some(settings) = state.config.agent_settings.as_ref() {
-            kube::delete_workspace_job(state.kube.as_deref(), &settings.namespace, &run.id).await;
+        if let Some(namespace) = state
+            .config
+            .agent_settings
+            .as_ref()
+            .and_then(|settings| settings.namespace.as_deref())
+        {
+            kube::delete_workspace_job(state.kube.as_deref(), namespace, &run.id).await;
         }
     }
     let ended = ended.map_err(status_error)?;

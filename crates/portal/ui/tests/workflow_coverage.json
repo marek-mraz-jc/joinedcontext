@@ -42,6 +42,16 @@
           "PUT /api/v1/projects/{project}/grafana/builder/{uid}"
         ]
       },
+      "restore-built": {
+        "live": {
+          "spec": "grafana-builder.spec.ts",
+          "test": "a person builds a dashboard from choices, previews it, and it opens once approved, then edits and removes it"
+        },
+        "personOnly": "restoring an earlier version of a dashboard is a person's call on its history page, proposed as a Change a reviewer approves",
+        "routes": [
+          "POST /api/v1/projects/{project}/grafana/builder/{uid}/versions/{sha}/restore"
+        ]
+      },
       "remove-built": {
         "live": {
           "spec": "grafana-builder.spec.ts",

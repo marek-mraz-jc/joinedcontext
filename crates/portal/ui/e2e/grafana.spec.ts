@@ -105,16 +105,16 @@ for (const width of [1440, 400]) {
     test("a person saves a visualization and gets its link", async ({ page }) => {
       await stubApi(page, {});
       await page.goto("/projects/helsinki/grafana");
-      await expect(page.getByRole("heading", { level: 1, name: "Grafana" })).toBeVisible();
+      await expect(page.getByRole("heading", { level: 1, name: "Dashboards" })).toBeVisible();
       await expect(page.getByText("Nothing saved yet")).toBeVisible();
-      await expect(page.getByText(/Not in Grafana yet: City bike operations/)).toBeVisible();
+      await expect(page.getByText(/The dashboards cannot read these yet: City bike operations/)).toBeVisible();
       await shot(page, "empty-list", width);
       await fill(page);
       await expect(page.getByText("Vartiokylä Huivipolku")).toBeVisible();
       await shot(page, "filled", width);
-      await page.getByRole("button", { name: "Save to Grafana" }).click();
+      await page.getByRole("button", { name: "Save chart" }).click();
       await expect(page.getByRole("link", { name: "Open it" })).toHaveAttribute("href", SAVED.openUrl);
-      await expect(page.getByRole("link", { name: "Open PM2.5 by station in Grafana" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open PM2.5 by station in a new tab" })).toBeVisible();
       await expect(page.getByText("Helsinki air quality: AirQualityObserved, pm25")).toBeVisible();
       await shot(page, "saved", width);
       expect(await page.evaluate(pageFindings, { namespaces: NAMESPACES, layout: true })).toEqual([]);
@@ -130,11 +130,11 @@ for (const width of [1440, 400]) {
 
     test("a refusal names the field and keeps what was typed", async ({ page }) => {
       await stubApi(page, {
-        save: { status: 422, body: { status: 422, title: "Unprocessable", detail: "Grafana cannot read the private Endpoint Helsinki air quality yet; ask your operator to add it to this project's Grafana, or choose another" } },
+        save: { status: 422, body: { status: 422, title: "Unprocessable", detail: "the dashboards service cannot read the private Endpoint Helsinki air quality yet; ask your operator to add it to this project's dashboards, or choose another" } },
       });
       await page.goto("/projects/helsinki/grafana");
       await fill(page);
-      await page.getByRole("button", { name: "Save to Grafana" }).click();
+      await page.getByRole("button", { name: "Save chart" }).click();
       await expect(page.getByRole("alert")).toContainText("operator");
       await expect(page.getByLabel("Name", { exact: true })).toHaveValue("PM2.5 by station");
       await shot(page, "error", width);
@@ -143,14 +143,14 @@ for (const width of [1440, 400]) {
     test("a reader sees what is saved and no form", async ({ page }) => {
       await stubApi(page, { page: { ready: true, mayCreate: false, items: [SAVED] } });
       await page.goto("/projects/helsinki/grafana");
-      await expect(page.getByRole("link", { name: "Open PM2.5 by station in Grafana" })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open PM2.5 by station in a new tab" })).toBeVisible();
       await expect(page.getByLabel("Endpoint", { exact: true })).toHaveCount(0);
       await shot(page, "refusal-reader", width);
     });
 
-    test("a project without Grafana says who can add it", async ({ page }) => {
+    test("a project without dashboards says who can add it", async ({ page }) => {
       await stubApi(page, {
-        page: { ready: false, mayCreate: true, items: [], reason: "Grafana has no organization for helsinki yet; ask your operator to add this project to Grafana" },
+        page: { ready: false, mayCreate: true, items: [], reason: "the dashboards service has no organization for helsinki yet; ask your operator to add this project to it" },
       });
       await page.goto("/projects/helsinki/grafana");
       await expect(page.getByText(/ask your operator/)).toBeVisible();

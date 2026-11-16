@@ -1025,6 +1025,7 @@ mod tests {
             siblings: &siblings,
             secrets: &secrets,
             door: None,
+            portal_internal: None,
         };
         let (shutdown, tasks) = (
             tokio_util::sync::CancellationToken::new(),
@@ -1108,6 +1109,7 @@ mod tests {
             siblings: &siblings,
             secrets: &secrets,
             door: None,
+            portal_internal: None,
         };
         let shutdown = tokio_util::sync::CancellationToken::new();
         let tasks = tokio_util::task::TaskTracker::new();
