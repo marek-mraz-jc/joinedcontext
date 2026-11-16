@@ -67,6 +67,8 @@ function renderDetail(
     afterApproval?: Record<string, unknown>;
     // The live Endpoint the change edits, for the publication preview (T-4847).
     endpoint?: Record<string, unknown>;
+    // A decision the server refuses (a grant withdrawn while the page was open).
+    refuse?: string;
   } = {},
 ) {
   const change = options.change ?? proposal();
@@ -89,6 +91,14 @@ function renderDetail(
     }
     if (options.endpoint && request.url.includes("/endpoints/air-quality")) {
       return Promise.resolve(json(options.endpoint));
+    }
+    if (request.method === "POST" && options.refuse) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ title: "Forbidden", status: 403, detail: options.refuse }), {
+          status: 403,
+          headers: { "Content-Type": "application/problem+json" },
+        }),
+      );
     }
     if (request.method === "POST") {
       approved = true;
@@ -338,6 +348,25 @@ describe("approval actions", () => {
       "/api/v1/projects/banskabystrica/changes/chg-1a2b3c4d/reject",
     );
     await expect(posts(fetchMock)[0].clone().json()).resolves.toEqual({ reason: "The slug is wrong" });
+  });
+
+  it("shuts both decisions after the server refuses one, with its reason on them (T-7071)", async () => {
+    const reason = "rejecting needs approve on Endpoint in project banskabystrica";
+    const fetchMock = renderDetail({ refuse: reason });
+    await userEvent.click(await screen.findByRole("button", { name: en.approvals.reject }));
+    const dialog = await screen.findByRole("dialog", { name: en.approvals.rejectTitle });
+    await userEvent.type(within(dialog).getByLabelText(en.approvals.rejectReason), "Wrong audience");
+    await userEvent.click(within(dialog).getByRole("button", { name: en.approvals.rejectConfirm }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(reason);
+    for (const name of [en.approvals.approve, en.approvals.reject]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(reason);
+    }
+    // A second press sends nothing: the refusal stands until the page is read again.
+    await userEvent.click(screen.getByRole("button", { name: en.approvals.reject }));
+    expect(posts(fetchMock)).toHaveLength(1);
   });
 
   it("cannot reject without a reason, and Escape or Cancel rejects nothing", async () => {

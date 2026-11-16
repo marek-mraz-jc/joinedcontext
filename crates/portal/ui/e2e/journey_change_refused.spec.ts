@@ -103,6 +103,9 @@ for (const width of [1440, 400]) {
     await stub(page, true, rejects);
     await reject(page);
     await expect(page.getByText(/rejecting needs approve on Endpoint/).first()).toBeVisible();
+    // The refusal shuts both decisions, so nobody meets it twice.
+    await expect(page.getByRole("button", { name: "Reject", exact: true })).toHaveAttribute("aria-disabled", "true");
+    await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveAttribute("aria-disabled", "true");
     await shot(page, `journey-change-refusal-denied-${width}`);
   });
 }

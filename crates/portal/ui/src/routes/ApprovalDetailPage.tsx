@@ -134,9 +134,13 @@ export function ApprovalDetailPage({
   const standing = proposal
     ? approvalStanding(permissions, identity?.email ?? undefined, proposal)
     : { block: null, ownAsAdministrator: false };
-  const disabledReason = standing.block ? t(`approvals.${standing.block}`) : null;
-
   const decision = useDecision(project, id);
+  const disabledReason = standing.block
+    ? t(`approvals.${standing.block}`)
+    : decision.refused
+      ? decision.error
+      : null;
+
   const approveMutation = decision.approve;
   const rejectMutation = decision.reject;
   const actionError = decision.error;
@@ -183,7 +187,7 @@ export function ApprovalDetailPage({
   // The proposer withdraws their own change, whoever approves it: closing never merges (T-6535).
   const own = isOwn(identity?.email, proposal);
   const words = rejectWords(own);
-  const canReject = own ? isPendingApproval && !isMutating : canAct;
+  const canReject = own ? isPendingApproval && !isMutating && !decision.refused : canAct;
 
   const summaryText = t(
     proposal.summary.key,
@@ -421,7 +425,7 @@ export function ApprovalDetailPage({
               // The same sentence the Approve button carries when a role or the authorship is
               // what refuses the action; a phase that simply has nothing to reject says nothing,
               // because that is not a refusal (UI-44).
-              disabledReason={own ? undefined : (disabledReason ?? undefined)}
+              disabledReason={own && !decision.refused ? undefined : (disabledReason ?? undefined)}
               loading={rejectMutation.isPending}
               onClick={() => setRejecting(true)}
             >
