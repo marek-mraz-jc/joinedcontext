@@ -398,7 +398,8 @@ export function SpaceRetention({
           <TableHeaderCell>{t("spaces.retention.current")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.retention.history")}</TableHeaderCell>
           <TableHeaderCell>{t("spaces.retention.record.column")}</TableHeaderCell>
-          <TableHeaderCell>{t("spaces.retention.deleted")}</TableHeaderCell>
+          {/* A column of its own width: squeezed at 400 px its header broke into single letters (T-7105 UI judge). */}
+          <TableHeaderCell className="min-w-40">{t("spaces.retention.deleted")}</TableHeaderCell>
         </TableHead>
         <TableBody>
           {rows.map((types) => [types[0], types] as const).map(([type, types]) => (
