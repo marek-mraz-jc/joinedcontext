@@ -230,8 +230,9 @@ ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 # The dependency layer's input: every manifest and lockfile, and a stub file for each target of
 # every path package (`cargo metadata` names them, explicit `[[bin]]`/`path =` targets included).
 # Each stub has a crate doc line: the Antares crates deny missing_docs in their [lints]. A crate
-# [patch.crates-io] replaces keeps its real sources: registry crates compile against it here
-# (biblatex uses the patched paste).
+# [patch.crates-io] replaces keeps its real sources, and so does each path dependency of one:
+# registry crates compile against it here (biblatex uses the patched paste, age the patched ml-kem
+# on vendor/kem).
 # This stage reruns on any change, but its output only changes with a manifest, so the
 # `COPY --from=plan` below and the dependency build after it stay cached across source changes.
 FROM rust AS plan
@@ -247,8 +248,14 @@ RUN set -eu; mkdir /stub; \
           case "$kind" in lib|rlib|cdylib|staticlib|dylib|proc-macro) echo '//! stub' > "/stub/$rel" ;; \
             *) printf '//! stub\nfn main() {}\n' > "/stub/$rel" ;; esac; \
         done; \
+    cargo metadata --locked --format-version 1 --manifest-path Cargo.toml > /tmp/meta.json; \
     awk '/^\[patch\.crates-io\]/{p=1;next} /^\[/{p=0} p && /path *=/' Cargo.toml \
-      | sed -E 's/.*path *= *"([^"]+)".*/\1/' | while read -r dir; do cp -r --parents "$dir" /stub; done
+      | sed -E 's/.*path *= *"([^"]+)".*/\1/' | while read -r dir; do \
+          cp -r --parents "$dir" /stub; \
+          jq -r --arg m "/src/$dir/Cargo.toml" \
+            '.packages[] | select(.manifest_path == $m) | .dependencies[] | select(.path) | .path' /tmp/meta.json \
+            | while read -r dep; do cp -r --parents "${dep#/src/}" /stub; done; \
+        done
 
 FROM rust AS build
 WORKDIR /src

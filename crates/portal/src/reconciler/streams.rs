@@ -4462,6 +4462,9 @@ output:
             serde_json::json!({ "generate": { "interval": "1s", "count": 3 } }),
             serde_json::json!({ "label": "input_0", "file": { "paths": ["/data/x.json"] } }),
             serde_json::json!({ "broker": { "inputs": [{ "file": {} }, { "csv": {} }] } }),
+            // T-7092: ekiben's own ftp and imap inputs read once per run and end.
+            serde_json::json!({ "ftp": { "address": "files.example.org:21", "path": "/x/*.csv" } }),
+            serde_json::json!({ "imap": { "address": "imap.example.org:993" } }),
         ] {
             assert!(input_ends_by_itself(&finite), "{finite} finishes");
         }

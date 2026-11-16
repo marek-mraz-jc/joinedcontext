@@ -2457,11 +2457,17 @@
       "externalBroker": "Externí broker (URL a secret níže)",
       "records": "Záznamy jsou v",
       "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam.",
+      "format": "Formát odpovědi",
       "webhookAuth": "Jak se odesílatel prokazuje",
       "webhookHmac": "Podepsané tělo (HMAC SHA-256)",
       "webhookBearer": "Token nositele (Bearer)",
       "maxBodyBytes": "Největší tělo (bajty)",
       "maxInFlight": "Událostí najednou"
+    },
+    "sheet": {
+      "label": "List",
+      "help": "List ke čtení podle názvu na jeho záložce, například Stanice 2026; první řádek listu pojmenovává sloupce. Prázdné pole čte první list.",
+      "problem": "Název listu má 1 až 31 znaků bez : \\ / ? * [ ]."
     },
     "probe": {
       "title": "Jedno stažení feedu",
@@ -2499,6 +2505,18 @@
         "what": "Tabulka zveřejněná jako soubor .csv, čtená při každém běhu.",
         "url": "Adresa souboru CSV",
         "urlHelp": "Adresa, která stáhne samotný soubor, začíná na https://."
+      },
+      "xlsx": {
+        "title": "Tabulka (Excel, ODS) na adrese",
+        "what": "Sešit zveřejněný jako .xlsx nebo .ods, jeden záznam na řádek listu, načtený při každém běhu.",
+        "url": "Adresa tabulky",
+        "urlHelp": "Adresa, která stáhne samotný soubor, začíná https://, například https://data.example.org/stations.xlsx."
+      },
+      "shapefile": {
+        "title": "Shapefile (v zipu) na adrese",
+        "what": "Zip s jednou vrstvou shapefile (.shp, .dbf, .prj), jeden prvek GeoJSON na záznam ve WGS 84, načtený při každém běhu.",
+        "url": "Adresa zipu",
+        "urlHelp": "Adresa, která stáhne samotný zip, začíná https://, například https://data.example.org/mestske-casti.zip. Soubor .prj určuje souřadnicový systém, například EPSG:5514 pro S-JTSK."
       },
       "json": {
         "title": "REST API (JSON)",
@@ -9426,6 +9444,11 @@
       "0": "0: nejvýše jednou (zpráva se může ztratit)",
       "1": "1: alespoň jednou (zpráva se může opakovat)",
       "2": "2: právě jednou (nejpomalejší)"
+    },
+    "httpBodyFormat": {
+      "csv": "CSV",
+      "xlsx": "Tabulka (xlsx, ods)",
+      "shapefile": "Shapefile (zabalený v zip)"
     }
   },
   "picker": {

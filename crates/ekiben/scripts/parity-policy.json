@@ -22,6 +22,8 @@
     "bloblang-methods/ngsild_normalized": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
     "bloblang-methods/ngsild_property": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
     "bloblang-methods/ngsild_relationship": "E7 NGSI-LD helper (ekiben-bloblang src/ngsild.rs)",
+    "inputs/ftp": "files under a path glob of an FTP server, explicit FTPS unless the allow_plain_ftp quota (ekiben-io-remote, T-7087 G-11)",
+    "inputs/imap": "attachments of the unread mails of an IMAPS mailbox, marked or moved after the ack (ekiben-io-remote, T-7087 G-11)",
     "inputs/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint",
     "outputs/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint",
     "processors/ngsi_ld": "E7 NGSI-LD component (ekiben-io-ngsild), the runner's own way to an Endpoint"

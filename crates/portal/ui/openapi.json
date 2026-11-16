@@ -58154,6 +58154,13 @@
             "$ref": "#/components/schemas/PipelineTestSampleFormat",
             "description": "How the sample is split into messages."
           },
+          "sheet": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sheet of an `xlsx` sample by its tab name, such as `Stations 2026`; absent, the\nfirst sheet."
+          },
           "text": {
             "type": [
               "string",
@@ -58177,7 +58184,9 @@
         "enum": [
           "text",
           "csv",
-          "json"
+          "json",
+          "xlsx",
+          "shapefile"
         ]
       },
       "Place": {

@@ -8619,6 +8619,16 @@
      "description": "The address of the server to connect to."
     },
     {
+     "path": "host_key_fingerprint",
+     "type": "string",
+     "kind": "scalar",
+     "secret": false,
+     "advanced": false,
+     "optional": false,
+     "default": null,
+     "description": "The server's SHA256 host key fingerprint, for example SHA256:Nh0Me49Zh9fDw/VYUfq43IJmI1T+XrjiYONPND8GzaM; only a server presenting it is accepted. Get it from the operator, or run ssh-keyscan host | ssh-keygen -lf - and confirm with them."
+    },
+    {
      "path": "credentials",
      "type": "object",
      "kind": "scalar",
@@ -8647,6 +8657,16 @@
      "optional": false,
      "default": "",
      "description": "The password for the username to connect to the SFTP server."
+    },
+    {
+     "path": "credentials.private_key",
+     "type": "string",
+     "kind": "scalar",
+     "secret": true,
+     "advanced": false,
+     "optional": false,
+     "default": "",
+     "description": "An OpenSSH Ed25519 or ECDSA private key (PEM, -----BEGIN OPENSSH PRIVATE KEY-----) to log in with instead of a password."
     },
     {
      "path": "credentials.private_key_file",

@@ -17,5 +17,9 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 rquickjs = { version = "=0.14.0", default-features = false, features = ["std"] }
 
+[features]
+# `ekiben_js::fuzzing`: one script over one message without a stream, for fuzz/ (cargo fuzz).
+fuzzing = []
+
 [dev-dependencies]
 tokio = { workspace = true }

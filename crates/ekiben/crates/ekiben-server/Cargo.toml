@@ -29,6 +29,9 @@ ekiben-io-file = { workspace = true }
 ekiben-io-nats = { workspace = true }
 ekiben-io-sql = { workspace = true }
 ekiben-io-s3 = { workspace = true }
+ekiben-io-remote = { workspace = true }
+ekiben-io-amqp = { workspace = true }
+ekiben-io-sftp = { workspace = true }
 ekiben-text = { workspace = true }
 ekiben-js = { workspace = true }
 ekiben-io-ngsild = { workspace = true, optional = true }
@@ -66,4 +69,8 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "pipeline_bench"
+harness = false
+
+[[bench]]
+name = "js_isolation"
 harness = false

@@ -124,7 +124,7 @@ impl SocketInput {
                 let mut buf = vec![0u8; MAX_DATAGRAM];
                 let n = sock.recv(&mut buf).await.map_err(io)?;
                 buf.truncate(n);
-                Ok(Some(self.scanner.scan(buf)?))
+                Ok(Some(self.scanner.scan(&buf, "")?))
             }
             Some(Conn::Tcp(r)) if lines => {
                 let mut line = Vec::new();
@@ -141,7 +141,7 @@ impl SocketInput {
                         "socket input: a line is over max_buffer ({max} bytes)"
                     )));
                 }
-                Ok(Some(self.scanner.scan(line)?))
+                Ok(Some(self.scanner.scan(&line, "")?))
             }
             Some(Conn::Tcp(r)) => {
                 let mut all = Vec::new();
@@ -158,7 +158,7 @@ impl SocketInput {
                 if all.is_empty() {
                     return Ok(None);
                 }
-                Ok(Some(self.scanner.scan(all)?))
+                Ok(Some(self.scanner.scan(&all, "")?))
             }
         }
     }
