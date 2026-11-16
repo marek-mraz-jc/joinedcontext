@@ -889,7 +889,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
               )}
             </div>
           ) : null}
-          {editing ? <ConnectionTest project={project} name={editing.metadata.name} /> : null}
+          {editing ? <ConnectionTest project={project} name={editing.metadata.name} type={typeOf(editing.spec ?? {})} /> : null}
         </div>
       </ResourceFormDialog>
       </SecretRefContext.Provider>

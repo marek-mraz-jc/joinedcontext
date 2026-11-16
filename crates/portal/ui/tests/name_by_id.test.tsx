@@ -31,6 +31,7 @@ import {
   usePersonNames,
 } from "../src/api/personNames";
 import { expectNoViolations } from "./checks";
+import { doorsAsRest } from "./odata";
 
 const JANA = "00000000-0000-4000-8000-00000000000a";
 const PLAN = {
@@ -86,6 +87,7 @@ function stub(verbs: string[]): { url: string; method: string }[] {
       return json({ items: [] });
     }),
   );
+  doorsAsRest();
   return sent;
 }
 
@@ -100,7 +102,9 @@ function wrap(element: ReactElement) {
         <RouterProvider
           router={createRouter({
             routeTree: createRootRoute({ component: () => element }),
-            history: createMemoryHistory({ initialEntries: ["/organization/people"] }),
+            history: createMemoryHistory({
+              initialEntries: ["/organization/people"],
+            }),
           })}
         />
       </I18nextProvider>
@@ -183,7 +187,9 @@ describe("naming people by id (ADR-N-061)", () => {
     vi.unstubAllGlobals();
     const sent = stub(["read"]);
     wrap(<Names ids={[JANA]} />);
-    expect(await screen.findAllByText(en.personName.unknown)).not.toHaveLength(0);
+    expect(await screen.findAllByText(en.personName.unknown)).not.toHaveLength(
+      0,
+    );
     expect(screen.queryByText(JANA)).toBeNull();
     expect(
       sent.some((s) => s.url.startsWith("/api/v1/organization/people/names")),

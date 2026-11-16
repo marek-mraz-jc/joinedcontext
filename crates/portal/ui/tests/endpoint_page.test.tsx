@@ -25,6 +25,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
+import {
+  asOData,
+  odataCall,
+  odataValue,
+  readingAsRest,
+  doorsAsRest,
+} from "./odata";
 
 const PROJECT = "banskabystrica";
 const NAME = "ovzdusie-public";
@@ -108,7 +115,10 @@ const PERMITTED = {
     {
       role: "endpoint-editor",
       binding: "editors",
-      rule: { kinds: ["Endpoint", "ModelProjection"], verbs: ["propose", "delete"] },
+      rule: {
+        kinds: ["Endpoint", "ModelProjection"],
+        verbs: ["propose", "delete"],
+      },
     },
   ],
 };
@@ -122,11 +132,16 @@ const VIEWER = { project: PROJECT, bootstrap: false, grants: [] };
  */
 async function sentTo(fetchMock: ReturnType<typeof vi.fn>, path: string) {
   const calls = fetchMock.mock.calls.map(([input, init]) => ({
-    url: new URL(input instanceof Request ? input.url : String(input), window.location.origin),
+    url: new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.origin,
+    ),
     text:
       input instanceof Request
         ? input.clone().text()
-        : Promise.resolve(String((init as RequestInit | undefined)?.body ?? "{}")),
+        : Promise.resolve(
+            String((init as RequestInit | undefined)?.body ?? "{}"),
+          ),
   }));
   return Promise.all(
     calls
@@ -159,7 +174,10 @@ function renderPage({
   counts?: { all: number; matching: number } | null;
 } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
-    const url = new URL(input instanceof Request ? input.url : String(input), window.location.origin);
+    const url = new URL(
+      input instanceof Request ? input.url : String(input),
+      window.location.origin,
+    );
     const path = url.pathname;
     const json = (body: unknown, status = 200) =>
       Promise.resolve(
@@ -177,8 +195,11 @@ function renderPage({
       return json({ admitted: true });
     }
     // Who reads the Endpoint is the Organization administrators' (T-6412): this caller is refused.
-    if (path === "/api/v1/organization/data-access") {
-      return json({ title: "Forbidden", status: 403, detail: "read on Person" }, 403);
+    if (readingAsRest(url)?.pathname === "/api/v1/organization/data-access") {
+      return json(
+        { title: "Forbidden", status: 403, detail: "read on Person" },
+        403,
+      ).then(asOData);
     }
     if (path.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`)) {
       if (counts === null) {
@@ -190,7 +211,9 @@ function renderPage({
           status: 200,
           headers: {
             "Content-Type": "application/ld+json",
-            "NGSILD-Results-Count": String(asked ? counts.matching : counts.all),
+            "NGSILD-Results-Count": String(
+              asked ? counts.matching : counts.all,
+            ),
           },
         }),
       );
@@ -199,29 +222,53 @@ function renderPage({
       return json(permissions);
     }
     // The filter proof's left side (T-3802): nothing under the draft, so the page shows no read error.
-    if (path.endsWith(`/endpoints/${NAME}/preview`)) {
-      return json({ entities: [], count: 0 });
+    if (odataCall(url)?.name === "jc_endpoint_preview") {
+      return Promise.resolve(odataValue({ entities: [], count: 0 }));
     }
     // T-5118: the page's Usage section, with nobody having called yet.
     if (path.endsWith(`/endpoints/${NAME}/usage`)) {
-      return json({ name: NAME, from: "2026-09-23", to: "2026-10-22", days: [], totals: {}, total: 0 });
+      return json({
+        name: NAME,
+        from: "2026-09-23",
+        to: "2026-10-22",
+        days: [],
+        totals: {},
+        total: 0,
+      });
     }
     // T-5531: the page's "Who may do what", with no Policy naming anyone yet.
     if (path.endsWith(`/endpoints/${NAME}/access/matrix`)) {
-      return json({ endpoint: NAME, space: "air", principals: [], types: [], cells: [], edges: [] });
+      return json({
+        endpoint: NAME,
+        space: "air",
+        principals: [],
+        types: [],
+        cells: [],
+        edges: [],
+      });
     }
     if (path.endsWith(`/endpoints/${NAME}`)) {
-      return endpoint === null ? json({ title: "Not Found", detail: "no such endpoint" }, 404) : json(endpoint);
+      return endpoint === null
+        ? json({ title: "Not Found", detail: "no such endpoint" }, 404)
+        : json(endpoint);
     }
     if (path.includes("/projections/")) {
       if (url.searchParams.get("dryRun") === "All") {
         return json(
           check.ok
             ? { valid: true, verdict: { ok: true, findings: [] } }
-            : { valid: false, verdict: { ok: false, findings: [{ message: check.message }] } },
+            : {
+                valid: false,
+                verdict: { ok: false, findings: [{ message: check.message }] },
+              },
         );
       }
-      return json({ kind: "Change", metadata: { name: "chg-1" }, spec: {}, status: { phase: "Pending" } });
+      return json({
+        kind: "Change",
+        metadata: { name: "chg-1" },
+        spec: {},
+        status: { phase: "Pending" },
+      });
     }
     if (path.endsWith("/projections")) {
       return json(list(projections));
@@ -238,8 +285,11 @@ function renderPage({
     return json(list([]));
   });
   vi.stubGlobal("fetch", fetchMock);
+  doorsAsRest();
 
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
@@ -263,18 +313,24 @@ describe("the endpoint's own settings page", () => {
   it("holds every setting the manifest carries, one section per aspect", async () => {
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: "Air quality, open" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Air quality, open" }),
+    ).toBeInTheDocument();
     for (const section of [
       en.endpoints.page.filtering,
       en.endpoints.page.whoMayCall,
       en.endpoints.page.traffic,
     ]) {
-      expect(screen.getByRole("heading", { name: section })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: section }),
+      ).toBeInTheDocument();
     }
 
     // The share is managed further down (T-3275).
     expect(screen.getAllByText("kosice").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("heading", { name: en.endpoints.shareFlow.section })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: en.endpoints.shareFlow.section }),
+    ).toBeInTheDocument();
 
     // What it answers is one row of links under the header (owner 2026-10-30).
     expect(screen.getByRole("link", { name: "ngsi-ld" })).toBeInTheDocument();
@@ -282,38 +338,62 @@ describe("the endpoint's own settings page", () => {
 
     // Who may call it: the policy the URN names, what it grants, and to whom (T-2282, GW34).
     expect(screen.getByRole("link", { name: "readers" })).toBeInTheDocument();
-    expect(screen.getByText(en.choice.operationGroup.retrieveOps)).toBeInTheDocument();
+    expect(
+      screen.getByText(en.choice.operationGroup.retrieveOps),
+    ).toBeInTheDocument();
     expect(screen.getByText("retrieveEntity, queryEntity")).toBeInTheDocument();
-    expect(screen.getByText(en.endpoints.page.grantChanges.nothing)).toBeInTheDocument();
+    expect(
+      screen.getByText(en.endpoints.page.grantChanges.nothing),
+    ).toBeInTheDocument();
     expect(screen.getByTitle("role:public")).toHaveTextContent("public");
-    expect(screen.getByText("120 requests a minute · burst 20")).toBeInTheDocument();
-    expect(screen.getByText("A caller may cache an answer for 60 seconds.")).toBeInTheDocument();
-    expect(screen.getByText("At most 50000 rows in a file")).toBeInTheDocument();
+    expect(
+      screen.getByText("120 requests a minute · burst 20"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("A caller may cache an answer for 60 seconds."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("At most 50000 rows in a file"),
+    ).toBeInTheDocument();
 
     // The owner took the review sentence and the fact sections off the page (2026-10-30).
-    expect(screen.queryByText(en.endpoints.page.proposedNotice)).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: en.endpoints.page.whatItIs })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(en.endpoints.page.proposedNotice),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: en.endpoints.page.whatItIs }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers the one connector for every endpoint, never this endpoint's own slug in it (T-4114, EP-113)", async () => {
     renderPage();
-    const panel = (await screen.findByRole("heading", { name: en.endpoints.hub.title })).closest(
-      "section",
-    ) as HTMLElement;
-    expect(within(panel).getByText(`${window.location.origin}/api/mcp`, { selector: "code" })).toBeInTheDocument();
+    const panel = (
+      await screen.findByRole("heading", { name: en.endpoints.hub.title })
+    ).closest("section") as HTMLElement;
+    expect(
+      within(panel).getByText(`${window.location.origin}/api/mcp`, {
+        selector: "code",
+      }),
+    ).toBeInTheDocument();
     expect(panel.textContent).not.toContain(SLUG);
   });
 
   it("reads the filtering from the named projection it publishes through", async () => {
     renderPage();
 
-    expect(await screen.findByRole("heading", { name: en.endpoints.page.filtering })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: en.endpoints.page.filtering }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(en.endpoints.filter.q)).toHaveValue("pm10>30");
-    expect(screen.getByLabelText(en.endpoints.filter.scopeQ)).toHaveValue("/Banska Bystrica/Centrum");
+    expect(screen.getByLabelText(en.endpoints.filter.scopeQ)).toHaveValue(
+      "/Banska Bystrica/Centrum",
+    );
     // Every condition says what it narrows, and an empty one shows it narrows nothing.
     expect(screen.getByText(en.endpoints.filter.qHelp)).toBeInTheDocument();
     expect(screen.getByLabelText(en.endpoints.filter.geoQ)).toHaveValue("");
-    expect(screen.getByRole("link", { name: "ovzdusie-open" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "ovzdusie-open" }),
+    ).toBeInTheDocument();
   });
 
   it("proposes a changed filter on the projection, checked first, and nothing else of it", async () => {
@@ -323,23 +403,32 @@ describe("the endpoint's own settings page", () => {
     const q = await screen.findByLabelText(en.endpoints.filter.q);
     // Untouched, there is nothing to propose.
     // Disabled with its reason (T-3852): aria-disabled, so the reason stays reachable.
-    expect(screen.getByRole("button", { name: en.endpoints.page.filterPropose })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    ).toHaveAttribute("aria-disabled", "true");
 
     await user.clear(q);
     await user.type(q, "pm10>50");
-    await user.click(screen.getByRole("button", { name: en.endpoints.page.filterPropose }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    );
 
     await waitFor(async () => {
-      expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(2);
+      expect(
+        await sentTo(fetchMock, "/projections/ovzdusie-open"),
+      ).toHaveLength(2);
     });
-    const [dryRun, real] = await sentTo(fetchMock, "/projections/ovzdusie-open");
+    const [dryRun, real] = await sentTo(
+      fetchMock,
+      "/projections/ovzdusie-open",
+    );
     // The check comes first, on the same route and body, and only a green one proposes (PF-57).
     expect(dryRun.url.searchParams.get("dryRun")).toBe("All");
     expect(real.url.searchParams.get("dryRun")).toBeNull();
-    expect(real.body.spec?.filter).toEqual({ q: "pm10>50", scopeQ: "/Banska Bystrica/Centrum" });
+    expect(real.body.spec?.filter).toEqual({
+      q: "pm10>50",
+      scopeQ: "/Banska Bystrica/Centrum",
+    });
     // The rest of the projection travels as it was, and the status the platform computes does not.
     expect(real.body.spec?.classes).toEqual(PROJECTION.spec.classes);
     expect(real.body.status).toBeUndefined();
@@ -350,10 +439,14 @@ describe("the endpoint's own settings page", () => {
     const user = userEvent.setup();
 
     await user.clear(await screen.findByLabelText(en.endpoints.filter.scopeQ));
-    await user.click(screen.getByRole("button", { name: en.endpoints.page.filterPropose }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    );
 
     await waitFor(async () => {
-      expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(2);
+      expect(
+        await sentTo(fetchMock, "/projections/ovzdusie-open"),
+      ).toHaveLength(2);
     });
     const [, real] = await sentTo(fetchMock, "/projections/ovzdusie-open");
     expect(real.body.spec?.filter).toEqual({ q: "pm10>30" });
@@ -364,20 +457,37 @@ describe("the endpoint's own settings page", () => {
     const user = userEvent.setup();
 
     // The attributes offered are the ones the projection publishes.
-    const attribute = await screen.findByLabelText(en.endpoints.condition.attribute);
-    expect([...(attribute as HTMLSelectElement).options].map((option) => option.value)).toEqual(["pm10"]);
+    const attribute = await screen.findByLabelText(
+      en.endpoints.condition.attribute,
+    );
+    expect(
+      [...(attribute as HTMLSelectElement).options].map(
+        (option) => option.value,
+      ),
+    ).toEqual(["pm10"]);
 
-    await user.selectOptions(screen.getByLabelText(en.endpoints.condition.operator), "gt");
+    await user.selectOptions(
+      screen.getByLabelText(en.endpoints.condition.operator),
+      "gt",
+    );
     await user.type(screen.getByLabelText(en.endpoints.condition.value), "50");
-    await user.click(screen.getByRole("button", { name: en.endpoints.condition.add }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.condition.add }),
+    );
 
     // Appended to what was there, with `;`, which is what the gateway reads as "and": the stored query
     // is never rewritten from a guess, so a filter nobody could parse cannot be lost.
-    expect(screen.getByLabelText(en.endpoints.filter.q)).toHaveValue("pm10>30;pm10>50");
+    expect(screen.getByLabelText(en.endpoints.filter.q)).toHaveValue(
+      "pm10>30;pm10>50",
+    );
 
-    await user.click(screen.getByRole("button", { name: en.endpoints.page.filterPropose }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    );
     await waitFor(async () => {
-      expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(2);
+      expect(
+        await sentTo(fetchMock, "/projections/ovzdusie-open"),
+      ).toHaveLength(2);
     });
     const [, real] = await sentTo(fetchMock, "/projections/ovzdusie-open");
     expect(real.body.spec?.filter?.q).toBe("pm10>30;pm10>50");
@@ -387,24 +497,32 @@ describe("the endpoint's own settings page", () => {
     renderPage();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole("button", { name: en.endpoints.condition.add }));
+    await user.click(
+      await screen.findByRole("button", { name: en.endpoints.condition.add }),
+    );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(en.endpoints.condition.needsValue);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      en.endpoints.condition.needsValue,
+    );
     expect(screen.getByLabelText(en.endpoints.filter.q)).toHaveValue("pm10>30");
     // Nothing to propose either: the query is what it was.
     // Disabled with its reason (T-3852): aria-disabled, so the reason stays reachable.
-    expect(screen.getByRole("button", { name: en.endpoints.page.filterPropose })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("quotes a value that is not a number, so a typed word cannot break the query", async () => {
     renderPage();
     const user = userEvent.setup();
 
-    await user.type(await screen.findByLabelText(en.endpoints.condition.value), 'Kamppi "1"');
-    await user.click(screen.getByRole("button", { name: en.endpoints.condition.add }));
+    await user.type(
+      await screen.findByLabelText(en.endpoints.condition.value),
+      'Kamppi "1"',
+    );
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.condition.add }),
+    );
 
     // The value is quoted and its own quotes escaped, by the SDK's compiler, so a typed word cannot
     // end the literal early and change what the query means.
@@ -416,16 +534,35 @@ describe("the endpoint's own settings page", () => {
   it("says how many entities the filter matches, read through the endpoint itself (T-2283)", async () => {
     const fetchMock = renderPage();
 
-    expect(await screen.findByText("1 of 3 entities match this filter")).toBeInTheDocument();
+    expect(
+      await screen.findByText("1 of 3 entities match this filter"),
+    ).toBeInTheDocument();
     // Both counts go through this endpoint's own URL, under the reader's own rights, and ask for the
     // projection's type, because NGSI-LD refuses a query with no selector.
     const reads = fetchMock.mock.calls
-      .map(([input]) => new URL(input instanceof Request ? input.url : String(input), window.location.origin))
-      .filter((url) => url.pathname.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`));
+      .map(
+        ([input]) =>
+          new URL(
+            input instanceof Request ? input.url : String(input),
+            window.location.origin,
+          ),
+      )
+      .filter((url) =>
+        url.pathname.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`),
+      );
     expect(reads).toHaveLength(2);
-    expect(reads.every((url) => url.searchParams.get("type") === "AirQualityObserved")).toBe(true);
-    expect(reads.every((url) => url.searchParams.get("count") === "true")).toBe(true);
-    expect(reads.map((url) => url.searchParams.get("q"))).toEqual([null, "pm10>30"]);
+    expect(
+      reads.every(
+        (url) => url.searchParams.get("type") === "AirQualityObserved",
+      ),
+    ).toBe(true);
+    expect(reads.every((url) => url.searchParams.get("count") === "true")).toBe(
+      true,
+    );
+    expect(reads.map((url) => url.searchParams.get("q"))).toEqual([
+      null,
+      "pm10>30",
+    ]);
   });
 
   // F-R2UI2-008: every keystroke in the query box was two counted reads through the gateway.
@@ -436,8 +573,16 @@ describe("the endpoint's own settings page", () => {
     await user.type(screen.getByLabelText(en.endpoints.filter.q), ";pm10<90");
     await waitFor(() => {
       const asked = fetchMock.mock.calls
-        .map(([input]) => new URL(input instanceof Request ? input.url : String(input), window.location.origin))
-        .filter((url) => url.pathname.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`))
+        .map(
+          ([input]) =>
+            new URL(
+              input instanceof Request ? input.url : String(input),
+              window.location.origin,
+            ),
+        )
+        .filter((url) =>
+          url.pathname.startsWith(`/api/endpoint/${SLUG}/ngsi-ld/v1/entities`),
+        )
         .map((url) => url.searchParams.get("q"));
       expect(asked).toEqual([null, "pm10>30", "pm10>30;pm10<90"]);
     });
@@ -446,18 +591,26 @@ describe("the endpoint's own settings page", () => {
   it("warns before it is proposed that a filter matching nothing publishes nothing", async () => {
     renderPage({ counts: { all: 3, matching: 0 } });
 
-    const verdict = await screen.findByText(/0 of 3 entities match this filter/);
+    const verdict = await screen.findByText(
+      /0 of 3 entities match this filter/,
+    );
     expect(verdict).toHaveTextContent(en.endpoints.count.none);
   });
 
   it("counts nothing for an endpoint that is not Live, and says why", async () => {
-    const fetchMock = renderPage({ endpoint: { ...ENDPOINT, status: { phase: "Pending" } } });
+    const fetchMock = renderPage({
+      endpoint: { ...ENDPOINT, status: { phase: "Pending" } },
+    });
 
-    expect(await screen.findByText(en.endpoints.count.unavailable)).toBeInTheDocument();
+    expect(
+      await screen.findByText(en.endpoints.count.unavailable),
+    ).toBeInTheDocument();
     // An endpoint that serves nothing is not read: no number, and no request either.
     expect(
       fetchMock.mock.calls.some(([input]) =>
-        (input instanceof Request ? input.url : String(input)).includes("/ngsi-ld/v1/entities"),
+        (input instanceof Request ? input.url : String(input)).includes(
+          "/ngsi-ld/v1/entities",
+        ),
       ),
     ).toBe(false);
   });
@@ -466,7 +619,9 @@ describe("the endpoint's own settings page", () => {
     renderPage({ counts: null });
 
     expect(await screen.findByText(/could not be counted/)).toBeInTheDocument();
-    expect(screen.queryByText(/entities match this filter/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/entities match this filter/),
+    ).not.toBeInTheDocument();
   });
 
   it("refuses a scope that is not a path and an area missing a part, at the field (T-2283, UI-45)", async () => {
@@ -476,28 +631,39 @@ describe("the endpoint's own settings page", () => {
     const scope = await screen.findByLabelText(en.endpoints.filter.scopeQ);
     await user.clear(scope);
     await user.type(scope, "Kamppi");
-    expect(await screen.findByText(en.endpoints.filter.fault.scopePath)).toBeInTheDocument();
+    expect(
+      await screen.findByText(en.endpoints.filter.fault.scopePath),
+    ).toBeInTheDocument();
     expect(scope).toHaveAttribute("aria-invalid", "true");
     // Disabled with its reason (T-3852): aria-disabled, so the reason stays reachable.
-    expect(screen.getByRole("button", { name: en.endpoints.page.filterPropose })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    ).toHaveAttribute("aria-disabled", "true");
 
     await user.clear(scope);
     await user.type(scope, "/Helsinki/Kamppi");
-    expect(screen.queryByText(en.endpoints.filter.fault.scopePath)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: en.endpoints.page.filterPropose })).toBeEnabled();
+    expect(
+      screen.queryByText(en.endpoints.filter.fault.scopePath),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    ).toBeEnabled();
 
     // An area without its three parts cannot be read by the gateway, so it is not sent either.
-    await user.type(await screen.findByLabelText(en.endpoints.filter.geoQ), "georel=near");
-    expect(await screen.findByText(en.endpoints.filter.fault.geoParts)).toBeInTheDocument();
-    // Disabled with its reason (T-3852): aria-disabled, so the reason stays reachable.
-    expect(screen.getByRole("button", { name: en.endpoints.page.filterPropose })).toHaveAttribute(
-      "aria-disabled",
-      "true",
+    await user.type(
+      await screen.findByLabelText(en.endpoints.filter.geoQ),
+      "georel=near",
     );
-    expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(0);
+    expect(
+      await screen.findByText(en.endpoints.filter.fault.geoParts),
+    ).toBeInTheDocument();
+    // Disabled with its reason (T-3852): aria-disabled, so the reason stays reachable.
+    expect(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(
+      0,
+    );
   });
 
   it("sets the area from four corners, through the SDK's own geo query (T-2283, UI-72)", async () => {
@@ -505,12 +671,19 @@ describe("the endpoint's own settings page", () => {
     const user = userEvent.setup();
 
     // The corners the wrong way round are refused, and nothing is written.
-    await user.type(await screen.findByLabelText(en.endpoints.area.west), "21.5");
+    await user.type(
+      await screen.findByLabelText(en.endpoints.area.west),
+      "21.5",
+    );
     await user.type(screen.getByLabelText(en.endpoints.area.south), "49.0");
     await user.type(screen.getByLabelText(en.endpoints.area.east), "19.0");
     await user.type(screen.getByLabelText(en.endpoints.area.north), "48.5");
-    await user.click(screen.getByRole("button", { name: en.endpoints.area.set }));
-    expect(await screen.findByText(en.endpoints.area.fault.order)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.area.set }),
+    );
+    expect(
+      await screen.findByText(en.endpoints.area.fault.order),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(en.endpoints.filter.geoQ)).toHaveValue("");
 
     // Corrected, the box becomes the four parts a gateway can read, closed and counter-clockwise.
@@ -518,30 +691,47 @@ describe("the endpoint's own settings page", () => {
     await user.type(screen.getByLabelText(en.endpoints.area.east), "22.0");
     await user.clear(screen.getByLabelText(en.endpoints.area.north));
     await user.type(screen.getByLabelText(en.endpoints.area.north), "49.5");
-    await user.click(screen.getByRole("button", { name: en.endpoints.area.set }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.area.set }),
+    );
 
     expect(screen.getByLabelText(en.endpoints.filter.geoQ)).toHaveValue(
       "georel=within;geometry=Polygon;coordinates=[[[21.5,49],[22,49],[22,49.5],[21.5,49.5],[21.5,49]]];geoproperty=location",
     );
     // A written area is a proposal like any other, and the field's own check no longer objects.
-    await user.click(screen.getByRole("button", { name: en.endpoints.page.filterPropose }));
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    );
     await waitFor(async () => {
-      expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(2);
+      expect(
+        await sentTo(fetchMock, "/projections/ovzdusie-open"),
+      ).toHaveLength(2);
     });
     const [, real] = await sentTo(fetchMock, "/projections/ovzdusie-open");
     expect(real.body.spec?.filter?.geoQ).toContain("georel=within");
   });
 
   it("says what a red check found and proposes nothing", async () => {
-    const fetchMock = renderPage({ check: { ok: false, message: "scopeQ is not a scope path" } });
+    const fetchMock = renderPage({
+      check: { ok: false, message: "scopeQ is not a scope path" },
+    });
     const user = userEvent.setup();
 
-    await user.type(await screen.findByLabelText(en.endpoints.filter.scopeQ), "?");
-    await user.click(screen.getByRole("button", { name: en.endpoints.page.filterPropose }));
+    await user.type(
+      await screen.findByLabelText(en.endpoints.filter.scopeQ),
+      "?",
+    );
+    await user.click(
+      screen.getByRole("button", { name: en.endpoints.page.filterPropose }),
+    );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("scopeQ is not a scope path");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "scopeQ is not a scope path",
+    );
     // One call, the check; the real one never went.
-    expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(1);
+    expect(await sentTo(fetchMock, "/projections/ovzdusie-open")).toHaveLength(
+      1,
+    );
   });
 
   it("says the whole space is published when there is no projection to filter with", async () => {
@@ -549,13 +739,21 @@ describe("the endpoint's own settings page", () => {
     delete (spec as { projectionRef?: unknown }).projectionRef;
     renderPage({ endpoint: { ...ENDPOINT, spec } });
 
-    expect(await screen.findByText(en.endpoints.page.noProjection)).toBeInTheDocument();
-    expect(screen.queryByText(en.endpoints.filter.qHelp)).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(en.endpoints.page.noProjection),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(en.endpoints.filter.qHelp),
+    ).not.toBeInTheDocument();
   });
 
   it("links Your access here to the Data access table opened on this endpoint (T-5593)", async () => {
     renderPage();
-    expect(await screen.findByRole("link", { name: en.projectSettings.access.title })).toHaveAttribute(
+    expect(
+      await screen.findByRole("link", {
+        name: en.projectSettings.access.title,
+      }),
+    ).toHaveAttribute(
       "href",
       `/projects/${PROJECT}/settings/access?endpoint=${NAME}`,
     );
@@ -565,11 +763,15 @@ describe("the endpoint's own settings page", () => {
     renderPage();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole("button", { name: en.endpoints.page.change }));
+    await user.click(
+      await screen.findByRole("button", { name: en.endpoints.page.change }),
+    );
 
     // The form is a page of its own (T-2474), so the change has an address to reload and share.
     await waitFor(() => {
-      expect(window.location.pathname).toBe(`/projects/${PROJECT}/endpoints/${NAME}/edit`);
+      expect(window.location.pathname).toBe(
+        `/projects/${PROJECT}/endpoints/${NAME}/edit`,
+      );
     });
     // The list's editor opens on that endpoint: its name is in the form, not an empty one.
     expect(await screen.findByDisplayValue(NAME)).toBeInTheDocument();
@@ -578,21 +780,26 @@ describe("the endpoint's own settings page", () => {
   it("lets a viewer read every setting and refuses the change with its reason", async () => {
     renderPage({ permissions: VIEWER });
 
-    expect(await screen.findByRole("heading", { name: "Air quality, open" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Air quality, open" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(en.endpoints.filter.q)).toHaveValue("pm10>30");
 
     // The guard remounts the control once the document arrives, so it is queried after the wait.
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: en.endpoints.page.change })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
+      expect(
+        screen.getByRole("button", { name: en.endpoints.page.change }),
+      ).toHaveAttribute("aria-disabled", "true");
     });
     // Every door says which verb on which kind is missing: the endpoint's settings, its
     // publication to the catalogue (EP-83) and the filter.
-    expect(screen.getByRole("button", { name: en.catalogue.publish.open })).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("button", { name: en.catalogue.publish.open }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(screen.getAllByTitle(/'propose' on 'Endpoint'/)).toHaveLength(2);
-    expect(screen.getByTitle(/'propose' on 'ModelProjection'/)).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/'propose' on 'ModelProjection'/),
+    ).toBeInTheDocument();
   });
 
   it("keeps the rest of the actions in one menu, and a denied one with its reason", async () => {
@@ -600,16 +807,19 @@ describe("the endpoint's own settings page", () => {
     const user = userEvent.setup();
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: en.endpoints.page.change })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
+      expect(
+        screen.getByRole("button", { name: en.endpoints.page.change }),
+      ).toHaveAttribute("aria-disabled", "true");
     });
     await user.click(screen.getByRole("button", { name: /More actions for/ }));
     const menu = await screen.findByRole("menu");
-    expect(within(menu).getByRole("menuitem", { name: en.endpoints.copyUrl })).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: en.endpoints.copyUrl }),
+    ).toBeInTheDocument();
     // The accessible name carries the reason too, so the item is matched by pattern (T-2279).
-    const remove = within(menu).getByRole("menuitem", { name: new RegExp(en.resourceDelete.button) });
+    const remove = within(menu).getByRole("menuitem", {
+      name: new RegExp(en.resourceDelete.button),
+    });
     expect(remove).toHaveAttribute("aria-disabled", "true");
     expect(remove).toHaveAttribute("title", expect.stringContaining("delete"));
   });
@@ -618,28 +828,47 @@ describe("the endpoint's own settings page", () => {
     renderPage();
     const user = userEvent.setup();
 
-    const section = (await screen.findByRole("heading", { name: en.endpoints.page.stop.title })).closest("section");
+    const section = (
+      await screen.findByRole("heading", { name: en.endpoints.page.stop.title })
+    ).closest("section");
     expect(section).not.toBeNull();
-    expect(within(section as HTMLElement).getByText(en.endpoints.page.stop.lead)).toBeInTheDocument();
+    expect(
+      within(section as HTMLElement).getByText(en.endpoints.page.stop.lead),
+    ).toBeInTheDocument();
     // No control pretends to pause what the manifest cannot pause.
-    expect(screen.queryByRole("button", { name: /pause|resume|retire/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /pause|resume|retire/i }),
+    ).not.toBeInTheDocument();
 
-    await user.click(within(section as HTMLElement).getByRole("button", { name: en.endpoints.page.stop.delete }));
+    await user.click(
+      within(section as HTMLElement).getByRole("button", {
+        name: en.endpoints.page.stop.delete,
+      }),
+    );
     // The same deletion as the menu's: the name typed back, then a change for an approver.
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("button", { name: new RegExp(en.resourceDelete.propose) })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", {
+        name: new RegExp(en.resourceDelete.propose),
+      }),
+    ).toBeInTheDocument();
   });
 
   it("refuses a viewer the deletion that stops an endpoint, with its reason (EP-89)", async () => {
     renderPage({ permissions: VIEWER });
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: new RegExp(en.endpoints.page.stop.delete) })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
+      expect(
+        screen.getByRole("button", {
+          name: new RegExp(en.endpoints.page.stop.delete),
+        }),
+      ).toHaveAttribute("aria-disabled", "true");
     });
-    expect(screen.getByRole("button", { name: new RegExp(en.endpoints.page.stop.delete) })).toHaveAttribute(
+    expect(
+      screen.getByRole("button", {
+        name: new RegExp(en.endpoints.page.stop.delete),
+      }),
+    ).toHaveAttribute(
       "title",
       expect.stringContaining("'delete' on 'Endpoint'"),
     );
@@ -648,10 +877,16 @@ describe("the endpoint's own settings page", () => {
   it("says why an endpoint could not be read instead of an empty page", async () => {
     renderPage({ endpoint: null });
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("no such endpoint");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no such endpoint",
+    );
     // A 404 answers the same the second time (T-2834): no Retry, the heading and the way back.
-    expect(screen.queryByRole("button", { name: en.app.error.retry })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: en.app.error.retry }),
+    ).toBeNull();
     expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: en.endpoints.page.back }).length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("link", { name: en.endpoints.page.back }).length,
+    ).toBeGreaterThan(0);
   });
 });

@@ -19,6 +19,7 @@ import {
 import { AccessRequestInbox } from "../src/pages/pipelines/AccessRequests";
 import type { AccessRequestView } from "../src/pages/pipelines/AccessRequests";
 import { InRouter } from "./pageHarness";
+import { doorsAsRest } from "./odata";
 
 const R = en.endpoints.request;
 const PATH =
@@ -112,6 +113,7 @@ describe("a person's access request on the Endpoint page (EP-55)", () => {
         return json({ items: [] });
       }),
     );
+    doorsAsRest();
   }
   const wrap = (node: JSX.Element) =>
     render(

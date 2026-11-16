@@ -70,7 +70,7 @@ the masked answer for MCP, and one activity row per MCP `tools/call` (`mcp::reco
 
 | Operation | Kind / rule | Lane | Route it calls |
 |---|---|---|---|
-| `jc_organization_read` | `*`, read in the project; each aspect's route decides | green | `projects::list_projects`, `setup::get_setup`, `validation::get_health`, `health_checks::list_all`, `organization_limits::get_limits`, `brokers::list_brokers`, `agent_registry::list_agents`, `agent_activity::list_agent_activity` |
+| `jc_organization_read` | `*`, read in the project (OData: bound to the `Organization` singleton, T-7098); each aspect's route decides | green | `projects::list_projects`, `setup::get_setup`, `validation::get_health`, `health_checks::list_all`, `organization_limits::get_limits`, `brokers::list_brokers`, `agent_registry::list_agents`, `agent_activity::list_agent_activity`, `costs::get_costs`, `organization_addresses::list_addresses`, `data_access::get_data_access`, `organization_widgets::list_options`, `data_access::get_person_readable` |
 | `jc_access_request_list` | `ContextSpace`, read in the project | green | `access_requests::list_incoming` |
 | `jc_access_request_decide` | approve on `ContextSpace`, checked by the route (offered only to who approves some space; the route checks the request's own space and that the caller did not file it) | yellow (asks) | `access_requests::approve_request`, `access_requests::revoke_request` |
 | `jc_serviceaccount_access` | `ServiceAccount`, read in the project | green | `agent_access::account_access` |

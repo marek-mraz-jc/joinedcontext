@@ -326,6 +326,7 @@
     },
     "history": {
       "filter": "Filtrovat historii",
+      "filtersToggle": "Filtry",
       "kind": "Druh",
       "name": "Název obsahuje",
       "apply": "Filtrovat",
@@ -344,6 +345,7 @@
       "older": "Zobrazit starší změny",
       "empty": "Zatím nebyla sloučena ani zamítnuta žádná změna.",
       "emptyHint": "Změna se tu objeví i s tím, kdo o ní rozhodl, jakmile ji na kartě Otevřené schválíte nebo zamítnete.",
+      "noneMatchHint": "Zrušte filtry nebo rozšiřte období, abyste viděli více rozhodnutých změn.",
       "noneOnPage": "Žádnou z těchto změn nemáte právo číst. Starší možná ano.",
       "restore": "Obnovit",
       "restoreOf": "Obnovit {name}",
@@ -2411,7 +2413,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP koncový bod",
       "websocket": "WebSocket proud",
-      "gtfs-rt": "GTFS-realtime zdroj"
+      "gtfs-rt": "GTFS-realtime zdroj",
+      "webhook": "Webhook (zasílané události)"
     },
     "dialog": {
       "create": "Nový zdroj dat",
@@ -2419,7 +2422,8 @@
       "mqtt": "Odebírá témata na brokeru a každou zprávu předá pipeline, která na něj odkazuje.",
       "http": "Periodicky stahuje URL v periodě samotné pipeline.",
       "websocket": "Drží otevřený socket a čte zprávy, které server posílá.",
-      "gtfs-rt": "Čte GTFS-realtime feed; protobuf se dekóduje ještě před pipeline."
+      "gtfs-rt": "Čte GTFS-realtime feed; protobuf se dekóduje ještě před pipeline.",
+      "webhook": "Čeká, až odesílatel pošle události; když zdroj čte pipeline, stránka ukáže adresu, kterou mu dáte."
     },
     "field": {
       "type": "Typ",
@@ -2453,7 +2457,12 @@
       "broker": "Broker",
       "externalBroker": "Externí broker (URL a secret níže)",
       "records": "Záznamy jsou v",
-      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam."
+      "recordsHelp": "U odpovědi JSON, která má záznamy v poli, cesta k němu, například data.stations; každá položka je jeden záznam. Prázdné pole čte celou odpověď jako jeden záznam.",
+      "webhookAuth": "Jak se odesílatel prokazuje",
+      "webhookHmac": "Podepsané tělo (HMAC SHA-256)",
+      "webhookBearer": "Token nositele (Bearer)",
+      "maxBodyBytes": "Největší tělo (bajty)",
+      "maxInFlight": "Událostí najednou"
     },
     "probe": {
       "title": "Jedno stažení feedu",
@@ -2675,6 +2684,45 @@
       "rowsHint": "Každý řádek CSV přijde do pipeline jako jeden záznam s názvy sloupců z hlavičky.",
       "handoff": "Spustit pipeline nad {name}",
       "picked": "Vybráno: {value}. Vyplnit formulář a zkontrolovat ho zapíše do formuláře níže."
+    },
+    "webhook": {
+      "title": "Kam odesílatelé posílají",
+      "hint": "Adresu pipeline vložte do odesílatele. Posílá požadavky POST s hlavičkou níže.",
+      "header": "Hlavička: {header}",
+      "maxBody": "Největší tělo: {bytes} bajtů",
+      "noReaders": "Tento zdroj zatím nečte žádná pipeline, proto nemá adresu. Vytvořte pipeline, která ho čte, a vraťte se.",
+      "unpublished": "Tato instalace nezveřejňuje adresu pro webhooky. Požádejte administrátora, aby do nasazení přidal vstupní záznam.",
+      "copy": "Kopírovat adresu",
+      "copied": "Adresa zkopírována",
+      "test": {
+        "title": "Poslat testovací událost",
+        "hint": "Pošle tělo níže vybrané pipeline, podepsané tak, jak ho podepisuje váš odesílatel. Událost projde pipeline jako skutečná.",
+        "button": "Poslat testovací událost",
+        "running": "Posílám…",
+        "accepted": "Přijato ({status}): pipeline událost převzala.",
+        "refused": "Běžec odpověděl {status}: {answer}",
+        "unauthorized": "Tajemství nebo hlavička, které tento zdroj uvádí, neodpovídají tomu, co má běžec: zkontrolujte obojí a pošlete znovu."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, které čtou tento zdroj, například ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Tělo",
+        "help": "Událost tak, jak by ji poslal odesílatel, například JSON jednoho uplinku podle dokumentace poskytovatele."
+      }
+    },
+    "signatureHeader": {
+      "label": "Hlavička s podpisem",
+      "help": "Hlavička, do které odesílatel zapisuje podpis, například X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Podpisové tajemství",
+      "help": "Tajemství se sdíleným podpisovým klíčem, například ttn-webhook s klíčem secret. Nejprve ho přidejte v části Tajemství."
+    },
+    "bearerToken": {
+      "label": "Přístupový token",
+      "help": "Tajemství s tokenem, který odesílatel píše za Bearer, například chirpstack s klíčem token."
     }
   },
   "pipelines": {
@@ -4440,6 +4488,7 @@
       "search": "Hledat osoby",
       "show": "Zobrazit přístup",
       "failed": "Přístup se nepodařilo zobrazit. Zkuste to znovu za minutu; důvod je níže.",
+      "refused": "Tento přístup nesmíte zobrazit. Přístup jiné osoby nebo účtu prohlíží jen správce organizace; důvod je níže.",
       "nothing": "Nedosáhne ničeho",
       "nothingLead": "Žádný Endpoint tohoto projektu je nepřipouští ani jim nic neuděluje. Přístup udělíte politikou, skupinou nebo vazbou role.",
       "space": "prostor {space}",
@@ -7862,9 +7911,10 @@
       "type": "Typ entity",
       "typeHelp": "Nechte prázdné pro dotaz na jakýkoli typ.",
       "submit": "Zeptat se brány",
-      "failed": "Bránu se nepodařilo zeptat. Zkuste to znovu za minutu; důvod je níže.",
+      "failed": "Bránu se nepodařilo zeptat. Důvod a Zkusit znovu najdete níže.",
       "allowed": "Povoleno",
       "refused": "Odmítnuto",
+      "refusedNext": "Chcete-li to povolit, přidejte této osobě, skupině nebo roli oprávnění v zásadě prostoru koncového bodu v seznamu výše a zeptejte se znovu.",
       "decidedBy": "Rozhodla Policy",
       "reason": {
         "policy_grant_matched": "Tuto akci povoluje Policy.",
@@ -8727,6 +8777,7 @@
       "measured": "Úložiště změřeno {at}; AI přepočteno kurzem {rate} {currency} za jeden americký dolar.",
       "partial": "Některé prostory nebo asistenti neodpověděli; počítají se zde jako 0. Důvody jsou v řádcích každého projektu.",
       "empty": "Žádný projekt zatím nemá prostor ani asistenta, proto celý měsíc patří platformě. Vytvořte v projektu Context Space a uvidíte jeho podíl.",
+      "emptyAction": "Otevřít projekty",
       "caption": "Náklady podle projektů, {month}",
       "project": "Projekt",
       "node": "Podíl na serveru",

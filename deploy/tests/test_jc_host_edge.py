@@ -74,7 +74,13 @@ FORGED = [
     (f"data.{DOMAIN}", "/metrics"),
 ]
 # And the hosts it routes still reach jc.
-ROUTED = [(DOMAIN, "/grafana/"), (f"portal.{DOMAIN}", "/"), (f"api.{DOMAIN}", "/api/endpoint/x")]
+# A webhook sender posts to ekiben's ingest mount on the Portal's host (PL-122).
+ROUTED = [
+    (DOMAIN, "/grafana/"),
+    (f"portal.{DOMAIN}", "/"),
+    (f"api.{DOMAIN}", "/api/endpoint/x"),
+    (f"portal.{DOMAIN}", "/ingest/default/hel.ttn/uplinks"),
+]
 
 
 def ask(port: int, host: str, path: str) -> tuple[int, str]:

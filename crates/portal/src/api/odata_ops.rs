@@ -188,8 +188,10 @@ pub const OTHER_ACTIONS: [&str; 34] = [
 
 /// The operations on the Organization's people (API/13 §2a): bound to the `Organization`
 /// singleton, since a person belongs to the Organization and to no project (T-7097), and
-/// offered on the installation's Organization only, whose realm they run in.
-pub const ORGANIZATION_BOUND: [&str; 7] = [
+/// offered on the installation's Organization only, whose realm they run in. The
+/// Administration pages' readings (`jc_organization_read`) are the Organization's too (T-7098).
+pub const ORGANIZATION_BOUND: [&str; 8] = [
+    crate::ops::administration::ORGANIZATION,
     "jc_person_list",
     "jc_person_get",
     "jc_person_create",
@@ -260,6 +262,7 @@ pub(crate) fn offered(
             && caller.may_run(op).is_ok()
             && ops::may_try(op, identity, state, ORG_NAMESPACE, None).is_ok()
             && (!op.annotations.read_only_hint
+                || !op.name.starts_with("jc_person_")
                 || crate::api::people::allow(state, identity, jc_core::kinds::Verb::Read).is_ok())
     };
     ops::registry()

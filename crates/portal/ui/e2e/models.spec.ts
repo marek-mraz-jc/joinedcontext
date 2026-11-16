@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { odataBody, odataCall } from "../tests/odata";
 
 // The Data models page as a person meets it (T-2765, T-2762; DM-61, DM-62): the list of the project's
 // models, one click to a model's own page, and its diagram, form and YAML. `vite preview` has no
@@ -420,8 +421,8 @@ test.describe("a model change is proposed, and read back (T-4830)", () => {
       await page.route("**/api/v1/tools/generate", (route) =>
         route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(KPI_ARTIFACTS) }),
       );
-      await page.route("**/api/v1/projects/helsinki/changes/history**", (route) =>
-        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(list([PUBLISHED_CHANGE])) }),
+      await page.route((url) => odataCall(url)?.name === "jc_change_history", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: odataBody(list([PUBLISHED_CHANGE])) }),
       );
       await page.route("**/api/v1/projects/helsinki/datamodels/helsinki-kpi/source", (route) =>
         route.fulfill({ status: 200, contentType: "text/plain", body: KPI_LINKML }),

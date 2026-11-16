@@ -326,6 +326,7 @@
     },
     "history": {
       "filter": "Filter the history",
+      "filtersToggle": "Filters",
       "kind": "Kind",
       "name": "Name contains",
       "apply": "Filter",
@@ -344,6 +345,7 @@
       "older": "Show older changes",
       "empty": "No change has been merged or rejected yet.",
       "emptyHint": "A change lands here with who decided it once it is approved or rejected on the Open tab.",
+      "noneMatchHint": "Clear the filters, or widen the dates, to see more of the decided changes.",
       "noneOnPage": "None of these changes is one you may read. Older ones may be.",
       "restore": "Restore",
       "restoreOf": "Restore {name}",
@@ -2411,7 +2413,8 @@
       "mqtt": "MQTT broker",
       "http": "HTTP endpoint",
       "websocket": "WebSocket stream",
-      "gtfs-rt": "GTFS-realtime feed"
+      "gtfs-rt": "GTFS-realtime feed",
+      "webhook": "Webhook (pushed events)"
     },
     "group": {
       "typed": "Common connections",
@@ -2438,7 +2441,8 @@
       "mqtt": "Subscribes to topics on a broker and hands every message to the pipeline that references it.",
       "http": "Polls a URL on the pipeline's own period.",
       "websocket": "Holds a socket open and reads the messages the server pushes.",
-      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it."
+      "gtfs-rt": "Reads a GTFS-realtime feed; the protobuf is decoded before the pipeline sees it.",
+      "webhook": "Waits for a sender to post events; the page shows the address to give it once a pipeline reads the source."
     },
     "field": {
       "type": "Type",
@@ -2472,7 +2476,12 @@
       "broker": "Broker",
       "externalBroker": "External broker (URL and secret below)",
       "records": "Records are in",
-      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record."
+      "recordsHelp": "For a JSON answer that holds its records in an array, the path to it, for example data.stations; each item becomes one record. Leave empty to read the whole answer as one record.",
+      "webhookAuth": "How the sender proves itself",
+      "webhookHmac": "Signed body (HMAC SHA-256)",
+      "webhookBearer": "Bearer token",
+      "maxBodyBytes": "Largest body (bytes)",
+      "maxInFlight": "Events at once"
     },
     "probe": {
       "title": "One fetch of the feed",
@@ -2675,6 +2684,45 @@
       "rowsHint": "Each row of the CSV reaches the pipeline as one record keyed by the header's column names.",
       "handoff": "Start a pipeline on {name}",
       "picked": "Picked: {value}. Fill the form and check writes it into the form below."
+    },
+    "webhook": {
+      "title": "Where senders post",
+      "hint": "Paste the address of a pipeline into your sender. It sends POST requests with the header below.",
+      "header": "Header: {header}",
+      "maxBody": "Largest body: {bytes} bytes",
+      "noReaders": "No pipeline reads this source yet, so it has no address. Create a pipeline that reads it, then come back.",
+      "unpublished": "This installation publishes no address for webhooks. Ask an administrator to add the ingest entry to the deployment.",
+      "copy": "Copy address",
+      "copied": "Address copied",
+      "test": {
+        "title": "Send test event",
+        "hint": "Sends the body below to the pipeline you pick, signed the way your sender signs it. The event runs through the pipeline like a real one.",
+        "button": "Send test event",
+        "running": "Sending…",
+        "accepted": "Accepted ({status}): the pipeline took the event.",
+        "refused": "The runner answered {status}: {answer}",
+        "unauthorized": "The secret or the header this source names does not match what the runner holds: check both, then send again."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "One of the pipelines that read this source, for example ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Body",
+        "help": "The event as your sender would post it, for example the JSON of one uplink your provider documents."
+      }
+    },
+    "signatureHeader": {
+      "label": "Signature header",
+      "help": "The header your sender writes the signature into, for example X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Signing secret",
+      "help": "The secret holding the shared signing key, for example ttn-webhook with key secret. Add it under Secrets first."
+    },
+    "bearerToken": {
+      "label": "Token",
+      "help": "The secret holding the token the sender puts after Bearer, for example chirpstack with key token."
     }
   },
   "pipelines": {
@@ -4440,6 +4488,7 @@
       "search": "Search people",
       "show": "Show access",
       "failed": "Access could not be shown. Try again in a minute; the reason is below.",
+      "refused": "You may not see this access. Only an organization administrator explores another person's or account's access; the reason is below.",
       "nothing": "Reaches nothing",
       "nothingLead": "No Endpoint of this project admits them or grants them anything. Grant access with a Policy, a group or a role binding.",
       "space": "space {space}",
@@ -7862,9 +7911,10 @@
       "type": "Entity type",
       "typeHelp": "Leave empty to ask about any type.",
       "submit": "Ask the gateway",
-      "failed": "The gateway could not be asked. Try again in a minute; the reason is below.",
+      "failed": "The gateway could not be asked. The reason and Retry are below.",
       "allowed": "Allowed",
       "refused": "Refused",
+      "refusedNext": "To allow it, add a grant for this person, group or role to a Policy of the Endpoint's space in the list above, then ask again.",
       "decidedBy": "Decided by the Policy",
       "reason": {
         "policy_grant_matched": "A Policy grants this action.",
@@ -8727,6 +8777,7 @@
       "measured": "Storage measured {at}; AI converted at {rate} {currency} for one US dollar.",
       "partial": "Some spaces or assistants did not answer; they count 0 here. Their reasons are in each project's lines.",
       "empty": "No project has a space or an assistant yet, so the whole month is the platform's. Create a Context Space in a project to see its share.",
+      "emptyAction": "Open the projects",
       "caption": "Costs per project, {month}",
       "project": "Project",
       "node": "Node share",

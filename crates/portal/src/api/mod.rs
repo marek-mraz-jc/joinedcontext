@@ -39,6 +39,7 @@ pub mod data_access;
 pub mod data_views;
 pub mod datamodels;
 pub mod datasource_test;
+pub mod datasource_webhook;
 pub mod delete;
 pub mod drafts;
 pub mod drift;
@@ -83,6 +84,7 @@ pub mod odata;
 pub mod odata_endpoints;
 pub mod odata_ops;
 pub mod odata_org;
+pub mod odata_portal;
 pub mod opendata_pages;
 pub mod ops;
 pub mod organization_addresses;
@@ -144,6 +146,7 @@ pub fn router() -> Router<AppState> {
         .merge(script_test::router())
         .merge(pipeline_source_check::router())
         .merge(datasource_test::router())
+        .merge(datasource_webhook::router())
         .merge(blueprints::router())
         .merge(branding::router())
         .merge(catalogue::router())
