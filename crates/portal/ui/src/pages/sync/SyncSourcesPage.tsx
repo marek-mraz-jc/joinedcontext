@@ -134,10 +134,11 @@ export function SyncSourcesPage({ project }: { project: string }): JSX.Element {
         title={t("syncSources.title")}
         description={t("syncSources.intro")}
         // A disabled Add source or Detach says why in words, not only in its tooltip (T-6423).
+        // Why Add is closed, and why Detach is once there is a source to detach.
         note={
           <>
             <DeniedNote project={project} kind="SyncSource" verb="propose" />
-            <DeniedNote project={project} kind="SyncSource" verb="delete" />
+            {items.length > 0 ? <DeniedNote project={project} kind="SyncSource" verb="delete" /> : null}
           </>
         }
         actions={

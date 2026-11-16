@@ -465,30 +465,33 @@ export function PipelinesPage({ project }: { project: string }): JSX.Element {
             onChange={(event) => setNeedle(event.target.value)}
             className="sm:max-w-sm"
           />
-          <Select
-            aria-label={t("pipelines.filter.status")}
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-            className="sm:w-auto"
-          >
-            {(["all", "running", "paused", "notWriting"] as const).map((value) => (
-              <option key={value} value={value}>
-                {t(`pipelines.filter.statusOption.${value}`)}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("pipelines.filter.class")}
-            value={classFilter}
-            onChange={(event) => setClassFilter(event.target.value as ClassFilter)}
-            className="sm:w-auto"
-          >
-            {(["all", "resident", "scheduled"] as const).map((value) => (
-              <option key={value} value={value}>
-                {t(`pipelines.filter.classOption.${value}`)}
-              </option>
-            ))}
-          </Select>
+          {/* Two filters share a row on a phone, so the list starts on the first screen. */}
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:items-end">
+            <Select
+              aria-label={t("pipelines.filter.status")}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+              className="sm:w-auto"
+            >
+              {(["all", "running", "paused", "notWriting"] as const).map((value) => (
+                <option key={value} value={value}>
+                  {t(`pipelines.filter.statusOption.${value}`)}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label={t("pipelines.filter.class")}
+              value={classFilter}
+              onChange={(event) => setClassFilter(event.target.value as ClassFilter)}
+              className="sm:w-auto"
+            >
+              {(["all", "resident", "scheduled"] as const).map((value) => (
+                <option key={value} value={value}>
+                  {t(`pipelines.filter.classOption.${value}`)}
+                </option>
+              ))}
+            </Select>
+          </div>
           {shown.length !== pipelines.length ? (
             <p role="status" className="text-caption text-fg-subtle sm:self-center">
               {t("pipelines.filter.shown", { shown: shown.length, total: pipelines.length })}
