@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { DataGrid, DEFAULT_DATA_LABELS } from "../src/grid/DataGrid";
 import { arrangeRows, EMPTY_QUERY, passes, sortDataRows, valuesOf } from "../src/grid/arrayRows";
@@ -23,6 +23,10 @@ const columns: DataColumn<Policy>[] = [
   { key: "changed", label: "Changed", text: (p) => p.changed, kind: "date", hidden: true },
 ];
 const names = (list: Policy[]) => list.map((p) => p.name);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("array row source", () => {
   it("sorts text case-blind, numbers as numbers, empty values last both ways", () => {
@@ -160,6 +164,13 @@ describe("DataGrid", () => {
       { key: "copy", label: "Copy", text: (p) => `${p.name} copy` },
       { key: "actions", label: "Actions", text: () => "", actions: true, cell: (p) => <button type="button">Open {p.name}</button> },
     ];
+    // A wide table (no matchMedia in jsdom counts as one) keeps every column under its header: no toggle cell.
+    grid({ columns: wide, stack: true });
+    const table = screen.getByRole("rowheader", { name: "Readers" }).closest("tr") as HTMLElement;
+    expect(table.children).toHaveLength(document.querySelectorAll("thead th").length);
+    expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();
+    cleanup();
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query === "(width <= 640px)", addEventListener() {}, removeEventListener() {} }));
     grid({ columns: wide, stack: true });
     const row = screen.getByRole("rowheader", { name: "Readers" }).closest("tr") as HTMLElement;
     const behind = () => [...row.querySelectorAll(".jc-data-grid-more")].map((cell) => cell.getAttribute("data-label"));
@@ -178,7 +189,7 @@ describe("DataGrid", () => {
     expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();
     cleanup();
     grid({ columns: wide });
-    expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();
+    expect(document.querySelector(".jc-data-grid-more, .jc-data-grid-more-toggle")).toBeNull();    vi.unstubAllGlobals();
   });
 
   it("pages through a long list", () => {
