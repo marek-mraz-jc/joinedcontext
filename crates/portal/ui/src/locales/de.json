@@ -6664,6 +6664,7 @@
     "noMatch": "Nichts passt zu dieser Abfrage; ändern oder entfernen Sie einen Filter.",
     "technical": "Technische Details (JSON-LD)",
     "copyJson": "JSON-LD kopieren",
+    "backToRow": "Zurück zur Entität, von der Sie kamen",
     "endpointApps": "Anwendungen",
     "unknownType": "In diesem Bereich gibt es keinen Typ {type}",
     "unknownTypeHint": "Die Adresse nennt einen Typ, den dieser Datenraum nicht hat. Wählen Sie einen seiner Typen:"

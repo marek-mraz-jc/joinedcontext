@@ -309,10 +309,19 @@ function webLink(value: unknown, text: string): JSX.Element | string {
 export function fieldsOf(definition: unknown, attributes: string[]): FieldRow[] {
   const properties = ((definition ?? {}) as { properties?: Record<string, unknown> }).properties ?? {};
   return attributes.map((name) => {
-    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown };
+    const property = (properties[name] ?? {}) as { type?: unknown; format?: unknown; $ref?: unknown; description?: unknown; anyOf?: unknown; "x-ngsi-ld-kind"?: unknown };
     const branch = Array.isArray(property.anyOf) ? ((property.anyOf.find((each) => each && typeof each === "object") ?? {}) as typeof property) : property;
     const ref = typeof branch.$ref === "string" ? branch.$ref.split("/").pop() : undefined;
-    const kind = typeof branch.format === "string" ? branch.format : typeof branch.type === "string" ? branch.type : ref ?? "";
+    // A Relationship holds a URN, which its schema types as a `uri`: the grid names and opens its
+    // target, so it is never printed as an address (T-7072).
+    const kind =
+      property["x-ngsi-ld-kind"] === "Relationship"
+        ? "relationship"
+        : typeof branch.format === "string"
+          ? branch.format
+          : typeof branch.type === "string"
+            ? branch.type
+            : ref ?? "";
     return { name, kind, description: typeof property.description === "string" ? property.description : "" };
   });
 }

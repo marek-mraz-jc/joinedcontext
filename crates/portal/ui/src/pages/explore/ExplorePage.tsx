@@ -146,6 +146,20 @@ export function ExplorePage({
   const [refused, setRefused] = useState(false);
   /** Bumped when an entity is removed, so the grid reads the endpoint again. */
   const [generation, setGeneration] = useState(0);
+  /** The rows a person opened a relationship from, newest last: the way back (T-7072). */
+  const [trail, setTrail] = useState<string[]>([]);
+  // Stable: the grid's detail reads a linked row in an effect that depends on this callback.
+  const openRow = useCallback((id: string | null) => {
+    setTrail([]);
+    setSelected(id);
+  }, []);
+  const openRelated = useCallback(
+    (urn: string) => {
+      if (selected && selected !== urn) setTrail((before) => [...before, selected]);
+      setSelected(urn);
+    },
+    [selected],
+  );
 
   /**
    * The `entities` hand-off names the endpoint and not its space (UI-59), and the page reads an
@@ -235,10 +249,12 @@ export function ExplorePage({
     if (chosenSpace !== null) put("space", chosenSpace);
     put("endpoint", endpointChoice || endpointName);
     put("type", query.type);
-    put("q", query.q);
+    // The grid's own filter row travels too, so a shared link opens the same rows (T-7072); it
+    // reopens as the type panel's query. The link carries the query only, never a credential.
+    put("q", andQ(query.q, gridAsk.q));
     put("entityId", selected);
     replaceOwnSearch(address);
-  }, [chosenSpace, endpointChoice, endpointName, query.type, query.q, selected]);
+  }, [chosenSpace, endpointChoice, endpointName, query.type, query.q, gridAsk.q, selected]);
   /** The space's model is not known yet: the space or the model list is still on its way. */
   const modelPending = spaces.isPending || models.isPending;
   const unknownType =
@@ -328,21 +344,39 @@ export function ExplorePage({
   }, []);
   // A row opens in the grid's own detail (T-5619): its fields as the grid draws them, its history,
   // and under them what the page adds, the removal of UI-60 and the entity as the endpoint holds it.
-  const detailExtra = (row: RichRow) =>
-    slug ? (
-      <ExploreRowActions
-        key={row.id}
-        slug={slug}
-        id={row.id}
-        deniedReason={mayDelete ? undefined : deleteRefusal}
-        onDeleted={() => {
-          setSelected(null);
-          // The grid holds a page that still lists the entity; a new key makes it read the endpoint
-          // again rather than show a row that is gone.
-          setGeneration((each) => each + 1);
-        }}
-      />
-    ) : null;
+  const back = trail.at(-1);
+  const detailExtra = (row: RichRow) => (
+    <>
+      {back ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="mb-2 w-fit"
+          onClick={() => {
+            setTrail((before) => before.slice(0, -1));
+            setSelected(back);
+          }}
+        >
+          {t("explore.backToRow")}
+        </Button>
+      ) : null}
+      {slug ? (
+        <ExploreRowActions
+          key={row.id}
+          slug={slug}
+          id={row.id}
+          deniedReason={mayDelete ? undefined : deleteRefusal}
+          onDeleted={() => {
+            setTrail([]);
+            setSelected(null);
+            // The grid holds a page that still lists the entity; a new key makes it read the endpoint
+            // again rather than show a row that is gone.
+            setGeneration((each) => each + 1);
+          }}
+        />
+      ) : null}
+    </>
+  );
 
   // A plain value of a person who may write it: what the row's "Correct values" tab offers (T-5326).
   const correctable = slots.filter((slot) => slot.kind === "Property" && editableAttrs.includes(slot.name)).map((slot) => slot.name);
@@ -353,6 +387,7 @@ export function ExplorePage({
 
   function changeQuery(next: EntityQuery) {
     setQuery(next);
+    setTrail([]);
     setSelected(null);
     setChecked([]);
   }
@@ -538,7 +573,7 @@ export function ExplorePage({
             enums={enums}
             relations={relations}
             rules={rules}
-            onOpenRelationship={setSelected}
+            onOpenRelationship={openRelated}
             onQuery={onQuery}
             // Numbered rows with a check box each, as on a space's page (T-6107).
             rowNumbers={{ selectRow: t("spaces.toolbar.selectRow"), selectAll: t("spaces.toolbar.selectAll") }}
@@ -547,7 +582,7 @@ export function ExplorePage({
             // A filter that excludes everything says so, and how to get rows back (T-4160 #22).
             emptyText={query.q ? t("explore.noMatch") : undefined}
             openRow={selected}
-            onOpenRow={setSelected}
+            onOpenRow={openRow}
             detailExtra={detailExtra}
             detailTabs={detailTabs}
             access={attributeAccess.isError ? null : attributeAccess.data}
