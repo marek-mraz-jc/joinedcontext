@@ -1,5 +1,5 @@
 import { vi } from "vitest";
-import metadata from "../../sdk/odata/org-admin.metadata.json";
+import metadata from "../../sdk/odata/org-admin.metadata.json" with { type: "json" };
 // The Organization's OData service as a page test meets it (T-6812): which bound function or
 // action a request calls, with what, and the answer the service wraps an operation's value in.
 

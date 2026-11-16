@@ -321,7 +321,8 @@ async fn an_administrators_red_lane_removal_lands_with_the_name_typed_back() {
 /// PF-58, CC-39 over the Organization's OData service (T-7075): `propose_delete` takes the name
 /// typed back as its `confirm`, and the removal lands as the REST door's `?confirm=` lands it.
 #[tokio::test]
-async fn an_administrators_red_lane_removal_through_propose_delete_lands_with_the_name_typed_back() {
+async fn an_administrators_red_lane_removal_through_propose_delete_lands_with_the_name_typed_back()
+{
     let (server, state) = forge(admin_of(&["ContextSpace"]), &[(SPACE_PATH, "deleted")]).await;
     // The service serves the Organization the project belongs to (API/15 §6).
     state.mirror.upsert(org("Organization", "bb", json!({})));

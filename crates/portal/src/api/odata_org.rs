@@ -2535,7 +2535,11 @@ fn dry_run(params: &Map<String, Value>) -> Result<DryRunQuery, Refused> {
     let confirm = match params.get("confirm") {
         None | Some(Value::Null) => None,
         Some(Value::String(name)) => Some(name.clone()),
-        Some(_) => return Err(no(bad("confirm is the resource's name typed back, e.g. \"air\""))),
+        Some(_) => {
+            return Err(no(bad(
+                "confirm is the resource's name typed back, e.g. \"air\"",
+            )))
+        }
     };
     Ok(DryRunQuery {
         dry_run: dry.then(|| "All".to_owned()),

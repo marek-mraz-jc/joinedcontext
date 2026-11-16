@@ -51,7 +51,8 @@ const PIPELINE = row(
 );
 
 /** Every REST door these pages read or wrote before T-7073; none may be asked any more. */
-const OLD_DOORS = /^\/api\/v1\/projects\/helsinki\/(?:syncsources|pipelines|apps|spaces|endpoints)(?:\/|$)/;
+const OLD_DOORS =
+  /^\/api\/v1\/projects\/helsinki\/(?:(?:syncsources|pipelines|apps|spaces|endpoints)(?:\/[^/]+)?|syncsources\/[^/]+\/(?:status|sync|pause|detach))$/;
 
 type Answer = { status: number; body?: unknown };
 const NONE: Answer = { status: 200, body: { value: [] } };
@@ -64,7 +65,15 @@ interface Asked {
 }
 
 /** The service answered by `reads` (by decoded path) and `operations` (by name), the shell as REST; every request recorded. */
-async function stub(page: Page, reads: Record<string, Answer>, operations: Record<string, Answer> = {}): Promise<Asked[]> {
+/** What the person holds in the project: an editor of these kinds, or (a refusal) none of them. */
+type Grants = "editor" | "none";
+
+async function stub(
+  page: Page,
+  reads: Record<string, Answer>,
+  operations: Record<string, Answer> = {},
+  grants: Grants = "editor",
+): Promise<Asked[]> {
   const asked: Asked[] = [];
   await page.route("**/api/**", async (route: Route) => {
     const request = route.request();
@@ -80,12 +89,19 @@ async function stub(page: Page, reads: Record<string, Answer>, operations: Recor
     }
     if (url.searchParams.get("$select")?.includes("spec") || reads[path]) {
       const answer = reads[path] ?? NONE;
-      return json(answer.body, answer.status);
+      // The edge's reference of a failure, which the failure says to quote.
+      return route.fulfill({
+        status: answer.status,
+        contentType: "application/json",
+        headers: answer.status >= 500 ? { "x-request-id": "req-7073" } : {},
+        body: JSON.stringify(answer.body),
+      });
     }
     if (path === "/api/v1/projects('helsinki')") return json({ "@odata.etag": 'W/"helsinki-7"', name: "helsinki" });
     if (path.endsWith("/auth/me")) return json({ subject: "s1", username: "admin", name: "Ada Admin", email: "admin@example.org", roles: [] });
     if (path.endsWith("/permissions/me")) {
-      return json({ project: "helsinki", grants: [{ role: "editor", binding: "editors", scope: "project", rule: { kinds: KINDS, verbs: ["read", "propose"] } }] });
+      const rule = { kinds: KINDS, verbs: ["read", "propose"] };
+      return json({ project: "helsinki", grants: grants === "editor" ? [{ role: "editor", binding: "editors", scope: "project", rule }] : [] });
     }
     if (path === "/api/v1/projects") return json({ apiVersion: API, kind: "ProjectList", items: [{ name: "helsinki" }] });
     if (path === "/api/v1/preferences") return json({ firstRunDismissed: true });
@@ -93,6 +109,11 @@ async function stub(page: Page, reads: Record<string, Answer>, operations: Recor
   });
   return asked;
 }
+
+/** The service's answer to a kind the person reads nothing of (PF-50): the list is hidden, not named. */
+const hidden = (plural: string): Answer => refusal(404, "resource-not-found", `plural '${plural}' not found in project 'helsinki'`);
+const failure: Answer = { status: 500, body: { error: { code: "internal-error", message: "the change store did not answer", type: "https://joinedcontext.com/errors/internal-error", title: "Error", status: 500 } } };
+const HIDDEN = "This list is not open to you in helsinki";
 
 const refusal = (status: number, code: string, message: string): Answer => ({
   status,
@@ -105,6 +126,11 @@ async function shoot(page: Page, name: string, width: number, at: Locator): Prom
   await page.screenshot({ path: join(SHOTS, `${name}-${width}.png`) });
 }
 
+const APP = {
+  ...row("App", "city-bikes", { endpointRef: "bikes", visibility: "project" }, { phase: "Live" }),
+  metadata: { name: "city-bikes", namespace: "helsinki", title: "City bikes" },
+};
+const APPS = "/api/v1/projects('helsinki')/apps";
 const SOURCES = "/api/v1/projects('helsinki')/syncsources";
 const PIPELINES = "/api/v1/projects('helsinki')/pipelines";
 
@@ -143,18 +169,19 @@ for (const width of [1440, 400]) {
     });
 
     test("sync sources: a failed read says so and offers a retry", async ({ page }) => {
-      await stub(page, { [SOURCES]: refusal(500, "internal-error", "The Portal could not read the sync sources.") });
+      await stub(page, { [SOURCES]: failure });
       await page.goto("/projects/helsinki/syncsources?lang=en");
-      const failed = page.getByText(/could not read the sync sources|could not be loaded|try again/i).first();
+      const failed = page.getByText("req-7073").first();
       await expect(failed).toBeVisible();
       await shoot(page, "syncsources-error", width, failed);
     });
 
     test("sync sources: a refused read shows the service's refusal", async ({ page }) => {
-      await stub(page, { [SOURCES]: refusal(403, "forbidden", "Your roles in helsinki do not let you read SyncSource.") });
+      await stub(page, { [SOURCES]: hidden("syncsources") }, {}, "none");
       await page.goto("/projects/helsinki/syncsources?lang=en");
-      const refused = page.getByText(/do not let you read SyncSource|not allowed|access/i).first();
+      const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
+      await expect(page.getByRole("button", { name: "Add source" }).first()).toBeDisabled();
       await shoot(page, "syncsources-refused", width, refused);
     });
 
@@ -176,11 +203,48 @@ for (const width of [1440, 400]) {
       await expect(main).toBeVisible();
       await shoot(page, "pipelines-empty", width, main);
       await page.unrouteAll({ behavior: "ignoreErrors" });
-      await stub(page, { [PIPELINES]: refusal(403, "forbidden", "Your roles in helsinki do not let you read Pipeline.") });
+      await stub(page, { [PIPELINES]: hidden("pipelines") }, {}, "none");
       await page.reload();
-      const refused = page.getByText(/do not let you read Pipeline|not allowed|access/i).first();
+      const refused = page.getByText(HIDDEN).first();
       await expect(refused).toBeVisible();
+      await expect(page.getByRole("button", { name: "New pipeline" }).first()).toBeDisabled();
       await shoot(page, "pipelines-refused", width, refused);
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await stub(page, { [PIPELINES]: failure });
+      await page.reload();
+      const failed = page.getByText("req-7073").first();
+      await expect(failed).toBeVisible();
+      await shoot(page, "pipelines-error", width, failed);
+    });
+
+    test("apps: the catalogue lists the service's App rows, and says what to do when there are none", async ({ page }) => {
+      const asked = await stub(page, { [APPS]: { status: 200, body: { value: [APP] } } });
+      await page.goto("/projects/helsinki/apps?lang=en");
+      const named = page.getByText("City bikes").first();
+      await expect(named).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
+      await shoot(page, "apps-filled", width, named);
+      expect(asked.filter((a) => OLD_DOORS.test(a.path))).toEqual([]);
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await stub(page, { [APPS]: NONE });
+      await page.reload();
+      const empty = page.getByText("No applications yet").first();
+      await expect(empty).toBeVisible();
+      await shoot(page, "apps-empty", width, empty);
+    });
+
+    test("apps: a refused catalogue shows the service's refusal", async ({ page }) => {
+      await stub(page, { [APPS]: hidden("apps") }, {}, "none");
+      await page.goto("/projects/helsinki/apps?lang=en");
+      const refused = page.getByText(HIDDEN).first();
+      await expect(refused).toBeVisible();
+      await shoot(page, "apps-refused", width, refused);
+      await page.unrouteAll({ behavior: "ignoreErrors" });
+      await stub(page, { [APPS]: failure });
+      await page.reload();
+      const failed = page.getByText("req-7073").first();
+      await expect(failed).toBeVisible();
+      await shoot(page, "apps-error", width, failed);
     });
   });
 }
