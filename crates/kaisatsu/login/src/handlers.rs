@@ -17,7 +17,8 @@ use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_oidc::{
-    ClientIp, OidcState, read_cookie, second_factor_required, sign_in_cookie, sign_in_cookie_name,
+    ClientIp, OidcState, add_auth_cookie, auth_cookie_holds, read_cookie, second_factor_required,
+    sign_in_cookie, sign_in_cookie_name,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -921,18 +922,10 @@ async fn sign_out_other_sessions(
     Ok(())
 }
 
-pub(crate) fn read_auth_cookie(headers: &HeaderMap) -> Option<String> {
-    read_cookie(headers, &sign_in_cookie_name("auth"))
-}
-
-/// K1: Verifies that the browser's auth session cookie matches `auth_session.handle_hash` in
-/// constant time (`subtle`).
+/// K1: whether this browser holds `auth_session` (one of the handles in its auth cookie,
+/// constant time; T-7147 lets one browser hold several sign-ins).
 pub(crate) fn auth_cookie_matches(headers: &HeaderMap, auth_session: &AuthSession) -> bool {
-    let Some(raw_cookie) = read_auth_cookie(headers) else {
-        return false;
-    };
-    let presented_hash = sha256_hex(&raw_cookie);
-    constant_time_str_eq(&presented_hash, &auth_session.handle_hash)
+    auth_cookie_holds(headers, &auth_session.handle_hash)
 }
 
 /// keycloak.v2's "page has expired" (theme's login-page-expired.ftl): a form of an earlier
@@ -2644,7 +2637,7 @@ async fn action_token_get(
         };
         state.store.put_auth_session(auth_session.clone()).await?;
 
-        let set_cookie = sign_in_cookie("auth", &handle, 900);
+        let set_cookie = add_auth_cookie(&headers, &handle, 900);
 
         return render_action_form(
             &state,
