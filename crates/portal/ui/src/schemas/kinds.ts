@@ -681,15 +681,15 @@ export function dataSourceSchema(
                   properties: {
                     header: {
                       type: "string",
-                      title: t("datasources.field.signatureHeader"),
-                      description: t("datasources.field.signatureHeaderHelp"),
+                      title: t("datasources.signatureHeader.label"),
+                      description: t("datasources.signatureHeader.help"),
                       pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
                       maxLength: 128,
                       examples: ["X-Hub-Signature-256"],
                     },
                     secretRef: {
-                      ...secretRef(t, t("datasources.field.signingSecret"), secrets),
-                      description: t("datasources.field.signingSecretHelp"),
+                      ...secretRef(t, t("datasources.signingSecret.label"), secrets),
+                      description: t("datasources.signingSecret.help"),
                     },
                   },
                 },
@@ -705,8 +705,8 @@ export function dataSourceSchema(
                   required: ["tokenRef"],
                   properties: {
                     tokenRef: {
-                      ...secretRef(t, t("datasources.field.bearerToken"), secrets),
-                      description: t("datasources.field.bearerTokenHelp"),
+                      ...secretRef(t, t("datasources.bearerToken.label"), secrets),
+                      description: t("datasources.bearerToken.help"),
                     },
                   },
                 },

@@ -24,6 +24,7 @@ Desired state of a `DataSource`: one connection and its credentials (MF-35).
 | `tls` | [TlsSettings](#tlssettings) | no | Transport security for the connection above. |
 | `type` | [DataSourceType](#datasourcetype) | yes | Which connection block below is the live one. |
 | `webSocket` | [WebSocketConnection](#websocketconnection) | no | The WebSocket connection, present when `type` is `websocket`. |
+| `webhook` | [WebhookConnection](#webhookconnection) | no | The webhook a sender pushes to, present when `type` is `webhook`. |
 
 ## GtfsRtConnection
 
@@ -101,6 +102,18 @@ A WebSocket the runner keeps open (Architecture/08 §6).
 |---|---|---|---|
 | `openMessage` | string | no | A message sent once the socket opens, usually a subscription request. A socket that needs a credential authenticates inside this message: Bento's websocket input sends no `Authorization` header, and a field the renderer cannot honour would be a promise the runner breaks. |
 | `url` | string | yes | The socket URL, `ws://` or `wss://`. |
+
+## WebhookConnection
+
+A pushed feed: the runner's shared ingest listener answers its POSTs (PL-122, ADR-N-071).
+
+Only the reconciler renders the `http_server` input this becomes, so the managed door keeps authentication and both caps whatever a manifest says; an author-written `http_server` stays refused (PL-50).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `auth` | [WebhookAuth](#webhookauth) | yes | How a sender proves it may post: exactly one of `hmac` and `bearer`. |
+| `maxBodyBytes` | integer (uint64) | no | The largest body accepted, in bytes (1 to 16777216; 1048576 when absent). A larger one answers 413 before any step runs. |
+| `maxInFlight` | integer (uint32) | no | How many requests may wait for their answer at once (1 to 1024; 64 when absent); more answer 503. |
 
 ## GtfsFeed
 
@@ -187,6 +200,15 @@ Structured typed resource reference (MF-07).
 | `name` | string | yes | Target resource name. |
 | `namespace` | string | no | Target resource namespace (defaults to caller namespace if omitted). |
 
+## WebhookAuth
+
+A webhook's authentication; there is no `public` option.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `bearer` | [WebhookBearer](#webhookbearer) | no | `Authorization: Bearer <token>`. |
+| `hmac` | [WebhookHmac](#webhookhmac) | no | The body's hex SHA-256 HMAC in the provider's header, with or without `sha256=`. |
+
 ## ArchiveFormat
 
 The archive formats an `http` connection reads (PL-72).
@@ -213,3 +235,20 @@ The order parameter of a paged source.
 The open data APIs a preset reads.
 
 Type: one of `"ckan"`, `"arcgisFeature"`, `"odata"`, `"wfs"`, `"ogcFeatures"`, `"sensorThings"`
+
+## WebhookBearer
+
+A webhook that sends a fixed bearer token.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tokenRef` | [SecretRef](#secretref) | yes | The token the sender presents. |
+
+## WebhookHmac
+
+An HMAC-signed webhook (GitHub's `X-Hub-Signature-256`, a form tool's own header).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `header` | string | yes | The header the provider writes its signature into, such as `X-Hub-Signature-256`. |
+| `secretRef` | [SecretRef](#secretref) | yes | The shared signing secret. |

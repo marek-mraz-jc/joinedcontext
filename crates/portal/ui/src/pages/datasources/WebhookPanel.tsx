@@ -113,7 +113,7 @@ export function WebhookPanel({ project, name }: { project: string; name: string 
             {t("datasources.webhook.test.title")}
           </h3>
           <p className="text-caption text-fg-muted">{t("datasources.webhook.test.hint")}</p>
-          <Field id="webhook-test-pipeline" label={t("datasources.webhook.test.pipeline")} help={t("datasources.webhook.test.pipelineHint")} required>
+          <Field id="webhook-test-pipeline" label={t("datasources.webhook.testPipeline.label")} help={t("datasources.webhook.testPipeline.help")} required>
             <Select id="webhook-test-pipeline" value={chosen} onChange={(event) => setPipeline(event.target.value)}>
               {addresses.map((address) => (
                 <option key={address.pipeline} value={address.pipeline}>
@@ -122,7 +122,7 @@ export function WebhookPanel({ project, name }: { project: string; name: string 
               ))}
             </Select>
           </Field>
-          <Field id="webhook-test-body" label={t("datasources.webhook.test.body")} help={t("datasources.webhook.test.bodyHint")} required>
+          <Field id="webhook-test-body" label={t("datasources.webhook.testBody.label")} help={t("datasources.webhook.testBody.help")} required>
             <Textarea id="webhook-test-body" rows={4} value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} />
           </Field>
           <div>

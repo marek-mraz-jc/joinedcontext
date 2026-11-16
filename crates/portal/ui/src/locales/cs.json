@@ -2458,12 +2458,6 @@
       "webhookAuth": "Jak se odesílatel prokazuje",
       "webhookHmac": "Podepsané tělo (HMAC SHA-256)",
       "webhookBearer": "Token nositele (Bearer)",
-      "signatureHeader": "Hlavička s podpisem",
-      "signatureHeaderHelp": "Hlavička, do které odesílatel zapisuje podpis, například X-Hub-Signature-256.",
-      "signingSecret": "Podpisové tajemství",
-      "signingSecretHelp": "Tajemství se sdíleným podpisovým klíčem, například ttn-webhook s klíčem secret. Nejprve ho přidejte v části Tajemství.",
-      "bearerToken": "Přístupový token",
-      "bearerTokenHelp": "Tajemství s tokenem, který odesílatel píše za Bearer, například chirpstack s klíčem token.",
       "maxBodyBytes": "Největší tělo (bajty)",
       "maxInFlight": "Událostí najednou"
     },
@@ -2568,15 +2562,19 @@
       "test": {
         "title": "Poslat testovací událost",
         "hint": "Pošle tělo níže vybrané pipeline, podepsané tak, jak ho podepisuje váš odesílatel. Událost projde pipeline jako skutečná.",
-        "pipeline": "Pipeline",
-        "pipelineHint": "Jedna z pipeline, které čtou tento zdroj, například ttn-uplinks.",
-        "body": "Tělo",
-        "bodyHint": "Událost tak, jak by ji poslal odesílatel, například JSON jednoho uplinku podle dokumentace poskytovatele.",
         "button": "Poslat testovací událost",
         "running": "Posílám…",
         "accepted": "Přijato ({status}): pipeline událost převzala.",
         "refused": "Běžec odpověděl {status}: {answer}",
         "unauthorized": "Tajemství nebo hlavička, které tento zdroj uvádí, neodpovídají tomu, co má běžec: zkontrolujte obojí a pošlete znovu."
+      },
+      "testPipeline": {
+        "label": "Pipeline",
+        "help": "Jedna z pipeline, které čtou tento zdroj, například ttn-uplinks."
+      },
+      "testBody": {
+        "label": "Tělo",
+        "help": "Událost tak, jak by ji poslal odesílatel, například JSON jednoho uplinku podle dokumentace poskytovatele."
       }
     },
     "preset": {
@@ -2651,6 +2649,18 @@
         "thing": "Thing"
       },
       "refused": "Požádejte správce projektu o roli, která navrhuje datové zdroje."
+    },
+    "signatureHeader": {
+      "label": "Hlavička s podpisem",
+      "help": "Hlavička, do které odesílatel zapisuje podpis, například X-Hub-Signature-256."
+    },
+    "signingSecret": {
+      "label": "Podpisové tajemství",
+      "help": "Tajemství se sdíleným podpisovým klíčem, například ttn-webhook s klíčem secret. Nejprve ho přidejte v části Tajemství."
+    },
+    "bearerToken": {
+      "label": "Přístupový token",
+      "help": "Tajemství s tokenem, který odesílatel píše za Bearer, například chirpstack s klíčem token."
     }
   },
   "pipelines": {
