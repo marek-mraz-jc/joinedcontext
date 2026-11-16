@@ -118,7 +118,7 @@ const fn door(
 use Bound::{Organization as Org, Project};
 
 /// Every Portal door (API/13 §2b's table).
-pub static DOORS: [Door; 207] = [
+pub static DOORS: &[Door] = &[
     door(
         "portal_people_remove",
         Org,
@@ -2154,7 +2154,7 @@ mod tests {
     #[test]
     fn no_door_is_a_registry_operation_and_each_path_member_is_a_parameter() {
         let mut names = std::collections::BTreeSet::new();
-        for door in &DOORS {
+        for door in DOORS {
             assert!(names.insert(door.name), "{} twice", door.name);
             assert!(door.name.starts_with(PREFIX), "{}", door.name);
             assert!(

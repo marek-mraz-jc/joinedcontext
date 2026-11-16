@@ -821,7 +821,11 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         // A person's own AI connectors, the kinds' schemas and forms and the Apps shared with
         // them, which belong to no Organization (T-7173).
         ("portal_own_connector_list", "()", "/api/v1/connectors"),
-        ("portal_kind_schema", "(kind='Endpoint')", "/api/v1/kinds/Endpoint/schema"),
+        (
+            "portal_kind_schema",
+            "(kind='Endpoint')",
+            "/api/v1/kinds/Endpoint/schema",
+        ),
         ("portal_form_list", "()", "/api/v1/forms"),
         ("portal_shared_app_list", "()", "/api/v1/shared-apps"),
     ] {
@@ -2300,7 +2304,7 @@ async fn the_portal_doors_answer_as_their_rest_doors() {
     let mut differ = Vec::new();
     for who in ["root", "hel-only"] {
         let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
-        for door in &odata_portal::DOORS {
+        for door in odata_portal::DOORS {
             let params: serde_json::Map<String, Value> = door
                 .parameters
                 .iter()
