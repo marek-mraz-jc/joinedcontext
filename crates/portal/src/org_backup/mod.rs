@@ -108,6 +108,10 @@ pub struct LogEntry {
     pub version_id: String,
     /// What happened, in words; never a credential.
     pub message: String,
+    /// The SHA-256 (hex) of the object a run uploaded; empty for every other act. A restore
+    /// opens only these bytes.
+    #[serde(skip)]
+    pub sha256: String,
 }
 
 /// What a new log entry says; the store stamps `id` and `at`.
@@ -121,6 +125,7 @@ pub struct NewEntry<'a> {
     pub object_key: &'a str,
     pub version_id: &'a str,
     pub message: &'a str,
+    pub sha256: &'a str,
 }
 
 fn rfc3339(at: time::OffsetDateTime) -> String {
@@ -188,6 +193,7 @@ type LogRow = (
     time::OffsetDateTime,
     bool,
     i64,
+    String,
     String,
     String,
     String,
@@ -371,14 +377,15 @@ impl BackupStore {
                     object_key: entry.object_key.to_owned(),
                     version_id: entry.version_id.to_owned(),
                     message: entry.message.to_owned(),
+                    sha256: entry.sha256.to_owned(),
                 });
                 Ok(())
             }
             Inner::Postgres(pool) => {
                 sqlx::query(
                     "INSERT INTO organization_backup_log (organization, kind, action, actor, ok, \
-                     bytes, object_key, version_id, message) \
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                     bytes, object_key, version_id, message, sha256) \
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
                 )
                 .bind(entry.organization)
                 .bind(entry.kind)
@@ -389,6 +396,7 @@ impl BackupStore {
                 .bind(entry.object_key)
                 .bind(entry.version_id)
                 .bind(entry.message)
+                .bind(entry.sha256)
                 .execute(pool)
                 .await
                 .map_err(db)?;
@@ -418,7 +426,7 @@ impl BackupStore {
             Inner::Postgres(pool) => {
                 let rows: Vec<LogRow> = sqlx::query_as(
                     "SELECT id, organization, kind, action, actor, at, ok, bytes, object_key, \
-                     version_id, message FROM organization_backup_log \
+                     version_id, message, sha256 FROM organization_backup_log \
                      WHERE organization = $1 AND kind = $2 ORDER BY id DESC LIMIT $3",
                 )
                 .bind(organization)
@@ -441,6 +449,7 @@ impl BackupStore {
                         object_key: r.8,
                         version_id: r.9,
                         message: r.10,
+                        sha256: r.11,
                     })
                     .collect())
             }
@@ -867,8 +876,8 @@ pub async fn require_versioning(
 /// target's retention removed, the outcome logged. Answers the log entry's message.
 pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEntry, ApiError> {
     let outcome = upload(state, target, actor).await;
-    let (ok, bytes, key, version, message) = match &outcome {
-        Ok((bytes, key, version, pruned)) => (
+    let (ok, bytes, key, version, message, sha256) = match &outcome {
+        Ok((bytes, key, version, pruned, sha256)) => (
             true,
             i64::try_from(*bytes).unwrap_or(i64::MAX),
             key.clone(),
@@ -881,8 +890,16 @@ pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEn
             } else {
                 "uploaded".to_owned()
             },
+            sha256.clone(),
         ),
-        Err(err) => (false, 0, String::new(), String::new(), err.to_string()),
+        Err(err) => (
+            false,
+            0,
+            String::new(),
+            String::new(),
+            err.to_string(),
+            String::new(),
+        ),
     };
     if !ok {
         tracing::warn!(organization = %target.organization, %message, "organization backup failed");
@@ -899,6 +916,7 @@ pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEn
             object_key: &key,
             version_id: &version,
             message: &message,
+            sha256: &sha256,
         })
         .await?;
     let entries = state
@@ -916,7 +934,7 @@ async fn upload(
     state: &AppState,
     target: &Target,
     actor: &str,
-) -> Result<(usize, String, String, usize), ApiError> {
+) -> Result<(usize, String, String, usize, String), ApiError> {
     let http = &state.org_backup_egress.http;
     let bucket = bucket(state, target)?;
     require_versioning(http, &bucket).await?;
@@ -926,6 +944,7 @@ async fn upload(
         build_bundle(state, &target.organization, actor).await?.0
     };
     let size = bytes.len();
+    let sha256 = sha256_hex(&bytes);
     // One key: every run is a new version of it, which is what "the versions" of the page lists.
     let key = target.object_key();
     let version = bucket
@@ -936,7 +955,16 @@ async fn upload(
         tracing::warn!(organization = %target.organization, error = %err, "old backup versions not removed");
         0
     });
-    Ok((size, key, version, pruned))
+    Ok((size, key, version, pruned, sha256))
+}
+
+/// The SHA-256 of `bytes`, lower-case hex: what the run log binds a version's bytes by.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Removes the noncurrent versions (and delete markers) of the target's folder that became

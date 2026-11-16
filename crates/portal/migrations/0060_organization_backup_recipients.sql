@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS organization_data_restores (
     organization text NOT NULL,
     version_id text NOT NULL,
     requested_by text NOT NULL,
+    -- The asker's Keycloak subject: four eyes are two subjects, never two usernames.
+    requested_subject text NOT NULL,
+    -- The SHA-256 of the sealed object the dry run read; the approval reads the same bytes.
+    sha256 text NOT NULL,
     requested_at timestamptz NOT NULL DEFAULT now(),
     state text NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'applied', 'declined', 'failed')),
@@ -26,3 +30,6 @@ CREATE INDEX IF NOT EXISTS organization_data_restores_by_organization
 ALTER TABLE organization_backup_log DROP CONSTRAINT IF EXISTS organization_backup_log_action_check;
 ALTER TABLE organization_backup_log ADD CONSTRAINT organization_backup_log_action_check
     CHECK (action IN ('run', 'delete', 'restore-plan', 'restore-request', 'restore-decline', 'restore'));
+
+-- The SHA-256 of the sealed object a run uploaded: a restore opens only those bytes (T-7168).
+ALTER TABLE organization_backup_log ADD COLUMN IF NOT EXISTS sha256 text NOT NULL DEFAULT '';

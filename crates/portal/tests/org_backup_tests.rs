@@ -1079,6 +1079,169 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
 }
 
 #[tokio::test]
+async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_an_id() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    for statement in [
+        "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+         VALUES ('alfa-city', 'Pipeline', 'alfa-draft', '{}', 'ada', 'user')",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed}', 'portal')",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect(statement);
+    }
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    world.state.mirror.upsert(org(
+        "RoleBinding",
+        "cid-admin",
+        json!({ "subjects": [{ "user": "cid@hel.fi" }], "role": "org-admin", "scope": { "organization": "alfa" } }),
+    ));
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+
+    // Lost since: the draft (a table keyed without an `id`), and a subscription made again under
+    // a new id with the same subject, project, scope and target.
+    for statement in [
+        "DELETE FROM drafts WHERE project = 'alfa-city'",
+        "DELETE FROM alert_subscriptions WHERE project = 'alfa-city'",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed,stale}', 'digest')",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect(statement);
+    }
+    let door = format!("{DATA_DOOR}/versions/{version}/restore");
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let plan = &body(&asked)["plan"]["modules"]["portal"];
+    assert_eq!(plan["drafts"]["create"], 1, "{plan}");
+    assert_eq!(plan["alert_subscriptions"]["create"], 0, "{plan}");
+    assert_eq!(plan["alert_subscriptions"]["refused"], 1, "{plan}");
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    let approve = format!("{DATA_DOOR}/restores/{id}/approve");
+
+    // While it waits, the bucket and the keys it was checked on stay.
+    let repointed = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, &identities())),
+    )
+    .await;
+    assert_eq!(repointed.status, StatusCode::CONFLICT, "{}", repointed.text);
+    assert!(repointed.text.contains("pending"), "{}", repointed.text);
+
+    // The asker under another username is still the asker.
+    let mut renamed = person("cid");
+    renamed.subject = "sub-ada".into();
+    let own = send(
+        &world.state,
+        renamed,
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::FORBIDDEN, "{}", own.text);
+
+    // Other bytes under the same version id (a bucket another admin points at) are refused.
+    let second = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text);
+    let swap = |bucket: &FakeS3, from: &str, to: &str| {
+        let mut bucket = bucket.lock().expect("bucket");
+        let versions = bucket.objects.get_mut(DATA_KEY).expect("archive");
+        let bytes = versions
+            .iter()
+            .find(|v| v.0 == from)
+            .and_then(|v| v.1.clone())
+            .expect("bytes");
+        let slot = versions.iter_mut().find(|v| v.0 == to).expect("version");
+        slot.1.replace(bytes)
+    };
+    let newer = body(&second)["versionId"]
+        .as_str()
+        .expect("a version")
+        .to_owned();
+    let original = swap(&world.bucket, &newer, &version);
+    let swapped = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(
+        swapped.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        swapped.text
+    );
+    assert!(swapped.text.contains("version"), "{}", swapped.text);
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .objects
+        .get_mut(DATA_KEY)
+        .and_then(|v| v.iter_mut().find(|v| v.0 == version))
+        .expect("version")
+        .1 = original;
+
+    let approved = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &approve,
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await;
+    assert_eq!(approved.status, StatusCode::OK, "{}", approved.text);
+    assert_eq!(body(&approved)["state"], "applied", "{}", approved.text);
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert_eq!(drafts, ["alfa-draft"], "the draft is back");
+    let deliveries: Vec<String> =
+        sqlx::query_scalar("SELECT delivery FROM alert_subscriptions WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("subscriptions");
+    assert_eq!(deliveries, ["digest"], "today's subscription stands");
+    let changed = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DATA_DOOR,
+        Some(data_target(&world.endpoint, &ids)),
+    )
+    .await;
+    assert_eq!(
+        changed.status,
+        StatusCode::OK,
+        "decided: the target is free again"
+    );
+}
+
+#[tokio::test]
 async fn an_archive_of_another_organization_is_not_restored_into_it() {
     let Some(db) = seeded_portal_db().await else {
         return;
@@ -1122,13 +1285,19 @@ async fn an_archive_of_another_organization_is_not_restored_into_it() {
 
     // Even copied under bravo's key, with a run of bravo's that names the version, the archive
     // says whose it is and is refused.
-    {
+    let copied_bytes = {
         let mut bucket = alfa.bucket.lock().expect("bucket");
         let copied = bucket.objects[DATA_KEY].clone();
+        let bytes = copied
+            .iter()
+            .find(|v| v.0 == version)
+            .and_then(|v| v.1.clone())
+            .expect("the version's bytes");
         bucket
             .objects
             .insert("jc/bravo/data/archive.zip.age".into(), copied);
-    }
+        bytes
+    };
     bravo
         .state
         .org_backups
@@ -1142,6 +1311,7 @@ async fn an_archive_of_another_organization_is_not_restored_into_it() {
             object_key: "jc/bravo/data/archive.zip.age",
             version_id: &version,
             message: "uploaded",
+            sha256: &joinedcontext_portal::org_backup::sha256_hex(&copied_bytes),
         })
         .await
         .expect("logged");

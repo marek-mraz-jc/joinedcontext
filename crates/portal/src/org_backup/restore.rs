@@ -18,6 +18,11 @@
 //! since. Tables whose rows decide access or record what happened are never restored
 //! ([`NOT_RESTORED`]). After the rows, every approved erasure of the Organization's projects is
 //! applied again to the Portal's copies, so a person erased since the backup stays erased.
+//!
+//! The run log binds each version to the SHA-256 of the bytes the run uploaded, and a request
+//! to the bytes its dry run read: a repointed target or another object under the same version id
+//! is refused, so the second administrator approves the plan of the bytes the first one checked.
+//! Each archive entry and the archive as a whole are read under a size cap ([`CAPS`]).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Read};
@@ -71,8 +76,8 @@ pub struct RestoreCounts {
     pub create: u64,
     pub update: u64,
     pub unchanged: u64,
-    /// Rows whose key is not the Organization's today, or whose id another Organization's
-    /// row holds: never written.
+    /// Rows whose key is not the Organization's today, whose id another Organization's row
+    /// holds, or that would break a unique rule a row of today holds: never written.
     pub refused: u64,
 }
 
@@ -126,17 +131,24 @@ pub fn identity_of(text: &Zeroizing<String>) -> Result<age::x25519::Identity, Ap
         })
 }
 
-/// The run log's word on `version`: one of this Organization's own data runs wrote it. The
-/// archive's index says the same or the restore is refused, but the log is what is trusted.
-pub async fn taken_by(state: &AppState, organization: &str, version: &str) -> Result<(), ApiError> {
-    let ours = state
+/// The run log's word on `version`: one of this Organization's own data runs wrote it, and the
+/// SHA-256 of the bytes each such run uploaded. The archive's index says the same or the restore
+/// is refused, but the log is what is trusted.
+pub async fn taken_by(
+    state: &AppState,
+    organization: &str,
+    version: &str,
+) -> Result<Vec<String>, ApiError> {
+    let ours: Vec<String> = state
         .org_backups
         .entries(organization, DATA, i64::MAX)
         .await?
         .into_iter()
-        .any(|e| e.action == "run" && e.ok && e.version_id == version);
-    if ours {
-        Ok(())
+        .filter(|e| e.action == "run" && e.ok && e.version_id == version)
+        .map(|e| e.sha256)
+        .collect();
+    if !ours.is_empty() {
+        Ok(ours)
     } else {
         Err(ApiError::Unprocessable {
             detail: format!(
@@ -148,10 +160,72 @@ pub async fn taken_by(state: &AppState, organization: &str, version: &str) -> Re
     }
 }
 
-/// An opened archive: the decrypted zip in a scratch file, and its index.
+/// Refuses `sealed` unless it is the bytes a run logged for the version (`logged`, from
+/// [`taken_by`]); answers their SHA-256.
+pub fn same_bytes(sealed: &[u8], logged: &[String]) -> Result<String, ApiError> {
+    let sha256 = super::sha256_hex(sealed);
+    if logged.iter().any(|l| !l.is_empty() && *l == sha256) {
+        Ok(sha256)
+    } else {
+        Err(ApiError::Unprocessable {
+            detail: "version: the object in the bucket is not the one this Organization's backup \
+                     uploaded under this version (the target was changed, or the version predates \
+                     checksums): run a backup now and restore that version"
+                .into(),
+            errors: vec!["version: not the bytes this Organization's backup uploaded".into()],
+        })
+    }
+}
+
+/// How much an archive may unpack to: per entry and in total. A deflate bomb is refused with a
+/// reason, never unpacked into the Portal's memory.
+#[derive(Debug, Clone, Copy)]
+pub struct Caps {
+    pub entry: u64,
+    pub total: u64,
+}
+
+/// The caps of a restore: a table's JSON lines up to 256 MiB, the archive up to 1 GiB. The
+/// sealed archive itself is at most 256 MiB.
+pub const CAPS: Caps = Caps {
+    entry: 256 << 20,
+    total: 1 << 30,
+};
+
+/// The index of an archive is a few kilobytes.
+const INDEX_CAP: u64 = 1 << 20;
+
+fn too_large(what: &str, cap: u64) -> ApiError {
+    ApiError::Unprocessable {
+        detail: format!(
+            "version: {what} unpacks to more than {} MiB, more than a backup of this Portal \
+             writes, so it is not restored",
+            cap >> 20
+        ),
+        errors: vec![format!("version: {what} is too large to restore")],
+    }
+}
+
+/// Reads `reader` whole, refusing it once it passes `cap` bytes.
+fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiError> {
+    let mut out = Vec::new();
+    reader
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut out)
+        .map_err(|_| not_an_archive())?;
+    if out.len() as u64 > cap {
+        return Err(too_large(what, cap));
+    }
+    Ok(out)
+}
+
+/// An opened archive: the decrypted zip in a scratch file, its index, and what it may still
+/// unpack to.
 pub struct Opened {
     zip: zip::ZipArchive<std::fs::File>,
     pub index: DataIndex,
+    caps: Caps,
+    left: u64,
     _scratch: Scratch,
 }
 
@@ -161,6 +235,7 @@ pub async fn open(
     sealed: Vec<u8>,
     identity: age::x25519::Identity,
     organization: &str,
+    caps: Caps,
 ) -> Result<Opened, ApiError> {
     let (scratch, file) = Scratch::new(".zip")?;
     let path = scratch.path().to_path_buf();
@@ -169,16 +244,23 @@ pub async fn open(
         let mut reader = decryptor
             .decrypt(std::iter::once(&identity as &dyn age::Identity))
             .map_err(|_| unreadable())?;
+        // age adds no compression: the plaintext is about the size of the sealed object.
         let mut out = std::io::BufWriter::new(file);
-        std::io::copy(&mut reader, &mut out).map_err(|_| unreadable())?;
+        let limit = caps.total.saturating_add(1);
+        let copied =
+            std::io::copy(&mut (&mut reader).take(limit), &mut out).map_err(|_| unreadable())?;
+        if copied >= limit {
+            return Err(too_large("the archive", caps.total));
+        }
         drop(out);
         let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).map_err(internal)?)
             .map_err(|_| not_an_archive())?;
-        let mut text = String::new();
-        zip.by_name("index.yaml")
-            .map_err(|_| not_an_archive())?
-            .read_to_string(&mut text)
-            .map_err(|_| not_an_archive())?;
+        let text = read_capped(
+            zip.by_name("index.yaml").map_err(|_| not_an_archive())?,
+            INDEX_CAP,
+            "index.yaml",
+        )?;
+        let text = String::from_utf8(text).map_err(|_| not_an_archive())?;
         let index: DataIndex = serde_norway::from_str(&text).map_err(|_| not_an_archive())?;
         Ok((zip, index))
     })
@@ -204,6 +286,8 @@ pub async fn open(
     Ok(Opened {
         zip,
         index,
+        caps,
+        left: caps.total,
         _scratch: scratch,
     })
 }
@@ -308,14 +392,18 @@ fn upsert_sql(table: &Table, keys: &[String]) -> String {
 }
 
 /// Raises the id sequence of a table past the ids a restore wrote, so the next row gets a new
-/// one. Never lowers it.
+/// one. Never lowers it. A table without an `id` column has none to raise.
 async fn raise_sequence(conn: &mut PgConnection, table: &str) -> Result<(), ApiError> {
-    let sequence: Option<String> = sqlx::query_scalar("SELECT pg_get_serial_sequence($1, 'id')")
-        .bind(format!("public.{table}"))
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(failed)?;
-    let Some(sequence) = sequence else {
+    // pg_get_serial_sequence raises on a column that does not exist: ask only where it does.
+    let sequence: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT pg_get_serial_sequence($1, 'id') FROM pg_attribute \
+         WHERE attrelid = to_regclass($1) AND attname = 'id' AND NOT attisdropped",
+    )
+    .bind(format!("public.{table}"))
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(failed)?;
+    let Some(sequence) = sequence.flatten() else {
         return Ok(());
     };
     let sql = format!(
@@ -336,14 +424,68 @@ async fn raise_sequence(conn: &mut PgConnection, table: &str) -> Result<(), ApiE
     Ok(())
 }
 
-/// Plans (apply = false) or applies the Portal part of `opened` for `target`, in one
-/// transaction; a failed apply writes nothing.
+/// Writes one row in a savepoint: `false` when a unique rule of today's rows refuses it (an
+/// index beside the primary key), which then counts as refused and leaves the rest standing.
+async fn write_row(
+    conn: &mut PgConnection,
+    upsert: &str,
+    wanted: &[String],
+    row: &serde_json::Value,
+) -> Result<bool, ApiError> {
+    sqlx::query("SAVEPOINT restore_row")
+        .execute(&mut *conn)
+        .await
+        .map_err(failed)?;
+    match sqlx::query(sqlx::AssertSqlSafe(upsert.to_owned()))
+        .bind(wanted)
+        .bind(row)
+        .execute(&mut *conn)
+        .await
+    {
+        Ok(_) => {
+            sqlx::query("RELEASE SAVEPOINT restore_row")
+                .execute(&mut *conn)
+                .await
+                .map_err(failed)?;
+            Ok(true)
+        }
+        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+            sqlx::query("ROLLBACK TO SAVEPOINT restore_row")
+                .execute(&mut *conn)
+                .await
+                .map_err(failed)?;
+            Ok(false)
+        }
+        Err(e) => Err(failed(e)),
+    }
+}
+
+/// The approval a restore writes under: the pending request and the second administrator.
+pub struct Approval<'a> {
+    pub id: i64,
+    pub by: &'a str,
+    /// The approver's Keycloak subject; never the asker's.
+    pub subject: &'a str,
+}
+
+/// The request was taken by another approval, declined, or asked by the approver.
+pub fn no_request(id: i64) -> ApiError {
+    ApiError::NotFound(format!(
+        "restore request {id} is not pending in this Organization, or you asked for it"
+    ))
+}
+
+/// Plans (`approval` none) or applies the Portal part of `opened` for `target`, in one
+/// transaction. A plan writes every row in that transaction too, so it counts what the apply
+/// meets, and then rolls back. An apply takes the pending request first and marks it applied
+/// in the same transaction as the rows: a failed or interrupted apply writes nothing and leaves
+/// the request pending.
 pub async fn run(
     state: &AppState,
     target: &Target,
     version: &str,
     opened: &mut Opened,
-    apply: bool,
+    approval: Option<&Approval<'_>>,
 ) -> Result<DataPlan, ApiError> {
     let pool = state.db.clone().ok_or_else(|| {
         ApiError::Conflict(
@@ -374,20 +516,33 @@ pub async fn run(
             .collect(),
         erasures_replayed: 0,
     };
-    if !opened
+    let exported = opened
         .index
         .modules
         .get("portal")
-        .is_some_and(|p| p.exported)
-    {
-        return Ok(plan);
-    }
+        .is_some_and(|p| p.exported);
 
     let mut tx = pool.begin().await.map_err(failed)?;
+    if let Some(approval) = approval {
+        // Held until the commit: a second approval waits here, then finds it taken.
+        let pending: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM organization_data_restores WHERE id = $1 AND organization = $2 \
+             AND state = 'pending' AND requested_subject <> $3 FOR UPDATE",
+        )
+        .bind(approval.id)
+        .bind(organization)
+        .bind(approval.subject)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(failed)?;
+        if pending.is_none() {
+            return Err(no_request(approval.id));
+        }
+    }
     let mut portal = BTreeMap::new();
     for table in PORTAL_TABLES
         .iter()
-        .filter(|t| !NOT_RESTORED.iter().any(|(n, _)| *n == t.name))
+        .filter(|t| exported && !NOT_RESTORED.iter().any(|(n, _)| *n == t.name))
     {
         let wanted = keys.get(table.keys).cloned().unwrap_or_default();
         let pk = key_columns(&mut tx, table.name).await?;
@@ -397,7 +552,7 @@ pub async fn run(
         let classify = classify_sql(table, &pk);
         let upsert = upsert_sql(table, &pk);
         let mut counts = RestoreCounts::default();
-        for line in lines(&mut opened.zip, table.name)? {
+        for line in lines(opened, table.name)? {
             let row: serde_json::Value =
                 serde_json::from_str(&line).map_err(|_| not_an_archive())?;
             let verdict: String = sqlx::query_scalar(sqlx::AssertSqlSafe(classify.clone()))
@@ -406,28 +561,24 @@ pub async fn run(
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(failed)?;
+            let written = matches!(verdict.as_str(), "create" | "update")
+                && write_row(&mut tx, &upsert, &wanted, &row).await?;
             match verdict.as_str() {
-                "create" => counts.create += 1,
-                "update" => counts.update += 1,
+                "create" if written => counts.create += 1,
+                "update" if written => counts.update += 1,
                 "unchanged" => counts.unchanged += 1,
                 _ => counts.refused += 1,
             }
-            if apply && matches!(verdict.as_str(), "create" | "update") {
-                sqlx::query(sqlx::AssertSqlSafe(upsert.clone()))
-                    .bind(&wanted)
-                    .bind(&row)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(failed)?;
-            }
         }
-        if apply && counts.create > 0 {
+        if approval.is_some() && counts.create > 0 {
             raise_sequence(&mut tx, table.name).await?;
         }
         portal.insert(table.name.to_owned(), counts);
     }
-    plan.modules.insert("portal".to_owned(), portal);
-    if apply {
+    if exported {
+        plan.modules.insert("portal".to_owned(), portal);
+    }
+    if let Some(approval) = approval {
         let projects = keys.get("projects").cloned().unwrap_or_default();
         for erasure in crate::erasure::approved_in(&mut tx, &projects)
             .await
@@ -438,6 +589,17 @@ pub async fn run(
                 .map_err(ApiError::Unavailable)?;
             plan.erasures_replayed += 1;
         }
+        sqlx::query(
+            "UPDATE organization_data_restores SET state = 'applied', decided_by = $2, \
+             decided_at = now(), plan = $3, message = $4 WHERE id = $1",
+        )
+        .bind(approval.id)
+        .bind(approval.by)
+        .bind(sqlx::types::Json(&plan))
+        .bind(applied_message(&plan))
+        .execute(&mut *tx)
+        .await
+        .map_err(failed)?;
         tx.commit().await.map_err(failed)?;
     } else {
         tx.rollback().await.map_err(failed)?;
@@ -445,12 +607,31 @@ pub async fn run(
     Ok(plan)
 }
 
-/// The JSON lines of `module/portal/<table>.jsonl`; none when the archive has no such file.
-fn lines(zip: &mut zip::ZipArchive<std::fs::File>, table: &str) -> Result<Vec<String>, ApiError> {
-    let Ok(file) = zip.by_name(&format!("module/portal/{table}.jsonl")) else {
+/// What an applied restore says it did.
+pub fn applied_message(plan: &DataPlan) -> String {
+    format!(
+        "{} row(s) written, {} erasure(s) applied again",
+        plan.writes(),
+        plan.erasures_replayed
+    )
+}
+
+/// The JSON lines of `module/portal/<table>.jsonl`, read under the entry cap and what is left
+/// of the total; none when the archive has no such file.
+fn lines(opened: &mut Opened, table: &str) -> Result<Vec<String>, ApiError> {
+    let name = format!("module/portal/{table}.jsonl");
+    let Ok(file) = opened.zip.by_name(&name) else {
         return Ok(Vec::new());
     };
-    std::io::BufReader::new(file)
+    let cap = opened.caps.entry.min(opened.left);
+    let what = if cap < opened.caps.entry {
+        "the archive".to_owned()
+    } else {
+        name
+    };
+    let bytes = read_capped(file, cap, &what)?;
+    opened.left -= bytes.len() as u64;
+    bytes
         .lines()
         .filter(|l| l.as_ref().map_or(true, |l| !l.trim().is_empty()))
         .collect::<Result<Vec<_>, _>>()
@@ -472,6 +653,12 @@ pub struct DataRestoreRequest {
     pub decided_by: Option<String>,
     pub decided_at: Option<String>,
     pub message: String,
+    /// The asker's Keycloak subject: the approver must be another.
+    #[serde(skip)]
+    pub requested_subject: String,
+    /// The SHA-256 of the sealed object the dry run read.
+    #[serde(skip)]
+    pub sha256: String,
 }
 
 type RequestRow = (
@@ -483,6 +670,8 @@ type RequestRow = (
     sqlx::types::Json<DataPlan>,
     Option<String>,
     Option<time::OffsetDateTime>,
+    String,
+    String,
     String,
 );
 
@@ -497,11 +686,13 @@ fn request_of(row: RequestRow) -> DataRestoreRequest {
         decided_by: row.6,
         decided_at: row.7.map(super::rfc3339),
         message: row.8,
+        requested_subject: row.9,
+        sha256: row.10,
     }
 }
 
 const REQUEST_COLUMNS: &str = "id, version_id, requested_by, requested_at, state, plan, \
-                               decided_by, decided_at, message";
+                               decided_by, decided_at, message, requested_subject, sha256";
 
 fn pool_of(state: &AppState) -> Result<sqlx::PgPool, ApiError> {
     state.db.clone().ok_or_else(|| {
@@ -511,21 +702,25 @@ fn pool_of(state: &AppState) -> Result<sqlx::PgPool, ApiError> {
     })
 }
 
-/// Records a request for a second administrator to approve.
+/// Records a request for a second administrator to approve, bound to the bytes its dry run
+/// read (`sha256`).
 pub async fn request(
     state: &AppState,
     organization: &str,
-    actor: &str,
+    actor: &crate::auth::session::Identity,
     plan: &DataPlan,
+    sha256: &str,
 ) -> Result<DataRestoreRequest, ApiError> {
     let row: RequestRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO organization_data_restores (organization, version_id, requested_by, plan) \
-         VALUES ($1, $2, $3, $4) RETURNING {REQUEST_COLUMNS}"
+        "INSERT INTO organization_data_restores (organization, version_id, requested_by, plan, \
+         requested_subject, sha256) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {REQUEST_COLUMNS}"
     )))
     .bind(organization)
     .bind(&plan.version_id)
-    .bind(actor)
+    .bind(&actor.username)
     .bind(sqlx::types::Json(plan))
+    .bind(&actor.subject)
+    .bind(sha256)
     .fetch_one(&pool_of(state)?)
     .await
     .map_err(failed)?;
@@ -551,9 +746,8 @@ pub async fn requests(
     Ok(rows.into_iter().map(request_of).collect())
 }
 
-/// Takes a pending request of the Organization for `decider` in one statement, so two
-/// approvals never both run it. With `others_only` the person who asked cannot take it (an
-/// approval); without, they can (withdrawing their own). `None` when there is no such request.
+/// Ends a pending request of the Organization without writing rows (declined, withdrawn or
+/// failed), in one statement. `None` when there is no such request.
 pub async fn decide(
     state: &AppState,
     organization: &str,
@@ -561,19 +755,17 @@ pub async fn decide(
     decider: &str,
     outcome: &str,
     message: &str,
-    others_only: bool,
 ) -> Result<Option<DataRestoreRequest>, ApiError> {
     let row: Option<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE organization_data_restores SET state = $4, decided_by = $3, decided_at = now(), \
          message = $5 WHERE id = $1 AND organization = $2 AND state = 'pending' \
-         AND (NOT $6 OR requested_by <> $3) RETURNING {REQUEST_COLUMNS}"
+         RETURNING {REQUEST_COLUMNS}"
     )))
     .bind(id)
     .bind(organization)
     .bind(decider)
     .bind(outcome)
     .bind(message)
-    .bind(others_only)
     .fetch_optional(&pool_of(state)?)
     .await
     .map_err(failed)?;
@@ -598,25 +790,20 @@ pub async fn pending(
     Ok(row.map(request_of))
 }
 
-/// Writes how an approved request ended.
-pub async fn finish(
-    state: &AppState,
-    id: i64,
-    outcome: &str,
-    plan: &DataPlan,
-    message: &str,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        "UPDATE organization_data_restores SET state = $2, plan = $3, message = $4 WHERE id = $1",
+/// Whether the Organization has a restore request waiting: its data target and recipients
+/// stay as they are until it is decided.
+pub async fn any_pending(state: &AppState, organization: &str) -> Result<bool, ApiError> {
+    let Some(pool) = state.db.clone() else {
+        return Ok(false);
+    };
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM organization_data_restores \
+         WHERE organization = $1 AND state = 'pending')",
     )
-    .bind(id)
-    .bind(outcome)
-    .bind(sqlx::types::Json(plan))
-    .bind(message)
-    .execute(&pool_of(state)?)
+    .bind(organization)
+    .fetch_one(&pool)
     .await
-    .map_err(failed)?;
-    Ok(())
+    .map_err(failed)
 }
 
 #[cfg(test)]
@@ -644,6 +831,36 @@ mod tests {
         for (name, _) in NOT_RESTORED {
             assert!(PORTAL_TABLES.iter().any(|t| t.name == *name), "{name}");
         }
+    }
+
+    #[test]
+    fn an_entry_that_unpacks_past_its_cap_is_refused_with_a_reason() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(
+            "module/portal/activity.jsonl",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .expect("entry");
+        zip.write_all(&vec![b'{'; 64 << 10]).expect("write");
+        let mut zip = zip::ZipArchive::new(zip.finish().expect("zip")).expect("archive");
+        let packed = zip.by_index_raw(0).expect("entry").compressed_size();
+        assert!(packed < 4 << 10, "deflate packs it to {packed} bytes");
+        let entry = zip.by_index(0).expect("entry");
+        let Err(refused) = read_capped(entry, 16 << 10, "module/portal/activity.jsonl") else {
+            panic!("64 KiB past a 16 KiB cap");
+        };
+        assert!(
+            refused
+                .to_string()
+                .contains("activity.jsonl unpacks to more than"),
+            "{refused}"
+        );
+        let entry = zip.by_index(0).expect("entry");
+        assert_eq!(
+            read_capped(entry, 64 << 10, "x").expect("at the cap").len(),
+            64 << 10
+        );
     }
 
     #[test]

@@ -296,6 +296,15 @@ async fn save_of(
 ) -> Result<Json<Target>, ApiError> {
     let identity = &user.0.identity;
     let organization = administered(state, identity)?;
+    // A pending restore was checked against this target's bytes and keys: they stay until a
+    // second administrator decides it.
+    if kind == DATA && org_backup::restore::any_pending(state, &organization).await? {
+        return Err(ApiError::Conflict(
+            "a data restore request is pending: approve or decline it under Restore requests \
+             before changing the data backup's bucket or keys"
+                .into(),
+        ));
+    }
     let endpoint = well_formed(&input)?;
     let recipients = recipients_of(&input, kind)?;
     state
@@ -602,6 +611,7 @@ async fn soft_delete_of(
             bytes: 0,
             object_key: &key,
             version_id: "",
+            sha256: "",
             message: &outcome
                 .as_ref()
                 .map(|()| "delete marker written".to_owned())
@@ -975,6 +985,7 @@ pub async fn restore(
             bytes: 0,
             object_key: "",
             version_id: &version,
+            sha256: "",
             message: &message,
         })
         .await?;
@@ -1009,7 +1020,7 @@ pub async fn data_overview(
     responses(
         (status = 200, description = "Saved", body = Target),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
-        (status = 409, description = "The bucket's versioning is not on", body = ProblemDetails),
+        (status = 409, description = "The bucket's versioning is not on, or a restore request is pending", body = ProblemDetails),
         (status = 422, description = "A field is not valid, a recipient included; `errors` names it", body = ProblemDetails),
         (status = 503, description = "No age key to seal the secret, or the bucket cannot be reached", body = ProblemDetails),
     )
@@ -1133,18 +1144,27 @@ pub struct DataRestoreAnswer {
 }
 
 /// Fetches `version` of the Organization's data archive and opens it with `identity`, after the
-/// run log says this Organization's own backup wrote it.
+/// run log says this Organization's own backup wrote it and uploaded these very bytes; answers
+/// their SHA-256 beside the archive.
 async fn opened(
     state: &AppState,
     target: &Target,
     version: &str,
     identity: String,
-) -> Result<org_backup::restore::Opened, ApiError> {
+) -> Result<(org_backup::restore::Opened, String), ApiError> {
     let identity = org_backup::restore::identity_of(&Zeroizing::new(identity))?;
     valid_version(version)?;
-    org_backup::restore::taken_by(state, &target.organization, version).await?;
+    let logged = org_backup::restore::taken_by(state, &target.organization, version).await?;
     let sealed = fetch(state, target, version).await?;
-    org_backup::restore::open(sealed, identity, &target.organization).await
+    let sha256 = org_backup::restore::same_bytes(&sealed, &logged)?;
+    let archive = org_backup::restore::open(
+        sealed,
+        identity,
+        &target.organization,
+        org_backup::restore::CAPS,
+    )
+    .await?;
+    Ok((archive, sha256))
 }
 
 async fn audit(
@@ -1171,6 +1191,7 @@ async fn audit(
             object_key: "",
             version_id: version,
             message: &message,
+            sha256: "",
         })
         .await
 }
@@ -1203,8 +1224,10 @@ pub async fn data_restore(
     let organization = administered(&state, &user.0.identity)?;
     let target = saved_target(&state, &organization, DATA).await?;
     let outcome = async {
-        let mut archive = opened(&state, &target, &version, input.identity).await?;
-        org_backup::restore::run(&state, &target, &version, &mut archive, false).await
+        let (mut archive, sha256) = opened(&state, &target, &version, input.identity).await?;
+        org_backup::restore::run(&state, &target, &version, &mut archive, None)
+            .await
+            .map(|plan| (plan, sha256))
     }
     .await;
     audit(
@@ -1215,17 +1238,19 @@ pub async fn data_restore(
         &version,
         outcome
             .as_ref()
-            .map(|plan| format!("{} row(s) would be written", plan.writes())),
+            .map(|(plan, _)| format!("{} row(s) would be written", plan.writes())),
     )
     .await?;
-    let plan = outcome?;
+    let (plan, sha256) = outcome?;
     if !input.request {
         return Ok(Json(DataRestoreAnswer {
             plan,
             request: None,
         }));
     }
-    let request = org_backup::restore::request(&state, &organization, actor, &plan).await?;
+    let request =
+        org_backup::restore::request(&state, &organization, &user.0.identity, &plan, &sha256)
+            .await?;
     audit(
         &state,
         &organization,
@@ -1265,11 +1290,7 @@ pub async fn data_restores(
         .map(Json)
 }
 
-fn no_request(id: i64) -> ApiError {
-    ApiError::NotFound(format!(
-        "restore request {id} is not pending in this Organization"
-    ))
-}
+use org_backup::restore::no_request;
 
 #[utoipa::path(
     post,
@@ -1300,44 +1321,58 @@ pub async fn data_restore_approve(
     let asked = org_backup::restore::pending(&state, &organization, id)
         .await?
         .ok_or_else(|| no_request(id))?;
-    if &asked.requested_by == approver {
+    // Four eyes are two Keycloak subjects: a username can repeat across realms.
+    if asked.requested_subject == user.0.identity.subject {
         return Err(ApiError::Denied(
             "a second administrator approves a restore: you asked for this one".into(),
         ));
     }
-    // The key is checked before the request is taken, so a wrong key leaves it pending.
-    let mut archive = opened(&state, &target, &asked.version_id, input.identity).await?;
-    let taken =
-        org_backup::restore::decide(&state, &organization, id, approver, "applied", "", true)
-            .await?
-            .ok_or_else(|| no_request(id))?;
-    let outcome =
-        org_backup::restore::run(&state, &target, &taken.version_id, &mut archive, true).await;
-    let (state_word, plan, message) = match &outcome {
-        Ok(plan) => (
-            "applied",
-            plan.clone(),
-            format!(
-                "{} row(s) written, {} erasure(s) applied again",
-                plan.writes(),
-                plan.erasures_replayed
-            ),
-        ),
-        Err(err) => ("failed", taken.plan.clone(), err.to_string()),
+    // The key and the bytes are checked before anything is written, so a wrong key leaves the
+    // request pending.
+    let (mut archive, sha256) = opened(&state, &target, &asked.version_id, input.identity).await?;
+    if sha256 != asked.sha256 {
+        return Err(ApiError::Unprocessable {
+            detail: "version: the object in the bucket is not the one this request was checked \
+                     on: decline it and check the version again"
+                .into(),
+            errors: vec!["version: not the bytes this request was checked on".into()],
+        });
+    }
+    let approval = org_backup::restore::Approval {
+        id,
+        by: approver,
+        subject: &user.0.identity.subject,
     };
-    org_backup::restore::finish(&state, id, state_word, &plan, &message).await?;
+    let outcome = org_backup::restore::run(
+        &state,
+        &target,
+        &asked.version_id,
+        &mut archive,
+        Some(&approval),
+    )
+    .await;
+    let message = match &outcome {
+        Ok(plan) => org_backup::restore::applied_message(plan),
+        // Taken by another approval meanwhile: that one's outcome stands.
+        Err(ApiError::NotFound(_)) => return Err(no_request(id)),
+        Err(err) => {
+            let message = err.to_string();
+            // The rows were rolled back; the request ends as failed with the reason.
+            org_backup::restore::decide(&state, &organization, id, approver, "failed", &message)
+                .await?;
+            tracing::warn!(organization = %organization, request = id, %message, "data restore failed");
+            message
+        }
+    };
     audit(
         &state,
         &organization,
         "restore",
         approver,
-        &taken.version_id,
+        &asked.version_id,
         outcome.as_ref().map(|_| message.clone()),
     )
     .await?;
-    if outcome.is_err() {
-        tracing::warn!(organization = %organization, request = id, %message, "data restore failed");
-    }
     org_backup::restore::requests(&state, &organization)
         .await?
         .into_iter()
@@ -1375,7 +1410,6 @@ pub async fn data_restore_decline(
         actor,
         "declined",
         &format!("declined by {actor}"),
-        false,
     )
     .await?
     .ok_or_else(|| no_request(id))?;
