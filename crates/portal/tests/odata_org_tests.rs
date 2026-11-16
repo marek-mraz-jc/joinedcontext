@@ -1880,6 +1880,235 @@ async fn people_operations_are_the_organizations_and_answer_as_their_rest_doors(
     assert!(!ba_model.text.contains("jc_person_"), "{}", ba_model.text);
 }
 
+/// One request of `cookie` through the whole router, `body` as JSON.
+async fn raw(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    cookie: &str,
+    body: Option<&Value>,
+) -> Answer {
+    let token = cookie
+        .split("; ")
+        .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
+        .unwrap_or_default()
+        .to_owned();
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, HEL)
+        .header(header::COOKIE, cookie)
+        .header(csrf::CSRF_HEADER, &token);
+    if body.is_some() {
+        request = request.header(header::CONTENT_TYPE, "application/json");
+    }
+    let request = request
+        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+        .expect("request");
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    Answer {
+        status,
+        headers,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
+/// A sample value of a Portal door's parameter `member`.
+fn door_sample(member: &str) -> Value {
+    match member {
+        "body" => json!({}),
+        "dryRun" => json!(true),
+        "person" | "ids" => json!("sub-ada"),
+        "endpoint" => json!("air"),
+        "notification" => json!("1"),
+        "template" => json!("bar"),
+        other => json!(format!("{other}-1")),
+    }
+}
+
+/// T-7100 (API/13 §2b): each Portal door, the REST doors no tool may answer, answers a person's
+/// session as its REST door does (status, body under `value`, refusal sentence), and the REST
+/// path's members are its parameters.
+#[tokio::test]
+async fn the_portal_doors_answer_as_their_rest_doors() {
+    use joinedcontext_portal::api::odata_portal::{self, Bound};
+    let state = state();
+    let mut differ = Vec::new();
+    for who in ["root", "hel-only"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        for door in &odata_portal::DOORS {
+            let params: serde_json::Map<String, Value> = door
+                .parameters
+                .iter()
+                .map(|(member, _)| ((*member).to_owned(), door_sample(member)))
+                .collect();
+            let project = (door.bound == Bound::Project).then_some("helsinki");
+            let rest = odata_portal::rest(door, project, &params).expect("rest");
+            let bound = match door.bound {
+                Bound::Organization => "Organization".to_owned(),
+                Bound::Project => "projects('helsinki')".to_owned(),
+            };
+            let odata = if door.is_function() {
+                let args: Vec<String> = params.keys().map(|m| format!("{m}=@{m}")).collect();
+                let aliases: Vec<String> = params
+                    .iter()
+                    .map(|(m, v)| format!("@{m}={}", alias(v)))
+                    .collect();
+                let uri = format!(
+                    "/api/v1/{bound}/JoinedContext.Portal.{}({})?{}",
+                    door.name,
+                    args.join(","),
+                    aliases.join("&")
+                );
+                raw(&state, "GET", &uri, &cookie, None).await
+            } else {
+                let uri = format!("/api/v1/{bound}/JoinedContext.Portal.{}", door.name);
+                raw(
+                    &state,
+                    "POST",
+                    &uri,
+                    &cookie,
+                    Some(&Value::Object(params.clone())),
+                )
+                .await
+            };
+            let rest_body: Option<Value> = rest
+                .body
+                .as_deref()
+                .map(|b| serde_json::from_slice(b).expect("JSON"));
+            let rest_uri = format!("/api/v1{}", rest.path_and_query);
+            let answer = raw(
+                &state,
+                door.method.as_str(),
+                &rest_uri,
+                &cookie,
+                rest_body.as_ref(),
+            )
+            .await;
+            let rest_status = if answer.status == StatusCode::NO_CONTENT {
+                StatusCode::OK
+            } else {
+                answer.status
+            };
+            let rest_json = answer.json();
+            let same = if odata.status != rest_status {
+                false
+            } else if rest_status.is_success() {
+                odata.json()["value"] == rest_json
+            } else {
+                let detail = rest_json
+                    .get("detail")
+                    .or_else(|| rest_json.get("title"))
+                    .cloned();
+                detail.is_none() || odata.json()["error"]["message"] == detail.unwrap_or_default()
+            };
+            if !same {
+                differ.push(format!(
+                    "{who} {}: OData {} {} / REST {} {rest_uri} {} {}",
+                    door.name, odata.status, odata.text, door.method, answer.status, answer.text
+                ));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// T-7100: a Portal door answers no bearer token (odata_portal's unit test proves a service
+/// account's or agent's identity is refused before the handler runs), and a person's session
+/// finds it in `$metadata` as their rights list it; another Organization's singleton offers none.
+#[tokio::test]
+async fn a_portal_door_answers_a_persons_session_only() {
+    let state = state();
+    let mode = Mode::Host("hel");
+    let bearer = send(
+        &state,
+        mode,
+        "",
+        "/api/v1/Organization/JoinedContext.Portal.portal_notification_list()",
+        &[("authorization", "Bearer not-a-person")],
+    )
+    .await;
+    assert!(
+        matches!(
+            bearer.status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ),
+        "{}",
+        bearer.text
+    );
+
+    let bound = |text: &str, name: &str, ty: &str| {
+        text.contains(&format!(
+            r#"Name="{name}" IsBound="true"><Parameter Name="bindingParameter" Type="JoinedContext.Portal.{ty}""#
+        ))
+    };
+    let root = get(&state, mode, "root", "/api/v1/$metadata").await.text;
+    for (name, ty) in [
+        ("portal_person_reset_password", "Organization"),
+        ("portal_connector_list", "Organization"),
+        ("portal_notification_list", "Organization"),
+        ("portal_secret_set", "Project"),
+    ] {
+        assert!(bound(&root, name, ty), "root lacks {name}: {root}");
+    }
+    let viewer = get(&state, mode, "hel-only", "/api/v1/$metadata")
+        .await
+        .text;
+    assert!(
+        bound(&viewer, "portal_notification_list", "Organization"),
+        "{viewer}"
+    );
+    assert!(
+        bound(&viewer, "portal_endpoint_quality", "Project"),
+        "{viewer}"
+    );
+    for name in [
+        "portal_person_reset_password",
+        "portal_people_remove",
+        "portal_connector_list",
+    ] {
+        assert!(!viewer.contains(name), "a viewer is offered {name}");
+    }
+    let json = get(&state, mode, "root", "/api/v1/$metadata?$format=json")
+        .await
+        .json();
+    let reset = &json["JoinedContext.Portal"]["portal_person_reset_password"][0];
+    assert_eq!(reset["$Kind"], "Action", "{reset}");
+    assert_eq!(reset["$Parameter"][1]["$Name"], "person", "{reset}");
+    // A door bound to the Organization is no project's, and the other way round.
+    let on_project = get(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.portal_notification_list()",
+    )
+    .await;
+    assert_eq!(
+        on_project.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        on_project.text
+    );
+    let ba = get(&state, Mode::Host("ba"), "root", "/api/v1/$metadata")
+        .await
+        .text;
+    assert!(
+        !bound(&ba, "portal_person_reset_password", "Organization"),
+        "{ba}"
+    );
+}
+
 /// PF-56 parity of the bound actions (T-6817): each role's dry-run `propose_delete` and
 /// `propose_update` answer the status the REST door's dry-run `DELETE` and `PATCH` answer.
 #[tokio::test]
