@@ -828,6 +828,8 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         ),
         ("portal_form_list", "()", "/api/v1/forms"),
         ("portal_shared_app_list", "()", "/api/v1/shared-apps"),
+        // The projects the person reads, on their own Organization's host (T-7177).
+        ("portal_project_list", "()", "/api/v1/projects"),
     ] {
         assert!(
             metadata
@@ -875,6 +877,47 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         "{}",
         none.text
     );
+    // A person's own door needs no one Organization: the projects list answers there as its
+    // REST door does (T-7177).
+    let own = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.portal_project_list()",
+    )
+    .await;
+    let rest = get(&state, Mode::Shared, "root", "/api/v1/projects").await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.text);
+    assert_eq!(own.json()["value"], rest.json(), "{}", own.text);
+    let organizations = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.portal_person_names()",
+    )
+    .await;
+    assert_eq!(
+        organizations.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        organizations.text
+    );
+    let listed = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/Organization/JoinedContext.Portal.portal_organization_list()",
+    )
+    .await;
+    let rest = get(
+        &state,
+        Mode::Shared,
+        "root",
+        "/api/v1/projects/org/organizations",
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    assert_eq!(listed.json()["value"], rest.json(), "{}", listed.text);
     let addressed = get(&state, Mode::Shared, "root", "/api/v1/projects('helsinki')").await;
     assert_eq!(addressed.status, StatusCode::OK, "{}", addressed.text);
     // A manifest keyed with its project names that project's Organization too (T-7073): the UI
@@ -2232,6 +2275,19 @@ async fn raw(
     cookie: &str,
     body: Option<&Value>,
 ) -> Answer {
+    let body = body.map(|b| ("application/json", b.to_string().into_bytes()));
+    raw_sent(state, method, uri, cookie, body, None).await
+}
+
+/// [`raw`] with a body of any media type and an `If-Match`, as a Portal door sends its REST door.
+async fn raw_sent(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    cookie: &str,
+    body: Option<(&str, Vec<u8>)>,
+    if_match: Option<&str>,
+) -> Answer {
     let token = cookie
         .split("; ")
         .find_map(|c| c.strip_prefix(&format!("{CSRF_COOKIE}=")))
@@ -2243,11 +2299,14 @@ async fn raw(
         .header(header::HOST, HEL)
         .header(header::COOKIE, cookie)
         .header(csrf::CSRF_HEADER, &token);
-    if body.is_some() {
-        request = request.header(header::CONTENT_TYPE, "application/json");
+    if let Some((media, _)) = &body {
+        request = request.header(header::CONTENT_TYPE, *media);
+    }
+    if let Some(tag) = if_match {
+        request = request.header(header::IF_MATCH, tag);
     }
     let request = request
-        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+        .body(body.map_or_else(Body::empty, |(_, b)| Body::from(b)))
         .expect("request");
     let response = server::app(state.clone())
         .oneshot(request)
@@ -2275,6 +2334,7 @@ fn door_sample(member: &str) -> Value {
         "dryRun" => json!(true),
         "person" | "ids" => json!("sub-ada"),
         "endpoint" => json!("air"),
+        "plural" => json!("spaces"),
         "notification" => json!("1"),
         "template" => json!("bar"),
         "limit" => json!(5),
@@ -2340,17 +2400,14 @@ async fn the_portal_doors_answer_as_their_rest_doors() {
                 )
                 .await
             };
-            let rest_body: Option<Value> = rest
-                .body
-                .as_deref()
-                .map(|b| serde_json::from_slice(b).expect("JSON"));
             let rest_uri = format!("/api/v1{}", rest.path_and_query);
-            let answer = raw(
+            let answer = raw_sent(
                 &state,
                 door.method.as_str(),
                 &rest_uri,
                 &cookie,
-                rest_body.as_ref(),
+                rest.body.clone().map(|b| (rest.content_type, b)),
+                rest.if_match.as_deref(),
             )
             .await;
             let rest_status = if answer.status == StatusCode::NO_CONTENT {

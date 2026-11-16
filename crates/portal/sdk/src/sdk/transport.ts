@@ -18,6 +18,8 @@ export interface JcRequest {
   reason?: string;
   /** Headers the call needs beside the transport's own, e.g. `If-Match` or `OData-Version`. */
   headers?: Record<string, string>;
+  /** Cancels the call: the promise rejects with the signal's reason, as `fetch` does. */
+  signal?: AbortSignal;
 }
 
 export interface JcResponse {
@@ -78,6 +80,7 @@ export function originTransport(fetchImpl?: typeof fetch, doc?: Document): Trans
         method: request.method,
         credentials: "same-origin",
         headers,
+        signal: request.signal,
         body: request.raw
           ? request.raw.data
           : request.body !== undefined && request.method !== "GET"
@@ -106,6 +109,8 @@ export function originTransport(fetchImpl?: typeof fetch, doc?: Document): Trans
       }
       return { status: response.status, body, headers: answered };
     } catch (err) {
+      // A call its caller cancelled is no answer: the caller reads its own reason (a timeout's).
+      if (request.signal?.aborted) throw request.signal.reason;
       return {
         status: 0,
         body: { title: err instanceof Error ? err.message : String(err) },

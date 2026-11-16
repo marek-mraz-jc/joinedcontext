@@ -31703,6 +31703,10 @@
                           "author": {
                             "type": "string"
                           },
+                          "date": {
+                            "description": "When it was committed, e.g. 2026-11-16T09:30:00Z",
+                            "type": "string"
+                          },
                           "message": {
                             "type": "string"
                           },

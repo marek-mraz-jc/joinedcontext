@@ -1,6 +1,6 @@
-import { api, ApiError, unwrap } from "./client";
+import { ApiError } from "./client";
 import type { components } from "./schema";
-import { doorAction, type RestAnswer } from "./odata";
+import { door, doorAction, type RestAnswer } from "./odata";
 
 /**
  * How much a space holds (T-2889, API/01 §29): the broker's entity count of the space, which the
@@ -31,12 +31,7 @@ export function spaceUsageQuery(project: string, space: string) {
       );
       signal.addEventListener("abort", () => call.abort(signal.reason));
       try {
-        return unwrap(
-          await api.GET("/api/v1/projects/{project}/spaces/{space}/usage", {
-            params: { path: { project, space } },
-            signal: call.signal,
-          }),
-        );
+        return (await door("portal_space_usage", { space }, project, call.signal)) as RestAnswer<"get_usage">;
       } finally {
         clearTimeout(timer);
       }

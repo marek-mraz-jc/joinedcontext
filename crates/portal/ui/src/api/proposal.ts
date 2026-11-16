@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "./client";
+import { ApiError, queryKeys } from "./client";
 import { isChange, ORG_NAMESPACE } from "./manifest";
-import { act, isManifestSet, projectBound, projectEtag, proposeManifest } from "./odata";
+import { act, isManifestSet, projectBound, projectEtag, proposeManifest, writeManifestDoor } from "./odata";
 import type { Change, ResourceProposal } from "./manifest";
 import type { components } from "./schema";
 
@@ -31,20 +31,9 @@ export async function proposeChecked(
     if (isManifestSet(plural) && !(create && project === ORG_NAMESPACE)) {
       return proposeManifest(project, plural, body, { create, dryRun, ifMatch });
     }
-    // ponytail: the service has no propose_create on the Organization's own repository and no
-    // set of `organizations` yet (T-7073's split); those two stay on the REST door.
-    const query = dryRun ? { dryRun: "All" } : undefined;
-    return unwrap(
-      create
-        ? await api.POST("/api/v1/projects/{project}/{plural}", {
-            params: { path: { project, plural }, query },
-            body,
-          })
-        : await api.PUT("/api/v1/projects/{project}/{plural}/{name}", {
-            params: { path: { project, plural, name: body.metadata.name }, query, header: ifMatch ? { "If-Match": ifMatch } : undefined },
-            body,
-          }),
-    );
+    // The service has no propose_create on the Organization's own repository and no set of
+    // some kinds (`organizations`): the manifest doors run the REST door's handler (T-7177).
+    return writeManifestDoor(project, plural, body, { create, dryRun, ifMatch });
   };
   const check = (await send(true)) as CheckAnswer;
   if (check.valid === false || check.verdict?.ok === false) {

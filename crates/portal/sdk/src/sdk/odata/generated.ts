@@ -601,6 +601,7 @@ export interface Repository {
 
 export interface Revision {
   author?: string | null;
+  date?: string | null;
   message?: string | null;
   project: string;
   sha: string;
@@ -1028,6 +1029,8 @@ export interface Functions {
   portal_knowledge_search: { source: string; q?: string; limit?: number };
   portal_knowledge_source_list: Record<string, never>;
   portal_knowledge_usage: { deployment: string };
+  portal_manifest_get: { plural: string; name: string; workspace?: string };
+  portal_manifest_list: { plural: string; workspace?: string; q?: string; count?: boolean; cursor?: string; limit?: number };
   portal_mcp_confirmation_get: { id: string };
   portal_mcp_elicitation_get: { projectName: string; id: string };
   portal_model_catalogue: { subject?: string; refresh?: boolean };
@@ -1041,10 +1044,12 @@ export interface Functions {
   portal_mqtt_watch: { broker: string; account?: string; since?: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
+  portal_org_model_source: { name: string };
   portal_organization_change_get: { id: string };
   portal_organization_change_history: { page?: number; kind?: string; name?: string };
   portal_organization_change_list: Record<string, never>;
   portal_organization_change_manifests: { id: string };
+  portal_organization_list: Record<string, never>;
   portal_organization_model_list: { search?: string };
   portal_own_connector_activity: { id: string };
   portal_own_connector_list: Record<string, never>;
@@ -1072,6 +1077,7 @@ export interface Functions {
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
   portal_project_get: Record<string, never>;
+  portal_project_list: Record<string, never>;
   portal_project_registry: Record<string, never>;
   portal_project_usage: { days?: number };
   portal_secret_list: Record<string, never>;
@@ -1082,6 +1088,7 @@ export interface Functions {
   portal_space_source_removals: { space: string };
   portal_space_surface_fit: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
+  portal_space_usage: { space: string };
   portal_space_view_list: { space: string };
   portal_trash_list: { space: string };
   portal_type_attributes: { space: string; type: string };
@@ -1194,6 +1201,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_knowledge_search: ["Project"],
   portal_knowledge_source_list: ["Project"],
   portal_knowledge_usage: ["Project"],
+  portal_manifest_get: ["Project"],
+  portal_manifest_list: ["Project"],
   portal_mcp_confirmation_get: ["Organization"],
   portal_mcp_elicitation_get: ["Organization"],
   portal_model_catalogue: ["Organization"],
@@ -1207,10 +1216,12 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_mqtt_watch: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
+  portal_org_model_source: ["Organization"],
   portal_organization_change_get: ["Organization"],
   portal_organization_change_history: ["Organization"],
   portal_organization_change_list: ["Organization"],
   portal_organization_change_manifests: ["Organization"],
+  portal_organization_list: ["Organization"],
   portal_organization_model_list: ["Organization"],
   portal_own_connector_activity: ["Organization"],
   portal_own_connector_list: ["Organization"],
@@ -1238,6 +1249,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
   portal_project_get: ["Project"],
+  portal_project_list: ["Organization"],
   portal_project_registry: ["Project"],
   portal_project_usage: ["Project"],
   portal_secret_list: ["Project"],
@@ -1248,6 +1260,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_space_source_removals: ["Project"],
   portal_space_surface_fit: ["Project"],
   portal_space_temporal_audit: ["Project"],
+  portal_space_usage: ["Project"],
   portal_space_view_list: ["Project"],
   portal_trash_list: ["Project"],
   portal_type_attributes: ["Project"],
@@ -1353,11 +1366,15 @@ export interface Actions {
   portal_knowledge_inclusion_set: { source: string; body?: unknown };
   portal_knowledge_recrawl: { source: string };
   portal_kpi_check: { body?: unknown };
+  portal_manifest_create: { plural: string; workspace?: string; dryRun?: string; body?: unknown };
+  portal_manifest_delete: { plural: string; name: string; workspace?: string; dryRun?: string; confirm?: string; ifMatch?: string };
+  portal_manifest_replace: { plural: string; name: string; workspace?: string; dryRun?: string; ifMatch?: string; body?: unknown };
   portal_mcp_confirmation_decide: { id: string; body?: unknown };
   portal_mcp_elicitation_decide: { projectName: string; id: string; body?: unknown };
   portal_model_compile: { body?: unknown };
   portal_model_import: { body?: unknown };
   portal_model_share: { name: string };
+  portal_model_source_set: { name: string; dryRun?: string; space?: string; source?: string };
   portal_mqtt_captured_clear: { broker: string };
   portal_mqtt_device_propose: { broker: string; body?: unknown };
   portal_mqtt_test_publish: { broker: string; body?: unknown };
@@ -1366,6 +1383,9 @@ export interface Actions {
   portal_opendata_page_revert: { page: string; lang: string };
   portal_opendata_page_set: { page: string; lang: string; body?: unknown };
   portal_operation_run: { name: string; body?: unknown };
+  portal_org_manifest_create: { plural: string; dryRun?: string; body?: unknown };
+  portal_org_manifest_replace: { plural: string; name: string; dryRun?: string; ifMatch?: string; body?: unknown };
+  portal_org_model_source_set: { name: string; dryRun?: string; space?: string; source?: string };
   portal_organization_change_approve: { id: string; body?: unknown };
   portal_organization_change_reject: { id: string; body?: unknown };
   portal_organization_change_restore: { id: string };
@@ -1396,6 +1416,7 @@ export interface Actions {
   portal_preferences_set: { body?: unknown };
   portal_preview_error_report: { id: string; body?: unknown };
   portal_preview_observation_report: { id: string; body?: unknown };
+  portal_project_create: { body?: unknown };
   portal_project_delete: Record<string, never>;
   portal_project_duplicate: { body?: unknown };
   portal_project_repoint: { body?: unknown };
@@ -1516,11 +1537,15 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_knowledge_inclusion_set: ["Project"],
   portal_knowledge_recrawl: ["Project"],
   portal_kpi_check: ["Project"],
+  portal_manifest_create: ["Project"],
+  portal_manifest_delete: ["Project"],
+  portal_manifest_replace: ["Project"],
   portal_mcp_confirmation_decide: ["Organization"],
   portal_mcp_elicitation_decide: ["Organization"],
   portal_model_compile: ["Organization"],
   portal_model_import: ["Organization"],
   portal_model_share: ["Project"],
+  portal_model_source_set: ["Project"],
   portal_mqtt_captured_clear: ["Project"],
   portal_mqtt_device_propose: ["Project"],
   portal_mqtt_test_publish: ["Project"],
@@ -1529,6 +1554,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_opendata_page_revert: ["Organization"],
   portal_opendata_page_set: ["Organization"],
   portal_operation_run: ["Project"],
+  portal_org_manifest_create: ["Organization"],
+  portal_org_manifest_replace: ["Organization"],
+  portal_org_model_source_set: ["Organization"],
   portal_organization_change_approve: ["Organization"],
   portal_organization_change_reject: ["Organization"],
   portal_organization_change_restore: ["Organization"],
@@ -1559,6 +1587,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_preferences_set: ["Organization"],
   portal_preview_error_report: ["Project"],
   portal_preview_observation_report: ["Project"],
+  portal_project_create: ["Organization"],
   portal_project_delete: ["Project"],
   portal_project_duplicate: ["Project"],
   portal_project_repoint: ["Project"],

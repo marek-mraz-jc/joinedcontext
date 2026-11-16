@@ -68,7 +68,7 @@ test.describe("a published data view", () => {
     expect(await page.getByTestId("public-view").textContent()).not.toContain(SLUG);
     await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
-    expect(asked.filter((path) => path.startsWith("/api/v1/projects"))).toEqual([]);
+    expect(asked.filter((path) => path.startsWith("/api/v1/projects") || path.includes("portal_project_list"))).toEqual([]);
     await shoot(page, "filled");
 
     // T-6752: the rows are on the shared grid: its search narrows them, Arrange columns hides one.

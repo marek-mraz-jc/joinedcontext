@@ -117,7 +117,7 @@ export type { Unit } from "./units";
 
 // portal-only: the Portal's OData service per Organization, typed from its $metadata (ADR-N-070, T-6816); the app builder's pack leaves it out.
 export { odata, ODataClient, ODataError, Query as ODataQuery } from "./odata/client";
-export type { KeyOf, ODataOptions, Page as ODataPage } from "./odata/client";
+export type { CallOptions, KeyOf, ODataOptions, Page as ODataPage } from "./odata/client";
 export type * as ODataModel from "./odata/generated";
 export { ENTITY_KEYS as ODATA_ENTITY_KEYS } from "./odata/generated";
 // /portal-only
