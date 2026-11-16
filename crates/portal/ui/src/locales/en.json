@@ -287,6 +287,15 @@
     "withdrawn": "You withdrew this change. It was closed without merging, and your reason is on its record.",
     "withdrawReason": "Why are you withdrawing it?",
     "withdrawReasonHint": "Recorded on the change, for example: proposed the wrong model version.",
+    "decision": {
+      "rejectedTitle": "Rejected",
+      "approvedTitle": "Approved",
+      "by": "Decided by {by}.",
+      "byAt": "Decided by {by} on {at}.",
+      "reason": "Reason: {reason}",
+      "noReason": "No reason was given.",
+      "rejectedNext": "Nothing this change proposed was applied. To try again, fix what the reason names in the resource and save it: that proposes a new change."
+    },
     "rejectCancel": "Cancel",
     "rejectReasonHint": "The author reads it on the change and needs it to fix the change.",
     "filterMine": "Only mine",

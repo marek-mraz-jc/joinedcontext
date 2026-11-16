@@ -282,6 +282,37 @@ describe("approval actions", () => {
     expect(screen.queryByText(en.approvals.approvedLive)).toBeNull();
   });
 
+  it("tells the author who rejected their change, why, and what to do next (T-7071)", async () => {
+    renderDetail({
+      change: proposal({
+        status: { lane: "yellow", phase: "Rejected", plan: { update: 1 } },
+        decision: {
+          by: "jana.kovacova@banskabystrica.sk",
+          at: "2026-03-04T09:30:00Z",
+          reason: "The air data stays public until the council decides",
+        },
+      }),
+    });
+    const note = await screen.findByRole("note", { name: en.approvals.decision.rejectedTitle });
+    expect(note).toHaveTextContent("jana.kovacova@banskabystrica.sk");
+    expect(note).toHaveTextContent("The air data stays public until the council decides");
+    expect(note).toHaveTextContent(en.approvals.decision.rejectedNext);
+    expect(screen.queryByRole("button", { name: en.approvals.reject })).toBeNull();
+    await expectNoAxeViolations(document.body);
+  });
+
+  it("names who approved an applied change, and says a rejection without a reason gave none (T-7071)", async () => {
+    renderDetail({
+      change: proposal({
+        status: { lane: "yellow", phase: "Applied", plan: { update: 1 } },
+        decision: { by: "jana.kovacova@banskabystrica.sk", at: "2026-03-04T09:30:00Z" },
+      }),
+    });
+    const note = await screen.findByRole("note", { name: en.approvals.decision.approvedTitle });
+    expect(note).toHaveTextContent("jana.kovacova@banskabystrica.sk");
+    expect(note).not.toHaveTextContent(en.approvals.decision.noReason);
+  });
+
   it("moves the status chip to Deploying once the merge is accepted", async () => {
     renderDetail();
     await userEvent.click(await screen.findByRole("button", { name: en.approvals.approve }));

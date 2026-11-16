@@ -22,7 +22,15 @@ const PROPOSAL = {
   planFields: [{ path: "spec.audience", from: "public", to: "organization" }],
 };
 
+const REASON = "The air data stays public until the council decides";
+const REJECTED = {
+  ...PROPOSAL,
+  status: { lane: "yellow", phase: "Rejected", plan: { update: 1 } },
+  decision: { by: "jana@banskabystrica.sk", at: "2026-03-04T09:30:00Z", reason: REASON },
+};
+
 async function stub(page: Page, refuse: boolean, rejects: string[]): Promise<void> {
+  let rejected = false;
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -41,9 +49,14 @@ async function stub(page: Page, refuse: boolean, rejects: string[]): Promise<voi
           body: JSON.stringify({ type: "https://joinedcontext.com/errors/forbidden", title: "Forbidden", status: 403, detail: "rejecting needs approve on Endpoint in project helsinki" }),
         });
       }
+      rejected = true;
       return json({ ...PROPOSAL, kind: "Change", status: { lane: "yellow", phase: "Rejected", plan: { update: 1 } } }, 202);
     }
-    if (path.endsWith(`/changes/${PROPOSAL.metadata.name}`)) return json(PROPOSAL);
+    if (path.endsWith("/permissions/me")) {
+      // Jana approves Endpoints in helsinki; the 403 case is a grant withdrawn while the page was open.
+      return json({ project: "helsinki", bootstrap: false, grants: [{ role: "approver", binding: "b", scope: "project:helsinki", rule: { kinds: ["Endpoint"], verbs: ["read", "approve"] } }] });
+    }
+    if (path.endsWith(`/changes/${PROPOSAL.metadata.name}`)) return json(rejected ? REJECTED : PROPOSAL);
     if (path.endsWith("/changes")) return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ChangeList", items: [PROPOSAL] });
     return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items: [] });
   });
@@ -53,6 +66,8 @@ async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.JC_EVIDENCE_DIR;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
+  // From the top: a full-page shot of a scrolled page draws the fixed top bar mid-page.
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
 }
 
@@ -60,7 +75,7 @@ async function reject(page: Page): Promise<void> {
   await page.goto(`/projects/helsinki/approvals/${PROPOSAL.metadata.name}?lang=en`);
   await page.getByRole("button", { name: "Reject" }).click();
   const dialog = page.getByRole("dialog", { name: "Reject this change?" });
-  await dialog.getByLabel("Why are you rejecting this?").fill("The air data stays public until the council decides");
+  await dialog.getByLabel("Why are you rejecting this?").fill(REASON);
   await dialog.getByRole("button", { name: "Reject the change" }).click();
 }
 
@@ -71,7 +86,12 @@ for (const width of [1440, 400]) {
     await stub(page, false, rejects);
     await reject(page);
     await expect(page.getByText("Rejected", { exact: true }).first()).toBeVisible();
-    expect(rejects.map((body) => JSON.parse(body))).toEqual([{ reason: "The air data stays public until the council decides" }]);
+    expect(rejects.map((body) => JSON.parse(body))).toEqual([{ reason: REASON }]);
+    // The author reads who rejected it, why, and what to do next on the change itself.
+    const decided = page.getByRole("note", { name: "Rejected" });
+    await expect(decided).toContainText("jana@banskabystrica.sk");
+    await expect(decided).toContainText(REASON);
+    await expect(decided).toContainText("To try again");
     expect(await axeViolations(page)).toEqual([]);
     await shot(page, `journey-change-refused-${width}`);
   });

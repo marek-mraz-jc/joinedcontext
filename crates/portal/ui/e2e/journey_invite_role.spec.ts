@@ -127,6 +127,8 @@ async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.JC_EVIDENCE_DIR;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
+  // From the top: a full-page shot of a scrolled page draws the fixed top bar mid-page.
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
 }
 
