@@ -2798,6 +2798,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/datasource-paging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Source Paging
+         * @description Reads the first answer of an address once on the project's runner and answers how the source pages: the walk for `spec.http.paging` (a Link header, a next link, ArcGIS, WFS or CKAN), where the records sit, the records on the first page, the announced total and the pages a walk reads. Nothing is written.
+         */
+        post: operations["guess_datasource_paging"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/datasources/{name}/test": {
         parameters: {
             query?: never;
@@ -11818,6 +11838,45 @@ export interface components {
             html: string;
             /** @description The first `# heading`, absent when the Markdown has none (the built-in title shows). */
             title?: string | null;
+        };
+        /** @description What the first answer says about the pages after it. */
+        PagingGuess: {
+            /** @description The answer says more pages follow without saying how many (ArcGIS, a next link). */
+            more: boolean;
+            /**
+             * Format: int64
+             * @description The records on the first page.
+             */
+            onPage?: number | null;
+            /**
+             * Format: int64
+             * @description The pages a walk reads: the total over the first page's records, rounded up.
+             */
+            pages?: number | null;
+            /**
+             * @description The walk to write into `spec.http.paging`; absent when the answer names no next page
+             *     the runner can follow.
+             */
+            paging?: Record<string, never> | null;
+            /** @description Where the records sit, for `spec.http.records`: `features`, `value`, `result.results`. */
+            records?: string | null;
+            /** @description Why nothing was guessed: the address did not answer, or answered no JSON. */
+            skipped?: string | null;
+            /**
+             * Format: int64
+             * @description The records in all, as the answer announces them.
+             */
+            total?: number | null;
+        };
+        /**
+         * @description The address whose first answer is read.
+         * @example {
+         *       "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&request=GetFeature&typeNames=avoindata:x&outputFormat=application/json"
+         *     }
+         */
+        PagingRequest: {
+            /** @description The address the source reads, as the person typed it. */
+            url: string;
         };
         /** @description A Portal tab paired with a connector (T-5967). */
         PairedTab: {
@@ -22624,6 +22683,87 @@ export interface operations {
             };
             /** @description A test of this project is already running */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No pipeline runner is configured, or it did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    guess_datasource_paging: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project slug */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PagingRequest"];
+            };
+        };
+        responses: {
+            /** @description The guess, or `skipped` with the reason in plain words */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PagingGuess"];
+                };
+            };
+            /** @description The URL does not parse, carries a credential, or names an address the runner may not reach */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No grant proposes a DataSource in this project */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A test of this project is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The address is not on the public internet */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

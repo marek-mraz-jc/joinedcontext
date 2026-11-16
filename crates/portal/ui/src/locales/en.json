@@ -2522,7 +2522,8 @@
         "url": "Give a full address starting with https:// or http://.",
         "ckanDataset": "This is the dataset page, not a file. Open the CSV or JSON resource on it and copy its download address.",
         "layer": "Name the layer to read, or give the address of a GeoJSON file.",
-        "records": "Give the path as names joined by dots, for example data.stations."
+        "records": "Give the path as names joined by dots, for example data.stations.",
+        "secretKey": "Give the name of the entry inside the secret that holds the credential."
       }
     },
     "test": {
@@ -2615,6 +2616,64 @@
         "thing": "Thing"
       },
       "refused": "Ask a project administrator for a role that proposes data sources."
+    },
+    "wizard": {
+      "step": "{n}. {label}",
+      "kind": "What you connect",
+      "address": "Address and credential",
+      "discover": "Pick from the service",
+      "pagingTitle": "Pages",
+      "format": "Format",
+      "check": "Name and first rows",
+      "groups": {
+        "api": "Open data API, read page by page",
+        "file": "A file or a feed at an address",
+        "other": "Something else: a stream, a file server, a queue, a database or a webhook"
+      },
+      "otherHelp": "Opens the full form of that connection below: MQTT, SFTP, Kafka, a database and the others.",
+      "otherNone": "Choose a connection…",
+      "api": {
+        "ckan": "Every dataset of one organization in a CKAN portal.",
+        "arcgisFeature": "The features of one layer of an ArcGIS Feature Service.",
+        "odata": "The rows of one entity set of an OData v4 service.",
+        "wfs": "Every feature of one WFS 2.0 feature type, as GeoJSON.",
+        "ogcFeatures": "The items of one OGC API Features collection.",
+        "sensorThings": "The Things or Datastreams of a SensorThings service."
+      },
+      "apiUrl": "Address of the service",
+      "apiUrlHelp": {
+        "ckan": "The portal's address, for example https://opendata-ajuntament.barcelona.cat/data.",
+        "arcgisFeature": "The FeatureServer address, for example https://services.example/arcgis/rest/services/Trees/FeatureServer.",
+        "odata": "The service root ending in .svc, for example https://services.odata.org/V4/Northwind/Northwind.svc.",
+        "wfs": "The WFS address before the question mark, for example https://kartta.hel.fi/ws/geoserver/avoindata/wfs.",
+        "ogcFeatures": "The API's address, for example https://demo.pygeoapi.io/master.",
+        "sensorThings": "The address with its version, for example https://iot.hamburg.de/v1.1."
+      },
+      "secret": "Credential",
+      "secretPublic": "None: a public source",
+      "secretHelp": "Pick the secret that holds the key or token; a password is never typed here.",
+      "secretNone": "This project's sources use no secret yet; a public source needs none. A source with a key gets its secret in the form below.",
+      "secretKeyHelp": "The entry inside the secret that holds the credential, for example token.",
+      "secretProbe": "A source with a credential is not fetched by the check; Test connection reads it once it is saved.",
+      "pagingHint": "Reads the first answer once on the project's runner and says how many pages a run reads.",
+      "pagingButton": "Find how it pages",
+      "pagingRunning": "Reading the first answer…",
+      "paging": {
+        "pages": "Reads {pages} pages of {onPage} ({total} records).",
+        "more": "Reads pages of {onPage} until the service says there are no more.",
+        "walk": "Follows the next page the service names, {onPage} records on the first.",
+        "totalOnly": "The first answer says {total} records in all, {onPage} on this page, but names no next page; set the paging in the form below.",
+        "once": "One answer holds everything: the address is read once per run.",
+        "skipped": "Could not tell: {reason}. Try again, or set the paging in the form below."
+      },
+      "allPages": "Read every page",
+      "allPagesHint": "Writes the paging into the form; untick to read the first page only.",
+      "presetPages": "The API kind pages the source itself, with the page size the service allows unless you set one in the form below.",
+      "oneRead": "A file or a feed is read whole on each run: there are no pages.",
+      "rows": "One record per row",
+      "rowsHint": "Each row of the CSV reaches the pipeline as one record keyed by the header's column names.",
+      "handoff": "Start a pipeline on {name}",
+      "picked": "Picked: {value}. Fill the form and check writes it into the form below."
     }
   },
   "pipelines": {

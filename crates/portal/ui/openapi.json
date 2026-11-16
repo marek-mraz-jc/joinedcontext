@@ -11177,6 +11177,109 @@
         }
       }
     },
+    "/api/v1/projects/{project}/datasource-paging": {
+      "post": {
+        "tags": [
+          "datasources"
+        ],
+        "summary": "Data Source Paging",
+        "description": "Reads the first answer of an address once on the project's runner and answers how the source pages: the walk for `spec.http.paging` (a Link header, a next link, ArcGIS, WFS or CKAN), where the records sit, the records on the first page, the announced total and the pages a walk reads. Nothing is written.",
+        "operationId": "guess_datasource_paging",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PagingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The guess, or `skipped` with the reason in plain words",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PagingGuess"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The URL does not parse, carries a credential, or names an address the runner may not reach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No grant proposes a DataSource in this project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A test of this project is already running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The address is not on the public internet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No pipeline runner is configured, or it did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/datasources/{name}/test": {
       "post": {
         "tags": [
@@ -56256,6 +56359,84 @@
             ],
             "description": "The first `# heading`, absent when the Markdown has none (the built-in title shows)."
           }
+        }
+      },
+      "PagingGuess": {
+        "type": "object",
+        "description": "What the first answer says about the pages after it.",
+        "required": [
+          "more"
+        ],
+        "properties": {
+          "more": {
+            "type": "boolean",
+            "description": "The answer says more pages follow without saying how many (ArcGIS, a next link)."
+          },
+          "onPage": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The records on the first page.",
+            "minimum": 0
+          },
+          "pages": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The pages a walk reads: the total over the first page's records, rounded up.",
+            "minimum": 0
+          },
+          "paging": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The walk to write into `spec.http.paging`; absent when the answer names no next page\nthe runner can follow."
+          },
+          "records": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the records sit, for `spec.http.records`: `features`, `value`, `result.results`."
+          },
+          "skipped": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why nothing was guessed: the address did not answer, or answered no JSON."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The records in all, as the answer announces them.",
+            "minimum": 0
+          }
+        }
+      },
+      "PagingRequest": {
+        "type": "object",
+        "description": "The address whose first answer is read.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The address the source reads, as the person typed it."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "url": "https://kartta.hel.fi/ws/geoserver/avoindata/wfs?service=WFS&request=GetFeature&typeNames=avoindata:x&outputFormat=application/json"
         }
       },
       "PairedTab": {
