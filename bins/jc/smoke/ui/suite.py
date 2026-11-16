@@ -80,7 +80,10 @@ def expected_4xx(who: str, status: int, method: str, url: str) -> bool:
         return True
     if status == 404 and re.search(r"/cs/[^/]+/ngsi-ld/v1/entities\?", url):
         return True
-    if status == 404 and method == "GET" and re.search(r"/drafts/[A-Za-z]+/[^/?]+$", path):
+    # No draft saved yet: the edit page reads it through the REST door or, since T-7119, through
+    # the OData door's jc_draft_get (T-7127). Every other 4xx of either door stays a failure.
+    if status == 404 and method == "GET" and re.search(
+            r"/drafts/[A-Za-z]+/[^/?]+$|/api/v1/projects\('[^']+'\)/JoinedContext\.Portal\.jc_draft_get\(", path):
         return True
     return status == 410 or (status == 404 and re.search(r"/agent-runs/[^/]+/(preview|events)", url) is not None)
 

@@ -179,12 +179,21 @@ def test_the_project_pages_follow_walk_routes_ts():
     assert walk.PROJECT_PAGES == re.findall(r'"([^"]+)"', block)
 
 
+# The edit pages read a draft through the OData door since T-7119 (T-7127).
+DRAFT_GET = "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_draft_get(kind=@kind,name=@name)"
+
+
 @pytest.mark.parametrize("who,status,url,ok", [
     ("viewer", 403, "http://x/api/v1/projects/p/policies", True),
     ("outsider", 403, "http://x/api/v1/projects/p/policies", True),
     ("admin", 403, "http://x/api/v1/projects/p/policies", False),
     ("admin", 404, "http://x/api/v1/projects/p/drafts/Space/a", True),
     ("admin", 404, "http://x/api/v1/projects/p/spaces/a", False),
+    ("admin", 404, DRAFT_GET + "?@kind='Endpoint'&@name='app-air-quality'", True),
+    ("viewer", 404, DRAFT_GET, True),
+    ("admin", 400, DRAFT_GET, False),
+    ("admin", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_draft_list()", False),
+    ("admin", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.jc_resource_get(kind=@kind,name=@name)", False),
     ("admin", 410, "http://x/api/v1/anything", True),
     ("outsider", 404, "http://x/api/v1/projects/p/spaces", True),
     ("outsider", 404, "http://x/api/v1/projects('p')/JoinedContext.Portal.portal_secret_list()", True),
