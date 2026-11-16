@@ -250,6 +250,8 @@ describe("AddFieldDialog", () => {
       if (path.endsWith("/serviceaccounts/pipelines")) return respond({ metadata: { name: "pipelines" } });
       if (method === "PUT") return respond({ metadata: { name: "chg-model" }, status: { phase: "PendingApproval" } }, 202);
       if (path.endsWith("/import")) return respond({ metadata: { name: "chg-pipeline" }, status: { phase: "PendingApproval" } }, 202);
+      // The project's row, whose ETag the import action's If-Match carries (T-7143).
+      if (path === "/api/v1/projects('hel')") return respond({ "@odata.etag": 'W/"hel"', name: "hel" });
       return respond({}, 404);
     }, ENDPOINTS);
     await screen.findByText(en.spaces.fields.sdmTitle);

@@ -2,8 +2,8 @@ import { useId, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, queryKeys, unwrap } from "../../api/client";
-import { call, listManifests } from "../../api/odata";
+import { queryKeys } from "../../api/client";
+import { call, door, listManifests, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE, type Manifest } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -101,17 +101,11 @@ function Panel({ project }: { project: string }): JSX.Element {
     queryKey: queryKeys.peoplePage(search.trim(), 0),
     enabled: kind === "person",
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/people", {
-          params: {
-            query: {
-              ...(search.trim() ? { search: search.trim() } : {}),
-              first: 0,
-              max: 20,
-            },
-          },
-        }),
-      ),
+      (await door("portal_people_list", {
+        ...(search.trim() ? { search: search.trim() } : {}),
+        first: 0,
+        max: 20,
+      })) as RestAnswer<"list_people">,
   });
 
   const endpointManifests = asManifests(endpoints.data?.items ?? []);

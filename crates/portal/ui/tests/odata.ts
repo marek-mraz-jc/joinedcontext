@@ -204,6 +204,8 @@ const OPERATIONS: Record<string, Door> = {
   jc_syncsource_pause: ["POST", "/projects/{project}/syncsources/{name}/pause", ["paused"]],
   jc_ckan_status: ["GET", "/projects/{project}/ckan/status"],
   jc_datasource_discover: ["POST", "/projects/{project}/datasource-discovery", ["kind", "url"]],
+  // A JSON import of manifests (T-7143); its `dryRun` is the REST door's `?dryRun=All`.
+  jc_project_import: ["POST", "/projects/{project}/import", ["manifests", "conflictPolicy", "orgDomain", "spaceMapping"]],
 
   // The Portal doors of a space's person records, its drift and a person's alerts (T-7105).
   portal_space_quality: ["GET", "/projects/{project}/spaces/{space}/quality"],
@@ -275,7 +277,22 @@ const OPERATIONS: Record<string, Door> = {
   portal_app_checks: ["GET", "/projects/{project}/app-checks"],
   portal_app_rename_shapes: ["POST", "/projects/{project}/apps/rename-shapes"],
   portal_app_from_template: ["POST", "/projects/{project}/app-templates/{name}/apps"],
+  // The Release tab's registry entry and its repoint (T-7166).
+  portal_project_registry: ["GET", "/projects/{project}/registry"],
+  portal_project_repoint: ["PUT", "/projects/{project}/registry"],
+  // The people reads and edits and the Organization reads of any page (T-7167).
+  portal_people_list: ["GET", "/organization/people"],
+  portal_person_create: ["POST", "/organization/people"],
+  portal_person_get: ["GET", "/organization/people/{person}"],
+  portal_person_edit: ["PATCH", "/organization/people/{person}"],
+  portal_portal_host_list: ["GET", "/organization/portal-hosts"],
+  portal_widget_list: ["GET", "/organization/widgets"],
+  portal_organization_model_list: ["GET", "/organization/datamodels"],
+  portal_health_check_list: ["GET", "/projects/{project}/health-checks"],
+  portal_project_get: ["GET", "/projects/{project}"],
+  portal_project_delete: ["DELETE", "/projects/{project}"],
   portal_app_templates: ["GET", "/app-templates"],
+  portal_blueprint_list: ["GET", "/blueprints"],
   portal_access_request_approve: ["POST", "/projects/{project}/access-requests/{id}/approve"],
   portal_access_request_decline: ["POST", "/projects/{project}/access-requests/{id}/decline"],
   portal_access_request_revoke: ["POST", "/projects/{project}/access-requests/{id}/revoke"],
@@ -532,7 +549,9 @@ export async function doorAsRest(
       for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
         for (const each of [picked].flat()) rest.searchParams.append(`var-${variable}`, each);
     else if (door[2]?.includes(name)) members[name] = value;
-    else rest.searchParams.set(name, String(value));
+    else if (name === "dryRun" && found[2] === "jc_project_import") {
+      if (value === true) rest.searchParams.set(name, "All");
+    } else rest.searchParams.set(name, String(value));
   }
   if (Object.keys(members).length) body = JSON.stringify(members);
   rest.pathname = `/api/v1${path}`;
@@ -562,7 +581,7 @@ const WORKSPACES =
 const RUNS =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/runs|runs\(project='((?:[^']|'')*)',id='((?:[^']|'')*)'\))$/;
 /** The REST list's query parameter of each member a runs `$filter` narrows by (api/odata.ts listRuns). */
-const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine" };
+const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine", origin: "origin" };
 const KEYED =
   /^\/api\/v1\/(\w+)\((?:project='((?:[^']|'')*)',name='((?:[^']|'')*)'|'((?:[^']|'')*)')\)$/;
 
@@ -606,9 +625,13 @@ export function manifestAsRest(
     if (runs[3] !== undefined)
       return { rest: new URL(`/api/v1/projects/${project}/agent-runs/${encodeURIComponent(unquote(runs[3]))}`, at.origin), one: true, row: true };
     const rest = new URL(`/api/v1/projects/${project}/agent-runs`, at.origin);
+    // The set holds every origin (T-7145): no `origin` in `$filter` is the REST list's `origin=all`,
+    // `origin eq 'person'` its default.
+    rest.searchParams.set("origin", "all");
     for (const [, member, value] of (at.searchParams.get("$filter") ?? "").matchAll(/(\w+) eq '((?:[^']|'')*)'/g)) {
       const name = RUN_FILTERS[member];
-      if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
+      if (name === "origin" && unquote(value) === "person") rest.searchParams.delete("origin");
+      else if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
     }
     const top = at.searchParams.get("$top");
     if (top !== null) rest.searchParams.set("limit", top);

@@ -467,8 +467,7 @@
         "$Type": "Edm.Untyped"
       },
       "origin": {
-        "$Nullable": true,
-        "$Type": "Edm.Untyped"
+        "$Nullable": true
       },
       "pathPrefix": {
         "$Nullable": true,
@@ -2025,7 +2024,7 @@
           },
           {
             "$Name": "bundle",
-            "$Nullable": false,
+            "$Nullable": true,
             "$Type": "Edm.String"
           },
           {
@@ -2039,9 +2038,19 @@
             "$Type": "Edm.Boolean"
           },
           {
+            "$Name": "manifests",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          },
+          {
             "$Name": "orgDomain",
             "$Nullable": true,
             "$Type": "Edm.String"
+          },
+          {
+            "$Name": "spaceMapping",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
           }
         ],
         "$ReturnType": {
@@ -3180,6 +3189,22 @@
         }
       }
     ],
+    "portal_blueprint_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_change_manifests": [
       {
         "$IsBound": true,
@@ -4040,6 +4065,22 @@
             "$Name": "name",
             "$Nullable": false,
             "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_health_check_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
           }
         ],
         "$ReturnType": {
@@ -5235,6 +5276,27 @@
         }
       }
     ],
+    "portal_organization_model_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "search",
+            "$Nullable": true,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_person_names": [
       {
         "$IsBound": true,
@@ -5758,6 +5820,22 @@
         }
       }
     ],
+    "portal_portal_host_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_portal_source_run": [
       {
         "$IsBound": true,
@@ -5882,6 +5960,75 @@
             "$Name": "bindingParameter",
             "$Nullable": false,
             "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_project_delete": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_project_get": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_project_registry": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_project_repoint": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
           },
           {
             "$Name": "body",
@@ -6325,6 +6472,22 @@
             "$Name": "facet",
             "$Nullable": true,
             "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_widget_list": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
           }
         ],
         "$ReturnType": {

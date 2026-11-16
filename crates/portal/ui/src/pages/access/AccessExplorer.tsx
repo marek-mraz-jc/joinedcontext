@@ -2,8 +2,8 @@ import { useId, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
-import { call, doorAction, listManifests } from "../../api/odata";
+import { ApiError, queryKeys } from "../../api/client";
+import { call, door, doorAction, listManifests, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -83,17 +83,11 @@ function Explorer({ project }: { project: string }): JSX.Element {
     queryKey: queryKeys.peoplePage(search.trim(), 0),
     enabled: kind === "person",
     queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/organization/people", {
-          params: {
-            query: {
-              ...(search.trim() ? { search: search.trim() } : {}),
-              first: 0,
-              max: 20,
-            },
-          },
-        }),
-      ),
+      (await door("portal_people_list", {
+        ...(search.trim() ? { search: search.trim() } : {}),
+        first: 0,
+        max: 20,
+      })) as RestAnswer<"list_people">,
   });
   const accountNames = asManifests(accounts.data?.items ?? []).map(
     (a) => a.metadata.name,
