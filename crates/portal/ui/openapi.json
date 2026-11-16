@@ -35196,13 +35196,16 @@
                   },
                   "limits": {
                     "additionalProperties": false,
+                    "description": "Run limits",
                     "properties": {
                       "memoryMb": {
+                        "description": "MiB heap",
                         "maximum": 64,
                         "minimum": 1,
                         "type": "integer"
                       },
                       "timeoutMs": {
+                        "description": "ms per run",
                         "maximum": 200,
                         "minimum": 1,
                         "type": "integer"
@@ -35211,6 +35214,7 @@
                     "type": "object"
                   },
                   "tests": {
+                    "description": "In/out cases",
                     "items": {
                       "additionalProperties": false,
                       "properties": {

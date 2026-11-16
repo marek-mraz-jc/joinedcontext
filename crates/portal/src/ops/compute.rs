@@ -587,14 +587,16 @@ fn script_test_input_schema() -> Value {
             "code": text("JavaScript", MAX_CODE_BYTES as u64),
             "limits": {
                 "type": "object",
+                "description": "Run limits",
                 "properties": {
-                    "timeoutMs": { "type": "integer", "minimum": 1, "maximum": MAX_TIMEOUT_MS },
-                    "memoryMb": { "type": "integer", "minimum": 1, "maximum": MAX_MEMORY_MB }
+                    "timeoutMs": { "type": "integer", "description": "ms per run", "minimum": 1, "maximum": MAX_TIMEOUT_MS },
+                    "memoryMb": { "type": "integer", "description": "MiB heap", "minimum": 1, "maximum": MAX_MEMORY_MB }
                 },
                 "additionalProperties": false
             },
             "tests": {
                 "type": "array",
+                "description": "In/out cases",
                 "minItems": 1,
                 "maxItems": MAX_TESTS,
                 "items": {

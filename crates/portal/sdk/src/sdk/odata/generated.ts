@@ -628,12 +628,15 @@ export interface ScopeDefinition {
 
 export interface Script {
   kind?: string | null;
+  metadata?: unknown | null;
   name: string;
   notServing?: string | null;
   phase?: string | null;
   project: string;
   sourceUrl?: string | null;
   space?: string | null;
+  spec?: unknown | null;
+  status?: unknown | null;
   title?: string | null;
   url?: string | null;
   "@odata.etag"?: string;

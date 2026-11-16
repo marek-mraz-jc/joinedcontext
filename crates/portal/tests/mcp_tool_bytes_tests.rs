@@ -77,8 +77,9 @@ fn the_tool_definitions_a_model_reads_stay_under_their_byte_ratchet() {
 /// types an agent otherwise guesses before its DataSource check goes red; 87,427 once jc-core
 /// catalogued `Script` (T-7083, 8 bytes in the resource tools' kind enum) and with `jc_script_test`
 /// (T-7084, 910 bytes): a Script version's tests on the runner before an agent proposes it, the
-/// only door to that route, its schema the route's bounds.
-const RATCHET: usize = 87_428;
+/// only door to that route, its schema the route's bounds; 87,535 once its limits and tests carry
+/// a description (T-7083, 108 bytes): ops_input_schema_tests refuses an undescribed property.
+const RATCHET: usize = 87_536;
 
 /// The cut never opens a schema: every MCP input stays closed, and `project` stays bounded.
 #[test]

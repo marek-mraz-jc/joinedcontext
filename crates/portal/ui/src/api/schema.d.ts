@@ -37813,10 +37813,14 @@ export interface operations {
                 "application/json": {
                     /** @description JavaScript */
                     code: string;
+                    /** @description Run limits */
                     limits?: {
+                        /** @description MiB heap */
                         memoryMb?: number;
+                        /** @description ms per run */
                         timeoutMs?: number;
                     };
+                    /** @description In/out cases */
                     tests: {
                         /** @description Expected out */
                         expected: Record<string, never>;

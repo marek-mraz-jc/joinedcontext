@@ -1794,6 +1794,10 @@
       "kind": {
         "$Nullable": true
       },
+      "metadata": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
       "name": {},
       "notServing": {
         "$Nullable": true
@@ -1807,6 +1811,14 @@
       },
       "space": {
         "$Nullable": true
+      },
+      "spec": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
+      },
+      "status": {
+        "$Nullable": true,
+        "$Type": "Edm.Untyped"
       },
       "title": {
         "$Nullable": true
