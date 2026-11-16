@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { Link } from "@tanstack/react-router";
 import { reasonOf } from "../../api/client";
 import { door, doorAction, type RestAnswer } from "../../api/odata";
-import { Alert, Button, buttonClass, EmptyState, Icon, Skeleton } from "../../components/ui";
+import { Alert, Button, buttonClass, Card, EmptyState, Icon, Skeleton } from "../../components/ui";
 import { PlanDiffViewer } from "../../components/diff/PlanDiffViewer";
 import type { FieldChange } from "../../components/diff/PlanDiffViewer";
 
@@ -84,9 +84,9 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
   };
   const shortSha = (sha: string) => sha.slice(0, 7);
   return (
-    <section aria-labelledby="dashboard-history-heading" className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+    <Card as="section" padding="md" aria-labelledby="dashboard-history-heading" className="flex flex-col gap-3">
       <div>
-        <h2 id="dashboard-history-heading" className="text-heading-sm font-semibold text-fg">
+        <h2 id="dashboard-history-heading" className="text-title font-semibold text-fg">
           {t("dashboardHistory.title")}
         </h2>
         <p className="text-body text-fg-muted">{t("dashboardHistory.lead")}</p>
@@ -133,6 +133,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                     size="sm"
                     variant={compared === version.sha ? "primary" : "secondary"}
                     aria-pressed={compared === version.sha}
+                    className="touch-target"
                     onClick={() => setCompared(compared === version.sha ? undefined : version.sha)}
                   >
                     <Icon name="git" className="size-4" />
@@ -141,6 +142,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                   <Button
                     size="sm"
                     variant="ghost"
+                    className="touch-target"
                     disabled={!mayEdit || restore.isPending || (restore.isSuccess && restore.variables === version.sha)}
                     title={t(mayEdit ? "dashboardHistory.restoreHint" : "dashboardHistory.readerHint")}
                     aria-describedby={mayEdit ? undefined : "dashboard-history-reader"}
@@ -182,7 +184,7 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
                 </Alert>
               ) : null}
               {compared === version.sha ? (
-                <div className="flex basis-full flex-col gap-2">
+                <div className="mt-2 flex basis-full flex-col gap-2 border-l-2 border-primary pl-3">
                   <h3 className="text-body font-semibold text-fg">
                     {t("dashboardHistory.diffTitle", { from: shortSha(compared), to: newest ? shortSha(newest) : "" })}
                   </h3>
@@ -203,6 +205,6 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
           ))}
         </ol>
       ) : null}
-    </section>
+    </Card>
   );
 }
