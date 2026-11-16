@@ -332,7 +332,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                   ? t("backups.restore.people")
                   : t("backups.restore.project", { project: group.name })}
             </h3>
-            <p className="text-caption text-fg-muted">
+            <p className="text-body text-fg-muted">
               {group.name === PEOPLE
                 ? t("backups.restore.peopleCounts", {
                     missing: group.created.length,
@@ -346,15 +346,15 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
                   })}
             </p>
             {group.note && group.name === PEOPLE ? (
-              <p className="text-caption text-fg-muted">
+              <p className="text-body">
                 {t("backups.restore.peopleNote")}{" "}
-                <Link to="/organization/$tab" params={{ tab: "people" }} className="underline">
+                <Link to="/organization/$tab" params={{ tab: "people" }} className="text-body font-semibold underline hover:no-underline">
                   {t("backups.restore.invite")}
                 </Link>
               </p>
             ) : null}
             {[...group.created, ...group.changed].length > 0 ? (
-              <ul className="list-disc pl-5 text-caption">
+              <ul className="list-disc pl-5 text-body">
                 {[...group.created, ...group.changed].map((item) => (
                   <li key={item}>{item}</li>
                 ))}
