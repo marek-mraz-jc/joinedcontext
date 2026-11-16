@@ -3,6 +3,9 @@ import type { Locator, Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Organization → Data access (ADR-N-067 §2.5, T-6412): the matrix of non-public Endpoints against
 // everyone and each group, a group's "Datasets this group reads" and a person's "What this person

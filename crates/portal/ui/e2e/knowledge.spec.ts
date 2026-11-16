@@ -3,6 +3,9 @@ import type { Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-3057: the knowledge assistant's sources in a real browser, the API answered in the browser.
 // What the list shows of `/knowledge/sources`, the source page's tree opened a level at a time,

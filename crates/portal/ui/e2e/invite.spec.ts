@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // Inviting a person (T-3237, PF-108): a steward invites a newcomer into a project with a role
 // whose description says what it may do, sees the pending invitation with its expiry, and the

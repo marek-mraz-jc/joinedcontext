@@ -5,6 +5,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pageFindings } from "../tests/pageChecks";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The same shape as the other journeys: the built bundle, the API answered from the browser.
 // The live tail is an EventSource, so the stream route is fulfilled with a body that holds one

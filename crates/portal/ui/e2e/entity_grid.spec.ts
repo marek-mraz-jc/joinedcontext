@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { attributeTable } from "./attributeAccess";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // The journey over entity data (T-1437; UI-64, UI-67, UI-59). `vite preview` has no portal API and
 // no gateway behind it, so both are answered in the browser: the grid, the explorer around it and

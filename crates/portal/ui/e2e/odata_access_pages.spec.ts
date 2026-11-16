@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { axeViolations } from "./axe";
 import { odataBody, odataCall } from "../tests/odata";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6812: the access and policy pages read through the Organization's OData service. Each journey
 // runs the real build against the service's answers (filled, empty, refused, failed) at 1440 and

@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-4973 (walker): the old /shared address lands on the Endpoints page, whose "Connect an AI
 // assistant" panel holds two code lines wider than a phone. A scrolling block the keyboard

@@ -38,6 +38,13 @@ describe("the OData client", () => {
     expect(page).toEqual({ value: [{ name: "pm10" }], count: 7, nextLink: undefined });
   });
 
+  it("reads one entity with the members a $select names", async () => {
+    const { transport, sent } = scripted({ status: 200, body: { name: "pm10", spec: { a: 1 } } });
+    const row = await odata("/api/v1/", { transport }).get("spaces", { project: "air", name: "pm10" }, ["name", "spec"]);
+    expect(sent[0].path).toBe("/api/v1/spaces(project='air',name='pm10')?$select=name%2Cspec");
+    expect(row).toEqual({ name: "pm10", spec: { a: 1 } });
+  });
+
   it("writes keys and literals as OData does", () => {
     expect(literal("it's")).toBe("'it''s'");
     expect(literal(3)).toBe("3");

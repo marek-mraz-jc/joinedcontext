@@ -1,9 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/api/client";
-import { act, call, door, doorAction, projectBound } from "../src/api/odata";
+import {
+  act,
+  call,
+  door,
+  doorAction,
+  listManifests,
+  manifestEtag,
+  projectBound,
+  readManifest,
+} from "../src/api/odata";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
-import { odataCall, odataError, odataValue } from "./odata";
+import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
 
 vi.mock("../src/api/sessionEnded", async (actual) => ({
   ...(await actual<object>()),
@@ -141,6 +150,115 @@ describe("the Portal's OData client (T-6812)", () => {
         hint: "Correct each member errors names.",
       },
     });
+  });
+
+  it("reads a kind's manifests through the project's navigation, the org namespace's from its Organization set, page after page", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer these reads from REST stubs.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      const row = (name: string) => ({
+        "@odata.etag": `W/"${name}"`,
+        name,
+        kind: "Policy",
+        metadata: { name, namespace: "air" },
+        spec: { rules: [] },
+        status: null,
+      });
+      return new Response(
+        JSON.stringify(
+          request.url.includes("/policies?") &&
+            !request.url.includes("skiptoken")
+            ? {
+                value: [row("a")],
+                "@odata.nextLink": `${location.origin}/api/v1/projects('air''s')/policies?$skiptoken=1`,
+              }
+            : { value: [row("b")] },
+        ),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const { items } = await listManifests("air's", "policies");
+    expect(items).toEqual([
+      {
+        apiVersion: "joinedcontext.com/v1alpha1",
+        kind: "Policy",
+        metadata: { name: "a", namespace: "air" },
+        spec: { rules: [] },
+        status: null,
+      },
+      expect.objectContaining({ metadata: { name: "b", namespace: "air" } }),
+    ]);
+    expect(Object.keys(items[0])).not.toContain("@odata.etag");
+    expect(manifestEtag(items[1])).toBe('W/"b"');
+    const first = new URL(sent[0].url);
+    expect(decodeURIComponent(first.pathname)).toBe(
+      "/api/v1/projects('air''s')/policies",
+    );
+    expect(first.searchParams.get("$select")).toBe(
+      "name,kind,metadata,spec,status",
+    );
+    expect(sent[1].url).toContain("$skiptoken=1");
+    // The test's REST mapping reads the same address back to the REST door.
+    expect(manifestAsRest(sent[0].url)?.rest.pathname).toBe(
+      "/api/v1/projects/air's/policies",
+    );
+
+    sent.length = 0;
+    await listManifests("org", "roles");
+    await listManifests("org", "rolebindings");
+    expect(sent.map((r) => new URL(r.url).pathname)).toEqual([
+      "/api/v1/organizationRoles",
+      "/api/v1/rolebindings",
+    ]);
+    vi.restoreAllMocks();
+  });
+
+  it("reads one manifest by its key with its ETag, and a missing one as the ApiError a page shows", async () => {
+    const sent: Request[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return request.url.includes("gone")
+        ? odataError(404, "resource-not-found", "no endpoint gone you may read")
+        : new Response(
+            JSON.stringify({
+              "@odata.etag": 'W/"7"',
+              name: "bikes",
+              kind: "Endpoint",
+              metadata: { name: "bikes", namespace: "air" },
+              spec: { slug: "bikes" },
+              status: { phase: "Live" },
+            }),
+            { headers: { "Content-Type": "application/json" } },
+          );
+    });
+    const endpoint = await readManifest("air", "endpoints", "bikes");
+    expect(endpoint).toEqual({
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "Endpoint",
+      metadata: { name: "bikes", namespace: "air" },
+      spec: { slug: "bikes" },
+      status: { phase: "Live" },
+    });
+    expect(manifestEtag(endpoint)).toBe('W/"7"');
+    expect(decodeURIComponent(new URL(sent[0].url).pathname)).toBe(
+      "/api/v1/endpoints(project='air',name='bikes')",
+    );
+    await readManifest("org", "groups", "stewards");
+    expect(decodeURIComponent(new URL(sent[1].url).pathname)).toBe(
+      "/api/v1/groups('stewards')",
+    );
+    const missing = (await readManifest("air", "endpoints", "gone").catch(
+      (e: unknown) => e,
+    )) as ApiError;
+    expect(missing).toBeInstanceOf(ApiError);
+    expect([missing.status, missing.message]).toEqual([
+      404,
+      "no endpoint gone you may read",
+    ]);
+    vi.restoreAllMocks();
   });
 
   it("ends the session on a 401 and asks for a second factor on that refusal, as the REST client does", async () => {

@@ -3,6 +3,7 @@ import { configure } from "@testing-library/react";
 import { File as NodeFile } from "node:buffer";
 import { beforeEach, vi } from "vitest";
 import { EXACT_PROJECTS } from "./exactProjects";
+import { manifestAnswer, manifestAsRest } from "./odata";
 import { settlePrefill } from "../src/assistant/state";
 
 // A hand-off the assistant leaves lives until the person leaves the page it was left on
@@ -101,7 +102,15 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
   // A proxy, not a new function: a file reads its stub back through globalThis.fetch (`.mock.calls`,
   // `mockImplementation`, `.checks`), and every property is the file's own.
   return new Proxy(stubbed, {
-    apply: (target, self, args: Parameters<typeof fetch>) => listing(Reflect.apply(target, self, args), ...args),
+    apply: (target, self, args: Parameters<typeof fetch>) => {
+      // A manifest read of the OData service reaches the file's REST stub as the REST read whose
+      // handler answers it (tests/odata.ts manifestAsRest, T-7103).
+      const [input] = args;
+      const read = manifestAsRest(new URL(input instanceof Request ? input.url : String(input), window.location.href));
+      if (!read) return listing(Reflect.apply(target, self, args), ...args);
+      const rest = new Request(read.rest);
+      return listing(Reflect.apply(target, self, [rest]), rest).then((answer) => manifestAnswer(answer, read.one));
+    },
   });
 }
 

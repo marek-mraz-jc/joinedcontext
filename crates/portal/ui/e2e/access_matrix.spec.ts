@@ -2,6 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-5531: who may do what on one Endpoint, every principal at once (API/01 §57). Each state at
 // 1440 and 400 px: the matrix, a partial cell's detail, the graph, the refusal, no Policy yet and

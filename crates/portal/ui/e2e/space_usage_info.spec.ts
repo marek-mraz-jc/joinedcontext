@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { Page, Route } from "@playwright/test";
 import { axeViolations } from "./axe";
+import { manifestReadsAsRest } from "./manifestReads";
+
+test.beforeEach(({ page }) => manifestReadsAsRest(page));
 
 // T-6208: the Spaces list keeps each space's count and size; the (i) beside it says when the
 // broker measured it and offers Recalculate. Route stubs only: the shots show the popover open,

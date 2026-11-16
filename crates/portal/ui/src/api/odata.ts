@@ -8,7 +8,8 @@ import {
   type ODataModel,
 } from "@joinedcontext/sdk";
 import { ApiError, loginRedirectUrl, type WireProblem } from "./client";
-import type { operations } from "./schema";
+import { ORG_NAMESPACE } from "./manifest";
+import type { components, operations } from "./schema";
 import { announceSessionEnded } from "./sessionEnded";
 import { announceStepUp, stepUpUrl } from "./stepUp";
 
@@ -238,4 +239,110 @@ export async function doorAction<A extends Door<keyof Actions & string>>(
     "@odata.context" in value
     ? null
     : value;
+}
+
+type EntitySets = ODataModel.EntitySets;
+
+/**
+ * The sets whose rows are manifests every one of `joinedcontext.com/v1alpha1` (jc-core
+ * conversions: only a Pipeline may also be `v1alpha2`, so `pipelines` is no such set here).
+ */
+export type ManifestSet = Exclude<
+  keyof EntitySets & string,
+  | "pipelines"
+  | "changes"
+  | "endpointList"
+  | "entities"
+  | "members"
+  | "projects"
+  | "repositories"
+  | "revisions"
+  | "runs"
+>;
+
+type Manifest = components["schemas"]["ResourceEnvelope"];
+
+/** The members a manifest set answers when `$select` names them (T-7097, API/13 §2a). */
+const MANIFEST_MEMBERS = [
+  "name",
+  "kind",
+  "metadata",
+  "spec",
+  "status",
+] as const;
+
+const API_VERSION = "joinedcontext.com/v1alpha1";
+
+/** Each manifest a read answered and the `@odata.etag` of its row, for a write's `If-Match`. */
+const etags = new WeakMap<object, string>();
+
+/** The `@odata.etag` the service answered with `manifest`, a write's `If-Match`. */
+export function manifestEtag(manifest: object): string | undefined {
+  return etags.get(manifest);
+}
+
+interface ManifestRow {
+  kind?: unknown;
+  metadata?: unknown;
+  spec?: unknown;
+  status?: unknown;
+  "@odata.etag"?: string;
+}
+
+function asManifest(row: ManifestRow): Manifest {
+  const manifest = {
+    apiVersion: API_VERSION,
+    kind: row.kind,
+    metadata: row.metadata,
+    spec: row.spec ?? undefined,
+    status: row.status ?? null,
+  } as Manifest;
+  if (row["@odata.etag"]) etags.set(manifest, row["@odata.etag"]);
+  return manifest;
+}
+
+/** The Organization set of the `org` namespace's `plural`: its own Roles are `organizationRoles`. */
+function orgSet(plural: ManifestSet): ManifestSet {
+  return plural === "roles" ? "organizationRoles" : plural;
+}
+
+/**
+ * Every manifest of `plural` in `project` the caller may read, as the REST door's
+ * `GET /projects/{project}/{plural}` lists them (`items`): the project's navigation, or for the
+ * `org` namespace the Organization set of that name, with `$select` of the manifest's members.
+ */
+export async function listManifests(
+  project: string,
+  plural: ManifestSet,
+): Promise<{ items: Manifest[] }> {
+  // `$select` names manifest members (metadata, spec) the generated row types of a set leave out.
+  const query: { select(...members: string[]): { all(): AsyncIterable<unknown> } } =
+    project === ORG_NAMESPACE
+      ? client.from(orgSet(plural))
+      : client.under(project, plural);
+  const items: Manifest[] = [];
+  const rows = query.select(...MANIFEST_MEMBERS).all();
+  await refusedAs(
+    (async () => {
+      for await (const row of rows) items.push(asManifest(row as ManifestRow));
+    })(),
+  );
+  return { items };
+}
+
+/**
+ * The manifest `name` of `plural` in `project`, as the REST door's
+ * `GET /projects/{project}/{plural}/{name}` answers it; its row's ETag in {@link manifestEtag}.
+ */
+export async function readManifest(
+  project: string,
+  plural: ManifestSet,
+  name: string,
+): Promise<Manifest> {
+  const row = await refusedAs(
+    project === ORG_NAMESPACE
+      ? client.get(orgSet(plural), name, MANIFEST_MEMBERS)
+      : client.get(plural, { project, name }, MANIFEST_MEMBERS),
+  );
+  return asManifest(row as ManifestRow);
 }
