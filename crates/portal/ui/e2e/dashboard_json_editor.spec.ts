@@ -97,7 +97,7 @@ for (const width of [1440, 400]) {
     await page.setViewportSize({ width, height: 900 });
     await stub(page, false);
     await page.goto("/projects/bbsk/dashboard-editor?lang=en");
-    await expect(page.getByRole("heading", { name: "New dashboard in JSON" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "New report page in JSON" })).toBeVisible();
     const editor = page.locator(".monaco-editor").first();
     await expect(editor).toBeVisible();
     await expect(page.getByText(width < 640 ? /draws nothing yet/ : /No widget yet/)).toBeVisible();

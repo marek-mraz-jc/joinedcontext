@@ -78,14 +78,14 @@ async function fill() {
   return user;
 }
 
-describe("the Grafana page", () => {
-  it("says why when Grafana is not ready and offers no form", async () => {
+describe("the Dashboards page", () => {
+  it("says why when the dashboards are not ready and offers no form", async () => {
     answers["GET /api/v1/projects/helsinki/grafana"] = {
-      body: { ready: false, reason: "Grafana is not set up", mayCreate: true, items: [] },
+      body: { ready: false, reason: "the dashboards service is not set up", mayCreate: true, items: [] },
     };
     renderInClient(<GrafanaPage project="helsinki" />);
-    expect(await screen.findByText("Grafana is not set up")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /save to grafana/i })).toBeNull();
+    expect(await screen.findByText("the dashboards service is not set up")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save chart/i })).toBeNull();
   });
 
   it("shows a reader what is saved, without the form or a remove button", async () => {
@@ -93,7 +93,7 @@ describe("the Grafana page", () => {
       body: { ready: true, mayCreate: false, items: [item] },
     };
     renderInClient(<GrafanaPage project="helsinki" />);
-    expect(await screen.findByRole("link", { name: "Open PM2.5 in Grafana" })).toHaveAttribute("href", item.openUrl);
+    expect(await screen.findByRole("link", { name: "Open PM2.5 in a new tab" })).toHaveAttribute("href", item.openUrl);
     expect(screen.queryByLabelText("Endpoint")).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove PM2.5" })).toBeNull();
   });
@@ -105,12 +105,12 @@ describe("the Grafana page", () => {
 });
 
 describe("the form", () => {
-  it("offers what the server offers, names what Grafana cannot read, and previews the choice", async () => {
+  it("offers what the server offers, names what the dashboards cannot read, and previews the choice", async () => {
     renderInClient(<VisualizationForm project="helsinki" />);
     await fill();
     expect(screen.getByRole("option", { name: "Air quality" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Bike operations" })).toBeNull();
-    expect(screen.getByText(/Not in Grafana yet: Bike operations/)).toBeInTheDocument();
+    expect(screen.getByText(/The dashboards cannot read these yet: Bike operations/)).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Attribute"), "pm25");
     expect(await screen.findByText("Kallio")).toBeInTheDocument();
     expect(screen.getByText("4.2")).toBeInTheDocument();
@@ -131,9 +131,9 @@ describe("the form", () => {
     renderInClient(<VisualizationForm project="helsinki" />);
     const user = await fill();
     await user.selectOptions(screen.getByLabelText("Attribute"), "pm25");
-    expect(screen.getByRole("button", { name: /save to grafana/i })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: /save chart/i })).toHaveAttribute("aria-disabled", "true");
     await user.type(screen.getByLabelText("Name"), "PM2.5");
-    await user.click(screen.getByRole("button", { name: /save to grafana/i }));
+    await user.click(screen.getByRole("button", { name: /save chart/i }));
     expect(await screen.findByRole("link", { name: "Open it" })).toHaveAttribute("href", item.openUrl);
     expect(sent.find((call) => call.method === "POST")?.body).toEqual({
       title: "PM2.5",
@@ -153,7 +153,7 @@ describe("the form", () => {
     const user = await fill();
     await user.selectOptions(screen.getByLabelText("Attribute"), "pm25");
     await user.type(screen.getByLabelText("Name"), "x");
-    await user.click(screen.getByRole("button", { name: /save to grafana/i }));
+    await user.click(screen.getByRole("button", { name: /save chart/i }));
     expect(await screen.findByRole("alert")).toHaveTextContent("choose another kind");
   });
 });
@@ -199,7 +199,7 @@ describe("a saved visualization", () => {
     expect(screen.getByRole("button", { name: "Remove PM2.5" })).toHaveFocus();
     expect(sent.some((call) => call.method === "DELETE")).toBe(false);
     await user.click(screen.getByRole("button", { name: "Remove PM2.5" }));
-    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove from Grafana" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove chart" }));
     await waitFor(() => expect(sent.some((call) => call.method === "DELETE")).toBe(true));
   });
 });

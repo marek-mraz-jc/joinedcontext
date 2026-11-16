@@ -33,6 +33,19 @@ describe("the sidebar's sections", () => {
     }
   });
 
+  // T-7160: one entry is "Dashboards" (the builder's folder tree); the Dashboard kind's pages are
+  // named apart, and no label in any language names the vendor that draws them.
+  it("has one Dashboards entry and names no vendor", () => {
+    const labels = NAV_SECTIONS.map((section) => translated(section.labelKey));
+    expect(labels.filter((label) => label === "Dashboards")).toHaveLength(1);
+    expect(NAV_SECTIONS.find((section) => translated(section.labelKey) === "Dashboards")?.plural).toBe("grafana");
+    for (const lang of ["en", "de", "cs", "sk"]) {
+      const text = readFileSync(join(__dirname, "..", "src", "locales", `${lang}.json`), "utf8");
+      const values = [...text.matchAll(/:\s*"((?:[^"\\]|\\.)*)"/g)].map((match) => match[1]);
+      expect(values.filter((value) => /grafana/i.test(value)), lang).toEqual([]);
+    }
+  });
+
   it("says what every entry is called", () => {
     for (const section of NAV_SECTIONS) {
       expect(typeof translated(section.labelKey)).toBe("string");
