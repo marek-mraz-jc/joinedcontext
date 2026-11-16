@@ -10,6 +10,7 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import { AccountSecret } from "../src/pages/access/AccountSecret";
+import { odataCall, odataValue } from "./odata";
 
 const ISSUED = {
   clientId: "helsinki-vendor",
@@ -27,8 +28,8 @@ function stub(access: Record<string, unknown>, issue: { status: number; body: un
       sent.push(`${request.method} ${url.pathname}`);
       const json = (body: unknown, status = 200) =>
         new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-      if (url.pathname.endsWith("/serviceaccounts/vendor/access")) {
-        return json({ account: "vendor", project: "helsinki", delegates: false, mayPropose: true, mayRevoke: true, grants: [], ...access });
+      if (odataCall(url)?.name === "jc_serviceaccount_access") {
+        return odataValue({ account: "vendor", project: "helsinki", delegates: false, mayPropose: true, mayRevoke: true, grants: [], ...access });
       }
       if (url.pathname.endsWith("/serviceaccounts/vendor/secret")) return json(issue.body, issue.status);
       return json({ items: [] });

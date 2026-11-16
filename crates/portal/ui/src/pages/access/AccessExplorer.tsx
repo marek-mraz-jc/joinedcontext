@@ -3,6 +3,7 @@ import type { FormEvent, JSX } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { call } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { administersOrganization, usePermissions } from "../../api/permissions";
@@ -88,13 +89,7 @@ function Explorer({ project }: { project: string }): JSX.Element {
   };
 
   const explore = useMutation({
-    mutationFn: async (subject: Who) =>
-      unwrap(
-        await api.POST("/api/v1/projects/{project}/access/explore", {
-          params: { path: { project } },
-          body: { subject },
-        }),
-      ),
+    mutationFn: (subject: Who) => call("jc_access_explore", project, { subject }),
   });
 
   const subject = who();
@@ -191,7 +186,10 @@ function Explorer({ project }: { project: string }): JSX.Element {
       </form>
       <div aria-live="polite" className="mt-6">
         {explore.isError ? (
-          <Alert tone="danger" title={t("access.explorer.failed")}>
+          <Alert
+            tone="danger"
+            title={t(explore.error instanceof ApiError && explore.error.status === 403 ? "access.explorer.refused" : "access.explorer.failed")}
+          >
             {explore.error instanceof ApiError ? (explore.error.problem?.detail ?? explore.error.message) : t("app.error.generic")}
           </Alert>
         ) : null}

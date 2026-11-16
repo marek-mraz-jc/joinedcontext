@@ -10,6 +10,7 @@ import i18n from "../src/i18n";
 import { PolicySummary } from "../src/pages/policies/PolicySummary";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
+import { asOData, odataCall } from "./odata";
 import { policySchema } from "../src/schemas/kinds";
 
 const READER = { project: "helsinki", bootstrap: false, grants: [{ rule: { kinds: ["*"], verbs: ["read"] } }] };
@@ -56,7 +57,7 @@ function answering(stored: ReturnType<typeof policy>, history: () => Response) {
     if (request.method !== "GET") return undefined;
     if (path === "/api/v1/projects/helsinki/policies") return jsonResponse(list([stored]));
     if (path === `/api/v1/projects/helsinki/policies/${stored.metadata.name}`) return jsonResponse(stored);
-    if (path === "/api/v1/projects/helsinki/changes/history") return history();
+    if (odataCall(request.url)?.name === "jc_change_history") return asOData(history());
     return undefined;
   };
 }
