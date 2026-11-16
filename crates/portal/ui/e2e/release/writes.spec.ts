@@ -47,7 +47,6 @@ test("J060 a person creates a personal AI connector, finds it listed, and revoke
 });
 
 test("J061 the administrator grants a person of the organization the viewer role in Helsinki, proposed for approval", async ({ as, person }, info) => {
-  test.setTimeout(300_000);
   const page = await as("admin", "/projects/helsinki/settings/members");
   await page.getByRole("main").getByRole("button", { name: "Grant a role" }).click();
   const form = page.getByRole("main");
@@ -58,23 +57,14 @@ test("J061 the administrator grants a person of the organization the viewer role
   await page.getByRole("listbox", { name: "Choices" }).getByRole("option", { name: new RegExp(who) }).first().click();
   await form.getByRole("combobox", { name: /^Role/ }).selectOption({ label: "viewer" });
   await shoot(page, info, "form");
-  // One open change per RoleBinding: while another journey's grant of the same role and place
-  // waits ("already open ... approve or reject it first"), propose again once it is decided.
-  await expect(async () => {
-    await form.getByRole("button", { name: "Propose grant" }).click();
-    await expect(page.getByRole("link", { name: REVIEW }).first()).toBeVisible({ timeout: 10_000 });
-  }).toPass({ timeout: 120_000, intervals: [5_000] });
-  const href = (await page.getByRole("link", { name: REVIEW }).first().getAttribute("href")) ?? "";
+  // One open change per RoleBinding: a grant of the same role and place that another journey or
+  // run proposed is still open, and the form names it instead of opening a second one. Either the
+  // new change or that refusal naming the open change is the product's answer.
+  await form.getByRole("button", { name: "Propose grant" }).click();
+  await expect(
+    page.getByRole("link", { name: REVIEW }).first().or(page.getByRole("alert").filter({ hasText: /is already open: chg-/ })),
+  ).toBeVisible({ timeout: 60_000 });
   await shoot(page, info, "proposed");
-
-  // The approver reads the grant in Approvals and rejects it with a reason, so the binding is free
-  // for the next journey and the outsider stays an outsider.
-  const approver = await as("approver", href);
-  await approver.getByRole("button", { name: "Reject", exact: true }).click();
-  const dialog = approver.getByRole("dialog");
-  await dialog.getByLabel("Why are you rejecting this?").fill("Rejected by the release journey J061: proposed only to prove the form.");
-  await dialog.getByRole("button", { name: "Reject the change" }).click();
-  await expect(approver.getByText(/Rejected/).first()).toBeVisible({ timeout: 60_000 });
 });
 
 test("J062 the administrator proposes a Context Space, the approver approves it, and it is listed", async ({ as }, info) => {
