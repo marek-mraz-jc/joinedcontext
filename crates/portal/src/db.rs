@@ -101,6 +101,23 @@ async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Erro
     Ok(())
 }
 
+/// A transaction keyed on one project of one Organization (ARCH/TEN-04, STO-06; T-7191 PK-1c):
+/// `jc.org` and `jc.project` are set for this transaction alone, so a table with forced
+/// row-level security answers only that key's rows and stamps new rows with it, and a statement
+/// run without this opener reads none of them.
+pub async fn tenant_tx(
+    pool: &PgPool,
+    key: jc_types::ProjectKey,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)")
+        .bind(key.org.to_string())
+        .bind(key.project.to_string())
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more
 /// often than sqlx's 10 min default, so all five stayed open all day, ~19 MiB of Postgres each.
 fn pool_options() -> PgPoolOptions {

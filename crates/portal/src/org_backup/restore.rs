@@ -540,7 +540,10 @@ pub async fn run(
         .get("portal")
         .is_some_and(|p| p.exported);
 
-    let mut tx = pool.begin().await.map_err(failed)?;
+    // Keyed on the Organization's reserved project (T-7191): its restore requests answer only so.
+    let mut tx = super::keyed(&pool, organization)
+        .await?
+        .ok_or_else(|| super::unregistered(organization))?;
     if let Some(approval) = approval {
         // Held until the commit: a second approval waits here, then finds it taken.
         let pending: Option<i64> = sqlx::query_scalar(
@@ -729,6 +732,7 @@ pub async fn request(
     plan: &DataPlan,
     sha256: &str,
 ) -> Result<DataRestoreRequest, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: RequestRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO organization_data_restores (organization, version_id, requested_by, plan, \
          requested_subject, sha256) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {REQUEST_COLUMNS}"
@@ -739,9 +743,10 @@ pub async fn request(
     .bind(sqlx::types::Json(plan))
     .bind(&actor.subject)
     .bind(sha256)
-    .fetch_one(&pool_of(state)?)
+    .fetch_one(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(request_of(row))
 }
 
@@ -753,14 +758,18 @@ pub async fn requests(
     let Some(pool) = state.db.clone() else {
         return Ok(Vec::new());
     };
+    let Some(mut tx) = super::keyed(&pool, organization).await? else {
+        return Ok(Vec::new());
+    };
     let rows: Vec<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQUEST_COLUMNS} FROM organization_data_restores WHERE organization = $1 \
          ORDER BY id DESC LIMIT 20"
     )))
     .bind(organization)
-    .fetch_all(&pool)
+    .fetch_all(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(rows.into_iter().map(request_of).collect())
 }
 
@@ -774,6 +783,7 @@ pub async fn decide(
     outcome: &str,
     message: &str,
 ) -> Result<Option<DataRestoreRequest>, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: Option<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE organization_data_restores SET state = $4, decided_by = $3, decided_at = now(), \
          message = $5 WHERE id = $1 AND organization = $2 AND state = 'pending' \
@@ -784,9 +794,10 @@ pub async fn decide(
     .bind(decider)
     .bind(outcome)
     .bind(message)
-    .fetch_optional(&pool_of(state)?)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(row.map(request_of))
 }
 
@@ -796,15 +807,17 @@ pub async fn pending(
     organization: &str,
     id: i64,
 ) -> Result<Option<DataRestoreRequest>, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: Option<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQUEST_COLUMNS} FROM organization_data_restores \
          WHERE id = $1 AND organization = $2 AND state = 'pending'"
     )))
     .bind(id)
     .bind(organization)
-    .fetch_optional(&pool_of(state)?)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(row.map(request_of))
 }
 
@@ -814,14 +827,29 @@ pub async fn any_pending(state: &AppState, organization: &str) -> Result<bool, A
     let Some(pool) = state.db.clone() else {
         return Ok(false);
     };
-    sqlx::query_scalar(
+    let Some(mut tx) = super::keyed(&pool, organization).await? else {
+        return Ok(false);
+    };
+    let pending = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM organization_data_restores \
          WHERE organization = $1 AND state = 'pending')",
     )
     .bind(organization)
-    .fetch_one(&pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(failed)
+    .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
+    Ok(pending)
+}
+
+/// A transaction keyed on the Organization's reserved project, or why there is none.
+async fn keyed_of(
+    state: &AppState,
+    organization: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ApiError> {
+    super::keyed(&pool_of(state)?, organization)
+        .await?
+        .ok_or_else(|| super::unregistered(organization))
 }
 
 #[cfg(test)]
