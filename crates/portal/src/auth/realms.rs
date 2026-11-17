@@ -281,9 +281,11 @@ pub fn issuer_of(token: &str) -> Option<String> {
 
 /// What a person of an Organization's realm cannot hold: the installation's bootstrap group is
 /// the operators', who sign in through the installation realm alone (T-7001 §7 row 11). A realm
-/// an Organization's admin can fill must never mint one.
+/// an Organization's admin can fill must never mint one, as a group or as a realm role of that
+/// name (`permissions::in_group` counts both).
 pub fn confine(identity: &mut Identity, bootstrap_admins: &str) {
     identity.groups.retain(|group| group != bootstrap_admins);
+    identity.roles.retain(|role| role != bootstrap_admins);
 }
 
 #[cfg(test)]
@@ -390,12 +392,15 @@ mod tests {
             username: "u".into(),
             email: None,
             name: None,
-            roles: Vec::new(),
+            roles: vec!["portal-approver".into(), "hel-reader".into()],
             groups: vec!["portal-approver".into(), "hel-editors".into()],
             client: None,
             second_factor: false,
         };
         confine(&mut identity, "portal-approver");
         assert_eq!(identity.groups, vec!["hel-editors".to_owned()]);
+        // A realm role of that name counts as the group in every bootstrap-admin check.
+        assert_eq!(identity.roles, vec!["hel-reader".to_owned()]);
+        assert!(!crate::permissions::in_group(&identity, "portal-approver"));
     }
 }
