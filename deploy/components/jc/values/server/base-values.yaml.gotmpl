@@ -81,7 +81,10 @@ args: ["--config", "/etc/jc/jc.toml"]
 
 containerPort: 8080
 
-{{- if or $wasmOn $mqtt }}
+{{- /* jc composes the edge file and the registry hosts' Certificates and Ingresses under the
+       apisix chart's Role edge-file-composer when the environment sets edgeComposer (T-7138). */}}
+{{- $edgeComposer := and (dig "edgeComposer" false $jc) (not $window) }}
+{{- if or $wasmOn $mqtt $edgeComposer }}
 # The Portal's API client (KubeClient::in_cluster). With wasm-host its reconciler writes each WASM
 # shard's placement ConfigMap and store-key Secret in the host's namespace (AP-157, AP-158); with
 # mqtt-brokers it stamps the brokers under the brokers chart's Role portal-mqtt-brokers, in the
@@ -534,6 +537,14 @@ env:
   JC_PORTAL_ORG_DOMAIN: {{ . | quote }}
   JC_GATEWAY_ORG_DOMAIN: {{ . | quote }}
   JC_ASSISTANT_ORG_DOMAIN: {{ . | quote }}
+  {{- end }}
+  {{- if $edgeComposer }}
+  # Where the edge runs: the registry hosts' Certificates and Ingresses go there (T-7129 §3).
+  JC_PORTAL_APISIX_NAMESPACE: {{ dig "apisix" "apisix" "namespace" "apisix" .Values | quote }}
+  {{- with dig "dns01Issuer" "" $jc }}
+  # The dns01 ClusterIssuer registry hosts' certificates come from instead of HTTP-01.
+  JC_PORTAL_DNS01_ISSUER: {{ . | quote }}
+  {{- end }}
   {{- end }}
   {{- if eq $mode "host" }}
   # The Portal's forge on jc's loopback ([[mounts.shako]] localhost:8080 above). Naming the URL

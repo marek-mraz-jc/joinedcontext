@@ -231,6 +231,15 @@ export function useAdministers(): { known: boolean; administers: boolean; own?: 
   return { known: !permissions.isLoading, administers, own, opensAdministration: administers || own !== undefined };
 }
 
+/**
+ * Whether the caller is one of the installation's operators (the bootstrap group,
+ * `JC_PORTAL_BOOTSTRAP_ADMINS`; T-7129, T-7140): only then does Administration show the
+ * operators' sections. The server checks the group and the second factor on every door.
+ */
+export function useOperator(): boolean {
+  return usePermissions(ORG_NAMESPACE).data?.bootstrap === true;
+}
+
 /** One rule of a `Role` as the form holds it: the verbs it grants on the kinds it names. */
 export interface GrantedRule {
   kinds?: string[];

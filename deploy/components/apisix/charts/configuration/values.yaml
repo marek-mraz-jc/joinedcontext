@@ -69,3 +69,15 @@ composer:
   enabled: false
   serviceAccount: portal
   namespace: ''
+  # The Kyverno ClusterPolicy that holds what the composer creates and deletes here (T-7129 §3):
+  # names, labels, Secret, issuer, backend. Off only where Kyverno is not installed.
+  admission:
+    enabled: true
+    # The composer may create and delete Ingresses and Certificates only with the policy in
+    # force: true refuses to render the composer without it (jc's, T-7138).
+    required: false
+  # The one Service a composer Ingress may route to.
+  gatewayService: apisix-gateway
+  # The dns01 ClusterIssuer (`jc-dns01-<namespace>`) a registry host's Certificate may name
+  # besides the edge's issuer; empty: the edge's alone.
+  dns01Issuer: ''

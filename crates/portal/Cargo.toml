@@ -172,6 +172,9 @@ metrics-exporter-prometheus = { version = "0.17", default-features = false }
 # The TXT lookup of PF-41 domain verification (T-2377): a stub resolver over the pod's own
 # resolv.conf, so the reconciler asks the cluster DNS the way any lookup does.
 hickory-resolver = { version = "0.26", default-features = false, features = ["tokio", "system-config"] }
+# The registered domain (eTLD+1) a host's certificate counts against, from the public suffix
+# list compiled in (T-7129 §3 pacing, T-7138): no lookup at run time.
+psl = "2.1.249"
 
 [dev-dependencies]
 http-body-util = "0.1"

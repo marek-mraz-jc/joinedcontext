@@ -8173,7 +8173,11 @@
       "costs": "Costs",
       "connectors": "Connectors",
       "data-access": "Data access",
-      "backups": "Backups"
+      "backups": "Backups",
+      "operator-organizations": "Organizations",
+      "operator-hosts": "Hosts and certificates",
+      "operator-changes": "Operator Changes",
+      "operator-audit": "Operator audit"
     },
     "settings": {
       "title": "Settings",
@@ -8849,13 +8853,15 @@
       "access": "People and access",
       "projects": "Projects and apps",
       "platform": "Platform",
-      "settings": "Settings"
+      "settings": "Settings",
+      "operators": "Installation operators"
     },
     "groupLead": {
       "access": "Who belongs to the organization and what each person, group and service account may do. Every change is proposed and approved.",
       "projects": "What every project of the organization holds and publishes, in one place.",
       "platform": "What the installation runs for every project: brokers, environments, data space membership, health and costs.",
-      "settings": "The organization's domain, languages, contacts, policies and limits, its configuration backups, and what setup still lacks."
+      "settings": "The organization's domain, languages, contacts, policies and limits, its configuration backups, and what setup still lacks.",
+      "operators": "The installation's Organizations, their domains, hosts and certificates, the Changes a second operator approves and the audit of every step. Only the installation's operators open these sections."
     },
     "kindHidden": "Only an organization administrator whose role includes {kinds} sees them here. Ask an organization administrator to add them to your role.",
     "agents": {
@@ -12367,7 +12373,7 @@
     "installationTitle": "Ask the installation's administrators",
     "ownSections": "Open your Organization's members",
     "installationContacts": "The installation's contacts",
-    "noInstallationContacts": "The installation publishes no contact yet.",
+    "noInstallationContacts": "The installation publishes no contact yet. The person who set up your Organization reached its operators: ask them.",
     "contacts": "Your organization's contacts",
     "back": "Back to your projects"
   },
@@ -13575,5 +13581,172 @@
         "failed": "Not restored: check the reason under it"
       }
     }
+  },
+  "operator": {
+    "only": "These sections belong to the installation's administrators, its operators. Ask one of them for a new Organization, domain or host.",
+    "tryAgain": "The request did not go through. Try again in a moment.",
+    "organizations": {
+      "title": "Organizations",
+      "lead": "Every Organization of the installation with its domain and its hosts. A new domain is proved by its TXT record before an Organization uses it.",
+      "caption": "Organizations",
+      "empty": "No Organization yet. Create one in Settings, then prove its domain and ask for its first host below.",
+      "name": "Organization",
+      "domain": "Domain",
+      "noDomain": "Not set yet",
+      "hosts": "Hosts",
+      "hostCount": "{served} served, {waiting} on their way",
+      "setDomain": "Write its proved domain in Settings",
+      "noHost": "No host yet"
+    },
+    "ids": {
+      "title": "Domains and their TXT records",
+      "lead": "Each domain proves itself with one TXT record. The id is minted once the record is there, and it is never reused.",
+      "caption": "Organization ids",
+      "empty": "No domain asked for yet. Start with step 1 below.",
+      "domain": "Domain",
+      "record": "TXT record",
+      "state": "State",
+      "minted": "Minted",
+      "waiting": "Waiting for the record",
+      "check": "Check the record now",
+      "notMinted": "The id was not minted",
+      "organization": "Organization",
+      "unclaimed": "No Organization has this domain yet"
+    },
+    "add": {
+      "title": "Add a domain and its first host",
+      "lead": "Three steps. The host waits for a second operator's approval, then for its DNS and its certificate.",
+      "step1": "1. The domain and its TXT record",
+      "domain": "Domain",
+      "ask": "Get the TXT record",
+      "publish": "Publish this record at the DNS of {domain}, then check it in step 2.",
+      "record": "The TXT record to publish",
+      "step2": "2. Check the record and mint the id",
+      "step2Lead": "The Portal asks DNS for the record. A record published a minute ago can take a few minutes to show.",
+      "mint": "Check and mint the id",
+      "mintFirst": "Get the TXT record in step 1 first.",
+      "minted": "The domain is proved. Its Organization id is {id}.",
+      "step3": "3. Ask for a host",
+      "noOrganization": "No Organization exists yet: create one in Settings first, then ask for its host here.",
+      "host": "Host",
+      "organization": "Organization",
+      "organizationPick": "Choose an Organization",
+      "role": "What answers on the host",
+      "propose": "Ask for the host",
+      "proposed": "The host is asked for. A second operator approves it.",
+      "toChanges": "Open Operator Changes",
+      "copy": "Copy the record",
+      "hint": {
+        "domain": "The Organization's own domain, lowercase, e.g. bbsk.sk.",
+        "host": "Lowercase, without a port, under the proved domain or the installation's, e.g. smartcity.bbsk.sk.",
+        "organization": "The Organization the host answers for, e.g. bbsk.",
+        "role": "e.g. Working Portal for smartcity.bbsk.sk, Open data for opendata.bbsk.sk."
+      },
+      "orgNoDomain": "{organization} has no domain yet, so the host goes in under the installation's domain. For a host under {domain}, write {domain} in its Settings first."
+    },
+    "role": {
+      "working": "Working Portal",
+      "opendata": "Open data",
+      "api": "API",
+      "signin": "Sign-in",
+      "apps": "Applications",
+      "portal-site": "Portal site",
+      "host": "Shared host"
+    },
+    "state": {
+      "proposed": "Proposed",
+      "approved": "Approved",
+      "dns-ok": "DNS ready",
+      "cert-issued": "Certificate issued",
+      "served": "Served",
+      "removed": "Removed"
+    },
+    "stateHint": {
+      "proposed": "Waits for a second operator.",
+      "approved": "Waits for its DNS record.",
+      "dns-ok": "Waits for its certificate.",
+      "cert-issued": "Goes live on the next pass.",
+      "served": "Nothing: it answers requests.",
+      "removed": "Answers no request any more."
+    },
+    "hosts": {
+      "title": "Hosts and certificates",
+      "lead": "Every host of every Organization on its way to served: its DNS, its certificate, then the edge route. A host answers only once it is served.",
+      "slots": "Certificate slots",
+      "slotsLead": "The certificate authority limits new certificates, so the installation requests at most 10 a day and {week} a week per registered domain.",
+      "used": "{used} of {limit} new certificates requested in the last 24 hours.",
+      "nextFree": "The next slot frees at {at}.",
+      "caption": "Hosts",
+      "empty": "No host yet. Add a domain and ask for its first host under Organizations.",
+      "host": "Host",
+      "state": "State",
+      "detail": "What it waits for",
+      "actions": "Actions",
+      "remove": "Remove",
+      "removeTitle": "Remove {host}?",
+      "removeLead": "This asks for a removal. Once a second operator approves it, the host answers no request, and its certificate and route are deleted.",
+      "removeConfirm": "Ask for the removal",
+      "removalProposed": "The removal is asked for. A second operator approves it.",
+      "full": "No certificate slot is free"
+    },
+    "kind": {
+      "HostAdd": "Add a host",
+      "HostRemove": "Remove a host",
+      "OperatorAdd": "Add an operator",
+      "OperatorRemove": "Remove an operator"
+    },
+    "changeState": {
+      "proposed": "Waits for approval",
+      "applied": "Applied",
+      "rejected": "Rejected"
+    },
+    "changes": {
+      "title": "Operator Changes",
+      "lead": "What an operator asked for. Another operator approves it, and nothing is written before. Any operator may reject one.",
+      "caption": "Operator Changes",
+      "empty": "No operator Change yet. A host asked for under Organizations or Hosts shows here.",
+      "kind": "Change",
+      "target": "Host or person",
+      "organization": "Organization",
+      "proposedBy": "Asked by",
+      "state": "State",
+      "actions": "Actions",
+      "you": "You",
+      "ownHint": "Another operator approves this.",
+      "approve": "Approve",
+      "reject": "Reject",
+      "refused": "Not decided",
+      "applied": "The Change for {target} is applied.",
+      "rejected": "The Change for {target} is rejected."
+    },
+    "audit": {
+      "title": "Operator audit",
+      "lead": "Every operator Change and every step the Portal took on a host's certificate and Ingress, as written. Nothing here can be changed or deleted.",
+      "caption": "Operator audit",
+      "empty": "Nothing recorded yet. The first operator Change writes the first row.",
+      "at": "When",
+      "actor": "Who",
+      "reconciler": "The Portal (reconciler)",
+      "action": "What",
+      "subject": "Host or person",
+      "source": "From address"
+    },
+    "action": {
+      "proposed": "Asked for: {kind}",
+      "applied": "Applied: {kind}",
+      "rejected": "Rejected: {kind}",
+      "host": "Host now {state}",
+      "certificate": {
+        "created": "Certificate requested",
+        "issued": "Certificate issued",
+        "deleted": "Certificate deleted"
+      },
+      "ingress": {
+        "created": "Route for the certificate check created",
+        "widened": "Route opened to the host",
+        "deleted": "Route deleted"
+      }
+    },
+    "refusedTitle": "{section} is for the installation's operators"
   }
 }

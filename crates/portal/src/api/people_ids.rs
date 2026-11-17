@@ -136,7 +136,7 @@ pub async fn person_names(
     Ok(Json(PersonNames { items }))
 }
 
-fn name_of(user: &KcUser) -> String {
+pub(super) fn name_of(user: &KcUser) -> String {
     let name = format!(
         "{} {}",
         user.first_name.as_deref().unwrap_or_default(),

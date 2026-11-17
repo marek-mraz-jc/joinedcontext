@@ -98,7 +98,7 @@ pub fn hostname_certificate(
     named_certificate(namespace, &name, hostname_labels(app), hostname, issuer_ref)
 }
 
-fn named_certificate(
+pub(super) fn named_certificate(
     namespace: &str,
     name: &str,
     labels: Value,
@@ -134,7 +134,18 @@ pub fn hostname_ingress(
     named_ingress(template, namespace, &name, hostname_labels(app), hostname)
 }
 
-fn named_ingress(
+/// The annotations a host Ingress copies from the edge's; composer-admission.yaml refuses any other.
+const ROUTER_ANNOTATIONS: [&str; 7] = [
+    "ingress.kubernetes.io/affinity",
+    "traefik.ingress.kubernetes.io/router.tls",
+    "traefik.ingress.kubernetes.io/router.tls.options",
+    "traefik.ingress.kubernetes.io/router.entrypoints",
+    "nginx.ingress.kubernetes.io/ssl-ciphers",
+    "nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers",
+    "nginx.ingress.kubernetes.io/force-ssl-redirect",
+];
+
+pub(super) fn named_ingress(
     template: &Value,
     namespace: &str,
     name: &str,
@@ -145,13 +156,14 @@ fn named_ingress(
     if !path["backend"].is_object() {
         return None;
     }
-    // The chart's Certificate is explicit and so is this one: an ingress-shim annotation would
-    // make a second owner order the same name.
+    // Only the edge's listener and affinity annotations, the list the composer's admission
+    // policy allows (composer-admission.yaml): no ingress-shim annotation, which would make a
+    // second owner order the same name, and no router middleware.
     let annotations: Map<String, Value> = template["metadata"]["annotations"]
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(key, _)| !key.starts_with("cert-manager.io/"))
+        .filter(|(key, _)| ROUTER_ANNOTATIONS.contains(&key.as_str()))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     let mut spec = json!({
@@ -223,7 +235,7 @@ fn no_backend() -> HostState {
 }
 
 /// A kube error as a sentence that names the object and the status, never the body sent.
-fn said(object: &str, err: &KubeError) -> String {
+pub(super) fn said(object: &str, err: &KubeError) -> String {
     match err {
         KubeError::Api { status, .. } => format!("the API server answered {status} for {object}"),
         other => format!("{object}: {other}"),
@@ -512,6 +524,8 @@ mod tests {
                 "annotations": {
                     "traefik.ingress.kubernetes.io/router.tls.options": "apisix-bsi-tr-02102@kubernetescrd",
                     "cert-manager.io/cluster-issuer": "letsencrypt-prod",
+                    "traefik.ingress.kubernetes.io/router.middlewares": "apisix-strip@kubernetescrd",
+                    "meta.helm.sh/release-name": "apisix",
                 },
             },
             "spec": {
@@ -547,11 +561,10 @@ mod tests {
             .as_object()
             .expect("annotations");
         assert!(annotations.contains_key("traefik.ingress.kubernetes.io/router.tls.options"));
-        assert!(
-            !annotations
-                .keys()
-                .any(|key| key.starts_with("cert-manager.io/")),
-            "one owner orders the certificate: {annotations:?}"
+        assert_eq!(
+            annotations.keys().collect::<Vec<_>>(),
+            ["traefik.ingress.kubernetes.io/router.tls.options"],
+            "no ingress-shim, middleware or helm annotation: {annotations:?}"
         );
         assert_eq!(managed_app(&made), Some("bikes"));
         assert!(

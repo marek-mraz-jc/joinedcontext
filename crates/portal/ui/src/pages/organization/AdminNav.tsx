@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ORG_NAMESPACE } from "../../api/manifest";
-import { useAdministers } from "../../api/permissions";
+import { useAdministers, useOperator } from "../../api/permissions";
 import { navLinkClass } from "../../components/layout/BrandMark";
 import { Icon } from "../../components/ui";
 
@@ -19,7 +19,17 @@ export const ORGANIZATION_GROUPS = [
   },
   { id: "platform", tabs: ["brokers", "environments", "dataspaceparticipants", "health", "costs"] },
   { id: "settings", tabs: ["settings", "opendata-pages", "backups", "setup"] },
+  // The installation's operators alone (T-7129, T-7140): Organizations, hosts, their Changes, the audit.
+  { id: "operators", tabs: ["operator-organizations", "operator-hosts", "operator-changes", "operator-audit"] },
 ] as const;
+
+/** The operators' sections: shown to an operator alone, every door checked on the server. */
+export const OPERATOR_TABS: readonly OrganizationTab[] = [
+  "operator-organizations",
+  "operator-hosts",
+  "operator-changes",
+  "operator-audit",
+];
 
 export type OrganizationTab = (typeof ORGANIZATION_GROUPS)[number]["tabs"][number];
 
@@ -69,9 +79,10 @@ export function AdminNav({
 }): JSX.Element {
   const { t } = useTranslation();
   const { known, administers, own } = useAdministers();
+  const operator = useOperator();
   const noProject = project === ORG_NAMESPACE;
   const groups = administers
-    ? ORGANIZATION_GROUPS
+    ? ORGANIZATION_GROUPS.filter((group) => operator || group.id !== "operators")
     : own
       ? ORGANIZATION_GROUPS.map((group) => ({
           id: group.id,

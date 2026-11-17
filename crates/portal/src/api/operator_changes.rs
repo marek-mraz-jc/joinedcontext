@@ -138,8 +138,13 @@ pub struct OperatorChange {
     pub proposed_by: String,
     #[schema(value_type = String, format = DateTime)]
     pub proposed_at: DateTime<Utc>,
+    /// The name of the operator who asked for it, when the realm answers it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed_by_name: Option<String>,
     /// The operator who approved or rejected it.
     pub decided_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decided_by_name: Option<String>,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub decided_at: Option<DateTime<Utc>>,
 }
@@ -152,7 +157,7 @@ pub struct OperatorChangeList {
 
 /// The caller, when it is a person of the operators' group with a second factor in this
 /// session; `403` for anybody else, a service account of that group included.
-fn operator(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
+pub(crate) fn operator(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
     if !crate::permissions::in_group(identity, &state.config.bootstrap_admins)
         || crate::permissions::is_service_account(&state.mirror, identity)
         || identity.client.is_some()
@@ -380,6 +385,44 @@ async fn holds(
     }
 }
 
+/// The names behind the user ids an operator read shows, at most `LAST_SEEN_AT_ONCE` realm reads
+/// in flight. Best effort: a read still answers with the ids when the realm does not, and an id it
+/// does not know (or `reconciler`) keeps no name.
+async fn names_of(
+    state: &AppState,
+    ids: std::collections::BTreeSet<String>,
+) -> std::collections::BTreeMap<String, String> {
+    let ids: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::permissions::is_person_id(id))
+        .collect();
+    if ids.is_empty() {
+        return Default::default();
+    }
+    let Ok(people) = people(state) else {
+        return Default::default();
+    };
+    let Ok(admin) = people.admin().await else {
+        return Default::default();
+    };
+    let lookups = ids.into_iter().map(|id| {
+        let admin = &admin;
+        async move {
+            let found = admin.get(&id).await;
+            (id, found)
+        }
+    });
+    let answers: Vec<_> = futures_util::StreamExt::collect(futures_util::StreamExt::buffered(
+        futures_util::stream::iter(lookups),
+        super::people::LAST_SEEN_AT_ONCE,
+    ))
+    .await;
+    answers
+        .into_iter()
+        .filter_map(|(id, found)| Some((id, super::people_ids::name_of(&found.ok()?))))
+        .collect()
+}
+
 fn people(state: &AppState) -> Result<&crate::people::People, ApiError> {
     state.people.as_deref().ok_or_else(|| {
         ApiError::Unavailable(
@@ -483,8 +526,10 @@ fn change(row: Row) -> Result<OperatorChange, ApiError> {
         payload,
         state,
         proposed_by,
+        proposed_by_name: None,
         proposed_at: at(proposed_at),
         decided_by,
+        decided_by_name: None,
         decided_at: decided_at.map(at),
     })
 }
@@ -567,7 +612,20 @@ pub async fn list(
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    let items = rows.into_iter().map(change).collect::<Result<_, _>>()?;
+    let mut items: Vec<OperatorChange> = rows.into_iter().map(change).collect::<Result<_, _>>()?;
+    let ids = items
+        .iter()
+        .flat_map(|c| std::iter::once(&c.proposed_by).chain(c.decided_by.as_ref()))
+        .cloned()
+        .collect();
+    let names = names_of(&state, ids).await;
+    for item in &mut items {
+        item.proposed_by_name = names.get(&item.proposed_by).cloned();
+        item.decided_by_name = item
+            .decided_by
+            .as_ref()
+            .and_then(|id| names.get(id).cloned());
+    }
     Ok(Json(OperatorChangeList { items }))
 }
 
@@ -927,11 +985,362 @@ pub async fn reject(
     Ok(Json(decided))
 }
 
+/// One host of the registry as the operators' pages show it (T-7129 §3, T-7140).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorHost {
+    pub host: String,
+    pub organization: String,
+    pub organization_id: Option<String>,
+    pub role: String,
+    /// `proposed`, `approved`, `dns-ok`, `cert-issued`, `served` or `removed`.
+    pub state: String,
+    /// What the host waits for on its way to `served`, e.g. `waiting for DNS: ...` or
+    /// `waiting for a certificate slot until 2026-11-18 09:00 UTC`; none once served.
+    pub detail: Option<String>,
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub detail_at: Option<DateTime<Utc>>,
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: DateTime<Utc>,
+}
+
+/// The new-certificate slots of the instance (T-7129 §3 pacing).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateSlots {
+    /// New certificates requested in the last 24 hours.
+    pub used_today: i64,
+    /// The most a rolling 24 hours allows.
+    pub per_day: i64,
+    /// The most a rolling 7 days allows per registered domain (eTLD+1).
+    pub per_domain_week: i64,
+    /// When the next slot frees, while every slot of the day is taken.
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub next_free_at: Option<DateTime<Utc>>,
+}
+
+/// Every host of the registry and the certificate slots.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OperatorHostList {
+    pub items: Vec<OperatorHost>,
+    pub certificates: CertificateSlots,
+}
+
+type HostReadRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    i64,
+);
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/operator/hosts",
+    operation_id = "operator_host_list",
+    summary = "List The Host Registry",
+    description = "Every host of every Organization with its state on the way to served and what it waits for, and the instance's new-certificate slots (T-7129 §3). For a person of the operators' group with a second factor.",
+    tag = "system",
+    responses(
+        (status = 200, description = "The hosts", body = OperatorHostList),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 503, description = "No database", body = ProblemDetails)
+    )
+)]
+pub async fn hosts(
+    user: CurrentUser,
+    State(state): State<AppState>,
+) -> Result<Json<OperatorHostList>, ApiError> {
+    operator(&state, &user.0.identity)?;
+    let pool = database(&state)?;
+    let rows: Vec<HostReadRow> = sqlx::query_as(
+        "SELECT host, organization, organization_id, role, state, detail, \
+         extract(epoch FROM detail_at)::bigint, extract(epoch FROM updated_at)::bigint \
+         FROM organization_hosts ORDER BY organization, host",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let items = rows
+        .into_iter()
+        .map(
+            |(host, organization, organization_id, role, state, detail, detail_at, updated_at)| {
+                OperatorHost {
+                    host,
+                    organization,
+                    organization_id,
+                    role,
+                    state,
+                    detail,
+                    detail_at: detail_at.map(at),
+                    updated_at: at(updated_at),
+                }
+            },
+        )
+        .collect();
+    let day: Vec<i64> = sqlx::query_scalar(
+        "SELECT extract(epoch FROM requested_at)::bigint FROM organization_host_certificates \
+         WHERE requested_at > now() - interval '24 hours' ORDER BY requested_at",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let next_free_at = crate::reconciler::org_hosts::wait_until(
+        &day.iter().copied().map(at).collect::<Vec<_>>(),
+        &[],
+    );
+    Ok(Json(OperatorHostList {
+        items,
+        certificates: CertificateSlots {
+            used_today: i64::try_from(day.len()).unwrap_or(i64::MAX),
+            per_day: crate::reconciler::org_hosts::PER_INSTANCE_DAY as i64,
+            per_domain_week: crate::reconciler::org_hosts::PER_DOMAIN_WEEK as i64,
+            next_free_at,
+        },
+    }))
+}
+
+/// One row of the operators' audit.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorAuditEntry {
+    pub id: i64,
+    #[schema(value_type = String, format = DateTime)]
+    pub at: DateTime<Utc>,
+    /// The operator's user id, or `reconciler` for a step on a host's objects.
+    pub actor: String,
+    /// The operator's name, when the realm answers it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_name: Option<String>,
+    pub change_id: Option<String>,
+    /// e.g. `proposed HostAdd`, `certificate.created`, `host.served`.
+    pub action: String,
+    pub before: Option<Value>,
+    pub after: Option<Value>,
+    pub source_ip: Option<String>,
+}
+
+/// The newest rows of the operators' audit, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OperatorAuditList {
+    pub items: Vec<OperatorAuditEntry>,
+}
+
+type AuditRow = (
+    i64,
+    i64,
+    String,
+    Option<String>,
+    String,
+    Option<Value>,
+    Option<Value>,
+    Option<String>,
+);
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/operator/audit",
+    operation_id = "operator_audit_list",
+    summary = "List The Operators' Audit",
+    description = "The newest 500 rows of the operators' append-only audit: every proposal, approval, rejection and applied write, and every reconciler step on a registry host (T-7129 §4). For a person of the operators' group with a second factor.",
+    tag = "system",
+    responses(
+        (status = 200, description = "The audit rows", body = OperatorAuditList),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 503, description = "No database", body = ProblemDetails)
+    )
+)]
+pub async fn audit_list(
+    user: CurrentUser,
+    State(state): State<AppState>,
+) -> Result<Json<OperatorAuditList>, ApiError> {
+    operator(&state, &user.0.identity)?;
+    let pool = database(&state)?;
+    let rows: Vec<AuditRow> = sqlx::query_as(
+        "SELECT id, extract(epoch FROM at)::bigint, actor, change_id::text, action, before, \
+         after, source_ip FROM operator_audit ORDER BY id DESC LIMIT 500",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let names = names_of(&state, rows.iter().map(|row| row.2.clone()).collect()).await;
+    let items = rows
+        .into_iter()
+        .map(
+            |(id, when, actor, change_id, action, before, after, source_ip)| OperatorAuditEntry {
+                id,
+                at: at(when),
+                actor_name: names.get(&actor).cloned(),
+                actor,
+                change_id,
+                action,
+                before,
+                after,
+                source_ip,
+            },
+        )
+        .collect();
+    Ok(Json(OperatorAuditList { items }))
+}
+
+/// One Organization id, minted or waiting for its TXT record (T-7012, T-7140).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorOrganizationId {
+    /// e.g. `sk_bbsk`.
+    pub id: String,
+    /// e.g. `bbsk.sk`.
+    pub domain: String,
+    /// The TXT record's name, `_joinedcontext.{domain}`.
+    pub record_name: String,
+    /// The TXT record's value, `jc-verify={challenge}`: public, it is published in DNS.
+    pub record_value: String,
+    #[schema(value_type = String, format = DateTime)]
+    pub requested_at: DateTime<Utc>,
+    /// When the id was minted; none while the record is not checked yet.
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub minted_at: Option<DateTime<Utc>>,
+    /// The active Organizations this id belongs to, or whose domain it is.
+    pub organizations: Vec<String>,
+}
+
+/// One Organization of the installation as the operators' list shows it.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorOrganization {
+    pub name: String,
+    pub title: Option<String>,
+    pub domain: Option<String>,
+    /// Its hosts per registry state, e.g. `{"served": 3, "dns-ok": 1}`.
+    pub hosts: std::collections::BTreeMap<String, i64>,
+}
+
+/// The Organizations and the Organization ids.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OperatorOrganizationList {
+    pub items: Vec<OperatorOrganization>,
+    pub ids: Vec<OperatorOrganizationId>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/operator/organizations",
+    operation_id = "operator_organization_list",
+    summary = "List Organizations For Operators",
+    description = "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.",
+    tag = "system",
+    responses(
+        (status = 200, description = "The Organizations and ids", body = OperatorOrganizationList),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 503, description = "No database", body = ProblemDetails)
+    )
+)]
+pub async fn organizations(
+    user: CurrentUser,
+    State(state): State<AppState>,
+) -> Result<Json<OperatorOrganizationList>, ApiError> {
+    operator(&state, &user.0.identity)?;
+    let pool = database(&state)?;
+    let counts: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT organization, state, count(*) FROM organization_hosts GROUP BY organization, state",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let rows: Vec<(String, String, String, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT id, domain, challenge, extract(epoch FROM requested_at)::bigint, \
+         extract(epoch FROM minted_at)::bigint FROM organization_ids ORDER BY domain",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    // The Organizations are the registry's active rows (T-7181); the manifest adds the title and,
+    // for a row with no id yet, the `spec.domain` the gateway derives one from.
+    let organizations: Vec<host_registry::OrganizationRow> = host_registry::organizations(pool)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .filter(|row| row.state == "active")
+        .collect();
+    let manifest = |name: &str| {
+        state
+            .mirror
+            .get(crate::permissions::ORG_NAMESPACE, "Organization", name)
+    };
+    let domain_of = |row: &host_registry::OrganizationRow| {
+        row.organization_id
+            .as_deref()
+            .and_then(|id| {
+                rows.iter()
+                    .find(|(minted, _, _, _, at)| minted == id && at.is_some())
+                    .map(|(_, domain, _, _, _)| domain.clone())
+            })
+            .or_else(|| {
+                manifest(&row.name)?
+                    .spec
+                    .get("domain")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+    };
+    let items: Vec<OperatorOrganization> = organizations
+        .iter()
+        .map(|row| OperatorOrganization {
+            name: row.name.clone(),
+            title: manifest(&row.name).and_then(|env| {
+                env.spec
+                    .get("title")
+                    .or_else(|| env.spec.get("displayName"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }),
+            domain: domain_of(row),
+            hosts: counts
+                .iter()
+                .filter(|(org, _, _)| *org == row.name)
+                .map(|(_, host_state, n)| (host_state.clone(), *n))
+                .collect(),
+        })
+        .collect();
+    let ids = rows
+        .iter()
+        .map(
+            |(id, domain, challenge, requested_at, minted_at)| OperatorOrganizationId {
+                record_name: txt_name(domain),
+                record_value: format!("jc-verify={challenge}"),
+                organizations: organizations
+                    .iter()
+                    .filter(|row| {
+                        row.organization_id.as_deref() == Some(id.as_str())
+                            || domain_of(row).as_deref() == Some(domain.as_str())
+                    })
+                    .map(|row| row.name.clone())
+                    .collect(),
+                id: id.clone(),
+                domain: domain.clone(),
+                requested_at: at(*requested_at),
+                minted_at: minted_at.map(at),
+            },
+        )
+        .collect();
+    Ok(Json(OperatorOrganizationList { items, ids }))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/operator/changes", get(list).post(propose))
         .route("/operator/changes/{id}/approve", post(approve))
         .route("/operator/changes/{id}/reject", post(reject))
+        .route("/operator/hosts", get(hosts))
+        .route("/operator/audit", get(audit_list))
+        .route("/operator/organizations", get(organizations))
 }
 
 #[cfg(test)]
