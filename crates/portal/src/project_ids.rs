@@ -121,10 +121,11 @@ pub async fn key_of(
 /// registry), sorted, so the caller says which ones wait.
 pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sqlx::Error> {
     let mut waiting = std::collections::BTreeSet::new();
+    // The table names are this file's constants, never input, so the formatted SQL binds the rest.
     for table in KEYED_BY_NAME {
-        let names: Vec<String> = sqlx::query_scalar(&format!(
-            "SELECT DISTINCT project FROM {table} WHERE project_id IS NULL OR org_id IS NULL"
-        ))
+        let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT DISTINCT project FROM {table} WHERE project_id IS NULL"
+        )))
         .fetch_all(pool)
         .await?;
         for name in names {
@@ -132,9 +133,10 @@ pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sql
                 waiting.insert(name);
                 continue;
             };
-            sqlx::query(&format!(
-                "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid                  WHERE project = $3 AND (project_id IS NULL OR org_id IS NULL)"
-            ))
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid \
+                 WHERE project = $3 AND project_id IS NULL"
+            )))
             .bind(key.org.to_string())
             .bind(key.project.to_string())
             .bind(&name)
