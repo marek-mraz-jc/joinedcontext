@@ -55,6 +55,12 @@ pub struct ProjectSummary {
     /// The Organization that owns the project, its `spec.organizationRef` (PF-122).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization: Option<String>,
+    /// The project's id (ARCH/TEN-01, T-7190): 26 characters of lower-case base32, minted once and
+    /// never reused, the `{projectId}` segment of `/{org}/{projectId}/api/...` (TEN-13). Absent
+    /// when the Portal runs without its database.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(example = "aerf3ql7mk5r4o2dvsxbq6ntcy")]
+    pub id: Option<String>,
 }
 
 /// The label that marks a project as the sample of real open data the first-run checklist offers
@@ -111,9 +117,11 @@ pub async fn list_projects(
                 sample,
                 title,
                 organization,
+                id: None,
             }
         })
         .collect();
+    let items = with_ids(&state, items).await?;
     let organizations = host_organization(&state);
     Ok(Json(ProjectList {
         api_version: API_VERSION.to_string(),
@@ -121,6 +129,28 @@ pub async fn list_projects(
         items,
         organizations,
     }))
+}
+
+/// `items` with their project ids, minting the ids of projects the registry has not seen yet
+/// (T-7190); unchanged when the Portal runs without its database.
+async fn with_ids(
+    state: &AppState,
+    mut items: Vec<ProjectSummary>,
+) -> Result<Vec<ProjectSummary>, ApiError> {
+    let Some(pool) = state.db.as_ref() else {
+        return Ok(items);
+    };
+    let names: Vec<String> = items.iter().map(|item| item.name.clone()).collect();
+    let ids = crate::project_ids::ensure(pool, &names)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "the project id registry did not answer");
+            ApiError::from_db(&err, "project id")
+        })?;
+    for item in &mut items {
+        item.id = ids.get(&item.name).map(jc_types::ProjectId::path_segment);
+    }
+    Ok(items)
 }
 
 /// The Organization this request's Portal host serves, alone (T-7151); none on any other address.
