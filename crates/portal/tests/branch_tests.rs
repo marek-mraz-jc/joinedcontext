@@ -1,6 +1,7 @@
 //! Branch projects (ARCH/TEN-12, CHG-15, RTE-05; T-7213): the door that opens and renews a branch,
 //! and a branch's name, which resolves only on the branch's own id address, so a name in a body,
-//! a tool argument or another project's address answers like an unknown project.
+//! a tool argument or another project's address answers like an unknown project; a branch's
+//! rights, its manifests that would reach beyond its Organization and its expiry (T-7215).
 //!
 //! The store is the database `JC_PORTAL_TEST_DATABASE_URL` names (CI's portal-test jobs set it).
 //! A missing variable fails, never skips. Each test uses names of its own run.
@@ -8,9 +9,10 @@
 mod common;
 
 use axum::http::StatusCode;
+use jc_core::kinds::Verb;
 use jc_types::ProjectId;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::permissions::ORG_NAMESPACE;
+use joinedcontext_portal::permissions::{effective, Effective, ORG_NAMESPACE};
 use joinedcontext_portal::project_ids;
 use joinedcontext_portal::request_id::placed;
 use joinedcontext_portal::state::AppState;
@@ -269,4 +271,190 @@ async fn the_branch_door_opens_for_a_proposer_and_answers_others_like_an_unknown
     )
     .await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text);
+}
+
+/// A branch with `ana` as creator in a fresh parent, `carl` approving and `dan` proposing there.
+async fn branch_of(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    test: &str,
+) -> (String, project_ids::BranchRow) {
+    let project = parent(state, pool, test).await;
+    grant(state, "carl", &project, &["read", "approve"]);
+    grant(state, "dan", &project, &["read", "propose"]);
+    let key = project_ids::key_of(pool, &state.mirror, &project)
+        .await
+        .expect("key")
+        .expect("a keyed parent");
+    let branch = project_ids::open_branch(pool, key, &person("ana").subject, 7, 5)
+        .await
+        .expect("open")
+        .expect("a branch");
+    (project, branch)
+}
+
+fn rights(state: &AppState, who: &str, project: &str) -> Effective {
+    effective(
+        &state.mirror,
+        &state.config.bootstrap_admins,
+        &person(who),
+        project,
+        chrono::Utc::now(),
+    )
+}
+
+#[tokio::test]
+async fn branch_rights_never_exceed_the_parent() {
+    let (state, pool) = state().await;
+    let (project, branch) = branch_of(&state, &pool, "brrights").await;
+    // A grant bound to one of the parent's spaces names nothing the branch holds.
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        &format!("ana-space-in-{project}"),
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": format!("carl-{project}-role"),
+                "scope": { "contextSpace": "parks" } }),
+    ));
+    let ana = rights(&state, "ana", &branch.name);
+    assert!(ana.may("Endpoint", Verb::Propose), "{ana:?}");
+    assert!(
+        !ana.may("Endpoint", Verb::Approve),
+        "never more than in the parent: {ana:?}"
+    );
+    assert!(ana.grants.iter().all(|grant| grant.space.is_none()));
+    let parent = rights(&state, "ana", &project);
+    assert!(ana.grants.len() <= parent.grants.len());
+    // The parent's approver gets their own rights; a member who neither opened it nor approves
+    // gets nothing, and so does anyone in no binding of the parent.
+    assert!(rights(&state, "carl", &branch.name).may("Endpoint", Verb::Approve));
+    for nobody in ["dan", "eve"] {
+        assert!(
+            rights(&state, nobody, &branch.name).grants.is_empty(),
+            "{nobody}"
+        );
+    }
+    // A branch no Portal opened gives nobody anything.
+    let unknown = format!("b-{}", ProjectId::mint().path_segment());
+    assert!(rights(&state, "ana", &unknown).grants.is_empty());
+}
+
+#[tokio::test]
+async fn branch_cannot_share_objects() {
+    let (state, pool) = state().await;
+    let (_, branch) = branch_of(&state, &pool, "brshare").await;
+    let endpoint = |name: &str, spec: Value| envelope("Endpoint", name, &branch.name, spec);
+    for shared in [
+        endpoint("open", json!({ "audience": "public" })),
+        endpoint(
+            "listed",
+            json!({ "audience": "organization", "catalog": { "title": "Trees" } }),
+        ),
+        envelope("SharedSpaceReference", "theirs", &branch.name, json!({})),
+        envelope("DataOffer", "offer", &branch.name, json!({})),
+    ] {
+        let (kind, name) = (shared.kind.clone(), shared.metadata.name.clone());
+        state.mirror.upsert(shared);
+        assert!(
+            state.mirror.get(&branch.name, &kind, &name).is_none(),
+            "{kind} {name} renders"
+        );
+        assert!(
+            state.mirror.refused(&branch.name, &kind, &name).is_some(),
+            "{kind} {name} is shown refused"
+        );
+    }
+    state
+        .mirror
+        .upsert(endpoint("inside", json!({ "audience": "organization" })));
+    assert!(state
+        .mirror
+        .get(&branch.name, "Endpoint", "inside")
+        .is_some());
+}
+
+/// An expired branch: its rights and manifests are gone at once, its rows after the sweep, and its
+/// registry rows stay as the tombstone.
+#[tokio::test]
+async fn an_expired_branch_answers_nothing_and_is_swept_to_a_tombstone() {
+    let (state, pool) = state().await;
+    let project = parent(&state, &pool, "brexpire").await;
+    let parent_key = project_ids::key_of(&pool, &state.mirror, &project)
+        .await
+        .expect("key")
+        .expect("a keyed parent");
+    // Expired two hours ago, past the hour the reconciler has to revoke its clients.
+    let id = ProjectId::mint();
+    let name = format!("b-{}", id.path_segment());
+    sqlx::query(
+        "INSERT INTO project_ids (id, name, parent, organization) \
+         SELECT $1::uuid, $2, p.id, p.organization FROM project_ids p WHERE p.id = $3::uuid",
+    )
+    .bind(id.to_string())
+    .bind(&name)
+    .bind(parent_key.project.to_string())
+    .execute(&pool)
+    .await
+    .expect("a branch row");
+    sqlx::query(
+        "INSERT INTO project_branches (id, created_by, created_at, expires_at) \
+         VALUES ($1::uuid, 'sub-ana', now() - interval '9 days', now() - interval '2 hours')",
+    )
+    .bind(id.to_string())
+    .execute(&pool)
+    .await
+    .expect("an expired branch");
+    let key = jc_types::ProjectKey {
+        org: parent_key.org,
+        project: id,
+    };
+    let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+        .await
+        .expect("tx");
+    sqlx::query(
+        "INSERT INTO email_unsubscribes (project, app, subject) VALUES ($1, 'mail', 'sub-x')",
+    )
+    .bind(&name)
+    .execute(&mut *tx)
+    .await
+    .expect("a branch's row");
+    tx.commit().await.expect("commit");
+    project_ids::read_branches(&pool).await.expect("read");
+
+    assert!(rights(&state, "ana", &name).grants.is_empty());
+    state
+        .mirror
+        .upsert(envelope("ServiceAccount", "worker", &name, json!({})));
+    assert!(state
+        .mirror
+        .get(&name, "ServiceAccount", "worker")
+        .is_none());
+    assert!(state
+        .mirror
+        .refused(&name, "ServiceAccount", "worker")
+        .is_none());
+
+    let swept = project_ids::sweep_expired_branches(&pool)
+        .await
+        .expect("sweep");
+    assert!(swept.contains(&name), "{swept:?}");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM email_unsubscribes WHERE project = $1")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(rows, 0, "the branch's data is deleted");
+    let tombstone: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
+         WHERE p.id = $1::uuid AND b.swept_at IS NOT NULL",
+    )
+    .bind(id.to_string())
+    .fetch_one(&pool)
+    .await
+    .expect("tombstone");
+    assert_eq!(tombstone, 1, "the id stays as a tombstone");
+    let again = project_ids::sweep_expired_branches(&pool)
+        .await
+        .expect("sweep");
+    assert!(!again.contains(&name), "swept once");
 }

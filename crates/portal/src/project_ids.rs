@@ -555,7 +555,11 @@ pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::
             let column = key_column(table.name);
             let statement = format!("DELETE FROM {} WHERE {column} = $1", table.name);
             // The table name is one of PORTAL_TABLES, a constant; the branch name is bound.
-            match sqlx::query(sqlx::AssertSqlSafe(statement)).bind(&name).execute(&mut *tx).await {
+            match sqlx::query(sqlx::AssertSqlSafe(statement))
+                .bind(&name)
+                .execute(&mut *tx)
+                .await
+            {
                 Ok(_) => tx.commit().await?,
                 Err(err) => {
                     tracing::info!(branch = %name, table = table.name, error = %err, "a branch's rows are kept");
