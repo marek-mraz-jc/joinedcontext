@@ -528,6 +528,15 @@ impl LogStore {
                 let steps: Vec<Option<i32>> = lines.iter().map(|l| l.step).collect();
                 let outcomes: Vec<&str> = lines.iter().map(|l| l.outcome.as_str()).collect();
                 let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    // 0080 forces the key (T-7201): a keyless project's run keeps no history.
+                    tracing::warn!(
+                        project,
+                        pipeline,
+                        run,
+                        "pipeline run history not kept: the project belongs to no active \
+                         Organization of this installation's registry; an operator adds its \
+                         Organization on the Organizations page"
+                    );
                     return Ok(());
                 };
                 sqlx::query(

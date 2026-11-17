@@ -1667,4 +1667,26 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
         2,
         "the backfilled run and the new one read in their key"
     );
+    let ran = state.pipeline_log.ran().await.expect("ran");
+    assert!(ran.contains_key(&(placed.clone(), "trees".to_owned())));
+    assert!(
+        !ran.contains_key(&(orphan.clone(), "trees".to_owned())),
+        "the pass over every project leaves a project with no key out (0080 forces the key)"
+    );
+    let refused = state
+        .pipeline_templates
+        .create(
+            &orphan,
+            "alice",
+            joinedcontext_portal::ops::pipeline_templates::CreateTemplate {
+                title: "Trees".into(),
+                manifest: serde_json::json!({"spec": {}}),
+            },
+        )
+        .await
+        .expect_err("a project with no key keeps no template");
+    assert!(
+        refused.to_string().contains(&orphan) && refused.to_string().contains("Organizations page"),
+        "the refusal names the project and the operator's next step: {refused}"
+    );
 }
