@@ -8455,7 +8455,7 @@
       "operatorSets": "Your installation's operators set this.",
       "notYet": "Not set yet",
       "whomToAsk": "Whom to ask",
-      "whomToAskLead": "The installation's operators set the e-mail server; ask them for it.",
+      "whomToAskLead": "The installation's operators set the branding, the sign-in pages and the e-mail server; ask them for these.",
       "deploymentSets": "Deployment sets this",
       "step": {
         "organization": {
