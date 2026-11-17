@@ -72,9 +72,18 @@ pub struct KcUser {
     pub required_actions: Vec<String>,
     #[serde(default)]
     pub attributes: HashMap<String, Vec<String>>,
+    /// Set on the user a client's service account signs in as (the full representation only).
+    #[serde(default)]
+    pub service_account_client_link: Option<String>,
 }
 
 impl KcUser {
+    /// A client's service account rather than a person: the link the full representation
+    /// carries, or the `service-account-` username Keycloak gives every one of them.
+    pub fn is_service_account(&self) -> bool {
+        self.service_account_client_link.is_some() || self.username.starts_with("service-account-")
+    }
+
     /// The language the person chose, as Keycloak keeps it (the `locale` attribute).
     pub fn locale(&self) -> Option<&str> {
         self.attributes
@@ -538,6 +547,63 @@ impl Admin<'_> {
         self.send(self.request(Method::PUT, &format!("/users/{id}/groups/{group}")))
             .await
             .map(|_| true)
+    }
+
+    /// Adds the person to the realm's top-level group `name` (the operators' group, T-7139);
+    /// `false` when the realm has no such group. Found by an exact search of the name.
+    pub async fn join_group(&self, id: &str, name: &str) -> Result<bool, PeopleError> {
+        self.group_membership(Method::PUT, id, name).await
+    }
+
+    /// Takes the person out of the realm's top-level group `name`; `false` when the realm has
+    /// no such group.
+    pub async fn leave_group(&self, id: &str, name: &str) -> Result<bool, PeopleError> {
+        self.group_membership(Method::DELETE, id, name).await
+    }
+
+    async fn group_membership(
+        &self,
+        verb: Method,
+        id: &str,
+        name: &str,
+    ) -> Result<bool, PeopleError> {
+        let id = segment(id)?;
+        let Some(group) = self.top_group(name).await? else {
+            return Ok(false);
+        };
+        self.send(self.request(verb, &format!("/users/{id}/groups/{group}")))
+            .await
+            .map(|_| true)
+    }
+
+    /// The people of the realm's top-level group `name`; `None` when the realm has no such
+    /// group.
+    pub async fn group_members(&self, name: &str) -> Result<Option<Vec<KcUser>>, PeopleError> {
+        let Some(group) = self.top_group(name).await? else {
+            return Ok(None);
+        };
+        self.pages(&format!("/groups/{group}/members"))
+            .await
+            .map(Some)
+    }
+
+    /// The id of the top-level group `name`, found by an exact search, as a path segment.
+    async fn top_group(&self, name: &str) -> Result<Option<String>, PeopleError> {
+        let search = self.request(Method::GET, "/groups").query(&[
+            ("search", name),
+            ("exact", "true"),
+            ("briefRepresentation", "true"),
+            ("max", "1000"),
+        ]);
+        let found: Vec<GroupNode> = self
+            .send(search)
+            .await?
+            .json()
+            .await
+            .map_err(|err| PeopleError::Unreachable(err.to_string()))?;
+        find_group(&found, &format!("/{name}"))
+            .map(|group| segment(&group).map(str::to_owned))
+            .transpose()
     }
 
     /// Every person of the realm (an Organization's own realm holds that Organization's people

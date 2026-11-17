@@ -165,6 +165,38 @@ async fn a_manifest_the_realm_does_not_have_is_created_and_filled() {
     assert_eq!(condition.reason.as_deref(), Some("DriftCorrected"));
 }
 
+/// T-7139 (T-7129 §4, critic row 1): a Group manifest named like the operators' group never
+/// reaches the realm, not even where the realm has no such group yet, so nobody joins the
+/// operators through a Change of their own.
+#[tokio::test]
+async fn a_manifest_of_the_operators_group_is_never_written() {
+    let keycloak = realm().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/groups")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&keycloak)
+        .await;
+    let mirror = mirror_with(vec![group("platform-admins", &[SNEAKY])]);
+    let outcomes = sync(&keycloak)
+        .with_operators("platform-admins")
+        .converge(&mirror)
+        .await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert!(
+        outcomes[0]
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("operators' group")),
+        "{outcomes:?}"
+    );
+    let wrote: Vec<String> = wrote(&keycloak)
+        .await
+        .into_iter()
+        .filter(|w| !w.ends_with("/openid-connect/token"))
+        .collect();
+    assert_eq!(wrote, Vec::<String>::new());
+}
+
 #[tokio::test]
 async fn a_console_edit_is_overwritten_and_reported_and_an_unknown_address_is_only_warned() {
     let keycloak = realm().await;

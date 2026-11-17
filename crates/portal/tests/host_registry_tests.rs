@@ -185,6 +185,60 @@ async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
     }
 }
 
+/// T-7139 (integrator, T-7135 review): the installation's own domain is the shared host every
+/// `/{org}/` path answers on, so no Organization takes it, whatever it proves.
+#[tokio::test]
+async fn the_installations_own_domain_is_no_organizations_host() {
+    let pool = pool().await;
+    let org = format!("o{}", run("d"));
+    for host in ["jcdev.example", "JCDEV.example"] {
+        let e = propose(&pool, &Mirror::new(), &RULES, &proposal(host, &org, None))
+            .await
+            .expect_err(host);
+        assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY, "{host}");
+    }
+}
+
+/// The channel of the next notification, within five seconds.
+async fn woke(listener: &mut sqlx::postgres::PgListener) -> String {
+    tokio::time::timeout(std::time::Duration::from_secs(5), listener.recv())
+        .await
+        .expect("a notification in time")
+        .expect("a notification")
+        .channel()
+        .to_owned()
+}
+
+/// T-7136 (T-7129 §1): each write to the registry wakes jc's host table with
+/// `NOTIFY organization_hosts` (migration 0061), a removal as much as an addition.
+#[tokio::test]
+async fn a_registry_write_wakes_the_router() {
+    let pool = pool().await;
+    let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
+        .await
+        .expect("a listener");
+    listener
+        .listen("organization_hosts")
+        .await
+        .expect("listening");
+    let host = format!("{}.notify.example", run("n"));
+    let added = seed(
+        &pool,
+        &[SeedHost {
+            host: host.clone(),
+            organization: "zilina".into(),
+            organization_id: None,
+            role: "working".into(),
+        }],
+    )
+    .await
+    .expect("seeded");
+    assert_eq!(added, 1);
+    assert_eq!(woke(&mut listener).await, "organization_hosts");
+    assert!(remove(&pool, &host).await.expect("removed"));
+    assert_eq!(woke(&mut listener).await, "organization_hosts");
+}
+
 #[tokio::test]
 async fn one_host_one_organization_also_when_two_writes_race() {
     let pool = pool().await;

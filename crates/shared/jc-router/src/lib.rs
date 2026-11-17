@@ -19,12 +19,12 @@ use axum::response::IntoResponse;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use tower::ServiceExt;
 
 mod hosts;
 pub mod registry;
-pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization};
+pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization, RegistryHost};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
@@ -187,7 +187,52 @@ pub struct JcRouter {
     default_host: String,
     trusted_proxies: Arc<Vec<IpNet>>,
     trusted_identities: Arc<Vec<String>>,
-    hosts: Option<Arc<HostTable>>,
+    hosts: Option<HostSwap>,
+}
+
+/// The router's host table, swapped at run time from the host registry (T-7129 §1, T-7136):
+/// every request reads the table current when it arrives. [`HostSwap::rebuild`] applies the
+/// registry's rows to the table the configuration built; a build that fails keeps the table
+/// that answers now.
+#[derive(Clone)]
+pub struct HostSwap {
+    /// The table of the configuration alone, which every rebuild starts from.
+    base: Arc<HostTable>,
+    current: Arc<RwLock<Arc<HostTable>>>,
+    /// `(first path segment, module)` of each mount: no Organization may take one.
+    segments: Arc<Vec<(String, String)>>,
+}
+
+impl HostSwap {
+    /// The table that answers now.
+    #[must_use]
+    pub fn current(&self) -> Arc<HostTable> {
+        // A writer cannot panic while holding the lock (it only assigns), so a poisoned lock
+        // still holds a whole table.
+        Arc::clone(&self.current.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Builds the table of the configuration with `rows` applied and swaps it in. On an error
+    /// the table that answers now stays, and the error says which row broke the build.
+    pub fn rebuild(&self, rows: &[RegistryHost<'_>]) -> Result<(), RouterError> {
+        let table = self.base.with_registry(rows)?;
+        shadow_check(&table, &self.segments)?;
+        *self.current.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(table);
+        Ok(())
+    }
+}
+
+/// No Organization of `table` is the first path segment of a mount: `/{org}/` would hide it.
+fn shadow_check(table: &HostTable, segments: &[(String, String)]) -> Result<(), RouterError> {
+    for org in table.organizations() {
+        if let Some((_, module)) = segments.iter().find(|(first, _)| first == org) {
+            return Err(RouterError::OrganizationShadowsMount {
+                organization: org.to_owned(),
+                module: module.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub struct JcRouterBuilder {
@@ -292,18 +337,15 @@ impl JcRouterBuilder {
             Some(_) => 2,
             None => 0,
         };
+        let segments: Vec<(String, String)> = entries
+            .iter()
+            .filter_map(|e| {
+                let first = e.prefix.trim_start_matches('/').split('/').next()?;
+                (!first.is_empty()).then(|| (first.to_owned(), e.module.clone()))
+            })
+            .collect();
         if let Some(table) = &self.hosts {
-            for org in table.organizations() {
-                if let Some(entry) = entries
-                    .iter()
-                    .find(|e| e.prefix.trim_start_matches('/').split('/').next() == Some(org))
-                {
-                    return Err(RouterError::OrganizationShadowsMount {
-                        organization: org.to_owned(),
-                        module: entry.module.clone(),
-                    });
-                }
-            }
+            shadow_check(table, &segments)?;
         }
         entries.sort_by(|a, b| {
             rank(&b.host)
@@ -316,7 +358,14 @@ impl JcRouterBuilder {
             default_host: self.default_host,
             trusted_proxies: Arc::new(self.trusted_proxies),
             trusted_identities: Arc::new(self.trusted_identities),
-            hosts: self.hosts.map(Arc::new),
+            hosts: self.hosts.map(|table| {
+                let base = Arc::new(table);
+                HostSwap {
+                    current: Arc::new(RwLock::new(Arc::clone(&base))),
+                    base,
+                    segments: Arc::new(segments),
+                }
+            }),
         })
     }
 }
@@ -335,6 +384,12 @@ fn is_page(req: &Request<Body>) -> bool {
 }
 
 impl JcRouter {
+    /// The handle that swaps the host table at run time; `None` without a host table.
+    #[must_use]
+    pub fn host_swap(&self) -> Option<HostSwap> {
+        self.hosts.clone()
+    }
+
     fn is_trusted_proxy(&self, peer: Option<IpAddr>) -> bool {
         let Some(ip) = peer else {
             return false;
@@ -480,11 +535,12 @@ impl JcRouter {
             return (StatusCode::BAD_REQUEST, "malformed Host header").into_response();
         }
         let host_only = hosts::without_port(&host_with_port);
+        // One table for the whole request, however often the registry swaps it meanwhile.
+        let table = self.hosts.as_ref().map(HostSwap::current);
         // The role is the table's word alone: a client's own header reaches no module.
         req.headers_mut().remove(HOST_ROLE_HEADER);
-        let role = self
-            .hosts
-            .as_ref()
+        let role = table
+            .as_deref()
             .and_then(|t| t.role_of(&host_with_port, host_only));
         if let Some(role) = role {
             if let Some(allow) = role.allowed_methods()
@@ -511,7 +567,7 @@ impl JcRouter {
             );
         }
         let public_path = req.uri().path().to_owned();
-        let (path, organization, via) = match &self.hosts {
+        let (path, organization, via) = match table.as_deref() {
             None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
             Some(table) => {
                 match table.place(&host_with_port, host_only, req.uri().path(), is_page(&req)) {
@@ -548,7 +604,7 @@ impl JcRouter {
         let entry = self.find(&host_with_port, host_only, &path);
         // A page asked on another group's host moves to the configured host that serves it:
         // the Location names a host of the table, never the request's (T-6991 §7).
-        if let Some(table) = &self.hosts
+        if let Some(table) = table.as_deref()
             && is_page(&req)
             && let Some((to, rest)) =
                 table.page_move(&host_with_port, host_only, &public_path, entry.is_some())
@@ -589,7 +645,7 @@ impl JcRouter {
         // Without a host table an entry with no host answers any Host, and a module builds its
         // issuer and links from the Mount (I-7): a Host the edge did not vouch for names the base
         // host there, so a forged one never reaches an issuer, a token or a link.
-        let host = if self.hosts.is_none() && entry.host.is_none() && !from_edge {
+        let host = if table.is_none() && entry.host.is_none() && !from_edge {
             self.default_host.clone()
         } else {
             host_with_port
@@ -1037,6 +1093,114 @@ mod tests {
             issuer("city.example", Some("jc.city.example"), "10.0.0.5")
                 .await
                 .contains("issuer=https://jc.city.example/login/realms/dev")
+        );
+    }
+
+    /// T-7136 (T-7129 §7, O1b): a swap from the host registry takes a host out (`421`) and puts
+    /// a served one in without a restart, with its Organization and role; a host whose row is
+    /// not `served` stays out; a rebuild that fails keeps the table that answers.
+    #[tokio::test]
+    async fn the_registry_swaps_hosts_in_and_out_and_a_failed_build_keeps_the_table() {
+        let table = HostTable::new()
+            .bound("smartcity.bbsk.sk", "bbsk", "/")
+            .unwrap()
+            .shared("city.example")
+            .unwrap();
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: None,
+                },
+                Router::new().fallback(
+                    |org: Option<Extension<Organization>>,
+                     headers: axum::http::HeaderMap| async move {
+                        let role = headers
+                            .get(HOST_ROLE_HEADER)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("-")
+                            .to_owned();
+                        format!("{}|{role}", org.map_or_else(String::new, |o| o.0.0))
+                    },
+                ),
+            )
+            .mount(
+                MountSpec {
+                    module: "gateway".into(),
+                    host: None,
+                    path_prefix: Some("/api".into()),
+                },
+                Router::new(),
+            )
+            .build()
+            .unwrap();
+        let swap = jc.host_swap().expect("a host table");
+        let get = |host: &'static str| {
+            let jc = jc.clone();
+            async move {
+                let req = Request::builder()
+                    .uri("/")
+                    .header("host", host)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = jc.dispatch(req, Some("127.0.0.1".parse().unwrap())).await;
+                let status = resp.status();
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let row = |host, organization, role, served| RegistryHost {
+            host,
+            organization,
+            organization_id: None,
+            role,
+            served,
+        };
+        assert_eq!(get("smartcity.bbsk.sk").await.0, StatusCode::OK);
+        assert_eq!(
+            get("data.zilina.sk").await.0,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        swap.rebuild(&[
+            row("smartcity.bbsk.sk", "bbsk", "working", false),
+            row("data.zilina.sk", "zilina", "working", true),
+            row("api.zilina.sk", "zilina", "api", false),
+        ])
+        .unwrap();
+        assert_eq!(
+            get("smartcity.bbsk.sk").await.0,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        assert_eq!(
+            get("data.zilina.sk").await,
+            (StatusCode::OK, "zilina|working".to_owned())
+        );
+        assert_eq!(
+            get("api.zilina.sk").await.0,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        assert_eq!(get("city.example").await.0, StatusCode::OK);
+        // An Organization named like a mount's first segment, and a host that is no host name:
+        // each build fails and the table of the last good build answers.
+        for broken in [
+            row("data.api.sk", "api", "working", true),
+            row("bad_host.sk", "zilina", "working", true),
+        ] {
+            assert!(swap.rebuild(&[broken]).is_err(), "{broken:?}");
+            assert_eq!(
+                get("data.zilina.sk").await,
+                (StatusCode::OK, "zilina|working".to_owned())
+            );
+        }
+        // Every rebuild starts from the configuration: a host served again comes back.
+        swap.rebuild(&[row("smartcity.bbsk.sk", "bbsk", "working", true)])
+            .unwrap();
+        assert_eq!(get("smartcity.bbsk.sk").await.0, StatusCode::OK);
+        assert_eq!(
+            get("data.zilina.sk").await.0,
+            StatusCode::MISDIRECTED_REQUEST
         );
     }
 

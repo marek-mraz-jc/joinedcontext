@@ -603,6 +603,14 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
         "the installation's host registry: a host is proposed and approved again, never restored",
     ),
     (
+        "operator_changes",
+        "the installation operators' Changes: hosts and operators, not an Organization's",
+    ),
+    (
+        "operator_audit",
+        "the installation operators' append-only audit, not an Organization's",
+    ),
+    (
         "organization_backup_targets",
         "the backup's own target: it holds a sealed secret",
     ),

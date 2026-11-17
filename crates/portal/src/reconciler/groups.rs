@@ -240,6 +240,9 @@ pub struct GroupSync {
     /// `/{organization}/members` are written there, never a Group manifest or another
     /// Organization's group. `None`: the installation realm.
     organization: Option<String>,
+    /// The operators' group (`JC_PORTAL_BOOTSTRAP_ADMINS`, T-7129 §4): its members change only
+    /// by an operator Change a second operator approved, never by a Group manifest.
+    operators: Option<String>,
 }
 
 /// How long a user the realm lacks is taken as still missing before the realm is asked again.
@@ -260,7 +263,14 @@ impl GroupSync {
             foreign: None,
             absent: Default::default(),
             organization: None,
+            operators: None,
         })
+    }
+
+    /// Never writes `group`, the operators' group, from a Group manifest (T-7129 §4, T-7139).
+    pub fn with_operators(mut self, group: &str) -> Self {
+        self.operators = Some(group.to_owned());
+        self
     }
 
     /// Makes this the sync of `organization`'s own realm (T-7144).
@@ -347,6 +357,16 @@ impl GroupSync {
         for envelope in manifests {
             let name = envelope.metadata.name.clone();
             wanted.insert(name.clone());
+            if self.operators.as_deref() == Some(name.as_str()) {
+                let mut outcome = GroupOutcome::of(&name);
+                outcome.error = Some(format!(
+                    "'{name}' is the installation's operators' group: its members change only by \
+                     an operator Change a second operator approves (OperatorAdd, OperatorRemove), \
+                     never by a Group manifest. Remove the manifest or rename it"
+                ));
+                outcomes.push(outcome);
+                continue;
+            }
             let spec: GroupSpec = match serde_json::from_value(envelope.spec) {
                 Ok(spec) => spec,
                 Err(err) => {

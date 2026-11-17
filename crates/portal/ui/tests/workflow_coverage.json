@@ -186,6 +186,18 @@
           "test": "an administrator edits the connector page in sk and en, publishes, approves, and the open data portal shows it"
         },
         "assistant": "jc_resource_propose"
+      },
+      "operator-changes": {
+        "live": {
+          "spec": "operator-changes.spec.ts",
+          "test": "a person of no operators' group is refused every operator Change door"
+        },
+        "personOnly": "a host of an Organization or a member of the operators' group changes the whole installation: one operator proposes it and another approves it (T-7129 §4, AG-11); no assistant tool proposes or decides one",
+        "routes": [
+          "POST /api/v1/operator/changes",
+          "POST /api/v1/operator/changes/{id}/approve",
+          "POST /api/v1/operator/changes/{id}/reject"
+        ]
       }
     },
     "people": {

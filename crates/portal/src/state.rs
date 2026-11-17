@@ -752,6 +752,7 @@ impl AppState {
                         syncer = syncer.with_edge_file(
                             Arc::new(
                                 crate::reconciler::edge_file::EdgeFile::new(edge_kube, namespace)
+                                    .with_registry(self.db.clone())
                                     .with_bounds(self.config.organization_bounds.clone())
                                     .with_wasm_host(
                                         self.config
@@ -790,7 +791,9 @@ impl AppState {
                 match crate::reconciler::groups::GroupSync::new(&oidc.backchannel(), id, secret) {
                     Some(groups) => {
                         syncer = syncer.with_groups(Arc::new(
-                            groups.with_foreign(Arc::clone(&self.foreign_names)),
+                            groups
+                                .with_foreign(Arc::clone(&self.foreign_names))
+                                .with_operators(&self.config.bootstrap_admins),
                         ))
                     }
                     None => tracing::warn!(

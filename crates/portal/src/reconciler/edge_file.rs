@@ -62,6 +62,10 @@ const APPS_SURFACE: &str = "apps-surface";
 const CONTEXT_ENDPOINT: &str = "context-endpoint";
 /// The base's route whose upstream is the Portal, which serves a `static` App's files.
 const PORTAL_UI: &str = "portal-ui";
+/// The base's route to jc (components/jc/apisix-routes.yaml), which a registry host's copies.
+const JC_ROUTE: &str = "jc";
+/// The prefix of the route id of a jc host (helm's `jc-org-*` and the registry's).
+const ORG_HOST_ROUTE: &str = "jc-org-";
 /// The label of a base entry whose `limit-count` the Organization sets, naming its route class.
 pub const RATE_CLASS: &str = "jc-rate-class";
 
@@ -220,6 +224,8 @@ pub enum ComposeError {
 pub struct Composed {
     pub file: String,
     pub skipped: Vec<(String, String)>,
+    /// The registry hosts that got no route, with the reason.
+    pub unrouted_hosts: Vec<(String, String)>,
 }
 
 fn by_id<'a>(document: &'a Value, list: &str, id: &str) -> Result<&'a Value, ComposeError> {
@@ -335,6 +341,100 @@ fn framed_by_portal(plugins: &mut Value, host: &str, policy: Option<&str>) {
 /// The base with the Organization's rates and every App's routes added, ending `#END`
 /// (AP-112, AP-133, ADR-N-035).
 pub fn compose(base: &str, apps: &[EdgeApp], rates: &EdgeLimits) -> Result<Composed, ComposeError> {
+    compose_hosts(base, apps, rates, &[])
+}
+
+/// The route id of a registry host, as helm names the route of a jc.toml host.
+pub fn org_host_route(host: &str) -> String {
+    format!("{ORG_HOST_ROUTE}{}", host.replace('.', "-"))
+}
+
+/// Whether `host` is a DNS name of at least two labels (`smartcity.bbsk.sk`): a route on
+/// anything else (`localhost`, an address, a wildcard) would reach jc on a name the edge must
+/// never route to it (T-6705).
+fn routable(host: &str) -> bool {
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+        && labels
+            .last()
+            .is_some_and(|tld| tld.bytes().any(|b| b.is_ascii_lowercase()))
+}
+
+/// Adds a route to jc for each served host of the registry (T-7129 §2, T-7137): a copy of the
+/// base's route [`JC_ROUTE`] (its upstream, its plugin chain, `/*`) on that host alone, so header
+/// stripping and limits stay helm's. A host whose route id the base holds keeps helm's route;
+/// a host that is no plain DNS name, or whose route id an earlier host took, gets none and is
+/// returned with the reason.
+fn add_org_hosts(
+    document: &mut Value,
+    hosts: &[String],
+    skipped: &mut Vec<(String, String)>,
+) -> Result<(), ComposeError> {
+    if hosts.is_empty() {
+        return Ok(());
+    }
+    let jc = by_id(document, "routes", JC_ROUTE)?.clone();
+    if jc["upstream_id"].as_str().is_none() {
+        return Err(ComposeError::Missing(format!(
+            "upstream_id on route {JC_ROUTE}"
+        )));
+    }
+    let taken = ids(document, "routes");
+    let mut added: std::collections::BTreeMap<String, &String> = std::collections::BTreeMap::new();
+    let mut hosts: Vec<&String> = hosts.iter().collect();
+    hosts.sort();
+    hosts.dedup();
+    for host in hosts {
+        if !routable(host) {
+            skipped.push((host.clone(), "not a DNS name the edge routes".into()));
+            continue;
+        }
+        let id = org_host_route(host);
+        if let Some(first) = added.get(&id) {
+            // `.` and `-` both read as `-` in a route id: a-b.sk and a.b-sk share one.
+            skipped.push((
+                host.clone(),
+                format!("its route id {id} is the route of {first} already"),
+            ));
+            continue;
+        }
+        if taken.contains(&id) {
+            continue;
+        }
+        added.insert(id.clone(), host);
+        let mut route = json!({
+            "id": id,
+            "name": id,
+            "desc": format!("jc, host {host} of the host registry"),
+            "uri": "/*",
+            "host": host,
+            "priority": jc["priority"].as_u64().unwrap_or(1),
+            "upstream_id": jc["upstream_id"].clone(),
+        });
+        if let Some(chain) = jc.get("plugin_config_id").filter(|c| c.is_string()) {
+            route["plugin_config_id"] = chain.clone();
+        }
+        push(document, "routes", route);
+    }
+    Ok(())
+}
+
+/// [`compose`], plus a route to jc on each served host of the registry ([`add_org_hosts`]);
+/// the hosts it routes none for come back in `skipped` with the Apps.
+pub fn compose_hosts(
+    base: &str,
+    apps: &[EdgeApp],
+    rates: &EdgeLimits,
+    org_hosts: &[String],
+) -> Result<Composed, ComposeError> {
     let mut document: Value =
         serde_norway::from_str(base).map_err(|err| ComposeError::Unreadable(err.to_string()))?;
     if !document.is_object() {
@@ -342,6 +442,9 @@ pub fn compose(base: &str, apps: &[EdgeApp], rates: &EdgeLimits) -> Result<Compo
     }
     // Before the App routes copy the base's chains, so they count the same rates.
     apply_limits(&mut document, rates);
+    let mut unrouted_hosts = Vec::new();
+    add_org_hosts(&mut document, org_hosts, &mut unrouted_hosts)?;
+    let mut skipped = Vec::new();
     let endpoint_route = by_id(&document, "routes", CONTEXT_ENDPOINT)?.clone();
     let portal_route = by_id(&document, "routes", PORTAL_UI)?.clone();
     let surface_plugins = by_id(&document, "plugin_configs", APPS_SURFACE)?["plugins"].clone();
@@ -368,7 +471,6 @@ pub fn compose(base: &str, apps: &[EdgeApp], rates: &EdgeLimits) -> Result<Compo
         .collect();
     let mut apps: Vec<&EdgeApp> = apps.iter().collect();
     apps.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut skipped = Vec::new();
     for app in apps {
         let name = app.name.as_str();
         let own = format!("app-{name}");
@@ -688,6 +790,7 @@ pub fn compose(base: &str, apps: &[EdgeApp], rates: &EdgeLimits) -> Result<Compo
     Ok(Composed {
         file: format!("{body}{END_MARKER}\n"),
         skipped,
+        unrouted_hosts,
     })
 }
 
@@ -827,6 +930,8 @@ pub struct EdgeFile {
     /// The WASM shards' namespace (`JC_PORTAL_WASM_HOST_NAMESPACE`): a wasm App's server is
     /// routed only when it is set.
     wasm_host: Option<String>,
+    /// The host registry (`organization_hosts`): each served host gets its route to jc.
+    registry: Option<sqlx::PgPool>,
 }
 
 /// A kube error as a sentence that names the object and the status, never the body sent.
@@ -846,7 +951,27 @@ impl EdgeFile {
             namespace,
             bounds: OrganizationBounds::default(),
             wasm_host: None,
+            registry: None,
         }
+    }
+
+    /// Routes each served host of the registry in `pool` to jc (T-7129 §2).
+    pub fn with_registry(mut self, pool: Option<sqlx::PgPool>) -> Self {
+        self.registry = pool;
+        self
+    }
+
+    /// The served hosts of the registry; none without one.
+    async fn served_hosts(&self) -> Result<Vec<String>, sqlx::Error> {
+        let Some(pool) = self.registry.as_ref() else {
+            return Ok(Vec::new());
+        };
+        Ok(crate::host_registry::rows(pool)
+            .await?
+            .into_iter()
+            .filter(|row| row.state == "served")
+            .map(|row| row.host)
+            .collect())
     }
 
     /// The WASM shards' namespace, so a wasm App's `/api` reaches its shard (AP-143).
@@ -896,10 +1021,28 @@ impl EdgeFile {
                 Vec::new(),
             );
         };
-        let composed = match compose(&base, apps, &rates) {
+        // A registry that cannot be read leaves the served file as it is: its hosts' routes
+        // stay until a run reads it again.
+        let org_hosts = match self.served_hosts().await {
+            Ok(hosts) => hosts,
+            Err(err) => {
+                tracing::error!(error = %err, "host registry");
+                return (
+                    EdgeOutcome::Failed(
+                        "the host registry could not be read; the served file stays as it is"
+                            .into(),
+                    ),
+                    Vec::new(),
+                );
+            }
+        };
+        let composed = match compose_hosts(&base, apps, &rates, &org_hosts) {
             Ok(composed) => composed,
             Err(err) => return (EdgeOutcome::Failed(err.to_string()), Vec::new()),
         };
+        for (host, reason) in &composed.unrouted_hosts {
+            tracing::warn!(%host, %reason, "registry host has no route at the edge");
+        }
         let routed = apps.len() - composed.skipped.len();
         let served = match self
             .kube
@@ -1076,6 +1219,95 @@ routes:
             "the base changed on the way"
         );
         assert!(composed.file.contains("${{EDGE_CLIENT_SECRET}}"));
+    }
+
+    /// The base with helm's route to jc and the route of one jc.toml host (`jc-org-*`).
+    fn base_with_jc() -> String {
+        BASE.replace(
+            "routes:\n",
+            "routes:\n  - id: jc\n    uri: /*\n    host: jc.city.example\n    priority: 1\n    upstream_id: jc\n    plugin_config_id: jc\n  - id: jc-org-smartcity-bbsk-sk\n    uri: /*\n    host: smartcity.bbsk.sk\n    priority: 1\n    upstream_id: jc-org-smartcity-bbsk-sk\n    plugin_config_id: jc\n",
+        )
+    }
+
+    /// T-7137 (T-7129 §2, §7 O2): each served registry host gets one route to jc on that host
+    /// alone, with the base route's upstream and plugin chain; no route is host-less; a name the
+    /// edge must never route to jc (`localhost`, an address, a wildcard) gets none; a host helm
+    /// routes keeps helm's route; a host no longer served loses its route on the next run; a host
+    /// whose route id another host took is reported.
+    #[test]
+    fn each_served_registry_host_gets_its_own_route_to_jc_and_nothing_else() {
+        let base = base_with_jc();
+        let hosts: Vec<String> = [
+            "data.zilina.sk",
+            "smartcity.bbsk.sk",
+            "localhost",
+            "127.0.0.1",
+            "*.zilina.sk",
+            "a..sk",
+            "data.zilina.sk",
+            "x-y.zilina.sk",
+            "x.y.zilina.sk",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let composed = compose_hosts(&base, &[], &EdgeLimits::default(), &hosts).expect("composes");
+        let file = parsed(&composed.file);
+        let routes = file["routes"].as_array().expect("routes");
+        for route in routes {
+            assert!(
+                route["host"].is_string() || route["hosts"].is_array(),
+                "{} answers every Host",
+                route["id"]
+            );
+        }
+        let to_jc: Vec<&Value> = routes
+            .iter()
+            .filter(|r| r["id"].as_str().is_some_and(|id| id.starts_with("jc-org-")))
+            .collect();
+        assert_eq!(to_jc.len(), 3, "{to_jc:?}");
+        let zilina = by_id(&file, "routes", "jc-org-data-zilina-sk").expect("a route");
+        assert_eq!(zilina["host"], "data.zilina.sk");
+        assert_eq!(zilina["uri"], "/*");
+        assert_eq!(zilina["upstream_id"], "jc");
+        assert_eq!(zilina["plugin_config_id"], "jc");
+        // helm's route of the jc.toml host is the one there, unchanged.
+        let helm = by_id(&file, "routes", "jc-org-smartcity-bbsk-sk").expect("helm's");
+        assert_eq!(helm["upstream_id"], "jc-org-smartcity-bbsk-sk");
+        let unrouted: Vec<&str> = composed
+            .unrouted_hosts
+            .iter()
+            .map(|(h, _)| h.as_str())
+            .collect();
+        // x.y.zilina.sk's route id is x-y.zilina.sk's: it is named, never silently dropped.
+        assert_eq!(
+            unrouted,
+            [
+                "*.zilina.sk",
+                "127.0.0.1",
+                "a..sk",
+                "localhost",
+                "x.y.zilina.sk"
+            ]
+        );
+        assert!(composed.skipped.is_empty());
+        // The next run without the host: its route is gone, the base is back as it was.
+        let next = compose_hosts(&base, &[], &EdgeLimits::default(), &[]).expect("composes");
+        assert_eq!(parsed(&next.file), parsed(&base));
+    }
+
+    /// A served host needs the base's route to jc to copy: a base without it is refused by
+    /// name, and the served file stays as it was.
+    #[test]
+    fn a_base_without_the_jc_route_is_refused_once_the_registry_serves_a_host() {
+        let err = compose_hosts(
+            BASE,
+            &[],
+            &EdgeLimits::default(),
+            &["data.zilina.sk".into()],
+        )
+        .expect_err("no jc route");
+        assert!(err.to_string().contains("routes entry jc"), "{err}");
+        compose_hosts(BASE, &[], &EdgeLimits::default(), &[]).expect("no host, no jc route needed");
     }
 
     #[test]

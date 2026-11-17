@@ -179,7 +179,12 @@ pub async fn build(
                 cfg.portal_siblings,
                 &cfg.organizations,
                 organizations,
-                portal::registry_seed(cfg),
+                // build_router builds the Portal in its late slot, which keeps the host table on
+                // the registry; a Portal built here has no router to swap.
+                portal::HostRegistry {
+                    seed: portal::registry_seed(cfg),
+                    hosts: None,
+                },
                 mount,
                 shutdown,
             )
