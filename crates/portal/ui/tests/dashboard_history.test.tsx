@@ -87,6 +87,11 @@ describe("a dashboard's history (T-7150)", () => {
     expect(screen.getByText("status")).toBeInTheDocument();
     expect(screen.getByText("availableBikeNumber")).toBeInTheDocument();
     expect(screen.queryByText("bikes-open")).not.toBeInTheDocument();
+    // The compared version stands out from the others, and its message wraps rather than cut at 400 px.
+    const [newest, compared] = screen.getAllByRole("listitem");
+    expect(compared).toHaveClass("bg-surface-subtle");
+    expect(newest).not.toHaveClass("bg-surface-subtle");
+    expect(compared.querySelector(".truncate")).toBeNull();
   });
 
   it("restores only after asking twice, and shows the Change it opened", async () => {
