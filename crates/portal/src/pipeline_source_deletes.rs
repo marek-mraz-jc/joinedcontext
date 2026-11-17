@@ -256,8 +256,7 @@ struct Book {
 }
 
 enum Inner {
-    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f), unkeyed
-    /// while the project has none (phase one).
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
     Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<HashMap<Key, Book>>),
 }
@@ -304,7 +303,9 @@ impl Ledger {
             return Ok(());
         }
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             let sql = if wrote {
                 "INSERT INTO pipeline_source_ledger (project, pipeline, entity_id, last_run, \
                  last_written) SELECT $1, $2, i, $3, now() FROM UNNEST($4::text[]) AS t(i) \
@@ -354,7 +355,9 @@ impl Ledger {
         pipeline: &str,
     ) -> Result<(BTreeMap<String, Row>, Option<Hold>), sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok((BTreeMap::new(), None));
+            };
             let rows: Vec<(String, String, i16)> = sqlx::query_as(
                 "SELECT entity_id, last_run, misses FROM pipeline_source_ledger \
                  WHERE project = $1 AND pipeline = $2",
@@ -405,7 +408,9 @@ impl Ledger {
         hold: Option<&Hold>,
     ) -> Result<(), sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             let (ids, counts): (Vec<&str>, Vec<i16>) = misses
                 .iter()
                 .map(|(id, missed)| (id.as_str(), i16::from(*missed)))
@@ -446,7 +451,9 @@ impl Ledger {
         ids: &[String],
     ) -> Result<(), sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             sqlx::query(
                 "DELETE FROM pipeline_source_ledger WHERE project = $1 AND pipeline = $2 \
                  AND entity_id = ANY($3::text[])",
@@ -474,7 +481,9 @@ impl Ledger {
     /// "Keep": every id counts as read again and the hold is cleared.
     pub async fn keep(&self, project: &str, pipeline: &str) -> Result<(), sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             sqlx::query(
                 "UPDATE pipeline_source_ledger SET misses = 0 WHERE project = $1 AND pipeline = $2",
             )
@@ -504,7 +513,9 @@ impl Ledger {
         ids: &[String],
     ) -> Result<Vec<String>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(Vec::new());
+            };
             let answer = sqlx::query_scalar(
                 "UPDATE pipeline_source_ledger SET marked_run = $3 \
                  WHERE project = $1 AND pipeline = $2 AND entity_id = ANY($4::text[]) \
@@ -545,7 +556,9 @@ impl Ledger {
         pipeline: &str,
     ) -> Result<Option<(String, Vec<String>)>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(None);
+            };
             let rows: Vec<(String, String)> = sqlx::query_as(
                 "WITH oldest AS (SELECT min(marked_run) AS run FROM pipeline_source_ledger \
                  WHERE project = $1 AND pipeline = $2 AND marked_run IS NOT NULL), \
@@ -591,10 +604,10 @@ impl Ledger {
     /// The pipelines with marks waiting, for the sweep.
     pub async fn marking(&self) -> Result<Vec<(String, String)>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            // Project by project, each in its own key or unkeyed while it has none (STO-07).
+            // Project by project, each in its own key (STO-07).
             let mut marking = Vec::new();
-            for (project, key) in crate::project_ids::projects_or_unkeyed(pool, mirror).await? {
-                let mut tx = crate::project_ids::key_tx(pool, key).await?;
+            for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 marking.extend(
                     sqlx::query_as::<_, (String, String)>(
                         "SELECT DISTINCT project, pipeline FROM pipeline_source_ledger \
@@ -626,7 +639,9 @@ impl Ledger {
         ids: &[String],
     ) -> Result<HashMap<String, i64>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(HashMap::new());
+            };
             let rows: Vec<(String, i64)> = sqlx::query_as(
                 "SELECT entity_id, EXTRACT(EPOCH FROM COALESCE(last_written, last_seen))::bigint \
                  FROM pipeline_source_ledger WHERE project = $1 AND pipeline = $2 \
@@ -653,10 +668,10 @@ impl Ledger {
     /// Every hold, for the alerts.
     pub async fn holds(&self) -> Result<Vec<(String, String, Hold)>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            // Project by project, each in its own key or unkeyed while it has none (STO-07).
+            // Project by project, each in its own key (STO-07).
             let mut rows: Vec<(String, String, String, String, i32, i32)> = Vec::new();
-            for (project, key) in crate::project_ids::projects_or_unkeyed(pool, mirror).await? {
-                let mut tx = crate::project_ids::key_tx(pool, key).await?;
+            for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 rows.extend(
                     sqlx::query_as::<_, (String, String, String, String, i32, i32)>(
                         "SELECT project, pipeline, run, reason, would, ledger \
@@ -722,7 +737,9 @@ impl Ledger {
         run: &str,
     ) -> Result<(), sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             sqlx::query(
                 "INSERT INTO pipeline_source_complete (project, pipeline, run) VALUES ($1, $2, $3) \
                  ON CONFLICT (project, pipeline) DO UPDATE SET run = $3, at = now()",
@@ -750,7 +767,9 @@ impl Ledger {
         pipeline: &str,
     ) -> Result<Option<(String, String)>, sqlx::Error> {
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(None);
+            };
             let row: Option<(String, time::OffsetDateTime)> = sqlx::query_as(
                 "SELECT run, at FROM pipeline_source_complete WHERE project = $1 AND pipeline = $2",
             )
@@ -781,7 +800,9 @@ impl Ledger {
             return Ok(());
         }
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(());
+            };
             sqlx::query(
                 "INSERT INTO pipeline_source_removed (project, space, entity_id, pipeline, run, \
                  cause) SELECT $1, $2, i, $3, $4, $6 FROM UNNEST($5::text[]) AS t(i) \
@@ -840,7 +861,9 @@ impl Ledger {
             RemovalsOf::Space(name) => (None, Some(name)),
         };
         if let Inner::Postgres(pool, mirror) = &self.inner {
-            let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project).await?;
+            let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                return Ok(Vec::new());
+            };
             let rows: Vec<(String, String, String, String, time::OffsetDateTime)> = sqlx::query_as(
                 "SELECT entity_id, pipeline, run, cause, at FROM pipeline_source_removed \
                  WHERE project = $1 AND ($2::text IS NULL OR pipeline = $2) \

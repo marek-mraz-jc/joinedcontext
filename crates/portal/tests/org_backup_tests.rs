@@ -565,8 +565,12 @@ async fn key_of(world: &World, organization: &str, kind: &str) -> String {
 }
 
 /// Rows of both Organizations in the Portal's tables, each with a mark the archive is searched
-/// for, and secret material in the columns that must never leave.
+/// for, and secret material in the columns that must never leave. A project's rows are written
+/// under its key, as `db::tenant_tx` writes them (the tables are forced since 0080, T-7201).
 const PORTAL_SEED: &str = "
+INSERT INTO organizations (name, host, state, created_by) VALUES ('alfa', 'alfa.example', 'active', 'seed');
+INSERT INTO project_ids (id, name, organization) VALUES (gen_random_uuid(), 'alfa-city', 'alfa');
+SELECT set_config('jc.org', (SELECT key::text FROM organizations WHERE name = 'alfa'), true), set_config('jc.project', (SELECT id::text FROM project_ids WHERE name = 'alfa-city' AND NOT reserved), true);
 INSERT INTO activity (time, project, kind, source, summary, severity) VALUES (now(), 'alfa-city', 'pipeline', 'portal', 'alfa-activity-mark', 'info');
 INSERT INTO entity_comments (project, space, urn, author, author_name, body) VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-1', 'ada', 'Ada', 'alfa-comment-mark');
 INSERT INTO agent_runs (id, project, app_name, endpoint_name, endpoint_slug, profile, app_class, visibility, prompt, prompt_digest, data_needs, branch, path_prefix, status, ticket_hash, created_by, expires_at) VALUES ('run-alfa-1', 'alfa-city', 'a', 'e', 's', 'p', 'static', 'private', 'alfa-prompt-mark', 'd', '[]', 'b', 'x/', 'queued', 'ALFA_TICKET_HASH_SECRET', 'ada', now());
@@ -574,8 +578,24 @@ INSERT INTO agent_run_events (run_id, seq, kind, payload) VALUES ('run-alfa-1', 
 INSERT INTO app_builds (project, app, commit, class, trigger, state, token_sha256) VALUES ('alfa-city', 'app', 'c', 'node', 'push', 'pending', 'ALFA_BUILD_TOKEN_SECRET');
 INSERT INTO workspaces (name, project, owner, base_revision, scope, expires_at, preview_salt) VALUES ('ws-alfa', 'alfa-city', 'ada', 'r', '{}', now(), 'ALFA_PREVIEW_SALT_SECRET');
 INSERT INTO domain_verifications (organization, domain, challenge, state) VALUES ('alfa', 'alfa.example', 'ALFA_DNS_CHALLENGE_SECRET', 'pending');
-INSERT INTO organizations (name, host, state, created_by) VALUES ('alfa', 'alfa.example', 'active', 'seed');
 ";
+
+/// Runs `sql` under `project`'s key, as `db::tenant_tx` does: the project tables are forced
+/// since 0080 (T-7201), so a row is written and read only in its project's key.
+async fn as_project(db: &sqlx::PgPool, project: &str, sql: &str) {
+    let key = joinedcontext_portal::project_ids::recorded(db, project)
+        .await
+        .expect("the registry")
+        .expect("a seeded project");
+    let mut tx = joinedcontext_portal::db::tenant_tx(db, key)
+        .await
+        .expect("tx");
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
+        .execute(&mut *tx)
+        .await
+        .expect(sql);
+    tx.commit().await.expect("commit");
+}
 
 /// A database of its own for one test, migrated and seeded with both Organizations' rows; `None`
 /// (the test says it skipped) without `JC_PORTAL_TEST_DATABASE_URL`.
@@ -604,13 +624,17 @@ async fn seeded_portal_db() -> Option<sqlx::PgPool> {
         .replace("alfa-city", "bravo-town")
         .replace("alfa", "bravo")
         .replace("ALFA", "BRAVO");
-    for statement in PORTAL_SEED.split(";\n").chain(bravo.split(";\n")) {
-        if !statement.trim().is_empty() {
-            sqlx::query(sqlx::AssertSqlSafe(statement))
-                .execute(&pool)
-                .await
-                .expect(statement);
+    for seed in [PORTAL_SEED, bravo.as_str()] {
+        let mut tx = pool.begin().await.expect("begin");
+        for statement in seed.split(";\n") {
+            if !statement.trim().is_empty() {
+                sqlx::query(sqlx::AssertSqlSafe(statement))
+                    .execute(&mut *tx)
+                    .await
+                    .expect(statement);
+            }
         }
+        tx.commit().await.expect("seeded");
     }
     Some(pool)
 }
@@ -754,6 +778,55 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
         .as_str()
         .is_some_and(|s| !s.is_empty()));
     assert!(files["README.md"].contains("consistent in itself"));
+}
+
+/// T-7201: the Portal serves as a role without BYPASSRLS (T-7179), so the forced project tables
+/// answer only the transaction's key. The archive still holds each of the Organization's project
+/// rows once, read in that project's key, and none of another Organization's.
+#[tokio::test]
+async fn the_serving_role_exports_each_forced_project_row_once_in_its_key() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("the test database");
+    let name: String = sqlx::query_scalar("SELECT current_database()")
+        .fetch_one(&db)
+        .await
+        .expect("its name");
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE pk_serving LOGIN NOBYPASSRLS PASSWORD 'pk-serving'; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
+    )
+    .execute(&db)
+    .await
+    .expect("the serving role");
+    let mut owner = url::Url::parse(&url).expect("url");
+    owner.set_path(&format!("/{name}"));
+    let mut serving = owner.clone();
+    serving.set_username("pk_serving").expect("user");
+    serving.set_password(Some("pk-serving")).expect("password");
+    let pool = joinedcontext_portal::db::connect_as(serving.as_str(), Some(owner.as_str()))
+        .await
+        .expect("served as a role without BYPASSRLS");
+    let world = world_with("alfa", "Enabled", Some(pool)).await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let files = unzip(&decrypt(
+        &latest(&world.bucket, &key_of(&world, "alfa", "data").await),
+        &ids[0],
+    ));
+    let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    for table in ["activity", "entity_comments", "agent_runs", "workspaces"] {
+        assert_eq!(
+            index["modules"]["portal"]["tables"][table], 1,
+            "{table}: alfa-city's one row, once: {}",
+            index["modules"]["portal"]["tables"]
+        );
+    }
+    let all: String = files.values().cloned().collect();
+    assert!(all.contains("alfa-comment-mark") && all.contains("alfa-prompt-mark"));
+    assert!(!all.contains("bravo"), "another Organization's rows left");
 }
 
 /// The modules' own schemas (their migrations as they ship), each with a row of alfa and of
@@ -1354,13 +1427,13 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
         return;
     };
     // A second comment, kept; the seeded one names the Entity an erasure removes later.
-    sqlx::query(
+    as_project(
+        &db,
+        "alfa-city",
         "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
          VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-2', 'ada', 'Ada', 'alfa-kept-mark')",
     )
-    .execute(&db)
-    .await
-    .expect("a second comment");
+    .await;
     let world = world_with("alfa", "Enabled", Some(db.clone())).await;
     world.state.mirror.upsert(org(
         "RoleBinding",
@@ -1382,17 +1455,21 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
     let version = run["versionId"].as_str().expect("a version").to_owned();
 
     // Data lost after the backup, then the backup soft-deleted.
-    sqlx::query("DELETE FROM entity_comments WHERE project IN ('alfa-city', 'bravo-town')")
-        .execute(&db)
-        .await
-        .expect("lost");
-    sqlx::query(
+    for project in ["alfa-city", "bravo-town"] {
+        as_project(
+            &db,
+            project,
+            "DELETE FROM entity_comments WHERE project IN ('alfa-city', 'bravo-town')",
+        )
+        .await;
+    }
+    as_project(
+        &db,
+        "bravo-town",
         "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
          VALUES ('bravo-town', 'air', 'urn:ngsi-ld:X:bravo-9', 'bob', 'Bob', 'bravo-after-mark')",
     )
-    .execute(&db)
-    .await
-    .expect("bravo writes on");
+    .await;
     let deleted = send(
         &world.state,
         person("ada"),
@@ -1408,14 +1485,14 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
         "the version stays behind its marker"
     );
     // The person behind urn:ngsi-ld:X:alfa-1 is erased since the backup.
-    sqlx::query(
+    as_project(
+        &db,
+        "alfa-city",
         "INSERT INTO erasures (id, project, space, subject, reason, actor, groups, stores, approval) \
          VALUES ('er-alfa-1', 'alfa-city', 'air', '0123456789abcdef0123456789abcdef', 'asked', 'ada', \
          '[{\"class\":\"X\",\"entities\":[\"urn:ngsi-ld:X:alfa-1\"],\"attrs\":null}]', '{}', 'approved')",
     )
-    .execute(&db)
-    .await
-    .expect("an erasure");
+    .await;
 
     let door = format!("{DATA_DOOR}/versions/{version}/restore");
     let wrong = send(
@@ -1575,7 +1652,7 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
          VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed}', 'portal')",
     ] {
-        sqlx::query(statement).execute(&db).await.expect(statement);
+        as_project(&db, "alfa-city", statement).await;
     }
     let world = world_with("alfa", "Enabled", Some(db.clone())).await;
     world.state.mirror.upsert(org(
@@ -1595,7 +1672,7 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
          VALUES ('sub-ada', 'alfa-city', 'pipeline', 'air', '{failed,stale}', 'digest')",
     ] {
-        sqlx::query(statement).execute(&db).await.expect(statement);
+        as_project(&db, "alfa-city", statement).await;
     }
     let door = format!("{DATA_DOOR}/versions/{version}/restore");
     let asked = send(

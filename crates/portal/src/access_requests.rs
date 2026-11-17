@@ -692,7 +692,7 @@ pub async fn incoming(
 
 /// The requests of one pipeline, newest first. A request is keyed by the Endpoint's project
 /// (T-7202), so the asking pipeline's list reads each recorded key in its own transaction
-/// (STO-07), then the rows no key reaches yet.
+/// (STO-07); every row has a key since migration 0080 (T-7201).
 ///
 /// ponytail: one transaction per recorded project; a requester-side copy of the row when
 /// installations hold thousands of projects.
@@ -717,16 +717,6 @@ pub async fn outgoing(
         );
         tx.commit().await?;
     }
-    found.extend(
-        sqlx::query_as::<_, Row>(select!(
-            "WHERE project_id IS NULL AND project = $1 AND pipeline = $2 AND person IS NULL \
-             ORDER BY requested_at DESC LIMIT 200"
-        ))
-        .bind(project)
-        .bind(pipeline)
-        .fetch_all(pool)
-        .await?,
-    );
     let mut found: Vec<AccessRequest> = found.into_iter().map(AccessRequest::from).collect();
     found.sort_by_key(|r| std::cmp::Reverse(r.requested_at));
     found.truncate(200);

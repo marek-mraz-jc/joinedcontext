@@ -50,9 +50,10 @@ pub struct Source {
     pub keys: BTreeMap<&'static str, Vec<String>>,
     pub tables: &'static [Table],
     /// The session settings the module's row-level security reads, one list per tenant of the
-    /// Organization: every table is read once per tenant, `set_config(name, value, true)`
-    /// inside the one snapshot. Empty: each table is read once with nothing set (a table with
-    /// row-level security then answers no row).
+    /// Organization: every table whose row-level security is active is read once per tenant,
+    /// `set_config(name, value, true)` inside the one snapshot, and any other table once. Empty:
+    /// each table is read once with nothing set (a table with row-level security then answers no
+    /// row).
     pub scopes: Vec<Vec<(&'static str, String)>>,
 }
 
@@ -648,27 +649,43 @@ async fn portal_source(state: &AppState, organization: &str) -> Result<Source, S
         .clone()
         .ok_or_else(|| "this Portal runs without a database".to_owned())?;
     // The Organization's own rows (its backup audit) answer only under its reserved project's
-    // key (T-7191); the project tables without row-level security ignore the setting. An
-    // Organization outside the registry has no such rows, and its project rows still export.
-    let key = crate::project_ids::reserved(&pool, organization)
+    // key (T-7191), each project's rows only under that project's key (T-7201); a table without
+    // row-level security is read once with no key. An Organization outside the registry has no
+    // keyed rows, and its other project rows still export.
+    let projects = projects_of(&state.mirror, organization);
+    let unreadable = |err: sqlx::Error| format!("the project registry could not be read: {err}");
+    let mut keys_of = Vec::new();
+    if let Some(key) = crate::project_ids::reserved(&pool, organization)
         .await
-        .map_err(|err| format!("the Organization registry could not be read: {err}"))?;
+        .map_err(unreadable)?
+    {
+        keys_of.push(key);
+    }
+    for project in &projects {
+        if let Some(key) = crate::project_ids::key_of(&pool, &state.mirror, project)
+            .await
+            .map_err(unreadable)?
+        {
+            keys_of.push(key);
+        }
+    }
     let mut keys = BTreeMap::new();
-    keys.insert("projects", projects_of(&state.mirror, organization));
+    keys.insert("projects", projects);
     keys.insert("organization", vec![organization.to_owned()]);
     Ok(Source {
         pool,
         schema: "",
         keys,
         tables: PORTAL_TABLES,
-        scopes: key
+        scopes: keys_of
+            .into_iter()
             .map(|key| {
-                vec![vec![
+                vec![
                     ("jc.org", key.org.to_string()),
                     ("jc.project", key.project.to_string()),
-                ]]
+                ]
             })
-            .unwrap_or_default(),
+            .collect(),
     })
 }
 
@@ -698,16 +715,21 @@ pub fn select_of(schema: &str, table: &Table) -> String {
         .map(|c| quoted(c))
         .collect::<Vec<_>>()
         .join(", ");
-    let schema = if schema.is_empty() {
-        String::new()
-    } else {
-        format!("{}.", quoted(schema))
-    };
     format!(
-        "SELECT row_to_json(t)::text FROM (SELECT {columns} FROM {schema}{} WHERE {}) t",
+        "SELECT row_to_json(t)::text FROM (SELECT {columns} FROM {}{} WHERE {}) t",
+        schema_prefix(schema),
         quoted(table.name),
         table.filter
     )
+}
+
+/// `"schema".` of a module's tables; empty for `public`.
+fn schema_prefix(schema: &str) -> String {
+    if schema.is_empty() {
+        String::new()
+    } else {
+        format!("{}.", quoted(schema))
+    }
 }
 
 type Zip = zip::ZipWriter<BufWriter<std::fs::File>>;
@@ -748,11 +770,22 @@ async fn export_module(
         zip.start_file(format!("module/{module}/{}.jsonl", table.name), options)
             .map_err(archive_error)?;
         let mut rows = 0u64;
+        // A row a policy guards answers under its own key alone, so each key reads its rows
+        // once; any other table is read once, or every key would copy its rows again.
+        let guarded: bool = sqlx::query_scalar("SELECT row_security_active($1::regclass)")
+            .bind(format!(
+                "{}{}",
+                schema_prefix(source.schema),
+                quoted(table.name)
+            ))
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(failed)?;
         let unscoped = [Vec::new()];
-        let scopes = if source.scopes.is_empty() {
-            &unscoped[..]
-        } else {
+        let scopes = if guarded && !source.scopes.is_empty() {
             &source.scopes[..]
+        } else {
+            &unscoped[..]
         };
         for scope in scopes.iter().filter(|_| !keys.is_empty()) {
             for (setting, value) in scope {
