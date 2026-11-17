@@ -210,7 +210,8 @@ impl Branding {
         }
     }
 
-    /// The file name the branding answers for a logo or favicon an Organization carries inline:
+    /// The file name the branding answers for a logo or favicon an Organization or the
+    /// installation's operators carry inline:
     /// the UI only asks whether one is set, and `GET /api/v1/branding/{asset}` serves the SVG.
     pub const INLINE_SVG: &'static str = "organization.svg";
 
@@ -218,8 +219,21 @@ impl Branding {
     /// locales as the switcher's (UIX-16, T-6772). A member the Organization leaves out keeps
     /// the installation's value; the result is sanitised like the file, so the colour rule and
     /// the computed foregrounds hold for it too.
-    pub fn with_organization(mut self, spec: &jc_core::kinds::OrganizationSpec) -> Self {
-        let look = &spec.appearance;
+    pub fn with_organization(self, spec: &jc_core::kinds::OrganizationSpec) -> Self {
+        let mut branding = self.with_appearance(&spec.appearance);
+        spec.domain.clone_into(&mut branding.org_domain);
+        if !spec.locales.is_empty() {
+            branding.languages = Languages {
+                default: spec.default_locale.clone(),
+                offered: spec.locales.clone(),
+            };
+        }
+        branding.sanitised()
+    }
+
+    /// This branding with `look` over it, member by member: the installation's own look its
+    /// operators set (T-7188), and the shared half of an Organization's.
+    pub fn with_appearance(mut self, look: &jc_core::kinds::OrganizationAppearance) -> Self {
         let over = |target: &mut String, value: &Option<String>| {
             if let Some(value) = value {
                 value.clone_into(target);
@@ -245,13 +259,6 @@ impl Branding {
         }
         if look.favicon_svg.is_some() {
             Self::INLINE_SVG.clone_into(&mut self.favicon);
-        }
-        spec.domain.clone_into(&mut self.org_domain);
-        if !spec.locales.is_empty() {
-            self.languages = Languages {
-                default: spec.default_locale.clone(),
-                offered: spec.locales.clone(),
-            };
         }
         self.sanitised()
     }

@@ -8455,7 +8455,7 @@
       "operatorSets": "Die Betreiber Ihrer Installation legen dies fest.",
       "notYet": "Noch nicht gesetzt",
       "whomToAsk": "Wen fragen",
-      "whomToAskLead": "Den E-Mail-Server legen die Betreiber der Installation fest; bitten Sie sie darum.",
+      "whomToAskLead": "Das Branding, die Anmeldeseiten und den E-Mail-Server legen die Betreiber der Installation fest; bitten Sie sie darum.",
       "deploymentSets": "Bereitstellung legt dies fest",
       "step": {
         "organization": {
@@ -8492,12 +8492,12 @@
       "operator": {
         "branding": {
           "title": "Markenauftritt",
-          "hint": "Name, Logo und Farben der Installation. Vorerst in der Branding-Datei der Installation festgelegt, die Ihre Bereitstellung mitbringt.",
+          "hint": "Name, Logo und Farben der Installation. Ein Betreiber setzt sie auf der Seite Installation; Standard ist die Branding-Datei.",
           "about": "Name, Logo und Farben der Installation."
         },
         "loginTheme": {
           "title": "Anmeldeseiten",
-          "hint": "Wie die Anmeldeseiten aussehen. Vorerst im Anmeldeteil der Branding-Datei der Installation festgelegt.",
+          "hint": "Wie die Anmeldeseiten aussehen: Logo und Farben, die ein Betreiber auf der Seite Installation setzt.",
           "about": "Wie die Anmeldeseiten aussehen."
         },
         "smtp": {
@@ -13791,6 +13791,51 @@
         "testFirst": "Sobald ein zweiter Operator den Server genehmigt, testen Sie ihn hier.",
         "testSent": "Der Server hat die Test-E-Mail angenommen. Sie geht an Ihre eigene Adresse; prüfen Sie Ihren Posteingang.",
         "testFailed": "Die Test-E-Mail wurde nicht gesendet. Beheben Sie, was die Zeile unten nennt, und senden Sie den Test erneut."
+      },
+      "branding": {
+        "title": "Erscheinungsbild",
+        "lead": "Name, Farben, Logo und Favicon der Installation im Portal und auf den Anmeldeseiten. Das eigene Erscheinungsbild einer Organisation liegt darüber; ein leeres Feld behält den Wert der Branding-Datei.",
+        "set": "Gesetzt",
+        "unset": "Aus der Branding-Datei",
+        "waiting": "Eine Änderung des Erscheinungsbilds wartet auf einen zweiten Betreiber. Sie erscheint nach der Freigabe.",
+        "empty": "Hier ist noch nichts gesetzt: Portal und Anmeldeseiten zeigen Name und Aussehen aus der Branding-Datei.",
+        "instanceName": "Voller Name",
+        "shortName": "Kurzname",
+        "colour": {
+          "primary": "Hauptfarbe",
+          "secondary": "Zweitfarbe",
+          "accent": "Akzentfarbe",
+          "background": "Hintergrundfarbe",
+          "text": "Textfarbe"
+        },
+        "logoSvg": "Logo",
+        "faviconSvg": "Favicon",
+        "fromFile": "Standard aus der Branding-Datei",
+        "removeFile": "Entfernen",
+        "unchanged": "Ändern Sie ein Feld, um eine Änderung zu beantragen.",
+        "hint": {
+          "instanceName": "In Seitentiteln und auf der Anmeldeseite, zum Beispiel Smart City Banská Bystrica.",
+          "shortName": "In der Seitenleiste und den Browser-Tabs, zum Beispiel Smart BB; leer übernimmt den vollen Namen.",
+          "colour": "Eine Hex-Farbe, zum Beispiel #0b5394.",
+          "svg": "Eine SVG-Datei von höchstens 64 KB ohne Skript, zum Beispiel logo.svg.",
+          "favicon": "Eine SVG-Datei von höchstens 64 KB ohne Skript, zum Beispiel favicon.svg."
+        },
+        "file": {
+          "size": "Die Datei ist größer als 64 KB. Wählen Sie ein kleineres SVG.",
+          "type": "Die Datei ist kein SVG-Bild. Wählen Sie eine .svg-Datei.",
+          "script": "Das SVG enthält Skript oder einen Event-Handler. Exportieren Sie es ohne beides erneut."
+        },
+        "propose": "Diese Änderung des Erscheinungsbilds beantragen",
+        "chooseFile": "SVG-Datei wählen",
+        "fixFile": "Wählen Sie zuerst eine andere SVG-Datei."
+      },
+      "signIn": {
+        "title": "Anmeldeseiten",
+        "lead": "Die Anmeldeseiten übernehmen Logo und Farben von oben ab der nächsten Anmeldung nach der Freigabe. Die Vorschau zeigt sie in Desktop- und Telefonbreite.",
+        "defaultName": "Ihre Installation",
+        "desktop": "Desktop-Breite",
+        "phone": "Telefonbreite",
+        "previewOf": "Vorschau der Anmeldeseite, {which}"
       }
     },
     "action": {

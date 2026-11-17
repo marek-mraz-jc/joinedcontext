@@ -169,6 +169,10 @@ pub struct AppState {
     /// ponytail: per-replica map; move it to the preferences database when the portal
     /// runs more than one replica (the reconciler is leader-elected, the UI is not).
     revocations: Arc<RwLock<HashMap<String, i64>>>,
+    /// The installation's own look its operators last approved (T-7188), over `JC_BRANDING_FILE`
+    /// on every page and on the sign-in pages. Read back at start, replaced on approval.
+    /// ponytail: per-replica like `revocations`; another replica reads it at its next start.
+    installation_look: Arc<RwLock<Option<Arc<jc_core::kinds::OrganizationAppearance>>>>,
     /// What a cookie session keeps on the server, by `sub` and `issued_at` (T-6549): the ID
     /// token (only the `id_token_hint` of its logout) and the group paths. Both grow with the
     /// person's groups, and a browser drops a cookie past 4096 bytes.
@@ -368,6 +372,7 @@ impl AppState {
             kube: None,
             app_tests: None,
             revocations: Arc::new(RwLock::new(HashMap::new())),
+            installation_look: Arc::default(),
             session_claims: Arc::default(),
             mcp_in_flight: Arc::default(),
             change_reads: Default::default(),
@@ -503,6 +508,7 @@ impl AppState {
         state.db = db;
         // What the process before this one refused stays refused (T-0980).
         state.load_revocations().await;
+        state.load_installation_look().await;
         state.attach_run_clients();
         // The people of the realm, managed with the admin client that manages its groups (PF-90).
         if let (Some(oidc), Some((id, secret))) = (
@@ -1164,7 +1170,7 @@ impl AppState {
                 crate::reconciler::ckan::CkanSync::new(catalogue_host(&self.config))
                     .with_age_key_file(age_key_file)
                     .for_organizations(self.organization_catalogues.clone());
-            let branding = crate::branding::Branding::load(self.config.branding_file.as_deref());
+            let branding = self.installation_branding();
             if !branding.organisation.trim().is_empty() {
                 catalogue = catalogue.titled(branding.organisation);
             }
@@ -1667,10 +1673,65 @@ impl AppState {
     /// `JC_BRANDING_FILE` or neutral defaults, with the appearance of the Organization the
     /// request's host pins over it (UIX-16, T-6772).
     pub fn branding(&self) -> Branding {
-        let installation = Branding::load(self.config.branding_file.as_deref());
+        let installation = self.installation_branding();
         match self.pinned_organization() {
             Some(spec) => installation.with_organization(&spec),
             None => installation,
+        }
+    }
+
+    /// The installation's branding: `JC_BRANDING_FILE` or neutral defaults, with the look its
+    /// operators approved over it (T-7188).
+    pub fn installation_branding(&self) -> Branding {
+        let file = Branding::load(self.config.branding_file.as_deref());
+        match self.installation_look() {
+            Some(look) => file.with_appearance(&look),
+            None => file,
+        }
+    }
+
+    /// The installation's look its operators approved last, `None` while they set none.
+    pub fn installation_look(&self) -> Option<Arc<jc_core::kinds::OrganizationAppearance>> {
+        self.installation_look
+            .read()
+            .ok()
+            .and_then(|look| look.clone())
+    }
+
+    /// Shows `look` from the next request on; an empty one shows the file again.
+    pub fn set_installation_look(&self, look: jc_core::kinds::OrganizationAppearance) {
+        let look = (!look.is_unset()).then(|| Arc::new(look));
+        if let Ok(mut held) = self.installation_look.write() {
+            *held = look;
+        }
+    }
+
+    /// Reads back the look of the last applied `BrandingSet` operator Change (T-7188). One that
+    /// no longer passes jc-core's check shows the file, and the log says so.
+    pub async fn load_installation_look(&self) {
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        let found = sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT payload -> 'branding' FROM operator_changes \
+             WHERE kind = 'BrandingSet' AND state = 'applied' \
+             ORDER BY decided_at DESC LIMIT 1",
+        )
+        .fetch_optional(db)
+        .await;
+        let look = match found {
+            Ok(Some(look)) => look,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::error!(%error, "the installation's look was not read back; the branding file shows");
+                return;
+            }
+        };
+        match serde_json::from_value::<jc_core::kinds::OrganizationAppearance>(look) {
+            Ok(look) if look.validate().is_ok() => self.set_installation_look(look),
+            _ => tracing::error!(
+                "the installation's approved look fails its check; the branding file shows"
+            ),
         }
     }
 

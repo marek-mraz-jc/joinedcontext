@@ -968,6 +968,10 @@ impl Modify for JcCoreSchemas {
         components
             .schemas
             .insert("Condition".into(), schemars_schema::<jc_core::Condition>());
+        components.schemas.insert(
+            "OrganizationAppearance".into(),
+            schemars_schema::<jc_core::kinds::OrganizationAppearance>(),
+        );
     }
 }
 
@@ -1122,6 +1126,11 @@ pub fn object_meta_ref() -> Ref {
 
 pub fn text_ref() -> Ref {
     Ref::from_schema_name("Text")
+}
+
+/// jc-core's `OrganizationAppearance`, also the installation's look (T-7188).
+pub fn appearance_ref() -> Ref {
+    Ref::from_schema_name("OrganizationAppearance")
 }
 
 pub fn phase_ref() -> Ref {

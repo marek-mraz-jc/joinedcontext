@@ -14,7 +14,6 @@ use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 
-use crate::branding::Branding;
 use crate::resource::is_dns1123;
 use crate::state::AppState;
 
@@ -64,7 +63,7 @@ async fn preview(
     Path(public_id): Path<String>,
     Query(query): Query<PreviewQuery>,
 ) -> Response {
-    let branding = Branding::load(state.config.branding_file.as_deref());
+    let branding = state.installation_branding();
     let (Some(host), true) = (host(&branding.domain), is_dns1123(&public_id)) else {
         return StatusCode::NOT_FOUND.into_response();
     };

@@ -8455,7 +8455,7 @@
       "operatorSets": "Nastavují to operátoři vaší instalace.",
       "notYet": "Zatím nenastaveno",
       "whomToAsk": "Koho se zeptat",
-      "whomToAskLead": "E-mailový server nastavují operátoři instalace; požádejte o něj je.",
+      "whomToAskLead": "Branding, přihlašovací stránky a e-mailový server nastavují operátoři instalace; požádejte o ně je.",
       "deploymentSets": "Nastavuje nasazení",
       "step": {
         "organization": {
@@ -8492,12 +8492,12 @@
       "operator": {
         "branding": {
           "title": "Značka",
-          "hint": "Název, logo a barvy instalace. Zatím se nastavují v souboru značky instalace, který dodává vaše nasazení.",
+          "hint": "Název, logo a barvy instalace. Provozovatel je nastaví na stránce Instalace; výchozí je soubor vzhledu.",
           "about": "Název, logo a barvy instalace."
         },
         "loginTheme": {
           "title": "Přihlašovací stránky",
-          "hint": "Jak vypadají přihlašovací stránky. Zatím se nastavují v přihlašovací části souboru značky instalace.",
+          "hint": "Jak vypadají přihlašovací stránky: logo a barvy, které provozovatel nastaví na stránce Instalace.",
           "about": "Jak vypadají přihlašovací stránky."
         },
         "smtp": {
@@ -13791,6 +13791,51 @@
         "testFirst": "Jakmile druhý operátor server schválí, otestujte ho zde.",
         "testSent": "Server přijal testovací e-mail. Jde na vaši vlastní adresu; zkontrolujte schránku.",
         "testFailed": "Testovací e-mail se neodeslal. Opravte, co uvádí řádek níže, a pošlete test znovu."
+      },
+      "branding": {
+        "title": "Vzhled",
+        "lead": "Název, barvy, logo a ikona instalace na Portálu a na přihlašovacích stránkách. Vlastní vzhled organizace jde nad ně; prázdné pole ponechá hodnotu ze souboru vzhledu.",
+        "set": "Nastaveno",
+        "unset": "Ze souboru vzhledu",
+        "waiting": "Změna vzhledu čeká na druhého provozovatele. Zobrazí se po schválení.",
+        "empty": "Zatím nic nenastaveno: Portál a přihlašovací stránky ukazují název a vzhled ze souboru vzhledu.",
+        "instanceName": "Celý název",
+        "shortName": "Krátký název",
+        "colour": {
+          "primary": "Hlavní barva",
+          "secondary": "Doplňková barva",
+          "accent": "Zvýrazňující barva",
+          "background": "Barva pozadí",
+          "text": "Barva textu"
+        },
+        "logoSvg": "Logo",
+        "faviconSvg": "Ikona stránky",
+        "fromFile": "Výchozí ze souboru vzhledu",
+        "removeFile": "Odstranit",
+        "unchanged": "Změňte pole, abyste mohli požádat o změnu.",
+        "hint": {
+          "instanceName": "V titulcích stránek a na přihlašovací stránce, například Smart City Banská Bystrica.",
+          "shortName": "V postranním panelu a na kartách prohlížeče, například Smart BB; prázdný převezme celý název.",
+          "colour": "Barva v hex zápisu, například #0b5394.",
+          "svg": "Soubor SVG o velikosti nejvýše 64 KB bez skriptu, například logo.svg.",
+          "favicon": "Soubor SVG o velikosti nejvýše 64 KB bez skriptu, například favicon.svg."
+        },
+        "file": {
+          "size": "Soubor má více než 64 KB. Vyberte menší SVG.",
+          "type": "Soubor není obrázek SVG. Vyberte soubor .svg.",
+          "script": "SVG obsahuje skript nebo obsluhu události. Exportujte jej znovu bez nich."
+        },
+        "propose": "Požádat o tuto změnu vzhledu",
+        "chooseFile": "Vybrat soubor SVG",
+        "fixFile": "Nejprve vyberte jiný soubor SVG."
+      },
+      "signIn": {
+        "title": "Přihlašovací stránky",
+        "lead": "Přihlašovací stránky převezmou logo a barvy výše od dalšího přihlášení po schválení. Náhled je ukazuje v šířce počítače a telefonu.",
+        "defaultName": "Vaše instalace",
+        "desktop": "Šířka počítače",
+        "phone": "Šířka telefonu",
+        "previewOf": "Náhled přihlašovací stránky, {which}"
       }
     },
     "action": {

@@ -249,6 +249,10 @@
       "class": "FREE",
       "reason": "the S3 address, region, bucket, folder and key of the Organization's own bucket outside the platform: nothing of the platform to pick from; the server checks each field's form (T-7154)"
     },
+    "src/pages/operator/OperatorBranding.tsx :: operator.installation.branding.colour.${name}": {
+      "class": "FREE",
+      "reason": "a hex colour such as #0b5394 for the installation's look; nothing of the platform to pick from, and jc-core checks its form on the server (T-7188)"
+    },
     "src/pages/operator/OperatorInstallation.tsx :: User": {
       "class": "FREE",
       "reason": "the SMTP server's own account name, which the mail provider issues; no person of the realm"
