@@ -152,3 +152,7 @@ note = "replaces remint_apply with range-bounded statements; an older release ca
 [0036]
 rollback = "compatible"
 note = "adds tenants.organization_id and tenant_rename; an older release writes no organization_id (NULL: the name alone decides) and reads neither"
+
+[0037]
+rollback = "compatible"
+note = "adds the rename functions, nothing calls them, and recreates the csource_index foreign key ON UPDATE CASCADE; an older release never renames and reads the same tables"
