@@ -314,7 +314,10 @@ impl AppState {
             draft_events,
             workspaces: crate::ops::workspaces::WorkspaceStore::new(None),
             data_views: crate::ops::data_views::DataViewStore::new(None, Arc::default()),
-            pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(None),
+            pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(
+                None,
+                Arc::default(),
+            ),
             previews: Arc::default(),
             activity,
             activity_events,
@@ -326,7 +329,10 @@ impl AppState {
             space_usage,
             space_moves: Arc::default(),
             model_schemas,
-            rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
+            rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                None,
+                Default::default(),
+            )),
             trash: Arc::new(crate::entity_trash::TrashStore::new(None, Arc::default())),
             comments: Arc::new(crate::entity_comments::CommentStore::new(
                 None,
@@ -347,8 +353,11 @@ impl AppState {
             endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None, Arc::default())),
             mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None, Arc::default())),
             live: Arc::new(crate::live::LiveHub::new(&public_base, None)),
-            pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None)),
-            source_ledger: Arc::new(crate::pipeline_source_deletes::Ledger::new(None)),
+            pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None, Default::default())),
+            source_ledger: Arc::new(crate::pipeline_source_deletes::Ledger::new(
+                None,
+                Arc::default(),
+            )),
             pipeline_samples: Arc::default(),
             pipeline_stats: Arc::default(),
             drift_watch: None,
@@ -731,7 +740,10 @@ impl AppState {
         if let Some(pool) = self.db.as_ref() {
             syncer = syncer
                 .with_leadership(Arc::new(Leadership::reconciler(pool.clone())))
-                .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(pool.clone())));
+                .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(
+                    pool.clone(),
+                    self.mirror.clone(),
+                )));
             // PF-41: the challenge lives in the database, so the check runs only with one.
             let host = self.config.public_base_url.host_str().map(str::to_owned);
             match (crate::domain_verification::NetLookup::new(), host) {
@@ -1268,10 +1280,14 @@ impl AppState {
         self.workspaces = crate::ops::workspaces::WorkspaceStore::new(db.clone());
         self.data_views =
             crate::ops::data_views::DataViewStore::new(db.clone(), self.mirror.clone());
-        self.pipeline_templates = crate::ops::pipeline_templates::TemplateStore::new(db.clone());
+        self.pipeline_templates =
+            crate::ops::pipeline_templates::TemplateStore::new(db.clone(), self.mirror.clone());
         self.activity =
             crate::activity::ActivityStore::new(db.clone()).with_hub(self.activity_events.clone());
-        self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(db.clone()));
+        self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
         self.trash = Arc::new(crate::entity_trash::TrashStore::new(
             db.clone(),
             self.mirror.clone(),
@@ -1304,8 +1320,14 @@ impl AppState {
             self.mirror.clone(),
         ));
         self.quality = Arc::new(crate::quality::Store::new(db.clone(), self.mirror.clone()));
-        self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(db.clone()));
-        self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(db.clone()));
+        self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
     }
 
     /// The cluster clients a builder run and its test sandbox are scheduled with.

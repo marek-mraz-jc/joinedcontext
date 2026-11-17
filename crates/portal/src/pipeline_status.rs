@@ -29,21 +29,41 @@ pub struct Saved {
 pub type Key = (String, String);
 
 /// The shared record, in the Portal's database.
-#[derive(Debug, Clone)]
+/// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
+#[derive(Clone)]
 pub struct Store {
     db: sqlx::PgPool,
+    mirror: std::sync::Arc<crate::store::Mirror>,
 }
 
 impl Store {
-    pub fn new(db: sqlx::PgPool) -> Self {
-        Self { db }
+    pub fn new(db: sqlx::PgPool, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
+        Self { db, mirror }
     }
 
     /// Replaces the record with `statuses`, the leader's whole answer of this run: a pipeline it
-    /// no longer holds leaves the record with it.
+    /// no longer holds leaves the record with it. Project by project in its key (STO-07): a
+    /// project with no key keeps no record.
     pub async fn save(&self, statuses: &HashMap<Key, Saved>) -> Result<(), sqlx::Error> {
-        let mut tx = self.db.begin().await?;
-        sqlx::query("DELETE FROM pipeline_status")
+        for (project, key) in crate::project_ids::keyed_projects(&self.db, &self.mirror).await? {
+            let theirs: HashMap<&Key, &Saved> = statuses
+                .iter()
+                .filter(|((p, _), _)| *p == project)
+                .collect();
+            self.save_project(key, &project, &theirs).await?;
+        }
+        Ok(())
+    }
+
+    async fn save_project(
+        &self,
+        key: jc_types::ProjectKey,
+        project: &str,
+        statuses: &HashMap<&Key, &Saved>,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = crate::db::tenant_tx(&self.db, key).await?;
+        sqlx::query("DELETE FROM pipeline_status WHERE project = $1")
+            .bind(project)
             .execute(&mut *tx)
             .await?;
         for ((project, pipeline), saved) in statuses {
@@ -64,13 +84,21 @@ impl Store {
     /// What the leader said within `fresh`. A row that no longer parses is skipped, never fatal.
     pub async fn load(&self, fresh: Duration) -> Result<HashMap<Key, Saved>, sqlx::Error> {
         let seconds = i64::try_from(fresh.as_secs()).unwrap_or(i64::MAX);
-        let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
-            "SELECT project, pipeline, status FROM pipeline_status \
-             WHERE updated_at > now() - make_interval(secs => $1::double precision)",
-        )
-        .bind(seconds as f64)
-        .fetch_all(&self.db)
-        .await?;
+        let mut rows: Vec<(String, String, serde_json::Value)> = Vec::new();
+        for (project, key) in crate::project_ids::keyed_projects(&self.db, &self.mirror).await? {
+            let mut tx = crate::db::tenant_tx(&self.db, key).await?;
+            rows.extend(
+                sqlx::query_as::<_, (String, String, serde_json::Value)>(
+                    "SELECT project, pipeline, status FROM pipeline_status \
+                     WHERE project = $2 AND updated_at > now() - make_interval(secs => $1::double precision)",
+                )
+                .bind(seconds as f64)
+                .bind(&project)
+                .fetch_all(&mut *tx)
+                .await?,
+            );
+            tx.commit().await?;
+        }
         Ok(rows
             .into_iter()
             .filter_map(|(project, pipeline, status)| {
@@ -109,12 +137,18 @@ mod tests {
             eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
             return;
         };
-        let store = Store::new(crate::db::connect(&url).await.expect("connect and migrate"));
+        // A project of its own run, placed in an Organization of the registry (T-7198).
+        let db = crate::db::connect(&url).await.expect("connect and migrate");
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        let run = jc_types::ProjectId::mint().path_segment();
+        let t2976 = format!("t2976-{run}");
+        crate::project_ids::placed(&db, &mirror, &t2976, &format!("t2976org-{run}")).await;
+        let store = Store::new(db, mirror);
         let live = Saved {
             phase: Phase::Live,
             conditions: vec![condition()],
         };
-        let key = ("t2976".to_owned(), "hsl-hfp-vehicles".to_owned());
+        let key = (t2976.clone(), "hsl-hfp-vehicles".to_owned());
         store
             .save(&HashMap::from([(key.clone(), live.clone())]))
             .await
@@ -124,7 +158,7 @@ mod tests {
             Some(&live)
         );
 
-        let gone = ("t2976".to_owned(), "retired".to_owned());
+        let gone = (t2976.clone(), "retired".to_owned());
         store
             .save(&HashMap::from([(
                 gone.clone(),
