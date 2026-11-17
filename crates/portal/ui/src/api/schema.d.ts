@@ -889,6 +889,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Operator Changes
+         * @description Every operator Change of the installation, newest first (T-7129 §4). For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_change_list"];
+        put?: never;
+        /**
+         * Propose An Operator Change
+         * @description Asks for a host added to or removed from an Organization, or a person added to or removed from the operators' group (T-7129 §4). Nothing is written until a second operator approves. 409 when the host or person already has an open Change, or the host is taken.
+         */
+        post: operations["operator_change_propose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/changes/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve An Operator Change
+         * @description Applies the Change, checked again against the registry and DNS, in one transaction with its audit row (T-7129 §4). Only an operator other than the proposer approves, whatever the kind.
+         */
+        post: operations["operator_change_approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/changes/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject An Operator Change
+         * @description Closes the Change without writing anything it asked for (T-7129 §4). Any operator may, the proposer included.
+         */
+        post: operations["operator_change_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization-ids": {
         parameters: {
             query?: never;
@@ -9893,6 +9957,14 @@ export interface components {
             name: string;
             namespace: string;
         };
+        /** @description The rows a Change writes, as it was asked for and checked. */
+        ChangePayload: {
+            host?: string | null;
+            organization?: string | null;
+            organizationId?: string | null;
+            role?: string | null;
+            subject?: string | null;
+        };
         /**
          * @description Lifecycle phase of a change.
          * @enum {string}
@@ -9932,6 +10004,38 @@ export interface components {
              *     copy first, and whose (UI-63, CC-79).
              */
             workspace?: string | null;
+        };
+        /**
+         * @description An operator Change as it is asked for. Each kind takes its own fields and no other.
+         * @example {
+         *       "host": "smartcity.bbsk.sk",
+         *       "kind": "HostAdd",
+         *       "organization": "bbsk",
+         *       "organizationId": "sk_bbsk",
+         *       "role": "working"
+         *     }
+         */
+        ChangeRequest: {
+            /** @description `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`. */
+            host?: string | null;
+            kind: components["schemas"]["OperatorKind"];
+            /** @description `HostAdd`: the Organization's name, e.g. `bbsk`. */
+            organization?: string | null;
+            /**
+             * @description `HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a
+             *     host outside the installation's domain.
+             */
+            organizationId?: string | null;
+            /**
+             * @description `HostAdd`: what answers on the host: `working`, `opendata`, `api`, `signin`, `apps`,
+             *     `portal-site` or `host`.
+             */
+            role?: string | null;
+            /**
+             * @description `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
+             *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
+             */
+            subject?: string | null;
         };
         /** @description Approval and reconciliation status of a change. */
         ChangeStatus: {
@@ -12408,6 +12512,31 @@ export interface components {
          * @enum {string}
          */
         Operations: "read" | "write" | "history";
+        /** @description One operator Change. */
+        OperatorChange: {
+            /** Format: date-time */
+            decidedAt?: string | null;
+            /** @description The operator who approved or rejected it. */
+            decidedBy?: string | null;
+            id: string;
+            kind: components["schemas"]["OperatorKind"];
+            payload: components["schemas"]["ChangePayload"];
+            /** Format: date-time */
+            proposedAt: string;
+            /** @description The user id of the operator who asked for it. */
+            proposedBy: string;
+            /** @description `proposed`, `applied` or `rejected`. */
+            state: string;
+        };
+        /** @description The operator Changes, newest first. */
+        OperatorChangeList: {
+            items: components["schemas"]["OperatorChange"][];
+        };
+        /**
+         * @description What an operator Change does.
+         * @enum {string}
+         */
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove";
         /** @description One address: what answers and where. */
         OrganizationAddress: {
             kind: components["schemas"]["AddressKind"];
@@ -17341,6 +17470,276 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    operator_change_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Changes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorChangeList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_change_propose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description The Change waits for a second operator */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorChange"];
+                };
+            };
+            /** @description The body does not parse */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description An open Change for the same host or person, or the host is taken */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A field breaks a rule; the error names it */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database, the installation's hosts are unknown, or no realm admin client for an operator Change */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_change_approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Change's id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorChange"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, no second factor, or the proposer */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such Change */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Decided already, the host was taken since, the proposer is no operator any more, or a removal would leave fewer than two operators */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A rule no longer holds, e.g. the TXT record lapsed; the error names the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database or no realm admin client */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_change_reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Change's id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rejected */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorChange"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such Change */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Decided already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
             };
         };
     };

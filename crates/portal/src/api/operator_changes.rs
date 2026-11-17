@@ -554,6 +554,7 @@ fn parse_id(id: &str) -> Result<String, ApiError> {
 #[utoipa::path(
     get,
     path = "/api/v1/operator/changes",
+    operation_id = "operator_change_list",
     summary = "List Operator Changes",
     description = "Every operator Change of the installation, newest first (T-7129 §4). For a person of the operators' group with a second factor.",
     tag = "system",
@@ -583,6 +584,7 @@ pub async fn list(
 #[utoipa::path(
     post,
     path = "/api/v1/operator/changes",
+    operation_id = "operator_change_propose",
     summary = "Propose An Operator Change",
     description = "Asks for a host added to or removed from an Organization, or a person added to or removed from the operators' group (T-7129 §4). Nothing is written until a second operator approves. 409 when the host or person already has an open Change, or the host is taken.",
     tag = "system",
@@ -738,6 +740,7 @@ async fn decide(
 #[utoipa::path(
     post,
     path = "/api/v1/operator/changes/{id}/approve",
+    operation_id = "operator_change_approve",
     summary = "Approve An Operator Change",
     description = "Applies the Change, checked again against the registry and DNS, in one transaction with its audit row (T-7129 §4). Only an operator other than the proposer approves, whatever the kind.",
     tag = "system",
@@ -892,6 +895,7 @@ async fn apply_operator(
 #[utoipa::path(
     post,
     path = "/api/v1/operator/changes/{id}/reject",
+    operation_id = "operator_change_reject",
     summary = "Reject An Operator Change",
     description = "Closes the Change without writing anything it asked for (T-7129 §4). Any operator may, the proposer included.",
     tag = "system",
