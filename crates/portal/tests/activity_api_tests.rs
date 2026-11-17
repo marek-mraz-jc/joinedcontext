@@ -21,8 +21,8 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 const PROJECT: &str = "helsinki";
 const CSRF: &str = "test-csrf-activity";
@@ -297,7 +297,7 @@ async fn activity_db() -> Option<(sqlx::PgPool, String)> {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let id = crate::unique::unique();
+    let id = unique::unique();
     Some((pool, format!("trim-{id}")))
 }
 
@@ -316,7 +316,10 @@ async fn one_trim_tick_drops_what_is_past_retention_and_the_next_within_the_hour
         return;
     };
     let now = Utc::now();
-    let store = ActivityStore::new(Some(pool.clone()));
+    let store = ActivityStore::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
     let at = |age: chrono::Duration| {
         let mut e = event("config.applied", "info", "endpoints/public-air");
         e.project = project.clone();
@@ -357,10 +360,13 @@ async fn a_backlog_is_trimmed_in_bounded_batches() {
     .await
     .expect("seeded");
 
-    let done = ActivityStore::new(Some(pool.clone()))
-        .trim(Utc::now())
-        .await
-        .expect("trimmed");
+    let done = ActivityStore::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    )
+    .trim(Utc::now())
+    .await
+    .expect("trimmed");
     assert_eq!(rows_of(&pool, &project).await, 0);
     assert!(done.rows >= 25_000, "{done:?}");
     // 25,000 of this test's rows alone take 3; other suites' old rows add to both counts alike.
@@ -380,7 +386,8 @@ async fn a_postgres_page_keeps_one_connectors_events_and_pages_on_by_cursor() {
     };
     // The store keeps whole seconds (`chrono_to_odt`); the id orders events of one second.
     let now = Utc::now().trunc_subsecs(0);
-    let store = ActivityStore::new(Some(pool));
+    let mirror = common::keyed_mirror(&pool, &[&project]).await;
+    let store = ActivityStore::new(Some(pool), mirror);
     let call = |minutes: i64, connector: &str| {
         let mut e = event("mcp.tool", "info", "endpoints/public-air");
         e.project = project.clone();

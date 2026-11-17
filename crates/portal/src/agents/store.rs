@@ -10,6 +10,7 @@
 //! deadline removes the pod.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
@@ -22,15 +23,27 @@ use crate::db;
 /// This text reaches the run's page and the API's answer, so it holds no driver words; the cause
 /// goes to the log where the error is made (T-6442: a person read "pool timed out ...").
 #[derive(Debug, thiserror::Error)]
-#[error("The Portal's database did not answer in time. Start the run again in a minute.")]
-pub struct StoreError(#[source] sqlx::Error);
+pub enum StoreError {
+    #[error("The Portal's database did not answer in time. Start the run again in a minute.")]
+    Db(#[source] sqlx::Error),
+    /// The project has no tenancy key (T-7206 PK-1g): its Organization is not an active one of
+    /// the registry, so it keeps no builder run.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no builder run; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
+}
 
 impl From<sqlx::Error> for StoreError {
     fn from(cause: sqlx::Error) -> Self {
         tracing::warn!(error = %cause, "the agent run store did not answer");
-        Self(cause)
+        Self::Db(cause)
     }
 }
+
+type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+/// How many run ids [`AgentStore`] remembers the project of before it starts over.
+/// ponytail: cleared whole when full; an LRU when a Portal holds more live runs than this.
+const KNOWN_RUNS: usize = 10_000;
 
 /// Filter criteria for querying agent runs (AG-71).
 #[derive(Debug, Clone, Default)]
@@ -51,20 +64,89 @@ struct Memory {
     events: HashMap<String, Vec<AgentRunEvent>>,
 }
 
-/// Every run of this Portal, by id.
-#[derive(Debug)]
+/// Every run of this Portal, by id. In the database every statement runs in a `db::tenant_tx`
+/// of the run's project key (T-7206 PK-1g).
 pub struct AgentStore {
     db: Option<sqlx::PgPool>,
+    mirror: Arc<crate::store::Mirror>,
+    /// The project of each run id this process has seen: a call by id alone opens the run's key
+    /// without asking every project for it.
+    projects: std::sync::Mutex<HashMap<String, String>>,
     memory: RwLock<Memory>,
+}
+
+impl std::fmt::Debug for AgentStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentStore")
+            .field("durable", &self.db.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl AgentStore {
     /// Backed by the database when there is one, by a map when there is not.
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         Self {
             db,
+            mirror,
+            projects: std::sync::Mutex::default(),
             memory: RwLock::new(Memory::default()),
         }
+    }
+
+    fn known(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.projects.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Remembers which project `runs` belong to.
+    fn learn<'a>(&self, runs: impl IntoIterator<Item = &'a AgentRun>) {
+        let mut known = self.known();
+        for run in runs {
+            if known.len() >= KNOWN_RUNS {
+                known.clear();
+            }
+            known.insert(run.id.clone(), run.project.clone());
+        }
+    }
+
+    /// A transaction in `project`'s key; `None` when it has none.
+    async fn project_tx(
+        &self,
+        pool: &sqlx::PgPool,
+        project: &str,
+    ) -> Result<Option<Tx>, StoreError> {
+        Ok(crate::project_ids::tx_of(pool, &self.mirror, project).await?)
+    }
+
+    /// A transaction in `project`'s key; [`StoreError::Unplaced`] when it has none.
+    async fn placed_tx(&self, pool: &sqlx::PgPool, project: &str) -> Result<Tx, StoreError> {
+        self.project_tx(pool, project)
+            .await?
+            .ok_or_else(|| StoreError::Unplaced(project.to_owned()))
+    }
+
+    /// A transaction in the key of run `id`'s project; `None` when no keyed project holds it. A
+    /// run this process has not seen is looked for project by project, each in its key (STO-07).
+    async fn run_tx(&self, pool: &sqlx::PgPool, id: &str) -> Result<Option<Tx>, StoreError> {
+        let known = self.known().get(id).cloned();
+        if let Some(project) = known {
+            return self.project_tx(pool, &project).await;
+        }
+        for (project, key) in crate::project_ids::keyed_projects(pool, &self.mirror).await? {
+            let mut tx = crate::db::tenant_tx(pool, key).await?;
+            let held: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM agent_runs WHERE id = $1 AND project = $2)",
+            )
+            .bind(id)
+            .bind(&project)
+            .fetch_one(&mut *tx)
+            .await?;
+            if held {
+                self.known().insert(id.to_owned(), project);
+                return Ok(Some(tx));
+            }
+        }
+        Ok(None)
     }
 
     /// Whether a restart keeps what this remembers, and so whether a run survives a rollout.
@@ -74,7 +156,10 @@ impl AgentStore {
 
     pub async fn create_run(&self, run: &AgentRun) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::insert_agent_run(pool, run).await?;
+            let mut tx = self.placed_tx(pool, &run.project).await?;
+            db::insert_agent_run(&mut *tx, run).await?;
+            tx.commit().await?;
+            self.learn([run]);
             return Ok(());
         }
         let mut memory = self.memory.write().await;
@@ -91,7 +176,13 @@ impl AgentStore {
     /// (F-POR1-018).
     pub async fn create_run_alone(&self, run: &AgentRun) -> Result<bool, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::insert_agent_run_alone(pool, run).await?);
+            let mut tx = self.placed_tx(pool, &run.project).await?;
+            let alone = db::insert_agent_run_alone(&mut tx, run).await?;
+            tx.commit().await?;
+            if alone {
+                self.learn([run]);
+            }
+            return Ok(alone);
         }
         let mut memory = self.memory.write().await;
         let taken = memory.runs.values().any(|r| {
@@ -111,7 +202,12 @@ impl AgentStore {
 
     pub async fn get_run(&self, id: &str) -> Result<Option<AgentRun>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::load_agent_run(pool, id).await?);
+            let Some(mut tx) = self.run_tx(pool, id).await? else {
+                return Ok(None);
+            };
+            let run = db::load_agent_run(&mut tx, id).await?;
+            tx.commit().await?;
+            return Ok(run);
         }
         Ok(self.memory.read().await.runs.get(id).cloned())
     }
@@ -129,7 +225,13 @@ impl AgentStore {
         limit: i64,
     ) -> Result<Vec<AgentRun>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::list_agent_runs_filtered(pool, project, filter, limit).await?);
+            let Some(mut tx) = self.project_tx(pool, project).await? else {
+                return Ok(Vec::new());
+            };
+            let runs = db::list_agent_runs_filtered(&mut tx, project, filter, limit).await?;
+            tx.commit().await?;
+            self.learn(&runs);
+            return Ok(runs);
         }
         let memory = self.memory.read().await;
         let mut runs: Vec<AgentRun> = memory
@@ -185,7 +287,13 @@ impl AgentStore {
         app_name: &str,
     ) -> Result<Option<AgentRun>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::load_live_agent_run_for_app(pool, project, app_name).await?);
+            let Some(mut tx) = self.project_tx(pool, project).await? else {
+                return Ok(None);
+            };
+            let run = db::load_live_agent_run_for_app(&mut tx, project, app_name).await?;
+            tx.commit().await?;
+            self.learn(&run);
+            return Ok(run);
         }
         let memory = self.memory.read().await;
         let mut matching: Vec<AgentRun> = memory
@@ -209,7 +317,16 @@ impl AgentStore {
     /// Lists non-terminal runs whose expiration time is before `now_rfc3339`.
     pub async fn list_expired(&self, now_rfc3339: &str) -> Result<Vec<AgentRun>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::list_expired_agent_runs(pool, now_rfc3339).await?);
+            let mut expired = Vec::new();
+            // Project by project, each in its own key (STO-07).
+            for (project, key) in crate::project_ids::keyed_projects(pool, &self.mirror).await? {
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
+                expired.extend(db::list_expired_agent_runs(&mut tx, &project, now_rfc3339).await?);
+                tx.commit().await?;
+            }
+            expired.sort_by(|a, b| a.expires_at.cmp(&b.expires_at));
+            self.learn(&expired);
+            return Ok(expired);
         }
         let memory = self.memory.read().await;
         let mut expired: Vec<AgentRun> = memory
@@ -231,7 +348,22 @@ impl AgentStore {
         status: AgentRunStatus,
     ) -> Result<Vec<AgentRun>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::list_agent_runs_in_status(pool, status.as_str()).await?);
+            let mut runs = Vec::new();
+            // Project by project, each in its own key (STO-07).
+            for (project, key) in crate::project_ids::keyed_projects(pool, &self.mirror).await? {
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
+                runs.extend(
+                    db::list_agent_runs_in_status(&mut tx, &project, status.as_str()).await?,
+                );
+                tx.commit().await?;
+            }
+            runs.sort_by(|a, b| {
+                a.created_at
+                    .cmp(&b.created_at)
+                    .then_with(|| a.id.cmp(&b.id))
+            });
+            self.learn(&runs);
+            return Ok(runs);
         }
         let memory = self.memory.read().await;
         let mut runs: Vec<AgentRun> = memory
@@ -265,8 +397,12 @@ impl AgentStore {
                 .map_err(StatusChangeError::Store)?
                 .ok_or(StatusChangeError::Unknown)?;
             let current = transition(&run.status, next)?;
+            let mut tx = self
+                .placed_tx(pool, &run.project)
+                .await
+                .map_err(StatusChangeError::Store)?;
             let moved = db::update_agent_run_status(
-                pool,
+                &mut tx,
                 id,
                 current.as_str(),
                 next.as_str(),
@@ -274,7 +410,10 @@ impl AgentStore {
                 next.is_terminal(),
             )
             .await
-            .map_err(|err| StatusChangeError::Store(StoreError(err)))?;
+            .map_err(|err| StatusChangeError::Store(StoreError::Db(err)))?;
+            tx.commit()
+                .await
+                .map_err(|err| StatusChangeError::Store(StoreError::Db(err)))?;
             let after = self
                 .get_run(id)
                 .await
@@ -318,7 +457,10 @@ impl AgentStore {
     /// Gives a run a new lease, `expires_at` in RFC 3339 (T-2772).
     pub async fn set_expiry(&self, id: &str, expires_at: &str) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::update_agent_run_expiry(pool, id, expires_at).await?;
+            if let Some(mut tx) = self.run_tx(pool, id).await? {
+                db::update_agent_run_expiry(&mut tx, id, expires_at).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(id) {
@@ -329,7 +471,10 @@ impl AgentStore {
 
     pub async fn invalidate_ticket(&self, id: &str) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::clear_agent_run_ticket(pool, id).await?;
+            if let Some(mut tx) = self.run_tx(pool, id).await? {
+                db::clear_agent_run_ticket(&mut tx, id).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(id) {
@@ -424,7 +569,10 @@ impl AgentStore {
         steps: i32,
     ) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::add_agent_run_usage(pool, run_id, tokens, steps).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::add_agent_run_usage(&mut tx, run_id, tokens, steps).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(run_id) {
@@ -436,7 +584,10 @@ impl AgentStore {
 
     pub async fn set_preview_url(&self, run_id: &str, url: &str) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::set_agent_run_preview_url(pool, run_id, url).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::set_agent_run_preview_url(&mut tx, run_id, url).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         let mut memory = self.memory.write().await;
@@ -456,7 +607,10 @@ impl AgentStore {
     /// Records when the first generated version of an application was served.
     pub async fn record_first_version(&self, run_id: &str) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::record_agent_run_first_version(pool, run_id).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::record_agent_run_first_version(&mut tx, run_id).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         let mut memory = self.memory.write().await;
@@ -479,7 +633,10 @@ impl AgentStore {
         files: serde_json::Value,
     ) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::set_agent_run_files(pool, run_id, &files).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::set_agent_run_files(&mut tx, run_id, &files).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(run_id) {
@@ -491,7 +648,10 @@ impl AgentStore {
     /// The application's name for people, chosen with its first version.
     pub async fn set_title(&self, run_id: &str, title: &str) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::set_agent_run_title(pool, run_id, title).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::set_agent_run_title(&mut tx, run_id, title).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(run_id) {
@@ -512,7 +672,10 @@ impl AgentStore {
             .map(|e| (e.name.clone(), e.slug.clone()))
             .unwrap_or_default();
         if let Some(pool) = &self.db {
-            db::set_agent_run_endpoints(pool, run_id, &value, &name, &slug).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::set_agent_run_endpoints(&mut tx, run_id, &value, &name, &slug).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(run_id) {
@@ -525,7 +688,10 @@ impl AgentStore {
 
     pub async fn set_merge_request(&self, run_id: &str, number: i32) -> Result<(), StoreError> {
         if let Some(pool) = &self.db {
-            db::set_agent_run_merge_request(pool, run_id, number).await?;
+            if let Some(mut tx) = self.run_tx(pool, run_id).await? {
+                db::set_agent_run_merge_request(&mut tx, run_id, number).await?;
+                tx.commit().await?;
+            }
             return Ok(());
         }
         if let Some(run) = self.memory.write().await.runs.get_mut(run_id) {
@@ -630,7 +796,7 @@ mod tests {
     /// refused from the status the winner left.
     #[tokio::test]
     async fn of_two_racing_endings_exactly_one_wins() {
-        let store = std::sync::Arc::new(AgentStore::new(None));
+        let store = std::sync::Arc::new(AgentStore::new(None, Arc::default()));
         store
             .create_run(&run("run-1", "helsinki", "2026-09-12T10:15:30Z"))
             .await
@@ -660,7 +826,7 @@ mod tests {
     /// and another App of the project is never held by it.
     #[tokio::test]
     async fn a_live_run_holds_its_app_against_a_second_run() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         let first = run("run-1", "helsinki", "2026-09-12T10:15:30Z");
         assert!(store.create_run_alone(&first).await.expect("create"));
         assert!(!store
@@ -684,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_run_is_read_back_and_listed_inside_its_own_project() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         assert!(!store.is_durable());
         store
             .create_run(&run("run-1", "helsinki", "2026-09-12T10:15:30Z"))
@@ -711,7 +877,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_lifecycle_is_what_the_store_allows() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         store
             .create_run(&run("run-1", "helsinki", "2026-09-12T10:15:30Z"))
             .await
@@ -755,7 +921,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancelling_leaves_a_ticket_hash_nothing_can_match() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         store
             .create_run(&run("run-1", "helsinki", "2026-09-12T10:15:30Z"))
             .await
@@ -771,7 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_stream_numbers_events_and_replays_only_what_was_missed() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         let first = store
             .append_event("run-1", "status", serde_json::json!({"status": "starting"}))
             .await
@@ -805,7 +971,7 @@ mod tests {
 
     #[tokio::test]
     async fn usage_accumulates_across_steps() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         store
             .create_run(&run("run-1", "helsinki", "2026-09-12T10:15:30Z"))
             .await
@@ -818,7 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn live_and_expired_runs_are_correctly_queried() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         let mut r1 = run("run-1", "helsinki", "2026-09-12T10:15:30Z");
         r1.expires_at = "2026-09-12T10:20:00Z".to_owned();
         let mut r2 = run("run-2", "helsinki", "2026-09-12T10:16:30Z");
@@ -853,7 +1019,7 @@ mod tests {
 
     #[tokio::test]
     async fn filtered_runs_filter_by_kind_and_creator() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         let mut r1 = run("run-1", "helsinki", "2026-09-12T10:15:30Z");
         r1.kind = "conversation".to_owned();
         r1.created_by = "alice".to_owned();
@@ -894,7 +1060,7 @@ mod tests {
 
     #[tokio::test]
     async fn events_of_keeps_the_asked_kinds_of_each_run_oldest_first() {
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Arc::default());
         for (run, kind) in [
             ("run-1", "status"),
             ("run-1", "thought"),

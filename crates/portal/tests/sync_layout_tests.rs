@@ -297,7 +297,7 @@ async fn a_broken_project_is_refused_alone_and_its_proposer_is_told() {
     let server = MockServer::start().await;
     two_projects(&server, &ovzdusie_files(), &doprava_files()).await;
     let (syncer, mirror) = syncer(&server);
-    let activity = ActivityStore::new(None);
+    let activity = ActivityStore::new(None, Default::default());
     let notices = Arc::new(CommentStore::new(None, Default::default()));
     let syncer = syncer
         .with_activity(activity.clone())

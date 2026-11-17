@@ -6,8 +6,8 @@ use joinedcontext_portal::ops::workspaces::{
     Opening, PreviewAccess, PreviewState, Scope, ScopedResource, WorkspaceError, WorkspaceStore,
 };
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn opening<'a>(name: &'a str, project: &'a str, ttl_hours: i64) -> Opening<'a> {
     Opening {
@@ -23,7 +23,7 @@ fn opening<'a>(name: &'a str, project: &'a str, ttl_hours: i64) -> Opening<'a> {
 
 #[tokio::test]
 async fn a_workspace_is_created_read_listed_and_deleted() {
-    let store = WorkspaceStore::new(None);
+    let store = WorkspaceStore::new(None, Default::default());
     let made = store
         .create(opening("bikes-v2", "helsinki", 24))
         .await
@@ -60,7 +60,7 @@ async fn a_workspace_is_created_read_listed_and_deleted() {
 
 #[tokio::test]
 async fn a_second_workspace_of_the_same_name_is_a_conflict_across_projects() {
-    let store = WorkspaceStore::new(None);
+    let store = WorkspaceStore::new(None, Default::default());
     store
         .create(opening("shared", "helsinki", 2))
         .await
@@ -74,7 +74,7 @@ async fn a_second_workspace_of_the_same_name_is_a_conflict_across_projects() {
 
 #[tokio::test]
 async fn an_unknown_name_is_not_found_everywhere() {
-    let store = WorkspaceStore::new(None);
+    let store = WorkspaceStore::new(None, Default::default());
     assert_eq!(store.get("nope").await.unwrap(), None);
     assert!(matches!(
         store.live("nope").await,
@@ -92,7 +92,7 @@ async fn an_unknown_name_is_not_found_everywhere() {
 
 #[tokio::test]
 async fn an_expired_workspace_is_listed_for_the_reaper_and_takes_nothing_more() {
-    let store = WorkspaceStore::new(None);
+    let store = WorkspaceStore::new(None, Default::default());
     store.create(opening("short", "helsinki", 1)).await.unwrap();
     store.create(opening("long", "helsinki", 48)).await.unwrap();
     let later = Utc::now() + Duration::hours(2);
@@ -109,7 +109,7 @@ async fn an_expired_workspace_is_listed_for_the_reaper_and_takes_nothing_more() 
 
 #[tokio::test]
 async fn names_ttls_and_scopes_outside_the_rules_are_refused() {
-    let store = WorkspaceStore::new(None);
+    let store = WorkspaceStore::new(None, Default::default());
     for name in [
         "",
         "Bikes",
@@ -194,21 +194,23 @@ fn a_scope_reads_the_shape_the_api_documents() {
 /// `JC_PORTAL_TEST_DATABASE_URL` is set, in memory always.
 #[tokio::test]
 async fn a_preview_start_keeps_its_author_and_salt_until_the_next_start() {
-    let mut stores = vec![WorkspaceStore::new(None)];
+    let mut stores = vec![WorkspaceStore::new(None, Default::default())];
     match std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
         .filter(|url| !url.trim().is_empty())
     {
-        Some(url) => stores.push(WorkspaceStore::new(Some(
-            joinedcontext_portal::db::connect(&url)
+        Some(url) => {
+            let pool = joinedcontext_portal::db::connect(&url)
                 .await
-                .expect("the test database answers and migrates"),
-        ))),
+                .expect("the test database answers and migrates");
+            let mirror = common::keyed_mirror(&pool, &["helsinki"]).await;
+            stores.push(WorkspaceStore::new(Some(pool), mirror));
+        }
         None => eprintln!("skipped on PostgreSQL: JC_PORTAL_TEST_DATABASE_URL is not set"),
     }
     // A workspace name is a DNS label of at most 20 characters: the unique tail, the low 40 bits
     // of the clock with the process id and counter.
-    let name = format!("p{}", &crate::unique::unique()[7..]);
+    let name = format!("p{}", &unique::unique()[7..]);
     for store in stores {
         store.create(opening(&name, "helsinki", 1)).await.unwrap();
         assert_eq!(store.get(&name).await.unwrap().unwrap().preview, None);

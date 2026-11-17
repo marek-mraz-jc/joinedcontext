@@ -289,10 +289,13 @@ const AGENT_EVENT_COLUMNS: &str = "run_id, seq, kind, payload, \
      to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') AS created_at";
 
 /// Records `run` only when its application has no live run, decided under a transaction-scoped
-/// advisory lock on (project, application): two concurrent admissions of one App's run never
-/// both pass the check (F-POR1-018). `Ok(false)` when another live run holds the App.
-pub async fn insert_agent_run_alone(pool: &PgPool, run: &AgentRun) -> Result<bool, sqlx::Error> {
-    let mut tx = pool.begin().await?;
+/// advisory lock on (project, application) in the caller's transaction: two concurrent
+/// admissions of one App's run never both pass the check (F-POR1-018). `Ok(false)` when another
+/// live run holds the App.
+pub async fn insert_agent_run_alone(
+    tx: &mut sqlx::PgConnection,
+    run: &AgentRun,
+) -> Result<bool, sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || '/' || $2, 0))")
         .bind(&run.project)
         .bind(&run.app_name)
@@ -310,7 +313,6 @@ pub async fn insert_agent_run_alone(pool: &PgPool, run: &AgentRun) -> Result<boo
         return Ok(false);
     }
     insert_agent_run(&mut *tx, run).await?;
-    tx.commit().await?;
     Ok(true)
 }
 
@@ -364,18 +366,21 @@ pub async fn insert_agent_run(
 }
 
 /// One run by id, `None` when there is no such row.
-pub async fn load_agent_run(pool: &PgPool, id: &str) -> Result<Option<AgentRun>, sqlx::Error> {
+pub async fn load_agent_run(
+    conn: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<Option<AgentRun>, sqlx::Error> {
     sqlx::query_as::<_, AgentRun>(AssertSqlSafe(format!(
         "SELECT {AGENT_RUN_COLUMNS} FROM agent_runs WHERE id = $1"
     )))
     .bind(id)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 
 /// Lists runs for a project matching filter criteria, newest first.
 pub async fn list_agent_runs_filtered(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     project: &str,
     filter: &crate::agents::store::RunFilter,
     limit: i64,
@@ -425,12 +430,12 @@ pub async fn list_agent_runs_filtered(
     }
     query = query.bind(limit);
 
-    query.fetch_all(pool).await
+    query.fetch_all(conn).await
 }
 
 /// Loads the active (non-terminal) run for an application in a project, if any.
 pub async fn load_live_agent_run_for_app(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     project: &str,
     app_name: &str,
 ) -> Result<Option<AgentRun>, sqlx::Error> {
@@ -442,43 +447,48 @@ pub async fn load_live_agent_run_for_app(
     )))
     .bind(project)
     .bind(app_name)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 
-/// Lists non-terminal runs whose expiration time is before the given timestamp.
+/// Lists `project`'s non-terminal runs whose expiration time is before the given timestamp.
 pub async fn list_expired_agent_runs(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
+    project: &str,
     now_rfc3339: &str,
 ) -> Result<Vec<AgentRun>, sqlx::Error> {
     sqlx::query_as::<_, AgentRun>(AssertSqlSafe(format!(
         "SELECT {AGENT_RUN_COLUMNS} FROM agent_runs \
          WHERE status NOT IN ('published', 'failed', 'cancelled', 'expired') \
-         AND expires_at < $1::text::timestamptz \
+         AND expires_at < $1::text::timestamptz AND project = $2 \
          ORDER BY expires_at ASC"
     )))
     .bind(now_rfc3339)
-    .fetch_all(pool)
+    .bind(project)
+    .fetch_all(conn)
     .await
 }
 
-/// Every run in `status`, in every project, oldest first.
+/// Every run of `project` in `status`, oldest first.
 pub async fn list_agent_runs_in_status(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
+    project: &str,
     status: &str,
 ) -> Result<Vec<AgentRun>, sqlx::Error> {
     sqlx::query_as::<_, AgentRun>(AssertSqlSafe(format!(
-        "SELECT {AGENT_RUN_COLUMNS} FROM agent_runs WHERE status = $1 ORDER BY created_at ASC"
+        "SELECT {AGENT_RUN_COLUMNS} FROM agent_runs WHERE status = $1 AND project = $2 \
+         ORDER BY created_at ASC"
     )))
     .bind(status)
-    .fetch_all(pool)
+    .bind(project)
+    .fetch_all(conn)
     .await
 }
 
 /// Moves a run to another state. `started_at` is stamped by the first state after `queued` and
 /// `finished_at` by the state the run stops in, so neither is ever moved twice.
 pub async fn update_agent_run_status(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     from: &str,
     status: &str,
@@ -498,7 +508,7 @@ pub async fn update_agent_run_status(
     .bind(error)
     .bind(finished)
     .bind(from)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|done| done.rows_affected() == 1)
 }
@@ -506,31 +516,34 @@ pub async fn update_agent_run_status(
 /// Moves a run's lease: a run waiting for its change's approval is given the approval's lease
 /// (T-2772).
 pub async fn update_agent_run_expiry(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     expires_at: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_runs SET expires_at = $2::text::timestamptz WHERE id = $1")
         .bind(id)
         .bind(expires_at)
-        .execute(pool)
+        .execute(conn)
         .await
         .map(|_| ())
 }
 
 /// Forgets a run's ticket hash, which is what a cancellation does to its workspace's credential:
 /// every later proxy call verifies against a hash no ticket can produce (AG-46).
-pub async fn clear_agent_run_ticket(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+pub async fn clear_agent_run_ticket(
+    conn: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_runs SET ticket_hash = '' WHERE id = $1")
         .bind(id)
-        .execute(pool)
+        .execute(conn)
         .await
         .map(|_| ())
 }
 
 /// Adds one step's token use to the run's budget counter (AG-44).
 pub async fn add_agent_run_usage(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     tokens: i64,
     steps: i32,
@@ -541,7 +554,7 @@ pub async fn add_agent_run_usage(
     .bind(id)
     .bind(tokens)
     .bind(steps)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
@@ -549,7 +562,7 @@ pub async fn add_agent_run_usage(
 /// Records where the built application can be looked at (AP-46) and, the first time, how long
 /// it took to get there (AP-57).
 pub async fn set_agent_run_preview_url(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     url: &str,
 ) -> Result<(), sqlx::Error> {
@@ -559,50 +572,57 @@ pub async fn set_agent_run_preview_url(
     )
     .bind(id)
     .bind(url)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
 
 /// Records when the first generated version of an application was served.
-pub async fn record_agent_run_first_version(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+pub async fn record_agent_run_first_version(
+    conn: &mut sqlx::PgConnection,
+    id: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE agent_runs SET first_version_ms = COALESCE(first_version_ms, \
          (EXTRACT(EPOCH FROM (now() - created_at)) * 1000)::bigint) WHERE id = $1",
     )
     .bind(id)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
 
 /// Keeps the files a run wrote (AP-56).
 pub async fn set_agent_run_files(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     files: &serde_json::Value,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_runs SET files = $2 WHERE id = $1")
         .bind(id)
         .bind(files)
-        .execute(pool)
+        .execute(conn)
         .await
         .map(|_| ())
 }
 
 /// The application's name for people (AP-44).
-pub async fn set_agent_run_title(pool: &PgPool, id: &str, title: &str) -> Result<(), sqlx::Error> {
+pub async fn set_agent_run_title(
+    conn: &mut sqlx::PgConnection,
+    id: &str,
+    title: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_runs SET title = $2 WHERE id = $1")
         .bind(id)
         .bind(title)
-        .execute(pool)
+        .execute(conn)
         .await
         .map(|_| ())
 }
 
 /// The endpoints a conversation reads from now on, the primary first (AG-75).
 pub async fn set_agent_run_endpoints(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     endpoints: &serde_json::Value,
     primary_name: &str,
@@ -615,21 +635,21 @@ pub async fn set_agent_run_endpoints(
     .bind(endpoints)
     .bind(primary_name)
     .bind(primary_slug)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
 
 /// Records the merge request a publish opened (AP-55).
 pub async fn set_agent_run_merge_request(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     id: &str,
     number: i32,
 ) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE agent_runs SET merge_request = $2 WHERE id = $1")
         .bind(id)
         .bind(number)
-        .execute(pool)
+        .execute(conn)
         .await
         .map(|_| ())
 }

@@ -2644,7 +2644,10 @@ pub(crate) fn expiry(ttl_secs: i64) -> String {
 }
 
 pub(crate) fn unavailable(err: StoreError) -> ApiError {
-    ApiError::Unavailable(err.to_string())
+    match err {
+        StoreError::Unplaced(_) => ApiError::NotFound(err.to_string()),
+        StoreError::Db(_) => ApiError::Unavailable(err.to_string()),
+    }
 }
 
 pub(crate) fn status_error(err: StatusChangeError) -> ApiError {

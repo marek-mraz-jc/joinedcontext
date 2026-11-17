@@ -4116,7 +4116,8 @@ async fn ending_world(
     let config = config();
     let (mut state, _, _) = with_state(mirror(Some(builder_profile_spec())), &config);
     if let Some(pool) = db {
-        state = state.with_db(pool);
+        state = state.with_db(pool.clone());
+        crate::common::keyed_project(&state, &pool, PROJECT, "helsinki").await;
     }
     state.kube = Some(Arc::new(
         joinedcontext_portal::apps::kube::KubeClient::with_token(&api.uri(), "kube-token")
@@ -4609,12 +4610,17 @@ mod filtered_list_edges {
     }
 
     async fn ids(pool: &PgPool, project: &str, filter: RunFilter, limit: i64) -> Vec<String> {
-        db::list_agent_runs_filtered(pool, project, &filter, limit)
-            .await
-            .expect("the list")
-            .into_iter()
-            .map(|run| run.id.trim_start_matches(&format!("{project}-")).to_owned())
-            .collect()
+        db::list_agent_runs_filtered(
+            &mut pool.acquire().await.expect("a connection"),
+            project,
+            &filter,
+            limit,
+        )
+        .await
+        .expect("the list")
+        .into_iter()
+        .map(|run| run.id.trim_start_matches(&format!("{project}-")).to_owned())
+        .collect()
     }
 
     fn filter(
@@ -4694,10 +4700,13 @@ mod filtered_list_edges {
         };
         let project = fresh("origin");
         insert(&pool, &project, &ROWS[..2]).await;
-        let mut journey: AgentRun = db::load_agent_run(&pool, &format!("{project}-a"))
-            .await
-            .expect("a read")
-            .expect("the run");
+        let mut journey: AgentRun = db::load_agent_run(
+            &mut pool.acquire().await.expect("a connection"),
+            &format!("{project}-a"),
+        )
+        .await
+        .expect("a read")
+        .expect("the run");
         assert_eq!(journey.origin, "person", "the column's default");
         journey.id = format!("{project}-j");
         journey.origin = "journey".to_owned();
@@ -4760,9 +4769,14 @@ mod filtered_list_edges {
             filter(Some("map"), None, None, None),
             filter(None, None, None, Some("boris")),
         ] {
-            let page = db::list_agent_runs_filtered(&pool, &mine, &filter, 50)
-                .await
-                .expect("the list");
+            let page = db::list_agent_runs_filtered(
+                &mut pool.acquire().await.expect("a connection"),
+                &mine,
+                &filter,
+                50,
+            )
+            .await
+            .expect("the list");
             assert!(page.iter().all(|run| run.project == mine), "{filter:?}");
         }
         let nobody = fresh("nobody");
