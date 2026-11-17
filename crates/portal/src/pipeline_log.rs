@@ -163,7 +163,8 @@ struct Memory {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
+    Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<HashMap<Key, Memory>>),
 }
 
@@ -494,10 +495,10 @@ type LatestRow = (
 
 impl LogStore {
     /// Durable with a database, in memory without one.
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new(HashMap::new())),
             },
             trims: Mutex::new(Trims::default()),
@@ -523,10 +524,12 @@ impl LogStore {
         let ids: Vec<String> = lines.iter().map(|l| clean(&l.record_id)).collect();
         let messages: Vec<String> = lines.iter().map(|l| clean(&l.message)).collect();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
                 let steps: Vec<Option<i32>> = lines.iter().map(|l| l.step).collect();
                 let outcomes: Vec<&str> = lines.iter().map(|l| l.outcome.as_str()).collect();
-                let mut tx = pool.begin().await?;
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(());
+                };
                 sqlx::query(
                     "INSERT INTO pipeline_log (project, pipeline, run, record_id, step, outcome, message) \
                      SELECT $1, $2, $3, r, s, o, m FROM UNNEST($4::text[], $5::int[], $6::text[], $7::text[]) \
@@ -666,9 +669,11 @@ impl LogStore {
             changes
         };
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
                 let ids: Vec<&str> = written.iter().map(|(id, _)| id.as_str()).collect();
-                let mut tx = pool.begin().await?;
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Changes::default());
+                };
                 let rows: Vec<(String, String)> = sqlx::query_as(
                     "SELECT record, hash FROM pipeline_record_hashes \
                      WHERE project = $1 AND pipeline = $2 AND record = ANY($3::text[])",
@@ -735,34 +740,29 @@ impl LogStore {
         loaded: &BTreeMap<String, HashSet<String>>,
     ) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let scope: Vec<&str> = loaded.keys().map(String::as_str).collect();
-                let (projects, pipelines): (Vec<&str>, Vec<&str>) = loaded
-                    .iter()
-                    .flat_map(|(project, names)| {
-                        names.iter().map(move |n| (project.as_str(), n.as_str()))
-                    })
-                    .unzip();
-                let mut tx = pool.begin().await?;
-                for statement in [
-                    "DELETE FROM pipeline_log r WHERE r.project = ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM \
-                     UNNEST($2::text[], $3::text[]) AS k(project, pipeline) \
-                     WHERE k.project = r.project AND k.pipeline = r.pipeline)",
-                    "DELETE FROM pipeline_runs r WHERE r.project = ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM \
-                     UNNEST($2::text[], $3::text[]) AS k(project, pipeline) \
-                     WHERE k.project = r.project AND k.pipeline = r.pipeline)",
-                    "DELETE FROM pipeline_record_hashes r WHERE r.project = ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM \
-                     UNNEST($2::text[], $3::text[]) AS k(project, pipeline) \
-                     WHERE k.project = r.project AND k.pipeline = r.pipeline)",
-                ] {
-                    sqlx::query(statement)
-                        .bind(&scope)
-                        .bind(&projects)
-                        .bind(&pipelines)
-                        .execute(&mut *tx)
-                        .await?;
+            Inner::Postgres(pool, mirror) => {
+                // Project by project, each in its own key (STO-07); a project with no key has
+                // no keyed rows to drop.
+                for (project, names) in loaded {
+                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await?
+                    else {
+                        continue;
+                    };
+                    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                    for statement in [
+                        "DELETE FROM pipeline_log WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                        "DELETE FROM pipeline_runs WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                        "DELETE FROM pipeline_record_hashes WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                    ] {
+                        sqlx::query(statement)
+                            .bind(project)
+                            .bind(&names)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                    tx.commit().await?;
                 }
-                tx.commit().await
+                Ok(())
             }
             Inner::Memory(map) => {
                 map.write()
@@ -782,17 +782,24 @@ impl LogStore {
     /// Portal held it (T-5778).
     pub async fn ran(&self) -> Result<HashMap<Key, chrono::DateTime<chrono::Utc>>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query_as::<_, (String, String, time::OffsetDateTime)>(
-                "SELECT project, pipeline, max(last_at) FROM pipeline_runs GROUP BY project, pipeline",
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<(String, String, time::OffsetDateTime)> = Vec::new();
+                // Project by project, each in its own key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(sqlx::query_as::<_, (String, String, time::OffsetDateTime)>(
+                "SELECT project, pipeline, max(last_at) FROM pipeline_runs WHERE project = $1 GROUP BY project, pipeline",
             )
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .filter_map(|(project, pipeline, last)| {
-                let last = chrono::DateTime::from_timestamp(last.unix_timestamp(), 0)?;
-                Some(((project, pipeline), last))
-            })
-            .collect()),
+            .bind(&project).fetch_all(&mut *tx).await?);
+                }
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|(project, pipeline, last)| {
+                        let last = chrono::DateTime::from_timestamp(last.unix_timestamp(), 0)?;
+                        Some(((project, pipeline), last))
+                    })
+                    .collect())
+            }
             Inner::Memory(map) => Ok(map
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
@@ -820,7 +827,10 @@ impl LogStore {
         stream: &str,
     ) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(());
+                };
                 sqlx::query(
                     "UPDATE pipeline_runs SET stream_hash = $4 \
                      WHERE project = $1 AND pipeline = $2 AND run = $3",
@@ -829,9 +839,9 @@ impl LogStore {
                 .bind(pipeline)
                 .bind(run)
                 .bind(stream)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
-                Ok(())
+                tx.commit().await
             }
             Inner::Memory(map) => {
                 let mut map = map.write().unwrap_or_else(|e| e.into_inner());
@@ -849,15 +859,22 @@ impl LogStore {
     /// a replace pipeline whose stream differs from it changed while no Portal held it.
     pub async fn ran_streams(&self) -> Result<HashMap<Key, String>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query_as::<_, (String, String, Option<String>)>(
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<(String, String, Option<String>)> = Vec::new();
+                // Project by project, each in its own key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(sqlx::query_as::<_, (String, String, Option<String>)>(
                 "SELECT DISTINCT ON (project, pipeline) project, pipeline, stream_hash \
-                 FROM pipeline_runs ORDER BY project, pipeline, last_at DESC",
+                 FROM pipeline_runs WHERE project = $1 ORDER BY project, pipeline, last_at DESC",
             )
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .filter_map(|(project, pipeline, stream)| Some(((project, pipeline), stream?)))
-            .collect()),
+            .bind(&project).fetch_all(&mut *tx).await?);
+                }
+                Ok(rows
+                    .into_iter()
+                    .filter_map(|(project, pipeline, stream)| Some(((project, pipeline), stream?)))
+                    .collect())
+            }
             Inner::Memory(map) => Ok(map
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
@@ -880,7 +897,10 @@ impl LogStore {
     ) -> Result<Vec<Run>, sqlx::Error> {
         let limit = limit.clamp(1, RUNS_KEPT);
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<RunRow> = sqlx::query_as(
                     "SELECT run, first_at, last_at, sent, rejected, failed, created, updated, unchanged FROM pipeline_runs \
                      WHERE project = $1 AND pipeline = $2 ORDER BY last_at DESC LIMIT $3",
@@ -888,7 +908,7 @@ impl LogStore {
                 .bind(project)
                 .bind(pipeline)
                 .bind(limit as i64)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 Ok(rows.into_iter().map(run_of).collect())
             }
@@ -908,14 +928,17 @@ impl LogStore {
         pipelines: &[String],
     ) -> Result<BTreeMap<String, Run>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(BTreeMap::new());
+                };
                 let rows: Vec<LatestRow> = sqlx::query_as(
                     "SELECT DISTINCT ON (pipeline) run, first_at, last_at, sent, rejected, failed, created, updated, unchanged, pipeline \
                      FROM pipeline_runs WHERE project = $1 AND pipeline = ANY($2) ORDER BY pipeline, last_at DESC",
                 )
                 .bind(project)
                 .bind(pipelines)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 Ok(rows
                     .into_iter()
@@ -964,15 +987,22 @@ impl LogStore {
         streak: usize,
     ) -> Result<BTreeMap<Key, String>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query_as::<_, (String, String, String)>(
-                "WITH newest AS (SELECT project, pipeline, run, row_number() OVER                    (PARTITION BY project, pipeline ORDER BY last_at DESC) AS n FROM pipeline_runs)                  SELECT r.project, r.pipeline, (array_agg(m.message ORDER BY r.n))[1] FROM newest r                  JOIN LATERAL (SELECT message FROM pipeline_log g WHERE g.project = r.project                    AND g.pipeline = r.pipeline AND g.run = r.run AND g.outcome = 'failed'                    AND (g.message LIKE 'access revoked by %' OR g.message LIKE 'access ended on %')                    ORDER BY g.id DESC LIMIT 1) m ON true                  WHERE r.n <= $1 GROUP BY r.project, r.pipeline HAVING count(*) = $1",
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<(String, String, String)> = Vec::new();
+                // Project by project, each in its own key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(sqlx::query_as::<_, (String, String, String)>(
+                "WITH newest AS (SELECT project, pipeline, run, row_number() OVER                    (PARTITION BY project, pipeline ORDER BY last_at DESC) AS n FROM pipeline_runs WHERE project = $2)                  SELECT r.project, r.pipeline, (array_agg(m.message ORDER BY r.n))[1] FROM newest r                  JOIN LATERAL (SELECT message FROM pipeline_log g WHERE g.project = r.project                    AND g.pipeline = r.pipeline AND g.run = r.run AND g.outcome = 'failed'                    AND (g.message LIKE 'access revoked by %' OR g.message LIKE 'access ended on %')                    ORDER BY g.id DESC LIMIT 1) m ON true                  WHERE r.n <= $1 GROUP BY r.project, r.pipeline HAVING count(*) = $1",
             )
             .bind(streak as i64)
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|(project, pipeline, message)| ((project, pipeline), message))
-            .collect()),
+            .bind(&project).fetch_all(&mut *tx).await?);
+                }
+                Ok(rows
+                    .into_iter()
+                    .map(|(project, pipeline, message)| ((project, pipeline), message))
+                    .collect())
+            }
             Inner::Memory(map) => Ok(map
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1006,26 +1036,36 @@ impl LogStore {
     /// retries them with backoff.
     pub async fn outside_failures(&self) -> Result<BTreeMap<Key, (String, String)>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query_as::<_, (String, String, String, String)>(
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<(String, String, String, String)> = Vec::new();
+                // Project by project, each in its own key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(sqlx::query_as::<_, (String, String, String, String)>(
                 "WITH newest AS (SELECT DISTINCT ON (project, pipeline) project, pipeline, run, \
-                 rejected + failed AS problems FROM pipeline_runs ORDER BY project, pipeline, last_at DESC) \
+                 rejected + failed AS problems FROM pipeline_runs WHERE project = $2 ORDER BY project, pipeline, last_at DESC) \
                  SELECT n.project, n.pipeline, n.run, m.message FROM newest n \
                  JOIN LATERAL (SELECT message FROM pipeline_log g WHERE g.project = n.project \
                  AND g.pipeline = n.pipeline AND g.run = n.run AND g.outcome <> 'sent' \
                  AND g.message ~ $1 ORDER BY g.id DESC LIMIT 1) m ON true WHERE n.problems > 0",
             )
             .bind(OUTSIDE_CAUSE)
-            .fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|(project, pipeline, run, message)| ((project, pipeline), (run, message)))
-            .collect()),
+            .bind(&project).fetch_all(&mut *tx).await?);
+                }
+                Ok(rows
+                    .into_iter()
+                    .map(|(project, pipeline, run, message)| ((project, pipeline), (run, message)))
+                    .collect())
+            }
             Inner::Memory(map) => Ok(map
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
                 .iter()
                 .filter_map(|(key, memory)| {
-                    let run = memory.runs.iter().max_by(|a, b| a.last_at.cmp(&b.last_at))?;
+                    let run = memory
+                        .runs
+                        .iter()
+                        .max_by(|a, b| a.last_at.cmp(&b.last_at))?;
                     let line = memory.lines.iter().rev().find(|l| {
                         l.run == run.run
                             && l.outcome != Outcome::Sent
@@ -1044,15 +1084,20 @@ impl LogStore {
         pipeline: &str,
     ) -> Result<Option<(String, String)>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query_as::<_, (String, time::OffsetDateTime)>(
-                "SELECT message, at FROM pipeline_log WHERE project = $1 AND pipeline = $2 \
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(None);
+                };
+                Ok(sqlx::query_as::<_, (String, time::OffsetDateTime)>(
+                    "SELECT message, at FROM pipeline_log WHERE project = $1 AND pipeline = $2 \
                  AND outcome <> 'sent' ORDER BY id DESC LIMIT 1",
-            )
-            .bind(project)
-            .bind(pipeline)
-            .fetch_optional(pool)
-            .await?
-            .map(|(message, at)| (message, rfc3339(at)))),
+                )
+                .bind(project)
+                .bind(pipeline)
+                .fetch_optional(&mut *tx)
+                .await?
+                .map(|(message, at)| (message, rfc3339(at))))
+            }
             Inner::Memory(map) => Ok(map
                 .read()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1079,7 +1124,10 @@ impl LogStore {
     ) -> Result<Vec<LogLine>, sqlx::Error> {
         let limit = limit.clamp(1, LINES_KEPT);
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<LineRow> = sqlx::query_as(
                     "SELECT id, at, run, record_id, step, outcome, message FROM pipeline_log \
                      WHERE project = $1 AND pipeline = $2 AND run = $3 \
@@ -1090,7 +1138,7 @@ impl LogStore {
                 .bind(run)
                 .bind(before)
                 .bind(limit as i64)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 Ok(rows
                     .into_iter()
@@ -1180,7 +1228,7 @@ mod tests {
     /// source, is not listed.
     #[tokio::test]
     async fn outside_failures_lists_the_newest_run_refused_for_an_outside_cause() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         let dm61 = "entity type `Tree` is not a class of the space's data model `m` (DM-61)";
         for (pipeline, runs) in [
             (
@@ -1405,7 +1453,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_run_counts_its_outcomes_and_its_log_is_its_own_pipelines_only() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         store
             .append(
                 "helsinki",
@@ -1458,7 +1506,7 @@ mod tests {
     /// pipeline again as if it were new.
     #[tokio::test]
     async fn ran_lists_every_pipeline_with_a_run_and_only_those() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         assert!(store.ran().await.expect("read").is_empty());
         store
             .append("slovensko", "susr-as", "2026-10-17T17:00Z", &[])
@@ -1476,7 +1524,7 @@ mod tests {
     /// newest run's: a newer run logged without one hides the older hash.
     #[tokio::test]
     async fn ran_streams_name_the_newest_runs_hash_and_only_for_a_logged_run() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         let key = ("helsinki".to_owned(), "trees".to_owned());
         store
             .ran_stream("helsinki", "trees", "r0", "never-logged")
@@ -1502,7 +1550,7 @@ mod tests {
     /// T-5048: the health tab shows the newest failed or rejected line, never a sent one.
     #[tokio::test]
     async fn last_problem_is_the_newest_line_that_did_not_send() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         assert_eq!(store.last_problem("p", "x").await.expect("read"), None);
         store
             .append(
@@ -1531,7 +1579,7 @@ mod tests {
     /// them that was not refused breaks it.
     #[tokio::test]
     async fn three_refused_runs_in_a_row_are_a_streak() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         let refused = "access revoked by anna on 2026-10-21; the gateway answered: 403";
         for (pipeline, runs) in [("cut", ["r1", "r2", "r3"]), ("broken", ["r1", "r2", "r3"])] {
             for run in runs {
@@ -1562,7 +1610,7 @@ mod tests {
 
     #[tokio::test]
     async fn lines_are_paged_bounded_and_the_counts_outlive_them() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         let many: Vec<NewLine> = (0..LINES_KEPT + 10)
             .map(|n| line(&format!("urn:{n}"), Outcome::Sent, ""))
             .collect();
@@ -1610,7 +1658,7 @@ mod tests {
             "c2lnbmF0dXJlLXBhcnQ",
         ]
         .join(".");
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         store
             .append(
                 "p",
@@ -1631,7 +1679,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_pipeline_that_is_gone_takes_its_runs_and_log_with_it() {
-        let store = LogStore::new(None);
+        let store = LogStore::new(None, Default::default());
         for (project, pipeline) in [("p", "kept"), ("p", "deleted"), ("q", "unread")] {
             store
                 .append(project, pipeline, "r", &[line("urn", Outcome::Sent, "")])

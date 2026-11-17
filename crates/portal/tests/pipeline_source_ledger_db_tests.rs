@@ -5,8 +5,8 @@
 
 use joinedcontext_portal::pipeline_source_deletes::{Cause, Hold, HoldReason, Ledger};
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -29,8 +29,11 @@ async fn the_ledger_keeps_ids_misses_and_the_hold_per_pipeline() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let ledger = Ledger::new(Some(pool));
     let project = fresh_project();
+    let ledger = Ledger::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
     let p = project.as_str();
     let ids = ["urn:a", "urn:b", "not an id"].map(str::to_owned);
     ledger.seen(p, "x", "r1", &ids, true).await.expect("seen");
@@ -90,8 +93,11 @@ async fn the_report_keeps_the_last_complete_run_and_the_removals() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let ledger = Ledger::new(Some(pool));
     let project = fresh_project();
+    let ledger = Ledger::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
     let p = project.as_str();
     assert!(ledger.last_complete(p, "x").await.expect("read").is_none());
     ledger.completed(p, "x", "r1").await.expect("complete");
@@ -145,8 +151,11 @@ async fn marks_are_taken_per_run_and_only_for_ledger_ids() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let ledger = Ledger::new(Some(pool));
     let project = fresh_project();
+    let ledger = Ledger::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
     let p = project.as_str();
     let ids = ["urn:a", "urn:b", "urn:c"].map(str::to_owned);
     ledger.seen(p, "ev", "r0", &ids, true).await.expect("seen");
@@ -186,7 +195,9 @@ async fn marks_are_taken_per_run_and_only_for_ledger_ids() {
 
 /// The ledger and the removals take Antares' longest entity id (2048 B, `MAX_ENTITY_ID_BYTES`)
 /// under the longest names: both primary keys are btrees, whose row limit (~2,704 B) an
-/// incompressible 2048 B id beside 253-byte project and pipeline names (2,554 B) still fits.
+/// incompressible 2048 B id beside a 253-byte pipeline name still fits. The project is the
+/// longest a keyed Project has (a 63-byte DNS label; T-7198): a longer one is in no mirror and
+/// keeps no row at all.
 #[tokio::test]
 async fn the_longest_entity_id_fits_the_ledger_and_the_removals() {
     let Some(url) = database_url() else {
@@ -196,9 +207,12 @@ async fn the_longest_entity_id_fits_the_ledger_and_the_removals() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let ledger = Ledger::new(Some(pool));
-    let project = format!("{}-{}", fresh_project(), "p".repeat(253));
-    let project = &project[..253];
+    let project = format!("{}-{}", fresh_project(), "p".repeat(63));
+    let project = &project[..63];
+    let ledger = Ledger::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[project]).await,
+    );
     let pipeline = "q".repeat(253);
     // Incompressible: a btree keeps a compressed copy of a repetitive id, which proves nothing.
     let mut seed = 0x2545_f491_4f6c_dd1d_u64;
