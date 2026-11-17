@@ -84,12 +84,23 @@ pub fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> Resourc
 
 /// Gives `project` an Organization of the registry (T-7196): its Project in the mirror names
 /// `organization`, which gets an active row in `organizations`, so the project has a tenancy key.
+/// The registry records a project's Organization once and never moves it, and CI's test binaries
+/// share one database: a project another binary placed already keeps that Organization here, so
+/// the binaries agree in any order (T-7202).
 pub async fn keyed_project(
     state: &AppState,
     pool: &sqlx::PgPool,
     project: &str,
     organization: &str,
 ) {
+    let recorded: Option<String> = sqlx::query_scalar(
+        "SELECT organization FROM project_ids WHERE parent IS NULL AND NOT reserved AND name = $1",
+    )
+    .bind(project)
+    .fetch_optional(pool)
+    .await
+    .expect("the registry's projects");
+    let organization = recorded.as_deref().unwrap_or(organization);
     state.mirror.upsert(envelope(
         "Project",
         project,
