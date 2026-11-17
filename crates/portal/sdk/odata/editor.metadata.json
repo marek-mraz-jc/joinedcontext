@@ -7618,6 +7618,27 @@
         }
       }
     ],
+    "portal_space_tenant": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Project"
+          },
+          {
+            "$Name": "space",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_space_usage": [
       {
         "$IsBound": true,
