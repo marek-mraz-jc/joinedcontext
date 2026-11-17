@@ -34,3 +34,28 @@ def test_a_space_takes_its_project_key_once_the_export_carries_it(tmp_path):
     keys = ex.project_keys(files)
     assert ex.space_tenant("hel", case["space"], "pinned", keys) == case["tenant"]
     assert ex.space_tenant("other", "mobility", None, keys) == "other-mobility"
+
+
+def _map_tool():
+    import importlib.util
+    path = Path(__file__).resolve().parents[4] / "crates/antares/dev/tenant-rename-map.py"
+    spec = importlib.util.spec_from_file_location("tenant_rename_map", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_rename_map_maps_each_tenant_of_a_registered_project_once():
+    case = json.loads(FIXTURE.read_text())["minted"][0]
+    key = (case["organization"], case["project"])
+    tool = _map_tool()
+    projects = {"hel": key, "a": key, "a-b": key}
+    out = tool.plan(
+        ["hel-" + case["space"], "a-b-c", "lost-x", "default", "antares-views", "pinned", case["tenant"]],
+        projects, {"pinned": ["hel", "air"]})
+    assert out["map"] == {"hel-" + case["space"]: case["tenant"],
+                          "pinned": ex.tenant_name(*key, "air")}
+    assert set(out["unmapped"]) == {"a-b-c", "lost-x", case["tenant"]}
+    assert "ambiguous" in out["unmapped"]["a-b-c"]
+    twice = tool.plan(["hel-air", "pinned"], projects, {"pinned": ["hel", "air"]})
+    assert twice["map"] == {} and set(twice["unmapped"]) == {"hel-air", "pinned"}

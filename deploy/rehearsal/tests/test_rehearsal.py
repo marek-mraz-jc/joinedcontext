@@ -237,6 +237,16 @@ def test_entity_batches_keep_their_tenant_and_stay_under_the_caps():
     assert [(t, len(b)) for t, b in batches] == [("a", 500), ("a", 500), ("a", 203), ("b", 1), ("a", 1)]
 
 
+def test_the_import_writes_into_the_tenants_the_export_maps(tmp_path):
+    """T-7038: an export with antares/tenant-map.json writes each segment's rows into the
+    project-key Tenant the gateway pins; one without keeps the export's names."""
+    assert rh._tenant_map(tmp_path) == {}
+    (tmp_path / "antares").mkdir()
+    (tmp_path / "antares" / "tenant-map.json").write_text(
+        json.dumps({"map": {"hel-air": "a" * 26 + "__" + "b" * 26 + "__air"}, "unmapped": {"x": "why"}}))
+    assert rh._tenant_map(tmp_path) == {"hel-air": "a" * 26 + "__" + "b" * 26 + "__air"}
+
+
 def test_the_import_never_sends_an_instance_older_than_the_window(tmp_path, monkeypatch):
     """The real importer against a stub broker: the 25 h instance is refused in the report and
     never reaches the broker; the window ends at the export time, not at the import."""
