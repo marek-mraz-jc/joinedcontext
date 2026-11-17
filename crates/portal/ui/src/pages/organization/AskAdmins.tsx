@@ -6,7 +6,8 @@ import { queryKeys } from "../../api/client";
 import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { useAdministers } from "../../api/permissions";
-import { Alert, Icon } from "../../components/ui";
+import { clsx } from "clsx";
+import { Alert, Icon, buttonClass } from "../../components/ui";
 
 interface Contact {
   role?: string;
@@ -102,7 +103,12 @@ export function AskAdmins({
         <Link
           to="/organization/$tab"
           params={{ tab: "members" }}
-          className="w-fit font-medium underline hover:no-underline"
+          // In a lock panel the way to the person's own sections is its one action.
+          className={
+            locked
+              ? clsx(buttonClass("secondary", "sm"), "mt-2")
+              : "w-fit font-medium underline hover:no-underline"
+          }
         >
           {t("askAdmins.ownSections")}
         </Link>

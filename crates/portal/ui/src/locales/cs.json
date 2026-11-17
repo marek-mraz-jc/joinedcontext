@@ -8452,7 +8452,8 @@
       "operatorLead": "Jste jedním z operátorů instalace: tyto položky nastavujete jednou pro každou organizaci.",
       "operatorLeadMember": "Operátoři instalace nastavují tyto položky jednou pro každou organizaci.",
       "setIt": "Otevřít instalaci",
-      "operatorSets": "Nastavují to operátoři vaší instalace",
+      "operatorSets": "Nastavují to operátoři vaší instalace.",
+      "notYet": "Zatím nenastaveno",
       "whomToAsk": "Koho se zeptat",
       "whomToAskLead": "E-mailový server nastavují operátoři instalace; požádejte o něj je.",
       "deploymentSets": "Nastavuje nasazení",
@@ -13811,6 +13812,7 @@
         "test": "Odeslán testovací e-mail"
       }
     },
+    "refusedLead": "{section} obsahuje to, co operátoři instalace spravují pro každou organizaci.",
     "refusedTitle": "{section} je jen pro operátory instalace"
   }
 }

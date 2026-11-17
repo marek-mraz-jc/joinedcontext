@@ -8452,7 +8452,8 @@
       "operatorLead": "Sie sind einer der Operatoren der Installation: Sie legen dies einmal für jede Organisation fest.",
       "operatorLeadMember": "Die Operatoren der Installation legen dies einmal für jede Organisation fest.",
       "setIt": "Installation öffnen",
-      "operatorSets": "Die Betreiber Ihrer Installation legen dies fest",
+      "operatorSets": "Die Betreiber Ihrer Installation legen dies fest.",
+      "notYet": "Noch nicht gesetzt",
       "whomToAsk": "Wen fragen",
       "whomToAskLead": "Den E-Mail-Server legen die Betreiber der Installation fest; bitten Sie sie darum.",
       "deploymentSets": "Bereitstellung legt dies fest",
@@ -13811,6 +13812,7 @@
         "test": "Test-E-Mail gesendet"
       }
     },
+    "refusedLead": "{section} enthält, was die Betreiber der Installation für jede Organisation pflegen.",
     "refusedTitle": "{section} ist den Betreibern der Installation vorbehalten"
   }
 }

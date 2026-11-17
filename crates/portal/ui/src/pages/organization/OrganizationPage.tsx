@@ -6,7 +6,12 @@ import { useTranslation } from "react-i18next";
 import { queryKeys } from "../../api/client";
 import { PageFailed } from "../../components/ui/PageState";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
-import { mayRead, useAdministers, useOperator, usePermissions } from "../../api/permissions";
+import {
+  mayRead,
+  useAdministers,
+  useOperator,
+  usePermissions,
+} from "../../api/permissions";
 import { kindPlural } from "../../kindWords";
 import { useProjects } from "../../api/projects";
 import { DeleteProjectAction } from "../../components/DeleteProjectDialog";
@@ -47,20 +52,42 @@ import { HealthLog } from "../health/HealthLog";
 import { Brokers } from "./Brokers";
 import { Costs } from "./Costs";
 import { McpServersPage } from "../mcp/McpServersPage";
-import { OPERATOR_TABS, ORGANIZATION_GROUPS, OWN_ORGANIZATION_TABS } from "./AdminNav";
+import {
+  OPERATOR_TABS,
+  ORGANIZATION_GROUPS,
+  OWN_ORGANIZATION_TABS,
+} from "./AdminNav";
 
 /** Only an administrator opens Agents, so its code loads with the tab (bundle budget, T-4849). */
-const Agents = lazy(() => import("./Agents").then((module) => ({ default: module.Agents })));
+const Agents = lazy(() =>
+  import("./Agents").then((module) => ({ default: module.Agents })),
+);
 /** The operators' sections load with their tab too: nobody else opens them (T-7140). */
 const OperatorOrganizations = lazy(() =>
-  import("../operator/OperatorOrganizations").then((module) => ({ default: module.OperatorOrganizations })),
+  import("../operator/OperatorOrganizations").then((module) => ({
+    default: module.OperatorOrganizations,
+  })),
 );
-const OperatorHosts = lazy(() => import("../operator/OperatorHosts").then((module) => ({ default: module.OperatorHosts })));
-const OperatorChanges = lazy(() => import("../operator/OperatorChanges").then((module) => ({ default: module.OperatorChanges })));
+const OperatorHosts = lazy(() =>
+  import("../operator/OperatorHosts").then((module) => ({
+    default: module.OperatorHosts,
+  })),
+);
+const OperatorChanges = lazy(() =>
+  import("../operator/OperatorChanges").then((module) => ({
+    default: module.OperatorChanges,
+  })),
+);
 const OperatorInstallation = lazy(() =>
-  import("../operator/OperatorInstallation").then((module) => ({ default: module.OperatorInstallation })),
+  import("../operator/OperatorInstallation").then((module) => ({
+    default: module.OperatorInstallation,
+  })),
 );
-const OperatorAudit = lazy(() => import("../operator/OperatorAudit").then((module) => ({ default: module.OperatorAudit })));
+const OperatorAudit = lazy(() =>
+  import("../operator/OperatorAudit").then((module) => ({
+    default: module.OperatorAudit,
+  })),
+);
 import type { OrganizationTab } from "./AdminNav";
 import { listManifests } from "../../api/odata";
 
@@ -85,8 +112,14 @@ function OrganizationMembers(): JSX.Element {
   }
   if (reads !== true) {
     return (
-      <section className="space-y-4" aria-labelledby="organization-members-heading">
-        <h2 id="organization-members-heading" className="text-title font-semibold text-fg">
+      <section
+        className="space-y-4"
+        aria-labelledby="organization-members-heading"
+      >
+        <h2
+          id="organization-members-heading"
+          className="text-title font-semibold text-fg"
+        >
           {t("organization.members.title")}
         </h2>
         <Alert tone="info">{t("organization.members.hidden")}</Alert>
@@ -115,14 +148,12 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
   const readsBindings = mayRead(permissions.data, "RoleBinding") === true;
   const manifests = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "projects"),
-    queryFn: async () =>
-      listManifests(ORG_NAMESPACE, "projects"),
+    queryFn: async () => listManifests(ORG_NAMESPACE, "projects"),
   });
   const bindings = useQuery({
     queryKey: queryKeys.list(ORG_NAMESPACE, "rolebindings"),
     enabled: readsBindings,
-    queryFn: async () =>
-      listManifests(ORG_NAMESPACE, "rolebindings"),
+    queryFn: async () => listManifests(ORG_NAMESPACE, "rolebindings"),
   });
 
   const titles = new Map(
@@ -147,13 +178,21 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
     [
       t("organization.projects.own", { count: bound(project) }),
       ...(organizationWide > 0
-        ? [t("organization.projects.throughOrganization", { count: organizationWide })]
+        ? [
+            t("organization.projects.throughOrganization", {
+              count: organizationWide,
+            }),
+          ]
         : []),
     ].join(" · ");
   const names = projects.data ?? [];
   const [importing, setImporting] = useState(false);
   const peopleText = (name: string) =>
-    readsBindings ? (bindings.isPending ? t("app.loading") : people(name)) : t("organization.projects.peopleHidden");
+    readsBindings
+      ? bindings.isPending
+        ? t("app.loading")
+        : people(name)
+      : t("organization.projects.peopleHidden");
   const columns: DataColumn<string>[] = [
     {
       key: "name",
@@ -171,11 +210,17 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
           >
             {titles.get(name) || name}
           </Link>
-          {titles.get(name) ? <span className="ml-2 text-caption text-fg-muted">{name}</span> : null}
+          {titles.get(name) ? (
+            <span className="ml-2 text-caption text-fg-muted">{name}</span>
+          ) : null}
         </>
       ),
     },
-    { key: "people", label: t("organization.projects.people"), text: peopleText },
+    {
+      key: "people",
+      label: t("organization.projects.people"),
+      text: peopleText,
+    },
     {
       key: "mqtt",
       label: t("mqttAllowance.admin.column"),
@@ -192,12 +237,21 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
       text: () => "",
       cell: (name) => (
         <span className="inline-flex items-center gap-2">
-          <Link to="/projects/$project/settings" params={{ project: name }} className={buttonClass("secondary", "sm")}>
+          <Link
+            to="/projects/$project/settings"
+            params={{ project: name }}
+            className={buttonClass("secondary", "sm")}
+          >
             {t("organization.projects.settings")}
           </Link>
           <ProjectMqtt project={name} title={titles.get(name) || name} />
           {/* The whole project leaves here and nowhere else (UI-87, CC-49). */}
-          <ExportButton project={name} target={{}} label={t("organization.projects.export")} size="sm" />
+          <ExportButton
+            project={name}
+            target={{}}
+            label={t("organization.projects.export")}
+            size="sm"
+          />
           <DeleteProjectAction project={name} />
         </span>
       ),
@@ -205,13 +259,21 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
   ];
 
   return (
-    <section className="space-y-4" aria-labelledby="organization-projects-heading">
+    <section
+      className="space-y-4"
+      aria-labelledby="organization-projects-heading"
+    >
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 id="organization-projects-heading" className="text-title font-semibold text-fg">
+          <h2
+            id="organization-projects-heading"
+            className="text-title font-semibold text-fg"
+          >
             {t("organization.projects.title")}
           </h2>
-          <p className="text-body text-fg-muted">{t("organization.projects.lead")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.projects.lead")}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Importing a whole project is here and nowhere else (UI-87). */}
@@ -261,8 +323,14 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
 }
 
 /** The group a section is listed under in the side navigation. */
-function groupOf(tab: OrganizationTab): (typeof ORGANIZATION_GROUPS)[number]["id"] {
-  return ORGANIZATION_GROUPS.find((group) => (group.tabs as readonly string[]).includes(tab))?.id ?? "settings";
+function groupOf(
+  tab: OrganizationTab,
+): (typeof ORGANIZATION_GROUPS)[number]["id"] {
+  return (
+    ORGANIZATION_GROUPS.find((group) =>
+      (group.tabs as readonly string[]).includes(tab),
+    )?.id ?? "settings"
+  );
 }
 
 /**
@@ -270,7 +338,13 @@ function groupOf(tab: OrganizationTab): (typeof ORGANIZATION_GROUPS)[number]["id
  * person reads none of that kind, a sentence saying who does, never the not-found page the API's
  * `404` turned into (D-environments, 2026-10-20).
  */
-function OrganizationKind({ plural, kind }: { plural: string; kind: string }): JSX.Element {
+function OrganizationKind({
+  plural,
+  kind,
+}: {
+  plural: string;
+  kind: string;
+}): JSX.Element {
   const { t } = useTranslation();
   const permissions = usePermissions(ORG_NAMESPACE);
   const reads = mayRead(permissions.data, kind);
@@ -278,7 +352,11 @@ function OrganizationKind({ plural, kind }: { plural: string; kind: string }): J
     return <PageLoading label={t("app.loading")} />;
   }
   if (!reads) {
-    return <Alert tone="info">{t("organization.kindHidden", { kinds: kindPlural(kind, t) })}</Alert>;
+    return (
+      <Alert tone="info">
+        {t("organization.kindHidden", { kinds: kindPlural(kind, t) })}
+      </Alert>
+    );
   }
   return <KindList project={ORG_NAMESPACE} plural={plural} embedded />;
 }
@@ -297,7 +375,13 @@ function OrganizationKind({ plural, kind }: { plural: string; kind: string }): J
  * administrator of the organization has the tab, anyone else opening its address lands on
  * Settings, and the server answers them `404` anyway.
  */
-export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor: string }): JSX.Element {
+export function OrganizationPage({
+  tab,
+  anchor,
+}: {
+  tab: OrganizationTab;
+  anchor: string;
+}): JSX.Element {
   const { t } = useTranslation();
   const { known, administers, own } = useAdministers();
   // An administrator of one Organization other than the installation's opens its own sections
@@ -307,7 +391,8 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
   const operator = useOperator();
   const operatorTab = OPERATOR_TABS.includes(tab);
   const opens =
-    (administers && (!operatorTab || operator)) || (own !== undefined && OWN_ORGANIZATION_TABS.includes(tab));
+    (administers && (!operatorTab || operator)) ||
+    (own !== undefined && OWN_ORGANIZATION_TABS.includes(tab));
   if (!known || !opens) {
     return (
       <div className="space-y-6">
@@ -317,8 +402,10 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
           title={t("organization.title")}
           description={
             known && operatorTab
-              ? // The lead names what the refused operator section holds (T-7152).
-                t(`operator.${tab.slice("operator-".length)}.lead`)
+              ? // The lead names the refused operator section and whose it is (T-7152).
+                t("operator.refusedLead", {
+                  section: t(`organization.tab.${tab}`),
+                })
               : known && own !== undefined
                 ? t(`organization.groupLead.${groupOf(tab)}`)
                 : t("organization.lead")
@@ -328,7 +415,7 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
           operatorTab ? (
             // A lock panel whose H2 names the section and its operators, one word for the role.
             <AskAdmins
-              title={t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}
+              title={t("operator.refusedTitle")}
               message={t("operator.only")}
               back={anchor}
               installation
@@ -337,7 +424,11 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
           ) : own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own
             // sections are beside it in the menu, and the installation's administrators decide this one.
-            <AskAdmins message={t("organization.installationOnly")} back={anchor} installation />
+            <AskAdmins
+              message={t("organization.installationOnly")}
+              back={anchor}
+              installation
+            />
           ) : (
             <AskAdmins message={t("organization.adminOnly")} back={anchor} />
           )
@@ -351,7 +442,10 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
     <div className="space-y-6">
       {/* Each section names itself in its own H2; the lead says what its group of the side
           navigation is for (T-4831). */}
-      <PageHeader title={t("organization.title")} description={t(`organization.groupLead.${groupOf(tab)}`)} />
+      <PageHeader
+        title={t("organization.title")}
+        description={t(`organization.groupLead.${groupOf(tab)}`)}
+      />
       {tab === "setup" ? null : <SetupReminder />}
       <div className="space-y-8">
         {tab === "settings" ? (
@@ -362,12 +456,22 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         ) : null}
         {tab === "people" ? <People /> : null}
         {tab === "members" ? <OrganizationMembers /> : null}
-        {tab === "roles" ? <Roles project={ORG_NAMESPACE} scope="organization" /> : null}
+        {tab === "roles" ? (
+          <Roles project={ORG_NAMESPACE} scope="organization" />
+        ) : null}
         {tab === "groups" ? <Groups project={ORG_NAMESPACE} /> : null}
         {tab === "data-access" ? <DataAccessMatrix /> : null}
-        {tab === "service-accounts" ? <ServiceAccounts project={ORG_NAMESPACE} /> : null}
+        {tab === "service-accounts" ? (
+          <ServiceAccounts project={ORG_NAMESPACE} />
+        ) : null}
         {tab === "agents" ? (
-          <Suspense fallback={<p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>}>
+          <Suspense
+            fallback={
+              <p role="status" className="text-body text-fg-muted">
+                {t("app.loading")}
+              </p>
+            }
+          >
             <Agents />
           </Suspense>
         ) : null}
@@ -375,18 +479,37 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {tab === "opendata-pages" ? <OpendataPages /> : null}
         {tab === "backups" ? <Backups /> : null}
         {operatorTab ? (
-          <Suspense fallback={<p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>}>
-            {tab === "operator-organizations" ? <OperatorOrganizations /> : null}
+          <Suspense
+            fallback={
+              <p role="status" className="text-body text-fg-muted">
+                {t("app.loading")}
+              </p>
+            }
+          >
+            {tab === "operator-organizations" ? (
+              <OperatorOrganizations />
+            ) : null}
             {tab === "operator-hosts" ? <OperatorHosts /> : null}
             {tab === "operator-installation" ? <OperatorInstallation /> : null}
             {tab === "operator-changes" ? <OperatorChanges /> : null}
             {tab === "operator-audit" ? <OperatorAudit /> : null}
           </Suspense>
         ) : null}
-        {tab === "blueprints" ? <OrganizationKind plural="blueprints" kind="Blueprint" /> : null}
-        {tab === "agentprofiles" ? <OrganizationKind plural="agentprofiles" kind="AgentProfile" /> : null}
-        {tab === "dataspaceparticipants" ? <OrganizationKind plural="dataspaceparticipants" kind="DataSpaceParticipant" /> : null}
-        {tab === "environments" ? <OrganizationKind plural="environments" kind="Environment" /> : null}
+        {tab === "blueprints" ? (
+          <OrganizationKind plural="blueprints" kind="Blueprint" />
+        ) : null}
+        {tab === "agentprofiles" ? (
+          <OrganizationKind plural="agentprofiles" kind="AgentProfile" />
+        ) : null}
+        {tab === "dataspaceparticipants" ? (
+          <OrganizationKind
+            plural="dataspaceparticipants"
+            kind="DataSpaceParticipant"
+          />
+        ) : null}
+        {tab === "environments" ? (
+          <OrganizationKind plural="environments" kind="Environment" />
+        ) : null}
         {tab === "models" ? <OrganizationModels /> : null}
         {tab === "projects" ? <OrganizationProjects anchor={anchor} /> : null}
         {tab === "applications" ? <OrganizationApplications /> : null}
@@ -394,8 +517,16 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {tab === "health" ? (
           <>
             <ValidationHealth />
-            <section aria-labelledby="health-projects" className="flex flex-col gap-4">
-              <h2 id="health-projects" className="text-title font-semibold text-fg">{t("health.adminTitle")}</h2>
+            <section
+              aria-labelledby="health-projects"
+              className="flex flex-col gap-4"
+            >
+              <h2
+                id="health-projects"
+                className="text-title font-semibold text-fg"
+              >
+                {t("health.adminTitle")}
+              </h2>
               <p className="text-body text-fg-muted">{t("health.adminLead")}</p>
               <HealthLog />
             </section>
@@ -404,7 +535,9 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {tab === "brokers" ? <Brokers /> : null}
         {tab === "costs" ? <Costs /> : null}
         {tab === "endpoints" ? <AllEndpointsPage /> : null}
-        {tab === "mcp-servers" ? <McpServersPage project={ORG_NAMESPACE} embedded /> : null}
+        {tab === "mcp-servers" ? (
+          <McpServersPage project={ORG_NAMESPACE} embedded />
+        ) : null}
       </div>
     </div>
   );

@@ -108,7 +108,9 @@ describe("Organization → Setup", () => {
     renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: false }));
     await screen.findByText(en.organization.setup.operatorLeadMember);
     // Only the e-mail server is the operators' on the Installation page; the deployment sets the rest.
-    expect(screen.getAllByText(en.organization.setup.operatorSets)).toHaveLength(1);
+    // The badge says the state, the line says who sets it, each once.
+    expect(screen.getAllByText(en.organization.setup.operatorSets, { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText(en.organization.setup.notYet)).toHaveLength(1);
     expect(screen.getAllByText(en.organization.setup.deploymentSets).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: en.organization.setup.setIt })).toBeNull();
     expect(document.body.textContent).not.toMatch(/keycloak|branding_file|JC_|postgres\./i);
@@ -159,12 +161,22 @@ describe("Organization → Setup", () => {
 
 describe("the setup reminder", () => {
   it("counts what is open on the other tabs and leads to the setup", async () => {
-    renderAt("people", ADMIN, () => json(setup((id) => id !== "domain" && id !== "backups")));
+    renderAt("people", ADMIN, () => json({ ...setup((id) => id !== "domain" && id !== "smtp"), operates: true }));
     expect(await screen.findByText("2 setup items are still open.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.organization.setup.continue })).toHaveAttribute(
       "href",
       "/organization/setup",
     );
+  });
+
+  it("counts only what the checklist shows the person as to do", async () => {
+    // The deployment's items and an e-mail server only operators set are nobody's to-do here (T-7152).
+    const member = renderAt("people", ADMIN, () => json({ ...setup((id) => id !== "backups" && id !== "smtp"), operates: false }));
+    await vi.waitFor(() => expect(member.requests).toContain("GET /api/v1/organization/setup"));
+    expect(screen.queryByText(/setup items? (is|are) still open/)).not.toBeInTheDocument();
+    cleanup();
+    renderAt("people", ADMIN, () => json({ ...setup((id) => id !== "backups" && id !== "smtp"), operates: true }));
+    expect(await screen.findByText("1 setup item is still open.")).toBeInTheDocument();
   });
 
   it("is gone once the setup is complete, and is never shown to anybody else", async () => {
