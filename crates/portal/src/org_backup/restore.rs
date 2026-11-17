@@ -48,6 +48,11 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
         "an invitation lets a person in: it is sent again, never restored",
     ),
     (
+        "project_ids",
+        "the installation mints a project's id and never reuses it: a restored id could take \
+         one minted since, so restoring a project folder under its id is its own step",
+    ),
+    (
         "erasures",
         "the erasure log only grows; its erasures are applied again after the restore",
     ),
