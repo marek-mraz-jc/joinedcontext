@@ -117,7 +117,8 @@ fn users_in(list: Option<&Value>) -> Vec<String> {
 /// The realm's first and last name of each subject that is a user id, `None` where the realm has
 /// none or cannot answer: the subjects still answer without it. Never the realm's e-mail.
 async fn names_of(state: &AppState, subjects: &[&str]) -> Vec<Option<String>> {
-    let admin = match state.people_here() {
+    let here = state.people_here();
+    let admin = match here.as_deref() {
         Some(people) => people.admin().await.ok(),
         None => None,
     };
@@ -134,7 +135,7 @@ async fn names_of(state: &AppState, subjects: &[&str]) -> Vec<Option<String>> {
         .await
 }
 
-async fn name_of(admin: &crate::people::Admin<'_>, subject: &str) -> Option<String> {
+async fn name_of(admin: &crate::people::Admin, subject: &str) -> Option<String> {
     if subject.contains('@') {
         return None;
     }

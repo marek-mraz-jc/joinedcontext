@@ -185,8 +185,9 @@ pub struct OrganizationRealm {
 }
 
 /// `JC_OIDC_ORGANIZATION_REALMS`: each Organization once, each issuer once and never the
-/// installation realm's, both URLs absolute; set only beside the installation realm.
-fn organization_realms(
+/// installation realm's, both URLs absolute; set only beside the installation realm. The same
+/// check holds for a set jc replaces at run time ([`crate::serve::OrganizationRealms`]).
+pub(crate) fn organization_realms(
     raw: Option<String>,
     installation: Option<&str>,
 ) -> Result<Vec<OrganizationRealm>, ConfigError> {

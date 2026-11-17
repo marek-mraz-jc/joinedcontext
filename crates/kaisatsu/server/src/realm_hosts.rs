@@ -10,7 +10,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use jc_router::Mount;
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 /// Which realm answers on which sign-in host.
 #[derive(Debug, Clone, Default)]
@@ -20,6 +20,32 @@ pub struct RealmHosts {
     /// The hosts sibling modules call kaisatsu on (loopback): a pinned realm answers there its
     /// back channel alone ([`BACK_CHANNEL`]), under the registry's issuer.
     internal: Vec<String>,
+}
+
+/// The pins a running kaisatsu answers by (T-7180): jc replaces them whenever the host registry
+/// serves another set of sign-in hosts, so a realm answers on its host, or is refused, from the
+/// next request on, without a restart. Every clone holds the same pins.
+#[derive(Debug, Clone, Default)]
+pub struct RealmHostsSwap(Arc<RwLock<Arc<RealmHosts>>>);
+
+impl RealmHostsSwap {
+    /// Makes `hosts` the pins from the next request on.
+    pub fn replace(&self, hosts: RealmHosts) {
+        let next = Arc::new(hosts);
+        match self.0.write() {
+            Ok(mut held) => *held = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+    }
+
+    /// The pins held now.
+    #[must_use]
+    pub fn current(&self) -> Arc<RealmHosts> {
+        match self.0.read() {
+            Ok(held) => Arc::clone(&held),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
 }
 
 /// What a resource server or a client fetches from a realm without a person at the browser.
@@ -130,7 +156,7 @@ impl RealmHosts {
 
 /// The layer: the request's Mount (set by jc-router, else `default`) names the host.
 pub(crate) async fn pin_realm(
-    State((hosts, default)): State<(Arc<RealmHosts>, Arc<Mount>)>,
+    State((hosts, default)): State<(RealmHostsSwap, Arc<Mount>)>,
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
@@ -138,7 +164,8 @@ pub(crate) async fn pin_realm(
         .extensions()
         .get::<Mount>()
         .map_or_else(|| default.host.clone(), |m| m.host.clone());
-    match hosts.decide(&host, req.uri().path()) {
+    let decided = hosts.current().decide(&host, req.uri().path());
+    match decided {
         Pin::Free => next.run(req).await,
         Pin::Own(mount) => {
             req.extensions_mut().insert(mount);

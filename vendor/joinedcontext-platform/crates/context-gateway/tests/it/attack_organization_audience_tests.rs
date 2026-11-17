@@ -17,6 +17,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use context_gateway::app::{router, Gateway};
 use context_gateway::auth::accounts::{accounts_of, client_id};
+use context_gateway::auth::token::Verifier;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
 use context_gateway::resolver::Endpoint;
@@ -224,18 +225,22 @@ const HEL_ISSUER: &str = "https://idm.hel.test/realms/hel";
 const ZILINA_ISSUER: &str = "https://idm.zilina.test/realms/zilina";
 
 /// The fixture with `hel` and `zilina` each on a realm of its own beside the installation's: the
-/// two realms, then the fixture.
-async fn fixture_with_own_realms(name: &str) -> (common::Realm, common::Realm, Fixture) {
+/// two realms, the fixture, and the verifier the gateway holds.
+async fn fixture_with_own_realms(
+    name: &str,
+) -> (common::Realm, common::Realm, Fixture, Arc<Verifier>) {
     let (hel, zilina) = (common::Realm::new(), common::Realm::new());
     let realm = common::Realm::new();
-    let broker = common::BrokerStub::start(vec![json!([]), json!([])]).await;
+    let broker = common::BrokerStub::start(vec![json!([]); 3]).await;
     let repo = Repo::new(name, &[PROJECT, OUTSIDER]);
     let accounts =
         accounts_of(&jc_manifest::loader::Repository::load(&repo.0).expect("the repository loads"));
-    let verifier = realm
-        .verifier()
-        .with_organization("hel", HEL_ISSUER)
-        .with_organization("zilina", ZILINA_ISSUER);
+    let verifier = Arc::new(
+        realm
+            .verifier()
+            .with_organization("hel", HEL_ISSUER)
+            .with_organization("zilina", ZILINA_ISSUER),
+    );
     for (organization, own) in verifier.organizations() {
         let keys = if organization == "hel" { &hel } else { &zilina };
         assert_eq!(own.replace_keys(keys.published_jwks()), 1);
@@ -246,7 +251,7 @@ async fn fixture_with_own_realms(name: &str) -> (common::Realm, common::Realm, F
         "hel.fi",
     )
     .serve([endpoint()])
-    .authenticate(Arc::new(verifier), accounts, None);
+    .authenticate(Arc::clone(&verifier), accounts, None);
     gateway.replace_provenance(organizations());
     let fixture = Fixture {
         realm,
@@ -254,7 +259,7 @@ async fn fixture_with_own_realms(name: &str) -> (common::Realm, common::Realm, F
         broker,
         _repo: repo,
     };
-    (hel, zilina, fixture)
+    (hel, zilina, fixture, verifier)
 }
 
 /// A person of `hel`'s project as `issuer`'s realm signs them, for `audience`.
@@ -278,7 +283,7 @@ fn own_realm_person(realm: &common::Realm, issuer: &str, audience: &str) -> Stri
 /// hub's), not even a token copying `hel`'s groups and `jc_org`.
 #[tokio::test]
 async fn only_the_endpoints_own_organization_realm_and_the_installations_sign_in() {
-    let (hel, zilina, fixture) = fixture_with_own_realms("own-realms").await;
+    let (hel, zilina, fixture, _) = fixture_with_own_realms("own-realms").await;
     let token = own_realm_person(&hel, HEL_ISSUER, SLUG);
     let (status, body) = read(&fixture, SLUG, &token).await;
     assert_eq!(status, StatusCode::OK, "hel's own realm: {body}");
@@ -301,6 +306,33 @@ async fn only_the_endpoints_own_organization_realm_and_the_installations_sign_in
         2,
         "only the two members reached the broker"
     );
+}
+
+/// T-7180: the Organizations' own realms follow the host registry without a restart: a realm
+/// the registry no longer serves signs nobody in from the next request on, the installation
+/// realm still does, and a realm served again signs in once its keys are loaded.
+#[tokio::test]
+async fn a_realm_the_registry_drops_signs_nobody_in_and_one_it_serves_again_does() {
+    let (hel, _zilina, fixture, verifier) = fixture_with_own_realms("swapped-realms").await;
+    let own = own_realm_person(&hel, HEL_ISSUER, SLUG);
+    assert_eq!(read(&fixture, SLUG, &own).await.0, StatusCode::OK, "served");
+    assert!(verifier.replace_organizations(&[]).is_empty());
+    let (status, body) = read(&fixture, SLUG, &own).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "dropped: {body}");
+    let installation = person(&fixture.realm, SLUG, &[PROJECT]);
+    assert_eq!(read(&fixture, SLUG, &installation).await.0, StatusCode::OK);
+    let added = verifier.replace_organizations(&[("hel".to_owned(), HEL_ISSUER.to_owned())]);
+    assert_eq!(added.len(), 1, "a new verifier, keys not loaded yet");
+    assert_eq!(read(&fixture, SLUG, &own).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(added[0].1.replace_keys(hel.published_jwks()), 1);
+    assert_eq!(read(&fixture, SLUG, &own).await.0, StatusCode::OK, "again");
+    assert!(
+        verifier
+            .replace_organizations(&[("hel".to_owned(), HEL_ISSUER.to_owned())])
+            .is_empty(),
+        "an unchanged realm keeps its verifier and keys"
+    );
+    assert_eq!(read(&fixture, SLUG, &own).await.0, StatusCode::OK, "kept");
 }
 
 /// F-SEC1-009 under ADR-N-067: a person whose groups name no project at all and whose token

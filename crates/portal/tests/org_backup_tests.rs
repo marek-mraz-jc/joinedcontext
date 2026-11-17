@@ -1069,15 +1069,16 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
             .parse()
             .expect("url"),
     };
-    world.state.organization_realms = Arc::new(BTreeMap::from([(
-        "alfa".to_owned(),
-        Arc::new(joinedcontext_portal::auth::realms::OrganizationRealm::new(
-            &setting,
-            &oidc,
-            &"https://portal.alfa.example".parse().expect("url"),
-            None,
-        )),
-    )]));
+    world.state.organization_realms =
+        joinedcontext_portal::auth::realms::OrganizationRealms::new(BTreeMap::from([(
+            "alfa".to_owned(),
+            Arc::new(joinedcontext_portal::auth::realms::OrganizationRealm::new(
+                &setting,
+                &oidc,
+                &"https://portal.alfa.example".parse().expect("url"),
+                None,
+            )),
+        )]));
 
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;

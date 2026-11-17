@@ -801,30 +801,30 @@ pub fn by_organization(
 }
 
 /// `JC_OIDC_ORGANIZATION_REALMS` (T-7131): the realm of each Organization with its own sign-in
-/// host, named like it (T-7001), under the issuer kaisatsu names on that host. Its keys are read
+/// host (`sign_ins`, jc.toml at start, the host registry's at run time, T-7180), named like it
+/// (T-7001), under the issuer kaisatsu names on that host. Its keys are read
 /// on that host through kaisatsu's `reach` in host mode, else on kaisatsu's loopback address:
 /// either way kaisatsu answers the pinned realm's back channel there. `None` when no
 /// Organization has a sign-in host of its own.
 #[must_use]
 pub fn organization_realms(
-    orgs: &[crate::config::OrganizationSection],
+    sign_ins: &[super::sign_in::SignIn],
     kaisatsu: &crate::siblings::Sibling,
     scheme: &str,
 ) -> Option<String> {
-    let realms: Vec<serde_json::Value> = orgs
+    let realms: Vec<serde_json::Value> = sign_ins
         .iter()
-        .filter_map(|org| {
-            let idm = org.hosts.idm.as_deref()?;
-            let name = &org.name;
+        .map(|own| {
+            let (idm, name) = (&own.host, &own.organization);
             let keys = match kaisatsu.reach {
                 Some(_) => format!("http://{idm}"),
                 None => kaisatsu.internal.trim_end_matches('/').to_owned(),
             };
-            Some(serde_json::json!({
+            serde_json::json!({
                 "organization": name,
                 "issuer": format!("{scheme}://{idm}/realms/{name}"),
                 "jwks_url": format!("{keys}/realms/{name}/protocol/openid-connect/certs"),
-            }))
+            })
         })
         .collect();
     (!realms.is_empty()).then(|| serde_json::Value::from(realms).to_string())
@@ -852,17 +852,17 @@ pub async fn build(
         portal,
         env,
     );
-    // Beside the installation realm jc filled, never beside one the environment named.
-    if filled.contains_key("JC_OIDC_ISSUER")
-        && env(&env_key("JC_OIDC_ORGANIZATION_REALMS")).is_none()
+    // Beside the installation realm jc filled, never beside one the environment named; the
+    // host registry's set then replaces it at run time (T-7180).
+    let follow_realms = ctx.siblings.get(Module::Kaisatsu).cloned().filter(|_| {
+        filled.contains_key("JC_OIDC_ISSUER")
+            && env(&env_key("JC_OIDC_ORGANIZATION_REALMS")).is_none()
+    });
+    if let Some(realms) = follow_realms
+        .as_ref()
+        .and_then(|id| organization_realms(&super::sign_in::from_config(orgs), id, &mount.scheme))
     {
-        let realms = ctx
-            .siblings
-            .get(Module::Kaisatsu)
-            .and_then(|id| organization_realms(orgs, id, &mount.scheme));
-        if let Some(realms) = realms {
-            filled.insert("JC_OIDC_ORGANIZATION_REALMS".to_owned(), realms);
-        }
+        filled.insert("JC_OIDC_ORGANIZATION_REALMS".to_owned(), realms);
     }
     tracing::info!(
         keys = ?filled.keys().collect::<Vec<_>>(),
@@ -915,6 +915,16 @@ pub async fn build(
     let built = context_gateway::serve::build(&config, broker)
         .await
         .map_err(err)?;
+    if let (Some(kaisatsu), Some(realms)) = (follow_realms, built.organization_realms.clone()) {
+        let scheme = mount.scheme.clone();
+        super::sign_in::follow("gateway", move |set| {
+            let raw = organization_realms(set, &kaisatsu, &scheme).unwrap_or_else(|| "[]".into());
+            match realms.replace(&raw) {
+                Ok(held) => tracing::info!(held, "gateway: Organization realms replaced"),
+                Err(e) => tracing::error!(error = %e, "gateway: Organization realms kept"),
+            }
+        });
+    }
     if let (Some(bind), Some(internal)) = (config.internal_bind, built.internal) {
         serve_internal(bind, internal).await?;
     }
@@ -1432,7 +1442,12 @@ mod tests {
             (&slug, "http://127.0.0.1:4000/login"),
             (&host, "http://idm.bbsk.sk"),
         ] {
-            let json = organization_realms(&cfg.organizations, kaisatsu, "https").unwrap();
+            let json = organization_realms(
+                &crate::modules::sign_in::from_config(&cfg.organizations),
+                kaisatsu,
+                "https",
+            )
+            .unwrap();
             let realms: Vec<context_gateway::config::OrganizationRealm> =
                 serde_json::from_str(&json).unwrap();
             assert_eq!(
@@ -1454,7 +1469,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            organization_realms(&none.organizations, &host, "https"),
+            organization_realms(
+                &crate::modules::sign_in::from_config(&none.organizations),
+                &host,
+                "https"
+            ),
             None
         );
     }

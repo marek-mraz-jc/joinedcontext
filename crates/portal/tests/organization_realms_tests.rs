@@ -104,7 +104,12 @@ fn world_at(ba_back: &str) -> World {
         .expect("installation verifier")
         .install(&set);
     let (ba, set) = keypair("ba");
-    state.organization_realms["ba"].bearer.install(&set);
+    state
+        .organization_realms
+        .get("ba")
+        .expect("ba's realm")
+        .bearer
+        .install(&set);
     let m = &state.mirror;
     m.upsert(envelope(
         "Role",
@@ -247,6 +252,54 @@ async fn a_token_of_an_organizations_realm_reaches_its_own_host_alone() {
         &[],
     );
     assert_eq!(bearer(&w.state, HEL, &hel).await, StatusCode::OK);
+}
+
+/// T-7180: jc hands the Portal the realms its host registry serves: a realm dropped signs nobody
+/// in on its Organization's host from the next request on, a set the start-time check refuses
+/// changes nothing, a realm served again signs in once its keys are loaded, and one served
+/// unchanged keeps its keys.
+#[tokio::test]
+async fn a_realm_the_registry_drops_is_refused_and_one_it_serves_again_signs_in() {
+    let w = world();
+    let own = token(&w.ba, "ba", BA_REALM, "ba-only", &[]);
+    assert_eq!(bearer(&w.state, BA, &own).await, StatusCode::OK);
+    assert_eq!(w.state.replace_organization_realms("[]", None), Ok(0));
+    assert_eq!(
+        bearer(&w.state, BA, &own).await,
+        StatusCode::UNAUTHORIZED,
+        "dropped"
+    );
+    let realm = |issuer: &str, name: &str| {
+        json!([{ "organization": "ba", "issuer": issuer,
+                 "jwks_url": format!("http://127.0.0.1:9/realms/{name}/protocol/openid-connect/certs") }])
+        .to_string()
+    };
+    assert!(w
+        .state
+        .replace_organization_realms(&realm(INSTALLATION, "jc"), None)
+        .is_err());
+    assert!(w.state.organization_realms.get("ba").is_none(), "unchanged");
+    let ba = realm(BA_REALM, "ba");
+    assert_eq!(w.state.replace_organization_realms(&ba, None), Ok(1));
+    assert_eq!(
+        bearer(&w.state, BA, &own).await,
+        StatusCode::UNAUTHORIZED,
+        "served again, its keys not loaded yet"
+    );
+    let (key, set) = keypair("ba-again");
+    let served = w.state.organization_realms.get("ba").expect("served");
+    served.bearer.install(&set);
+    let again = token(&key, "ba-again", BA_REALM, "ba-only", &[]);
+    assert_eq!(bearer(&w.state, BA, &again).await, StatusCode::OK);
+    assert_eq!(w.state.replace_organization_realms(&ba, None), Ok(1));
+    assert!(
+        std::sync::Arc::ptr_eq(
+            &served,
+            &w.state.organization_realms.get("ba").expect("kept")
+        ),
+        "an unchanged realm keeps its keys"
+    );
+    assert_eq!(bearer(&w.state, BA, &again).await, StatusCode::OK);
 }
 
 /// An access token of App `app`'s own client, issued by `issuer`.

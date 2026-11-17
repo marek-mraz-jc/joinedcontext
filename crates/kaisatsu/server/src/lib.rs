@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 mod realm_hosts;
-pub use realm_hosts::RealmHosts;
+pub use realm_hosts::{RealmHosts, RealmHostsSwap};
 
 /// Server state with private key-encryption key and private store pool (W2, W9).
 #[derive(Clone)]
@@ -32,7 +32,7 @@ pub struct KaisatsuState {
     guard: OutboundGuard,
     authorizer: Arc<dyn Authorizer>,
     second_factor: SecondFactor,
-    realm_hosts: RealmHosts,
+    realm_hosts: RealmHostsSwap,
 }
 
 impl KaisatsuState {
@@ -49,7 +49,7 @@ impl KaisatsuState {
             guard,
             authorizer,
             second_factor: SecondFactor::Optional,
-            realm_hosts: RealmHosts::default(),
+            realm_hosts: RealmHostsSwap::default(),
         }
     }
 
@@ -63,9 +63,15 @@ impl KaisatsuState {
     /// Pins realms to sign-in hosts of their own (T-7001): each answers there alone, under the
     /// issuer the registry names.
     #[must_use]
-    pub fn with_realm_hosts(mut self, realm_hosts: RealmHosts) -> Self {
-        self.realm_hosts = realm_hosts;
+    pub fn with_realm_hosts(self, realm_hosts: RealmHosts) -> Self {
+        self.realm_hosts.replace(realm_hosts);
         self
+    }
+
+    /// The pins of this kaisatsu, to replace while it runs (T-7180).
+    #[must_use]
+    pub fn realm_hosts(&self) -> RealmHostsSwap {
+        self.realm_hosts.clone()
     }
 
     #[must_use]
@@ -78,7 +84,7 @@ impl KaisatsuState {
             guard: OutboundGuard::default(),
             authorizer: Arc::new(LocalAuthorizer),
             second_factor: SecondFactor::Optional,
-            realm_hosts: RealmHosts::default(),
+            realm_hosts: RealmHostsSwap::default(),
         }
     }
 
@@ -93,7 +99,7 @@ impl KaisatsuState {
 
 /// Builds the complete `kaisatsu` Axum [`Router`] for `mount` (W9).
 pub fn router(state: KaisatsuState, mount: Mount) -> Router {
-    let pins = (Arc::new(state.realm_hosts.clone()), Arc::new(mount.clone()));
+    let pins = (state.realm_hosts.clone(), Arc::new(mount.clone()));
     let oidc_state = OidcState {
         store: state.store.clone(),
         kek: state.kek.clone(),

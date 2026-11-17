@@ -184,7 +184,7 @@ impl std::fmt::Debug for PasswordReset {
     }
 }
 
-pub(super) fn people(state: &AppState) -> Result<&People, ApiError> {
+pub(super) fn people(state: &AppState) -> Result<std::sync::Arc<People>, ApiError> {
     state.people_here().ok_or_else(|| {
         ApiError::Unavailable(
             "no Keycloak admin client is configured, so people cannot be managed here".into(),
@@ -627,7 +627,7 @@ fn uncovered_grants(
 async fn takeover_guard(
     state: &AppState,
     identity: &Identity,
-    admin: &Admin<'_>,
+    admin: &Admin,
     user: &KcUser,
 ) -> Result<Option<String>, ApiError> {
     let realm = admin.groups_and_realm_roles(&user.id).await?;
@@ -661,7 +661,7 @@ fn holds_uncovered(user: &KcUser, grant: &str) -> ApiError {
 async fn held_beyond(
     state: &AppState,
     identity: &Identity,
-    admin: &Admin<'_>,
+    admin: &Admin,
     id: &str,
 ) -> Result<Option<String>, ApiError> {
     let user = admin.get(id).await?;
@@ -731,7 +731,7 @@ pub(crate) async fn target<'a>(
     identity: &Identity,
     verb: Verb,
     id: &str,
-) -> Result<(Admin<'a>, KcUser), ApiError> {
+) -> Result<(Admin, KcUser), ApiError> {
     let (admin, user, uncovered) = target_held(state, identity, verb, id).await?;
     if let Some(grant) = uncovered {
         return Err(holds_uncovered(&user, &grant));
@@ -746,9 +746,10 @@ async fn target_held<'a>(
     identity: &Identity,
     verb: Verb,
     id: &str,
-) -> Result<(Admin<'a>, KcUser, Option<String>), ApiError> {
+) -> Result<(Admin, KcUser, Option<String>), ApiError> {
     allow(state, identity, verb)?;
-    let admin = people(state)?.admin().await?;
+    let people = people(state)?;
+    let admin = people.admin().await?;
     let user = admin.get(id).await?;
     let uncovered = if verb == Verb::Read {
         None
@@ -760,7 +761,7 @@ async fn target_held<'a>(
 
 /// Each person's last access, in the order of `users`, at most `LAST_SEEN_AT_ONCE` lookups in
 /// flight; a lookup the realm refuses reads as never seen.
-async fn last_seen_of(admin: &Admin<'_>, users: &[KcUser]) -> Vec<Option<i64>> {
+async fn last_seen_of(admin: &Admin, users: &[KcUser]) -> Vec<Option<i64>> {
     let lookups: Vec<_> = users.iter().map(|user| admin.last_seen(&user.id)).collect();
     futures_util::stream::iter(lookups)
         .buffered(LAST_SEEN_AT_ONCE)
@@ -819,7 +820,8 @@ pub async fn list_people(
             "search is at most 255 characters".into(),
         ));
     }
-    let admin = people(&state)?.admin().await?;
+    let people = people(&state)?;
+    let admin = people.admin().await?;
     let mut users = admin.list(search, first, max + 1).await?;
     let next = (users.len() > max as usize).then(|| first + max);
     users.truncate(max as usize);
@@ -876,7 +878,8 @@ pub(crate) async fn create(
     let last_name = name("lastName", &body.last_name)?;
     let language = body.locale.as_deref().map(locale).transpose()?;
     let project = invitation_project(state, identity, body.project.as_deref())?;
-    let admin = people(state)?.admin().await?;
+    let people = people(state)?;
+    let admin = people.admin().await?;
     let id = admin
         .create(&NewPerson {
             email: &address,
@@ -932,7 +935,7 @@ pub(crate) async fn create(
 /// before ADR-N-067) leaves them outside, with a warning, as before.
 async fn join_members(
     state: &AppState,
-    admin: &Admin<'_>,
+    admin: &Admin,
     id: &str,
     project: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
@@ -954,7 +957,7 @@ async fn join_members(
 /// The realm's e-mail, or when it cannot send one, a temporary password answered once (PF-92).
 async fn invite(
     state: &AppState,
-    admin: &Admin<'_>,
+    admin: &Admin,
     id: &str,
     actions: &[&str],
     back: Option<(&str, &str)>,
@@ -1159,7 +1162,7 @@ async fn revoke(state: &AppState, id: &str) {
 
 /// [`revoke`], then Keycloak's logout, which ends the refresh tokens and sessions. The mark comes
 /// first, so a failed logout still leaves the person refused.
-async fn end_access(state: &AppState, admin: &Admin<'_>, id: &str) -> Result<(), ApiError> {
+async fn end_access(state: &AppState, admin: &Admin, id: &str) -> Result<(), ApiError> {
     revoke(state, id).await;
     admin.sign_out(id).await.map_err(ApiError::from)
 }
@@ -1623,7 +1626,8 @@ pub async fn remove_people(
     refuse_bearer(identity)?;
     allow(&state, identity, Verb::Delete)?;
     let ids = removal_ids(&body)?;
-    let admin = people(&state)?.admin().await?;
+    let people = people(&state)?;
+    let admin = people.admin().await?;
     let found = removable(&state, identity, &admin, &ids).await?;
     remove(&state, identity, &admin, &found).await
 }
@@ -1650,7 +1654,7 @@ fn removal_ids(body: &[u8]) -> Result<Vec<String>, ApiError> {
 async fn removable(
     state: &AppState,
     identity: &Identity,
-    admin: &Admin<'_>,
+    admin: &Admin,
     ids: &[String],
 ) -> Result<Vec<KcUser>, ApiError> {
     let mut found = Vec::with_capacity(ids.len());
@@ -1717,7 +1721,7 @@ fn removal_branch(people: &[KcUser]) -> String {
 async fn remove(
     state: &AppState,
     identity: &Identity,
-    admin: &Admin<'_>,
+    admin: &Admin,
     people: &[KcUser],
 ) -> Result<Response, ApiError> {
     let named: Vec<Who> = people.iter().map(Who::of).collect();

@@ -122,7 +122,7 @@ impl AuthorRights {
     /// not say who one of them is.
     async fn judge<'a>(
         &'a self,
-        realm: &mut Realm<'a>,
+        realm: &mut Realm,
         mirror: &Mirror,
         placed: &Placed<'_>,
         authors: &Authors,
@@ -263,15 +263,15 @@ fn hash_of(manifest: &Value) -> u64 {
 
 /// The realm's answers of one run: one admin token, each person asked once.
 #[derive(Default)]
-struct Realm<'a> {
-    admin: Option<Admin<'a>>,
+struct Realm {
+    admin: Option<Admin>,
     names: HashMap<String, Vec<String>>,
 }
 
-impl<'a> Realm<'a> {
+impl Realm {
     async fn person(
         &mut self,
-        people: Option<&'a People>,
+        people: Option<&People>,
         mirror: &Mirror,
         email: &str,
     ) -> Result<Identity, PeopleError> {

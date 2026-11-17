@@ -21,6 +21,22 @@ pub fn install(hosts: &[(String, SocketAddr)]) {
     }
 }
 
+/// Adds `host` to the reached hosts at `addr` (T-7180: an Organization's sign-in host the
+/// registry serves after start). A host reached already keeps its address; an address but
+/// loopback is refused as [`from_env`] refuses it.
+pub fn add(host: &str, addr: SocketAddr) {
+    if !addr.ip().is_loopback() {
+        tracing::warn!(%host, %addr, "a reached host is dialed on loopback alone; left out");
+        return;
+    }
+    let host = host.to_ascii_lowercase();
+    if let Ok(mut held) = REACH.write() {
+        if !held.iter().any(|(h, _)| *h == host) {
+            held.push((host, addr));
+        }
+    }
+}
+
 /// A client builder that dials each reached host at its address.
 pub fn builder() -> reqwest::ClientBuilder {
     let mut builder = reqwest::Client::builder();

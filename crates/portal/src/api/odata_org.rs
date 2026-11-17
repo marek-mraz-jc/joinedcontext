@@ -2015,7 +2015,8 @@ async fn member_rows(read: &Read<'_>) -> Result<Vec<Value>, Refused> {
 /// or the subject is an e-mail already (then it is its own e-mail).
 async fn personal_of(state: &AppState, users: Vec<String>) -> Vec<(Value, Value)> {
     use futures_util::StreamExt;
-    let admin = match state.people_here() {
+    let here = state.people_here();
+    let admin = match here.as_deref() {
         Some(people) => people.admin().await.ok(),
         None => None,
     };
@@ -2029,7 +2030,7 @@ async fn personal_of(state: &AppState, users: Vec<String>) -> Vec<(Value, Value)
         .await
 }
 
-async fn personal(admin: &crate::people::Admin<'_>, user: &str) -> (Value, Value) {
+async fn personal(admin: &crate::people::Admin, user: &str) -> (Value, Value) {
     if user.contains('@') {
         return (Value::Null, json_email(user));
     }
