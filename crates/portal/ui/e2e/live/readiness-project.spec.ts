@@ -1,7 +1,10 @@
 /**
  * Ready for the demo, the project's life (T-2746, TS-26): demo.steward opens a project from the
  * sidebar, duplicates it, and deletes what it made, each a red change the administrator approves
- * with the name typed back (PF-58).
+ * with the name typed back (PF-58). In between the steward opens a branch of the new project and
+ * renews it (TEN-12, CHG-15, T-7213): the branch is a project of its own named `b-{id}`, so its
+ * name never reaches it on the parent's address, and its row stays as a tombstone after the
+ * parent goes. The journey's own project keeps the per-project branch limit from filling on dev.
  *
  * Nightly, not hourly (`sweep.sh`'s list): a deleted project's name stays reserved for 30 days,
  * and on layout 2 every project and copy is a forge repository. A project in the organization's
@@ -10,7 +13,7 @@
  */
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { STEWARD, approve, signIn } from "./portal";
+import { STEWARD, approve, csrf, signIn } from "./portal";
 
 const SUFFIX = process.env.E2E_SUFFIX ?? new Date().toISOString().slice(11, 16).replace(":", "");
 const PROJ = `rdy-proj-${SUFFIX}`;
@@ -31,6 +34,29 @@ async function approveLinked(page: Page): Promise<void> {
   await approve(page, project, change, (await typed.getAttribute("placeholder")) ?? "");
 }
 
+interface Branch {
+  id: string;
+  name: string;
+  parent: string;
+  expiresAt: string;
+}
+
+/** Opens a branch of `project` and renews it once, checking what each door answers. */
+async function branchAndRenew(page: Page, token: string, project: string): Promise<void> {
+  const headers = { "x-csrf-token": token };
+  const opened = await page.request.post(`/api/v1/projects/${project}/branches`, { headers });
+  expect(opened.status(), await opened.text()).toBe(201);
+  const branch = (await opened.json()) as Branch;
+  expect(branch.parent).toBe(project);
+  expect(branch.name).toBe(`b-${branch.id}`);
+  // RTE-05: a branch's name resolves only on its own id address, never on the parent's.
+  expect(await exists(page, branch.name)).toBe(404);
+  const renewed = await page.request.post(`/api/v1/projects/${project}/branches/${branch.id}/renewal`, { headers });
+  expect(renewed.status(), await renewed.text()).toBe(200);
+  const later = (await renewed.json()) as Branch;
+  expect(Date.parse(later.expiresAt)).toBeGreaterThan(Date.parse(branch.expiresAt));
+}
+
 async function exists(page: Page, project: string): Promise<number> {
   return (await page.request.get(`/api/v1/projects/${project}`)).status();
 }
@@ -49,7 +75,7 @@ async function deleteProject(page: Page, project: string): Promise<void> {
     .toBe(404);
 }
 
-test("a project is opened, duplicated where it can be, and deleted", async ({ browser }) => {
+test("a project is opened, branched and renewed, duplicated where it can be, and deleted", async ({ browser }) => {
   const steward = await signIn(browser, STEWARD, "/projects/helsinki/spaces?lang=en");
   const page = steward.page;
   let opened = false;
@@ -65,6 +91,8 @@ test("a project is opened, duplicated where it can be, and deleted", async ({ br
     await expect
       .poll(() => exists(page, PROJ), { timeout: 600_000, intervals: [10_000], message: `${PROJ} is opened` })
       .toBe(200);
+
+    await branchAndRenew(page, await csrf(steward.context), PROJ);
 
     await page.goto(`/projects/${PROJ}/settings/general?lang=en`, { waitUntil: "load" });
     const duplicate = page.getByRole("button", { name: "Duplicate", exact: true });
