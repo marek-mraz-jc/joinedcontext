@@ -1074,8 +1074,10 @@ pub fn reader_secret(namespace: &str, key: &ProjectKey, reader: &Credential) -> 
 
 /// The name of that Secret. `artifactStore.credentialsSecretRef` of the workload's values names
 /// the same string, which is the whole coupling between the two (Architecture/17 §4).
+/// `{OrgId}-{ProjectId}-artifacts`, 63 characters: a Kubernetes name is a DNS label, so it holds
+/// the ids and a fixed role word, never a name (ARCH/TEN-04).
 pub fn reader_secret_name(key: &ProjectKey) -> String {
-    format!("artifact-store-reader-{}", key.dns_label())
+    format!("{}-artifacts", key.dns_label())
 }
 
 #[cfg(test)]

@@ -244,13 +244,16 @@ fn the_secret_carries_the_reader_and_nothing_that_can_write() {
     let secret = joinedcontext_portal::artifact_store::reader_secret("dev", &key(), &reader);
 
     assert_eq!(secret["kind"], "Secret");
-    assert_eq!(
-        secret["metadata"]["name"],
-        format!(
-            "artifact-store-reader-{}-{}",
-            key().org.path_segment(),
-            key().project.path_segment()
-        )
+    let name = format!(
+        "{}-{}-artifacts",
+        key().org.path_segment(),
+        key().project.path_segment()
+    );
+    assert_eq!(secret["metadata"]["name"], name);
+    // A Kubernetes name is a DNS label: 63 characters at most.
+    assert!(
+        jc_core::names::validate_dns1123_label(&name).is_ok(),
+        "{name}"
     );
     assert_eq!(secret["metadata"]["namespace"], "dev");
     assert_eq!(
