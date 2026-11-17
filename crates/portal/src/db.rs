@@ -9,6 +9,7 @@ use crate::agents::run::{AgentRun, AgentRunEvent};
 // what the wrapper asserts.
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::AssertSqlSafe;
+use std::str::FromStr;
 use std::time::Duration;
 use time::OffsetDateTime;
 
@@ -28,6 +29,76 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
     }
     migrator.run(&pool).await?;
     Ok(pool)
+}
+
+/// Connects as `serving` after migrating as `migration` (T-7179, T-7129 §4). The migrating role
+/// owns every table and trigger; the serving role gets each table's rows and nothing else, on
+/// `operator_audit` INSERT and SELECT alone, so the running Portal can neither change the audit
+/// nor drop its triggers. Without `migration` the one role migrates and serves, as before T-7179,
+/// and the boot says so: that role owns the tables and could drop the audit's triggers.
+pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool, sqlx::Error> {
+    let Some(migration) = migration else {
+        tracing::warn!(
+            "JC_PORTAL_MIGRATION_DATABASE_URL is not set: the Portal migrates and serves as one \
+             role, which owns its tables and could drop the operators' audit triggers; set it to \
+             the owning role and JC_PORTAL_DATABASE_URL to a role that owns nothing"
+        );
+        return connect(serving).await;
+    };
+    let role = sqlx::postgres::PgConnectOptions::from_str(serving)?
+        .get_username()
+        .to_owned();
+    let migrating = sqlx::postgres::PgConnectOptions::from_str(migration)?;
+    if migrating.get_username() == role {
+        return Err(sqlx::Error::Configuration(
+            format!(
+                "JC_PORTAL_DATABASE_URL and JC_PORTAL_MIGRATION_DATABASE_URL both name the role \
+                 `{role}`: the serving role must be another role, one that owns nothing"
+            )
+            .into(),
+        ));
+    }
+    let owner = connect(migration).await?;
+    grant_serving_role(&owner, &role).await?;
+    owner.close().await;
+    let pool = pool_options().connect(serving).await?;
+    let owned: Vec<String> = sqlx::query_scalar(
+        "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relowner = \
+         (SELECT oid FROM pg_roles WHERE rolname = current_user) ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await?;
+    if !owned.is_empty() {
+        return Err(sqlx::Error::Configuration(
+            format!(
+                "the serving role `{role}` (JC_PORTAL_DATABASE_URL) owns the tables {owned:?}: \
+                 it could drop the operators' audit triggers; name a role that owns nothing, \
+                 the owner goes in JC_PORTAL_MIGRATION_DATABASE_URL"
+            )
+            .into(),
+        ));
+    }
+    Ok(pool)
+}
+
+/// What the serving role may do, granted again after every migration so a new table is covered:
+/// the rows of every table of `public`, never TRUNCATE, never the migration history, and on the
+/// operators' audit only INSERT and SELECT. The role name is quoted by Postgres (`%I`).
+async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Error> {
+    let sql: String = sqlx::query_scalar(
+        "SELECT format('GRANT USAGE ON SCHEMA public TO %1$I; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %1$I; \
+         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %1$I; \
+         REVOKE ALL ON _sqlx_migrations FROM %1$I; \
+         REVOKE ALL ON operator_audit FROM %1$I; \
+         GRANT SELECT, INSERT ON operator_audit TO %1$I;', $1::text)",
+    )
+    .bind(role)
+    .fetch_one(owner)
+    .await?;
+    sqlx::raw_sql(AssertSqlSafe(sql)).execute(owner).await?;
+    Ok(())
 }
 
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more

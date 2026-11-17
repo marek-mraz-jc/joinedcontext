@@ -335,6 +335,13 @@ pub struct Config {
     /// UI-09). A secret: it carries a password, so it is redacted in `Debug`. `None` runs the Portal without preferences: those routes answer
     /// 503, everything else works.
     pub database_url: Option<String>,
+    /// PostgreSQL connection string of the role that owns the Portal's tables and migrates them
+    /// (`JC_PORTAL_MIGRATION_DATABASE_URL`, T-7179), e.g.
+    /// `postgresql://jc_portal:<password>@db:5432/jc_portal`. A secret, redacted in `Debug`. When
+    /// set, the Portal migrates as this role and serves as the role of `JC_PORTAL_DATABASE_URL`,
+    /// which then holds only the rows of its tables (on the operators' audit INSERT and SELECT),
+    /// so it cannot drop the audit's triggers. Unset: one role migrates and serves, as before.
+    pub migration_database_url: Option<String>,
     /// The module databases a data backup reads and jc's tenant of each module
     /// ([`crate::org_backup::modules::BackupModules::from_lookup`] names the variables).
     pub backup_modules: crate::org_backup::modules::BackupModules,
@@ -537,6 +544,10 @@ impl std::fmt::Debug for Config {
             .field(
                 "database_url",
                 &self.database_url.as_ref().map(|_| "[redacted]"),
+            )
+            .field(
+                "migration_database_url",
+                &self.migration_database_url.as_ref().map(|_| "[redacted]"),
             )
             .field("backup_modules", &self.backup_modules)
             .field("app_settings", &self.app_settings)
@@ -2256,6 +2267,8 @@ impl Config {
         let reach = crate::reach::from_env(&lookup)?;
         let health_dir = lookup("JC_HEALTH_DIR").filter(|path| !path.trim().is_empty());
         let database_url = lookup("JC_PORTAL_DATABASE_URL").filter(|url| !url.trim().is_empty());
+        let migration_database_url =
+            lookup("JC_PORTAL_MIGRATION_DATABASE_URL").filter(|url| !url.trim().is_empty());
         let backup_modules = crate::org_backup::modules::BackupModules::from_lookup(&lookup)
             .map_err(|reason| ConfigError::Invalid {
                 var: "JC_PORTAL_BACKUP_TENANTS",
@@ -2360,6 +2373,7 @@ impl Config {
             reach,
             health_dir,
             database_url,
+            migration_database_url,
             backup_modules,
             bootstrap_admins,
             decisions_need_second_factor,
@@ -2460,6 +2474,7 @@ impl Config {
             reach: Vec::new(),
             health_dir: None,
             database_url: None,
+            migration_database_url: None,
             backup_modules: Default::default(),
             // The dev realm's approver role: a test session that carries it may do everything,
             // one that does not is bound by whatever Role/RoleBinding the test puts in the mirror.

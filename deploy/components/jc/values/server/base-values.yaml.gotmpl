@@ -461,6 +461,9 @@ envSecret:
   PORTAL_DB_PASSWORD:
     secret: db-jc-portal
     key: password
+  PORTAL_APP_DB_PASSWORD:
+    secret: db-jc-portal-app
+    key: password
   BROKER_DB_PASSWORD:
     secret: db-jc-antares
     key: password
@@ -555,7 +558,9 @@ env:
   # rolls by Recreate (updateStrategy below) and declares itself the only one.
   ANTARES_BUS: "local"
   ANTARES_ALLOW_SHARED_LOCAL: "1"
-  JC_PORTAL_DATABASE_URL: "postgresql://jc_portal:$(PORTAL_DB_PASSWORD)@{{ $pg }}:5432/jc_portal"
+  # The Portal serves as jc_portal_app and migrates as the owner jc_portal (T-7179).
+  JC_PORTAL_DATABASE_URL: "postgresql://jc_portal_app:$(PORTAL_APP_DB_PASSWORD)@{{ $pg }}:5432/jc_portal"
+  JC_PORTAL_MIGRATION_DATABASE_URL: "postgresql://jc_portal:$(PORTAL_DB_PASSWORD)@{{ $pg }}:5432/jc_portal"
   # The data backup's readers of the module databases (T-7169): SELECT on the exported columns,
   # under each module's row-level security (databases.yaml `<module>_backup`).
   JC_PORTAL_BACKUP_ANTARES_DATABASE_URL: "postgresql://antares_backup:$(BACKUP_ANTARES_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"

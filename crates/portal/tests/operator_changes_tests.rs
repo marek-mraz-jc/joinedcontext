@@ -655,6 +655,97 @@ async fn the_realm_changes_only_after_the_audit_and_a_refusal_keeps_the_change_o
     kc.verify().await;
 }
 
+/// The running Portal serves as a role apart from the one that migrates (T-7179): that role
+/// appends to the audit and reads it, and changes, deletes, truncates or drops the triggers of
+/// none of it. The Portal boots and serves with both URLs; one role named in both is refused.
+#[tokio::test]
+async fn the_serving_role_cannot_alter_the_audit_or_drop_its_triggers() {
+    let owner_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let owner = joinedcontext_portal::db::connect(&owner_url)
+        .await
+        .expect("connect + migrate");
+    let role = run("serving");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE \"{role}\" LOGIN PASSWORD 'serving-pw'"
+    )))
+    .execute(&owner)
+    .await
+    .expect("a serving role");
+    let mut serving_url = url::Url::parse(&owner_url).expect("the test URL");
+    serving_url.set_username(&role).expect("a user");
+    serving_url
+        .set_password(Some("serving-pw"))
+        .expect("a password");
+
+    let same = joinedcontext_portal::db::connect_as(&owner_url, Some(&owner_url))
+        .await
+        .expect_err("one role named twice");
+    assert!(
+        same.to_string()
+            .contains("JC_PORTAL_MIGRATION_DATABASE_URL"),
+        "{same}"
+    );
+
+    let config = Config {
+        database_url: Some(serving_url.to_string()),
+        migration_database_url: Some(owner_url.clone()),
+        ..Config::for_tests()
+    };
+    let state = AppState::from_config(config)
+        .await
+        .expect("the Portal boots");
+    let pool = state.db.clone().expect("db");
+    let me: String = sqlx::query_scalar("SELECT current_user::text")
+        .fetch_one(&pool)
+        .await
+        .expect("who");
+    assert_eq!(me, role, "the Portal serves as the serving role");
+    joinedcontext_portal::db::save_preferences(&pool, &role, &json!({"theme": "dark"}))
+        .await
+        .expect("the serving role writes its rows");
+    sqlx::query("INSERT INTO operator_audit (actor, action) VALUES ($1, 'probe')")
+        .bind(&role)
+        .execute(&pool)
+        .await
+        .expect("an append");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM operator_audit WHERE actor = $1")
+        .bind(&role)
+        .fetch_one(&pool)
+        .await
+        .expect("a read");
+    assert_eq!(rows, 1);
+    for statement in [
+        "UPDATE operator_audit SET actor = 'x' WHERE action = 'probe'",
+        "DELETE FROM operator_audit WHERE action = 'probe'",
+        "TRUNCATE operator_audit",
+        "DROP TRIGGER operator_audit_append_only ON operator_audit",
+        "DROP TRIGGER operator_audit_no_truncate ON operator_audit",
+        "ALTER TABLE operator_audit DISABLE TRIGGER ALL",
+        "CREATE OR REPLACE FUNCTION operator_audit_append_only() RETURNS trigger \
+         LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
+        "DELETE FROM _sqlx_migrations",
+    ] {
+        let err = sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect_err(statement);
+        let text = err.to_string();
+        assert!(
+            text.contains("permission denied") || text.contains("must be owner"),
+            "{statement}: {text}"
+        );
+    }
+    drop(state);
+    pool.close().await;
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\""
+    )))
+    .execute(&owner)
+    .await
+    .expect("the role removed");
+}
+
 /// The audit is append-only: the Portal's own role changes, deletes and truncates none of it.
 #[tokio::test]
 async fn the_audit_refuses_update_delete_and_truncate() {

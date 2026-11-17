@@ -431,7 +431,9 @@ impl AppState {
         // A configured database that cannot be reached or migrated is fatal, like a half-configured
         // forge: better one clear startup error than a Portal that silently forgets preferences.
         let db = match config.database_url.as_deref() {
-            Some(url) => Some(crate::db::connect(url).await?),
+            Some(url) => {
+                Some(crate::db::connect_as(url, config.migration_database_url.as_deref()).await?)
+            }
             None => None,
         };
         let mut state = Self::new(config, oidc);

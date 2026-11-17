@@ -22,6 +22,7 @@ async fn main() {
     }
 
     // `joinedcontext-portal migrate`: bring `JC_PORTAL_DATABASE_URL` up to this release's schema
+    // (as the role of `JC_PORTAL_MIGRATION_DATABASE_URL` where it is set, granting the serving role)
     // and exit, without the rest of the configuration. The upgrade drill runs the next release's
     // image this way against a copy of the database (T-2802, OPS-12).
     if std::env::args().nth(1).as_deref() == Some("migrate") {
@@ -60,7 +61,10 @@ async fn migrate() -> i32 {
         eprintln!("migrate: JC_PORTAL_DATABASE_URL is not set: name the database to migrate");
         return 1;
     };
-    match joinedcontext_portal::db::connect(&url).await {
+    let migration = std::env::var("JC_PORTAL_MIGRATION_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty());
+    match joinedcontext_portal::db::connect_as(&url, migration.as_deref()).await {
         Ok(_) => {
             tracing::info!("the database is at this release's schema");
             0
