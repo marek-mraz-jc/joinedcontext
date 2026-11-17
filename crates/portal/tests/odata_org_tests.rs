@@ -836,6 +836,13 @@ async fn an_unpinned_request_reads_the_addressed_the_callers_or_the_installation
         ("portal_shared_app_list", "()", "/api/v1/shared-apps"),
         // The projects the person reads, on their own Organization's host (T-7177).
         ("portal_project_list", "()", "/api/v1/projects"),
+        // Their own rights in the `org` namespace: a viewer of another Organization's project
+        // reads them as the REST door answers (T-7176, the ui smoke's viewer).
+        (
+            "portal_org_permissions_me",
+            "()",
+            "/api/v1/projects/org/permissions/me",
+        ),
     ] {
         assert!(
             metadata
