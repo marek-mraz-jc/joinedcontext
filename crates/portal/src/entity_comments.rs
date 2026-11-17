@@ -124,10 +124,67 @@ pub struct CommentStore {
 }
 
 enum Inner {
-    /// The comments run in a `db::tenant_tx` of their project's key (T-7200 PK-1h); the
-    /// notifications, which also hold an installation's connector events, are not keyed yet.
+    /// The comments run in a `db::tenant_tx` of their project's key (T-7200 PK-1h); a
+    /// notification takes its project's key, an installation's connector event (project '') the
+    /// installation Organization's reserved project key (T-7203 PK-1j), and a person's inbox reads
+    /// every key, one transaction each ([`inbox_keys`]).
     Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<Memory>),
+}
+
+/// The keys a person's notifications can sit under: every project the registry recorded, the
+/// installation's reserved project, then `None` for the rows no key reaches yet (phase one; the
+/// forcing migration waits until none is).
+///
+/// ponytail: two statements per recorded project on each inbox read; one inbox table keyed by
+/// the recipient's Organization when installations hold hundreds of projects.
+async fn inbox_keys(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+) -> Result<Vec<Option<jc_types::ProjectKey>>, sqlx::Error> {
+    let mut keys: Vec<Option<jc_types::ProjectKey>> = crate::project_ids::every_recorded(pool)
+        .await?
+        .into_iter()
+        .map(|(_, key)| Some(key))
+        .collect();
+    if let Some(key) = crate::project_ids::installation(pool, mirror).await? {
+        if !keys.contains(&Some(key)) {
+            keys.push(Some(key));
+        }
+    }
+    keys.push(None);
+    Ok(keys)
+}
+
+/// A transaction in `key`, or an unkeyed one for the rows no key reaches yet.
+async fn keyed_tx(
+    pool: &sqlx::PgPool,
+    key: Option<jc_types::ProjectKey>,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    match key {
+        Some(key) => crate::db::tenant_tx(pool, key).await,
+        None => pool.begin().await,
+    }
+}
+
+/// The `project_id` a statement of [`inbox_keys`]' pass filters on, `IS NOT DISTINCT FROM`.
+fn key_id(key: Option<jc_types::ProjectKey>) -> Option<String> {
+    key.map(|key| key.project.to_string())
+}
+
+/// The transaction a notice of `project` is written in: the key the registry recorded for it,
+/// or the installation's reserved project key for an installation's event (project ''); an
+/// unkeyed one while there is none.
+async fn notice_tx(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    project: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    if project.is_empty() {
+        keyed_tx(pool, crate::project_ids::installation(pool, mirror).await?).await
+    } else {
+        crate::project_ids::recorded_tx(pool, project).await
+    }
 }
 
 fn rfc3339(at: time::OffsetDateTime) -> String {
@@ -406,13 +463,15 @@ impl CommentStore {
         }
     }
 
-    /// The notifications of a person known by any of `recipients`, newest first, at most
-    /// [`LISTED`], and how many of all theirs are unread.
     /// Leaves a connector event for `recipient`, a person's identifier or an audience
     /// ([`approvers_of`], [`CONNECTOR_ADMINS`]); `false` when its key was there already.
     pub async fn notify(&self, recipient: &str, notice: Notice<'_>) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool, _) => Ok(sqlx::query(
+            Inner::Postgres(pool, mirror) => {
+                let mut tx = notice_tx(pool, mirror, notice.project).await?;
+                // The unique (recipient, event_key) index holds across keys: a second notice of
+                // one event is dropped whichever key the first went under.
+                let added = sqlx::query(
                 "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, link, event_key) \
                  VALUES ($1, $2, $3, '', $4, $5, $6, $7, $8, $9) ON CONFLICT (recipient, event_key) DO NOTHING",
             )
@@ -425,10 +484,13 @@ impl CommentStore {
             .bind(notice.connector)
             .bind(notice.link)
             .bind(notice.key)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?
             .rows_affected()
-                > 0),
+                > 0;
+                tx.commit().await?;
+                Ok(added)
+            }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
                 if memory
@@ -478,20 +540,28 @@ impl CommentStore {
             return Ok(());
         }
         match &self.inner {
-            Inner::Postgres(pool, _) => {
-                sqlx::query(
-                    "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at) \
-                     SELECT $1, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at \
-                     FROM notifications WHERE recipient = ANY($2) AND event_key IS NOT NULL AND author <> ALL($3) \
-                     AND created_at > now() - make_interval(days => $4) ORDER BY id \
-                     ON CONFLICT (recipient, event_key) DO NOTHING",
-                )
-                .bind(me)
-                .bind(audiences)
-                .bind(ids)
-                .bind(AUDIENCE_DAYS as i32)
-                .execute(pool)
-                .await?;
+            Inner::Postgres(pool, mirror) => {
+                // Each copy stays under its notice's key: the column defaults stamp the key of
+                // the transaction it is written in.
+                for key in inbox_keys(pool, mirror).await? {
+                    let mut tx = keyed_tx(pool, key).await?;
+                    sqlx::query(
+                        "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at) \
+                         SELECT $1, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at \
+                         FROM notifications WHERE recipient = ANY($2) AND event_key IS NOT NULL AND author <> ALL($3) \
+                         AND created_at > now() - make_interval(days => $4) \
+                         AND project_id IS NOT DISTINCT FROM $5::uuid ORDER BY id \
+                         ON CONFLICT (recipient, event_key) DO NOTHING",
+                    )
+                    .bind(me)
+                    .bind(audiences)
+                    .bind(ids)
+                    .bind(AUDIENCE_DAYS as i32)
+                    .bind(key_id(key))
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                }
                 Ok(())
             }
             Inner::Memory(lock) => {
@@ -524,26 +594,42 @@ impl CommentStore {
         }
     }
 
+    /// The notifications of a person known by any of `recipients`, newest first, at most
+    /// [`LISTED`], and how many of all theirs are unread.
     pub async fn notifications(
         &self,
         recipients: &[String],
     ) -> Result<(Vec<Notification>, i64), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool, _) => {
-                let rows: Vec<NotificationRow> = sqlx::query_as(
-                    "SELECT id, kind, project, space, urn, comment_id, author, author_name, excerpt, link, created_at, read_at \
-                     FROM notifications WHERE recipient = ANY($1) ORDER BY id DESC LIMIT $2",
-                )
-                .bind(recipients)
-                .bind(LISTED)
-                .fetch_all(pool)
-                .await?;
-                let (unread,): (i64,) = sqlx::query_as(
-                    "SELECT count(*) FROM notifications WHERE recipient = ANY($1) AND read_at IS NULL",
-                )
-                .bind(recipients)
-                .fetch_one(pool)
-                .await?;
+            Inner::Postgres(pool, mirror) => {
+                let (mut rows, mut unread) = (Vec::<NotificationRow>::new(), 0_i64);
+                for key in inbox_keys(pool, mirror).await? {
+                    let mut tx = keyed_tx(pool, key).await?;
+                    rows.extend(
+                        sqlx::query_as::<_, NotificationRow>(
+                            "SELECT id, kind, project, space, urn, comment_id, author, author_name, excerpt, link, created_at, read_at \
+                             FROM notifications WHERE recipient = ANY($1) \
+                             AND project_id IS NOT DISTINCT FROM $3::uuid ORDER BY id DESC LIMIT $2",
+                        )
+                        .bind(recipients)
+                        .bind(LISTED)
+                        .bind(key_id(key))
+                        .fetch_all(&mut *tx)
+                        .await?,
+                    );
+                    let (count,): (i64,) = sqlx::query_as(
+                        "SELECT count(*) FROM notifications WHERE recipient = ANY($1) AND read_at IS NULL \
+                         AND project_id IS NOT DISTINCT FROM $2::uuid",
+                    )
+                    .bind(recipients)
+                    .bind(key_id(key))
+                    .fetch_one(&mut *tx)
+                    .await?;
+                    unread += count;
+                    tx.commit().await?;
+                }
+                rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+                rows.truncate(LISTED as usize);
                 Ok((rows.into_iter().map(notification_of).collect(), unread))
             }
             Inner::Memory(lock) => {
@@ -570,15 +656,27 @@ impl CommentStore {
     /// Marks one of the person's notifications read; `false` when none of theirs has that id.
     pub async fn mark_read(&self, recipients: &[String], id: i64) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool, _) => Ok(sqlx::query(
-                "UPDATE notifications SET read_at = coalesce(read_at, now()) WHERE id = $1 AND recipient = ANY($2)",
-            )
-            .bind(id)
-            .bind(recipients)
-            .execute(pool)
-            .await?
-            .rows_affected()
-                > 0),
+            Inner::Postgres(pool, mirror) => {
+                for key in inbox_keys(pool, mirror).await? {
+                    let mut tx = keyed_tx(pool, key).await?;
+                    let marked = sqlx::query(
+                        "UPDATE notifications SET read_at = coalesce(read_at, now()) \
+                         WHERE id = $1 AND recipient = ANY($2) AND project_id IS NOT DISTINCT FROM $3::uuid",
+                    )
+                    .bind(id)
+                    .bind(recipients)
+                    .bind(key_id(key))
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected()
+                        > 0;
+                    tx.commit().await?;
+                    if marked {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
                 let mut found = false;

@@ -982,12 +982,17 @@ async fn rows_keyed_and_read_only_under_their_key(
         }
     }
     let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
-    for table in &tables {
-        assert!(
-            !project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is forced by 0080 and off the list"
-        );
-    }
+    // Tables still on the list are phase one (0074's, T-7203): 0080 neither checks nor forces them.
+    let phase_one = tables
+        .iter()
+        .all(|t| project_ids::KEYED_BY_NAME.contains(t));
+    assert!(
+        phase_one
+            || tables
+                .iter()
+                .all(|t| !project_ids::KEYED_BY_NAME.contains(t)),
+        "{tables:?}: all forced by 0080 or all phase one"
+    );
 
     let waiting = project_ids::backfill_tables(&pool, &state.mirror, &tables)
         .await
@@ -1016,6 +1021,15 @@ async fn rows_keyed_and_read_only_under_their_key(
             };
             assert_eq!((org_id, project_id), expected, "{table} {project}");
         }
+    }
+
+    if phase_one {
+        // 0080 runs over the orphan's unkeyed rows and leaves these tables as they are.
+        migrate_on(&pool)
+            .await
+            .expect("0080 ignores phase-one rows");
+        rls_reads_only_under_the_key(&pool, &org, &tables, &placed, key, true).await;
+        return (state, placed, orphan, key);
     }
 
     // T-7201: the forcing migration refuses while the orphan's rows have no key, naming each
@@ -1064,8 +1078,22 @@ async fn rows_keyed_and_read_only_under_their_key(
         );
     }
 
-    // The forced tables: the key alone decides what a role without BYPASSRLS reads.
-    let other = project_ids::reserved(&pool, &org)
+    rls_reads_only_under_the_key(&pool, &org, &tables, &placed, key, false).await;
+    (state, placed, orphan, key)
+}
+
+/// Under forced row-level security (turned on in each rolled-back transaction when `force`, for a
+/// phase-one table), a role without BYPASSRLS reads `placed`'s row of each table under its key
+/// only: none under another key of the Organization, none unkeyed.
+async fn rls_reads_only_under_the_key(
+    pool: &sqlx::PgPool,
+    org: &str,
+    tables: &[&str],
+    placed: &str,
+    key: jc_types::ProjectKey,
+    force: bool,
+) {
+    let other = project_ids::reserved(pool, org)
         .await
         .expect("reserved")
         .expect("a key");
@@ -1075,12 +1103,21 @@ async fn rows_keyed_and_read_only_under_their_key(
          GRANT SELECT ON {} TO pk_rls_reader",
         tables.join(", ")
     )))
-    .execute(&pool)
+    .execute(pool)
     .await
     .expect("the reader role");
-    for table in &tables {
+    for table in tables {
         for (key, expected) in [(Some(key), 1_i64), (Some(other), 0), (None, 0)] {
             let mut tx = pool.begin().await.expect("begin");
+            if force {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; \
+                     ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
+                )))
+                .execute(&mut *tx)
+                .await
+                .expect("forced in this transaction");
+            }
             if let Some(key) = key {
                 sqlx::query(
                     "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
@@ -1098,7 +1135,7 @@ async fn rows_keyed_and_read_only_under_their_key(
             let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT count(*) FROM {table} WHERE project = $1"
             )))
-            .bind(&placed)
+            .bind(placed)
             .fetch_one(&mut *tx)
             .await
             .expect("count");
@@ -1106,7 +1143,6 @@ async fn rows_keyed_and_read_only_under_their_key(
             tx.rollback().await.expect("rollback");
         }
     }
-    (state, placed, orphan, key)
 }
 
 /// Places `project` under a new Organization of the registry and runs the backfill, as an operator
@@ -1677,6 +1713,218 @@ async fn erasure_and_access_request_rows_are_keyed_and_read_only_under_their_key
              before the forcing migration: {open:?}"
         );
     }
+}
+
+/// A row of each table T-7203 keys for `project`, written as before the key. `$1` is the project.
+const PROJECT_ROWS_0074: &[(&str, &str)] = &[
+    (
+        "notifications",
+        "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, event_key) \
+         VALUES ('pj-' || md5($1), 'connector.pending', $1, '', 'c-1', 'sami', 'Sami', 'doprava', 'k-' || md5($1))",
+    ),
+    (
+        "app_builds",
+        "INSERT INTO app_builds (project, app, commit, class, trigger, state) \
+         VALUES ($1, 'bikes', 'c0ffee', 'node', 'push', 'succeeded')",
+    ),
+];
+
+/// T-7203 PK-1j: the notifications and App builds of today are keyed by the backfill and read
+/// only under their key; an installation's connector event (project '') takes the installation
+/// Organization's reserved project key; the inbox and the build queue read every key, and a
+/// build is reached only with its own project.
+#[tokio::test]
+async fn notification_and_build_rows_are_keyed_and_read_only_under_their_key() {
+    use joinedcontext_portal::apps::build_pods::Class;
+    use joinedcontext_portal::apps::build_records::{self, Trigger};
+    use joinedcontext_portal::entity_comments::{CommentStore, Notice};
+
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PROJECT_ROWS_0074, "pj").await;
+    let pool = state.db.clone().expect("a database");
+    let org = project_ids::recorded(&pool, &placed)
+        .await
+        .expect("recorded")
+        .map(|recorded| recorded.org);
+    assert_eq!(org, Some(key.org));
+    let org_name: String =
+        sqlx::query_scalar("SELECT organization FROM project_ids WHERE id = $1::uuid")
+            .bind(key.project.to_string())
+            .fetch_one(&pool)
+            .await
+            .expect("the placed project's Organization");
+    state.mirror.upsert(envelope(
+        "Organization",
+        &org_name,
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "installation": true }),
+    ));
+    let installation = project_ids::reserved(&pool, &org_name)
+        .await
+        .expect("reserved")
+        .expect("the installation's reserved key");
+    assert_eq!(
+        project_ids::installation(&pool, &state.mirror)
+            .await
+            .expect("installation"),
+        Some(installation)
+    );
+
+    // An installation's event written before the key is keyed by the backfill under the
+    // installation's reserved project.
+    let early = run_name("pjearly");
+    sqlx::query(
+        "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, event_key) \
+         VALUES ($1, 'connector.expiring', '', '', 'c-1', '', '', 'doprava', 'early')",
+    )
+    .bind(&early)
+    .execute(&pool)
+    .await
+    .expect("an unkeyed installation event");
+    project_ids::backfill(&pool, &state.mirror)
+        .await
+        .expect("backfill");
+    let early_key: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM notifications WHERE recipient = $1")
+            .bind(&early)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(early_key, Some(installation.project.to_string()));
+
+    // New notices take their project's key, an installation's the reserved one; the inbox reads
+    // both, the unkeyed one of the orphan project too, and marks one read in its key.
+    let comments = CommentStore::new(Some(pool.clone()), state.mirror.clone());
+    let me = run_name("pjme");
+    fn notice<'a>(project: &'a str, key: &'a str) -> Notice<'a> {
+        Notice {
+            kind: "connector.pending",
+            project,
+            about: "c-1",
+            author: "sami",
+            author_name: "Sami",
+            connector: "doprava",
+            link: "/ai-connectors",
+            key,
+        }
+    }
+    for (project, event) in [(placed.as_str(), "e1"), ("", "e2"), (orphan.as_str(), "e3")] {
+        assert!(comments
+            .notify(&me, notice(project, event))
+            .await
+            .expect("notify"));
+    }
+    assert!(
+        !comments
+            .notify(&me, notice("", "e1"))
+            .await
+            .expect("notify"),
+        "one event, one notification, across keys"
+    );
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT event_key, project_id::text FROM notifications WHERE recipient = $1 ORDER BY event_key",
+    )
+    .bind(&me)
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(
+        stamped,
+        vec![
+            ("e1".to_owned(), Some(key.project.to_string())),
+            ("e2".to_owned(), Some(installation.project.to_string())),
+            ("e3".to_owned(), None),
+        ]
+    );
+    let (listed, unread) = comments
+        .notifications(std::slice::from_ref(&me))
+        .await
+        .expect("inbox");
+    assert_eq!((listed.len(), unread), (3, 3), "{listed:?}");
+    assert!(listed.windows(2).all(|w| w[0].id > w[1].id), "newest first");
+    let installation_notice = listed.iter().find(|n| n.project.is_empty()).expect("e2");
+    assert!(comments
+        .mark_read(std::slice::from_ref(&me), installation_notice.id)
+        .await
+        .expect("mark"));
+    assert_eq!(
+        comments
+            .notifications(std::slice::from_ref(&me))
+            .await
+            .expect("inbox")
+            .1,
+        2
+    );
+    // An audience's notice is copied under its own key.
+    let audience = run_name("pjaudience");
+    let reader = run_name("pjreader");
+    assert!(comments
+        .notify(&audience, notice(&placed, "e4"))
+        .await
+        .expect("notify"));
+    comments
+        .deliver(&reader, &[], std::slice::from_ref(&audience))
+        .await
+        .expect("deliver");
+    let copied: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM notifications WHERE recipient = $1")
+            .bind(&reader)
+            .fetch_one(&pool)
+            .await
+            .expect("the copy");
+    assert_eq!(copied, Some(key.project.to_string()));
+
+    // A build is queued in its project's key, found by id across keys, and reached only with
+    // its own project: a token of another project's build never reads this one.
+    let app = run_name("pjapp");
+    let id = build_records::enqueue(&pool, &placed, &app, "c1", Class::Node, Trigger::Push, None)
+        .await
+        .expect("queued");
+    let build_key: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM app_builds WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(build_key, Some(key.project.to_string()));
+    let found = build_records::get(&pool, id)
+        .await
+        .expect("get")
+        .expect("found across keys");
+    assert_eq!(
+        (found.project.as_str(), found.app.as_str()),
+        (placed.as_str(), app.as_str())
+    );
+    assert!(build_records::in_state(&pool, "pending")
+        .await
+        .expect("in_state")
+        .iter()
+        .any(|build| build.id == id));
+    assert!(
+        !build_records::start(&pool, &orphan, id, "t", chrono::Duration::minutes(5))
+            .await
+            .expect("start")
+    );
+    assert!(
+        build_records::start(&pool, &placed, id, "t", chrono::Duration::minutes(5))
+            .await
+            .expect("start")
+    );
+    assert_eq!(
+        build_records::token_of(&pool, &orphan, id)
+            .await
+            .expect("token"),
+        None
+    );
+    assert_eq!(
+        build_records::token_of(&pool, &placed, id)
+            .await
+            .expect("token"),
+        Some(build_records::token_hash("t"))
+    );
+    build_records::finish(&pool, &placed, id, Err("ended for this test"))
+        .await
+        .expect("finished");
 }
 
 const PIPELINE_ROWS_0072: &[(&str, &str)] = &[

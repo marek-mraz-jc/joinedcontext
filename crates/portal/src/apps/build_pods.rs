@@ -446,7 +446,7 @@ async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, Dispa
             None => None,
         };
         if let Some(why) = why {
-            build_records::finish(db, build.id, Err(&why)).await?;
+            build_records::finish(db, &build.project, build.id, Err(&why)).await?;
             ended_now.push((build.id, why));
         }
     }
@@ -458,7 +458,7 @@ async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, Dispa
             .is_some_and(|at| at + chrono::Duration::minutes(30) <= now)
         {
             let why = "the Portal stopped while it published the build".to_owned();
-            build_records::finish(db, build.id, Err(&why)).await?;
+            build_records::finish(db, &build.project, build.id, Err(&why)).await?;
             ended_now.push((build.id, why));
         }
     }
@@ -488,11 +488,19 @@ async fn start(
             .await?;
     }
     let token = build_records::new_token();
-    if !build_records::start(db, build.id, &token, build.class().token_lifetime()).await? {
+    if !build_records::start(
+        db,
+        &build.project,
+        build.id,
+        &token,
+        build.class().token_lifetime(),
+    )
+    .await?
+    {
         return Ok(());
     }
     if let Err(err) = apply_job(kube, settings, build, &token).await {
-        build_records::requeue(db, build.id).await?;
+        build_records::requeue(db, &build.project, build.id).await?;
         return Err(err.into());
     }
     Ok(())
