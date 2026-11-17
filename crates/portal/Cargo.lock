@@ -2765,6 +2765,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "jcctl"
 version = "0.1.0"
 dependencies = [
@@ -2911,6 +2919,7 @@ dependencies = [
  "jc-chart",
  "jc-core",
  "jc-router",
+ "jc-types",
  "jcctl",
  "jsonschema",
  "jsonwebtoken",
