@@ -64,6 +64,9 @@ function useSetup(enabled = true) {
   });
 }
 
+/** The operator items an operator sets on the Installation page. */
+const ON_INSTALLATION_PAGE = ["branding", "loginTheme", "smtp"];
+
 function State({
   done,
   theirs,
@@ -89,7 +92,7 @@ function State({
 
 /**
  * What an operator item offers: an operator opens the Installation page where it is set (the
- * e-mail server today, T-7152); anybody else reads that their operator sets it.
+ * branding and the sign-in look, T-7188, and the e-mail server, T-7152); anybody else reads that their operator sets it.
  */
 function OperatorAction({
   item,
@@ -99,9 +102,9 @@ function OperatorAction({
   operates: boolean;
 }): JSX.Element | null {
   const { t } = useTranslation();
-  // Only the e-mail server is set on the Installation page today; the deployment still sets the rest.
-  // Anybody else reads who sets it in the row's badge.
-  if (item !== "smtp" || !operates) return null;
+  // The branding, the sign-in look (T-7188) and the e-mail server (T-7152) are set on the
+  // Installation page; the deployment still sets the rest. Anybody else reads who sets it in the row's badge.
+  if (!ON_INSTALLATION_PAGE.includes(item) || !operates) return null;
   return (
     <Link
       to="/organization/$tab"
@@ -212,18 +215,18 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
                     `organization.setup.operator.${item.id}.${operates ? "hint" : "about"}`,
                   )}
                   {/* The badge says its state; the line says who sets it, each once. */}
-                  {item.id === "smtp" && !operates
+                  {ON_INSTALLATION_PAGE.includes(item.id) && !operates
                     ? ` ${t("organization.setup.operatorSets")}`
                     : null}
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-3">
-                {/* Only the e-mail server is set on the Installation page today: the other items are no
-                    red to-do for anybody yet (branding T-7188, backups T-7189). */}
+                {/* Only what the Installation page sets is a red to-do: the rest is no alarm for
+                    anybody yet (backups T-7189). */}
                 <State
                   done={item.done}
                   theirs={
-                    item.id !== "smtp"
+                    !ON_INSTALLATION_PAGE.includes(item.id)
                       ? "deployment"
                       : operates
                         ? undefined
@@ -258,11 +261,11 @@ export function SetupReminder(): JSX.Element | null {
   const setup = useSetup(administers);
   if (!administers || setup.data?.complete !== false) return null;
   // The count is what the checklist shows as "To do" for this person: the deployment's items and
-  // an e-mail server only operators set are nobody's to-do here (T-7152).
+  // the Installation page items only operators set are nobody else's to-do (T-7152, T-7188).
   const { steps, operator, operates } = setup.data;
   const left = [
     ...steps,
-    ...operator.filter((item) => item.id === "smtp" && operates),
+    ...operator.filter((item) => ON_INSTALLATION_PAGE.includes(item.id) && operates),
   ].filter((item) => !item.done).length;
   if (left === 0) return null;
   return (

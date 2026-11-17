@@ -104,14 +104,21 @@ pub fn steps(state: &AppState, people: bool) -> Vec<SetupItem> {
 }
 
 /// What the installation provides: the branding block, the deployment's statements and whether
-/// the sign-in service holds an e-mail server (`smtp_set`, which the operators set, T-7152).
-pub fn operator(branding: &Branding, said: &SetupStatements, smtp_set: bool) -> Vec<SetupItem> {
+/// the sign-in service holds an e-mail server (`smtp_set`, which the operators set, T-7152). The
+/// sign-in pages carry the look the operators set (`look_set`, T-7188).
+pub fn operator(
+    branding: &Branding,
+    said: &SetupStatements,
+    smtp_set: bool,
+    look_set: bool,
+) -> Vec<SetupItem> {
     let named = branding.instance_name.trim() != Branding::default().instance_name
         || !branding.logo.trim().is_empty();
     let themed = said
         .login_theme
         .as_deref()
-        .is_some_and(|theme| !STOCK_THEMES.contains(&theme));
+        .is_some_and(|theme| !STOCK_THEMES.contains(&theme))
+        || look_set;
     vec![
         item("branding", named),
         item("loginTheme", themed),
@@ -169,9 +176,10 @@ pub async fn get_setup(
     )?;
     let steps = steps(&state, a_second_person(&state).await);
     let operator = operator(
-        &Branding::load(state.config.branding_file.as_deref()),
+        &state.installation_branding(),
         &state.config.setup,
         smtp_set(&state).await,
+        state.installation_look().is_some(),
     );
     let complete = steps.iter().chain(&operator).all(|item| item.done);
     let identity = &user.0.identity;
@@ -195,7 +203,12 @@ mod tests {
 
     #[test]
     fn the_operator_part_is_done_only_where_it_was_said() {
-        let stock = operator(&Branding::default(), &SetupStatements::default(), false);
+        let stock = operator(
+            &Branding::default(),
+            &SetupStatements::default(),
+            false,
+            false,
+        );
         assert!(stock.iter().all(|item| !item.done), "{stock:?}");
 
         let branding = Branding {
@@ -208,7 +221,7 @@ mod tests {
             backups: false,
         };
         assert_eq!(
-            operator(&branding, &said, false),
+            operator(&branding, &said, false, false),
             vec![
                 item("branding", true),
                 item("loginTheme", true),
@@ -220,8 +233,10 @@ mod tests {
             login_theme: Some("keycloak.v2".into()),
             ..SetupStatements::default()
         };
-        assert!(!operator(&branding, &stock_theme, false)[1].done);
+        assert!(!operator(&branding, &stock_theme, false, false)[1].done);
         // The e-mail server the operators saved counts without the deployment's statement.
-        assert!(operator(&branding, &SetupStatements::default(), true)[2].done);
+        assert!(operator(&branding, &SetupStatements::default(), true, false)[2].done);
+        // The look the operators set themes the sign-in pages too (T-7188).
+        assert!(operator(&branding, &stock_theme, false, true)[1].done);
     }
 }

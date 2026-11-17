@@ -17,6 +17,8 @@ export type ChangeRequest = components["schemas"]["ChangeRequest"];
 export type Installation = components["schemas"]["Installation"];
 export type SmtpServer = components["schemas"]["SmtpServer"];
 export type SmtpTest = components["schemas"]["SmtpTest"];
+/** The installation's look (T-7188): jc-core's appearance; the server refuses its dashboards and page texts. */
+export type InstallationLook = components["schemas"]["OrganizationAppearance"];
 
 /** The roles a host takes, as the server's `HOST_ROLES` names them. */
 export const HOST_ROLES = ["working", "opendata", "api", "signin", "apps", "portal-site", "host"] as const;

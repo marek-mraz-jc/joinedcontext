@@ -14,6 +14,10 @@ export interface FilePickerProps {
   /** A tooltip on the trigger, for the icon-only form where the label is not on screen. */
   title?: string;
   className?: string;
+  /** The input's id and the wiring a `Field` adds, so its label, hint and error reach the input. */
+  id?: string;
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
   /** What the trigger looks like: a button-shaped span, a dashed drop zone, an icon. */
   children: ReactNode;
 }
@@ -38,6 +42,9 @@ export function FilePicker({
   multiple,
   title,
   className,
+  id,
+  "aria-describedby": describedBy,
+  "aria-invalid": invalid,
   children,
 }: FilePickerProps): React.JSX.Element {
   return (
@@ -47,6 +54,9 @@ export function FilePicker({
     >
       <input
         type="file"
+        id={id}
+        aria-describedby={describedBy}
+        aria-invalid={invalid}
         accept={accept}
         multiple={multiple}
         aria-label={label}

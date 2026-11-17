@@ -482,7 +482,10 @@ async fn the_bundle_holds_only_its_organization_and_no_secret_or_code() {
     let world = world("alfa", "Enabled").await;
     let run = saved_and_run(&world, "ada").await;
     assert_eq!(run["ok"], true, "{run}");
-    let files = unzip(&latest(&world.bucket, "jc/alfa/configuration/bundle.zip"));
+    let files = unzip(&latest(
+        &world.bucket,
+        &key_of(&world, "alfa", "configuration").await,
+    ));
 
     for (path, text) in &files {
         for foreign in ["bravo", "bob@", "AKIDBACKUP", SECRET] {
@@ -547,7 +550,19 @@ async fn only_the_organizations_administrators_reach_its_backup() {
 }
 
 const DATA_DOOR: &str = "/api/v1/organization/backups/data";
-const DATA_KEY: &str = "jc/alfa/data/archive.zip.age";
+/// Where a saved target's runs write: the Organization's reserved project key, never its name
+/// (T-7207).
+async fn key_of(world: &World, organization: &str, kind: &str) -> String {
+    world
+        .state
+        .org_backups
+        .target(organization, kind)
+        .await
+        .expect("read")
+        .expect("saved")
+        .object_key()
+        .expect("keyed")
+}
 
 /// Rows of both Organizations in the Portal's tables, each with a mark the archive is searched
 /// for, and secret material in the columns that must never leave. A project's rows are written
@@ -699,7 +714,7 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
-    let sealed = latest(&world.bucket, DATA_KEY);
+    let sealed = latest(&world.bucket, &key_of(&world, "alfa", "data").await);
     assert!(
         zip::ZipArchive::new(std::io::Cursor::new(&sealed)).is_err(),
         "the stored archive is encrypted"
@@ -1182,7 +1197,10 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
-    let files = unzip(&decrypt(&latest(&world.bucket, DATA_KEY), &ids[0]));
+    let files = unzip(&decrypt(
+        &latest(&world.bucket, &key_of(&world, "alfa", "data").await),
+        &ids[0],
+    ));
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
     for module in ["antares", "kaisatsu", "shako", "daiya", "dataroom"] {
         assert_eq!(
@@ -1265,7 +1283,10 @@ async fn a_data_archive_without_a_database_says_what_it_left_out() {
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
-    let files = unzip(&decrypt(&latest(&world.bucket, DATA_KEY), &ids[1]));
+    let files = unzip(&decrypt(
+        &latest(&world.bucket, &key_of(&world, "alfa", "data").await),
+        &ids[1],
+    ));
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
     assert_eq!(index["modules"]["portal"]["exported"], false);
     assert_eq!(index["modules"]["antares"]["exported"], false);
@@ -1456,7 +1477,7 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
     .await;
     assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.text);
     assert_eq!(
-        version_ids(&world.bucket, DATA_KEY).len(),
+        version_ids(&world.bucket, &key_of(&world, "alfa", "data").await).len(),
         2,
         "the version stays behind its marker"
     );
@@ -1702,9 +1723,10 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
     )
     .await;
     assert_eq!(second.status, StatusCode::OK, "{}", second.text);
+    let data_key = key_of(&world, "alfa", "data").await;
     let swap = |bucket: &FakeS3, from: &str, to: &str| {
         let mut bucket = bucket.lock().expect("bucket");
-        let versions = bucket.objects.get_mut(DATA_KEY).expect("archive");
+        let versions = bucket.objects.get_mut(&data_key).expect("archive");
         let bytes = versions
             .iter()
             .find(|v| v.0 == from)
@@ -1752,7 +1774,7 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         .lock()
         .expect("bucket")
         .objects
-        .get_mut(DATA_KEY)
+        .get_mut(&data_key)
         .and_then(|v| v.iter_mut().find(|v| v.0 == version))
         .expect("version")
         .1 = original;
@@ -1836,19 +1858,19 @@ async fn an_archive_of_another_organization_is_not_restored_into_it() {
         refused.text
     );
 
+    let alfa_key = key_of(&alfa, "alfa", "data").await;
+    let bravo_key = key_of(&bravo, "bravo", "data").await;
     // Even copied under bravo's key, with a run of bravo's that names the version, the archive
     // says whose it is and is refused.
     let copied_bytes = {
         let mut bucket = alfa.bucket.lock().expect("bucket");
-        let copied = bucket.objects[DATA_KEY].clone();
+        let copied = bucket.objects[&alfa_key].clone();
         let bytes = copied
             .iter()
             .find(|v| v.0 == version)
             .and_then(|v| v.1.clone())
             .expect("the version's bytes");
-        bucket
-            .objects
-            .insert("jc/bravo/data/archive.zip.age".into(), copied);
+        bucket.objects.insert(bravo_key.clone(), copied);
         bytes
     };
     bravo
@@ -1861,7 +1883,7 @@ async fn an_archive_of_another_organization_is_not_restored_into_it() {
             actor: "ada",
             ok: true,
             bytes: 1,
-            object_key: "jc/bravo/data/archive.zip.age",
+            object_key: &bravo_key,
             version_id: &version,
             message: "uploaded",
             sha256: &joinedcontext_portal::org_backup::sha256_hex(&copied_bytes),
@@ -1974,6 +1996,96 @@ async fn a_field_out_of_range_is_named() {
 }
 
 #[tokio::test]
+async fn a_bundle_from_before_the_project_key_is_read_until_its_retention_ends() {
+    let world = world("alfa", "Enabled").await;
+    let run = saved_and_run(&world, "ada").await;
+    let version = run["versionId"].as_str().expect("version").to_owned();
+    let key = key_of(&world, "alfa", "configuration").await;
+    // Built from ids only (ARCH/STO-14): no Organization or project name in the path.
+    assert!(
+        key.starts_with("jc/org/") && key.ends_with("/backup/configuration/bundle.zip"),
+        "{key}"
+    );
+    assert!(!key.contains("alfa"), "{key}");
+    assert_eq!(run["objectKey"], key.as_str(), "{run}");
+
+    // The bucket holds alfa's bundle from before T-7207 under its name, bravo's from then, and
+    // another Organization's under its key.
+    let bundle = latest(&world.bucket, &key);
+    let old = |at: &str| vec![("old".to_owned(), Some(bundle.clone()), at.to_owned())];
+    let other = key.replacen("jc/org/", "jc/org/0", 1);
+    {
+        let mut bucket = world.bucket.lock().expect("bucket");
+        for planted in [
+            "jc/alfa/configuration/bundle.zip",
+            "jc/bravo/configuration/bundle.zip",
+        ] {
+            bucket
+                .objects
+                .insert(planted.into(), old("2020-01-01T00:00:00.000Z"));
+        }
+        bucket
+            .objects
+            .insert(other.clone(), old("2026-11-16T11:00:00.000Z"));
+    }
+    let listed = body(
+        &send(
+            &world.state,
+            person("ada"),
+            "GET",
+            &format!("{DOOR}/versions"),
+            None,
+        )
+        .await,
+    );
+    let ids: Vec<&str> = listed["versions"]
+        .as_array()
+        .expect("versions")
+        .iter()
+        .filter_map(|v| v["versionId"].as_str())
+        .collect();
+    assert_eq!(ids, [version.as_str(), "old"], "{listed}");
+
+    // The old version still downloads, at the key it was written under (ARCH/TEN-15).
+    let read = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DOOR}/versions/old"),
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    assert_eq!(read.text, String::from_utf8_lossy(&bundle));
+
+    // The next run removes it, written more than keepDays (90) ago, and nobody else's.
+    let again = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text);
+    {
+        let bucket = world.bucket.lock().expect("bucket");
+        assert!(bucket.objects["jc/alfa/configuration/bundle.zip"].is_empty());
+        assert_eq!(bucket.objects["jc/bravo/configuration/bundle.zip"].len(), 1);
+        assert_eq!(bucket.objects[&other].len(), 1);
+    }
+    let gone = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DOOR}/versions/old"),
+        None,
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.text);
+}
+
+#[tokio::test]
 async fn a_deleted_bundle_keeps_its_versions_and_restores_with_no_change() {
     let world = world("alfa", "Enabled").await;
     let run = saved_and_run(&world, "ada").await;
@@ -2035,7 +2147,8 @@ async fn a_deleted_bundle_keeps_its_versions_and_restores_with_no_change() {
 async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
     let world = world("alfa", "Enabled").await;
     saved_and_run(&world, "ada").await;
-    let mut files = unzip(&latest(&world.bucket, "jc/alfa/configuration/bundle.zip"));
+    let key = key_of(&world, "alfa", "configuration").await;
+    let mut files = unzip(&latest(&world.bucket, &key));
     // An item in alfa's own project folder that names bravo's Endpoint by namespace.
     let planted = "projects/alfa-city/spaces/transit/endpoints/bravo-bus.yaml";
     files.insert(planted.into(), BRAVO_ENDPOINT.into());
@@ -2060,7 +2173,7 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
         .lock()
         .expect("bucket")
         .objects
-        .get_mut("jc/alfa/configuration/bundle.zip")
+        .get_mut(&key)
         .expect("alfa's bundle")
         .push((
             "crafted".into(),
@@ -2098,17 +2211,15 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
 async fn a_bundle_of_another_organization_is_not_restored() {
     let alfa = world("alfa", "Enabled").await;
     saved_and_run(&alfa, "ada").await;
-    let alfa_bundle = latest(&alfa.bucket, "jc/alfa/configuration/bundle.zip");
+    let alfa_bundle = latest(&alfa.bucket, &key_of(&alfa, "alfa", "configuration").await);
 
     // bravo's bucket holds alfa's bundle under bravo's key.
     let bravo = world("bravo", "Enabled").await;
     saved_and_run(&bravo, "ada").await;
+    let bravo_key = key_of(&bravo, "bravo", "configuration").await;
     let version = {
         let mut bucket = bravo.bucket.lock().expect("bucket");
-        let versions = bucket
-            .objects
-            .get_mut("jc/bravo/configuration/bundle.zip")
-            .expect("bravo's bundle");
+        let versions = bucket.objects.get_mut(&bravo_key).expect("bravo's bundle");
         versions.push((
             "planted".into(),
             Some(alfa_bundle),

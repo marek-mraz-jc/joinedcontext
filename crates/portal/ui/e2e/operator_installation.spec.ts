@@ -28,6 +28,8 @@ interface World {
   smtp: Record<string, unknown> | null;
   smtpChange: string | null;
   tested: number;
+  branding?: Record<string, unknown> | null;
+  brandingChange?: string | null;
   changes?: unknown[];
 }
 
@@ -57,7 +59,18 @@ async function stubApi(page: Page, world: World, operator = true): Promise<void>
       return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ complete: false, steps, operator: items, operates: operator }) });
     }
     if (path.startsWith("/api/v1/operator/") && !operator) return route.fulfill(json(FORBIDDEN, 403));
-    if (path === "/api/v1/operator/installation") return route.fulfill(json({ smtp: world.smtp, smtpChange: world.smtpChange }));
+    if (path === "/api/v1/operator/installation")
+      return route.fulfill(json({ smtp: world.smtp, smtpChange: world.smtpChange, branding: world.branding ?? undefined, brandingChange: world.brandingChange ?? null }));
+    if (path === "/api/v1/operator/changes" && method === "POST" && (request.postDataJSON() as { kind: string }).kind === "BrandingSet") {
+      const input = request.postDataJSON() as { branding: Record<string, unknown> };
+      const primary = (input.branding.colours as Record<string, string> | undefined)?.primary;
+      if (primary !== undefined && !/^#[0-9a-f]{6}$/i.test(primary)) {
+        const detail = "branding.colours.primary: branding.colours.primary must be a hex colour such as #0b5394";
+        return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail: `the Change cannot be taken: ${detail}`, errors: [detail] }, 422));
+      }
+      world.brandingChange = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+      return route.fulfill(json({ id: world.brandingChange, kind: "BrandingSet", payload: { branding: input.branding }, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T10:00:00Z", decidedBy: null, decidedAt: null }, 201));
+    }
     if (path === "/api/v1/operator/changes" && method === "POST") {
       const input = request.postDataJSON() as { kind: string; smtp: Record<string, unknown> };
       if (String(input.smtp.host).match(/^[0-9.]+$/)) {
@@ -104,7 +117,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       // Backups are not set on the Installation page yet: no red to-do the operator cannot act on.
       await expect(page.getByRole("listitem").filter({ hasText: "Backups" }).getByText("Deployment sets this", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-operator-${width}`);
-      await page.getByRole("link", { name: "Open Installation" }).click();
+      await page.getByRole("listitem").filter({ hasText: "An SMTP server" }).getByRole("link", { name: "Open Installation" }).click();
 
       await expect(page.getByRole("heading", { name: "Installation", level: 2 })).toBeVisible();
       await expect(page.getByText("No e-mail server yet", { exact: false })).toBeVisible();
@@ -148,6 +161,48 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       expect(world.tested).toBe(1);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-set-${width}`);
+    });
+
+    test(`an operator sets the installation's name, colours and logo for the Portal and the sign-in pages at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const world: World = { smtp: null, smtpChange: null, tested: 0, branding: null, brandingChange: null };
+      await stubApi(page, world);
+      await page.goto("/organization/setup?lang=en");
+      await page.getByRole("listitem").filter({ hasText: "How the sign-in pages look" }).getByRole("link", { name: "Open Installation" }).click();
+      await expect(page.getByText("Nothing set here yet", { exact: false })).toBeVisible();
+      await expect(page.getByRole("img", { name: "Sign-in page preview, Phone width" })).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `branding-empty-${width}`);
+
+      await page.getByLabel("Logo", { exact: true }).setInputFiles({ name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>') });
+      await expect(page.getByText("The SVG holds script or an event handler.", { exact: false })).toBeVisible();
+      await page.getByLabel("Full name", { exact: true }).fill("Smart City Banská Bystrica");
+      await expect(page.getByText("Choose another SVG file first.").first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Ask for this branding change" })).toHaveAttribute("aria-disabled", "true");
+      await shot(page, `branding-refused-file-${width}`);
+
+      const logo = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32"><rect width="32" height="32" rx="6" fill="#0b5394"/><text x="40" y="22" font-size="16" fill="#0b5394">Smart BB</text></svg>';
+      await page.getByLabel("Logo", { exact: true }).setInputFiles({ name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from(logo) });
+      await expect(page.getByRole("img", { name: "Logo", exact: true })).toBeVisible();
+      await page.getByLabel("Primary colour", { exact: true }).fill("#0b539");
+      await page.getByRole("button", { name: "Ask for this branding change" }).click();
+      await expect(page.getByText("Must be a hex colour such as #0b5394")).toBeVisible();
+      await shot(page, `branding-error-${width}`);
+      await page.getByLabel("Primary colour", { exact: true }).fill("#0b5394");
+      await page.getByRole("button", { name: "Ask for this branding change" }).click();
+      await expect(page.getByText("A branding change waits for a second operator.", { exact: false })).toBeVisible();
+      await expect(page.getByLabel("Full name", { exact: true })).toBeDisabled();
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `branding-waiting-${width}`);
+
+      // A second operator approved it: the Portal and the sign-in pages show it from the next request.
+      world.branding = { instanceName: "Smart City Banská Bystrica", colours: { primary: "#0b5394" }, logoSvg: logo };
+      world.brandingChange = null;
+      await page.reload();
+      await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Smart City Banská Bystrica");
+      await expect(page.getByRole("button", { name: "Ask for this branding change" })).toHaveAttribute("aria-disabled", "true");
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `branding-set-${width}`);
     });
 
     test(`an Organization administrator reads that the operator sets it and meets no Installation page at ${width} px`, async ({ page }) => {

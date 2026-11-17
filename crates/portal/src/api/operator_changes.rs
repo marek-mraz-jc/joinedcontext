@@ -28,6 +28,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use chrono::{DateTime, Utc};
+use jc_core::kinds::OrganizationAppearance;
 use jc_router::registry::Rules;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -67,6 +68,9 @@ pub enum OperatorKind {
     /// The installation's e-mail (SMTP) server, which the sign-in service sends invitations and
     /// password resets through (T-7152).
     SmtpSet,
+    /// The installation's own look: names, colours, logo and favicon over the branding file, on
+    /// the Portal and the sign-in pages (T-7188).
+    BrandingSet,
 }
 
 impl OperatorKind {
@@ -77,6 +81,7 @@ impl OperatorKind {
             Self::OperatorAdd => "OperatorAdd",
             Self::OperatorRemove => "OperatorRemove",
             Self::SmtpSet => "SmtpSet",
+            Self::BrandingSet => "BrandingSet",
         }
     }
 
@@ -87,6 +92,7 @@ impl OperatorKind {
             Self::OperatorAdd,
             Self::OperatorRemove,
             Self::SmtpSet,
+            Self::BrandingSet,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -114,6 +120,10 @@ pub struct ChangeRequest {
     pub subject: Option<String>,
     /// `SmtpSet`: the installation's e-mail server.
     pub smtp: Option<SmtpRequest>,
+    /// `BrandingSet`: the installation's look under an Organization appearance's rules, without
+    /// its dashboards and page texts; `{}` shows the branding file again.
+    #[schema(schema_with = crate::openapi::appearance_ref, example = json!({ "instanceName": "Smart City Banská Bystrica", "colours": { "primary": "#0b5394" } }))]
+    pub branding: Option<OrganizationAppearance>,
 }
 
 /// `SmtpSet`: the e-mail server as an operator types it.
@@ -166,6 +176,9 @@ pub struct ChangePayload {
     pub subject: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smtp: Option<SmtpSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(schema_with = crate::openapi::appearance_ref)]
+    pub branding: Option<OrganizationAppearance>,
 }
 
 /// One operator Change.
@@ -280,6 +293,12 @@ fn payload(
     if kind != OperatorKind::SmtpSet && request.smtp.is_some() {
         return Err(invalid("smtp", format!("{} takes no smtp", kind.as_str())));
     }
+    if kind != OperatorKind::BrandingSet && request.branding.is_some() {
+        return Err(invalid(
+            "branding",
+            format!("{} takes no branding", kind.as_str()),
+        ));
+    }
     match kind {
         OperatorKind::HostAdd => {
             absent(kind, &[("subject", &request.subject)])?;
@@ -308,6 +327,7 @@ fn payload(
                     role: Some(role),
                     subject: None,
                     smtp: None,
+                    branding: None,
                 },
                 host,
                 None,
@@ -391,7 +411,63 @@ fn payload(
                 password,
             ))
         }
+        OperatorKind::BrandingSet => {
+            absent(
+                kind,
+                &[
+                    ("host", &request.host),
+                    ("organization", &request.organization),
+                    ("organizationId", &request.organization_id),
+                    ("role", &request.role),
+                    ("subject", &request.subject),
+                ],
+            )?;
+            let look = request.branding.ok_or_else(|| {
+                invalid(
+                    "branding",
+                    "BrandingSet needs branding, e.g. {\"instanceName\": \"Smart City\"}; {} shows the branding file again".into(),
+                )
+            })?;
+            installation_look(&look)?;
+            Ok((
+                kind,
+                ChangePayload {
+                    branding: Some(look),
+                    ..ChangePayload::default()
+                },
+                "branding".into(),
+                None,
+            ))
+        }
     }
+}
+
+/// The installation's look holds jc-core's rules for an Organization's appearance (plain one-line
+/// names, hex colours, an SVG logo and favicon of at most 64 KiB without script, event handler or
+/// external reference), and names none of the dashboards or page texts only an Organization has.
+fn installation_look(look: &OrganizationAppearance) -> Result<(), ApiError> {
+    if let Err(e) = look.validate() {
+        return Err(match e {
+            jc_core::Error::Invalid { field, reason } => {
+                let field = field.replacen("spec.appearance", "branding", 1);
+                invalid(&field, format!("{field} {reason}"))
+            }
+            other => invalid("branding", other.to_string()),
+        });
+    }
+    for (field, empty) in [
+        ("branding.homeWidgets", look.home_widgets.is_empty()),
+        ("branding.opendataWidgets", look.opendata_widgets.is_empty()),
+        ("branding.pages", look.pages.is_empty()),
+    ] {
+        if !empty {
+            return Err(invalid(
+                field,
+                format!("{field} belongs to an Organization's appearance; the installation's look takes names, colours, a logo and a favicon"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A host name an SMTP server answers on (`smtp.example.org`): letters, digits and `-` in
@@ -582,6 +658,7 @@ async fn holds(
             }
             Ok(())
         }
+        OperatorKind::BrandingSet => Ok(()),
     }
 }
 
@@ -1045,7 +1122,10 @@ pub async fn approve(
     // always does, under its lock (`operators_hold`).
     if let (
         Some(people),
-        OperatorKind::HostAdd | OperatorKind::HostRemove | OperatorKind::SmtpSet,
+        OperatorKind::HostAdd
+        | OperatorKind::HostRemove
+        | OperatorKind::SmtpSet
+        | OperatorKind::BrandingSet,
     ) = (state.people.as_deref(), found.kind)
     {
         proposer_holds(
@@ -1093,6 +1173,11 @@ pub async fn approve(
         OperatorKind::SmtpSet => {
             return apply_smtp(&state, tx, &found, &identity.subject, source(client)).await;
         }
+        // The SVGs stay in the Change; the audit names whether each one is there.
+        OperatorKind::BrandingSet => (
+            state.installation_look().map(|look| look_summary(&look)),
+            payload.branding.as_ref().map(look_summary),
+        ),
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
     let ip = source(client);
@@ -1107,7 +1192,26 @@ pub async fn approve(
     )
     .await?;
     tx.commit().await.map_err(db)?;
+    if found.kind == OperatorKind::BrandingSet {
+        state.set_installation_look(payload.branding.clone().unwrap_or_default());
+    }
     Ok(Json(decided))
+}
+
+/// The installation's look as the operators' audit keeps it: its names and colours, and whether
+/// a logo and a favicon are set.
+fn look_summary(look: &OrganizationAppearance) -> Value {
+    json!({
+        "instanceName": look.instance_name,
+        "shortName": look.short_name,
+        "city": look.city,
+        "publisher": look.publisher,
+        "contactEmail": look.contact_email,
+        "licenseDefault": look.license_default,
+        "colours": look.colours,
+        "logo": look.logo_svg.is_some(),
+        "favicon": look.favicon_svg.is_some(),
+    })
 }
 
 /// Applies an approved `OperatorAdd` or `OperatorRemove`. The decision and its audit row are
@@ -1287,6 +1391,13 @@ pub struct Installation {
     pub smtp: Option<crate::people::SmtpServer>,
     /// The open `SmtpSet` Change waiting for a second operator, if any.
     pub smtp_change: Option<String>,
+    /// The installation's look its operators approved last, on the Portal and the sign-in pages
+    /// from the next request on (T-7188); absent while the branding file shows alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(schema_with = crate::openapi::appearance_ref)]
+    pub branding: Option<OrganizationAppearance>,
+    /// The open `BrandingSet` Change waiting for a second operator, if any.
+    pub branding_change: Option<String>,
 }
 
 #[utoipa::path(
@@ -1315,13 +1426,22 @@ pub async fn installation(
         .smtp_server()
         .await
         .map_err(no_smtp_door)?;
-    let smtp_change: Option<String> = sqlx::query_scalar(
-        "SELECT id::text FROM operator_changes WHERE kind = 'SmtpSet' AND state = 'proposed'",
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?;
-    Ok(Json(Installation { smtp, smtp_change }))
+    let open = |kind: &'static str| {
+        sqlx::query_scalar::<_, String>(
+            "SELECT id::text FROM operator_changes WHERE kind = $1 AND state = 'proposed'",
+        )
+        .bind(kind)
+        .fetch_optional(pool)
+    };
+    let smtp_change = open("SmtpSet").await.map_err(db)?;
+    let branding_change = open("BrandingSet").await.map_err(db)?;
+    let branding = state.installation_look().map(|look| (*look).clone());
+    Ok(Json(Installation {
+        smtp,
+        smtp_change,
+        branding,
+        branding_change,
+    }))
 }
 
 #[utoipa::path(

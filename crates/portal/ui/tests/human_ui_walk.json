@@ -1693,6 +1693,22 @@
         "evidence/T-7140/operator-hosts-remove-400.png"
       ]
     },
+    "src/pages/operator/OperatorBranding.tsx": {
+      "walkedBy": "worker-t7188",
+      "date": "2026-11-17",
+      "screenshots": [
+        "evidence/T-7188/branding-empty-1440.png",
+        "evidence/T-7188/branding-empty-400.png",
+        "evidence/T-7188/branding-error-1440.png",
+        "evidence/T-7188/branding-error-400.png",
+        "evidence/T-7188/branding-refused-file-1440.png",
+        "evidence/T-7188/branding-refused-file-400.png",
+        "evidence/T-7188/branding-set-1440.png",
+        "evidence/T-7188/branding-set-400.png",
+        "evidence/T-7188/branding-waiting-1440.png",
+        "evidence/T-7188/branding-waiting-400.png"
+      ]
+    },
     "src/pages/operator/OperatorInstallation.tsx": {
       "walkedBy": "worker-t7152",
       "date": "2026-11-17",

@@ -7,10 +7,12 @@ import { ApiError, reasonOf } from "../../api/client";
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageFailed, PageLoading, Select } from "../../components/ui";
 import { operatorChanges, operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
 import type { SmtpServer } from "./operatorApi";
+import { OperatorBranding } from "./OperatorBranding";
 
 /**
  * Administration → Installation (T-7152): what the installation provides every Organization, set
- * by an operator without the cluster. The e-mail server is an operator Change: a second operator
+ * by an operator without the cluster. The branding and the sign-in pages' look (T-7188) and the
+ * e-mail server is an operator Change: a second operator
  * approves it, and the password goes to the sign-in service sealed and is never shown again, only
  * whether one is stored. The test e-mail goes to the operator's own address.
  */
@@ -28,6 +30,11 @@ export function OperatorInstallation(): JSX.Element {
         <p className="text-body text-fg-muted">{t("operator.installation.lead")}</p>
       </div>
       {/* Keyed by what is saved: an approved change starts the form again from it. */}
+      <OperatorBranding
+        key={`look-${JSON.stringify(installation.data.branding ?? null)}`}
+        look={installation.data.branding ?? undefined}
+        open={installation.data.brandingChange ?? undefined}
+      />
       <EmailServer
         key={JSON.stringify(installation.data.smtp ?? null)}
         smtp={installation.data.smtp ?? undefined}

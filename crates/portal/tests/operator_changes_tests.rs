@@ -1034,6 +1034,175 @@ async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never
     assert_eq!(to, vec![json!({ "to": "ops-a@hel.fi" })]);
 }
 
+/// T-7188: the installation's look is an operator Change. An Organization's administrator asks
+/// for none; a logo with script, a CSS colour or an Organization's dashboards are refused by
+/// field; the proposer never approves; once a second operator approves, the Portal's branding and
+/// logo show it from the next request on, a restarted Portal reads it back, and the audit keeps
+/// no SVG.
+#[tokio::test]
+async fn the_installation_look_waits_for_a_second_operator_and_then_shows_on_every_page() {
+    let (mut state, _) = world().await;
+    let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/ops/smtp-server"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&kc)
+        .await;
+    let name = format!("Smart City {}", run("look"));
+    let logo = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="#0b5394"/></svg>"##;
+    let change = |branding: Value| json!({ "kind": "BrandingSet", "branding": branding });
+    let good = change(json!({
+        "instanceName": name, "colours": { "primary": "#0b5394" }, "logoSvg": logo,
+    }));
+
+    let org_admin = common::organization_admin(&state.mirror, "org-admin");
+    let (status, _) = propose(&state, org_admin, good.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "only an operator asks for it"
+    );
+
+    for (branding, field) in [
+        (
+            json!({ "logoSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>" }),
+            "branding.logoSvg",
+        ),
+        (
+            json!({ "colours": { "primary": "red;}" } }),
+            "branding.colours.primary",
+        ),
+        (
+            json!({ "homeWidgets": ["doprava/prehlad"] }),
+            "branding.homeWidgets",
+        ),
+        (
+            json!({ "instanceName": "<b>x</b>" }),
+            "branding.instanceName",
+        ),
+    ] {
+        let (status, problem) = propose(&state, operator(&state, "ops-a"), change(branding)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{field}: {problem}"
+        );
+        assert!(problem.to_string().contains(field), "{field}: {problem}");
+    }
+    let (status, problem) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        json!({ "kind": "SmtpSet", "branding": {} }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+
+    let (status, made) = propose(&state, operator(&state, "ops-a"), good).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("id").to_owned();
+    let read = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/operator/installation",
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    assert_eq!(body(&read.text)["brandingChange"], json!(id));
+    let shown = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/branding",
+        None,
+    )
+    .await;
+    assert_ne!(
+        body(&shown.text)["instanceName"],
+        json!(name),
+        "nothing shows before the approval"
+    );
+
+    let (status, _) = decide(&state, operator(&state, "ops-a"), &id, "approve").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the proposer never approves");
+    let (status, applied) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+
+    let check = |state: AppState| {
+        let name = name.clone();
+        async move {
+            let shown = send(
+                &state,
+                operator(&state, "ops-a"),
+                "GET",
+                "/api/v1/branding",
+                None,
+            )
+            .await;
+            let shown = body(&shown.text);
+            assert_eq!(shown["instanceName"], json!(name), "{shown}");
+            assert_eq!(shown["colours"]["primary"], json!("#0b5394"));
+            assert_eq!(shown["logo"], json!("organization.svg"));
+            let served = send(
+                &state,
+                operator(&state, "ops-a"),
+                "GET",
+                "/api/v1/branding/logo",
+                None,
+            )
+            .await;
+            assert_eq!(served.status, StatusCode::OK);
+            assert_eq!(served.text, logo);
+        }
+    };
+    check(state.clone()).await;
+    let read = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/operator/installation",
+        None,
+    )
+    .await;
+    let read = body(&read.text);
+    assert_eq!(read["branding"]["instanceName"], json!(name), "{read}");
+    assert_eq!(read["brandingChange"], Value::Null);
+
+    // A restarted Portal reads the look back from the last applied Change.
+    state.set_installation_look(Default::default());
+    assert!(state.installation_look().is_none());
+    state.load_installation_look().await;
+    check(state.clone()).await;
+
+    let audit: Vec<Option<Value>> =
+        sqlx::query_scalar("SELECT after FROM operator_audit WHERE change_id = $1::uuid AND action = 'applied BrandingSet'")
+            .bind(&id)
+            .fetch_all(state.db.as_ref().expect("db"))
+            .await
+            .expect("audit");
+    assert_eq!(audit.len(), 1, "{audit:?}");
+    let after = audit[0].clone().expect("after");
+    assert_eq!(after["logo"], json!(true));
+    assert!(!after.to_string().contains("<svg"), "{after}");
+
+    // An empty look shows the branding file again.
+    let (_, reset) = propose(&state, operator(&state, "ops-a"), change(json!({}))).await;
+    let reset = reset["id"].as_str().expect("id").to_owned();
+    let (status, _) = decide(&state, operator(&state, "ops-b"), &reset, "approve").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.installation_look().is_none());
+    let shown = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/branding",
+        None,
+    )
+    .await;
+    assert_ne!(body(&shown.text)["instanceName"], json!(name));
+}
+
 /// The running Portal serves as a role apart from the one that migrates (T-7179): that role
 /// appends to the audit and reads it, and changes, deletes, truncates or drops the triggers of
 /// none of it. The Portal boots and serves with both URLs; one role named in both is refused.
