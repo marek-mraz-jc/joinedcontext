@@ -72,20 +72,47 @@ pub struct Target {
     pub updated_at: String,
     /// RFC 3339; the start of the last scheduled or manual run.
     pub last_run_at: Option<String>,
+    /// The Organization's reserved project key, set by the store that read the target; `None`
+    /// for a target no store has saved yet, which then has no object key.
+    #[serde(skip)]
+    pub key: Option<jc_types::ProjectKey>,
 }
 
 impl Target {
-    /// The folder of this Organization's bundles: `{prefix}{organization}/{kind}/`.
-    pub fn folder(&self) -> String {
-        format!("{}{}/{}/", self.prefix, self.organization, self.kind)
+    /// The folder of this Organization's bundles, built from ids only (ARCH/STO-14, T-7207):
+    /// `{prefix}org/{OrgId}/project/{reserved ProjectId}/backup/{kind}/`.
+    pub fn folder(&self) -> Result<String, ApiError> {
+        let key = self.key.ok_or_else(|| {
+            ApiError::Internal("a backup target was used before it was saved".into())
+        })?;
+        Ok(format!(
+            "{}{}backup/{}/",
+            self.prefix,
+            key.object_prefix(),
+            self.kind
+        ))
     }
 
     /// The one object every run writes a new version of.
-    pub fn object_key(&self) -> String {
+    pub fn object_key(&self) -> Result<String, ApiError> {
+        Ok(format!("{}{}", self.folder()?, self.file()))
+    }
+
+    /// The folder before T-7207, `{prefix}{organization}/{kind}/`. Read only (ARCH/TEN-15): its
+    /// versions answer listing, download and restore until the run's retention removes them.
+    pub fn legacy_folder(&self) -> String {
+        format!("{}{}/{}/", self.prefix, self.organization, self.kind)
+    }
+
+    pub fn legacy_object_key(&self) -> String {
+        format!("{}{}", self.legacy_folder(), self.file())
+    }
+
+    fn file(&self) -> &'static str {
         if self.kind == DATA {
-            format!("{}archive.zip.age", self.folder())
+            "archive.zip.age"
         } else {
-            format!("{}bundle.zip", self.folder())
+            "bundle.zip"
         }
     }
 }
@@ -182,6 +209,7 @@ fn target_of(row: TargetRow) -> Target {
         updated_by: row.12,
         updated_at: rfc3339(row.13),
         last_run_at: row.14.map(rfc3339),
+        key: None,
     }
 }
 
@@ -211,11 +239,28 @@ pub(crate) async fn keyed(
     pool: &sqlx::PgPool,
     organization: &str,
 ) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, ApiError> {
+    Ok(keyed_with(pool, organization).await?.map(|(_, tx)| tx))
+}
+
+/// [`keyed`], with the reserved key the transaction runs under.
+async fn keyed_with(
+    pool: &sqlx::PgPool,
+    organization: &str,
+) -> Result<
+    Option<(
+        jc_types::ProjectKey,
+        sqlx::Transaction<'static, sqlx::Postgres>,
+    )>,
+    ApiError,
+> {
     match crate::project_ids::reserved(pool, organization)
         .await
         .map_err(db)?
     {
-        Some(key) => crate::db::tenant_tx(pool, key).await.map(Some).map_err(db),
+        Some(key) => crate::db::tenant_tx(pool, key)
+            .await
+            .map(|tx| Some((key, tx)))
+            .map_err(db),
         None => Ok(None),
     }
 }
@@ -246,7 +291,7 @@ impl BackupStore {
                 .get(&(organization.to_owned(), kind.to_owned()))
                 .cloned()),
             Inner::Postgres(pool) => {
-                let Some(mut tx) = keyed(pool, organization).await? else {
+                let Some((key, mut tx)) = keyed_with(pool, organization).await? else {
                     return Ok(None);
                 };
                 let row: Option<TargetRow> = sqlx::query_as(
@@ -261,7 +306,10 @@ impl BackupStore {
                 .await
                 .map_err(db)?;
                 tx.commit().await.map_err(db)?;
-                Ok(row.map(target_of))
+                Ok(row.map(|row| Target {
+                    key: Some(key),
+                    ..target_of(row)
+                }))
             }
         }
     }
@@ -275,8 +323,22 @@ impl BackupStore {
                     .map_err(|_| ApiError::Internal("the backup store is poisoned".into()))?;
                 let key = (target.organization.clone(), target.kind.clone());
                 let last = rows.0.get(&key).and_then(|t| t.last_run_at.clone());
+                // Without the registry the store mints the Organization's key once, as the
+                // registry would; both kinds of one Organization share it.
+                let project_key = rows
+                    .0
+                    .values()
+                    .find(|t| t.organization == target.organization)
+                    .and_then(|t| t.key)
+                    .unwrap_or_else(|| {
+                        jc_types::ProjectKey::new(
+                            jc_types::OrgId::mint(),
+                            jc_types::ProjectId::mint(),
+                        )
+                    });
                 let mut saved = target.clone();
                 saved.last_run_at = last;
+                saved.key = Some(project_key);
                 saved.updated_at = rfc3339(time::OffsetDateTime::now_utc());
                 rows.0.insert(key, saved);
                 Ok(())
@@ -356,7 +418,7 @@ impl BackupStore {
                 .map_err(db)?;
                 let mut due = Vec::new();
                 for organization in organizations {
-                    let Some(mut tx) = keyed(pool, &organization).await? else {
+                    let Some((key, mut tx)) = keyed_with(pool, &organization).await? else {
                         continue;
                     };
                     let rows: Vec<TargetRow> = sqlx::query_as(
@@ -371,7 +433,10 @@ impl BackupStore {
                     .await
                     .map_err(db)?;
                     tx.commit().await.map_err(db)?;
-                    due.extend(rows.into_iter().map(target_of));
+                    due.extend(rows.into_iter().map(|row| Target {
+                        key: Some(key),
+                        ..target_of(row)
+                    }));
                 }
                 Ok(due)
             }
@@ -996,7 +1061,7 @@ async fn upload(
     let bucket = bucket(state, target)?;
     require_versioning(http, &bucket).await?;
     // One key: every run is a new version of it, which is what "the versions" of the page lists.
-    let key = target.object_key();
+    let key = target.object_key()?;
     let (size, sha256, put) = if target.kind == DATA {
         let (sealed, size, sha256) = data::encrypted_archive(state, target, actor).await?;
         let put = bucket
@@ -1026,23 +1091,38 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Removes the noncurrent versions (and delete markers) of the target's folder that became
-/// noncurrent more than `keep_days` ago. The current version is never touched.
+/// noncurrent more than `keep_days` ago. The current version is never touched. In the folder
+/// before T-7207 every version counts as noncurrent, the run having just written the current one
+/// under the new key (ARCH/TEN-15): it is read until `keep_days` after it was written, as it
+/// would have been had it stayed, and then removed.
 async fn prune(
     http: &reqwest::Client,
     bucket: &s3::Bucket,
     target: &Target,
-) -> Result<usize, s3::S3Error> {
+) -> Result<usize, ApiError> {
     let cutoff = (chrono::Utc::now() - chrono::Duration::days(i64::from(target.keep_days)))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    let versions = bucket.versions(http, &target.folder()).await?;
+    let unavailable = |e: s3::S3Error| ApiError::Unavailable(e.to_string());
+    let current = bucket
+        .versions(http, &target.folder()?)
+        .await
+        .map_err(unavailable)?;
+    let legacy = bucket
+        .versions(http, &target.legacy_folder())
+        .await
+        .map_err(unavailable)?;
+    let legacy_key = target.legacy_object_key();
     let mut removed = 0;
-    for version in versions
+    for version in current
         .iter()
-        .filter(|v| !v.is_latest && v.last_modified < cutoff)
+        .filter(|v| !v.is_latest)
+        .chain(legacy.iter().filter(|v| v.key == legacy_key))
+        .filter(|v| v.last_modified < cutoff)
     {
         bucket
             .delete(http, &version.key, Some(&version.version_id))
-            .await?;
+            .await
+            .map_err(unavailable)?;
         removed += 1;
     }
     Ok(removed)
