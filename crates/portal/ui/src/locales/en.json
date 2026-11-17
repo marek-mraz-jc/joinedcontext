@@ -8455,7 +8455,7 @@
       "operatorSets": "Your installation's operators set this",
       "notYet": "Not set yet",
       "whomToAsk": "Whom to ask",
-      "whomToAskLead": "Ask them for any of these items through the installation's contacts.",
+      "whomToAskLead": "The installation's operators set the e-mail server; ask them for it.",
       "deploymentSets": "Deployment sets this",
       "step": {
         "organization": {
@@ -13755,7 +13755,7 @@
         "unset": "Not set",
         "waitingBadge": "Waiting for approval",
         "unchanged": "Change a field first; nothing differs from the saved server.",
-        "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and ask for the change; a second operator approves it.",
+        "empty": "No e-mail server yet, so invitations and password resets are not sent.",
         "waitingShort": "A change already waits for a second operator: approve or reject it first.",
         "notAsked": "The Portal refused the change: no Change was created",
         "fixField": "{field} was refused: fix it as said under the field, then ask for the change again.",

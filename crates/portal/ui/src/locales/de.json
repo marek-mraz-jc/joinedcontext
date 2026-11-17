@@ -8455,7 +8455,7 @@
       "operatorSets": "Die Betreiber Ihrer Installation legen dies fest",
       "notYet": "Noch nicht gesetzt",
       "whomToAsk": "Wen fragen",
-      "whomToAskLead": "Bitten Sie sie über die Kontakte der Installation um einen dieser Punkte.",
+      "whomToAskLead": "Den E-Mail-Server legen die Betreiber der Installation fest; bitten Sie sie darum.",
       "deploymentSets": "Bereitstellung legt dies fest",
       "step": {
         "organization": {

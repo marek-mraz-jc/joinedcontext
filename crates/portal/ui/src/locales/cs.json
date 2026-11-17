@@ -8455,7 +8455,7 @@
       "operatorSets": "Nastavují to operátoři vaší instalace",
       "notYet": "Zatím nenastaveno",
       "whomToAsk": "Koho se zeptat",
-      "whomToAskLead": "O kteroukoli z těchto položek je požádejte přes kontakty instalace.",
+      "whomToAskLead": "E-mailový server nastavují operátoři instalace; požádejte o něj je.",
       "deploymentSets": "Nastavuje nasazení",
       "step": {
         "organization": {
