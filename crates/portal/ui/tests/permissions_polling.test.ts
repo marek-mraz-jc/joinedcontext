@@ -4,7 +4,8 @@
  * stays open.
  */
 import { describe, expect, it } from "vitest";
-import { EMPTY_GRANTS_ASKS, emptyGrantsRetry } from "../src/api/permissions";
+import { ApiError } from "../src/api/client";
+import { EMPTY_GRANTS_ASKS, deniedBy, emptyGrantsRetry } from "../src/api/permissions";
 
 describe("emptyGrantsRetry", () => {
   it("asks an empty answer again, then stops", () => {
@@ -19,5 +20,17 @@ describe("emptyGrantsRetry", () => {
     expect(emptyGrantsRetry({ grants: [{ kinds: ["*"] }] }, 1)).toBe(false);
     expect(emptyGrantsRetry({ grants: [], bootstrap: true }, 1)).toBe(false);
     expect(emptyGrantsRetry(undefined, 0)).toBe(false);
+  });
+});
+
+describe("deniedBy", () => {
+  it("reads the Organization's rules with no grant as denied, as its old 404 was (T-7176)", () => {
+    const none = { project: "org", bootstrap: false, grants: [] };
+    expect(deniedBy("org", null, none)).toBe(true);
+    expect(deniedBy("org", null, { ...none, bootstrap: true })).toBe(false);
+    expect(deniedBy("org", null, undefined)).toBe(false);
+    // A project's empty document is a fresh pod's answer, asked again, not a refusal.
+    expect(deniedBy("air", null, { ...none, project: "air" })).toBe(false);
+    expect(deniedBy("air", new ApiError(404, "project 'air' not found"), undefined)).toBe(true);
   });
 });

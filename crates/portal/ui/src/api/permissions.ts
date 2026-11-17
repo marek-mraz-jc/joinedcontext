@@ -165,6 +165,18 @@ export async function readPermissions(project: string): Promise<RestAnswer<"perm
 }
 
 /**
+ * Whether the answer is a known "nothing here": the 404 of a project no binding of the caller
+ * covers (PF-59), or the Organization's own rules with no grant, which its door answers as a
+ * document since `org` is no project a 404 could hide (T-7176).
+ */
+export function deniedBy(project: string, error: unknown, data: Effective | undefined): boolean {
+  if (error instanceof ApiError && error.status === 404) {
+    return true;
+  }
+  return project === ORG_NAMESPACE && Array.isArray(data?.grants) && data.grants.length === 0 && data.bootstrap !== true;
+}
+
+/**
  * The caller's effective permissions in `project` (T-0526). A convenience for the UI: a
  * control renders only when the API would honour it, and the API decides on its own.
  */
@@ -185,8 +197,7 @@ export function usePermissions(project: string) {
   // The first read is on its way: no document yet and none failed (T-5833), its retries
   // included. A disabled query (no project) is never checking.
   const checking = query.isLoading;
-  // The 404 of a project no binding of the caller covers (PF-59): a known answer, reading nothing.
-  const denied = query.error instanceof ApiError && query.error.status === 404;
+  const denied = deniedBy(project, query.error, data);
   // Any other failure (500, network): no document, and the API re-checks every write.
   const unchecked = query.isError && !denied && data === undefined;
   // One value per answer, so a page memoising on `can` or `canIn` recomputes only when it moves.

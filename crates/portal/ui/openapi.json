@@ -40201,7 +40201,7 @@
           "permissions"
         ],
         "summary": "Read My Permissions",
-        "description": "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project.",
+        "description": "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project; the Organization namespace `org` answers an empty grant list instead.",
         "operationId": "permissions_me",
         "parameters": [
           {

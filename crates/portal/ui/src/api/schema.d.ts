@@ -6995,7 +6995,7 @@ export interface paths {
         };
         /**
          * Read My Permissions
-         * @description The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project.
+         * @description The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project; the Organization namespace `org` answers an empty grant list instead.
          */
         get: operations["permissions_me"];
         put?: never;
