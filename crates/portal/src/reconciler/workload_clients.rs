@@ -939,7 +939,19 @@ impl WorkloadClientSync {
             }
         };
 
-        mirror.set_workload_clients(registry(&listed));
+        let clients = registry(&listed);
+        // One registry for every reader of a client id in this process: jc's gateway, MQTT door
+        // and manifest assembly read it through jc_core's keycloak_client_id (T-7214).
+        jc_core::kinds::service_account::set_client_registry(
+            clients
+                .iter()
+                .filter_map(|(id, account)| {
+                    let (project, name) = account.split_once('/')?;
+                    Some((id.clone(), (project.to_owned(), name.to_owned())))
+                })
+                .collect(),
+        );
+        mirror.set_workload_clients(clients);
 
         let mut accounts = bound(mirror);
         if let Some(namespace) = &self.pipelines {
@@ -1323,6 +1335,31 @@ impl WorkloadClientSync {
         }
     }
 
+    /// The id a new client of `account` gets: `jc_types::internal_name` of its project's key and
+    /// its name (ARCH/TEN-10, T-7214), when the registry holds no client of the account and the
+    /// realm holds none under its present `id` (the derived `{project}-{name}`) either, so every
+    /// live client keeps its id (MIG-03). `None` keeps `id`: a client exists, or the name is no
+    /// label of the key.
+    async fn new_client_id(
+        &self,
+        token: &str,
+        mirror: &Mirror,
+        account: &BoundAccount,
+        id: &str,
+        key: jc_types::ProjectKey,
+    ) -> Result<Option<String>, String> {
+        if mirror.client_account(id).is_some() {
+            return Ok(None);
+        }
+        let Ok(label) = jc_types::Label::parse(&account.name) else {
+            return Ok(None);
+        };
+        if self.admin.find(token, id).await?.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(jc_types::internal_name(key, &label).to_string()))
+    }
+
     async fn converge_one(
         &self,
         token: &str,
@@ -1332,7 +1369,7 @@ impl WorkloadClientSync {
         imported: &[String],
     ) -> ClientOutcome {
         let mut outcome = ClientOutcome::of(&account.label());
-        let id = mirror.client_id(&account.project, &account.name);
+        let mut id = mirror.client_id(&account.project, &account.name);
         let mut want = match &account.auth {
             Auth::External(credential) => {
                 desired_external(&account.project, &account.name, credential)
@@ -1343,7 +1380,20 @@ impl WorkloadClientSync {
         want["clientId"] = json!(id);
         if let Some(pool) = self.keys.as_ref() {
             match crate::project_ids::recorded(pool, &account.project).await {
-                Ok(Some(key)) => with_project(&mut want, &key),
+                Ok(Some(key)) => {
+                    with_project(&mut want, &key);
+                    match self.new_client_id(token, mirror, account, &id, key).await {
+                        Ok(Some(new)) => {
+                            id = new;
+                            want["clientId"] = json!(id);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            outcome.error = Some(err);
+                            return outcome;
+                        }
+                    }
+                }
                 Ok(None) => {}
                 Err(err) => {
                     outcome.error = Some(format!("its project id was not read: {err}"));
@@ -1423,7 +1473,14 @@ impl WorkloadClientSync {
                 }
                 match self.admin.find(token, &id).await {
                     Ok(Some(client)) => match client.get("id").and_then(Value::as_str) {
-                        Some(uuid) => uuid.to_owned(),
+                        Some(uuid) => {
+                            jc_core::kinds::service_account::record_client(
+                                &id,
+                                &account.project,
+                                &account.name,
+                            );
+                            uuid.to_owned()
+                        }
                         None => {
                             outcome.error = Some(format!("the realm answered {id} without an id"));
                             return outcome;
