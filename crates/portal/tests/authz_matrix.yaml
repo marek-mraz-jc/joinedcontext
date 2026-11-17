@@ -196,6 +196,12 @@ routes:
   - route: POST /mcp
     rule: "mcp-dispatch"
     expect: [401, 401, 401, 401, 401, 401, 401, allow]
+  - route: GET /projects/{project}/mcp
+    rule: "public"
+    expect: [405, 405, 405, 405, 405, 405, 405, 405]
+  - route: POST /projects/{project}/mcp
+    rule: "mcp-dispatch, the project's own door (MCP-33)"
+    expect: [401, 401, 401, 401, 401, 401, 401, allow]
   - route: GET /git/{owner}/{repo}/info/refs
     rule: "bearer:git-read (a person's access token in the header; members of the project, the installation repository platform administrators alone)"
     expect: [404, 404, 404, 404, 404, 404, 404, 404]
