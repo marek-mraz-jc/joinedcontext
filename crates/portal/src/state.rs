@@ -335,10 +335,13 @@ impl AppState {
             connectors: Arc::new(crate::connectors::ConnectorStore::new(None)),
             paired_tabs: Arc::default(),
             plans: Arc::default(),
-            alerts: Arc::new(crate::alerts::AlertStore::new(None)),
-            health_log: Arc::new(crate::health_log::HealthStore::new(None)),
-            link_check: Arc::new(crate::link_check::LinkStore::new(None)),
-            endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None)),
+            alerts: Arc::new(crate::alerts::AlertStore::new(None, Arc::default())),
+            health_log: Arc::new(crate::health_log::HealthStore::new(
+                None,
+                Default::default(),
+            )),
+            link_check: Arc::new(crate::link_check::LinkStore::new(None, Arc::default())),
+            endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None, Arc::default())),
             mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None)),
             live: Arc::new(crate::live::LiveHub::new(&public_base, None)),
             pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None)),
@@ -376,6 +379,11 @@ impl AppState {
 
     pub fn with_mirror(mut self, mirror: Arc<Mirror>) -> Self {
         self.mirror = mirror;
+        // The keyed stores place a project by the mirror (T-7197): they read this one.
+        let db = self.db.clone();
+        if db.is_some() {
+            self.attach_stores(&db);
+        }
         self
     }
 
@@ -458,9 +466,6 @@ impl AppState {
         };
         let mut state = Self::new(config, oidc);
         state.attach_stores(&db);
-        if let Err(err) = state.quality.load().await {
-            tracing::warn!(error = %err, "the kept data-quality reports were not read");
-        }
         // The live updates write their subscriptions as the reconciler writes declared ones: through
         // the space surface, as this Portal's own ServiceAccount (API/01 §32).
         if let (Some(base), Some(oidc), Some((id, secret)), Some(domain)) = (
@@ -1268,12 +1273,24 @@ impl AppState {
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
         self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
         self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
-        self.alerts = Arc::new(crate::alerts::AlertStore::new(db.clone()));
-        self.health_log = Arc::new(crate::health_log::HealthStore::new(db.clone()));
-        self.link_check = Arc::new(crate::link_check::LinkStore::new(db.clone()));
-        self.endpoint_usage = Arc::new(crate::endpoint_usage::UsageStore::new(db.clone()));
+        self.alerts = Arc::new(crate::alerts::AlertStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.health_log = Arc::new(crate::health_log::HealthStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.link_check = Arc::new(crate::link_check::LinkStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.endpoint_usage = Arc::new(crate::endpoint_usage::UsageStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
         self.mqtt_capture = Arc::new(crate::mqtt_capture::CaptureStore::new(db.clone()));
-        self.quality = Arc::new(crate::quality::Store::new(db.clone()));
+        self.quality = Arc::new(crate::quality::Store::new(db.clone(), self.mirror.clone()));
         self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(db.clone()));
         self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(db.clone()));
     }

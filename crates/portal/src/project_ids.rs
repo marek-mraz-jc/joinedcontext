@@ -15,7 +15,18 @@ use crate::store::Mirror;
 /// one): `org_id` and `project_id` are nullable and default to the transaction's key, every
 /// statement runs in a `db::tenant_tx`, and [`backfill`] keys the rows written before. A later
 /// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security.
-pub const KEYED_BY_NAME: &[&str] = &["grafana_visualizations"];
+pub const KEYED_BY_NAME: &[&str] = &[
+    "grafana_visualizations",
+    // T-7197 PK-1e, migration 0070.
+    "alert_subscriptions",
+    "alert_incidents",
+    "alert_notices",
+    "health_check",
+    "health_check_history",
+    "space_quality",
+    "endpoint_usage_daily",
+    "link_check",
+];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
 /// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
@@ -116,6 +127,27 @@ pub async fn key_of(
     }
 }
 
+/// Every Project of the mirror with its key, by name: what a read over every project fans out
+/// over, one `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
+pub async fn keyed_projects(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
+    let projects = mirror.list(
+        ORG_NAMESPACE,
+        "Project",
+        &crate::store::ListOptions::default(),
+    );
+    let mut keyed = Vec::with_capacity(projects.items.len());
+    for project in &projects.items {
+        let name = project.metadata.name.as_str();
+        if let Some(key) = key_of(pool, mirror, name).await? {
+            keyed.push((name.to_owned(), key));
+        }
+    }
+    Ok(keyed)
+}
+
 /// Keys every row of [`KEYED_BY_NAME`] that has none yet with its project's key; answers the
 /// project names it could not key (no Project in the mirror, or no active Organization of the
 /// registry), sorted, so the caller says which ones wait.
@@ -181,4 +213,27 @@ fn parsed(org: &str, project: &str) -> Option<ProjectKey> {
         OrgId::parse_verified(org).ok()?,
         ProjectId::parse_verified(project).ok()?,
     ))
+}
+
+/// Gives `project` an Organization of the registry, as tests/common `keyed_project` does, for the
+/// crate's own tests of keyed stores.
+#[cfg(test)]
+pub(crate) async fn placed(pool: &PgPool, mirror: &Mirror, project: &str, organization: &str) {
+    mirror.upsert(
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": { "name": project, "namespace": ORG_NAMESPACE },
+            "spec": { "organizationRef": organization },
+        }))
+        .expect("a Project"),
+    );
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) \
+         VALUES ($1, $1 || '.example', 'active', 'test') ON CONFLICT DO NOTHING",
+    )
+    .bind(organization)
+    .execute(pool)
+    .await
+    .expect("an Organization of the registry");
 }

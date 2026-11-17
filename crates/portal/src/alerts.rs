@@ -208,7 +208,9 @@ pub struct AlertStore {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7197 PK-1e): the mirror
+    /// places a project in its Organization, and a read over every project fans out per Project.
+    Postgres(sqlx::PgPool, Arc<Mirror>),
     Memory(RwLock<Memory>),
 }
 
@@ -217,6 +219,10 @@ type Stamp = time::OffsetDateTime;
 pub(crate) fn rfc3339(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
+
+/// One row of `alert_incidents` as Postgres answers it: id, project, pipeline, event, detail,
+/// opened, recovered.
+type IncidentRow = (i64, String, String, String, String, Stamp, Option<Stamp>);
 
 /// One row of `alert_notices` as Postgres answers it.
 type NoticeRow = (
@@ -329,10 +335,10 @@ pub fn room_for(held: &[Subscription], new: &NewSubscription, scope: Scope) -> R
 }
 
 impl AlertStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new(Memory::default())),
             },
         }
@@ -352,12 +358,22 @@ impl AlertStore {
     /// Every subscription, for the evaluator.
     pub async fn all(&self) -> Result<Vec<Held>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let rows: Vec<SubscriptionRow> = sqlx::query_as(
-                    "SELECT id, subject, project, scope, target, events, delivery, muted_until, digest_at FROM alert_subscriptions ORDER BY id",
-                )
-                .fetch_all(pool)
-                .await?;
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<SubscriptionRow> = Vec::new();
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(
+                        sqlx::query_as::<_, SubscriptionRow>(
+                            "SELECT id, subject, project, scope, target, events, delivery, muted_until, digest_at \
+                             FROM alert_subscriptions WHERE project = $1 ORDER BY id",
+                        )
+                        .bind(&project)
+                        .fetch_all(&mut *tx)
+                        .await?,
+                    );
+                    tx.commit().await?;
+                }
+                rows.sort_by_key(|row| row.0);
                 Ok(rows.into_iter().filter_map(held_of).collect())
             }
             Inner::Memory(lock) => Ok(lock
@@ -369,6 +385,7 @@ impl AlertStore {
     }
 
     /// Subscribes, or changes the person's subscription of the same target; a mute is kept.
+    /// `None` when the project has no tenancy key (its Organization is not of the registry).
     pub async fn upsert(
         &self,
         subject: &str,
@@ -377,10 +394,14 @@ impl AlertStore {
         target: &str,
         events: &[Event],
         delivery: Delivery,
-    ) -> Result<Subscription, sqlx::Error> {
+    ) -> Result<Option<Subscription>, sqlx::Error> {
         let names: Vec<String> = events.iter().map(|e| e.as_str().to_owned()).collect();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(None);
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let row: SubscriptionRow = sqlx::query_as(
                     "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
                      VALUES ($1, $2, $3, $4, $5, $6) \
@@ -393,10 +414,11 @@ impl AlertStore {
                 .bind(target)
                 .bind(&names)
                 .bind(delivery.as_str())
-                .fetch_one(pool)
+                .fetch_one(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 held_of(row)
-                    .map(|held| held.subscription)
+                    .map(|held| Some(held.subscription))
                     .ok_or(sqlx::Error::RowNotFound)
             }
             Inner::Memory(lock) => {
@@ -409,7 +431,7 @@ impl AlertStore {
                 }) {
                     held.subscription.events = events.to_vec();
                     held.subscription.delivery = delivery;
-                    return Ok(held.subscription.clone());
+                    return Ok(Some(held.subscription.clone()));
                 }
                 memory.next += 1;
                 let subscription = Subscription {
@@ -427,7 +449,7 @@ impl AlertStore {
                     muted_until: None,
                     digest_at: None,
                 });
-                Ok(subscription)
+                Ok(Some(subscription))
             }
         }
     }
@@ -435,15 +457,24 @@ impl AlertStore {
     /// Removes one of the person's subscriptions, and its notices; `false` when none has that id.
     pub async fn remove(&self, subject: &str, id: i64) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "DELETE FROM alert_subscriptions WHERE id = $1 AND subject = $2",
-            )
-            .bind(id)
-            .bind(subject)
-            .execute(pool)
-            .await?
-            .rows_affected()
-                > 0),
+            Inner::Postgres(pool, mirror) => {
+                for (_, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    let removed = sqlx::query(
+                        "DELETE FROM alert_subscriptions WHERE id = $1 AND subject = $2",
+                    )
+                    .bind(id)
+                    .bind(subject)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                    tx.commit().await?;
+                    if removed > 0 {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
                 let before = memory.subscriptions.len();
@@ -469,17 +500,24 @@ impl AlertStore {
         until: Option<DateTime<Utc>>,
     ) -> Result<Option<Subscription>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let row: Option<SubscriptionRow> = sqlx::query_as(
-                    "UPDATE alert_subscriptions SET muted_until = $3 WHERE id = $1 AND subject = $2 \
-                     RETURNING id, subject, project, scope, target, events, delivery, muted_until, digest_at",
-                )
-                .bind(id)
-                .bind(subject)
-                .bind(until.map(chrono_to_odt))
-                .fetch_optional(pool)
-                .await?;
-                Ok(row.and_then(held_of).map(|held| held.subscription))
+            Inner::Postgres(pool, mirror) => {
+                for (_, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    let row: Option<SubscriptionRow> = sqlx::query_as(
+                        "UPDATE alert_subscriptions SET muted_until = $3 WHERE id = $1 AND subject = $2 \
+                         RETURNING id, subject, project, scope, target, events, delivery, muted_until, digest_at",
+                    )
+                    .bind(id)
+                    .bind(subject)
+                    .bind(until.map(chrono_to_odt))
+                    .fetch_optional(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    if let Some(row) = row {
+                        return Ok(held_of(row).map(|held| held.subscription));
+                    }
+                }
+                Ok(None)
             }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -497,15 +535,19 @@ impl AlertStore {
     }
 
     /// Records that the subscription's digest was written at `at`.
-    async fn digested(&self, id: i64, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    async fn digested(&self, project: &str, id: i64, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(());
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 sqlx::query("UPDATE alert_subscriptions SET digest_at = $2 WHERE id = $1")
                     .bind(id)
                     .bind(chrono_to_odt(at))
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await?;
-                Ok(())
+                tx.commit().await
             }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -538,18 +580,28 @@ impl AlertStore {
         since: Option<DateTime<Utc>>,
     ) -> Result<Vec<(Incident, Option<DateTime<Utc>>)>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let rows: Vec<(String, String, String, String, Stamp, Option<Stamp>)> = sqlx::query_as(
-                    "SELECT project, pipeline, event, detail, opened_at, recovered_at FROM alert_incidents \
-                     WHERE ($1::timestamptz IS NULL AND recovered_at IS NULL) OR opened_at > $1 ORDER BY id",
-                )
-                .bind(since.map(chrono_to_odt))
-                .fetch_all(pool)
-                .await?;
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<IncidentRow> = Vec::new();
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(
+                        sqlx::query_as::<_, IncidentRow>(
+                            "SELECT id, project, pipeline, event, detail, opened_at, recovered_at FROM alert_incidents \
+                             WHERE project = $2 AND (($1::timestamptz IS NULL AND recovered_at IS NULL) OR opened_at > $1) \
+                             ORDER BY id",
+                        )
+                        .bind(since.map(chrono_to_odt))
+                        .bind(&project)
+                        .fetch_all(&mut *tx)
+                        .await?,
+                    );
+                    tx.commit().await?;
+                }
+                rows.sort_by_key(|row| row.0);
                 Ok(rows
                     .into_iter()
                     .filter_map(
-                        |(project, pipeline, event, detail, opened_at, recovered_at)| {
+                        |(_, project, pipeline, event, detail, opened_at, recovered_at)| {
                             Some((
                                 Incident {
                                     key: (project, pipeline, Event::parse(&event)?),
@@ -577,9 +629,15 @@ impl AlertStore {
         }
     }
 
+    /// Opens an incident; a project with no tenancy key keeps none.
     async fn open(&self, signal: &Signal, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, &signal.key.0).await?
+                else {
+                    return Ok(());
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 sqlx::query(
                     "INSERT INTO alert_incidents (project, pipeline, event, detail, opened_at) VALUES ($1, $2, $3, $4, $5) \
                      ON CONFLICT DO NOTHING",
@@ -589,9 +647,9 @@ impl AlertStore {
                 .bind(signal.key.2.as_str())
                 .bind(&signal.detail)
                 .bind(chrono_to_odt(at))
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
-                Ok(())
+                tx.commit().await
             }
             Inner::Memory(lock) => {
                 lock.write()
@@ -612,7 +670,11 @@ impl AlertStore {
 
     async fn close(&self, key: &IncidentKey, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(tenant) = crate::project_ids::key_of(pool, mirror, &key.0).await? else {
+                    return Ok(());
+                };
+                let mut tx = crate::db::tenant_tx(pool, tenant).await?;
                 sqlx::query(
                     "UPDATE alert_incidents SET recovered_at = $4 \
                      WHERE project = $1 AND pipeline = $2 AND event = $3 AND recovered_at IS NULL",
@@ -621,9 +683,9 @@ impl AlertStore {
                 .bind(&key.1)
                 .bind(key.2.as_str())
                 .bind(chrono_to_odt(at))
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
-                Ok(())
+                tx.commit().await
             }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -637,7 +699,8 @@ impl AlertStore {
         }
     }
 
-    /// Leaves a notice for `recipient`, dropping their oldest beyond [`KEPT`].
+    /// Leaves a notice for `recipient`, dropping their oldest of the project beyond [`KEPT`]; a
+    /// project with no tenancy key leaves none.
     async fn notify(
         &self,
         recipient: &str,
@@ -647,8 +710,11 @@ impl AlertStore {
         detail: &str,
     ) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let mut tx = pool.begin().await?;
+            Inner::Postgres(pool, mirror) => {
+                let Some(tenant) = crate::project_ids::key_of(pool, mirror, &key.0).await? else {
+                    return Ok(());
+                };
+                let mut tx = crate::db::tenant_tx(pool, tenant).await?;
                 sqlx::query(
                     "INSERT INTO alert_notices (recipient, subscription, project, pipeline, event, change, detail) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -663,11 +729,12 @@ impl AlertStore {
                 .execute(&mut *tx)
                 .await?;
                 sqlx::query(
-                    "DELETE FROM alert_notices WHERE recipient = $1 AND id NOT IN \
-                     (SELECT id FROM alert_notices WHERE recipient = $1 ORDER BY id DESC LIMIT $2)",
+                    "DELETE FROM alert_notices WHERE recipient = $1 AND project = $3 AND id NOT IN \
+                     (SELECT id FROM alert_notices WHERE recipient = $1 AND project = $3 ORDER BY id DESC LIMIT $2)",
                 )
                 .bind(recipient)
                 .bind(KEPT)
+                .bind(&key.0)
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await
@@ -711,16 +778,25 @@ impl AlertStore {
     /// The person's notices, newest first, and how many are unread.
     pub async fn notices(&self, recipients: &[String]) -> Result<Vec<Notice>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let rows: Vec<NoticeRow> =
-                    sqlx::query_as(
-                        "SELECT id, subscription, project, pipeline, event, change, detail, created_at, read_at \
-                         FROM alert_notices WHERE recipient = ANY($1) ORDER BY id DESC LIMIT $2",
-                    )
-                    .bind(recipients)
-                    .bind(KEPT)
-                    .fetch_all(pool)
-                    .await?;
+            Inner::Postgres(pool, mirror) => {
+                let mut rows: Vec<NoticeRow> = Vec::new();
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(
+                        sqlx::query_as::<_, NoticeRow>(
+                            "SELECT id, subscription, project, pipeline, event, change, detail, created_at, read_at \
+                             FROM alert_notices WHERE recipient = ANY($1) AND project = $3 ORDER BY id DESC LIMIT $2",
+                        )
+                        .bind(recipients)
+                        .bind(KEPT)
+                        .bind(&project)
+                        .fetch_all(&mut *tx)
+                        .await?,
+                    );
+                    tx.commit().await?;
+                }
+                rows.sort_by_key(|row| std::cmp::Reverse(row.0));
+                rows.truncate(KEPT as usize);
                 Ok(rows
                     .into_iter()
                     .filter_map(
@@ -766,15 +842,24 @@ impl AlertStore {
     /// Marks one of the person's notices read; `false` when none of theirs has that id.
     pub async fn mark_read(&self, recipients: &[String], id: i64) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "UPDATE alert_notices SET read_at = coalesce(read_at, now()) WHERE id = $1 AND recipient = ANY($2)",
-            )
-            .bind(id)
-            .bind(recipients)
-            .execute(pool)
-            .await?
-            .rows_affected()
-                > 0),
+            Inner::Postgres(pool, mirror) => {
+                for (_, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    let marked = sqlx::query(
+                        "UPDATE alert_notices SET read_at = coalesce(read_at, now()) WHERE id = $1 AND recipient = ANY($2)",
+                    )
+                    .bind(id)
+                    .bind(recipients)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                    tx.commit().await?;
+                    if marked > 0 {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
                 let mut found = false;
@@ -1329,7 +1414,9 @@ impl Evaluator {
                         }
                     }
                 }
-                self.store.digested(held.subscription.id, now).await?;
+                self.store
+                    .digested(&held.subscription.project, held.subscription.id, now)
+                    .await?;
             }
         }
         Ok(())
@@ -1567,7 +1654,7 @@ mod tests {
         // After the refusals: a signal counts only what happened up to the evaluator's now.
         let now = Utc::now() + Duration::seconds(1);
         let mirror = mirror();
-        let store = Arc::new(AlertStore::new(None));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
         let evaluator = Evaluator::new(
             Arc::clone(&mirror),
             Arc::new(crate::quality::Store::default()),
@@ -1584,7 +1671,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         for (who, target, event) in [
             ("eeva", "analyst", Event::SpendShare),
             ("mikko", "builder", Event::RefusalSpike),
@@ -1599,7 +1687,8 @@ mod tests {
                     Delivery::Portal,
                 )
                 .await
-                .unwrap();
+                .unwrap()
+                .expect("kept");
         }
         evaluator.run(now).await.unwrap();
         evaluator.run(now + Duration::minutes(1)).await.unwrap();
@@ -1743,7 +1832,7 @@ mod tests {
     #[tokio::test]
     async fn a_subscriber_is_told_once_when_it_starts_once_when_it_recovers_and_not_while_muted() {
         let mirror = mirror();
-        let store = Arc::new(AlertStore::new(None));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
         let evaluator = Evaluator::new(
             Arc::clone(&mirror),
             Arc::new(crate::quality::Store::default()),
@@ -1759,7 +1848,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         let muted = store
             .upsert(
                 "eeva",
@@ -1770,7 +1860,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         store
             .mute("eeva", muted.id, Some(at("2026-10-08T00:00:00Z")))
             .await
@@ -1785,7 +1876,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
 
         let stalled = json!({ "phase": "Live", "conditions": [{ "type": "StreamWriting", "status": "False", "reason": "Stalled" }] });
         mirror.upsert(pipeline("bikes", stalled));
@@ -1816,7 +1908,7 @@ mod tests {
     #[tokio::test]
     async fn a_source_failing_three_runs_in_a_row_opens_a_failure_once_an_hour_is_read() {
         let mirror = mirror();
-        let store = Arc::new(AlertStore::new(None));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
         let runs = Arc::new(crate::pipeline_log::LogStore::new(None));
         let evaluator = Evaluator::new(
             Arc::clone(&mirror),
@@ -1834,7 +1926,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         mirror.upsert(pipeline("bikes", json!({ "phase": "Live" })));
         let broken = |message: &str| crate::pipeline_log::NewLine {
             record_id: String::new(),
@@ -1916,7 +2009,7 @@ mod tests {
     #[tokio::test]
     async fn a_digest_names_the_day_s_incidents_once() {
         let mirror = mirror();
-        let store = Arc::new(AlertStore::new(None));
+        let store = Arc::new(AlertStore::new(None, Default::default()));
         let evaluator = Evaluator::new(
             Arc::clone(&mirror),
             Arc::new(crate::quality::Store::default()),
@@ -1932,7 +2025,8 @@ mod tests {
                 Delivery::Digest,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         mirror.upsert(pipeline("bikes", json!({ "phase": "Error" })));
         evaluator.run(at("2026-10-07T03:00:00Z")).await.unwrap();
         assert!(
@@ -1951,7 +2045,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_person_keeps_their_newest_notices_and_reads_only_their_own() {
-        let store = AlertStore::new(None);
+        let store = AlertStore::new(None, Default::default());
         let sub = store
             .upsert(
                 "jana",
@@ -1962,7 +2056,8 @@ mod tests {
                 Delivery::Portal,
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("kept");
         let key: IncidentKey = ("helsinki".into(), "bikes".into(), Event::Zero);
         for _ in 0..(KEPT + 5) {
             store
@@ -1992,7 +2087,10 @@ mod tests {
     /// rows and their `since`.
     #[tokio::test]
     async fn a_run_over_an_unloaded_mirror_keeps_the_health_log() {
-        let log = Arc::new(crate::health_log::HealthStore::new(None));
+        let log = Arc::new(crate::health_log::HealthStore::new(
+            None,
+            Default::default(),
+        ));
         let t0 = at("2026-10-21T08:00:00Z");
         let row = crate::health_log::Finding {
             project: "bbsk".into(),
@@ -2008,7 +2106,7 @@ mod tests {
         let evaluator = Evaluator::new(
             Arc::new(Mirror::new()),
             Arc::new(crate::quality::Store::default()),
-            Arc::new(AlertStore::new(None)),
+            Arc::new(AlertStore::new(None, Default::default())),
         )
         .with_health_log(
             Arc::clone(&log),

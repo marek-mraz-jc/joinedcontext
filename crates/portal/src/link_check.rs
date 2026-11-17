@@ -473,15 +473,18 @@ impl<'a> Stored<'a> {
 }
 
 /// The newest check of each pipeline, durable with a database.
+/// Every statement runs in a `db::tenant_tx` of its project's key (T-7197 PK-1e).
 pub struct LinkStore {
     db: Option<sqlx::PgPool>,
+    mirror: Arc<Mirror>,
     memory: RwLock<HashMap<(String, String), Links>>,
 }
 
 impl LinkStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<Mirror>) -> Self {
         Self {
             db,
+            mirror,
             memory: RwLock::default(),
         }
     }
@@ -493,12 +496,17 @@ impl LinkStore {
                 .get(&(project.to_owned(), pipeline.to_owned()))
                 .cloned());
         };
+        let Some(key) = crate::project_ids::key_of(pool, &self.mirror, project).await? else {
+            return Ok(None);
+        };
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         let row: Option<(sqlx::types::Json<Links>,)> =
             sqlx::query_as("SELECT result FROM link_check WHERE project = $1 AND pipeline = $2")
                 .bind(project)
                 .bind(pipeline)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await?;
+        tx.commit().await?;
         Ok(row.map(|(json,)| json.0))
     }
 
@@ -513,6 +521,11 @@ impl LinkStore {
             memory.insert((project.to_owned(), pipeline.to_owned()), links.clone());
             return Ok(());
         };
+        // A project with no tenancy key keeps no check.
+        let Some(key) = crate::project_ids::key_of(pool, &self.mirror, project).await? else {
+            return Ok(());
+        };
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         sqlx::query(
             "INSERT INTO link_check (project, pipeline, checked_at, result) VALUES ($1, $2, now(), $3) \
              ON CONFLICT (project, pipeline) DO UPDATE SET checked_at = now(), result = EXCLUDED.result",
@@ -520,12 +533,12 @@ impl LinkStore {
         .bind(project)
         .bind(pipeline)
         .bind(sqlx::types::Json(Stored::of(links)))
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await
     }
 
-    /// When the newest check ran, over every pipeline.
+    /// When the newest check ran, over every pipeline, read project by project (STO-07).
     pub async fn newest(&self) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
         let Some(pool) = &self.db else {
             let memory = self.memory.read().unwrap_or_else(|p| p.into_inner());
@@ -535,13 +548,18 @@ impl LinkStore {
                 .map(|t| t.with_timezone(&Utc))
                 .max());
         };
-        let row: (Option<time::OffsetDateTime>,) =
-            sqlx::query_as("SELECT max(checked_at) FROM link_check")
-                .fetch_one(pool)
-                .await?;
-        Ok(row
-            .0
-            .and_then(|t| DateTime::from_timestamp(t.unix_timestamp(), 0)))
+        let mut newest: Option<time::OffsetDateTime> = None;
+        for (project, key) in crate::project_ids::keyed_projects(pool, &self.mirror).await? {
+            let mut tx = crate::db::tenant_tx(pool, key).await?;
+            let row: (Option<time::OffsetDateTime>,) =
+                sqlx::query_as("SELECT max(checked_at) FROM link_check WHERE project = $1")
+                    .bind(&project)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            tx.commit().await?;
+            newest = newest.max(row.0);
+        }
+        Ok(newest.and_then(|t| DateTime::from_timestamp(t.unix_timestamp(), 0)))
     }
 }
 
@@ -1234,7 +1252,7 @@ mod tests {
             .expect("bind");
         let at = listener.local_addr().expect("address");
         tokio::spawn(async move { axum::serve(listener, gateway).await });
-        let store = Arc::new(LinkStore::new(None));
+        let store = Arc::new(LinkStore::new(None, Default::default()));
         let checker = Checker::new(
             Arc::clone(&mirror),
             Arc::clone(&store),

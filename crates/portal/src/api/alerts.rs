@@ -176,8 +176,15 @@ pub async fn subscribe(
             delivery,
         )
         .await
+        .map_err(stored)?
         .map(Json)
-        .map_err(stored)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the project {} belongs to no active Organization of this installation's registry, \
+                 so it keeps no alert; an operator adds its Organization on the Organizations page first",
+                new.project
+            ))
+        })
 }
 
 #[utoipa::path(
