@@ -751,6 +751,7 @@ impl AppState {
                                 "no third API client: no App host gets a certificate"
                             ),
                         }
+                        syncer = self.wire_org_hosts(syncer, &namespace);
                         syncer = syncer.with_edge_file(
                             Arc::new(
                                 crate::reconciler::edge_file::EdgeFile::new(edge_kube, namespace)
@@ -779,6 +780,48 @@ impl AppState {
             _ => tracing::info!("no app settings or no cluster: apps are read, not deployed"),
         }
         syncer
+    }
+
+    /// The registry hosts' certificates and Ingresses (T-7129 §3), beside the App hosts': a
+    /// database for the registry and a client of their own. `JC_PORTAL_DNS01_ISSUER` names the
+    /// dns01 ClusterIssuer to request them from instead of the edge certificate's issuer.
+    fn wire_org_hosts(&self, syncer: Syncer, namespace: &str) -> Syncer {
+        let Some(pool) = self.db.clone() else {
+            return syncer;
+        };
+        let dns = match crate::domain_verification::NetLookup::new() {
+            Ok(dns) => dns,
+            Err(reason) => {
+                tracing::warn!(%reason, "no resolver: no registry host moves past approved");
+                return syncer;
+            }
+        };
+        let dns01 = std::env::var("JC_PORTAL_DNS01_ISSUER")
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty());
+        if let Some(name) = dns01
+            .as_deref()
+            .filter(|name| !crate::resource::is_dns1123(name))
+        {
+            tracing::error!(%name, "JC_PORTAL_DNS01_ISSUER is not a Kubernetes name: no registry host gets a certificate");
+            return syncer;
+        }
+        match crate::apps::kube::KubeClient::in_cluster() {
+            Ok(Some(kube)) => syncer.with_org_hosts(Arc::new(
+                crate::reconciler::org_hosts::OrgHosts::new(
+                    kube,
+                    namespace.to_owned(),
+                    pool,
+                    Arc::new(dns),
+                )
+                .with_dns01_issuer(dns01),
+            )),
+            _ => {
+                tracing::warn!("no fourth API client: no registry host gets a certificate");
+                syncer
+            }
+        }
     }
 
     /// The realm writers: groups, App clients, workload clients, hub scopes, MQTT and MCP clients.

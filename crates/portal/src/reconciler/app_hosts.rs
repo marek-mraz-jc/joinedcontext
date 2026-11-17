@@ -98,7 +98,7 @@ pub fn hostname_certificate(
     named_certificate(namespace, &name, hostname_labels(app), hostname, issuer_ref)
 }
 
-fn named_certificate(
+pub(super) fn named_certificate(
     namespace: &str,
     name: &str,
     labels: Value,
@@ -134,7 +134,7 @@ pub fn hostname_ingress(
     named_ingress(template, namespace, &name, hostname_labels(app), hostname)
 }
 
-fn named_ingress(
+pub(super) fn named_ingress(
     template: &Value,
     namespace: &str,
     name: &str,
@@ -223,7 +223,7 @@ fn no_backend() -> HostState {
 }
 
 /// A kube error as a sentence that names the object and the status, never the body sent.
-fn said(object: &str, err: &KubeError) -> String {
+pub(super) fn said(object: &str, err: &KubeError) -> String {
     match err {
         KubeError::Api { status, .. } => format!("the API server answered {status} for {object}"),
         other => format!("{object}: {other}"),

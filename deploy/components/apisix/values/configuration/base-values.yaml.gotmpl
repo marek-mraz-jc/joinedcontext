@@ -27,11 +27,23 @@ realm: {{ $global.instanceSlug }}
 
 # The Portal composes the served edge file from the base (ADR-N-030, AP-112). An environment
 # without the Portal (addons) keeps the base helm seeds.
+{{- /* In jc the Portal runs inside jc (ServiceAccount jc): it composes when the environment sets
+       jc.server.edgeComposer, which gives jc its API token for this Role (T-7129 §3, T-7138). */}}
 {{- $portal := dig "portal" "portal" dict .Values }}
+{{- $jcComposer := and (has "jc" .Values.components) (dig "jc" "server" "edgeComposer" false .Values) }}
 composer:
+{{- if $jcComposer }}
+  enabled: true
+  serviceAccount: jc
+  namespace: {{ dig "jc" "server" "namespace" "" .Values | quote }}
+{{- else }}
   enabled: {{ dig "enabled" false $portal }}
   serviceAccount: portal
   namespace: {{ dig "namespace" "" $portal | quote }}
+{{- end }}
+  admission:
+    enabled: {{ has "runtime-policies" .Values.components }}
+  dns01Issuer: {{ dig "jc" "server" "dns01Issuer" "" .Values | quote }}
 
 # The SAN list is the apex plus every routed subdomain, derived from the same route map the
 # ConfigMap is built from, so a new route can never end up on an uncovered hostname. Several

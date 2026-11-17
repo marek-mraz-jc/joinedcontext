@@ -1,0 +1,118 @@
+{{- if and .Values.composer.enabled .Values.composer.admission.enabled }}
+{{- $issuers := list .Values.edge.clusterIssuer }}
+{{- with .Values.composer.dns01Issuer }}{{ $issuers = append $issuers . }}{{ end }}
+{{- $subject := dict "kind" "ServiceAccount" "name" .Values.composer.serviceAccount "namespace" .Values.composer.namespace }}
+# What the edge-file composer may send in this namespace (evidence/T-7129/design.md §3, T-7138).
+# RBAC cannot narrow `create` or `delete` to labelled objects, and a Certificate whose
+# `secretName` is the edge's own TLS Secret would overwrite it. So for the composer's
+# ServiceAccount alone: a Certificate or Ingress only named `jc-org-*` or `app-*`, labelled as
+# the Portal's host objects, its Secret its own name plus `-tls`, a Certificate only from the
+# edge's issuer (or the dns01 one named), every Ingress backend the APISIX gateway; and a
+# delete only of an object carrying those labels.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: edge-file-composer-objects
+  labels:
+    {{- include "configuration.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: Edge composer writes only its own host objects
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Certificate, Ingress
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: names-and-labels
+      match:
+        any:
+          - resources:
+              kinds: [cert-manager.io/v1/Certificate, networking.k8s.io/v1/Ingress]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects: [{{ $subject | toJson }}]
+      validate:
+        message: >-
+          The edge composer creates only Certificates and Ingresses named jc-org-* or app-* and
+          labelled app.kubernetes.io/managed-by=joinedcontext-portal with component org-host,
+          app-host or app-hostname.
+        pattern:
+          metadata:
+            name: "jc-org-* | app-*"
+            labels:
+              app.kubernetes.io/managed-by: joinedcontext-portal
+              app.kubernetes.io/component: "org-host | app-host | app-hostname"
+    - name: certificate-secret-and-issuer
+      match:
+        any:
+          - resources:
+              kinds: [cert-manager.io/v1/Certificate]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects: [{{ $subject | toJson }}]
+      validate:
+        message: >-
+          A composer Certificate keeps its own Secret (its name plus -tls) and is issued by
+          {{ join " or " $issuers }}.
+        deny:
+          conditions:
+            any:
+              - key: "{{`{{ request.object.spec.secretName || '' }}`}}"
+                operator: NotEquals
+                value: "{{`{{ request.object.metadata.name }}`}}-tls"
+              - key: "{{`{{ request.object.spec.issuerRef.name || '' }}`}}"
+                operator: AnyNotIn
+                value: {{ $issuers | toJson }}
+              - key: "{{`{{ request.object.spec.issuerRef.kind || '' }}`}}"
+                operator: NotEquals
+                value: ClusterIssuer
+    - name: ingress-secret-and-backend
+      match:
+        any:
+          - resources:
+              kinds: [networking.k8s.io/v1/Ingress]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [CREATE, UPDATE]
+            subjects: [{{ $subject | toJson }}]
+      validate:
+        message: >-
+          A composer Ingress names only its own TLS Secret (its name plus -tls) and routes only
+          to the Service {{ .Values.composer.gatewayService }}.
+        deny:
+          conditions:
+            any:
+              - key: '{{ "{{ request.object.spec.tls[].secretName || `[]` }}" }}'
+                operator: AnyNotIn
+                value: ["{{`{{ request.object.metadata.name }}`}}-tls"]
+              - key: '{{ "{{ request.object.spec.rules[].http.paths[].backend.service.name || `[]` }}" }}'
+                operator: AnyNotIn
+                value: [{{ .Values.composer.gatewayService | quote }}]
+              - key: "{{`{{ length(request.object.spec.rules[].http.paths[]) }}`}}"
+                operator: NotEquals
+                value: "{{`{{ length(request.object.spec.rules[].http.paths[].backend.service) }}`}}"
+              - key: "{{`{{ request.object.spec.defaultBackend || '' }}`}}"
+                operator: NotEquals
+                value: ""
+    - name: delete-labelled-only
+      match:
+        any:
+          - resources:
+              kinds: [cert-manager.io/v1/Certificate, networking.k8s.io/v1/Ingress]
+              namespaces: [{{ .Release.Namespace | quote }}]
+              operations: [DELETE]
+            subjects: [{{ $subject | toJson }}]
+      validate:
+        message: >-
+          The edge composer deletes only the host objects it labelled; the edge's own Ingress
+          and Certificate are helm's.
+        deny:
+          conditions:
+            any:
+              - key: "{{`{{ request.oldObject.metadata.labels.\"app.kubernetes.io/managed-by\" || '' }}`}}"
+                operator: NotEquals
+                value: joinedcontext-portal
+              - key: "{{`{{ request.oldObject.metadata.labels.\"app.kubernetes.io/component\" || '' }}`}}"
+                operator: AnyNotIn
+                value: [org-host, app-host, app-hostname]
+{{- end }}

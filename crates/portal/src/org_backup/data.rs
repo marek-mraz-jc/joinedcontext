@@ -603,6 +603,10 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
         "the installation's host registry: a host is proposed and approved again, never restored",
     ),
     (
+        "organization_host_certificates",
+        "the installation's certificate pacing ledger, not an Organization's",
+    ),
+    (
         "operator_changes",
         "the installation operators' Changes: hosts and operators, not an Organization's",
     ),

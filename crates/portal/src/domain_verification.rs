@@ -336,6 +336,28 @@ impl TxtRecords for NetLookup {
     }
 }
 
+/// The addresses a registry host resolves to, for its `dns-ok` step (T-7129 §3, T-7138): A and
+/// AAAA, a CNAME followed. No record is an empty set, not a failure.
+impl crate::reconciler::org_hosts::Addresses for NetLookup {
+    fn addresses<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<std::collections::BTreeSet<std::net::IpAddr>, Unanswered>,
+    > {
+        Box::pin(async move {
+            match self.resolver.lookup_ip(name).await {
+                Ok(answer) => Ok(answer.iter().collect()),
+                Err(err) if err.is_no_records_found() || err.is_nx_domain() => {
+                    Ok(std::collections::BTreeSet::new())
+                }
+                Err(_) => Err(Unanswered),
+            }
+        })
+    }
+}
+
 /// What the gateway decides a write on: one Organization, its domain and where it stands
 /// (`GET /internal/domain-verifications`, Architecture/03 §3). The challenge, the record and
 /// the reason stay with the Portal.
