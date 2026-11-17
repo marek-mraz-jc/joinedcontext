@@ -686,14 +686,20 @@ mod tests {
             tenants.shako.map(|pair| pair.map(|id| id.to_string())),
             Some([one.clone(), one.clone()])
         );
-        assert_eq!(tenants.daiya_installation.map(|id| id.to_string()), Some(one));
+        assert_eq!(
+            tenants.daiya_installation.map(|id| id.to_string()),
+            Some(one)
+        );
         let installation = dataroom_core::OrgId::parse_verified(&cfg.dataroom.org_id).unwrap();
         let alpha = &tenants.dataroom["alpha"];
         assert_eq!(
             alpha.org.to_string(),
             dataroom_core::OrgId::of_organization(installation, "alpha").to_string()
         );
-        assert_eq!(alpha.catalogue.to_string(), "00000000-0000-7000-8000-0000000000a1");
+        assert_eq!(
+            alpha.catalogue.to_string(),
+            "00000000-0000-7000-8000-0000000000a1"
+        );
         assert_ne!(tenants.dataroom["beta"].org, alpha.org);
         let portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
         assert!(backup_vars(&portal_only).is_empty());

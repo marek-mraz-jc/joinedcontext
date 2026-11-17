@@ -429,14 +429,22 @@ impl Bucket {
         size: u64,
         part: usize,
     ) -> Result<String, S3Error> {
-        let file = std::fs::File::open(path).map_err(|_| S3Error::Unreadable("the archive file"))?;
+        let file =
+            std::fs::File::open(path).map_err(|_| S3Error::Unreadable("the archive file"))?;
         if size <= part as u64 {
             let (_, body) = read_part(file, part).await?;
             return self.put(http, key, body).await;
         }
         const CREATE: &str = "CreateMultipartUpload";
         let created = self
-            .call(http, CREATE, reqwest::Method::POST, Some(key), &[("uploads", "")], Vec::new())
+            .call(
+                http,
+                CREATE,
+                reqwest::Method::POST,
+                Some(key),
+                &[("uploads", "")],
+                Vec::new(),
+            )
             .await?;
         let upload = tag(&Self::text(created, CREATE).await?, "UploadId")
             .ok_or(S3Error::Unreadable(CREATE))?;
@@ -447,7 +455,10 @@ impl Bucket {
                     .iter()
                     .enumerate()
                     .map(|(at, etag)| {
-                        format!("<Part><PartNumber>{}</PartNumber><ETag>{etag}</ETag></Part>", at + 1)
+                        format!(
+                            "<Part><PartNumber>{}</PartNumber><ETag>{etag}</ETag></Part>",
+                            at + 1
+                        )
                     })
                     .collect();
                 self.call(
@@ -456,7 +467,8 @@ impl Bucket {
                     reqwest::Method::POST,
                     Some(key),
                     &[("uploadId", upload.as_str())],
-                    format!("<CompleteMultipartUpload>{body}</CompleteMultipartUpload>").into_bytes(),
+                    format!("<CompleteMultipartUpload>{body}</CompleteMultipartUpload>")
+                        .into_bytes(),
                 )
                 .await
             }
@@ -610,19 +622,34 @@ mod tests {
         let file: Vec<u8> = (0..2500u32).map(|i| (i % 251) as u8).collect();
         std::fs::write(&dir, &file).expect("file");
         let version = bucket
-            .put_file(&reqwest::Client::new(), "jc/a/data/archive.zip.age", &dir, 2500, 1000)
+            .put_file(
+                &reqwest::Client::new(),
+                "jc/a/data/archive.zip.age",
+                &dir,
+                2500,
+                1000,
+            )
             .await
             .expect("uploaded");
         std::fs::remove_file(&dir).ok();
         assert_eq!(version, "v-big");
         let received = server.received_requests().await.expect("requests");
-        let parts: Vec<&Request> = received.iter().filter(|r| r.method.as_str() == "PUT").collect();
-        assert_eq!(parts.iter().map(|r| r.body.len()).collect::<Vec<_>>(), vec![1000, 1000, 500]);
+        let parts: Vec<&Request> = received
+            .iter()
+            .filter(|r| r.method.as_str() == "PUT")
+            .collect();
+        assert_eq!(
+            parts.iter().map(|r| r.body.len()).collect::<Vec<_>>(),
+            vec![1000, 1000, 500]
+        );
         let rebuilt: Vec<u8> = parts.iter().flat_map(|r| r.body.clone()).collect();
         assert_eq!(rebuilt, file);
         let complete = received.last().expect("complete");
         let body = String::from_utf8_lossy(&complete.body);
-        assert!(body.contains("<PartNumber>3</PartNumber><ETag>\"etag-3\"</ETag>"), "{body}");
+        assert!(
+            body.contains("<PartNumber>3</PartNumber><ETag>\"etag-3\"</ETag>"),
+            "{body}"
+        );
     }
 
     /// The GET Object example of the AWS SigV4 documentation ("Examples of Signature

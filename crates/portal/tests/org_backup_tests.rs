@@ -913,11 +913,15 @@ fn the_deployment_grants_each_backup_reader_exactly_the_columns_the_portal_expor
 /// One database per module, migrated as the module migrates it, seeded with alfa's and
 /// bravo's rows, the backup reader granted as the deployment grants it; the reader's URL by
 /// module. `None` without `JC_PORTAL_TEST_DATABASE_URL`.
-async fn seeded_module_dbs(seed: &BTreeMap<&str, String>) -> Option<BTreeMap<&'static str, String>> {
+async fn seeded_module_dbs(
+    seed: &BTreeMap<&str, String>,
+) -> Option<BTreeMap<&'static str, String>> {
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
         .filter(|u| !u.trim().is_empty())?;
-    let admin = sqlx::PgPool::connect(&url).await.expect("the test database");
+    let admin = sqlx::PgPool::connect(&url)
+        .await
+        .expect("the test database");
     // Roles are the cluster's: made once, kept for the next run.
     sqlx::raw_sql(
         "DO $$ DECLARE r text; BEGIN
@@ -941,14 +945,19 @@ async fn seeded_module_dbs(seed: &BTreeMap<&str, String>) -> Option<BTreeMap<&'s
     .expect("roles");
     let mut readers = BTreeMap::new();
     for (module, _) in MODULE_SEED {
-        let name = format!("org_mod_{module}_{}", common::unique::unique().replace('-', "_"));
+        let name = format!(
+            "org_mod_{module}_{}",
+            common::unique::unique().replace('-', "_")
+        );
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
             .execute(&admin)
             .await
             .expect("a fresh database");
         let mut own = url::Url::parse(&url).expect("url");
         own.set_path(&format!("/{name}"));
-        let db = sqlx::PgPool::connect(own.as_str()).await.expect("module db");
+        let db = sqlx::PgPool::connect(own.as_str())
+            .await
+            .expect("module db");
         for migration in module_migrations(module) {
             sqlx::raw_sql(sqlx::AssertSqlSafe(migration))
                 .execute(&db)
@@ -1005,7 +1014,10 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
             .replace("{alfa_org}", &dataroom["alfa"].org.to_string())
             .replace("{bravo_org}", &dataroom["bravo"].org.to_string())
             .replace("{alfa_catalogue}", &dataroom["alfa"].catalogue.to_string())
-            .replace("{bravo_catalogue}", &dataroom["bravo"].catalogue.to_string())
+            .replace(
+                "{bravo_catalogue}",
+                &dataroom["bravo"].catalogue.to_string(),
+            )
             .replace("{{", "{")
             .replace("}}", "}")
     };
@@ -1026,8 +1038,16 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
     // alfa-city's space `air` is tenant alfa-city-air; bravo's project alfa-city-air (named like
     // it) has space `x`, tenant alfa-city-air-x, which is bravo's.
     let m = &world.state.mirror;
-    m.upsert(org("Project", "alfa-city-air", json!({ "organizationRef": "bravo" })));
-    for (project, space) in [("alfa-city", "air"), ("bravo-town", "air"), ("alfa-city-air", "x")] {
+    m.upsert(org(
+        "Project",
+        "alfa-city-air",
+        json!({ "organizationRef": "bravo" }),
+    ));
+    for (project, space) in [
+        ("alfa-city", "air"),
+        ("bravo-town", "air"),
+        ("alfa-city-air", "x"),
+    ] {
         m.upsert(common::envelope("ContextSpace", space, project, json!({})));
     }
     world.state.mirror.set_repositories(BTreeMap::from([
@@ -1098,15 +1118,23 @@ async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_colum
         ("module/shako/repo.jsonl", "alfa-repo-mark"),
         ("module/daiya/cr_folder.jsonl", "alfa-folder-mark"),
         ("module/dataroom/cat_catalogue.jsonl", "alfa-catalogue-mark"),
-        ("module/dataroom/cat_harvest_source.jsonl", "alfa-harvest-mark"),
+        (
+            "module/dataroom/cat_harvest_source.jsonl",
+            "alfa-harvest-mark",
+        ),
     ] {
         assert!(files[path].contains(mark), "{mark} missing from {path}");
     }
-    assert_eq!(index["modules"]["antares"]["keys"]["tenants"], json!(["alfa-city-air"]));
+    assert_eq!(
+        index["modules"]["antares"]["keys"]["tenants"],
+        json!(["alfa-city-air"])
+    );
     assert_eq!(index["modules"]["antares"]["tables"]["entities"], 1);
     // A repository of the Apps' owner named like alfa's project repository is not alfa's.
     assert_eq!(index["modules"]["shako"]["tables"]["repo"], 1);
-    assert!(!files.keys().any(|p| p.contains("credentials") || p.contains("webhook")));
+    assert!(!files
+        .keys()
+        .any(|p| p.contains("credentials") || p.contains("webhook")));
 }
 
 #[tokio::test]

@@ -89,12 +89,10 @@ pub struct DataIndex {
 
 /// The modules whose data is not in this archive yet, and why. Each slice that adds an
 /// exporter takes its line out.
-pub const NOT_EXPORTED_YET: &[(&str, &str)] = &[
-    (
-        "assistant",
-        "jc_assistant has no Organization key yet; the assistant's runs are in portal/agent_runs",
-    ),
-];
+pub const NOT_EXPORTED_YET: &[(&str, &str)] = &[(
+    "assistant",
+    "jc_assistant has no Organization key yet; the assistant's runs are in portal/agent_runs",
+)];
 
 macro_rules! by_project {
     ($name:literal, [$($column:literal),+ $(,)?]) => {
@@ -929,7 +927,7 @@ async fn build_archive(
 /// The run's archive, encrypted to the target's recipients, in a scratch file: the file, its
 /// size and the SHA-256 the run log binds the version by. An archive past one PutObject goes up
 /// in parts ([`super::s3::Bucket::put_file`]).
-pub async fn encrypted_archive(
+pub(super) async fn encrypted_archive(
     state: &AppState,
     target: &Target,
     actor: &str,

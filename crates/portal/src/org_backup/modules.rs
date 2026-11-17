@@ -90,8 +90,9 @@ impl BackupModules {
             }
         }
         let tenants = match lookup("JC_PORTAL_BACKUP_TENANTS").filter(|v| !v.trim().is_empty()) {
-            Some(text) => serde_json::from_str(&text)
-                .map_err(|e| format!("JC_PORTAL_BACKUP_TENANTS: {e}"))?,
+            Some(text) => {
+                serde_json::from_str(&text).map_err(|e| format!("JC_PORTAL_BACKUP_TENANTS: {e}"))?
+            }
             None => Tenants::default(),
         };
         Ok(Self { readers, tenants })
@@ -156,7 +157,12 @@ pub const ANTARES_TABLES: &[Table] = &[
             "bare"
         ]
     ),
-    table!("iri_ids", "tenants", "tenant_id = ANY($1)", ["tenant_id", "id", "iri"]),
+    table!(
+        "iri_ids",
+        "tenants",
+        "tenant_id = ANY($1)",
+        ["tenant_id", "id", "iri"]
+    ),
     table!(
         "attr_rows",
         "tenants",
@@ -236,7 +242,12 @@ pub const ANTARES_TABLES: &[Table] = &[
 /// webauthn_credential and idp_links (second factors and linked accounts), and by column
 /// `organization_domains.challenge_hash` and `applications.secret_enc`.
 pub const KAISATSU_TABLES: &[Table] = &[
-    table!("organizations", "realm", "realm_id = ANY($1)", ["realm_id", "org_id", "alias", "doc"]),
+    table!(
+        "organizations",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "org_id", "alias", "doc"]
+    ),
     table!(
         "organization_domains",
         "realm",
@@ -249,7 +260,12 @@ pub const KAISATSU_TABLES: &[Table] = &[
         "realm_id = ANY($1)",
         ["realm_id", "org_id", "person_id", "doc"]
     ),
-    table!("groups", "realm", "realm_id = ANY($1)", ["realm_id", "id", "org_id", "path", "doc"]),
+    table!(
+        "groups",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "id", "org_id", "path", "doc"]
+    ),
     table!(
         "group_members",
         "realm",
@@ -260,19 +276,42 @@ pub const KAISATSU_TABLES: &[Table] = &[
         "people",
         "realm",
         "realm_id = ANY($1)",
-        ["realm_id", "id", "org_id", "username_lower", "email_lower", "transient", "doc"]
+        [
+            "realm_id",
+            "id",
+            "org_id",
+            "username_lower",
+            "email_lower",
+            "transient",
+            "doc"
+        ]
     ),
     table!(
         "roles",
         "realm",
         "realm_id = ANY($1)",
-        ["realm_id", "id", "container_id", "client_role", "name", "doc"]
+        [
+            "realm_id",
+            "id",
+            "container_id",
+            "client_role",
+            "name",
+            "doc"
+        ]
     ),
     table!(
         "role_mappings",
         "realm",
         "realm_id = ANY($1)",
-        ["realm_id", "id", "principal_kind", "principal_id", "client_uuid", "role_name", "doc"]
+        [
+            "realm_id",
+            "id",
+            "principal_kind",
+            "principal_id",
+            "client_uuid",
+            "role_name",
+            "doc"
+        ]
     ),
     table!(
         "applications",
@@ -280,16 +319,36 @@ pub const KAISATSU_TABLES: &[Table] = &[
         "realm_id = ANY($1)",
         ["realm_id", "id", "org_id", "client_id", "doc"]
     ),
-    table!("client_scopes", "realm", "realm_id = ANY($1)", ["realm_id", "id", "name", "doc"]),
-    table!("required_actions", "realm", "realm_id = ANY($1)", ["realm_id", "alias", "doc"]),
+    table!(
+        "client_scopes",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "id", "name", "doc"]
+    ),
+    table!(
+        "required_actions",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "alias", "doc"]
+    ),
     table!(
         "branding_blocks",
         "realm",
         "realm_id = ANY($1)",
         ["realm_id", "org_key", "org_id", "doc"]
     ),
-    table!("events", "realm", "realm_id = ANY($1)", ["realm_id", "id", "org_id", "doc"]),
-    table!("admin_events", "realm", "realm_id = ANY($1)", ["realm_id", "id", "org_id", "doc"]),
+    table!(
+        "events",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "id", "org_id", "doc"]
+    ),
+    table!(
+        "admin_events",
+        "realm",
+        "realm_id = ANY($1)",
+        ["realm_id", "id", "org_id", "doc"]
+    ),
 ];
 
 /// shako's rows of the Organization's project repositories (`owner/name`). Left out: instance
@@ -322,7 +381,17 @@ pub const SHAKO_TABLES: &[Table] = &[
         "protection_rule",
         "repos",
         "repo_id IN (SELECT id FROM shako.repo WHERE owner || '/' || name = ANY($1))",
-        ["id", "instance_id", "org_id", "repo_id", "kind", "rule_name", "doc", "created_at", "updated_at"]
+        [
+            "id",
+            "instance_id",
+            "org_id",
+            "repo_id",
+            "kind",
+            "rule_name",
+            "doc",
+            "created_at",
+            "updated_at"
+        ]
     ),
     table!(
         "pull_request",
@@ -508,13 +577,29 @@ pub const DAIYA_TABLES: &[Table] = &[
         "cr_alert_rule",
         "daiya_orgs",
         "org_id::text = ANY($1)",
-        ["installation_id", "org_id", "instance_id", "uid", "folder_uid", "title", "spec", "updated_at"]
+        [
+            "installation_id",
+            "org_id",
+            "instance_id",
+            "uid",
+            "folder_uid",
+            "title",
+            "spec",
+            "updated_at"
+        ]
     ),
     table!(
         "cr_alert_state",
         "daiya_orgs",
         "org_id::text = ANY($1)",
-        ["installation_id", "org_id", "instance_id", "rule_uid", "state", "updated_at"]
+        [
+            "installation_id",
+            "org_id",
+            "instance_id",
+            "rule_uid",
+            "state",
+            "updated_at"
+        ]
     ),
 ];
 
@@ -543,7 +628,18 @@ pub const DATAROOM_TABLES: &[Table] = &[
         "cat_publisher",
         "catalogue",
         "catalogue_id::text = ANY($1)",
-        ["org_id", "catalogue_id", "id", "name", "title", "uri", "state", "merged_into", "modified", "doc"]
+        [
+            "org_id",
+            "catalogue_id",
+            "id",
+            "name",
+            "title",
+            "uri",
+            "state",
+            "merged_into",
+            "modified",
+            "doc"
+        ]
     ),
     table!(
         "cat_dataset",
@@ -589,13 +685,32 @@ pub const DATAROOM_TABLES: &[Table] = &[
         "cat_view",
         "catalogue",
         "catalogue_id::text = ANY($1)",
-        ["org_id", "catalogue_id", "distribution_id", "id", "view_type", "title", "view_order", "doc"]
+        [
+            "org_id",
+            "catalogue_id",
+            "distribution_id",
+            "id",
+            "view_type",
+            "title",
+            "view_order",
+            "doc"
+        ]
     ),
     table!(
         "cat_harvest_source",
         "catalogue",
         "catalogue_id::text = ANY($1)",
-        ["org_id", "catalogue_id", "id", "name", "kind", "url", "publisher_id", "enabled", "modified"]
+        [
+            "org_id",
+            "catalogue_id",
+            "id",
+            "name",
+            "kind",
+            "url",
+            "publisher_id",
+            "enabled",
+            "modified"
+        ]
     ),
     table!(
         "cat_harvest_run",
@@ -685,7 +800,10 @@ pub fn daiya_org(installation: uuid::Uuid, project: &str) -> uuid::Uuid {
 /// Organization's people, so it is never read for one of them.
 fn own_realm(state: &AppState, organization: &str) -> Option<String> {
     let realm = state.organization_realms.get(organization)?;
-    let (_, name) = realm.issuer().trim_end_matches('/').rsplit_once("/realms/")?;
+    let (_, name) = realm
+        .issuer()
+        .trim_end_matches('/')
+        .rsplit_once("/realms/")?;
     (!name.is_empty()).then(|| name.to_owned())
 }
 
@@ -726,10 +844,16 @@ pub fn antares_tenants(state: &AppState, organization: &str) -> Vec<String> {
         .flat_map(|project| {
             state
                 .mirror
-                .list(project, "ContextSpace", &crate::store::ListOptions::default())
+                .list(
+                    project,
+                    "ContextSpace",
+                    &crate::store::ListOptions::default(),
+                )
                 .items
                 .into_iter()
-                .map(move |space| crate::spaces::segment(&state.mirror, project, &space.metadata.name))
+                .map(move |space| {
+                    crate::spaces::segment(&state.mirror, project, &space.metadata.name)
+                })
         })
         .collect();
     tenants.sort();
@@ -812,7 +936,10 @@ async fn daiya(state: &AppState, organization: &str) -> Result<Source, String> {
     Ok(Source {
         pool: reader(state, "daiya").await?,
         schema: "",
-        scopes: orgs.iter().map(|org| vec![("cr.org", org.clone())]).collect(),
+        scopes: orgs
+            .iter()
+            .map(|org| vec![("cr.org", org.clone())])
+            .collect(),
         keys: one_key("daiya_orgs", orgs),
         tables: DAIYA_TABLES,
     })
@@ -882,9 +1009,17 @@ mod tests {
         for (module, _, tables) in MODULE_TABLES {
             for table in *tables {
                 for column in table.columns {
-                    if ["secret", "token", "hash", "password", "_enc", "private_key", "challenge"]
-                        .iter()
-                        .any(|s| column.contains(s))
+                    if [
+                        "secret",
+                        "token",
+                        "hash",
+                        "password",
+                        "_enc",
+                        "private_key",
+                        "challenge",
+                    ]
+                    .iter()
+                    .any(|s| column.contains(s))
                     {
                         flagged.push(format!("{module}.{}.{column}", table.name));
                     }
@@ -909,16 +1044,27 @@ mod tests {
                 );
             }
         }
-        assert!(flagged.is_empty(), "looks like secret material: {flagged:?}");
+        assert!(
+            flagged.is_empty(),
+            "looks like secret material: {flagged:?}"
+        );
     }
 
     #[test]
     fn tenants_name_their_field_and_readers_must_be_postgres() {
         let env = |pairs: &'static [(&'static str, &'static str)]| {
-            move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| (*v).to_owned())
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| (*v).to_owned())
+            }
         };
         let parsed = BackupModules::from_lookup(env(&[
-            ("JC_PORTAL_BACKUP_DAIYA_DATABASE_URL", "postgres://daiya_backup@db/jc_daiya"),
+            (
+                "JC_PORTAL_BACKUP_DAIYA_DATABASE_URL",
+                "postgres://daiya_backup@db/jc_daiya",
+            ),
             (
                 "JC_PORTAL_BACKUP_TENANTS",
                 r#"{"daiyaInstallation":"00000000-0000-0000-0000-000000000001"}"#,
@@ -926,7 +1072,10 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(parsed.readers.keys().collect::<Vec<_>>(), vec![&"daiya"]);
-        assert_eq!(parsed.tenants.daiya_installation, Some(uuid::Uuid::from_u128(1)));
+        assert_eq!(
+            parsed.tenants.daiya_installation,
+            Some(uuid::Uuid::from_u128(1))
+        );
         assert!(!format!("{parsed:?}").contains("daiya_backup@"));
         let refused =
             BackupModules::from_lookup(env(&[("JC_PORTAL_BACKUP_TENANTS", r#"{"shakoo":1}"#)]))
@@ -937,6 +1086,9 @@ mod tests {
             "mysql://x",
         )]))
         .unwrap_err();
-        assert!(refused.starts_with("JC_PORTAL_BACKUP_SHAKO_DATABASE_URL"), "{refused}");
+        assert!(
+            refused.starts_with("JC_PORTAL_BACKUP_SHAKO_DATABASE_URL"),
+            "{refused}"
+        );
     }
 }
