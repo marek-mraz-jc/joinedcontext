@@ -31,6 +31,9 @@ pub struct WasmApps {
     pub store: Arc<Store>,
     /// The bucket of `components/` and `apps/` (deployment's `apps` bucket).
     pub bucket: String,
+    /// The Portal's database, whose project keys name each App's prefix (ARCH/STO-14); without
+    /// it an App's files are only under `apps/<shard>/<id>/`.
+    pub keys: Option<sqlx::PgPool>,
 }
 
 /// `components/sha256-<hex>.wasm`, where the host fetches it (AP-151).
@@ -178,14 +181,30 @@ impl WasmApps {
                 .await
                 .map_err(|err| format!("the schema export could not be written: {err}"))?;
         }
-        let prefix = format!("apps/{shard}/{id}/");
-        let objects = self
-            .store
-            .list(&self.bucket, &prefix)
-            .await
-            .map_err(|err| format!("the App's files could not be listed: {err}"))?;
-        for object in &objects {
-            let relative = object.key.strip_prefix(&prefix).unwrap_or(&object.key);
+        // The old prefix first: where both hold one path, the keyed copy is the newer and is
+        // exported last, over it.
+        let mut prefixes = vec![super::files::legacy_prefix(shard, &id)];
+        if let Some(pool) = &self.keys {
+            if let Some(key) = crate::project_ids::recorded(pool, project)
+                .await
+                .map_err(|err| format!("the project key could not be read: {err}"))?
+            {
+                prefixes.push(super::files::keyed_prefix(&key, &id));
+            }
+        }
+        let mut objects = Vec::new();
+        for prefix in &prefixes {
+            for object in self
+                .store
+                .list(&self.bucket, prefix)
+                .await
+                .map_err(|err| format!("the App's files could not be listed: {err}"))?
+            {
+                objects.push((prefix.len(), object));
+            }
+        }
+        for (cut, object) in &objects {
+            let relative = &object.key[*cut..];
             self.store
                 .copy_object(
                     &self.bucket,
@@ -197,7 +216,7 @@ impl WasmApps {
         }
         // Both exports are written: now, and only now, the App's own data goes.
         self.db.retire(&id).await.map_err(|err| err.to_string())?;
-        for object in &objects {
+        for (_, object) in &objects {
             self.store
                 .delete_object(&self.bucket, &object.key)
                 .await

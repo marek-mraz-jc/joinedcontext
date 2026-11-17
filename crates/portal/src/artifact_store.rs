@@ -117,31 +117,37 @@ pub fn shard_name(shard: u32) -> String {
 }
 
 /// What one shard's key may do in the Apps bucket (AP-158, ADR-N-044 §2.5): read, write and
-/// delete its own Apps' objects under `apps/<shard>/`, list that prefix and no other, and read
-/// the components every shard loads. Not a word about another shard's prefix: the store itself
-/// refuses it.
-pub fn shard_policy_document(bucket: &str, shard: u32) -> serde_json::Value {
-    serde_json::json!({
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-                "Resource": [format!("arn:aws:s3:::{bucket}/apps/{shard}/*")],
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:ListBucket"],
-                "Resource": [format!("arn:aws:s3:::{bucket}")],
-                "Condition": { "StringLike": { "s3:prefix": [format!("apps/{shard}/*")] } },
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:GetObject"],
-                "Resource": [format!("arn:aws:s3:::{bucket}/components/*")],
-            },
-        ],
-    })
+/// delete the objects of the Apps placed on it, each under its own `prefixes` (its project's
+/// `org/{OrgId}/project/{ProjectId}/apps/{id}/`, and `apps/{shard}/{id}/` until its files are
+/// moved, TEN-15), list those prefixes and no other, and read the components every shard loads.
+/// Not a word about another App's prefix: the store itself refuses it.
+pub fn shard_policy_document(bucket: &str, prefixes: &[String]) -> serde_json::Value {
+    let mut statements = vec![serde_json::json!({
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": [format!("arn:aws:s3:::{bucket}/components/*")],
+    })];
+    // A shard with no App gets no object right at all: an empty resource list is no policy.
+    if !prefixes.is_empty() {
+        statements.push(serde_json::json!({
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+            "Resource": prefixes
+                .iter()
+                .map(|prefix| format!("arn:aws:s3:::{bucket}/{prefix}*"))
+                .collect::<Vec<_>>(),
+        }));
+        statements.push(serde_json::json!({
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket"],
+            "Resource": [format!("arn:aws:s3:::{bucket}")],
+            "Condition": { "StringLike": { "s3:prefix": prefixes
+                .iter()
+                .map(|prefix| format!("{prefix}*"))
+                .collect::<Vec<_>>() } },
+        }));
+    }
+    serde_json::json!({ "Version": "2012-10-17", "Statement": statements })
 }
 
 /// The Secret a shard mounts its key from, `apps-host-<shard>-store` (AP-158); the host reads
@@ -306,13 +312,19 @@ impl Client {
         Ok(issued)
     }
 
-    /// Makes one WASM shard's policy and user exist in the Apps bucket `bucket`, and returns its
-    /// key (AP-158). Idempotent, as [`Client::ensure_organization`] is.
-    pub async fn ensure_shard(&self, bucket: &str, shard: u32) -> Result<Credential, Error> {
+    /// Makes one WASM shard's policy over its Apps' `prefixes` and its user exist in the Apps
+    /// bucket `bucket`, and returns its key (AP-158). Idempotent, as
+    /// [`Client::ensure_organization`] is.
+    pub async fn ensure_shard(
+        &self,
+        bucket: &str,
+        shard: u32,
+        prefixes: &[String],
+    ) -> Result<Credential, Error> {
         let credential = Credential::derive_shard(&self.settings.root_secret_key, shard);
         self.ensure_user(
             &shard_name(shard),
-            &shard_policy_document(bucket, shard),
+            &shard_policy_document(bucket, prefixes),
             &credential,
         )
         .await?;
@@ -613,6 +625,30 @@ impl Client {
             .await?
         {
             (200..=299, _, _) => Ok(()),
+            (status, _, _) => Err(Error::Refused {
+                operation: "copy an object",
+                status,
+            }),
+        }
+    }
+
+    /// Copies `from` to `to` unless `to` exists (`If-None-Match: *`): `false` when it does, so a
+    /// move never overwrites a newer write (TEN-15).
+    pub async fn copy_if_absent(&self, bucket: &str, from: &str, to: &str) -> Result<bool, Error> {
+        let source = Self::object_path(bucket, from);
+        match self
+            .object(
+                reqwest::Method::PUT,
+                bucket,
+                to,
+                Vec::new(),
+                &[("x-amz-copy-source", source), ("if-none-match", "*".into())],
+                "copy an object",
+            )
+            .await?
+        {
+            (200..=299, _, _) => Ok(true),
+            (412, _, _) => Ok(false),
             (status, _, _) => Err(Error::Refused {
                 operation: "copy an object",
                 status,
