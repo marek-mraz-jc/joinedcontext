@@ -1,5 +1,7 @@
 //! Project id addresses (ARCH/RTE-05, T-7194): `/{org}/{ProjectId}/api/v1/X` is placed as
-//! `/{org}/api/v1/projects/{name}/X` of the live project the id names in that Organization, and
+//! `/{org}/api/v1/projects/{name}/X` of the live project the id names in that Organization, the
+//! project MCP door `/{org}/{ProjectId}/api/mcp` as `/{org}/api/v1/projects/{name}/mcp` (MCP-33),
+//! and
 //! every refusal on such an address is one 404 with the same bytes, so an answer tells no one
 //! whether an id exists or whether they hold a grant on it.
 
@@ -62,6 +64,10 @@ impl ProjectTable {
         let Some(name) = self.names.get(&(organization.to_owned(), id.to_owned())) else {
             return Some(Err(()));
         };
+        // The project MCP door (MCP-33) is the project's own MCP server.
+        if rest == "api/mcp" {
+            return Some(Ok(format!("/api/v1/projects/{name}/mcp")));
+        }
         let under = match rest.strip_prefix("api/v1") {
             Some("") => String::new(),
             Some(under) if under.starts_with('/') => under.to_owned(),
@@ -151,11 +157,17 @@ mod tests {
             t.place("bratislava", &format!("/{ID}/api/v1")),
             Some(Ok("/api/v1/projects/traffic".to_owned()))
         );
+        assert_eq!(
+            t.place("bratislava", &format!("/{ID}/api/mcp")),
+            Some(Ok("/api/v1/projects/traffic/mcp".to_owned()))
+        );
         for refused in [
             "/baaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces",
             "/caaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces",
             &format!("/{ID}/api/v1x"),
             &format!("/{ID}/api/v2/spaces"),
+            &format!("/{ID}/api/mcp/x"),
+            "/baaaaaaaaaaaaaaaaaaaaaaaaa/api/mcp",
             &format!("/{ID}"),
             &format!("/{ID}/"),
         ] {

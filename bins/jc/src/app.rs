@@ -1506,6 +1506,7 @@ async fn portal_attempt(
                     seed: modules::portal::registry_seed(&cfg),
                     roles: cfg.roles.clone(),
                     hosts: shared.hosts.clone(),
+                    project_addresses: cfg.portal.project_addresses,
                 },
                 mount,
                 &shutdown,

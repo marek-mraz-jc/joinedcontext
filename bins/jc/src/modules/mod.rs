@@ -188,6 +188,7 @@ pub async fn build(
                     seed: portal::registry_seed(cfg),
                     roles: cfg.roles.clone(),
                     hosts: None,
+                    project_addresses: cfg.portal.project_addresses,
                 },
                 mount,
                 shutdown,
