@@ -274,6 +274,18 @@ routes:
   - route: POST /organization-ids
     rule: "a person of the operators' group with a second factor (EP-186, PF-78); 403 for everyone else"
     expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /operator/changes
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
+    expect: [401, 403, 403, 403, 403, 403, 403, 403]
+  - route: POST /operator/changes
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: POST /operator/changes/{id}/approve
+    rule: "a person of the operators' group with a second factor other than the proposer (T-7129 §4); 403 for everyone else"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
+  - route: POST /operator/changes/{id}/reject
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else"
+    expect: [403, 403, 403, 403, 403, 403, 403, 403]
   - route: GET /organization/addresses
     rule: "any signed-in person: the answer holds only the Organizations the caller belongs to (T-7013)"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]

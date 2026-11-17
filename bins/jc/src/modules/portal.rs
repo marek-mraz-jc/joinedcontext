@@ -434,6 +434,14 @@ pub(crate) fn organization_vars(
         .map(|org| format!("{}={scheme}://{}", org.name, org.hosts.portal))
         .collect();
     out.insert("JC_PORTAL_ORGANIZATION_HOSTS".to_owned(), hosts.join(","));
+    // The host registry's rules at the operator's door (T-7129 §1): the same two hosts the
+    // seed's check holds against.
+    let bare = |h: &str| jc_router::registry::bare(h).to_ascii_lowercase();
+    out.insert(
+        "JC_PORTAL_INSTALLATION_DOMAIN".to_owned(),
+        bare(&cfg.base_host),
+    );
+    out.insert("JC_PORTAL_LOGIN_HOST".to_owned(), bare(&cfg.login_host));
     out.insert(
         "JC_PORTAL_ORGANIZATION_ADDRESSES".to_owned(),
         organization_addresses(cfg).to_string(),
