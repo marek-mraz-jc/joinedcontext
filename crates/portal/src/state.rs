@@ -991,6 +991,10 @@ impl AppState {
                                 .await
                         })
                     }));
+                    let clients = match self.db.clone() {
+                        Some(pool) => clients.with_keys(pool),
+                        None => clients,
+                    };
                     syncer = syncer.with_workload_clients(Arc::new(clients))
                 }
                 None => tracing::warn!(
