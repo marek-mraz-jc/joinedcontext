@@ -15,6 +15,7 @@ use axum::http::{header, HeaderMap};
 
 use crate::error::ApiError;
 use crate::state::AppState;
+use crate::store::Mirror;
 
 /// What a token for this listener must be issued for. Not the Portal's API audience: a token a
 /// person or an app holds for `/api/v1` must not open an internal route as well.
@@ -93,22 +94,22 @@ async fn verified_client(state: &AppState, headers: &HeaderMap) -> Result<String
 /// (PL-19, PL-47): its project's `pipelines` account, which every stream of the project renders
 /// with, and the pipeline's own federated client `{project}-pl-{pipeline}` once streams run as
 /// their pipeline (T-1508).
-pub fn pipeline_clients(project: &str, pipeline: &str) -> [String; 2] {
-    use jc_core::kinds::{pipeline_identity, service_account::keycloak_client_id};
+pub fn pipeline_clients(mirror: &Mirror, project: &str, pipeline: &str) -> [String; 2] {
+    use jc_core::kinds::pipeline_identity;
     [
-        keycloak_client_id(project, crate::reconciler::streams::PIPELINE_ACCOUNT),
-        keycloak_client_id(project, &pipeline_identity::account_name(pipeline)),
+        mirror.client_id(project, crate::reconciler::streams::PIPELINE_ACCOUNT),
+        mirror.client_id(project, &pipeline_identity::account_name(pipeline)),
     ]
 }
 
 /// The clients a pipeline test or probe of `project` presents on its capture route (PL-43): the
 /// project's `pipelines` account, and its harness principal `{project}-pl-pipeline-test` once the
 /// harness runs through the token service (T-4050).
-pub fn harness_clients(project: &str) -> [String; 2] {
-    use jc_core::kinds::{pipeline_identity, service_account::keycloak_client_id};
+pub fn harness_clients(mirror: &Mirror, project: &str) -> [String; 2] {
+    use jc_core::kinds::pipeline_identity;
     [
-        keycloak_client_id(project, crate::reconciler::streams::PIPELINE_ACCOUNT),
-        keycloak_client_id(
+        mirror.client_id(project, crate::reconciler::streams::PIPELINE_ACCOUNT),
+        mirror.client_id(
             project,
             &pipeline_identity::account_name(pipeline_identity::HARNESS),
         ),
@@ -125,7 +126,7 @@ pub async fn authenticate_pipeline_of(
     pipeline: &str,
 ) -> Result<(), ApiError> {
     let client = verified_client(state, headers).await?;
-    if pipeline_clients(project, pipeline).contains(&client) {
+    if pipeline_clients(&state.mirror, project, pipeline).contains(&client) {
         return Ok(());
     }
     tracing::warn!(
@@ -154,7 +155,8 @@ pub async fn authenticate_pipeline_runner(
         .map(str::trim)
         .filter(|client| !client.is_empty());
     let client = verified_client(state, headers).await?;
-    let of_project = project.is_some_and(|project| harness_clients(project).contains(&client));
+    let of_project =
+        project.is_some_and(|project| harness_clients(&state.mirror, project).contains(&client));
     if configured == Some(client.as_str()) || of_project {
         Ok(())
     } else {
@@ -170,7 +172,7 @@ mod tests {
     /// harness principal, and no pipeline's own client and nothing of another project.
     #[test]
     fn a_test_is_known_by_its_projects_account_and_harness_principal() {
-        let clients = harness_clients("praha");
+        let clients = harness_clients(&Mirror::new(), "praha");
         assert_eq!(
             clients,
             [
@@ -193,10 +195,10 @@ mod tests {
     #[test]
     fn a_pipeline_is_known_by_its_projects_account_and_its_own_client() {
         assert_eq!(
-            pipeline_clients("praha", "odpad"),
+            pipeline_clients(&Mirror::new(), "praha", "odpad"),
             ["praha-pipelines".to_owned(), "praha-pl-odpad".to_owned()]
         );
-        let clients = pipeline_clients("praha", "odpad");
+        let clients = pipeline_clients(&Mirror::new(), "praha", "odpad");
         for other in [
             "helsinki-pipelines",
             "praha-pl-other",

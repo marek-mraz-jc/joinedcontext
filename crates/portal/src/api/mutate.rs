@@ -1699,8 +1699,8 @@ async fn check_content(
     crate::catalog::check_contact(&state.mirror, identity, kind, &envelope.spec)
 }
 
-/// The Keycloak client id `{project}-{name}` derives, when another project's ServiceAccount
-/// already derives it.
+/// The Keycloak client id `{project}-{name}` derives, when another ServiceAccount's client
+/// already holds it (the realm's registry id, or the derived one while it has none).
 pub(crate) fn service_account_id_taken(
     mirror: &crate::store::Mirror,
     project: &str,
@@ -1719,7 +1719,7 @@ pub(crate) fn service_account_id_taken(
             .iter()
             .any(|account| {
                 (namespace.as_str(), account.metadata.name.as_str()) != (project, name)
-                    && keycloak_client_id(&namespace, &account.metadata.name) == id
+                    && mirror.client_id(&namespace, &account.metadata.name) == id
             })
     });
     taken.then_some(id)
