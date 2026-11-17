@@ -662,7 +662,10 @@ Budget (jc-dev copy of 2026-11-17, Postgres 16 container on a shared disk):
 count equal, run as superuser. The largest Tenant (16.7 M rows) took 992 s,
 5.6 M rows 394 s, 3.0 M rows 267 s, a Tenant under 100 k rows 0.2 to 5 s;
 the whole map about 45 min. Writers wait on one Tenant's locks for its own
-time; readers go on. Before 0037 skipped the `entities` triggers, a
+time; readers go on. The rename takes its table locks all within 300 ms or
+lets them go and tries again, for up to 60 s, so it never deadlocks a writer;
+under steady writes it stops with "writers held the tables of Tenant ...":
+stop the brokers' writers or run it again. Before 0037 skipped the `entities` triggers, a
 209 k-entity Tenant ran over 20 min on 7.5 GB of temp files.
 
 ## Where the proofs run

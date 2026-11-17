@@ -13479,7 +13479,9 @@
         "plan": "Kontrola obnovy",
         "restore": "Obnova",
         "restore-request": "Obnova vyžádána",
-        "restore-decline": "Obnova zamítnuta"
+        "restore-decline": "Obnova zamítnuta",
+        "copy-plan": "Kontrola kopie projektu",
+        "copy": "Projekt zkopírován"
       }
     },
     "versions": {
@@ -13553,7 +13555,9 @@
       "keepDays": "1 až 3650 dní, například 90",
       "enabled": "Vypnutí ponechá bucket i všechny verze; Spustit nyní funguje dál.",
       "workingRecipient": "Veřejný klíč identity, kterou používají vaši správci, z age-keygen, např. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "Druhý veřejný klíč, který offline uchovává jiná osoba, např. age1syrvza6xvtvsr9f0…. Každý archiv otevře kterýkoli z nich."
+      "recoveryRecipient": "Druhý veřejný klíč, který offline uchovává jiná osoba, např. age1syrvza6xvtvsr9f0…. Každý archiv otevře kterýkoli z nich.",
+      "copyProject": "Projekty této zálohy, které smíte číst, např. air-quality. Projekt smazaný od zálohy se nezobrazí a nikdy se neobnoví.",
+      "copyName": "Malá písmena, číslice a '-', název, který nepoužívá žádný projekt, např. air-quality-restored."
     },
     "section": {
       "jump": "Přejít na zálohu",
@@ -13598,6 +13602,25 @@
         "declined": "Zamítnuto",
         "failed": "Neobnoveno: důvod je pod tím"
       }
+    },
+    "copy": {
+      "action": "Obnovit projekt",
+      "title": "Obnovit jeden projekt do nového projektu",
+      "lead": "Vyberte jeden projekt této zálohy a nový název. Jeho záznamy se zkopírují do nového projektu s vlastním id; projekt, ze kterého pocházejí, se nezmění.",
+      "list": "Zobrazit projekty",
+      "project": "Projekt této zálohy",
+      "pick": "Vyberte projekt",
+      "none": "Žádný projekt této zálohy, který smíte obnovit",
+      "deleted": "Smazané od této zálohy, nikdy se neobnoví: {names}",
+      "name": "Název nového projektu",
+      "check": "Zkontrolovat",
+      "apply": "Obnovit do nového projektu",
+      "summary": "Záznamy ke kopírování do {name}: {rows}. Odmítnuté: {refused}. Výmazy použité znovu: {erasures}.",
+      "done": "Obnoveno do {name} (id projektu {id}). {source} se nezměnil.",
+      "first": "Nejprve vyberte projekt a napište název",
+      "caption": "Záznamy podle tabulek, které kopie zapíše",
+      "refusedNote": "Odmítnuté záznamy porušují pravidlo dnešních dat (název, který má jiný záznam, nebo odkaz na záznam, který kopie nemá) a vynechají se; zbytek se zkopíruje.",
+      "noneHint": "Vyberte jinou verzi nebo požádejte správce projektu o přístup ke čtení."
     }
   },
   "operator": {

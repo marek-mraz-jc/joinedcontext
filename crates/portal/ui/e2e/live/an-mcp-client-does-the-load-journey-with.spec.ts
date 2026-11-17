@@ -1,8 +1,9 @@
 /**
  * Load from an external MCP client that holds a ServiceAccount token, on dev (T-1595, AG-64, AG-82,
  * AG-11, AG-63, PF-57, PF-58): the seeded account `helsinki/pipeline-proposer` mints a `portal-api`
- * token (T-2245), lists the tools, checks and proposes a DataSource and a Pipeline, is refused the
- * approval and bringing a workspace back, and a person approves each change in the Portal.
+ * token (T-2245), lists the tools (on the MCP door and on the project's own door, MCP-33), checks
+ * and proposes a DataSource and a Pipeline, is refused the approval and bringing a workspace back,
+ * and a person approves each change in the Portal.
  *
  * A Yellow call answers a question first (AG-63): the host shows it to the person and repeats the
  * call with the answer. The person of this journey accepts; what the Portal ran is the answer.
@@ -60,11 +61,11 @@ interface RpcAnswer {
 const said = (result: ToolResult): string => (result.content ?? []).map((part) => part.text ?? "").join(" ");
 
 /** The MCP door as a host drives it: JSON-RPC over one POST, the bearer and nothing else. */
-function mcpClient(baseURL: string, token: string) {
+function mcpClient(baseURL: string, token: string, door = "/api/v1/mcp") {
   let id = 0;
   const rpc = async (method: string, params: Record<string, unknown>): Promise<RpcAnswer> => {
     id += 1;
-    const answer = await fetch(new URL("/api/v1/mcp", baseURL), {
+    const answer = await fetch(new URL(door, baseURL), {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
@@ -141,6 +142,13 @@ test("an MCP client with a ServiceAccount token checks and proposes a data sourc
     for (const withheld of ["jc_change_approve", "jc_workspace_propose"]) {
       expect(tools, withheld).not.toContain(withheld);
     }
+
+    // MCP-33: the project's own door lists the same tools and holds every message to its project.
+    const projectDoor = mcpClient(base, token, `/api/v1/projects/${PROJECT}/mcp`);
+    const held = ((await projectDoor.rpc("tools/list", {})).result?.tools ?? []).map((tool) => tool.name);
+    expect([...held].sort()).toEqual([...tools].sort());
+    const elsewhere = await projectDoor.rpc("tools/list", { project: "bystrica" });
+    expect(elsewhere.error?.message).toBe("unknown project");
 
     // The data source: checked (PF-57), proposed, and not approved by the account.
     const sourceCheck = await mcp.call("jc_datasource_check", { manifest: SOURCE_MANIFEST });

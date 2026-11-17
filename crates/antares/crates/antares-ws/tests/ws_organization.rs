@@ -82,14 +82,13 @@ async fn an_upgrade_on_another_organizations_tenant_reads_as_an_unknown_tenant(
     for (k, v) in MEMBER_OF_B {
         create = create.header(k, v);
     }
-    let made = app
+    let Ok(made) = app
         .oneshot(
             create
                 .body(axum::body::Body::from(ROOM))
                 .map_err(|e| e.to_string())?,
         )
-        .await
-        .map_err(|e| e.to_string())?;
+        .await;
     assert_eq!(made.status(), axum::http::StatusCode::CREATED);
 
     assert_eq!(upgrade(addr, &MEMBER_OF_B).await?, None, "the owner opens");

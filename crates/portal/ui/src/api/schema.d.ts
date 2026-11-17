@@ -1441,6 +1441,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/backups/data/versions/{version}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a Project into a New Project
+         * @description Restores one project's folder of the Organization's data archive into a new project: a new project id whose parent is the source, the folder's rows under the new name with new row ids, the source's approved erasures applied again. The source project is never written. `apply` false checks only. A project deleted since the backup is refused (TEN-16); a project the caller may not read answers 404 like an id the archive does not hold (T-7208).
+         */
+        post: operations["data_copy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/versions/{version}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Projects of a Data Backup
+         * @description Opens one version of the Organization's data archive with the identity given for this request only and lists its project folders the caller may restore into a new project: live projects of the Organization they may read. Projects deleted since the backup are named apart and never restored (T-7208, TEN-16).
+         */
+        post: operations["data_projects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/backups/data/versions/{version}/restore": {
         parameters: {
             query?: never;
@@ -2980,6 +3020,46 @@ export interface paths {
         get: operations["get_tile"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open A Branch
+         * @description Opens a branch of the project: a new project of its own, empty, with no grant of the parent, that answers only on its own id address and lives 7 days unless renewed (TEN-12, CHG-15). Needs a role that may propose in the project.
+         */
+        post: operations["open_branch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/branches/{id}/renewal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renew A Branch
+         * @description Renews a live branch by 7 days, never past 30 days from its creation; each renewal is audited (CHG-15). Its creator renews it while it may propose in the parent; an approver of the parent renews any; an agent renews only a branch it opened.
+         */
+        post: operations["renew_branch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4560,6 +4640,29 @@ export interface paths {
          * @description Checks a v1alpha2 Pipeline draft with one kpi step by jc-core's admission rules (PL-102, PL-103), with each attribute's unit from its space's model, and says of each source whether the pipeline's account may read it. `preview: true` also computes the indicator on each source Endpoint's current page, read as the person (PL-105), and a `prev` term on its history (PL-117). Needs propose on Pipeline in the project, from a person's session; a source in a space the caller may not read is named as unknown. Changes no data.
          */
         post: operations["check_kpi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The project door (ARCH/MCP-33, T-7194): the router places `/{org}/{ProjectId}/api/mcp` here.
+         *     Every message is held to `project`: one naming another project, in `params`, its
+         *     `arguments` or a `jc://` resource address, is answered as an unknown project, and the rest
+         *     are answered as `/api/v1/mcp` answers them with `project` set, so `tools/list` is that
+         *     project's. The handshake names the server `{org}.{ProjectId}.manage`.
+         */
+        post: operations["handle_project_mcp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9244,6 +9347,19 @@ export interface components {
             /** @description The value of the class's `dataSubjectRef` slot, as the proposal named it. */
             subject: string;
         };
+        /** @description One project folder of an archive the person may restore. */
+        ArchivedProject: {
+            /** @description The project's id in its 26-character path form, the folder's name. */
+            id: string;
+            /** @description The project's name today. */
+            name: string;
+        };
+        /** @description The folders of one archive: those the person may restore, and how many it leaves out. */
+        ArchivedProjects: {
+            /** @description Names of the archive's projects deleted since the backup: never restored (TEN-16). */
+            deleted: string[];
+            projects: components["schemas"]["ArchivedProject"][];
+        };
         /**
          * @description What one Model Tools run rendered. Every artifact is optional: a version that does not
          *     render one omits it, and a source that does not compile yet answers with `errors` filled in
@@ -9479,6 +9595,23 @@ export interface components {
             label?: string;
             name: string;
             type: string;
+        };
+        /** @description A branch project as its doors answer it. */
+        Branch: {
+            /**
+             * Format: date-time
+             * @description When the branch stops answering unless renewed (CHG-15).
+             */
+            expiresAt: string;
+            /**
+             * @description The branch's project id in the path form, what its id address carries (RTE-05).
+             * @example bxq4m2c7d5t6v3n8k9p0r1s2wa
+             */
+            id: string;
+            /** @description The branch's project name, `b-` and its id: only its own id address reaches it. */
+            name: string;
+            /** @description The project it branches from. */
+            parent: string;
         };
         /** @description Everything the Portal shows that names or themes an installation. */
         Branding: {
@@ -10601,6 +10734,38 @@ export interface components {
             /** @description `entities`, `rejectedRecords`, `runs`, `grants` or `bindings`. */
             what: string;
         };
+        CopyCounts: {
+            /** Format: int64 */
+            create: number;
+            /** Format: int64 */
+            refused: number;
+        };
+        /** @description What a copy writes, or wrote. */
+        CopyPlan: {
+            /**
+             * Format: int64
+             * @description Approved erasures of the source applied to the copy (on a check: that would be).
+             */
+            erasuresReplayed: number;
+            /** @description The new project's name. */
+            name: string;
+            /** @description The tables a copy leaves alone, with why. */
+            notRestored: {
+                [key: string]: string;
+            };
+            /** @description The new project's id in its path form; empty on a check, which mints none. */
+            projectId: string;
+            /** @description The source project's id (26-character path form) and name. */
+            source: string;
+            sourceName: string;
+            /** @description Rows written per table, and rows a unique rule or a missing reference refused. */
+            tables: {
+                [key: string]: components["schemas"]["CopyCounts"];
+            };
+            /** @description When the backup was taken, RFC 3339. */
+            takenAt: string;
+            versionId: string;
+        };
         /** @description The operator's price table: what the cloud bills a month. */
         CostPrices: {
             /** @description ISO 4217, e.g. `EUR`. */
@@ -10808,6 +10973,17 @@ export interface components {
             /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
             identity: string;
         };
+        /** @description One project folder restored into a new project. */
+        DataCopyInput: {
+            /** @description `false` (the default) checks only; `true` writes the new project. */
+            apply?: boolean;
+            /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
+            /** @description The new project's name, a DNS label no project holds, e.g. `air-quality-restored`. */
+            name: string;
+            /** @description The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`. */
+            project: string;
+        };
         /** @description The dry run of one version, or what its restore did. */
         DataPlan: {
             /**
@@ -10833,6 +11009,11 @@ export interface components {
             /** @description When the backup was taken, RFC 3339. */
             takenAt: string;
             versionId: string;
+        };
+        /** @description The identity that opens the archive, to list its project folders. */
+        DataProjectsInput: {
+            /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
         };
         /** @description A dry run, and the request when one was asked for. */
         DataRestoreAnswer: {
@@ -19379,6 +19560,145 @@ export interface operations {
             };
         };
     };
+    data_copy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "apply": false,
+                 *       "identity": "AGE-SECRET-KEY-1…",
+                 *       "name": "air-quality-restored",
+                 *       "project": "bm6wyhdpioruxguvhqpu4lt2ca"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataCopyInput"];
+            };
+        };
+        responses: {
+            /** @description What the copy writes, or wrote */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPlan"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version, or no project by that id the caller may read */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or no database */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A deleted source project, a name taken or not a DNS label, a format 1 archive; `errors` names the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_projects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "identity": "AGE-SECRET-KEY-1…"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataProjectsInput"];
+            };
+        };
+        responses: {
+            /** @description The folders the caller may restore */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchivedProjects"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or no database */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Another Organization's version, or an identity that does not open it; `errors` names the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     data_restore: {
         parameters: {
             query?: never;
@@ -24447,6 +24767,144 @@ export interface operations {
             };
             /** @description Bad gateway from upstream */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    open_branch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The project to branch from, e.g. helsinki */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The branch, with its id and expiry */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Branch"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No role here may propose */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project for this caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project keeps as many live branches as allowed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No project registry */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    renew_branch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The parent project, e.g. helsinki */
+                project: string;
+                /** @description The branch's id in the path form, e.g. bxq4m2c7d5t6v3n8k9p0r1s2wa */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The branch with its new expiry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Branch"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not renew this branch */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No live branch of that id under the project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The branch already lives to its 30 days */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No project registry */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -30592,6 +31050,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    handle_project_mcp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The project every message is held to, e.g. `traffic` */
+                project: string;
+            };
+            cookie?: never;
+        };
+        /** @description A JSON-RPC 2.0 request object, as on `/api/v1/mcp`. A message naming another project in `params`, its `arguments` or a `jc://` address is answered as an unknown project (MCP-33). */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "id": 1,
+                 *       "jsonrpc": "2.0",
+                 *       "method": "tools/list",
+                 *       "params": {}
+                 *     }
+                 */
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC response object; `tools/list` lists this project's tools and the handshake names the server `{org}.{ProjectId}.manage` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description No bearer, or one this realm did not sign; the answer carries `WWW-Authenticate` with the metadata document */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description The token is valid and its account may not use this door */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Method not allowed: the door takes POST */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Past the per-subject rate limit of this minute (AG-60) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
                 };
             };
         };

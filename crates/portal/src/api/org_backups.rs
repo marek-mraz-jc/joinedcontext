@@ -1304,6 +1304,126 @@ pub async fn data_restore(
     }))
 }
 
+/// The identity that opens the archive, to list its project folders.
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DataProjectsInput {
+    /// The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`.
+    pub identity: String,
+}
+
+/// One project folder restored into a new project.
+#[derive(Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DataCopyInput {
+    /// The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`.
+    pub identity: String,
+    /// The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`.
+    pub project: String,
+    /// The new project's name, a DNS label no project holds, e.g. `air-quality-restored`.
+    pub name: String,
+    /// `false` (the default) checks only; `true` writes the new project.
+    #[serde(default)]
+    pub apply: bool,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/organization/backups/data/versions/{version}/projects",
+    summary = "List Projects of a Data Backup",
+    description = "Opens one version of the Organization's data archive with the identity given for this request only and lists its project folders the caller may restore into a new project: live projects of the Organization they may read. Projects deleted since the backup are named apart and never restored (T-7208, TEN-16).",
+    tag = "system",
+    params(("version" = String, Path, description = "S3 version id")),
+    request_body(content = DataProjectsInput, example = json!({ "identity": "AGE-SECRET-KEY-1…" })),
+    responses(
+        (status = 200, description = "The folders the caller may restore", body = org_backup::copy::ArchivedProjects),
+        (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
+        (status = 404, description = "No such version", body = ProblemDetails),
+        (status = 409, description = "No target, or no database", body = ProblemDetails),
+        (status = 422, description = "Another Organization's version, or an identity that does not open it; `errors` names the field", body = ProblemDetails),
+    )
+)]
+pub async fn data_projects(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(version): Path<String>,
+    Json(input): Json<DataProjectsInput>,
+) -> Result<Json<org_backup::copy::ArchivedProjects>, ApiError> {
+    let organization = administered(&state, &user.0.identity)?;
+    let target = saved_target(&state, &organization, DATA).await?;
+    let (archive, _) = opened(&state, &target, &version, input.identity).await?;
+    org_backup::copy::projects(&state, &user.0.identity, &organization, &archive)
+        .await
+        .map(Json)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/organization/backups/data/versions/{version}/copy",
+    summary = "Restore a Project into a New Project",
+    description = "Restores one project's folder of the Organization's data archive into a new project: a new project id whose parent is the source, the folder's rows under the new name with new row ids, the source's approved erasures applied again. The source project is never written. `apply` false checks only. A project deleted since the backup is refused (TEN-16); a project the caller may not read answers 404 like an id the archive does not hold (T-7208).",
+    tag = "system",
+    params(("version" = String, Path, description = "S3 version id")),
+    request_body(content = DataCopyInput, example = json!({ "identity": "AGE-SECRET-KEY-1…", "project": "bm6wyhdpioruxguvhqpu4lt2ca", "name": "air-quality-restored", "apply": false })),
+    responses(
+        (status = 200, description = "What the copy writes, or wrote", body = org_backup::copy::CopyPlan),
+        (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
+        (status = 404, description = "No such version, or no project by that id the caller may read", body = ProblemDetails),
+        (status = 409, description = "No target, or no database", body = ProblemDetails),
+        (status = 422, description = "A deleted source project, a name taken or not a DNS label, a format 1 archive; `errors` names the field", body = ProblemDetails),
+    )
+)]
+pub async fn data_copy(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    Path(version): Path<String>,
+    Json(input): Json<DataCopyInput>,
+) -> Result<Json<org_backup::copy::CopyPlan>, ApiError> {
+    let actor = &user.0.identity.username;
+    let organization = administered(&state, &user.0.identity)?;
+    let target = saved_target(&state, &organization, DATA).await?;
+    let outcome = async {
+        let (mut archive, _) = opened(&state, &target, &version, input.identity).await?;
+        let request = org_backup::copy::CopyRequest {
+            organization: &organization,
+            version: &version,
+            source: &input.project,
+            name: &input.name,
+            apply: input.apply,
+            by: actor,
+        };
+        org_backup::copy::copy(&state, &user.0.identity, &mut archive, &request).await
+    }
+    .await;
+    audit(
+        &state,
+        &organization,
+        if input.apply { "copy" } else { "copy-plan" },
+        actor,
+        &version,
+        outcome.as_ref().map(|plan| {
+            if input.apply {
+                format!(
+                    "project {} restored into new project {} ({}): {} row(s)",
+                    plan.source_name,
+                    plan.name,
+                    plan.project_id,
+                    plan.writes()
+                )
+            } else {
+                format!(
+                    "{} row(s) of project {} would be restored into {}",
+                    plan.writes(),
+                    plan.source_name,
+                    plan.name
+                )
+            }
+        }),
+    )
+    .await?;
+    outcome.map(Json)
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/organization/backups/data/restores",
@@ -1500,6 +1620,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/organization/backups/data/versions/{version}/restore",
             post(data_restore),
+        )
+        .route(
+            "/organization/backups/data/versions/{version}/projects",
+            post(data_projects),
+        )
+        .route(
+            "/organization/backups/data/versions/{version}/copy",
+            post(data_copy),
         )
         .route("/organization/backups/data/restores", get(data_restores))
         .route(

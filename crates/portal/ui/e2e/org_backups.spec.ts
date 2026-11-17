@@ -44,6 +44,26 @@ const PLAN = {
   erasuresReplayed: 0,
 };
 
+const SOURCE = "bm6wyhdpioruxguvhqpu4lt2ca";
+const COPIED = "lyvhyrangvhw5crmtupc6m2ewa";
+const COPY_PLAN = {
+  versionId: "v1",
+  takenAt: "2026-11-16T09:11:00Z",
+  source: SOURCE,
+  sourceName: "air-quality",
+  name: "air-quality-restored",
+  projectId: "",
+  tables: {
+    activity: { create: 214, refused: 0 },
+    entity_comments: { create: 52, refused: 0 },
+    data_views: { create: 6, refused: 0 },
+    pipeline_runs: { create: 91, refused: 0 },
+    alert_notices: { create: 0, refused: 2 },
+  },
+  notRestored: { "portal/access_requests": "an access decision: restoring it could open access that was withdrawn since" },
+  erasuresReplayed: 1,
+};
+
 type Kind = keyof typeof DOORS;
 
 function json(body: unknown, status = 200) {
@@ -105,6 +125,18 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
     bucket.versions.unshift({ versionId: "m1", lastModified: now(), size: 0, isLatest: true, deleteMarker: true });
     log("delete", true, "delete marker written");
     return route.fulfill({ status: 204, body: "" });
+  }
+  if (kind === "data" && rest.endsWith("/projects")) {
+    return route.fulfill(json({ projects: [{ id: SOURCE, name: "air-quality" }, { id: "pqor4p2klnggnchpafnsyprelu", name: "mobility" }], deleted: ["old-pilot"] }));
+  }
+  if (kind === "data" && rest.endsWith("/copy")) {
+    const input = route.request().postDataJSON() as { name: string; project: string; apply?: boolean };
+    if (input.name === "air-quality") {
+      const detail = "name: air-quality is taken by a project, a copy or an Organization; pick a new name";
+      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [detail] }, 422));
+    }
+    log(input.apply ? "copy" : "copy-plan", true, `project air-quality ${input.apply ? "restored" : "would be restored"} into ${input.name}`);
+    return route.fulfill(json({ ...COPY_PLAN, name: input.name, projectId: input.apply ? COPIED : "" }));
   }
   if (kind === "data" && rest.endsWith("/restore")) {
     const input = route.request().postDataJSON() as { identity: string; request?: boolean };
@@ -280,6 +312,39 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       await expect(data.getByText("Restored", { exact: true })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `backups-data-approved-${width}`);
+    });
+
+    test(`an administrator restores one project of a data version into a new project at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const target = { endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", bucket: "city-data", prefix: "", accessKeyId: "AKIAIOSFODNN7EXAMPLE", enabled: true, everyHours: 24, keepDays: 90, recipients: [WORKING, RECOVERY], organization: "bbsk", kind: "data", updatedBy: "ada", updatedAt: "2026-11-16T09:00:00Z", lastRunAt: null };
+      const versions = [{ versionId: "v1", lastModified: "2026-11-16T09:11:00Z", size: 912345, isLatest: true, deleteMarker: false }];
+      const log = [{ id: 1, organization: "bbsk", kind: "data", action: "run", actor: "ada", at: "2026-11-16T09:11:00Z", ok: true, bytes: 912345, objectKey: "jc/bbsk/data/archive.zip.age", versionId: "v1", message: "uploaded" }];
+      await stubApi(page, { target: null, log: [], versions: [] }, true, { target, log, versions, restores: [] });
+      await page.goto("/organization/backups?lang=en");
+      const data = page.getByTestId("backup-data");
+      await data.getByRole("button", { name: "Restore a project" }).click();
+      const dialog = page.getByTestId("backup-project-copy");
+      await expect(dialog.getByRole("button", { name: "Show the projects" })).toHaveAttribute("aria-disabled", "true");
+      await shot(page, `backups-copy-empty-${width}`);
+      await dialog.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
+      await dialog.getByRole("button", { name: "Show the projects" }).click();
+      await dialog.getByLabel("Project of this backup").selectOption({ label: "air-quality" });
+      await expect(dialog.getByText(/old-pilot/)).toBeVisible();
+      await dialog.getByLabel("New project name").fill("air-quality");
+      await dialog.getByRole("button", { name: "Check", exact: true }).click();
+      await expect(dialog.getByText(/air-quality is taken by a project/)).toBeVisible();
+      await shot(page, `backups-copy-refused-${width}`);
+      await dialog.getByLabel("New project name").fill("air-quality-restored");
+      await dialog.getByRole("button", { name: "Check", exact: true }).click();
+      await expect(dialog.getByRole("rowheader", { name: "entity_comments" })).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Check", exact: true })).not.toHaveAttribute("aria-disabled", "true");
+      await page.waitForTimeout(300);
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `backups-copy-checked-${width}`);
+      await dialog.getByRole("button", { name: "Restore into the new project" }).click();
+      await expect(dialog.getByText(/Restored into air-quality-restored/)).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `backups-copy-done-${width}`);
     });
 
     test(`a member who does not administer is refused at ${width} px`, async ({ page }) => {

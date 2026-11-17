@@ -11,16 +11,53 @@ use antares_model::TenantId;
 use antares_sql::store::pg;
 use sqlx::PgPool;
 
-macro_rules! require_db {
-    () => {
+/// A database of the test's own, migrated: the rename locks every Tenant table
+/// for up to 300 ms per attempt, which in the shared test database times out a
+/// parallel test's partition create or drop (55P03).
+macro_rules! own_db {
+    ($tag:literal) => {
         match std::env::var("ANTARES_TEST_DATABASE_URL") {
-            Ok(url) => url,
+            Ok(shared) => OwnDb::new(&shared, $tag).await,
             Err(_) => {
                 eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
                 return;
             }
         }
     };
+}
+
+struct OwnDb {
+    admin: PgPool,
+    name: String,
+    pool: PgPool,
+}
+
+impl OwnDb {
+    async fn new(shared: &str, tag: &str) -> Self {
+        let admin = pg::connect(shared, 2).await.expect("connect+migrate");
+        let name = format!("antares_rename_{tag}_{}", run_id());
+        // the name is this test's own: a literal tag and a number
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("own database");
+        let (base, _) = shared.rsplit_once('/').expect("a database URL");
+        let pool = pg::connect(&format!("{base}/{name}"), 5)
+            .await
+            .expect("connect+migrate the own database");
+        Self { admin, name, pool }
+    }
+
+    async fn drop(self) {
+        self.pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {} WITH (FORCE)",
+            self.name
+        )))
+        .execute(&self.admin)
+        .await
+        .expect("drop own database");
+    }
 }
 
 fn run_id() -> u128 {
@@ -168,8 +205,8 @@ async fn rows_of(pool: &PgPool, tenant: &str) -> i64 {
 /// stored Organization are written; the rollback gives the digest back.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_tenant_moves_whole_and_rolls_back() {
-    let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let db = own_db!("whole");
+    let pool = db.pool.clone();
     let n = run_id();
     let old = format!("ren{n}-air");
     let t = TenantId::new(&old).expect("tenant");
@@ -248,14 +285,15 @@ async fn a_tenant_moves_whole_and_rolls_back() {
         .await
         .expect("tombstones");
     assert_eq!(tombs, 0);
+    db.drop().await;
 }
 
 /// The rename refuses a target holding rows, a tombstoned or reserved name,
 /// the default Tenant, and a rollback nobody recorded; nothing moves.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
-    let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let db = own_db!("refuse");
+    let pool = db.pool.clone();
     let n = run_id();
     let (a, b) = (format!("rena{n}"), format!("renb{n}"));
     for name in [&a, &b] {
@@ -305,6 +343,7 @@ async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
         .to_string();
     assert!(stray.contains("no rename"), "{stray}");
     assert_eq!(digest(&pool, &a).await, before);
+    db.drop().await;
 }
 
 /// A database owner that bypasses row-level security without being superuser
@@ -312,28 +351,43 @@ async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
 /// Tenant moves the same, and the transaction keeps its triggers afterwards.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bypassrls_owner_moves_the_tenant_the_same_with_the_triggers_on() {
-    let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let db = own_db!("owner");
+    let pool = db.pool.clone();
     let n = run_id();
     let old = format!("renu{n}-air");
     seed(&pool, &TenantId::new(&old).expect("tenant")).await;
     let before = digest(&pool, &old).await;
     let new = keyed(n, "air");
     let role = format!("renameowner{n}");
-    let mut tx = pool.begin().await.expect("tx");
-    for stmt in [
+    // The grants commit before the rename's transaction: granted there, they
+    // would hold every table's pg_class row through the rename and deadlock a
+    // parallel ANALYZE that waits on them while the rename waits on its table.
+    let own = |stmts: Vec<String>| {
+        let pool = pool.clone();
+        async move {
+            let mut setup = pool.begin().await.expect("tx");
+            for stmt in stmts {
+                // the role name is this test's own
+                sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                    .execute(&mut *setup)
+                    .await
+                    .expect(&stmt);
+            }
+            setup.commit().await.expect("commit");
+        }
+    };
+    own(vec![
         format!("CREATE ROLE {role} NOSUPERUSER BYPASSRLS"),
         format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {role}"),
         format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {role}"),
         format!("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {role}"),
-        format!("SET LOCAL ROLE {role}"),
-    ] {
-        // the role name is this test's own
-        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
-            .execute(&mut *tx)
-            .await
-            .expect(&stmt);
-    }
+    ])
+    .await;
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET LOCAL ROLE {role}")))
+        .execute(&mut *tx)
+        .await
+        .expect("set role");
     sqlx::query("SELECT antares_tenant_rename($1, $2)")
         .bind(&old)
         .bind(&new)
@@ -353,16 +407,22 @@ async fn a_bypassrls_owner_moves_the_tenant_the_same_with_the_triggers_on() {
             .await
             .expect("setting");
     tx.rollback().await.expect("rollback");
+    own(vec![
+        format!("DROP OWNED BY {role}"),
+        format!("DROP ROLE {role}"),
+    ])
+    .await;
     assert_eq!(after, before);
     assert_eq!(replication, "origin");
+    db.drop().await;
 }
 
 /// The functions run only as a role that bypasses row-level security: the
 /// broker's own role can never move a Tenant or read every row of one.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_rename_refuses_a_role_under_row_level_security() {
-    let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let db = own_db!("rls");
+    let pool = db.pool.clone();
     let n = run_id();
     let old = format!("renr{n}");
     seed(&pool, &TenantId::new(&old).expect("tenant")).await;
@@ -398,4 +458,5 @@ async fn the_rename_refuses_a_role_under_row_level_security() {
         assert!(err.contains("bypasses row-level security"), "{sql}: {err}");
     }
     assert!(rows_of(&pool, &old).await > 0);
+    db.drop().await;
 }

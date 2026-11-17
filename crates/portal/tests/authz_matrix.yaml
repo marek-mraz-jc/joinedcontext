@@ -196,6 +196,12 @@ routes:
   - route: POST /mcp
     rule: "mcp-dispatch"
     expect: [401, 401, 401, 401, 401, 401, 401, allow]
+  - route: GET /projects/{project}/mcp
+    rule: "public"
+    expect: [405, 405, 405, 405, 405, 405, 405, 405]
+  - route: POST /projects/{project}/mcp
+    rule: "mcp-dispatch, the project's own door (MCP-33)"
+    expect: [401, 401, 401, 401, 401, 401, 401, allow]
   - route: GET /git/{owner}/{repo}/info/refs
     rule: "bearer:git-read (a person's access token in the header; members of the project, the installation repository platform administrators alone)"
     expect: [404, 404, 404, 404, 404, 404, 404, 404]
@@ -395,6 +401,16 @@ routes:
     body: {"identity": "AGE-SECRET-KEY-1", "request": false}
     expect: [403, 403, 403, 403, 403, allow, 403, 403]
     note: "the identity is used for this request only; no target in the fixture: 409 for the administrator (T-7171)"
+  - route: POST /organization/backups/data/versions/{version}/projects
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7208)"
+    body: {"identity": "AGE-SECRET-KEY-1"}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "lists the archive's project folders the caller may read; no target in the fixture: 409 for the administrator (T-7208)"
+  - route: POST /organization/backups/data/versions/{version}/copy
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7208)"
+    body: {"identity": "AGE-SECRET-KEY-1", "project": "bm6wyhdpioruxguvhqpu4lt2ca", "name": "air-quality-restored", "apply": false}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "restores one project folder into a new project; no target in the fixture: 409 for the administrator (T-7208)"
   - route: GET /organization/backups/data/restores
     rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
@@ -912,6 +928,15 @@ routes:
     values: {"id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"}
     body: {"decision": "accept"}
     note: "the fixture reaches no broker holding a question, so every person's 404 is the unknown id; a bearer token is refused before the broker is asked; tests/mcp_confirmations_tests.rs plays the real question"
+  - route: POST /projects/{project}/branches
+    rule: "project-read, then propose on some kind (TEN-12)"
+    expect: [403, 403, allow, allow, 403, allow, 404, 403]
+    note: "an allowed caller's 503 is the fixture's: it has no database (the project registry)"
+  - route: POST /projects/{project}/branches/{id}/renewal
+    rule: "project-read, then the branch's creator with propose, or a person who approves (CHG-15)"
+    expect: [403, allow, allow, allow, allow, allow, 404, allow]
+    values: {"id": "bxq4m2c7d5t6v3n8k9p0r1s2wa"}
+    note: "who renews is decided on the branch row, after the registry: every reader's 503 is the fixture's (no database)"
   - route: POST /projects/{project}/spaces/{space}/erasures
     rule: "space-read, then approve on ContextSpace in the space (DM-126)"
     expect: [403, 403, allow, allow, allow, allow, 404, 403]

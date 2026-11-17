@@ -368,6 +368,90 @@ async fn a_bound_account_gets_a_federated_client_and_no_secret() {
 
 /// PF-47: an account that names a `Role` acts on the Portal, so its token carries the Portal's
 /// audience besides its endpoints'.
+/// T-7214 (ARCH/TEN-10, MIG-03): a new account of a keyed project gets a client named
+/// `internal_name(key, name)`, which every reader of a client id in the process then resolves;
+/// an account whose client the realm holds under the derived `{project}-{name}` keeps that id.
+#[tokio::test]
+async fn a_new_account_gets_a_client_named_by_its_project_key_and_a_live_one_keeps_its_id() {
+    use jc_types::{internal_name, Label, ProjectId};
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    let organization = format!("wcorg-{}", ProjectId::mint().path_segment());
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $1 || '.example', 'active', 'test')",
+    )
+    .bind(&organization)
+    .execute(&pool)
+    .await
+    .expect("an Organization");
+    let project = format!("wc-{}", ProjectId::mint().path_segment());
+    let key = joinedcontext_portal::project_ids::key(&pool, &organization, &project)
+        .await
+        .expect("key")
+        .expect("a keyed project");
+    let new = internal_name(key, &Label::parse("ingest").expect("label")).to_string();
+    let live = format!("{project}-kpi");
+
+    let keycloak = realm(json!([])).await;
+    client_lookup(&keycloak, &format!("{project}-ingest"), json!([])).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param("clientId", new.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .up_to_n_times(1)
+        .mount(&keycloak)
+        .await;
+    let mut created = managed_client("uuid-new", &project, "ingest", "env-dept", "ingest");
+    created["clientId"] = json!(new);
+    client_lookup(&keycloak, &new, json!([created])).await;
+    client_lookup(
+        &keycloak,
+        &live,
+        json!([managed_client(
+            "uuid-kpi", &project, "kpi", "env-dept", "kpi"
+        )]),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/clients")))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&keycloak)
+        .await;
+    mappers(&keycloak, "uuid-new", json!([])).await;
+    mappers(&keycloak, "uuid-kpi", json!([])).await;
+
+    let outcomes = sync(&keycloak)
+        .with_keys(pool.clone())
+        .converge(
+            &mirror_with(vec![
+                account(
+                    &project,
+                    "ingest",
+                    Some(("env-dept", "ingest")),
+                    "space-writer",
+                ),
+                account(&project, "kpi", Some(("env-dept", "kpi")), "space-writer"),
+            ]),
+            &Bentos::new(),
+        )
+        .await;
+    assert!(outcomes.iter().all(|o| o.error.is_none()), "{outcomes:?}");
+    let created: Vec<Value> = bodies(&keycloak, "POST", &format!("{REALM}/clients")).await;
+    assert_eq!(
+        created
+            .iter()
+            .map(|c| c["clientId"].clone())
+            .collect::<Vec<_>>(),
+        vec![json!(new)],
+        "one client, named by the project key; the live one is not created again"
+    );
+    // What the process then resolves is jc_core's registry, which every converge in this binary
+    // replaces in parallel: jc-core's registry_tests and streams::identity::tests hold it.
+}
+
 #[tokio::test]
 async fn an_account_holding_a_portal_role_gets_the_portal_audience() {
     let keycloak = realm(json!([])).await;

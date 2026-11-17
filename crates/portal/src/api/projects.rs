@@ -659,6 +659,7 @@ pub(crate) async fn new_project_name(
             "'{name}' is the organization's own namespace and is not a project (PF-67)"
         )));
     }
+    refuse_branch_name(name)?;
     if state.mirror.namespaces().iter().any(|held| held == name)
         || state
             .mirror
@@ -692,6 +693,26 @@ pub(crate) async fn new_project_name(
         )));
     }
     Ok(())
+}
+
+/// `b-` and a project id is a branch's name, which the platform writes and no person chooses
+/// (RTE-05, TEN-12): refused by its shape, never by a lookup, so the answer tells nothing of any
+/// branch, an expired one included.
+fn refuse_branch_name(name: &str) -> Result<(), ApiError> {
+    if !jc_router::branch_name(name) {
+        return Ok(());
+    }
+    Err(ApiError::Unprocessable {
+        detail: format!(
+            "project name '{name}' has the shape of a branch's name, b- and a project id, which \
+             only the platform gives (RTE-05)"
+        ),
+        errors: vec![
+            "metadata.name: b- followed by 26 base32 characters is kept for branches; choose \
+             another name, e.g. helsinki-traffic"
+                .to_owned(),
+        ],
+    })
 }
 
 fn lets_anyone_open(state: &AppState, organization: &str) -> bool {
@@ -1893,6 +1914,25 @@ mod tests {
             metadata: ObjectMeta::new(name, ORG_NAMESPACE),
             spec,
             status: None,
+        }
+    }
+
+    #[test]
+    fn a_branch_shaped_name_is_refused_naming_metadata_name() {
+        let branch = format!("b-{}", jc_types::ProjectId::mint().path_segment());
+        match refuse_branch_name(&branch) {
+            Err(ApiError::Unprocessable { errors, .. }) => {
+                assert!(errors[0].starts_with("metadata.name: "), "{errors:?}");
+            }
+            other => panic!("{branch}: {other:?}"),
+        }
+        for name in [
+            "b-helsinki",
+            "helsinki",
+            "b-",
+            "bb-abcdefghijklmnopqrstuvwxyz",
+        ] {
+            assert!(refuse_branch_name(name).is_ok(), "{name}");
         }
     }
 

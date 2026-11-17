@@ -32,7 +32,9 @@ use sqlx::PgConnection;
 use utoipa::ToSchema;
 use zeroize::Zeroizing;
 
-use super::data::{DataIndex, Scratch, Table, FORMAT_VERSION, PORTAL_TABLES};
+use super::data::{
+    project_folder, DataIndex, Scratch, Table, FORMAT_FLAT, FORMAT_VERSION, PORTAL_TABLES,
+};
 use super::{Target, DATA};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -50,7 +52,7 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
     (
         "project_ids",
         "the installation mints a project's id and never reuses it: a restored id could take \
-         one minted since, so restoring a project folder under its id is its own step",
+         one minted since; one project's folder is restored into a new project instead",
     ),
     (
         "erasures",
@@ -61,6 +63,10 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
         "a domain is proven again, never restored",
     ),
     ("organization_backup_log", "the audit only grows"),
+    (
+        "project_copies",
+        "a copy's lineage is written by the restore that made the copy",
+    ),
     (
         "agent_runs",
         "a run's state belongs to the run that made it",
@@ -212,7 +218,7 @@ fn too_large(what: &str, cap: u64) -> ApiError {
 }
 
 /// Reads `reader` whole, refusing it once it passes `cap` bytes.
-fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiError> {
+pub(super) fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     reader
         .take(cap.saturating_add(1))
@@ -227,7 +233,7 @@ fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiEr
 /// An opened archive: the decrypted zip in a scratch file, its index, and what it may still
 /// unpack to.
 pub struct Opened {
-    zip: zip::ZipArchive<std::fs::File>,
+    pub(super) zip: zip::ZipArchive<std::fs::File>,
     pub index: DataIndex,
     caps: Caps,
     left: u64,
@@ -272,10 +278,11 @@ pub async fn open(
     .await
     .map_err(internal)??;
     let (zip, index) = opened;
-    if index.format_version != FORMAT_VERSION {
+    if index.format_version != FORMAT_VERSION && index.format_version != FORMAT_FLAT {
         return Err(ApiError::Unprocessable {
             detail: format!(
-                "version: archive format {} is not the format {FORMAT_VERSION} this Portal restores",
+                "version: archive format {} is not a format this Portal restores ({FORMAT_FLAT} \
+                 or {FORMAT_VERSION})",
                 index.format_version
             ),
             errors: vec!["version: another archive format".into()],
@@ -297,23 +304,26 @@ pub async fn open(
     })
 }
 
-fn internal(err: impl std::fmt::Display) -> ApiError {
+pub(super) fn internal(err: impl std::fmt::Display) -> ApiError {
     ApiError::Internal(format!("the restore failed: {err}"))
 }
 
-fn not_an_archive() -> ApiError {
+pub(super) fn not_an_archive() -> ApiError {
     ApiError::Unprocessable {
         detail: "version: not a data backup archive".into(),
         errors: vec!["version: not a data backup archive".into()],
     }
 }
 
-fn quoted(identifier: &str) -> String {
+pub(super) fn quoted(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 /// The primary key columns of a Portal table.
-async fn key_columns(conn: &mut PgConnection, table: &str) -> Result<Vec<String>, ApiError> {
+pub(super) async fn key_columns(
+    conn: &mut PgConnection,
+    table: &str,
+) -> Result<Vec<String>, ApiError> {
     sqlx::query_scalar(
         "SELECT a.attname::text FROM pg_index i \
          JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
@@ -325,7 +335,7 @@ async fn key_columns(conn: &mut PgConnection, table: &str) -> Result<Vec<String>
     .map_err(failed)
 }
 
-fn failed(err: sqlx::Error) -> ApiError {
+pub(super) fn failed(err: sqlx::Error) -> ApiError {
     ApiError::Unavailable(format!("the Portal database could not be restored: {err}"))
 }
 
@@ -454,7 +464,10 @@ async fn write_row(
                 .map_err(failed)?;
             Ok(true)
         }
-        Err(sqlx::Error::Database(e)) if e.is_unique_violation() => {
+        // A row another key holds is not this transaction's to overwrite: the policy refuses it.
+        Err(sqlx::Error::Database(e))
+            if e.is_unique_violation() || e.code().as_deref() == Some("42501") =>
+        {
             sqlx::query("ROLLBACK TO SAVEPOINT restore_row")
                 .execute(&mut *conn)
                 .await
@@ -463,6 +476,62 @@ async fn write_row(
         }
         Err(e) => Err(failed(e)),
     }
+}
+
+/// Whether the Portal table `table` is keyed per project (a `project_id` column, T-7196): its row
+/// takes the key of the transaction that writes it, so each project's rows are written in that
+/// project's key, whatever row-level security this connection's role is under.
+async fn keyed_per_project(conn: &mut PgConnection, table: &str) -> Result<bool, ApiError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' \
+         AND table_name = $1 AND column_name = 'project_id')",
+    )
+    .bind(table)
+    .fetch_one(conn)
+    .await
+    .map_err(failed)
+}
+
+/// The archived rows of `table`, parsed. Per project (`per_project`): grouped by the project
+/// whose key a row takes, each with that key when the project is one of the Organization's
+/// (`wanted`) and has one today, `None` otherwise; else one group with no key.
+async fn batches(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    table: &Table,
+    wanted: &[String],
+    lines: Vec<String>,
+    per_project: bool,
+) -> Result<Vec<(Option<jc_types::ProjectKey>, Vec<serde_json::Value>)>, ApiError> {
+    let mut rows = Vec::with_capacity(lines.len());
+    for line in lines {
+        rows.push(serde_json::from_str::<serde_json::Value>(&line).map_err(|_| not_an_archive())?);
+    }
+    if !per_project {
+        return Ok(vec![(None, rows)]);
+    }
+    let column = crate::project_ids::key_column(table.name);
+    let mut by: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    for row in rows {
+        let project = row
+            .get(column)
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned();
+        by.entry(project).or_default().push(row);
+    }
+    let mut out = Vec::with_capacity(by.len());
+    for (project, rows) in by {
+        let key = if wanted.contains(&project) {
+            crate::project_ids::key_of(pool, &state.mirror, &project)
+                .await
+                .map_err(failed)?
+        } else {
+            None
+        };
+        out.push((key, rows));
+    }
+    Ok(out)
 }
 
 /// The approval a restore writes under: the pending request and the second administrator.
@@ -541,9 +610,13 @@ pub async fn run(
         .is_some_and(|p| p.exported);
 
     // Keyed on the Organization's reserved project (T-7191): its restore requests answer only so.
-    let mut tx = super::keyed(&pool, organization)
-        .await?
+    let reserved = crate::project_ids::reserved(&pool, organization)
+        .await
+        .map_err(failed)?
         .ok_or_else(|| super::unregistered(organization))?;
+    let mut tx = crate::db::tenant_tx(&pool, reserved)
+        .await
+        .map_err(failed)?;
     if let Some(approval) = approval {
         // Held until the commit: a second approval waits here, then finds it taken.
         let pending: Option<i64> = sqlx::query_scalar(
@@ -573,23 +646,47 @@ pub async fn run(
         let classify = classify_sql(table, &pk);
         let upsert = upsert_sql(table, &pk);
         let mut counts = RestoreCounts::default();
-        for line in lines(opened, table.name)? {
-            let row: serde_json::Value =
-                serde_json::from_str(&line).map_err(|_| not_an_archive())?;
-            let verdict: String = sqlx::query_scalar(sqlx::AssertSqlSafe(classify.clone()))
-                .bind(&wanted)
-                .bind(&row)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(failed)?;
-            let written = matches!(verdict.as_str(), "create" | "update")
-                && write_row(&mut tx, &upsert, &wanted, &row).await?;
-            match verdict.as_str() {
-                "create" if written => counts.create += 1,
-                "update" if written => counts.update += 1,
-                "unchanged" => counts.unchanged += 1,
-                _ => counts.refused += 1,
+        // A project's row of a keyed table is written under that project's key alone (T-7201);
+        // a row of a project the Organization does not hold today, or with no key, is refused.
+        let per_project =
+            table.keys == "projects" && keyed_per_project(&mut tx, table.name).await?;
+        for (key, rows) in batches(
+            state,
+            &pool,
+            table,
+            &wanted,
+            lines(opened, table.name)?,
+            per_project,
+        )
+        .await?
+        {
+            match key {
+                Some(key) => crate::db::enter(&mut tx, key).await.map_err(failed)?,
+                None if per_project => {
+                    counts.refused += rows.len() as u64;
+                    continue;
+                }
+                None => {}
             }
+            for row in rows {
+                let verdict: String = sqlx::query_scalar(sqlx::AssertSqlSafe(classify.clone()))
+                    .bind(&wanted)
+                    .bind(&row)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(failed)?;
+                let written = matches!(verdict.as_str(), "create" | "update")
+                    && write_row(&mut tx, &upsert, &wanted, &row).await?;
+                match verdict.as_str() {
+                    "create" if written => counts.create += 1,
+                    "update" if written => counts.update += 1,
+                    "unchanged" => counts.unchanged += 1,
+                    _ => counts.refused += 1,
+                }
+            }
+        }
+        if per_project {
+            crate::db::enter(&mut tx, reserved).await.map_err(failed)?;
         }
         if approval.is_some() && counts.create > 0 {
             raise_sequence(&mut tx, table.name).await?;
@@ -620,10 +717,6 @@ pub async fn run(
                 plan.erasures_replayed += 1;
             }
         }
-        let reserved = crate::project_ids::reserved(&pool, organization)
-            .await
-            .map_err(failed)?
-            .ok_or_else(|| super::unregistered(organization))?;
         crate::db::enter(&mut tx, reserved).await.map_err(failed)?;
         sqlx::query(
             "UPDATE organization_data_restores SET state = 'applied', decided_by = $2, \
@@ -652,10 +745,40 @@ pub fn applied_message(plan: &DataPlan) -> String {
     )
 }
 
-/// The JSON lines of `module/portal/<table>.jsonl`, read under the entry cap and what is left
-/// of the total; none when the archive has no such file.
+/// The JSON lines of `table` in the archive: `module/portal/<table>.jsonl` (format 1, or an
+/// Organization outside the registry) and the table's file in every project folder (format 2).
 fn lines(opened: &mut Opened, table: &str) -> Result<Vec<String>, ApiError> {
-    let name = format!("module/portal/{table}.jsonl");
+    let file = format!("/{table}.jsonl");
+    let names: Vec<String> = opened
+        .zip
+        .file_names()
+        .filter_map(|n| n.ok().map(|n| n.into_owned()))
+        .filter(|n| {
+            n.strip_prefix("module/portal/project/")
+                .and_then(|rest| rest.strip_suffix(&file))
+                .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        })
+        .collect();
+    let mut out = file_lines(opened, &format!("module/portal/{table}.jsonl"))?;
+    for name in names {
+        out.extend(file_lines(opened, &name)?);
+    }
+    Ok(out)
+}
+
+/// The JSON lines of `name` in one project's folder (format 2).
+pub(super) fn folder_lines(
+    opened: &mut Opened,
+    project: &jc_types::ProjectId,
+    table: &str,
+) -> Result<Vec<String>, ApiError> {
+    file_lines(opened, &format!("{}{table}.jsonl", project_folder(project)))
+}
+
+/// The JSON lines of the archive file `name`, read under the entry cap and what is left of the
+/// total; none when the archive has no such file.
+fn file_lines(opened: &mut Opened, name: &str) -> Result<Vec<String>, ApiError> {
+    let name = name.to_owned();
     let Ok(file) = opened.zip.by_name(&name) else {
         return Ok(Vec::new());
     };

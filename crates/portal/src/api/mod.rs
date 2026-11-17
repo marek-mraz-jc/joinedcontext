@@ -23,6 +23,7 @@ pub mod assistant_context;
 pub mod assistant_preview;
 pub mod basemap;
 pub mod blueprints;
+pub mod branches;
 pub mod branding;
 pub mod brokers;
 pub mod build_listener;
@@ -195,6 +196,7 @@ pub fn router() -> Router<AppState> {
         .merge(space_usage::router())
         .merge(space_retention::router())
         .merge(erasures::router())
+        .merge(branches::router())
         .merge(mcp_confirmations::router())
         .merge(mcp_elicitations::router())
         .merge(access_requests::router())
