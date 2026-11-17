@@ -170,10 +170,9 @@ DECLARE
   tok text := '%"' || p_old || '"%';
   super boolean;
   deadline timestamptz;
-  tbls text;
+  attempt timestamptz;
 BEGIN
   PERFORM tenant_rename_guard(p_old, p_new);
-  PERFORM set_config('lock_timeout', '30s', true);
   -- `entities`' statement triggers keep the catalogue and `entity_values` of
   -- a written document; the rename moves both itself, so the triggers would
   -- only copy every moved row twice into transition tables (7.5 GB of temp
@@ -185,27 +184,32 @@ BEGIN
   IF super THEN
     PERFORM set_config('session_replication_role', 'replica', true);
   END IF;
-  -- writers wait until the transaction ends; readers go on. All tables in
-  -- one NOWAIT statement inside a subtransaction: an attempt that meets a
-  -- writer releases what it took, so the rename never holds part of the set
-  -- while it waits for the rest (a writer locking entities, then the
-  -- catalogue, deadlocked a table-by-table loop).
-  SELECT string_agg(format('%I', s.tbl), ', ') INTO tbls
-    FROM (SELECT tbl FROM tenant_tables() UNION SELECT 'tenants' UNION SELECT 'jsonld_contexts') s;
-  deadline := clock_timestamp() + interval '30 seconds';
+  -- writers wait until the transaction ends; readers go on. One attempt
+  -- takes every table within 300 ms or releases what it took (the
+  -- subtransaction): a writer that waits on a table the attempt holds starts
+  -- its deadlock check after deadlock_timeout (1 s by default), when the
+  -- attempt has let go, so the rename never deadlocks a writer that locks
+  -- entities, then the catalogue. A table-by-table wait did (40P01).
+  deadline := clock_timestamp() + interval '60 seconds';
   LOOP
     BEGIN
-      EXECUTE format('LOCK TABLE %s IN EXCLUSIVE MODE NOWAIT', tbls);
+      attempt := clock_timestamp() + interval '300 milliseconds';
+      FOR t IN SELECT tbl FROM tenant_tables() UNION SELECT 'tenants' UNION SELECT 'jsonld_contexts' ORDER BY 1 LOOP
+        PERFORM set_config('lock_timeout',
+          greatest(1, ceil(extract(epoch FROM attempt - clock_timestamp()) * 1000))::int || 'ms', true);
+        EXECUTE format('LOCK TABLE %I IN EXCLUSIVE MODE', t);
+      END LOOP;
       EXIT;
     EXCEPTION WHEN lock_not_available THEN
       IF clock_timestamp() > deadline THEN
-        RAISE EXCEPTION 'writers held the tables of Tenant % for 30 s', p_old
+        RAISE EXCEPTION 'writers held the tables of Tenant % for 60 s', p_old
           USING ERRCODE = 'lock_not_available',
                 HINT = 'run the rename again in a quieter window, or stop the brokers first';
       END IF;
-      PERFORM pg_sleep(0.02 + random() * 0.08);
+      PERFORM pg_sleep(0.05 + random() * 0.2);
     END;
   END LOOP;
+  PERFORM set_config('lock_timeout', '30s', true);
 
   FOR t IN SELECT tbl FROM tenant_tables() LOOP
     EXECUTE format('UPDATE %I SET tenant_id = $2 WHERE tenant_id = $1', t) USING p_old, p_new;

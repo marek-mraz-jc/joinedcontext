@@ -320,20 +320,35 @@ async fn a_bypassrls_owner_moves_the_tenant_the_same_with_the_triggers_on() {
     let before = digest(&pool, &old).await;
     let new = keyed(n, "air");
     let role = format!("renameowner{n}");
-    let mut tx = pool.begin().await.expect("tx");
-    for stmt in [
+    // The grants commit before the rename's transaction: granted there, they
+    // would hold every table's pg_class row through the rename and deadlock a
+    // parallel ANALYZE that waits on them while the rename waits on its table.
+    let own = |stmts: Vec<String>| {
+        let pool = pool.clone();
+        async move {
+            let mut setup = pool.begin().await.expect("tx");
+            for stmt in stmts {
+                // the role name is this test's own
+                sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+                    .execute(&mut *setup)
+                    .await
+                    .expect(&stmt);
+            }
+            setup.commit().await.expect("commit");
+        }
+    };
+    own(vec![
         format!("CREATE ROLE {role} NOSUPERUSER BYPASSRLS"),
         format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {role}"),
         format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {role}"),
         format!("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {role}"),
-        format!("SET LOCAL ROLE {role}"),
-    ] {
-        // the role name is this test's own
-        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
-            .execute(&mut *tx)
-            .await
-            .expect(&stmt);
-    }
+    ])
+    .await;
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query(sqlx::AssertSqlSafe(format!("SET LOCAL ROLE {role}")))
+        .execute(&mut *tx)
+        .await
+        .expect("set role");
     sqlx::query("SELECT antares_tenant_rename($1, $2)")
         .bind(&old)
         .bind(&new)
@@ -353,6 +368,11 @@ async fn a_bypassrls_owner_moves_the_tenant_the_same_with_the_triggers_on() {
             .await
             .expect("setting");
     tx.rollback().await.expect("rollback");
+    own(vec![
+        format!("DROP OWNED BY {role}"),
+        format!("DROP ROLE {role}"),
+    ])
+    .await;
     assert_eq!(after, before);
     assert_eq!(replication, "origin");
 }
