@@ -1032,3 +1032,35 @@ fn an_organization_realm_with_the_installations_issuer_is_refused() {
         assert!(refused.is_err(), "{realms}");
     }
 }
+
+/// T-7180: jc replaces the realms at run time under the start-time check: a dropped realm is gone
+/// from the next exchange on, and a list the check refuses changes nothing.
+#[test]
+fn the_organization_realms_are_replaced_at_run_time_under_the_same_check() {
+    let ba = r#"[{"organization":"ba","issuer":"https://idm.ba/realms/ba","jwks_url":"http://kc/realms/ba/protocol/openid-connect/certs"}]"#;
+    let config = agent_proxy::config::Config::from_lookup(|key| match key {
+        "JC_PROXY_BIND" => Some("127.0.0.1:0".to_owned()),
+        "JC_REQUIRE_MESH_IDENTITY" => Some("false".to_owned()),
+        "JC_MODEL_KEY" => Some("mock-model-key".to_owned()),
+        "JC_FORGE_TOKEN" => Some("mock-forge-token".to_owned()),
+        "JC_OIDC_ISSUER" => Some("https://idm.example/realms/jc".to_owned()),
+        "JC_OIDC_CLIENT_ID" => Some(PROXY_CLIENT.to_owned()),
+        "JC_OIDC_CLIENT_SECRET" => Some(PROXY_SECRET.to_owned()),
+        _ => None,
+    })
+    .expect("the configuration is complete");
+    let shared = config.clone();
+    let realms = &config.organization_realms;
+    assert!(realms.current().is_empty());
+    assert_eq!(realms.replace(ba, &config.oidc_issuer).expect("ba"), 1);
+    assert_eq!(shared.organization_realms.current()[0].organization, "ba");
+    let theirs = r#"[{"organization":"ba","issuer":"https://idm.example/realms/jc","jwks_url":"http://kc/realms/jc/protocol/openid-connect/certs"}]"#;
+    assert!(realms.replace(theirs, &config.oidc_issuer).is_err());
+    assert_eq!(
+        realms.current()[0].issuer,
+        "https://idm.ba/realms/ba",
+        "kept"
+    );
+    assert_eq!(realms.replace("[]", &config.oidc_issuer).expect("none"), 0);
+    assert!(shared.organization_realms.current().is_empty(), "dropped");
+}

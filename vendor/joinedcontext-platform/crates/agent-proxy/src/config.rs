@@ -5,6 +5,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
 use url::Url;
 
 #[derive(Clone)]
@@ -64,7 +65,7 @@ pub struct Config {
     /// The realm of each Organization with its own sign-in host (`JC_OIDC_ORGANIZATION_REALMS`,
     /// the gateway's shape, T-7144): a run of that Organization's person hands over a token of
     /// it, and the proxy introspects and exchanges it there with its own client of that realm.
-    pub organization_realms: Vec<OrganizationRealm>,
+    pub organization_realms: OrganizationRealms,
     /// Whether a caller must arrive through the mesh with a Linkerd identity
     /// (`JC_REQUIRE_MESH_IDENTITY`, `true` or `false`; default on, F-PLT1-008). A run's ticket is
     /// then honoured from the run's own workload or the Portal's alone, so a ticket copied out of
@@ -265,8 +266,10 @@ impl Config {
         // presented on every callback. The proxy asks the realm for a token of its own client now,
         // audience-bound to the Portal's internal listener, and it expires by itself.
         let oidc_token_url = lookup("JC_OIDC_TOKEN_URL").filter(|v| !v.trim().is_empty());
-        let organization_realms =
-            organization_realms(lookup("JC_OIDC_ORGANIZATION_REALMS"), &oidc_issuer)?;
+        let organization_realms = OrganizationRealms::new(organization_realms(
+            lookup("JC_OIDC_ORGANIZATION_REALMS"),
+            &oidc_issuer,
+        )?);
         let require_mesh_identity = match lookup("JC_REQUIRE_MESH_IDENTITY").as_deref() {
             None | Some("true") => true,
             Some("false") => false,
@@ -385,6 +388,46 @@ pub struct OrganizationRealm {
 }
 
 const CERTS: &str = "/protocol/openid-connect/certs";
+
+/// The Organizations' own realms the proxy exchanges in (T-7180): read at start, replaced by jc
+/// whenever the host registry serves another set of sign-in hosts. Every clone of the config
+/// sees the same set.
+#[derive(Clone, Default)]
+pub struct OrganizationRealms(Arc<RwLock<Arc<Vec<OrganizationRealm>>>>);
+
+impl std::fmt::Debug for OrganizationRealms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.current().fmt(f)
+    }
+}
+
+impl OrganizationRealms {
+    fn new(realms: Vec<OrganizationRealm>) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(realms))))
+    }
+
+    /// The realms held now.
+    pub fn current(&self) -> Arc<Vec<OrganizationRealm>> {
+        match self.0.read() {
+            Ok(held) => Arc::clone(&held),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    /// Makes `raw` (a `JC_OIDC_ORGANIZATION_REALMS` list, checked as at start beside the
+    /// installation realm `installation`) the realms from the next exchange on. A set that fails
+    /// the check changes nothing. Returns how many realms are held.
+    pub fn replace(&self, raw: &str, installation: &Url) -> Result<usize, ConfigError> {
+        let realms = organization_realms(Some(raw.to_owned()), installation)?;
+        let held = realms.len();
+        let next = Arc::new(realms);
+        match self.0.write() {
+            Ok(mut slot) => *slot = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+        Ok(held)
+    }
+}
 
 impl OrganizationRealm {
     /// The realm's token endpoint at its back channel.

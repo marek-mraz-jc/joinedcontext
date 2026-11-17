@@ -9,7 +9,8 @@
 //! Organization's host: operators sign in on `login_host`, and a person not moved into the
 //! Organization's realm yet (T-7128) still holds an installation session.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
 
 use url::Url;
 
@@ -111,10 +112,93 @@ pub struct OrganizationRealm {
     pub bearer: BearerVerifier,
     /// The realm's people, as its own `portal-reconciler` manages them (T-7142); `None` without
     /// the admin client (`JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID`).
-    pub people: Option<crate::people::People>,
+    pub people: Option<Arc<crate::people::People>>,
     /// The realm's issuer path at its back channel, where the Portal's admin clients post
     /// (`http://idm.city.example/realms/city`).
     pub backchannel: String,
+    /// What it was built from: a set replaced at run time keeps a realm whose setting is equal.
+    setting: RealmSetting,
+}
+
+/// The Organizations' own realms by name (T-7180): built at start, replaced whenever jc's host
+/// registry serves another set of sign-in hosts ([`AppState::replace_organization_realms`]).
+/// Every clone holds the same set; a request reads the set current when it asks.
+#[derive(Clone, Default)]
+pub struct OrganizationRealms(Arc<RwLock<Arc<RealmMap>>>);
+
+type RealmMap = BTreeMap<String, Arc<OrganizationRealm>>;
+
+impl OrganizationRealms {
+    pub fn new(realms: RealmMap) -> Self {
+        Self(Arc::new(RwLock::new(Arc::new(realms))))
+    }
+
+    /// The set held now.
+    pub fn current(&self) -> Arc<RealmMap> {
+        match self.0.read() {
+            Ok(held) => Arc::clone(&held),
+            Err(poisoned) => Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    pub fn get(&self, organization: &str) -> Option<Arc<OrganizationRealm>> {
+        self.current().get(organization).cloned()
+    }
+
+    pub fn values(&self) -> Vec<Arc<OrganizationRealm>> {
+        self.current().values().cloned().collect()
+    }
+
+    pub fn keys(&self) -> Vec<String> {
+        self.current().keys().cloned().collect()
+    }
+
+    fn store(&self, next: RealmMap) {
+        let next = Arc::new(next);
+        match self.0.write() {
+            Ok(mut held) => *held = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+    }
+}
+
+impl AppState {
+    /// Makes `raw` (a `JC_PORTAL_ORGANIZATION_REALMS` list, checked as at start) the
+    /// Organizations' own realms (T-7180). A realm left out signs nobody in from the next request
+    /// on and its sessions end at their next refresh; a realm whose setting is unchanged keeps its
+    /// client and keys; a new realm's host is dialed at jc's listener `reach`. A set that fails
+    /// the check changes nothing. Returns how many realms are held.
+    pub fn replace_organization_realms(
+        &self,
+        raw: &str,
+        reach: Option<std::net::SocketAddr>,
+    ) -> Result<usize, String> {
+        let settings = parse(
+            raw,
+            self.config.oidc.as_ref(),
+            &self.config.organization_hosts,
+        )?;
+        if let Some(addr) = reach {
+            for s in &settings {
+                if let Some(host) = s.jwks_url.host_str() {
+                    crate::reach::add(host, addr);
+                }
+            }
+        }
+        let held = self.organization_realms.current();
+        let next: RealmMap = settings
+            .iter()
+            .filter_map(|s| match held.get(&s.organization) {
+                Some(realm) if realm.setting == *s => {
+                    Some((s.organization.clone(), Arc::clone(realm)))
+                }
+                _ => crate::state::organization_realm(&self.config, s),
+            })
+            .collect();
+        let count = next.len();
+        self.organization_realms.store(next);
+        Ok(count)
+    }
 }
 
 impl OrganizationRealm {
@@ -136,8 +220,9 @@ impl OrganizationRealm {
         );
         Self {
             people: admin.and_then(|(id, auth)| {
-                crate::people::People::new(&backchannel, id.clone(), auth.clone())
+                crate::people::People::new(&backchannel, id.clone(), auth.clone()).map(Arc::new)
             }),
+            setting: setting.clone(),
             backchannel,
             organization: setting.organization.clone(),
             issuer: trimmed(&setting.issuer).to_owned(),
@@ -193,7 +278,7 @@ impl OrganizationRealm {
 /// own.
 pub fn here(state: &AppState) -> Option<Arc<OrganizationRealm>> {
     let organization = crate::organization_host::organization()?;
-    state.organization_realms.get(&organization).cloned()
+    state.organization_realms.get(&organization)
 }
 
 /// The realm App `app` signs its people in at (T-7165): its project's Organization's own, when
@@ -206,7 +291,7 @@ pub fn of_app(state: &AppState, app: &str) -> Option<Arc<OrganizationRealm>> {
         .metadata
         .namespace?;
     let organization = crate::permissions::organization_of(&state.mirror, &project)?;
-    state.organization_realms.get(&organization).cloned()
+    state.organization_realms.get(&organization)
 }
 
 /// The sign-in configuration of App `app`'s realm ([`of_app`]), else the installation's.

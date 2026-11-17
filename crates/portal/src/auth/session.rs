@@ -338,6 +338,14 @@ pub fn load_with_realm(headers: &HeaderMap, state: &AppState) -> Option<(Session
         realm,
         ..
     } = open_from(headers, &state.config)?;
+    // A session of a realm this Portal no longer signs in through (the host registry dropped its
+    // sign-in host, T-7180) is over from the next request on, not only at its next refresh.
+    if realm
+        .as_deref()
+        .is_some_and(|r| state.organization_realms.get(r).is_none())
+    {
+        return None;
+    }
     if groups_kept {
         match state.session_groups(&session) {
             Some(groups) => session.identity.groups = groups,

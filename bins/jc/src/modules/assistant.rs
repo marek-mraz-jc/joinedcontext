@@ -187,7 +187,7 @@ fn proxy_lookup(
     out.insert("JC_PROXY_BIND", format!("{}:0", Ipv4Addr::LOCALHOST));
     if let Some(id) = siblings.get(Module::Kaisatsu) {
         out.insert("JC_OIDC_ISSUER", format!("{}/realms/{realm}", id.public));
-        if let Some(realms) = organization_realms(orgs, &id.public) {
+        if let Some(realms) = organization_realms(&super::sign_in::from_config(orgs), &id.public) {
             out.insert("JC_OIDC_ORGANIZATION_REALMS", realms);
         }
     }
@@ -228,23 +228,19 @@ fn proxy_lookup(
 /// own sign-in host, where a run of that Organization's person is introspected and exchanged as
 /// the realm's `agent-proxy` client (`setup::assistant_realm_file`). The proxy dials the realm at
 /// its issuer, as it dials the installation realm, on the scheme kaisatsu's public address has.
-fn organization_realms(
-    orgs: &[crate::config::OrganizationSection],
-    kaisatsu: &str,
-) -> Option<String> {
+fn organization_realms(sign_ins: &[super::sign_in::SignIn], kaisatsu: &str) -> Option<String> {
     let scheme = kaisatsu
         .split_once("://")
         .map_or("https", |(scheme, _)| scheme);
-    let realms: Vec<serde_json::Value> = orgs
+    let realms: Vec<serde_json::Value> = sign_ins
         .iter()
-        .filter_map(|org| {
-            let idm = org.hosts.idm.as_deref()?;
-            let issuer = format!("{scheme}://{idm}/realms/{}", org.name);
-            Some(serde_json::json!({
-                "organization": org.name,
+        .map(|own| {
+            let issuer = format!("{scheme}://{}/realms/{}", own.host, own.organization);
+            serde_json::json!({
+                "organization": own.organization,
                 "jwks_url": format!("{issuer}/protocol/openid-connect/certs"),
                 "issuer": issuer,
-            }))
+            })
         })
         .collect();
     (!realms.is_empty()).then(|| serde_json::Value::from(realms).to_string())
@@ -355,6 +351,20 @@ async fn proxy(
         .await
         .map_err(|e| format!("the model proxy cannot listen: {e}"))?;
     let config = Arc::new(config);
+    // The host registry's sign-in hosts replace the jc.toml realms at run time (T-7180).
+    if let Some(kaisatsu) = siblings.get(Module::Kaisatsu).map(|id| id.public.clone()) {
+        let (realms, issuer) = (
+            config.organization_realms.clone(),
+            config.oidc_issuer.clone(),
+        );
+        super::sign_in::follow("assistant", move |set| {
+            let raw = organization_realms(set, &kaisatsu).unwrap_or_else(|| "[]".into());
+            match realms.replace(&raw, &issuer) {
+                Ok(held) => tracing::info!(held, "assistant: Organization realms replaced"),
+                Err(e) => tracing::error!(error = %e, "assistant: Organization realms kept"),
+            }
+        });
+    }
     let credentials = agent_proxy::inject::CredentialManager::new(Arc::clone(&config));
     let runs = agent_proxy::runs::RunResolver::new(config.portal_base.clone(), credentials.clone());
     let state = Arc::new(agent_proxy::ProxyState::new(
@@ -877,7 +887,8 @@ mod tests {
             hosts = { portal = \"smartcity.zilina.sk\" }\n";
         let file = crate::config::Config::parse_file(Path::new("jc.toml"), text).unwrap();
         let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).unwrap();
-        let json = organization_realms(&cfg.organizations, "https://city.example/login").unwrap();
+        let sign_ins = crate::modules::sign_in::from_config(&cfg.organizations);
+        let json = organization_realms(&sign_ins, "https://city.example/login").unwrap();
         let realms: Vec<agent_proxy::config::OrganizationRealm> =
             serde_json::from_str(&json).unwrap();
         assert_eq!(
@@ -889,7 +900,7 @@ mod tests {
             }]
         );
         assert_eq!(
-            organization_realms(&cfg.organizations[1..], "https://city.example"),
+            organization_realms(&sign_ins[1..], "https://city.example"),
             None
         );
     }

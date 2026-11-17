@@ -410,7 +410,7 @@ const OPERATOR_LOCK: i64 = 0x6a63_6f70_7273; // "jcoprs"
 /// The proposer is still in the operators' group (or holds its realm role) when a second
 /// operator approves: one who left takes their open Changes' four eyes with them.
 async fn proposer_holds(
-    admin: &crate::people::Admin<'_>,
+    admin: &crate::people::Admin,
     group: &str,
     proposer: &str,
 ) -> Result<(), ApiError> {
@@ -434,7 +434,7 @@ async fn proposer_holds(
 /// [`FEWEST_OPERATORS`].
 async fn operators_hold(
     tx: &mut sqlx::PgConnection,
-    admin: &crate::people::Admin<'_>,
+    admin: &crate::people::Admin,
     group: &str,
     found: &OperatorChange,
 ) -> Result<(), ApiError> {

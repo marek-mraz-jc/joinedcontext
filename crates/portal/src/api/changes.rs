@@ -596,7 +596,7 @@ async fn standing(
     let writer = match pr.author_email.as_deref().map(str::trim) {
         Some(email) if !email.is_empty() => {
             writers.contains(&email.to_ascii_lowercase())
-                || crate::people::realm_id_of(state.people_here(), email)
+                || crate::people::realm_id_of(state.people_here().as_deref(), email)
                     .await
                     .is_some_and(|id| writers.contains(&id.to_ascii_lowercase()))
         }

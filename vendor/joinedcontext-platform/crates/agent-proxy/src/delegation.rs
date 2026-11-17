@@ -258,9 +258,8 @@ impl Grants {
         let Some(issuer) = issuer_of(subject_token) else {
             return Ok(self.config.token_url());
         };
-        let mut realms = self
-            .config
-            .organization_realms
+        let held = self.config.organization_realms.current();
+        let mut realms = held
             .iter()
             .filter(|realm| realm.issuer.trim_end_matches('/') == issuer);
         match realms.next() {

@@ -172,6 +172,7 @@ struct NamedRole {
 const SECOND_FACTORS: [&str; 3] = ["otp", "webauthn", "webauthn-passwordless"];
 
 /// The realm's people, as this Portal's admin client may manage them.
+#[derive(Clone)]
 pub struct People {
     http: reqwest::Client,
     issuer: String,
@@ -182,8 +183,8 @@ pub struct People {
 
 /// One authenticated conversation with the admin API: the token is fetched once per request the
 /// Portal serves, not once per call.
-pub struct Admin<'a> {
-    people: &'a People,
+pub struct Admin {
+    people: People,
     token: String,
 }
 
@@ -202,7 +203,7 @@ impl People {
         })
     }
 
-    pub async fn admin(&self) -> Result<Admin<'_>, PeopleError> {
+    pub async fn admin(&self) -> Result<Admin, PeopleError> {
         let form = self
             .auth
             .form(&self.client_id, &[("grant_type", "client_credentials")])
@@ -226,7 +227,7 @@ impl People {
             .await
             .map_err(|err| PeopleError::Unreachable(err.to_string()))?;
         Ok(Admin {
-            people: self,
+            people: self.clone(),
             token: token.access_token,
         })
     }
@@ -255,7 +256,7 @@ async fn refusal(response: reqwest::Response) -> PeopleError {
     }
 }
 
-impl Admin<'_> {
+impl Admin {
     fn url(&self, path: &str) -> String {
         format!("{}{path}", self.people.admin)
     }

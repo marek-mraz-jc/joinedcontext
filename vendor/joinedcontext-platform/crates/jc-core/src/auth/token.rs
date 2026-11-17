@@ -257,9 +257,10 @@ pub struct Verifier {
     keys: ArcSwap<Table>,
     /// `sub` -> unix second of the subject's revocation, as the Portal lists it (T-5568).
     revoked: ArcSwap<HashMap<String, i64>>,
-    /// Organization -> the realm of its own sign-in host (T-7131), fixed at start. Its tokens
-    /// count only for a request of that Organization ([`Self::verify_for`]).
-    organizations: HashMap<String, Arc<Verifier>>,
+    /// Organization -> the realm of its own sign-in host (T-7131), replaced whole when the host
+    /// registry serves another set (T-7180). Its tokens count only for a request of that
+    /// Organization ([`Self::verify_for`]).
+    organizations: ArcSwap<HashMap<String, Arc<Verifier>>>,
 }
 
 impl std::fmt::Debug for Verifier {
@@ -268,7 +269,7 @@ impl std::fmt::Debug for Verifier {
         f.debug_struct("Verifier")
             .field("issuer", &self.issuer)
             .field("keys", &self.key_count())
-            .field("organizations", &self.organizations.len())
+            .field("organizations", &self.organizations.load().len())
             .finish()
     }
 }
@@ -280,7 +281,7 @@ impl Verifier {
             issuer: issuer.into(),
             keys: ArcSwap::new(Arc::new(Table::default())),
             revoked: ArcSwap::new(Arc::new(HashMap::new())),
-            organizations: HashMap::new(),
+            organizations: ArcSwap::new(Arc::new(HashMap::new())),
         }
     }
 
@@ -289,18 +290,51 @@ impl Verifier {
     /// [`Self::organizations`]; the revocations stay this verifier's.
     #[must_use]
     pub fn with_organization(
-        mut self,
+        self,
         organization: impl Into<String>,
         issuer: impl Into<String>,
     ) -> Self {
-        self.organizations
-            .insert(organization.into(), Arc::new(Self::new(issuer)));
+        let mut held = HashMap::clone(&self.organizations.load());
+        held.insert(organization.into(), Arc::new(Self::new(issuer)));
+        self.organizations.store(Arc::new(held));
         self
     }
 
     /// Each Organization's own realm, to load and refresh its keys.
-    pub fn organizations(&self) -> impl Iterator<Item = (&str, &Arc<Verifier>)> {
-        self.organizations.iter().map(|(o, v)| (o.as_str(), v))
+    pub fn organizations(&self) -> Vec<(String, Arc<Verifier>)> {
+        self.organizations
+            .load()
+            .iter()
+            .map(|(o, v)| (o.clone(), Arc::clone(v)))
+            .collect()
+    }
+
+    /// Makes `realms` (Organization, issuer) the Organizations' own realms from now on (T-7180):
+    /// an Organization left out has its tokens refused from the next request on, one whose
+    /// issuer is unchanged keeps its verifier and keys. Returns the realms that are new, whose
+    /// keys the caller loads; until then their tokens are refused.
+    pub fn replace_organizations(
+        &self,
+        realms: &[(String, String)],
+    ) -> Vec<(String, Arc<Verifier>)> {
+        let held = self.organizations.load();
+        let mut added = Vec::new();
+        let next = realms
+            .iter()
+            .map(|(organization, issuer)| {
+                let own = match held.get(organization) {
+                    Some(own) if own.issuer == *issuer => Arc::clone(own),
+                    _ => {
+                        let own = Arc::new(Self::new(issuer.clone()));
+                        added.push((organization.clone(), Arc::clone(&own)));
+                        own
+                    }
+                };
+                (organization.clone(), own)
+            })
+            .collect();
+        self.organizations.store(Arc::new(next));
+        added
     }
 
     /// Replaces the revoked subjects: `sub` -> the unix second it was revoked at. A token of a
@@ -414,7 +448,8 @@ impl Verifier {
         token: &str,
         audiences: Option<&[String]>,
     ) -> Result<Claims, Rejected> {
-        if let Some(own) = organization.and_then(|o| self.organizations.get(o)) {
+        let held = self.organizations.load();
+        if let Some(own) = organization.and_then(|o| held.get(o)) {
             match own.decode(token, audiences) {
                 Err(Rejected::UnknownKey | Rejected::WrongIssuer | Rejected::BadSignature) => {}
                 answer => return answer,
