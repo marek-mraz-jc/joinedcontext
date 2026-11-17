@@ -910,6 +910,7 @@ async fn filed(pool: &sqlx::PgPool, requested_by: &str, person: &str) -> String 
 async fn a_project_administrator_decides_an_access_request_and_no_other_organization_sees_it() {
     let Some(pool) = pool().await else { return };
     let state = scenario_world().await.with_db(pool.clone());
+    common::registered(&state, &pool, ESP_PROJECT).await;
     state
         .mirror
         .upsert(envelope("ContextSpace", "air", ESP_PROJECT, json!({})));

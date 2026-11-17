@@ -184,6 +184,10 @@ pub enum WorkspaceError {
     NotFound(String),
     #[error("database error: {0}")]
     Db(String),
+    /// The project has no tenancy key (T-7206 PK-1g): its Organization is not an active one of
+    /// the registry, so it keeps no workspace.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no workspace; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// What opening a workspace asks for.
@@ -199,8 +203,109 @@ pub struct Opening<'a> {
 }
 
 enum Inner {
-    Db(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of the workspace's project key (T-7206 PK-1g);
+    /// the map is the project of each workspace name this process has seen, so a call by name
+    /// alone opens its key without asking every project.
+    Db(
+        sqlx::PgPool,
+        Arc<crate::store::Mirror>,
+        std::sync::Mutex<std::collections::HashMap<String, String>>,
+    ),
     Memory(RwLock<BTreeMap<String, Workspace>>),
+}
+
+type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+/// How many workspace names the store remembers the project of before it starts over.
+/// ponytail: cleared whole when full; an LRU when an installation holds more workspaces.
+const KNOWN_NAMES: usize = 10_000;
+
+fn known(
+    names: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, String>> {
+    names.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Remembers which project `workspaces` belong to.
+fn learn<'a>(
+    names: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+    workspaces: impl IntoIterator<Item = &'a Workspace>,
+) {
+    let mut names = known(names);
+    for workspace in workspaces {
+        if names.len() >= KNOWN_NAMES {
+            names.clear();
+        }
+        names.insert(workspace.name.clone(), workspace.project.clone());
+    }
+}
+
+/// A transaction in the key of workspace `name`'s project; `None` when no keyed project holds
+/// it. A name this process has not seen is looked for project by project, each in its key
+/// (STO-07).
+async fn name_tx(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    names: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+    name: &str,
+) -> Result<Option<Tx>, WorkspaceError> {
+    let project = known(names).get(name).cloned();
+    if let Some(project) = project {
+        return crate::project_ids::tx_of(pool, mirror, &project)
+            .await
+            .map_err(db);
+    }
+    for (project, key) in crate::project_ids::keyed_projects(pool, mirror)
+        .await
+        .map_err(db)?
+    {
+        let mut tx = crate::db::tenant_tx(pool, key).await.map_err(db)?;
+        let held: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM workspaces WHERE name = $1 AND project = $2)",
+        )
+        .bind(name)
+        .bind(&project)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        if held {
+            known(names).insert(name.to_owned(), project);
+            return Ok(Some(tx));
+        }
+    }
+    Ok(None)
+}
+
+/// The workspaces of every keyed project that `filter` (SQL after `WHERE project = $1 AND`,
+/// binding `$2` to `at`) selects, project by project, each in its key (STO-07).
+async fn every_project(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    names: &std::sync::Mutex<std::collections::HashMap<String, String>>,
+    filter: &'static str,
+    at: Option<time::OffsetDateTime>,
+) -> Result<Vec<Workspace>, WorkspaceError> {
+    let mut found = Vec::new();
+    for (project, key) in crate::project_ids::keyed_projects(pool, mirror)
+        .await
+        .map_err(db)?
+    {
+        let mut tx = crate::db::tenant_tx(pool, key).await.map_err(db)?;
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE project = $1 AND {filter}"
+        )))
+        .bind(&project);
+        if let Some(at) = at {
+            query = query.bind(at);
+        }
+        for row in query.fetch_all(&mut *tx).await.map_err(db)? {
+            found.push(row_to_workspace(row)?);
+        }
+        tx.commit().await.map_err(db)?;
+    }
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    learn(names, &found);
+    Ok(found)
 }
 
 #[derive(Clone)]
@@ -232,9 +337,9 @@ fn db(err: sqlx::Error) -> WorkspaceError {
 }
 
 impl WorkspaceStore {
-    pub fn new(pool: Option<sqlx::PgPool>) -> Self {
+    pub fn new(pool: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         let inner = match pool {
-            Some(pool) => Inner::Db(pool),
+            Some(pool) => Inner::Db(pool, mirror, std::sync::Mutex::default()),
             None => Inner::Memory(RwLock::new(BTreeMap::new())),
         };
         Self {
@@ -278,9 +383,13 @@ impl WorkspaceStore {
                 map.insert(workspace.name.clone(), workspace.clone());
                 Ok(workspace)
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror, names) => {
                 let scope = serde_json::to_value(&workspace.scope)
                     .map_err(|e| WorkspaceError::Db(e.to_string()))?;
+                let mut tx = crate::project_ids::tx_of(pool, mirror, &workspace.project)
+                    .await
+                    .map_err(db)?
+                    .ok_or_else(|| WorkspaceError::Unplaced(workspace.project.clone()))?;
                 let row = sqlx::query(
                     "INSERT INTO workspaces (name, title, project, owner, base_revision, scope, preview_state, created_at, expires_at) VALUES ($1, $8, $2, $3, $4, $5, 'none', $6, $7) \
                      ON CONFLICT (name) DO NOTHING RETURNING name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at",
@@ -293,11 +402,16 @@ impl WorkspaceStore {
                 .bind(chrono_to_odt(workspace.created_at))
                 .bind(chrono_to_odt(workspace.expires_at))
                 .bind(&workspace.title)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 match row {
-                    Some(row) => row_to_workspace(row),
+                    Some(row) => {
+                        let created = row_to_workspace(row)?;
+                        learn(names, [&created]);
+                        Ok(created)
+                    }
                     None => Err(WorkspaceError::Conflict(workspace.name)),
                 }
             }
@@ -307,14 +421,17 @@ impl WorkspaceStore {
     pub async fn get(&self, name: &str) -> Result<Option<Workspace>, WorkspaceError> {
         match &*self.inner {
             Inner::Memory(map) => Ok(map.read().await.get(name).cloned()),
-            Inner::Db(pool) => {
-                sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE name = $1")
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = name_tx(pool, mirror, names, name).await? else {
+                    return Ok(None);
+                };
+                let row = sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE name = $1")
                     .bind(name)
-                    .fetch_optional(pool)
+                    .fetch_optional(&mut *tx)
                     .await
-                    .map_err(db)?
-                    .map(row_to_workspace)
-                    .transpose()
+                    .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                row.map(row_to_workspace).transpose()
             }
         }
     }
@@ -338,14 +455,26 @@ impl WorkspaceStore {
                 .filter(|w| w.project == project)
                 .cloned()
                 .collect::<Vec<_>>(),
-            Inner::Db(pool) => sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE project = $1")
-            .bind(project)
-            .fetch_all(pool)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(row_to_workspace)
-            .collect::<Result<Vec<_>, _>>()?,
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project)
+                    .await
+                    .map_err(db)?
+                else {
+                    return Ok(Vec::new());
+                };
+                let rows = sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE project = $1")
+                    .bind(project)
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                let found = rows
+                    .into_iter()
+                    .map(row_to_workspace)
+                    .collect::<Result<Vec<_>, _>>()?;
+                learn(names, &found);
+                found
+            }
         };
         found.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.name.cmp(&b.name)));
         Ok(found)
@@ -364,13 +493,17 @@ impl WorkspaceStore {
                 }
                 None => Err(WorkspaceError::NotFound(name.to_owned())),
             },
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = name_tx(pool, mirror, names, name).await? else {
+                    return Err(WorkspaceError::NotFound(name.to_owned()));
+                };
                 let done = sqlx::query("UPDATE workspaces SET preview_state = $2 WHERE name = $1")
                     .bind(name)
                     .bind(state.as_str())
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await
                     .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 if done.rows_affected() == 0 {
                     return Err(WorkspaceError::NotFound(name.to_owned()));
                 }
@@ -395,16 +528,20 @@ impl WorkspaceStore {
                 }
                 None => Err(WorkspaceError::NotFound(name.to_owned())),
             },
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = name_tx(pool, mirror, names, name).await? else {
+                    return Err(WorkspaceError::NotFound(name.to_owned()));
+                };
                 let done = sqlx::query(
                     "UPDATE workspaces SET preview_state = 'starting', preview_salt = $2, preview_author = $3 WHERE name = $1",
                 )
                 .bind(name)
                 .bind(&access.salt)
                 .bind(&access.author)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 if done.rows_affected() == 0 {
                     return Err(WorkspaceError::NotFound(name.to_owned()));
                 }
@@ -427,13 +564,17 @@ impl WorkspaceStore {
                 }
                 None => Err(WorkspaceError::NotFound(name.to_owned())),
             },
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = name_tx(pool, mirror, names, name).await? else {
+                    return Err(WorkspaceError::NotFound(name.to_owned()));
+                };
                 let done = sqlx::query("UPDATE workspaces SET base_revision = $2 WHERE name = $1")
                     .bind(name)
                     .bind(revision)
-                    .execute(pool)
+                    .execute(&mut *tx)
                     .await
                     .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 if done.rows_affected() == 0 {
                     return Err(WorkspaceError::NotFound(name.to_owned()));
                 }
@@ -450,14 +591,21 @@ impl WorkspaceStore {
                 .await
                 .remove(name)
                 .ok_or_else(|| WorkspaceError::NotFound(name.to_owned())),
-            Inner::Db(pool) => sqlx::query("DELETE FROM workspaces WHERE name = $1 RETURNING name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at")
-            .bind(name)
-            .fetch_optional(pool)
-            .await
-            .map_err(db)?
-            .map(row_to_workspace)
-            .transpose()?
-            .ok_or_else(|| WorkspaceError::NotFound(name.to_owned())),
+            Inner::Db(pool, mirror, names) => {
+                let Some(mut tx) = name_tx(pool, mirror, names, name).await? else {
+                    return Err(WorkspaceError::NotFound(name.to_owned()));
+                };
+                let row = sqlx::query("DELETE FROM workspaces WHERE name = $1 RETURNING name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at")
+                    .bind(name)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                known(names).remove(name);
+                row.map(row_to_workspace)
+                    .transpose()?
+                    .ok_or_else(|| WorkspaceError::NotFound(name.to_owned()))
+            }
         }
     }
 
@@ -468,16 +616,24 @@ impl WorkspaceStore {
                 .read()
                 .await
                 .values()
-                .filter(|w| matches!(w.preview_state, PreviewState::Starting | PreviewState::Running))
+                .filter(|w| {
+                    matches!(
+                        w.preview_state,
+                        PreviewState::Starting | PreviewState::Running
+                    )
+                })
                 .cloned()
                 .collect()),
-            Inner::Db(pool) => sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE preview_state IN ('starting', 'running') ORDER BY name")
-            .fetch_all(pool)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(row_to_workspace)
-            .collect(),
+            Inner::Db(pool, mirror, names) => {
+                every_project(
+                    pool,
+                    mirror,
+                    names,
+                    "preview_state IN ('starting', 'running')",
+                    None,
+                )
+                .await
+            }
         }
     }
 
@@ -491,14 +647,16 @@ impl WorkspaceStore {
                 .filter(|w| w.expired(now))
                 .cloned()
                 .collect()),
-            Inner::Db(pool) => sqlx::query("SELECT name, title, project, owner, base_revision, scope, preview_state, preview_salt, preview_author, created_at, expires_at FROM workspaces WHERE expires_at <= $1 ORDER BY name")
-            .bind(chrono_to_odt(now))
-            .fetch_all(pool)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(row_to_workspace)
-            .collect(),
+            Inner::Db(pool, mirror, names) => {
+                every_project(
+                    pool,
+                    mirror,
+                    names,
+                    "expires_at <= $2",
+                    Some(chrono_to_odt(now)),
+                )
+                .await
+            }
         }
     }
 }
@@ -682,6 +840,7 @@ impl From<WorkspaceError> for ApiError {
             WorkspaceError::Conflict(_) => ApiError::Conflict(err.to_string()),
             WorkspaceError::NotFound(_) => ApiError::NotFound(err.to_string()),
             WorkspaceError::Db(msg) => ApiError::Internal(msg),
+            WorkspaceError::Unplaced(_) => ApiError::NotFound(err.to_string()),
         }
     }
 }

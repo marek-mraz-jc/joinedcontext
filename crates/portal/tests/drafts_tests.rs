@@ -67,7 +67,7 @@ fn session_cookie(
 
 #[tokio::test]
 async fn memory_store_put_get_version_bump_drop_list() {
-    let store = DraftStore::new(None);
+    let store = DraftStore::new(None, Default::default());
     let m1 = json!({
         "apiVersion": API_VERSION,
         "kind": "DataSource",
@@ -138,7 +138,7 @@ async fn memory_store_put_get_version_bump_drop_list() {
 
 #[tokio::test]
 async fn literal_secret_refused_at_put() {
-    let store = DraftStore::new(None);
+    let store = DraftStore::new(None, Default::default());
     let secret_manifest = json!({
         "apiVersion": API_VERSION,
         "kind": "DataSource",
@@ -230,7 +230,7 @@ fn is_fresh_for_becomes_false_after_manifest_changes() {
 #[tokio::test]
 async fn draft_event_broadcast_on_put_and_drop() {
     let hub = DraftHub::new();
-    let store = DraftStore::new(None).with_hub(hub.clone());
+    let store = DraftStore::new(None, Default::default()).with_hub(hub.clone());
     let mut rx = hub.subscribe("p1").await;
 
     let m = json!({ "spec": { "active": true } });
@@ -411,7 +411,7 @@ async fn rest_api_draft_crud_roundtrip() {
 
 #[tokio::test]
 async fn sweep_removes_idle_drafts() {
-    let store = DraftStore::new(None);
+    let store = DraftStore::new(None, Default::default());
     let m = json!({
         "apiVersion": API_VERSION,
         "kind": "DataSource",
@@ -746,7 +746,7 @@ async fn the_draft_stream_announces_only_what_the_reader_may_read() {
 /// places is two drafts (T-1235).
 #[tokio::test]
 async fn draft_scoped_to_workspace() {
-    let store = joinedcontext_portal::ops::drafts::DraftStore::new(None);
+    let store = joinedcontext_portal::ops::drafts::DraftStore::new(None, Default::default());
     let manifest = |title: &str| serde_json::json!({ "kind": "Pipeline", "metadata": { "name": "bikes", "title": title } });
     store
         .put(
@@ -843,7 +843,7 @@ async fn draft_scoped_to_workspace() {
 
 #[tokio::test]
 async fn draft_without_workspace_still_works_and_serializes_without_one() {
-    let store = joinedcontext_portal::ops::drafts::DraftStore::new(None);
+    let store = joinedcontext_portal::ops::drafts::DraftStore::new(None, Default::default());
     let draft = store
         .put(
             "helsinki",

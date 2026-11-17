@@ -10,8 +10,8 @@ use joinedcontext_portal::config::Config;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -21,7 +21,7 @@ fn database_url() -> Option<String> {
 
 /// A project nobody else's run writes to, so tests share one database without a fixture.
 fn fresh_project() -> String {
-    let id = crate::unique::unique();
+    let id = unique::unique();
     format!("replicas-{id}")
 }
 
@@ -44,6 +44,8 @@ async fn a_draft_put_on_one_replica_is_an_event_on_the_other() {
     let project = fresh_project();
     let a = replica(&url).await;
     let b = replica(&url).await;
+    // Only replica A writes, so only its mirror needs the project placed in an Organization.
+    common::keyed_project(&a, a.db.as_ref().expect("a database"), &project, "helsinki").await;
     let mut on_a = a.draft_events.subscribe(&project).await;
     let mut on_b = b.draft_events.subscribe(&project).await;
     // The listener subscribes asynchronously; give it the moment a connection takes.

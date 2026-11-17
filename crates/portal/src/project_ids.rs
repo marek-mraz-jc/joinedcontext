@@ -44,6 +44,13 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "pipeline_source_holds",
     "pipeline_source_complete",
     "pipeline_source_removed",
+    // T-7204 PK-1g, migration 0075.
+    "drafts",
+    // T-7205 PK-1g, migration 0076.
+    "activity",
+    // T-7206 PK-1g, migration 0077.
+    "workspaces",
+    "agent_runs",
 ];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
@@ -131,11 +138,19 @@ pub async fn reserved(
 /// The key of `project` as the mirror places it: its Organization from the Project's
 /// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
 /// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.
+/// The Organization's own rows, filed under [`ORG_NAMESPACE`] (people, roles, an Organization
+/// draft), take the installation Organization's reserved project (TEN-11; T-7205).
 pub async fn key_of(
     pool: &PgPool,
     mirror: &Mirror,
     project: &str,
 ) -> Result<Option<ProjectKey>, sqlx::Error> {
+    if project == ORG_NAMESPACE {
+        return match crate::permissions::installation_organization(mirror) {
+            Some(organization) => reserved(pool, &organization).await,
+            None => Ok(None),
+        };
+    }
     if mirror.get(ORG_NAMESPACE, "Project", project).is_none() {
         return Ok(None);
     }
@@ -181,8 +196,9 @@ pub(crate) async fn tx_of(
     }
 }
 
-/// Every Project of the mirror with its key, by name: what a read over every project fans out
-/// over, one `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
+/// Every Project of the mirror with its key, by name, then [`ORG_NAMESPACE`] with the
+/// installation Organization's reserved key: what a read over every project fans out over, one
+/// `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
 pub async fn keyed_projects(
     pool: &PgPool,
     mirror: &Mirror,
@@ -195,9 +211,15 @@ pub async fn keyed_projects(
     let mut keyed = Vec::with_capacity(projects.items.len());
     for project in &projects.items {
         let name = project.metadata.name.as_str();
+        if name == ORG_NAMESPACE {
+            continue;
+        }
         if let Some(key) = key_of(pool, mirror, name).await? {
             keyed.push((name.to_owned(), key));
         }
+    }
+    if let Some(key) = key_of(pool, mirror, ORG_NAMESPACE).await? {
+        keyed.push((ORG_NAMESPACE.to_owned(), key));
     }
     Ok(keyed)
 }

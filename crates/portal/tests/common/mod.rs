@@ -106,6 +106,26 @@ pub async fn keyed_project(
     .expect("an Organization of the registry");
 }
 
+/// Puts the Organization the mirror places `project` in (its Project's `organizationRef`, or the
+/// installation's; `ORG_NAMESPACE` for the Organization's own rows) in the registry as active,
+/// leaving the mirror as it is: what keys a fixture's project without rewriting its Project.
+pub async fn registered(state: &AppState, pool: &sqlx::PgPool, project: &str) {
+    let organization = if project == joinedcontext_portal::permissions::ORG_NAMESPACE {
+        joinedcontext_portal::permissions::installation_organization(&state.mirror)
+    } else {
+        joinedcontext_portal::permissions::organization_of(&state.mirror, project)
+    }
+    .expect("the mirror places the project in an Organization");
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) \
+         VALUES ($1, $1 || '.example', 'active', 'test') ON CONFLICT DO NOTHING",
+    )
+    .bind(&organization)
+    .execute(pool)
+    .await
+    .expect("an Organization of the registry");
+}
+
 /// A mirror holding `projects`, each placed in an active Organization of the registry: what a
 /// store built on its own (no `AppState`) needs to keep rows under a project key (T-7198).
 pub async fn keyed_mirror(pool: &sqlx::PgPool, projects: &[&str]) -> Arc<Mirror> {

@@ -911,6 +911,306 @@ async fn rows_keyed_and_read_only_under_their_key(
     (state, placed, orphan, key)
 }
 
+/// A draft of `project`, written as before the key (T-7204). `$1` is the project.
+const DRAFT_ROWS_0075: &[(&str, &str)] = &[(
+    "drafts",
+    "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+     VALUES ($1, 'Endpoint', 'air', '{}', 'anna', 'human')",
+)];
+
+/// T-7204 PK-1g: the drafts of today are keyed by the backfill and read only under their key; the
+/// store writes a new draft in the key, refuses one for a project without a key with the
+/// Organizations page named, and reads none there.
+#[tokio::test]
+async fn drafts_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(DRAFT_ROWS_0075, "dr").await;
+    let pool = state.db.clone().expect("a database");
+    let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "water" } });
+    state
+        .drafts
+        .put(
+            &placed,
+            "Endpoint",
+            "water",
+            manifest.clone(),
+            None,
+            "anna",
+            "human",
+        )
+        .await
+        .expect("a placed project keeps a draft");
+    let refused = state
+        .drafts
+        .put(
+            &orphan, "Endpoint", "water", manifest, None, "anna", "human",
+        )
+        .await
+        .expect_err("an unplaced project keeps no draft");
+    assert!(
+        matches!(
+            refused,
+            joinedcontext_portal::ops::drafts::DraftError::Unplaced(_)
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("Organizations page"),
+        "{refused}"
+    );
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM drafts WHERE name = 'water' AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(stamped, [(placed.clone(), Some(key.project.to_string()))]);
+    assert!(state.drafts.list(&orphan).await.expect("list").is_empty());
+    assert!(state
+        .drafts
+        .get(&orphan, "Endpoint", "air")
+        .await
+        .expect("get")
+        .is_none());
+    let names: Vec<String> = state
+        .drafts
+        .list(&placed)
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert_eq!(
+        names.len(),
+        2,
+        "the backfilled draft and the new one: {names:?}"
+    );
+    assert!(state
+        .drafts
+        .drop(&placed, "Endpoint", "air")
+        .await
+        .expect("drop"));
+}
+
+/// An activity event of `project`, written as before the key (T-7205). `$1` is the project.
+const ACTIVITY_ROWS_0076: &[(&str, &str)] = &[(
+    "activity",
+    "INSERT INTO activity (time, project, kind, source, summary, severity) \
+     VALUES (now() - interval '1 minute', $1, 'config.applied', 'reconciler', 'Applied.', 'info')",
+)];
+
+/// T-7205 PK-1g: the activity of today is keyed by the backfill and read only under its key; a
+/// new event lands in its project's key, and a project without a key keeps none and reads none.
+#[tokio::test]
+async fn activity_rows_are_keyed_and_read_only_under_their_key() {
+    use joinedcontext_portal::activity::{ActivityEvent, ActivityFilter};
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0076, "ac").await;
+    let pool = state.db.clone().expect("a database");
+    let event = |project: &str| ActivityEvent {
+        time: chrono::Utc::now(),
+        project: project.to_owned(),
+        space: None,
+        kind: "config.applied".into(),
+        source: "reconciler".into(),
+        summary: "Applied again.".into(),
+        severity: "info".into(),
+        correlation_id: None,
+        details: Value::Null,
+    };
+    let mut tail = state.activity_events.subscribe(&orphan).await;
+    state
+        .activity
+        .append(&[event(&placed), event(&orphan)])
+        .await
+        .expect("append");
+    assert!(
+        tail.try_recv().is_err(),
+        "the tail hears no event that was not kept"
+    );
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM activity WHERE summary = 'Applied again.' \
+         AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(stamped, [(placed.clone(), Some(key.project.to_string()))]);
+    let filter = ActivityFilter {
+        limit: 10,
+        ..ActivityFilter::default()
+    };
+    let none = state.activity.list(&orphan, &filter).await.expect("list");
+    assert!(none.items.is_empty(), "{:?}", none.items);
+    let page = state.activity.list(&placed, &filter).await.expect("list");
+    assert_eq!(page.items.len(), 2, "the backfilled event and the new one");
+
+    // The Organization's own events (people, roles) take its reserved project's key (TEN-11).
+    let org = joinedcontext_portal::permissions::organization_of(&state.mirror, &placed)
+        .expect("the placed project's Organization");
+    let org_ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    state
+        .mirror
+        .upsert(envelope("Organization", &org, org_ns, json!({})));
+    let reserved = project_ids::reserved(&pool, &org)
+        .await
+        .expect("reserved")
+        .expect("a reserved key");
+    let mut own = event(org_ns);
+    own.summary = format!("People of {org} changed.");
+    state.activity.append(&[own]).await.expect("append");
+    let stamped: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM activity WHERE summary = $1")
+            .bind(format!("People of {org} changed."))
+            .fetch_one(&pool)
+            .await
+            .expect("the Organization's event is kept");
+    assert_eq!(stamped, Some(reserved.project.to_string()));
+}
+
+/// A workspace and a builder run of `project`, written as before the key (T-7206). `$1` is the
+/// project.
+const WORKSPACE_RUN_ROWS_0077: &[(&str, &str)] = &[
+    (
+        "workspaces",
+        "INSERT INTO workspaces (name, project, owner, base_revision, scope, expires_at) \
+         VALUES ('w' || left(md5($1), 12), $1, 'anna', 'abc123', '{\"kind\": \"project\"}', \
+         now() + interval '1 hour')",
+    ),
+    (
+        "agent_runs",
+        "INSERT INTO agent_runs (id, project, app_name, endpoint_name, endpoint_slug, profile, \
+         app_class, visibility, prompt, prompt_digest, data_needs, branch, path_prefix, status, \
+         ticket_hash, created_by, expires_at) \
+         VALUES ('run-' || md5($1), $1, 'kpi', 'air', 'air', 'builder', 'static', 'internal', 'p', \
+         'd', '[]', 'b', 'apps/kpi', 'running', 'h', 'anna', now() + interval '1 hour')",
+    ),
+];
+
+/// T-7206 PK-1g: the workspaces and builder runs of today are keyed by the backfill and read only
+/// under their key; by name or id alone the stores find a placed project's row in its key and
+/// none of a project without one, and refuse to open a workspace or a run there.
+#[tokio::test]
+async fn workspace_and_agent_run_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(WORKSPACE_RUN_ROWS_0077, "wr").await;
+    let pool = state.db.clone().expect("a database");
+    let (placed_md5, orphan_md5): (String, String) = sqlx::query_as("SELECT md5($1), md5($2)")
+        .bind(&placed)
+        .bind(&orphan)
+        .fetch_one(&pool)
+        .await
+        .expect("md5");
+    let workspace = |md5: &str| format!("w{}", &md5[..12]);
+
+    let found = state
+        .workspaces
+        .get(&workspace(&placed_md5))
+        .await
+        .expect("get")
+        .expect("a placed project's workspace is found by name");
+    assert_eq!(found.project, placed);
+    assert!(state
+        .workspaces
+        .get(&workspace(&orphan_md5))
+        .await
+        .expect("get")
+        .is_none());
+    assert!(state
+        .workspaces
+        .list(&orphan)
+        .await
+        .expect("list")
+        .is_empty());
+    use joinedcontext_portal::ops::workspaces::{Opening, Scope};
+    let opening = |name, project| Opening {
+        name,
+        title: None,
+        project,
+        owner: "anna",
+        base_revision: "abc123",
+        scope: Scope::Project {},
+        ttl_hours: 1,
+    };
+    let refused = state
+        .workspaces
+        .create(opening("wr-orphan-new", &orphan))
+        .await
+        .expect_err("an unplaced project opens no workspace");
+    assert!(
+        refused.to_string().contains("Organizations page"),
+        "{refused}"
+    );
+    let name = format!("x{}", &placed_md5[..12]);
+    state
+        .workspaces
+        .create(opening(&name, &placed))
+        .await
+        .expect("a placed project opens a workspace");
+    let stamped: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM workspaces WHERE name = $1")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stamped, Some(key.project.to_string()));
+
+    let run = state
+        .agents
+        .get_run(&format!("run-{placed_md5}"))
+        .await
+        .expect("get")
+        .expect("a placed project's run is found by id");
+    assert_eq!(run.project, placed);
+    assert!(state
+        .agents
+        .get_run(&format!("run-{orphan_md5}"))
+        .await
+        .expect("get")
+        .is_none());
+    assert!(state
+        .agents
+        .list_runs(&orphan, 10)
+        .await
+        .expect("list")
+        .is_empty());
+    let mut orphan_run = run.clone();
+    orphan_run.id = format!("run-new-{orphan_md5}");
+    orphan_run.project = orphan.clone();
+    let refused = state
+        .agents
+        .create_run(&orphan_run)
+        .await
+        .expect_err("an unplaced project starts no run");
+    assert!(
+        matches!(
+            refused,
+            joinedcontext_portal::agents::store::StoreError::Unplaced(_)
+        ),
+        "{refused:?}"
+    );
+    let mut placed_run = run;
+    placed_run.id = format!("run-new-{placed_md5}");
+    state.agents.create_run(&placed_run).await.expect("create");
+    state
+        .agents
+        .set_title(&placed_run.id, "Air today")
+        .await
+        .expect("title");
+    let titled: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT title, project_id::text FROM agent_runs WHERE id = $1")
+            .bind(&placed_run.id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(
+        titled,
+        (Some("Air today".to_owned()), Some(key.project.to_string()))
+    );
+}
+
 /// A row of each table T-7200 keys for `project`, written as before the key. `$1` is the project.
 const PROJECT_ROWS_0071: &[(&str, &str)] = &[
     (
