@@ -5,5 +5,6 @@
 # assistant/*: no line. The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md scope
 # decision); its rehearsal rows are named skips "kept component: assistant" (gate.sh --kept-component).
 
+^kaisatsu/clients\.project\.  # service-account clients without jc.project (platform clients, imported pipeline clients): the row must be empty before JC_OIDC_REQUIRE_PROJECT (T-7211 step 4, T-7214 step 2); filed tasks/later/project-attribute-platform-clients.md
 ^mcp/hub\.search$  # search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
 ^pipelines/(status|history|held)$  # the runner refuses the helsinki streams: cache resource 'helsinki__gtfs' not found, and lstat <rehearsal>/gate/files/proto: no such file (smoke 42952387007; brief 122 jc-gate-rerun owns the pipelines suite)

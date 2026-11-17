@@ -155,6 +155,20 @@ if ! "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"; t
   exit 1
 fi
 reports gate ""
+# The Organizations the bundle's Projects name (hel, zilina), each an active row of the Portal's
+# Organization registry, as every installation's jc.toml seeds them: Portal 0080 keys a project's
+# rows only under a registered Organization, so without them helsinki keeps no draft, activity or
+# run history (T-7201). Written here, not as [[organizations]]: jc.toml lists an Organization only
+# with a host of its own, and any entry turns off dataroom's loopback default catalogue, which
+# every suite reads at 127.0.0.1/opendata. The backfill places the projects within a minute.
+sed -n 's/^  organizationRef: *//p' "$export_dir"/gitea/files/*/configuration/projects/*.yaml | sort -u |
+  while read -r o; do
+    PGPASSWORD=$(cat "$home/secrets/superuser") psql -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$pg_port" \
+      -U postgres -d portal -v name="$o" <<'SQL'
+INSERT INTO organizations (name, host, state, created_by)
+VALUES (:'name', 'portal.' || :'name' || '.localhost', 'active', 'rehearsal') ON CONFLICT (name) DO NOTHING;
+SQL
+  done
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
 if [ -n "${SMOKE_STOP:-}" ]; then
   roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)

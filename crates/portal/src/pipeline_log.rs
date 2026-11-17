@@ -209,6 +209,9 @@ impl Trims {
 pub struct LogStore {
     inner: Inner,
     trims: Mutex<Trims>,
+    /// The projects whose run history was last refused for want of a key: the warning is said
+    /// once per change (as `project_ids::spawn_backfill` does), not once per report.
+    unplaced: Mutex<HashSet<String>>,
 }
 
 /// A run name the runner sent, or the current UTC hour when it sent none a person could read:
@@ -502,6 +505,19 @@ impl LogStore {
                 None => Inner::Memory(RwLock::new(HashMap::new())),
             },
             trims: Mutex::new(Trims::default()),
+            unplaced: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Records whether `project` has a key now; true when it just lost it, the one time the
+    /// refusal is worth a log line.
+    fn newly_unplaced(&self, project: &str, keyed: bool) -> bool {
+        let mut unplaced = self.unplaced.lock().unwrap_or_else(|e| e.into_inner());
+        if keyed {
+            unplaced.remove(project);
+            false
+        } else {
+            unplaced.insert(project.to_owned())
         }
     }
 
@@ -527,16 +543,19 @@ impl LogStore {
             Inner::Postgres(pool, mirror) => {
                 let steps: Vec<Option<i32>> = lines.iter().map(|l| l.step).collect();
                 let outcomes: Vec<&str> = lines.iter().map(|l| l.outcome.as_str()).collect();
-                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                let tx = crate::project_ids::tx_of(pool, mirror, project).await?;
+                if self.newly_unplaced(project, tx.is_some()) {
                     // 0080 forces the key (T-7201): a keyless project's run keeps no history.
                     tracing::warn!(
                         project,
                         pipeline,
                         run,
-                        "pipeline run history not kept: the project belongs to no active \
-                         Organization of this installation's registry; an operator adds its \
-                         Organization on the Organizations page"
+                        "pipeline run history not kept until the project is placed: it belongs \
+                         to no active Organization of this installation's registry; an operator \
+                         adds its Organization on the Organizations page"
                     );
+                }
+                let Some(mut tx) = tx else {
                     return Ok(());
                 };
                 sqlx::query(
@@ -1184,6 +1203,18 @@ impl LogStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7201 smoke bounce: a keyless project's refusal is said when it starts and again only
+    /// after the project was placed in between, not once per report (3,000 lines in 120 s).
+    #[test]
+    fn a_keyless_project_is_reported_once_per_change() {
+        let store = LogStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        assert!(store.newly_unplaced("helsinki", false));
+        assert!(!store.newly_unplaced("helsinki", false));
+        assert!(store.newly_unplaced("zilina", false));
+        assert!(!store.newly_unplaced("helsinki", true));
+        assert!(store.newly_unplaced("helsinki", false));
+    }
 
     fn line(id: &str, outcome: Outcome, message: &str) -> NewLine {
         NewLine {
