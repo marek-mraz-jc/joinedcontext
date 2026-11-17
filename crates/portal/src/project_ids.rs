@@ -15,7 +15,7 @@ use crate::store::Mirror;
 /// one): `org_id` and `project_id` are nullable and default to the transaction's key, every
 /// statement runs in a `db::tenant_tx`, and [`backfill`] keys the rows written before. A later
 /// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security,
-/// and takes its tables off this list: migration 0079 (T-7201) forced the 31 tables of PK-1d to
+/// and takes its tables off this list: migration 0080 (T-7201) forced the 31 tables of PK-1d to
 /// PK-1h, from grafana_visualizations to agent_runs.
 pub const KEYED_BY_NAME: &[&str] = &[];
 
@@ -201,7 +201,7 @@ pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, 
 }
 
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: it
-/// reads no row of a forced table, and the NOT NULL key (0079, T-7201) refuses its writes, so a
+/// reads no row of a forced table, and the NOT NULL key (0080, T-7201) refuses its writes, so a
 /// handler answers [`required`]'s 404 before it writes.
 pub async fn recorded_tx(
     pool: &PgPool,

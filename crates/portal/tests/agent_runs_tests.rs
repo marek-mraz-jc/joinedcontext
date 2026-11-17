@@ -4592,7 +4592,7 @@ mod filtered_list_edges {
     /// `(id, app, kind, status, created_by, created_at)`
     type Row<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, &'a str);
 
-    /// Writes `rows` in `project`'s key, as the run store does: the runs are forced since 0079
+    /// Writes `rows` in `project`'s key, as the run store does: the runs are forced since 0080
     /// (T-7201), so the project is placed in an Organization of the registry first.
     async fn insert(pool: &PgPool, project: &str, rows: &[Row<'_>]) {
         let mirror = crate::common::keyed_mirror(pool, &[project]).await;

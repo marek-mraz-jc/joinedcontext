@@ -566,7 +566,7 @@ async fn key_of(world: &World, organization: &str, kind: &str) -> String {
 
 /// Rows of both Organizations in the Portal's tables, each with a mark the archive is searched
 /// for, and secret material in the columns that must never leave. A project's rows are written
-/// under its key, as `db::tenant_tx` writes them (the tables are forced since 0079, T-7201).
+/// under its key, as `db::tenant_tx` writes them (the tables are forced since 0080, T-7201).
 const PORTAL_SEED: &str = "
 INSERT INTO organizations (name, host, state, created_by) VALUES ('alfa', 'alfa.example', 'active', 'seed');
 INSERT INTO project_ids (id, name, organization) VALUES (gen_random_uuid(), 'alfa-city', 'alfa');
@@ -581,7 +581,7 @@ INSERT INTO domain_verifications (organization, domain, challenge, state) VALUES
 ";
 
 /// Runs `sql` under `project`'s key, as `db::tenant_tx` does: the project tables are forced
-/// since 0079 (T-7201), so a row is written and read only in its project's key.
+/// since 0080 (T-7201), so a row is written and read only in its project's key.
 async fn as_project(db: &sqlx::PgPool, project: &str, sql: &str) {
     let key = joinedcontext_portal::project_ids::recorded(db, project)
         .await

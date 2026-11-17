@@ -912,7 +912,7 @@ async fn a_project_administrator_decides_an_access_request_and_no_other_organiza
     let state = scenario_world().await.with_db(pool.clone());
     common::registered(&state, &pool, ESP_PROJECT).await;
     // What the filing door's `project_ids::required` does first: records the key the request is
-    // kept in (access requests are forced since 0079, T-7201).
+    // kept in (access requests are forced since 0080, T-7201).
     joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, ESP_PROJECT)
         .await
         .expect("the registry")

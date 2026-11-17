@@ -577,7 +577,7 @@ async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<S
     .expect("the row")
 }
 
-/// T-7196 phase one and T-7201 phase two, on a database of the release before 0079: a row written
+/// T-7196 phase one and T-7201 phase two, on a database of the release before 0080: a row written
 /// before the key is keyed by the backfill once the mirror places its project; a project the
 /// mirror lacks, or whose Organization is not of the registry, keeps no key and is named; a row
 /// written through the store carries the key by the column default; the forcing migration refuses
@@ -586,7 +586,7 @@ async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<S
 #[tokio::test]
 async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_key() {
     use joinedcontext_portal::grafana::{self, Kind, Visualization};
-    let pool = migrated_before(79, "pkbf").await;
+    let pool = migrated_before(80, "pkbf").await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, "bforg").await;
     let placed = run_name("bfplaced");
@@ -827,7 +827,7 @@ async fn migrated_before(before: i64, test: &str) -> sqlx::PgPool {
     pool
 }
 
-/// Applies every migration this release ships, the forcing migration 0079 (T-7201) included.
+/// Applies every migration this release ships, the forcing migration 0080 (T-7201) included.
 /// Without the migrator's advisory lock: a refused run returns its connection to the pool still
 /// holding it, and the test's next run would wait for it forever.
 async fn migrate_on(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {
@@ -844,7 +844,7 @@ async fn rows_keyed_and_read_only_under_their_key(
     rows: &'static [(&'static str, &'static str)],
     test: &str,
 ) -> (AppState, String, String, jc_types::ProjectKey) {
-    let pool = migrated_before(79, &format!("pk{test}")).await;
+    let pool = migrated_before(80, &format!("pk{test}")).await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, &format!("{test}org")).await;
     let placed = run_name(&format!("{test}placed"));
@@ -873,7 +873,7 @@ async fn rows_keyed_and_read_only_under_their_key(
     for table in &tables {
         assert!(
             !project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is forced by 0079 and off the list"
+            "{table} is forced by 0080 and off the list"
         );
     }
 
