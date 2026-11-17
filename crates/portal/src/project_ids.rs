@@ -15,7 +15,7 @@ use crate::store::Mirror;
 /// one): `org_id` and `project_id` are nullable and default to the transaction's key, every
 /// statement runs in a `db::tenant_tx`, and [`backfill`] keys the rows written before. A later
 /// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security,
-/// and takes its tables off this list: migration 0079 (T-7201) forced the 31 tables of PK-1d to
+/// and takes its tables off this list: migration 0080 (T-7201) forced the 31 tables of PK-1d to
 /// PK-1h, from grafana_visualizations to agent_runs.
 pub const KEYED_BY_NAME: &[&str] = &[];
 
@@ -424,7 +424,7 @@ pub async fn renew_branch(
 }
 
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: it
-/// reads no row of a forced table, and the NOT NULL key (0079, T-7201) refuses its writes, so a
+/// reads no row of a forced table, and the NOT NULL key (0080, T-7201) refuses its writes, so a
 /// handler answers [`required`]'s 404 before it writes.
 pub async fn recorded_tx(
     pool: &PgPool,
@@ -448,29 +448,6 @@ pub(crate) async fn tx_of(
     }
 }
 
-/// A transaction in `project`'s key as the mirror places it, or an unkeyed one while it has none:
-/// in phase one (row-level security off) a project made before the registry knew its Organization
-/// keeps its drafts and activity, and [`backfill`] keys those rows once an operator adds the
-/// Organization; the forcing migration waits until none is unkeyed.
-pub(crate) async fn tx_or_unkeyed(
-    pool: &PgPool,
-    mirror: &Mirror,
-    project: &str,
-) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
-    key_tx(pool, key_of(pool, mirror, project).await?).await
-}
-
-/// A `db::tenant_tx` of `key`, or an unkeyed transaction for a project with none (phase one).
-pub(crate) async fn key_tx(
-    pool: &PgPool,
-    key: Option<ProjectKey>,
-) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
-    match key {
-        Some(key) => crate::db::tenant_tx(pool, key).await,
-        None => pool.begin().await,
-    }
-}
-
 /// Every Project of the mirror with its key, by name, then [`ORG_NAMESPACE`] with the
 /// installation Organization's reserved key: what a read over every project fans out over, one
 /// `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
@@ -478,37 +455,25 @@ pub async fn keyed_projects(
     pool: &PgPool,
     mirror: &Mirror,
 ) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
-    Ok(projects_or_unkeyed(pool, mirror)
-        .await?
-        .into_iter()
-        .filter_map(|(name, key)| Some((name, key?)))
-        .collect())
-}
-
-/// [`keyed_projects`] with the Projects whose Organization has no key yet, as `None`: in phase
-/// one (row-level security off) their rows are unkeyed and a pass over every project still reads
-/// them, one [`key_tx`] each, until [`backfill`] keys them.
-pub(crate) async fn projects_or_unkeyed(
-    pool: &PgPool,
-    mirror: &Mirror,
-) -> Result<Vec<(String, Option<ProjectKey>)>, sqlx::Error> {
     let projects = mirror.list(
         ORG_NAMESPACE,
         "Project",
         &crate::store::ListOptions::default(),
     );
-    let mut every = Vec::with_capacity(projects.items.len() + 1);
+    let mut keyed = Vec::with_capacity(projects.items.len());
     for project in &projects.items {
         let name = project.metadata.name.as_str();
         if name == ORG_NAMESPACE {
             continue;
         }
-        every.push((name.to_owned(), key_of(pool, mirror, name).await?));
+        if let Some(key) = key_of(pool, mirror, name).await? {
+            keyed.push((name.to_owned(), key));
+        }
     }
     if let Some(key) = key_of(pool, mirror, ORG_NAMESPACE).await? {
-        every.push((ORG_NAMESPACE.to_owned(), Some(key)));
+        keyed.push((ORG_NAMESPACE.to_owned(), key));
     }
-    Ok(every)
+    Ok(keyed)
 }
 
 /// Keys every row of [`KEYED_BY_NAME`] that has none yet with its project's key; answers the

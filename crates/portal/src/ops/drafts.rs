@@ -135,6 +135,10 @@ pub enum DraftError {
         kind: String,
         name: String,
     },
+    /// The project has no tenancy key (T-7201): its Organization is not an active one of the
+    /// registry, so it keeps no draft.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no draft; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// The PostgreSQL channel every replica's draft events cross (OPS-51, Architecture/09 §10).
@@ -277,8 +281,8 @@ impl DraftHub {
 }
 
 enum DraftStoreInner {
-    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7204 PK-1g), unkeyed
-    /// while the project has none (phase one).
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7204 PK-1g); a project
+    /// without one holds no draft (0080 forces the key, T-7201).
     Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     Memory(RwLock<HashMap<(String, String, String, String), Draft>>),
 }
@@ -300,13 +304,14 @@ fn db_err(err: sqlx::Error) -> DraftError {
     DraftError::Db(err.to_string())
 }
 
-/// A transaction in `project`'s key, unkeyed while it has none (phase one).
+/// A transaction in `project`'s key; `None` while it has none, so it holds no draft (0080 forces
+/// the key, T-7201).
 async fn tenant(
     pool: &sqlx::PgPool,
     mirror: &crate::store::Mirror,
     project: &str,
-) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, DraftError> {
-    crate::project_ids::tx_or_unkeyed(pool, mirror, project)
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, DraftError> {
+    crate::project_ids::tx_of(pool, mirror, project)
         .await
         .map_err(db_err)
 }
@@ -363,7 +368,9 @@ impl DraftStore {
                 Ok(r.get(&key(ws, project, kind, name)).cloned())
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let mut tx = tenant(pool, mirror, project).await?;
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(None);
+                };
                 let row = sqlx::query(
                     "SELECT project, kind, name, workspace, manifest, verdict, touched_by, touched_kind, version, updated_at \
                      FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4",
@@ -478,7 +485,9 @@ impl DraftStore {
                 draft
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let mut tx = tenant(pool, mirror, project).await?;
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Err(DraftError::Unplaced(project.to_owned()));
+                };
                 let existing = sqlx::query(
                     "SELECT version FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4 FOR UPDATE",
                 )
@@ -601,7 +610,13 @@ impl DraftStore {
             DraftStoreInner::Db(pool, mirror) => {
                 let verdict_json =
                     serde_json::to_value(&verdict).map_err(|e| DraftError::Db(e.to_string()))?;
-                let mut tx = tenant(pool, mirror, project).await?;
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Err(DraftError::NotFound {
+                        project: project.to_owned(),
+                        kind: kind.to_owned(),
+                        name: name.to_owned(),
+                    });
+                };
                 let row = sqlx::query(
                     // A verdict without a record check keeps the one the draft held (T-4840),
                     // as `Verdict::keeping_records` does in memory.
@@ -674,7 +689,9 @@ impl DraftStore {
                 Ok(drafts)
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let mut tx = tenant(pool, mirror, project).await?;
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows = sqlx::query(
                     "SELECT project, kind, name, workspace, manifest, verdict, touched_by, touched_kind, version, updated_at \
                      FROM drafts WHERE project = $1 AND workspace = $2 ORDER BY updated_at DESC",
@@ -728,7 +745,9 @@ impl DraftStore {
                 }
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let mut tx = tenant(pool, mirror, project).await?;
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(false);
+                };
                 let row = sqlx::query(
                     "DELETE FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4 \
                      RETURNING project, kind, name, version, touched_by, touched_kind, updated_at, \
@@ -800,12 +819,6 @@ impl DraftStore {
                         .map_err(db_err)?;
                     tx.commit().await.map_err(db_err)?;
                 }
-                // The drafts of a project with no key yet, kept unkeyed in phase one.
-                sqlx::query("DELETE FROM drafts WHERE project_id IS NULL AND updated_at < $1")
-                    .bind(cutoff_odt)
-                    .execute(pool)
-                    .await
-                    .map_err(db_err)?;
                 Ok(())
             }
         }
@@ -921,6 +934,9 @@ pub(crate) fn draft_error(err: DraftError) -> OpError {
             "draft '{kind}/{name}' not found in project '{project}'"
         ))),
         DraftError::Db(msg) => OpError::Api(ApiError::Internal(msg)),
+        unplaced @ DraftError::Unplaced(_) => {
+            OpError::Api(ApiError::NotFound(unplaced.to_string()))
+        }
     }
 }
 

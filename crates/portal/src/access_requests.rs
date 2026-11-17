@@ -692,7 +692,7 @@ pub async fn incoming(
 
 /// The requests of one pipeline, newest first. A request is keyed by the Endpoint's project
 /// (T-7202), so the asking pipeline's list reads each recorded key in its own transaction
-/// (STO-07); every row has a key since migration 0079 (T-7201).
+/// (STO-07); every row has a key since migration 0080 (T-7201).
 ///
 /// ponytail: one transaction per recorded project; a requester-side copy of the row when
 /// installations hold thousands of projects.

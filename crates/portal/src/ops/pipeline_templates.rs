@@ -55,6 +55,10 @@ pub enum TemplateError {
     NotFound,
     #[error("database: {0}")]
     Db(String),
+    /// The project has no tenancy key (T-7198): its Organization is not an active one of the
+    /// registry, so it keeps no template.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no pipeline template; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// The spec a template keeps: the manifest's `spec` without the credentials and the references
@@ -121,15 +125,16 @@ fn db(err: sqlx::Error) -> TemplateError {
     TemplateError::Db(err.to_string())
 }
 
-/// A transaction in `project`'s key, unkeyed while it has none (phase one).
+/// A transaction in `project`'s key; [`TemplateError::Unplaced`] when it has none.
 async fn tenant(
     pool: &sqlx::PgPool,
     mirror: &crate::store::Mirror,
     project: &str,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, TemplateError> {
-    crate::project_ids::tx_or_unkeyed(pool, mirror, project)
+    crate::project_ids::tx_of(pool, mirror, project)
         .await
-        .map_err(db)
+        .map_err(db)?
+        .ok_or_else(|| TemplateError::Unplaced(project.to_owned()))
 }
 
 impl TemplateStore {
@@ -152,7 +157,11 @@ impl TemplateStore {
                 Ok(items)
             }
             Inner::Db(pool, mirror) => {
-                let mut tx = tenant(pool, mirror, project).await?;
+                let mut tx = match tenant(pool, mirror, project).await {
+                    Ok(tx) => tx,
+                    Err(TemplateError::Unplaced(_)) => return Ok(Vec::new()),
+                    Err(err) => return Err(err),
+                };
                 let rows = sqlx::query(
                     "SELECT id, title, spec, created_by, created_at FROM pipeline_templates \
                      WHERE project = $1 ORDER BY seq DESC",
