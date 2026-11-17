@@ -6015,12 +6015,15 @@ output_error{stream="kpi"} 6
             )
         };
         mirror.upsert(grant("2099-01-01T00:00:00Z"));
-        let log = Arc::new(crate::pipeline_log::LogStore::new(None));
+        let log = Arc::new(crate::pipeline_log::LogStore::new(None, Default::default()));
         let activity = crate::activity::ActivityStore::new(None);
         let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror))
             .with_activity(activity.clone())
             .with_pipeline_outcomes(
-                Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
+                Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                    None,
+                    Default::default(),
+                )),
                 Arc::clone(&log),
             );
         let refused = "access revoked by anna@helsinki.example on 2026-10-21; the gateway \

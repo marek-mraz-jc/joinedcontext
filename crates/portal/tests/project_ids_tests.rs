@@ -1008,3 +1008,111 @@ async fn app_capture_trash_comment_and_view_rows_are_keyed_and_read_only_under_t
         "the backfilled row reads in its key"
     );
 }
+
+const PIPELINE_ROWS_0072: &[(&str, &str)] = &[
+    (
+        "pipeline_log",
+        "INSERT INTO pipeline_log (project, pipeline, run, outcome) VALUES ($1, 'trees', 'r1', 'sent')",
+    ),
+    (
+        "pipeline_runs",
+        "INSERT INTO pipeline_runs (project, pipeline, run, sent) VALUES ($1, 'trees', 'r1', 1)",
+    ),
+    (
+        "pipeline_rejected",
+        "INSERT INTO pipeline_rejected (project, pipeline, record, rule, message) \
+         VALUES ($1, 'trees', '{}', 'required', 'height is missing')",
+    ),
+    (
+        "pipeline_status",
+        "INSERT INTO pipeline_status (project, pipeline, status) VALUES ($1, 'trees', '{}')",
+    ),
+    (
+        "pipeline_templates",
+        "INSERT INTO pipeline_templates (id, project, title, spec, created_by) \
+         VALUES ('tpl-' || md5($1), $1, 'Trees', '{}', 'anna')",
+    ),
+    (
+        "pipeline_record_hashes",
+        "INSERT INTO pipeline_record_hashes (project, pipeline, record, hash) VALUES ($1, 'trees', 'r', 'h')",
+    ),
+    (
+        "pipeline_source_ledger",
+        "INSERT INTO pipeline_source_ledger (project, pipeline, entity_id, last_run) \
+         VALUES ($1, 'trees', 'urn:ngsi-ld:Tree:1', 'r1')",
+    ),
+    (
+        "pipeline_source_holds",
+        "INSERT INTO pipeline_source_holds (project, pipeline, run, reason, would, ledger) \
+         VALUES ($1, 'trees', 'r1', 'empty', 0, 1)",
+    ),
+    (
+        "pipeline_source_complete",
+        "INSERT INTO pipeline_source_complete (project, pipeline, run) VALUES ($1, 'trees', 'r1')",
+    ),
+    (
+        "pipeline_source_removed",
+        "INSERT INTO pipeline_source_removed (project, space, entity_id, pipeline, run) \
+         VALUES ($1, 'air', 'urn:ngsi-ld:Tree:1', 'trees', 'r1')",
+    ),
+];
+
+/// T-7198 PK-1f: the run log, rejects, status, templates, record hashes and source ledger of
+/// today are keyed by the backfill and read only under their key; the log writes new lines in the
+/// key and keeps none for a project without one.
+#[tokio::test]
+async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PIPELINE_ROWS_0072, "pl").await;
+    let pool = state.db.clone().expect("a database");
+    for (table, _) in PIPELINE_ROWS_0072 {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+    let line = joinedcontext_portal::pipeline_log::NewLine {
+        record_id: "urn:ngsi-ld:Tree:2".into(),
+        step: None,
+        outcome: joinedcontext_portal::pipeline_log::Outcome::Sent,
+        message: String::new(),
+    };
+    for project in [&placed, &orphan] {
+        state
+            .pipeline_log
+            .append(project, "trees", "r2", std::slice::from_ref(&line))
+            .await
+            .expect("append");
+    }
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(
+        stamped,
+        [(placed.clone(), Some(key.project.to_string()))],
+        "a placed project's line lands in its key and an orphan's line is not kept"
+    );
+    assert_eq!(
+        state
+            .pipeline_log
+            .runs(&orphan, "trees", 10)
+            .await
+            .expect("runs")
+            .len(),
+        0
+    );
+    assert_eq!(
+        state
+            .pipeline_log
+            .runs(&placed, "trees", 10)
+            .await
+            .expect("runs")
+            .len(),
+        2,
+        "the backfilled run and the new one read in their key"
+    );
+}

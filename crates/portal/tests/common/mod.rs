@@ -106,6 +106,16 @@ pub async fn keyed_project(
     .expect("an Organization of the registry");
 }
 
+/// A mirror holding `projects`, each placed in an active Organization of the registry: what a
+/// store built on its own (no `AppState`) needs to keep rows under a project key (T-7198).
+pub async fn keyed_mirror(pool: &sqlx::PgPool, projects: &[&str]) -> Arc<Mirror> {
+    let state = AppState::new(Config::for_tests(), None);
+    for project in projects {
+        keyed_project(&state, pool, project, "helsinki").await;
+    }
+    state.mirror.clone()
+}
+
 /// Binds `{who}@hel.fi` to reading Apps in `project`: what makes a person a member of the project,
 /// and so of the organization, for an App's visibility (T-4910).
 pub fn bind(mirror: &Mirror, who: &str, project: &str) {
