@@ -173,7 +173,7 @@ export function deniedBy(project: string, error: unknown, data: Effective | unde
   if (error instanceof ApiError && error.status === 404) {
     return true;
   }
-  return project === ORG_NAMESPACE && data !== undefined && data.bootstrap !== true && data.grants.length === 0;
+  return project === ORG_NAMESPACE && Array.isArray(data?.grants) && data.grants.length === 0 && data.bootstrap !== true;
 }
 
 /**
