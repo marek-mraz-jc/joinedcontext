@@ -164,7 +164,9 @@ describe("Administration → Backups", () => {
     const { container } = render(ADMIN, null);
     expect(await (await configuration()).findByText(en.backups.form.emptyTitle)).toBeInTheDocument();
     expect(await (await data()).findByText(en.backups.form.emptyTitle)).toBeInTheDocument();
-    for (const hint of Object.values(en.backups.hint)) expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
+    // The copy dialog's two hints show in that dialog; its own test reads them there.
+    for (const [key, hint] of Object.entries(en.backups.hint))
+      if (!key.startsWith("copy")) expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
     expect((await data()).getByText(en.backups.hint.workingRecipient)).toBeInTheDocument();
     expect((await configuration()).queryByText(en.backups.hint.workingRecipient)).toBeNull();
     await expectNoAxeViolations(container);
@@ -234,7 +236,8 @@ describe("Administration → Backups", () => {
     expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([en.backups.copy.pick, "air-quality"]);
     expect(picker).toHaveValue(SOURCE);
     expect(dialog.getByText(/old-pilot/)).toBeInTheDocument();
-    expect(dialog.getByText(en.backups.copy.nameHint)).toBeInTheDocument();
+    expect(dialog.getByText(en.backups.hint.copyName)).toBeInTheDocument();
+    expect(dialog.getByText(en.backups.hint.copyProject)).toBeInTheDocument();
     fireEvent.change(dialog.getByLabelText(en.backups.copy.name), { target: { value: "air-quality" } });
     fireEvent.click(dialog.getByRole("button", { name: en.backups.copy.check }));
     expect(await dialog.findByText(/air-quality is taken by a project/)).toBeInTheDocument();

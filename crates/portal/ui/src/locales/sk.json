@@ -13549,7 +13549,9 @@
       "keepDays": "1 až 3650 dní, napríklad 90",
       "enabled": "Vypnutie ponechá bucket aj všetky verzie; Spustiť teraz funguje ďalej.",
       "workingRecipient": "Verejný kľúč identity, ktorú používajú vaši správcovia, z age-keygen, napr. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "Druhý verejný kľúč, ktorý offline uchováva iná osoba, napr. age1syrvza6xvtvsr9f0…. Každý archív otvorí ktorýkoľvek z nich."
+      "recoveryRecipient": "Druhý verejný kľúč, ktorý offline uchováva iná osoba, napr. age1syrvza6xvtvsr9f0…. Každý archív otvorí ktorýkoľvek z nich.",
+      "copyProject": "Projekty tejto zálohy, ktoré smiete čítať, napr. air-quality. Projekt zmazaný od zálohy sa nezobrazí a nikdy sa neobnoví.",
+      "copyName": "Malé písmená, číslice a '-', názov, ktorý nepoužíva žiadny projekt, napr. air-quality-restored."
     },
     "section": {
       "jump": "Prejsť na zálohu",
@@ -13601,15 +13603,13 @@
       "lead": "Vyberte jeden projekt tejto zálohy a nový názov. Jeho záznamy sa skopírujú do nového projektu s vlastným id; projekt, z ktorého pochádzajú, sa nezmení.",
       "list": "Zobraziť projekty",
       "project": "Projekt tejto zálohy",
-      "projectHint": "Projekty tejto zálohy, ktoré smiete čítať, napr. air-quality. Projekt zmazaný od zálohy sa nezobrazí a nikdy sa neobnoví.",
       "pick": "Vyberte projekt",
       "none": "Táto záloha nemá projekt, ktorý smiete obnoviť. Vyberte inú verziu alebo požiadajte správcu projektu o prístup na čítanie.",
       "deleted": "Zmazané od tejto zálohy, nikdy sa neobnovia: {names}",
       "name": "Názov nového projektu",
-      "nameHint": "Malé písmená, číslice a '-', názov, ktorý nepoužíva žiadny projekt, napr. air-quality-restored.",
       "check": "Skontrolovať",
       "apply": "Obnoviť do nového projektu",
-      "summary": "{rows} záznamov na kopírovanie do {name}, {refused} odmietnutých, {erasures} výmazov použitých znova",
+      "summary": "Záznamy na kopírovanie do {name}: {rows}. Odmietnuté: {refused}. Výmazy použité znova: {erasures}.",
       "done": "Obnovené do {name} (id projektu {id}). {source} sa nezmenil.",
       "first": "Najprv vyberte projekt a napíšte názov",
       "caption": "Záznamy podľa tabuliek, ktoré kópia zapíše",

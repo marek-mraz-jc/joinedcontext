@@ -659,7 +659,7 @@ function ProjectCopy({ version, onClose }: { version: string; onClose: () => voi
             <EmptyState bare title={t("backups.copy.none")} />
           ) : (
             <>
-              <Field id="backup-copy-project" label={t("backups.copy.project")} help={t("backups.copy.projectHint")} errors={projectError ? [projectError] : undefined}>
+              <Field id="backup-copy-project" label={t("backups.copy.project")} help={t("backups.hint.copyProject")} errors={projectError ? [projectError] : undefined}>
                 <Select id="backup-copy-project" value={project} onChange={(e) => pick(e.target.value)}>
                   <option value="">{t("backups.copy.pick")}</option>
                   {projects.projects.map((p) => (
@@ -672,7 +672,7 @@ function ProjectCopy({ version, onClose }: { version: string; onClose: () => voi
               {projects.deleted.length > 0 ? (
                 <p className="text-caption text-fg-muted">{t("backups.copy.deleted", { names: projects.deleted.join(", ") })}</p>
               ) : null}
-              <Field id="backup-copy-name" label={t("backups.copy.name")} help={t("backups.copy.nameHint")} errors={nameError ? [nameError] : undefined}>
+              <Field id="backup-copy-name" label={t("backups.copy.name")} help={t("backups.hint.copyName")} errors={nameError ? [nameError] : undefined}>
                 <Input id="backup-copy-name" autoComplete="off" spellCheck={false} value={name}
                   onChange={(e) => {
                     setName(e.target.value);
@@ -689,28 +689,20 @@ function ProjectCopy({ version, onClose }: { version: string; onClose: () => voi
               {t("backups.copy.summary", { rows: total("create"), name: plan.name, refused: total("refused"), erasures: plan.erasuresReplayed })}
             </p>
             {rows.length > 0 ? (
-              // Three short columns fit a phone as they are: no stacked cards, no column menu.
-              <div className="overflow-x-auto">
-                <table className="w-full text-body">
-                  <caption className="sr-only">{t("backups.copy.caption")}</caption>
-                  <thead>
-                    <tr className="border-b border-border text-left text-caption text-fg-muted">
-                      <th scope="col" className="py-1 pr-2 font-medium">{t("backups.data.table")}</th>
-                      <th scope="col" className="py-1 pr-2 text-right font-medium">{t("backups.data.create")}</th>
-                      <th scope="col" className="py-1 text-right font-medium">{t("backups.data.refused")}</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {rows.map(([table, c]) => (
-                      <tr key={table} className={c.refused > 0 ? "bg-warning-soft" : undefined}>
-                        <th scope="row" className="py-1 pr-2 text-left font-mono font-normal break-all">{table}</th>
-                        <td className="py-1 pr-2 text-right tabular-nums">{c.create}</td>
-                        <td className="py-1 text-right tabular-nums">{c.refused}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              // Three short columns fit a phone as they are: no stacked cards.
+              <AdminGrid
+                caption={t("backups.copy.caption")}
+                rows={rows}
+                rowKey={([table]) => table}
+                storageKey="organization.backups.data.copy"
+                empty={t("backups.data.planSame")}
+                noSearch
+                columns={[
+                  { key: "table", label: t("backups.data.table"), text: ([table]) => table, cell: ([table]) => <span className="break-all font-mono">{table}</span> },
+                  { key: "create", label: t("backups.data.create"), kind: "number", align: "right", text: ([, c]) => String(c.create) },
+                  { key: "refused", label: t("backups.data.refused"), kind: "number", align: "right", text: ([, c]) => String(c.refused) },
+                ]}
+              />
             ) : null}
             {total("refused") > 0 ? <Alert tone="warning">{t("backups.copy.refusedNote")}</Alert> : null}
           </>

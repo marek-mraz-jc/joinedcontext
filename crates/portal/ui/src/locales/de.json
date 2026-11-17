@@ -13549,7 +13549,9 @@
       "keepDays": "1 bis 3650 Tage, zum Beispiel 90",
       "enabled": "Aus behält den Bucket und jede Version; Jetzt ausführen funktioniert weiter.",
       "workingRecipient": "Der öffentliche Schlüssel der Identität Ihrer Administratoren, aus age-keygen, z. B. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "Ein zweiter öffentlicher Schlüssel, den eine andere Person offline aufbewahrt, z. B. age1syrvza6xvtvsr9f0…. Jeder der beiden öffnet jedes Archiv."
+      "recoveryRecipient": "Ein zweiter öffentlicher Schlüssel, den eine andere Person offline aufbewahrt, z. B. age1syrvza6xvtvsr9f0…. Jeder der beiden öffnet jedes Archiv.",
+      "copyProject": "Die Projekte dieser Sicherung, die Sie lesen dürfen, z. B. air-quality. Ein seit der Sicherung gelöschtes Projekt wird nicht angezeigt und nie wiederhergestellt.",
+      "copyName": "Kleinbuchstaben, Ziffern und '-', ein Name, den kein Projekt nutzt, z. B. air-quality-restored."
     },
     "section": {
       "jump": "Zu einer Sicherung springen",
@@ -13601,15 +13603,13 @@
       "lead": "Wählen Sie ein Projekt dieser Sicherung und einen neuen Namen. Seine Zeilen werden in ein neues Projekt mit eigener ID kopiert; das Ursprungsprojekt bleibt unverändert.",
       "list": "Projekte anzeigen",
       "project": "Projekt dieser Sicherung",
-      "projectHint": "Die Projekte dieser Sicherung, die Sie lesen dürfen, z. B. air-quality. Ein seit der Sicherung gelöschtes Projekt wird nicht angezeigt und nie wiederhergestellt.",
       "pick": "Projekt wählen",
       "none": "Diese Sicherung enthält kein Projekt, das Sie wiederherstellen dürfen. Wählen Sie eine andere Version oder bitten Sie die Projektverwaltung um Lesezugriff.",
       "deleted": "Seit dieser Sicherung gelöscht, nie wiederhergestellt: {names}",
       "name": "Name des neuen Projekts",
-      "nameHint": "Kleinbuchstaben, Ziffern und '-', ein Name, den kein Projekt nutzt, z. B. air-quality-restored.",
       "check": "Prüfen",
       "apply": "In das neue Projekt wiederherstellen",
-      "summary": "{rows} Zeilen zum Kopieren nach {name}, {refused} abgelehnt, {erasures} Löschungen erneut angewendet",
+      "summary": "Zeilen zum Kopieren nach {name}: {rows}. Abgelehnt: {refused}. Erneut angewendete Löschungen: {erasures}.",
       "done": "In {name} wiederhergestellt (Projekt-ID {id}). {source} wurde nicht verändert.",
       "first": "Wählen Sie zuerst ein Projekt und geben Sie einen Namen ein",
       "caption": "Zeilen je Tabelle, die die Kopie schreibt",

@@ -2024,6 +2024,8 @@
         "routes": [
           "POST /api/v1/organization/backups/configuration/versions/{version}/restore",
           "POST /api/v1/organization/backups/data/versions/{version}/restore",
+          "POST /api/v1/organization/backups/data/versions/{version}/projects",
+          "POST /api/v1/organization/backups/data/versions/{version}/copy",
           "POST /api/v1/organization/backups/data/restores/{id}/approve",
           "POST /api/v1/organization/backups/data/restores/{id}/decline"
         ]
