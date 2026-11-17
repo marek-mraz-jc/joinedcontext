@@ -1441,6 +1441,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/backups/data/versions/{version}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a Project into a New Project
+         * @description Restores one project's folder of the Organization's data archive into a new project: a new project id whose parent is the source, the folder's rows under the new name with new row ids, the source's approved erasures applied again. The source project is never written. `apply` false checks only. A project deleted since the backup is refused (TEN-16); a project the caller may not read answers 404 like an id the archive does not hold (T-7208).
+         */
+        post: operations["data_copy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/backups/data/versions/{version}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Projects of a Data Backup
+         * @description Opens one version of the Organization's data archive with the identity given for this request only and lists its project folders the caller may restore into a new project: live projects of the Organization they may read. Projects deleted since the backup are named apart and never restored (T-7208, TEN-16).
+         */
+        post: operations["data_projects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/backups/data/versions/{version}/restore": {
         parameters: {
             query?: never;
@@ -9224,6 +9264,19 @@ export interface components {
             /** @description The value of the class's `dataSubjectRef` slot, as the proposal named it. */
             subject: string;
         };
+        /** @description One project folder of an archive the person may restore. */
+        ArchivedProject: {
+            /** @description The project's id, the folder's name. */
+            id: string;
+            /** @description The project's name today. */
+            name: string;
+        };
+        /** @description The folders of one archive: those the person may restore, and how many it leaves out. */
+        ArchivedProjects: {
+            /** @description Names of the archive's projects deleted since the backup: never restored (TEN-16). */
+            deleted: string[];
+            projects: components["schemas"]["ArchivedProject"][];
+        };
         /**
          * @description What one Model Tools run rendered. Every artifact is optional: a version that does not
          *     render one omits it, and a source that does not compile yet answers with `errors` filled in
@@ -10579,6 +10632,38 @@ export interface components {
             /** @description `entities`, `rejectedRecords`, `runs`, `grants` or `bindings`. */
             what: string;
         };
+        CopyCounts: {
+            /** Format: int64 */
+            create: number;
+            /** Format: int64 */
+            refused: number;
+        };
+        /** @description What a copy writes, or wrote. */
+        CopyPlan: {
+            /**
+             * Format: int64
+             * @description Approved erasures of the source applied to the copy (on a check: that would be).
+             */
+            erasuresReplayed: number;
+            /** @description The new project's name. */
+            name: string;
+            /** @description The tables a copy leaves alone, with why. */
+            notRestored: {
+                [key: string]: string;
+            };
+            /** @description The new project's id; empty on a check, which mints none. */
+            projectId: string;
+            /** @description The source project's id and name. */
+            source: string;
+            sourceName: string;
+            /** @description Rows written per table, and rows a unique rule or a missing reference refused. */
+            tables: {
+                [key: string]: components["schemas"]["CopyCounts"];
+            };
+            /** @description When the backup was taken, RFC 3339. */
+            takenAt: string;
+            versionId: string;
+        };
         /** @description The operator's price table: what the cloud bills a month. */
         CostPrices: {
             /** @description ISO 4217, e.g. `EUR`. */
@@ -10786,6 +10871,17 @@ export interface components {
             /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
             identity: string;
         };
+        /** @description One project folder restored into a new project. */
+        DataCopyInput: {
+            /** @description `false` (the default) checks only; `true` writes the new project. */
+            apply?: boolean;
+            /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
+            /** @description The new project's name, a DNS label no project holds, e.g. `air-quality-restored`. */
+            name: string;
+            /** @description The source project's id, one of the version's project list, e.g. `0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10`. */
+            project: string;
+        };
         /** @description The dry run of one version, or what its restore did. */
         DataPlan: {
             /**
@@ -10811,6 +10907,11 @@ export interface components {
             /** @description When the backup was taken, RFC 3339. */
             takenAt: string;
             versionId: string;
+        };
+        /** @description The identity that opens the archive, to list its project folders. */
+        DataProjectsInput: {
+            /** @description The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`. */
+            identity: string;
         };
         /** @description A dry run, and the request when one was asked for. */
         DataRestoreAnswer: {
@@ -19287,6 +19388,145 @@ export interface operations {
             };
             /** @description No such version */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_copy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "apply": false,
+                 *       "identity": "AGE-SECRET-KEY-1…",
+                 *       "name": "air-quality-restored",
+                 *       "project": "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataCopyInput"];
+            };
+        };
+        responses: {
+            /** @description What the copy writes, or wrote */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopyPlan"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version, or no project by that id the caller may read */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or no database */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A deleted source project, a name taken or not a DNS label, a format 1 archive; `errors` names the field */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    data_projects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description S3 version id */
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "identity": "AGE-SECRET-KEY-1…"
+                 *     }
+                 */
+                "application/json": components["schemas"]["DataProjectsInput"];
+            };
+        };
+        responses: {
+            /** @description The folders the caller may restore */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArchivedProjects"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No target, or no database */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Another Organization's version, or an identity that does not open it; `errors` names the field */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
