@@ -148,9 +148,26 @@ if runs multiorg@path; then
   mo_pids+=($!)
 fi
 
+# The Organizations the bundle's Projects name (hel, zilina), each an active row of the
+# Organization registry as every installation lists them in jc.toml (jc-dev's deployment renders
+# one [[organizations]] per Organization): Portal 0080 keys a project's rows only under a
+# registered Organization, so without them helsinki keeps no draft, activity or run history
+# (T-7201). Each on its own *.localhost Portal host, as multiorg's; 127.0.0.1 stays the base host
+# every suite calls.
+gate_orgs=$REHEARSAL_HOME/gate-organizations.toml
+: > "$gate_orgs"
+i=0
+sed -n 's/^  organizationRef: *//p' "$export_dir"/gitea/files/*/configuration/projects/*.yaml | sort -u |
+while read -r o; do
+  i=$((i + 1))
+  printf '[[organizations]]\nname = "%s"\ncatalogue_id = "00000000-0000-7000-8000-0000000000%02x"\n' "$o" "$((0xb0 + i))"
+  printf 'hosts = { portal = "portal.%s.localhost:%s" }\n\n' "$o" "$port"
+done >> "$gate_orgs"
+[ -s "$gate_orgs" ] || { echo "gate.sh: the bundle's Projects name no Organization" >&2; exit 1; }
+
 # reports <env> <prefix>: the import's reports (refusals, writeDoors) into the artifact.
 reports() { local f; for f in "$REHEARSAL_HOME/$1"/import-*report.json; do [ -e "$f" ] && cp "$f" "$out/$2${f##*/}"; done; true; }
-if ! "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"; then
+if ! REHEARSAL_JC_TOML_EXTRA=$gate_orgs "$repo/deploy/rehearsal/import.sh" gate "$port" "$pg_port" "$export_dir"; then
   reports gate ""
   exit 1
 fi
@@ -158,7 +175,7 @@ reports gate ""
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
 if [ -n "${SMOKE_STOP:-}" ]; then
   roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)
-  REHEARSAL_ROLE=$roles "$repo/deploy/rehearsal/up.sh" gate "$port" "$pg_port"
+  REHEARSAL_JC_TOML_EXTRA=$gate_orgs REHEARSAL_ROLE=$roles "$repo/deploy/rehearsal/up.sh" gate "$port" "$pg_port"
 fi
 converge gate "$(wc -l < "$home/jc.log")"
 [ "${#mo_pids[@]}" = 0 ] || wait "${mo_pids[@]}" || true
