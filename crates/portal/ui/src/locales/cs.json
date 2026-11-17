@@ -8455,7 +8455,7 @@
       "operatorSets": "Nastavují to operátoři vaší instalace",
       "notYet": "Zatím nenastaveno",
       "whomToAsk": "Koho se zeptat",
-      "whomToAskLead": "Tyto položky nastavují operátoři vaší instalace.",
+      "whomToAskLead": "O kteroukoli z těchto položek je požádejte přes kontakty instalace.",
       "step": {
         "organization": {
           "title": "Pojmenujte organizaci",
@@ -13763,6 +13763,7 @@
         "noneInForce": "Zatím neplatí žádný e-mailový server: čekající změna nastaví první.",
         "inForce": "Platí, dokud změna není schválena",
         "inForceNow": "Platí nyní",
+        "waitingOwn": "Změna už čeká na druhého operátora. Sledujte ji, nebo ji stáhněte a požádejte o jinou, na stránce Změny.",
         "askedFor": "Vyžádáno",
         "passwordNew": "Nové, zapečetěné do rozhodnutí o změně",
         "toChanges": "Otevřít Změny",

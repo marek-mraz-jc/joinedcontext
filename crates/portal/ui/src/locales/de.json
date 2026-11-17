@@ -8455,7 +8455,7 @@
       "operatorSets": "Die Betreiber Ihrer Installation legen dies fest",
       "notYet": "Noch nicht gesetzt",
       "whomToAsk": "Wen fragen",
-      "whomToAskLead": "Diese Punkte legen die Betreiber Ihrer Installation fest.",
+      "whomToAskLead": "Bitten Sie sie über die Kontakte der Installation um einen dieser Punkte.",
       "step": {
         "organization": {
           "title": "Organisation benennen",
@@ -13763,6 +13763,7 @@
         "noneInForce": "Noch gilt kein E-Mail-Server: die wartende Änderung setzt den ersten.",
         "inForce": "Gilt, bis die Änderung genehmigt ist",
         "inForceNow": "Gilt jetzt",
+        "waitingOwn": "Eine Änderung wartet bereits auf einen zweiten Operator. Verfolgen Sie sie oder ziehen Sie sie zurück, um eine andere zu beantragen, auf der Seite Änderungen.",
         "askedFor": "Beantragt",
         "passwordNew": "Ein neues, versiegelt bis die Änderung entschieden ist",
         "toChanges": "Änderungen öffnen",

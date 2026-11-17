@@ -8455,7 +8455,7 @@
       "operatorSets": "Your installation's operators set this",
       "notYet": "Not set yet",
       "whomToAsk": "Whom to ask",
-      "whomToAskLead": "Your installation's operators set these items.",
+      "whomToAskLead": "Ask them for any of these items through the installation's contacts.",
       "step": {
         "organization": {
           "title": "Name the organization",
@@ -13763,6 +13763,7 @@
         "noneInForce": "No e-mail server is in force yet: the waiting change sets the first one.",
         "inForce": "In force until the change is approved",
         "inForceNow": "In force now",
+        "waitingOwn": "A change already waits for a second operator. Follow it, or withdraw it to ask for another, on the Changes page.",
         "askedFor": "Asked for",
         "passwordNew": "A new one, sealed until the change is decided",
         "toChanges": "Open the Changes",

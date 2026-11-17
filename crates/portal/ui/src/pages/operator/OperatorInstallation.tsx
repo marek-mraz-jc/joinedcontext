@@ -184,7 +184,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
             {t("operator.installation.email.test")}
           </Button>
           {open ? (
-            <p className="text-caption text-fg-muted">{t("operator.installation.email.waitingShort")}</p>
+            <p className="text-caption text-fg-muted">{t("operator.installation.email.waitingOwn")}</p>
           ) : !smtp ? (
             <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p>
           ) : null}

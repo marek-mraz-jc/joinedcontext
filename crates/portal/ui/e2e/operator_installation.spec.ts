@@ -126,6 +126,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("Waiting for approval", { exact: true })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toBeHidden();
       await expect(page.getByText("No e-mail server is in force yet", { exact: false })).toBeVisible();
+      await expect(page.getByText("withdraw it to ask for another, on the Changes page", { exact: false })).toBeVisible();
       // What the waiting change asks for, read from the Change; its password only as "a new one".
       await expect(page.getByText("Asked for", { exact: true })).toBeVisible();
       await expect(page.getByText("smtp.bbsk.sk", { exact: true })).toBeVisible();
@@ -160,6 +161,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("Whom to ask", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-member-${width}`);
       await page.goto("/organization/operator-installation?lang=en");
+      await expect(page.getByRole("heading", { name: "Installation", level: 2 })).toBeVisible();
       await expect(page.getByText("This section belongs to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toHaveCount(0);
       // One word for the role: the refusal names the operators, never "administrators".

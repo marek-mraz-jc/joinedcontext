@@ -319,8 +319,10 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         />
         {known ? (
           operatorTab ? (
-            // One block, one word for the role: the section, that its operators open it, whom to ask.
-            <div>
+            // The section names itself in its H2 like every other; the block says its operators
+            // open it and whom to ask, one word for the role.
+            <div className="space-y-3">
+              <h2 className="text-title font-semibold text-fg">{t(`organization.tab.${tab}`)}</h2>
               <AskAdmins
                 title={t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}
                 message={t("operator.only")}
