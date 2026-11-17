@@ -755,8 +755,21 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     ] {
         assert!(all.contains(mark), "{mark} is missing");
     }
-    assert!(files["module/portal/agent_run_events.jsonl"].contains("run-alfa-1"));
-    let registry = &files["module/portal/project_ids.jsonl"];
+    // Format 2 (T-7208): each project's rows in the folder named by its id, the Organization's
+    // own in its reserved project's.
+    let segment = jc_types::ProjectId::parse_verified(&city)
+        .expect("an id")
+        .path_segment();
+    let folder = format!("module/portal/project/{segment}/");
+    assert!(files[&format!("{folder}agent_run_events.jsonl")].contains("run-alfa-1"));
+    assert!(files[&format!("{folder}entity_comments.jsonl")].contains("alfa-comment-mark"));
+    assert!(
+        !files
+            .keys()
+            .any(|p| p.starts_with("module/portal/") && !p.starts_with("module/portal/project/")),
+        "no flat Portal file beside the folders"
+    );
+    let registry = &files[&format!("{folder}project_ids.jsonl")];
     assert!(
         registry.contains(&city),
         "alfa-city's id is kept: {registry}"
@@ -766,7 +779,22 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
         "another Organization's reserved id left: {registry}"
     );
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
-    assert_eq!(index["formatVersion"], 1);
+    assert_eq!(index["formatVersion"], 2);
+    assert_eq!(
+        index["modules"]["portal"]["projects"][&segment],
+        "alfa-city"
+    );
+    assert_eq!(
+        segment.len(),
+        26,
+        "the folder names the id in its path form"
+    );
+    let own = index["modules"]["portal"]["organizationProject"]
+        .as_str()
+        .expect("the Organization's folder");
+    assert!(files.contains_key(&format!(
+        "module/portal/project/{own}/organization_backup_log.jsonl"
+    )));
     assert_eq!(index["organization"], "alfa");
     assert_eq!(index["modules"]["portal"]["exported"], true);
     assert_eq!(
@@ -1637,6 +1665,244 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
                 .as_array()
                 .is_some_and(|log| log.iter().any(|e| e["action"] == action)),
             "{action} is audited"
+        );
+    }
+}
+
+/// T-7208: one project's folder restores into a new project: a new id whose parent is the
+/// source, the rows under the new name and new ids, the source's erasures applied again; the
+/// source's rows stay as they were. A taken name, an id the archive does not hold and a project
+/// deleted since the backup are refused.
+#[tokio::test]
+async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_untouched() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    as_project(
+        &db,
+        "alfa-city",
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-2', 'ada', 'Ada', 'alfa-kept-mark')",
+    )
+    .await;
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+    // The person behind urn:ngsi-ld:X:alfa-1 is erased since the backup.
+    as_project(
+        &db,
+        "alfa-city",
+        "INSERT INTO erasures (id, project, space, subject, reason, actor, groups, stores, approval) \
+         VALUES ('er-alfa-1', 'alfa-city', 'air', '0123456789abcdef0123456789abcdef', 'asked', 'ada', \
+         '[{\"class\":\"X\",\"entities\":[\"urn:ngsi-ld:X:alfa-1\"],\"attrs\":null}]', '{}', 'approved')",
+    )
+    .await;
+    let source_rows = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM entity_comments WHERE project = 'alfa-city'",
+        )
+        .fetch_one(&db)
+        .await
+        .expect("count")
+    };
+    let before = source_rows().await;
+    let source_id = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
+        .await
+        .expect("registry")
+        .expect("alfa-city's key")
+        .project;
+    // Doors, folders and the log name an id in its 26-character path form (TEN-01).
+    let source = source_id.path_segment();
+    let identity = secret_of(&ids[0]);
+
+    let listed = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/versions/{version}/projects"),
+        Some(json!({ "identity": identity })),
+    )
+    .await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    assert_eq!(
+        body(&listed)["projects"],
+        json!([{ "id": source, "name": "alfa-city" }])
+    );
+
+    let door = format!("{DATA_DOOR}/versions/{version}/copy");
+    let ask = |project: &str, name: &str, apply: bool| json!({ "identity": identity, "project": project, "name": name, "apply": apply });
+    let check = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&source, "alfa-copy", false)),
+    )
+    .await;
+    assert_eq!(check.status, StatusCode::OK, "{}", check.text);
+    let plan = body(&check);
+    assert_eq!(plan["tables"]["entity_comments"]["create"], 2, "{plan}");
+    assert_eq!(plan["projectId"], "", "a check mints no id");
+    let minted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_ids WHERE name = 'alfa-copy'")
+            .fetch_one(&db)
+            .await
+            .expect("count");
+    assert_eq!(minted, 0, "a check writes nothing");
+
+    let applied = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&source, "alfa-copy", true)),
+    )
+    .await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+    let plan = body(&applied);
+    assert_eq!(plan["erasuresReplayed"], 1, "{plan}");
+    let copy_id =
+        jc_types::ProjectId::from_path_segment(plan["projectId"].as_str().expect("the new id"))
+            .expect("the path form");
+    assert_ne!(copy_id, source_id);
+    let copy = copy_id.to_string();
+    let (parent, organization): (String, String) =
+        sqlx::query_as("SELECT parent::text, organization FROM project_ids WHERE id = $1::uuid")
+            .bind(&copy)
+            .fetch_one(&db)
+            .await
+            .expect("the copy's registry row");
+    assert_eq!(
+        (parent.as_str(), organization.as_str()),
+        (source_id.to_string().as_str(), "alfa")
+    );
+    let lineage: (String, String) =
+        sqlx::query_as("SELECT source::text, version_id FROM project_copies WHERE id = $1::uuid")
+            .bind(&copy)
+            .fetch_one(&db)
+            .await
+            .expect("the lineage");
+    assert_eq!(lineage, (source_id.to_string(), version.clone()));
+    // The copy's rows answer in its own key only, under the new name, the erased one gone.
+    let key = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
+        .await
+        .expect("registry")
+        .expect("key");
+    let copy_key = jc_types::ProjectKey::new(key.org, copy_id);
+    let mut tx = joinedcontext_portal::db::tenant_tx(&db, copy_key)
+        .await
+        .expect("tx");
+    let bodies: Vec<(String, String)> = sqlx::query_as(
+        "SELECT project, body FROM entity_comments WHERE project_id = $1::uuid ORDER BY body",
+    )
+    .bind(&copy)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("the copy's comments");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(
+        bodies,
+        vec![("alfa-copy".to_owned(), "alfa-kept-mark".to_owned())],
+        "the erased person's comment stays erased in the copy"
+    );
+    assert_eq!(
+        source_rows().await,
+        before,
+        "the source project is untouched"
+    );
+
+    let again = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&source, "alfa-copy", true)),
+    )
+    .await;
+    assert_eq!(
+        again.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        again.text
+    );
+    assert!(again.text.contains("name:"), "{}", again.text);
+    let unknown = jc_types::ProjectId::mint().path_segment();
+    let foreign = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&unknown, "alfa-other", false)),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+
+    // alfa-city deleted since the backup: its id is retired and its folder never restored.
+    world
+        .state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "Project".to_owned(),
+            name: "alfa-city".to_owned(),
+        });
+    let gone = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&source, "alfa-other", false)),
+    )
+    .await;
+    assert_eq!(
+        gone.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        gone.text
+    );
+    assert!(
+        gone.text.contains("project:") && gone.text.contains("deleted"),
+        "{}",
+        gone.text
+    );
+    let listed = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/versions/{version}/projects"),
+        Some(json!({ "identity": identity })),
+    )
+    .await;
+    assert_eq!(
+        body(&listed),
+        json!({ "projects": [], "deleted": ["alfa-city"] })
+    );
+}
+
+/// T-7208: the copy doors answer the Organization's administrators only.
+#[tokio::test]
+async fn only_administrators_reach_the_project_copy_doors() {
+    let world = world("alfa", "Enabled").await;
+    for door in ["projects", "copy"] {
+        let refused = send(
+            &world.state,
+            person("bob"),
+            "POST",
+            &format!("{DATA_DOOR}/versions/v1/{door}"),
+            Some(if door == "copy" {
+                json!({ "identity": "AGE-SECRET-KEY-1X", "project": "p", "name": "n" })
+            } else {
+                json!({ "identity": "AGE-SECRET-KEY-1X" })
+            }),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{door}: {}",
+            refused.text
         );
     }
 }

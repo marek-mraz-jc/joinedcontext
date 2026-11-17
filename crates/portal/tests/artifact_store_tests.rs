@@ -1,15 +1,34 @@
-//! The reconciler mints one scoped credential pair per organization (T-0422, PF-31, PF-32).
+//! The reconciler mints one scoped credential pair per project, named and scoped by its key
+//! (T-0422, T-7210, PF-31, PF-32).
 //!
 //! Against a mocked store admin API: what is actually sent on the wire, that the request is
 //! signed with the root credential and not with a derived one, that the body the signature
 //! covers is the body that arrives, and that a refusal carries no secret into the error.
 
+use jc_types::{OrgId, ProjectId, ProjectKey};
 use joinedcontext_portal::artifact_store::{Client, Credential, Role, Settings};
 use serde_json::Value;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const ROOT_SECRET: &str = "the-root-secret-nobody-else-holds";
+
+fn key() -> ProjectKey {
+    ProjectKey::new(
+        OrgId::parse_verified("0b0c6c2e-1d1e-4a40-9f0e-2a5a3c1f0b01").expect("an id"),
+        ProjectId::parse_verified("5f1d2c3b-4a59-4b6c-8d7e-9f0a1b2c3d4e").expect("an id"),
+    )
+}
+
+/// `jc-{OrgId}-{ProjectId}-{role}`, the ids in their path form.
+fn user(role: &str) -> String {
+    let key = key();
+    format!(
+        "jc-{}-{}-{role}",
+        key.org.path_segment(),
+        key.project.path_segment()
+    )
+}
 
 fn settings(endpoint: String) -> Settings {
     Settings {
@@ -49,7 +68,7 @@ async fn an_organization_gets_one_writer_and_one_reader_and_no_third_credential(
 
     let client = Client::new(settings(server.uri())).expect("a client");
     let issued = client
-        .ensure_organization("hel")
+        .ensure_project(&key(), None)
         .await
         .expect("the store accepts the pair");
 
@@ -58,7 +77,7 @@ async fn an_organization_gets_one_writer_and_one_reader_and_no_third_credential(
             .iter()
             .map(|c| c.access_key.as_str())
             .collect::<Vec<_>>(),
-        vec!["jc-hel-writer", "jc-hel-reader"]
+        vec![user("writer"), user("reader")]
     );
 
     let received = server.received_requests().await.expect("recorded requests");
@@ -73,10 +92,10 @@ async fn the_user_the_store_is_told_about_carries_the_derived_secret_and_is_enab
     let server = MockServer::start().await;
     accept_everything(&server).await;
     let client = Client::new(settings(server.uri())).expect("a client");
-    client.ensure_organization("hel").await.expect("accepted");
+    client.ensure_project(&key(), None).await.expect("accepted");
 
     let received = server.received_requests().await.expect("recorded requests");
-    let reader = Credential::derive(ROOT_SECRET, "hel", Role::Reader);
+    let reader = Credential::derive(ROOT_SECRET, &key(), Role::Reader);
     let bodies: Vec<Value> = requests_to(&received, "/rustfs/admin/v3/add-user")
         .iter()
         .map(|request| request.body_json().expect("a JSON body"))
@@ -95,7 +114,7 @@ async fn the_user_the_store_is_told_about_carries_the_derived_secret_and_is_enab
         .map(|request| request.url.query().unwrap_or_default().to_owned())
         .collect();
     assert!(
-        queries.contains(&"accessKey=jc-hel-reader".to_owned()),
+        queries.contains(&format!("accessKey={}", user("reader"))),
         "{queries:?}"
     );
 }
@@ -105,7 +124,7 @@ async fn the_policy_attached_to_the_reader_is_the_readers_own() {
     let server = MockServer::start().await;
     accept_everything(&server).await;
     let client = Client::new(settings(server.uri())).expect("a client");
-    client.ensure_organization("hel").await.expect("accepted");
+    client.ensure_project(&key(), None).await.expect("accepted");
 
     let received = server.received_requests().await.expect("recorded requests");
     let pairs: Vec<(String, String)> =
@@ -119,8 +138,8 @@ async fn the_policy_attached_to_the_reader_is_the_readers_own() {
                 )
             })
             .collect();
-    assert!(pairs.contains(&("jc-hel-reader".to_owned(), "jc-hel-reader".to_owned())));
-    assert!(pairs.contains(&("jc-hel-writer".to_owned(), "jc-hel-writer".to_owned())));
+    assert!(pairs.contains(&(user("reader"), user("reader"))));
+    assert!(pairs.contains(&(user("writer"), user("writer"))));
     // A group would apply to everyone in it; these are users.
     for request in requests_to(&received, "/rustfs/admin/v3/set-user-or-group-policy") {
         assert!(request
@@ -138,7 +157,7 @@ async fn every_request_is_signed_with_the_root_credential_over_the_body_that_arr
     let server = MockServer::start().await;
     accept_everything(&server).await;
     let client = Client::new(settings(server.uri())).expect("a client");
-    client.ensure_organization("hel").await.expect("accepted");
+    client.ensure_project(&key(), None).await.expect("accepted");
 
     for request in server.received_requests().await.expect("recorded requests") {
         let authorization = request
@@ -176,26 +195,26 @@ async fn a_store_that_refuses_says_which_call_failed_and_carries_no_secret() {
     let server = MockServer::start().await;
     Mock::given(method("PUT"))
         .and(path("/rustfs/admin/v3/add-canned-policy"))
-        .and(query_param("name", "jc-hel-writer"))
+        .and(query_param("name", user("writer")))
         // An admin API can echo the request it refused, which is why the body is never in the
         // error: the request carries a derived secret key.
         .respond_with(ResponseTemplate::new(403).set_body_string(format!(
             "refused: secretKey={}",
-            Credential::derive(ROOT_SECRET, "hel", Role::Writer).secret_key
+            Credential::derive(ROOT_SECRET, &key(), Role::Writer).secret_key
         )))
         .mount(&server)
         .await;
 
     let client = Client::new(settings(server.uri())).expect("a client");
     let error = client
-        .ensure_organization("hel")
+        .ensure_project(&key(), None)
         .await
         .expect_err("a 403 is a refusal");
     let said = error.to_string();
     assert!(said.contains("add-canned-policy"), "{said}");
     assert!(said.contains("403"), "{said}");
     assert!(
-        !said.contains(&Credential::derive(ROOT_SECRET, "hel", Role::Writer).secret_key),
+        !said.contains(&Credential::derive(ROOT_SECRET, &key(), Role::Writer).secret_key),
         "the refusal carried the secret it was refusing: {said}"
     );
 
@@ -211,7 +230,7 @@ async fn a_store_that_is_not_there_is_a_transport_error_and_not_a_panic() {
     // named, rather than take the reconciler's run down with it.
     let client = Client::new(settings("http://127.0.0.1:1".to_owned())).expect("a client");
     let error = client
-        .ensure_organization("hel")
+        .ensure_project(&key(), None)
         .await
         .expect_err("nothing answers");
     assert!(error.to_string().contains("add-canned-policy"), "{error}");
@@ -220,14 +239,28 @@ async fn a_store_that_is_not_there_is_a_transport_error_and_not_a_panic() {
 /// T-0925, PF-32: the reader travels to the workload that serves, the writer never does.
 #[test]
 fn the_secret_carries_the_reader_and_nothing_that_can_write() {
-    let reader = Credential::derive(ROOT_SECRET, "hel", Role::Reader);
-    let writer = Credential::derive(ROOT_SECRET, "hel", Role::Writer);
-    let secret = joinedcontext_portal::artifact_store::reader_secret("dev", "hel", &reader);
+    let reader = Credential::derive(ROOT_SECRET, &key(), Role::Reader);
+    let writer = Credential::derive(ROOT_SECRET, &key(), Role::Writer);
+    let secret = joinedcontext_portal::artifact_store::reader_secret("dev", &key(), &reader);
 
     assert_eq!(secret["kind"], "Secret");
-    assert_eq!(secret["metadata"]["name"], "artifact-store-reader-hel");
+    let name = format!(
+        "{}-{}-artifacts",
+        key().org.path_segment(),
+        key().project.path_segment()
+    );
+    assert_eq!(secret["metadata"]["name"], name);
+    // A Kubernetes name is a DNS label: 63 characters at most.
+    assert!(
+        jc_core::names::validate_dns1123_label(&name).is_ok(),
+        "{name}"
+    );
     assert_eq!(secret["metadata"]["namespace"], "dev");
-    assert_eq!(secret["stringData"]["ACCESS_KEY_ID"], "jc-hel-reader");
+    assert_eq!(
+        secret["metadata"]["labels"]["joinedcontext.com/project-id"],
+        key().project.path_segment()
+    );
+    assert_eq!(secret["stringData"]["ACCESS_KEY_ID"], user("reader"));
     assert_eq!(secret["stringData"]["ACCESS_SECRET_KEY"], reader.secret_key);
 
     let serialised = secret.to_string();
@@ -241,25 +274,21 @@ fn the_secret_carries_the_reader_and_nothing_that_can_write() {
     );
 }
 
-/// The credential is derived, so a rotation of the root secret rewrites every organization's
-/// Secret on the next sync and two organizations never share one.
+/// The credential is derived, so a rotation of the root secret rewrites every project's Secret
+/// on the next sync, and two projects of one Organization never share one.
 #[test]
-fn a_rotated_root_rewrites_the_secret_and_organizations_do_not_share_one() {
-    let before = joinedcontext_portal::artifact_store::reader_secret(
-        "dev",
-        "hel",
-        &Credential::derive(ROOT_SECRET, "hel", Role::Reader),
-    );
-    let after = joinedcontext_portal::artifact_store::reader_secret(
-        "dev",
-        "hel",
-        &Credential::derive("a-rotated-root-secret", "hel", Role::Reader),
-    );
-    let other = joinedcontext_portal::artifact_store::reader_secret(
-        "dev",
-        "bb",
-        &Credential::derive(ROOT_SECRET, "bb", Role::Reader),
-    );
+fn a_rotated_root_rewrites_the_secret_and_projects_do_not_share_one() {
+    let other_key = ProjectKey::new(key().org, ProjectId::mint());
+    let secret = |root: &str, key: &ProjectKey| {
+        joinedcontext_portal::artifact_store::reader_secret(
+            "dev",
+            key,
+            &Credential::derive(root, key, Role::Reader),
+        )
+    };
+    let before = secret(ROOT_SECRET, &key());
+    let after = secret("a-rotated-root-secret", &key());
+    let other = secret(ROOT_SECRET, &other_key);
 
     assert_ne!(
         before["stringData"]["ACCESS_SECRET_KEY"],
@@ -270,5 +299,5 @@ fn a_rotated_root_rewrites_the_secret_and_organizations_do_not_share_one() {
         before["stringData"]["ACCESS_SECRET_KEY"],
         other["stringData"]["ACCESS_SECRET_KEY"]
     );
-    assert_eq!(other["metadata"]["name"], "artifact-store-reader-bb");
+    assert_ne!(before["metadata"]["name"], other["metadata"]["name"]);
 }

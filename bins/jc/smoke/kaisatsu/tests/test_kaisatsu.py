@@ -173,6 +173,19 @@ def test_gateway_metadata_compares_paths_not_hosts():
     assert bad == {"field.registration_endpoint", "field.token_endpoint"}
 
 
+def test_service_account_clients_without_their_project_are_listed_by_id_only():
+    clients = [
+        {"clientId": "traffic-sensors", "serviceAccountsEnabled": True, "secret": "s3cr3t-value",
+         "attributes": {"jc.project": "aaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+        {"clientId": "air-pipelines", "serviceAccountsEnabled": True, "secret": "s3cr3t-value"},
+        {"clientId": "imported", "serviceAccountsEnabled": True, "attributes": {"jc.project": " "}},
+        {"clientId": "portal-ui", "publicClient": True},
+        {"clientId": "realm-management", "serviceAccountsEnabled": True},
+    ]
+    assert suite.project_less(clients) == ["air-pipelines", "imported"]
+    assert suite.project_less(clients[:1]) == []
+
+
 def test_redact_keeps_no_token_code_secret_or_password():
     text = ('{"access_token":"eyJabc.def.ghi","refresh_token":"r1"} http://localhost/callback?code=XYZ&state=s '
             'client_secret=s3cr3t password=hunter2 id_token_hint=eyJa.b.c')

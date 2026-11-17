@@ -94,6 +94,10 @@ pub struct Config {
     /// loopback address and port): `jc` in host mode serves its realm on its own listener by the
     /// host the request names.
     pub oidc_jwks_reach: Option<std::net::SocketAddr>,
+    /// Whether a ServiceAccount's or App's token must name its project
+    /// (`JC_OIDC_REQUIRE_PROJECT`, `true` or `false`, default `false`; ARCH/IDN-02, T-7194). On
+    /// once every service-account client of the realm carries its `jc.project` attribute.
+    pub oidc_require_project: bool,
     /// The realm of each Organization with its own sign-in host (`JC_OIDC_ORGANIZATION_REALMS`,
     /// T-7131): its tokens count only on that Organization's Endpoints and hosts. Their keys are
     /// read like the installation realm's, through `JC_OIDC_JWKS_REACH`.
@@ -325,6 +329,16 @@ impl Config {
                 }
             },
         };
+        let oidc_require_project = match non_empty("JC_OIDC_REQUIRE_PROJECT").as_deref() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => return Err(ConfigError::Invalid {
+                name: "JC_OIDC_REQUIRE_PROJECT",
+                reason:
+                    "true or false, e.g. true once every service-account client carries jc.project"
+                        .to_owned(),
+            }),
+        };
         let oidc_organizations = organization_realms(
             non_empty("JC_OIDC_ORGANIZATION_REALMS"),
             oidc_issuer.as_deref(),
@@ -508,6 +522,7 @@ impl Config {
             oidc_issuer,
             oidc_jwks_url,
             oidc_jwks_reach,
+            oidc_require_project,
             oidc_organizations,
             oidc_token_url: var("JC_OIDC_TOKEN_URL")
                 .ok()
@@ -825,6 +840,7 @@ mod tests {
                 "http://keycloak/realms/dev/protocol/openid-connect/certs".to_owned(),
             ),
             oidc_jwks_reach: None,
+            oidc_require_project: false,
             oidc_organizations: Vec::new(),
             oidc_token_url: None,
             oidc_client: Some((
@@ -1006,6 +1022,35 @@ mod tests {
             Some("127.0.0.1:8080".parse().expect("an address"))
         );
         assert_eq!(with("").expect("no reach").oidc_jwks_reach, None);
+    }
+
+    /// ARCH/IDN-02 (T-7194): the project requirement is off unless switched on, and a value
+    /// other than true or false refuses the start instead of guessing.
+    #[test]
+    fn the_project_requirement_is_off_by_default_and_takes_only_true_or_false() {
+        let with = |value: &'static str| {
+            Config::from_vars(move |name| match name {
+                "JC_OIDC_REQUIRE_PROJECT" => Some(value.to_owned()),
+                "JC_GATEWAY_BROKER_URL" => Some("http://broker:1026".to_owned()),
+                "JC_GATEWAY_ORG_DOMAIN" => Some("hel.fi".to_owned()),
+                _ => None,
+            })
+        };
+        assert!(!with("").expect("unset").oidc_require_project);
+        assert!(!with("false").expect("off").oidc_require_project);
+        assert!(with("true").expect("on").oidc_require_project);
+        for refused in ["1", "yes", "TRUE"] {
+            assert!(
+                matches!(
+                    with(refused),
+                    Err(ConfigError::Invalid {
+                        name: "JC_OIDC_REQUIRE_PROJECT",
+                        ..
+                    })
+                ),
+                "{refused}"
+            );
+        }
     }
 
     #[test]

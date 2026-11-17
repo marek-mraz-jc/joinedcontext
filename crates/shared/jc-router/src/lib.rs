@@ -23,8 +23,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 use tower::ServiceExt;
 
 mod hosts;
+mod projects;
 pub mod registry;
 pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization, RegistryHost};
+pub use projects::{IdAddress, ProjectTable, RegistryProject};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
@@ -210,9 +212,30 @@ pub struct HostSwap {
     /// The entries of the hosts the registry added ([`HostSwap::mount_hosts`]), longest prefix
     /// first.
     added: Arc<RwLock<Arc<Vec<MountedEntry>>>>,
+    /// The live projects by id once id addresses are on ([`HostSwap::replace_projects`]); while
+    /// `None` no path is read as an id address (RTE-05, `project_addresses` off).
+    projects: Arc<RwLock<Option<Arc<ProjectTable>>>>,
 }
 
 impl HostSwap {
+    /// Turns id addresses on with the live projects of `rows` (RTE-05, T-7194), replacing the
+    /// last set whole.
+    pub fn replace_projects(&self, rows: &[RegistryProject<'_>]) {
+        *self
+            .projects
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(ProjectTable::new(rows)));
+    }
+
+    /// The project table that answers now; `None` while id addresses are off.
+    #[must_use]
+    pub fn projects(&self) -> Option<Arc<ProjectTable>> {
+        self.projects
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// The table that answers now.
     #[must_use]
     pub fn current(&self) -> Arc<HostTable> {
@@ -456,6 +479,7 @@ impl JcRouterBuilder {
                     routers: Arc::new(self.routers),
                     fixed: Arc::new(fixed),
                     added: Arc::default(),
+                    projects: Arc::default(),
                 }
             }),
         })
@@ -669,6 +693,16 @@ impl JcRouter {
             );
         }
         let public_path = req.uri().path().to_owned();
+        let projects = self.hosts.as_ref().and_then(HostSwap::projects);
+        let mut project_address = false;
+        // The project door's address when its metadata is asked (MCP-33).
+        let mut door_metadata: Option<String> = None;
+        // The project id an id address placed the request under (RTE-05, T-7212).
+        let mut placed_id: Option<String> = None;
+        let credentials = req
+            .headers()
+            .contains_key(axum::http::header::AUTHORIZATION)
+            || req.headers().contains_key(axum::http::header::COOKIE);
         let (path, organization, via) = match table.as_deref() {
             None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
             Some(table) => {
@@ -677,7 +711,38 @@ impl JcRouter {
                         path,
                         organization,
                         via,
-                    } => (path, organization, via),
+                    } => {
+                        // An id address (RTE-05): placed under the project's name, or refused
+                        // with the one answer every refusal there gets.
+                        let placed = match (&organization, &via, &projects) {
+                            (Some(org), hosts::Via::Prefixed(_), Some(projects)) => projects
+                                .place(org, &path, credentials)
+                                .map(|placed| (org, placed)),
+                            _ => None,
+                        };
+                        match placed {
+                            None => (path, organization, via),
+                            Some((_, Err(()))) => return projects::not_found(),
+                            Some((org, Ok(placed))) => {
+                                project_address = true;
+                                let id = path.split('/').nth(1).unwrap_or_default();
+                                let door_base = format!("{scheme}://{host_with_port}/{org}/{id}");
+                                match placed {
+                                    projects::IdPlace::Named(named) => {
+                                        placed_id = Some(id.to_owned());
+                                        (named, organization, via)
+                                    }
+                                    projects::IdPlace::Challenge => {
+                                        return projects::challenge(&door_base);
+                                    }
+                                    projects::IdPlace::Metadata => {
+                                        door_metadata = Some(door_base);
+                                        (projects::PORTAL_METADATA.to_owned(), organization, via)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     hosts::Placed::Canonical(path) => {
                         let location = match req.uri().query() {
                             Some(q) => format!("{path}?{q}"),
@@ -703,6 +768,16 @@ impl JcRouter {
             }
         };
 
+        // A name never resolves to a branch: only its own id address reaches it (RTE-05,
+        // TEN-12; T-7212), whether id addresses are on or not.
+        let placed_branch = placed_id.as_ref().map(|id| format!("b-{id}"));
+        if projects::names_other_branch(&path, req.uri().query(), placed_branch.as_deref()) {
+            return projects::not_found();
+        }
+        if let Some(id) = placed_id {
+            req.extensions_mut().insert(projects::IdAddress(id));
+        }
+
         // A host the registry added answers its own entries, exact hosts all, so they come first
         // as the configuration's exact hosts do (T-7184).
         let added = self.hosts.as_ref().map(HostSwap::added);
@@ -713,6 +788,7 @@ impl JcRouter {
         // A page asked on another group's host moves to the configured host that serves it:
         // the Location names a host of the table, never the request's (T-6991 §7).
         if let Some(table) = table.as_deref()
+            && !project_address
             && is_page(&req)
             && let Some((to, rest)) =
                 table.page_move(&host_with_port, host_only, &public_path, entry.is_some())
@@ -728,6 +804,9 @@ impl JcRouter {
                 .into_response();
         }
         let Some(entry) = entry else {
+            if project_address {
+                return projects::not_found();
+            }
             return (StatusCode::NOT_FOUND, "unmounted path").into_response();
         };
 
@@ -792,6 +871,12 @@ impl JcRouter {
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
         if role.is_some_and(HostRole::drops_set_cookie) {
             resp.headers_mut().remove(axum::http::header::SET_COOKIE);
+        }
+        if let Some(door_base) = door_metadata {
+            return projects::metadata(resp, &door_base).await;
+        }
+        if project_address && projects::refused(resp.status()) {
+            return projects::not_found();
         }
         resp
     }
@@ -1314,6 +1399,346 @@ mod tests {
         );
         assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|"));
         assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
+    }
+
+    /// TEN-12, CHG-15, RTE-05 (T-7212): a branch answers on its own id address with the id as
+    /// the module's [`IdAddress`]; its name, on a name address or in a query, gets body P
+    /// whether id addresses are on or not; an expired branch's id gets the same bytes as an
+    /// unknown id; a token on project A's id address naming branch B is refused alike.
+    #[tokio::test]
+    async fn a_branch_answers_only_on_its_own_live_id_address() {
+        const BRANCH: &str = "daaaaaaaaaaaaaaaaaaaaaaaaa";
+        const EXPIRED: &str = "eaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let api = Router::new().fallback(|req: Request<Body>| async move {
+            let placed = req
+                .extensions()
+                .get::<IdAddress>()
+                .map_or("-".to_owned(), |a| a.0.clone());
+            format!("{}|{placed}", req.uri())
+        });
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization("bratislava"))
+            .unwrap();
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some("/api".into()),
+                },
+                api,
+            )
+            .build()
+            .unwrap();
+        let call = |path: String| {
+            let jc = jc.clone();
+            async move {
+                let req = Request::builder()
+                    .uri(path)
+                    .header("host", "city.example")
+                    .header("authorization", "Bearer ok");
+                let resp = jc.dispatch(req.body(Body::empty()).unwrap(), None).await;
+                let status = resp.status();
+                let headers = format!("{:?}", resp.headers());
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, headers, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let by_name = format!("/bratislava/api/v1/projects/b-{BRANCH}/spaces");
+        // Off: no id address, and the branch's name is still refused.
+        let off = call(by_name.clone()).await;
+        assert_eq!(off.0, StatusCode::NOT_FOUND);
+        assert!(off.2.contains("ask the project's owner"), "{}", off.2);
+
+        jc.host_swap().expect("a host table").replace_projects(&[
+            RegistryProject {
+                organization: "bratislava",
+                id: A,
+                name: "traffic",
+                expires_at: None,
+            },
+            RegistryProject {
+                organization: "bratislava",
+                id: BRANCH,
+                name: &format!("b-{BRANCH}"),
+                expires_at: Some(i64::MAX),
+            },
+            RegistryProject {
+                organization: "bratislava",
+                id: EXPIRED,
+                name: &format!("b-{EXPIRED}"),
+                expires_at: Some(1),
+            },
+        ]);
+        let live = call(format!("/bratislava/{BRANCH}/api/v1/spaces")).await;
+        assert_eq!(live.0, StatusCode::OK);
+        assert_eq!(live.2, format!("/v1/projects/b-{BRANCH}/spaces|{BRANCH}"));
+        let plain = call("/bratislava/api/v1/projects/traffic/spaces".into()).await;
+        assert_eq!(plain.2, "/v1/projects/traffic/spaces|-");
+
+        let unknown = call("/bratislava/caaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces".into()).await;
+        assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+        for path in [
+            by_name,
+            format!("/bratislava/api/v1/mcp?project=b-{BRANCH}"),
+            format!("/bratislava/{EXPIRED}/api/v1/spaces"),
+            format!("/bratislava/{A}/api/v1/spaces?project=b-{BRANCH}"),
+            format!("/bratislava/{BRANCH}/api/v1/spaces?project=b-{EXPIRED}"),
+        ] {
+            assert_eq!(call(path.clone()).await, unknown, "{path}");
+        }
+    }
+
+    /// RTE-05 (T-7194): with id addresses on, an unknown id, another Organization's id, a
+    /// request without a session, one without a grant, an unknown object, a redirect and a
+    /// misspelt id answer the same bytes and headers; a granted call reaches the project by its
+    /// name. Off, an id path is routed as it is.
+    #[tokio::test]
+    async fn every_refusal_on_an_id_address_is_the_same_404() {
+        const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const FOREIGN: &str = "baaaaaaaaaaaaaaaaaaaaaaaaa";
+        let api = Router::new().fallback(|headers: axum::http::HeaderMap, uri: Uri| async move {
+            let auth = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            match (auth, uri.path()) {
+                (None, _) => (
+                    StatusCode::UNAUTHORIZED,
+                    [
+                        ("www-authenticate", "Bearer resource_metadata=\"x\""),
+                        ("set-cookie", "s=1"),
+                    ],
+                    "sign in".to_owned(),
+                )
+                    .into_response(),
+                (Some("Bearer none"), _) => (StatusCode::FORBIDDEN, "no grant").into_response(),
+                (_, "/v1/projects/traffic/gone") => {
+                    (StatusCode::NOT_FOUND, "no such space").into_response()
+                }
+                (_, "/v1/projects/traffic/moved") => (
+                    StatusCode::PERMANENT_REDIRECT,
+                    [("location", "/bratislava/api/v1/projects/traffic/spaces")],
+                )
+                    .into_response(),
+                (_, path) => path.to_owned().into_response(),
+            }
+        });
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization("bratislava"))
+            .and_then(|t| t.organization("kosice"))
+            .unwrap();
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some("/api".into()),
+                },
+                api,
+            )
+            .build()
+            .unwrap();
+        let call = |path: String, auth: Option<&'static str>| {
+            let jc = jc.clone();
+            async move {
+                let mut req = Request::builder().uri(path).header("host", "city.example");
+                if let Some(auth) = auth {
+                    req = req.header("authorization", auth);
+                }
+                let resp = jc.dispatch(req.body(Body::empty()).unwrap(), None).await;
+                let status = resp.status();
+                let headers = format!("{:?}", resp.headers());
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, headers, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let spaces = format!("/bratislava/{ID}/api/v1/spaces");
+        assert_eq!(
+            call(spaces.clone(), Some("Bearer ok")).await.0,
+            StatusCode::NOT_FOUND
+        );
+
+        jc.host_swap().expect("a host table").replace_projects(&[
+            RegistryProject {
+                organization: "bratislava",
+                id: ID,
+                name: "traffic",
+                expires_at: None,
+            },
+            RegistryProject {
+                organization: "kosice",
+                id: FOREIGN,
+                name: "air",
+                expires_at: None,
+            },
+        ]);
+        let granted = call(spaces.clone(), Some("Bearer ok")).await;
+        assert_eq!(granted.0, StatusCode::OK);
+        assert_eq!(granted.2, "/v1/projects/traffic/spaces");
+        let refusal = call(spaces.clone(), None).await;
+        assert_eq!(refusal.0, StatusCode::NOT_FOUND);
+        assert!(
+            refusal.2.contains("ask the project's owner"),
+            "{}",
+            refusal.2
+        );
+        for (path, auth) in [
+            (
+                format!("/bratislava/{FOREIGN}/api/v1/spaces"),
+                Some("Bearer ok"),
+            ),
+            (
+                "/bratislava/caaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces".to_owned(),
+                Some("Bearer ok"),
+            ),
+            (spaces.clone(), Some("Bearer none")),
+            (format!("/bratislava/{ID}/api/v1/gone"), Some("Bearer ok")),
+            (format!("/bratislava/{ID}/api/v1/moved"), Some("Bearer ok")),
+            (format!("/bratislava/{ID}/data"), Some("Bearer ok")),
+            (
+                format!("/bratislava/{}/api/v1/spaces", ID.to_uppercase()),
+                Some("Bearer ok"),
+            ),
+        ] {
+            assert_eq!(call(path.clone(), auth).await, refusal, "{path} {auth:?}");
+        }
+        // The name address is untouched.
+        let named = call("/bratislava/api/v1/projects/traffic/spaces".into(), None).await;
+        assert_eq!(named.0, StatusCode::UNAUTHORIZED);
+    }
+
+    /// MCP-33 (T-7211): the project door's metadata answers without a session and names the id
+    /// address as its resource, and the door challenges a caller without credentials, both the
+    /// same for this Organization's id, another Organization's id and an unknown one (nothing
+    /// tells them apart but the id the caller sent); a caller with credentials but no grant
+    /// still gets the one 404.
+    #[tokio::test]
+    async fn the_project_door_metadata_answers_without_a_session_and_leaks_no_project() {
+        const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const FOREIGN: &str = "baaaaaaaaaaaaaaaaaaaaaaaaa";
+        const UNKNOWN: &str = "caaaaaaaaaaaaaaaaaaaaaaaaa";
+        let api = Router::new().fallback(|headers: axum::http::HeaderMap| async move {
+            match headers.get(axum::http::header::AUTHORIZATION) {
+                None => StatusCode::UNAUTHORIZED.into_response(),
+                Some(_) => StatusCode::FORBIDDEN.into_response(),
+            }
+        });
+        let well_known = Router::new().route(
+            "/oauth-protected-resource/api/v1/mcp",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!({
+                    "resource": "https://city.example/api/v1/mcp",
+                    "authorization_servers": ["https://city.example/id"],
+                    "scopes_supported": ["mcp:portal"]
+                }))
+            }),
+        );
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization("bratislava"))
+            .and_then(|t| t.organization("kosice"))
+            .unwrap();
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some("/api".into()),
+                },
+                api,
+            )
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some("/.well-known".into()),
+                },
+                well_known,
+            )
+            .build()
+            .unwrap();
+        jc.host_swap().expect("a host table").replace_projects(&[
+            RegistryProject {
+                organization: "bratislava",
+                id: ID,
+                name: "traffic",
+                expires_at: None,
+            },
+            RegistryProject {
+                organization: "kosice",
+                id: FOREIGN,
+                name: "air",
+                expires_at: None,
+            },
+        ]);
+        let call = |method: &'static str, path: String, auth: Option<&'static str>| {
+            let jc = jc.clone();
+            async move {
+                let mut req = Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("host", "city.example");
+                if let Some(auth) = auth {
+                    req = req.header("authorization", auth);
+                }
+                let resp = jc.dispatch(req.body(Body::empty()).unwrap(), None).await;
+                let status = resp.status();
+                let headers = format!("{:?}", resp.headers());
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, headers, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let meta =
+            |id: &str| format!("/bratislava/{id}/api/mcp/.well-known/oauth-protected-resource");
+        let own = call("GET", meta(ID), None).await;
+        assert_eq!(own.0, StatusCode::OK);
+        let doc: serde_json::Value = serde_json::from_str(&own.2).unwrap();
+        assert_eq!(
+            doc["resource"],
+            format!("https://city.example/bratislava/{ID}/api/mcp")
+        );
+        assert_eq!(doc["authorization_servers"][0], "https://city.example/id");
+        assert!(!own.2.contains("traffic"), "{}", own.2);
+        for other in [FOREIGN, UNKNOWN] {
+            let answer = call("GET", meta(other), None).await;
+            assert_eq!(answer.1, own.1, "{other}");
+            assert_eq!(answer.2, own.2.replace(ID, other), "{other}");
+        }
+
+        let door = |id: &str| format!("/bratislava/{id}/api/mcp");
+        let challenge = call("POST", door(ID), None).await;
+        assert_eq!(challenge.0, StatusCode::UNAUTHORIZED);
+        assert!(
+            challenge.1.contains(&format!(
+                "resource_metadata=\\\"https://city.example/bratislava/{ID}/api/mcp/.well-known/oauth-protected-resource\\\""
+            )),
+            "{}",
+            challenge.1
+        );
+        for other in [FOREIGN, UNKNOWN] {
+            let answer = call("POST", door(other), None).await;
+            assert_eq!(
+                (answer.0, answer.1, answer.2),
+                (
+                    challenge.0,
+                    challenge.1.replace(ID, other),
+                    challenge.2.clone()
+                ),
+                "{other}"
+            );
+        }
+        let refused = call("POST", door(ID), Some("Bearer none")).await;
+        assert_eq!(refused.0, StatusCode::NOT_FOUND);
+        assert_eq!(
+            call("POST", door(UNKNOWN), Some("Bearer none")).await,
+            refused
+        );
     }
 
     /// T-7136 (T-7129 §7, O1b): a swap from the host registry takes a host out (`421`) and puts

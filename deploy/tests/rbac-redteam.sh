@@ -232,10 +232,10 @@ cannot "delete secrets in dev" "$PORTAL" delete secrets -n dev
 export EXPECT=dev-portal-secrets
 refused "overwrite the database secret by server-side apply" "$PORTAL" apply --server-side --force-conflicts -f <(secret db-keycloak)
 refused "create a Secret under a platform name" "$PORTAL" apply --server-side -f <(secret keycloak-admin-user)
-refused "a token-typed Secret under a handed-over name" "$PORTAL" apply --server-side -f <(secret artifact-store-reader-x kubernetes.io/service-account-token "kubernetes.io/service-account.name: postgres-cluster-dr-drill")
+refused "a token-typed Secret under a handed-over name" "$PORTAL" apply --server-side -f <(secret bbbbbbbbbbbbbbbbbbbbbbbbbb-cccccccccccccccccccccccccc-artifacts kubernetes.io/service-account-token "kubernetes.io/service-account.name: postgres-cluster-dr-drill")
 unset EXPECT
 allowed "apply the pipeline runner's Secret" "$PORTAL" apply --server-side -f <(secret pipeline-secrets)
-allowed "apply an organization's reader Secret" "$PORTAL" apply --server-side -f <(secret artifact-store-reader-hel)
+allowed "apply a project's artifact reader Secret" "$PORTAL" apply --server-side -f <(secret bbbbbbbbbbbbbbbbbbbbbbbbbb-cccccccccccccccccccccccccc-artifacts)
 if [ "$(k get secret db-keycloak -n dev -o jsonpath='{.data.password}' | base64 -d)" = platform-credential ]; then
 	echo "ok    the database secret is unchanged"
 else

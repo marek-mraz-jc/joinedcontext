@@ -32,7 +32,9 @@ use sqlx::PgConnection;
 use utoipa::ToSchema;
 use zeroize::Zeroizing;
 
-use super::data::{DataIndex, Scratch, Table, FORMAT_VERSION, PORTAL_TABLES};
+use super::data::{
+    project_folder, DataIndex, Scratch, Table, FORMAT_FLAT, FORMAT_VERSION, PORTAL_TABLES,
+};
 use super::{Target, DATA};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -50,7 +52,7 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
     (
         "project_ids",
         "the installation mints a project's id and never reuses it: a restored id could take \
-         one minted since, so restoring a project folder under its id is its own step",
+         one minted since; one project's folder is restored into a new project instead",
     ),
     (
         "erasures",
@@ -61,6 +63,10 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
         "a domain is proven again, never restored",
     ),
     ("organization_backup_log", "the audit only grows"),
+    (
+        "project_copies",
+        "a copy's lineage is written by the restore that made the copy",
+    ),
     (
         "agent_runs",
         "a run's state belongs to the run that made it",
@@ -212,7 +218,7 @@ fn too_large(what: &str, cap: u64) -> ApiError {
 }
 
 /// Reads `reader` whole, refusing it once it passes `cap` bytes.
-fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiError> {
+pub(super) fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiError> {
     let mut out = Vec::new();
     reader
         .take(cap.saturating_add(1))
@@ -227,7 +233,7 @@ fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec<u8>, ApiEr
 /// An opened archive: the decrypted zip in a scratch file, its index, and what it may still
 /// unpack to.
 pub struct Opened {
-    zip: zip::ZipArchive<std::fs::File>,
+    pub(super) zip: zip::ZipArchive<std::fs::File>,
     pub index: DataIndex,
     caps: Caps,
     left: u64,
@@ -272,10 +278,11 @@ pub async fn open(
     .await
     .map_err(internal)??;
     let (zip, index) = opened;
-    if index.format_version != FORMAT_VERSION {
+    if index.format_version != FORMAT_VERSION && index.format_version != FORMAT_FLAT {
         return Err(ApiError::Unprocessable {
             detail: format!(
-                "version: archive format {} is not the format {FORMAT_VERSION} this Portal restores",
+                "version: archive format {} is not a format this Portal restores ({FORMAT_FLAT} \
+                 or {FORMAT_VERSION})",
                 index.format_version
             ),
             errors: vec!["version: another archive format".into()],
@@ -297,23 +304,26 @@ pub async fn open(
     })
 }
 
-fn internal(err: impl std::fmt::Display) -> ApiError {
+pub(super) fn internal(err: impl std::fmt::Display) -> ApiError {
     ApiError::Internal(format!("the restore failed: {err}"))
 }
 
-fn not_an_archive() -> ApiError {
+pub(super) fn not_an_archive() -> ApiError {
     ApiError::Unprocessable {
         detail: "version: not a data backup archive".into(),
         errors: vec!["version: not a data backup archive".into()],
     }
 }
 
-fn quoted(identifier: &str) -> String {
+pub(super) fn quoted(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 
 /// The primary key columns of a Portal table.
-async fn key_columns(conn: &mut PgConnection, table: &str) -> Result<Vec<String>, ApiError> {
+pub(super) async fn key_columns(
+    conn: &mut PgConnection,
+    table: &str,
+) -> Result<Vec<String>, ApiError> {
     sqlx::query_scalar(
         "SELECT a.attname::text FROM pg_index i \
          JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
@@ -325,7 +335,7 @@ async fn key_columns(conn: &mut PgConnection, table: &str) -> Result<Vec<String>
     .map_err(failed)
 }
 
-fn failed(err: sqlx::Error) -> ApiError {
+pub(super) fn failed(err: sqlx::Error) -> ApiError {
     ApiError::Unavailable(format!("the Portal database could not be restored: {err}"))
 }
 
@@ -735,10 +745,40 @@ pub fn applied_message(plan: &DataPlan) -> String {
     )
 }
 
-/// The JSON lines of `module/portal/<table>.jsonl`, read under the entry cap and what is left
-/// of the total; none when the archive has no such file.
+/// The JSON lines of `table` in the archive: `module/portal/<table>.jsonl` (format 1, or an
+/// Organization outside the registry) and the table's file in every project folder (format 2).
 fn lines(opened: &mut Opened, table: &str) -> Result<Vec<String>, ApiError> {
-    let name = format!("module/portal/{table}.jsonl");
+    let file = format!("/{table}.jsonl");
+    let names: Vec<String> = opened
+        .zip
+        .file_names()
+        .filter_map(|n| n.ok().map(|n| n.into_owned()))
+        .filter(|n| {
+            n.strip_prefix("module/portal/project/")
+                .and_then(|rest| rest.strip_suffix(&file))
+                .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+        })
+        .collect();
+    let mut out = file_lines(opened, &format!("module/portal/{table}.jsonl"))?;
+    for name in names {
+        out.extend(file_lines(opened, &name)?);
+    }
+    Ok(out)
+}
+
+/// The JSON lines of `name` in one project's folder (format 2).
+pub(super) fn folder_lines(
+    opened: &mut Opened,
+    project: &jc_types::ProjectId,
+    table: &str,
+) -> Result<Vec<String>, ApiError> {
+    file_lines(opened, &format!("{}{table}.jsonl", project_folder(project)))
+}
+
+/// The JSON lines of the archive file `name`, read under the entry cap and what is left of the
+/// total; none when the archive has no such file.
+fn file_lines(opened: &mut Opened, name: &str) -> Result<Vec<String>, ApiError> {
+    let name = name.to_owned();
     let Ok(file) = opened.zip.by_name(&name) else {
         return Ok(Vec::new());
     };

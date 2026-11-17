@@ -96,6 +96,14 @@ pub struct Claims {
     /// The scopes the token was granted, space-separated (RFC 6749 section 3.3).
     #[serde(default)]
     pub scope: Option<String>,
+    /// What the subject is (ARCH/IDN-02): `person`, `serviceAccount` or `app`. Absent on a token
+    /// of an issuer that does not say, which counts as unknown, never as a person.
+    #[serde(default)]
+    pub sub_kind: Option<String>,
+    /// The project of a non-person subject, its `ProjectId` in the 26-character path form
+    /// (ARCH/IDN-02, TEN-04), as the issuer read it from the client registry row of `azp`.
+    #[serde(default)]
+    pub project: Option<String>,
 }
 
 /// `aud` as RFC 7519 section 4.1.3 allows it: a single string or an array of them.
@@ -226,6 +234,9 @@ pub enum Rejected {
     /// The subject was disabled, deleted or logged out after the token was issued (AR-6).
     #[error("token issued before its subject was revoked")]
     Revoked,
+    /// A ServiceAccount's or App's token without a project id in the path form (ARCH/IDN-02).
+    #[error("workload token names no project")]
+    NoProject,
 }
 
 impl From<Rejected> for crate::ProblemDetails {
@@ -261,6 +272,8 @@ pub struct Verifier {
     /// registry serves another set (T-7180). Its tokens count only for a request of that
     /// Organization ([`Self::verify_for`]).
     organizations: ArcSwap<HashMap<String, Arc<Verifier>>>,
+    /// Whether a non-person token must name its project (ARCH/IDN-02, [`Self::requiring_project`]).
+    require_project: bool,
 }
 
 impl std::fmt::Debug for Verifier {
@@ -282,7 +295,18 @@ impl Verifier {
             keys: ArcSwap::new(Arc::new(Table::default())),
             revoked: ArcSwap::new(Arc::new(HashMap::new())),
             organizations: ArcSwap::new(Arc::new(HashMap::new())),
+            require_project: false,
         }
+    }
+
+    /// Refuses, when `on`, a token whose `sub_kind` is not `person` and whose `project` is not a
+    /// `ProjectId` in the path form (ARCH/IDN-02). Off until every service-account client of the
+    /// realm carries its `jc.project` attribute: the issuer leaves the claim out for a client
+    /// without one, and refusing those tokens would end the platform's own clients' calls.
+    #[must_use]
+    pub fn requiring_project(mut self, on: bool) -> Self {
+        self.require_project = on;
+        self
     }
 
     /// Accepts `issuer`'s tokens beside this realm's for a request of `organization` alone: the
@@ -419,7 +443,15 @@ impl Verifier {
             return Err(Rejected::WrongAudience);
         }
         let claims = self.decode_for(organization, token, Some(audiences))?;
-        unrevoked(claims, &self.revoked.load())
+        self.with_project(unrevoked(claims, &self.revoked.load())?)
+    }
+
+    /// `claims`, when this verifier does not require a project or they name one (IDN-02).
+    fn with_project(&self, claims: Claims) -> Result<Claims, Rejected> {
+        if self.require_project && !names_its_project(&claims) {
+            return Err(Rejected::NoProject);
+        }
+        Ok(claims)
     }
 
     /// Who a token names: signature, issuer and lifetime checked, the audience not (T-5290).
@@ -539,6 +571,23 @@ fn unrevoked(claims: Claims, revoked: &HashMap<String, i64>) -> Result<Claims, R
     }
 }
 
+/// Whether a token is a person's, or a workload's naming its project in the path form: 26
+/// characters of lower-case base32 starting `a`..`h` (ARCH/TEN-01, a UUID's 128 bits). A token
+/// that does not say what its subject is counts as a workload's. The claim is checked, never
+/// repaired, and nothing is read from `azp`'s text.
+fn names_its_project(claims: &Claims) -> bool {
+    if claims.sub_kind.as_deref() == Some("person") {
+        return true;
+    }
+    claims.project.as_deref().is_some_and(|id| {
+        id.len() == 26
+            && (b'a'..=b'h').contains(&id.as_bytes()[0])
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+    })
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -603,6 +652,56 @@ mod tests {
             claims["aud"] = aud;
         }
         serde_json::from_value(claims).expect("claims")
+    }
+
+    /// ARCH/IDN-02 (T-7194): with the switch on, a ServiceAccount's or App's token must name
+    /// its project in the path form; a person's need not, and a token that does not say what
+    /// its subject is counts as a workload's. A malformed id is refused, never trimmed or
+    /// lower-cased. With the switch off every token passes as before.
+    #[test]
+    fn a_workload_token_without_its_project_is_refused_when_required() {
+        const PROJECT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let with = |extra: serde_json::Value| -> Claims {
+            let mut claims = serde_json::json!({"sub": "s", "iss": "realm", "exp": NOW});
+            claims
+                .as_object_mut()
+                .expect("an object")
+                .extend(extra.as_object().expect("an object").clone());
+            serde_json::from_value(claims).expect("claims")
+        };
+        let required = super::Verifier::new("realm").requiring_project(true);
+        let admitted = [
+            serde_json::json!({"sub_kind": "person"}),
+            serde_json::json!({"sub_kind": "serviceAccount", "project": PROJECT}),
+            serde_json::json!({"sub_kind": "app", "project": "h7aaaaaaaaaaaaaaaaaaaaaaaa"}),
+        ];
+        for extra in admitted {
+            assert!(
+                required.with_project(with(extra.clone())).is_ok(),
+                "{extra}"
+            );
+        }
+        let refused = [
+            serde_json::json!({"sub_kind": "serviceAccount"}),
+            serde_json::json!({"sub_kind": "app", "project": ""}),
+            serde_json::json!({"project": PROJECT.replace('a', "A")}),
+            serde_json::json!({"sub_kind": "serviceAccount", "project": "iaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+            serde_json::json!({"sub_kind": "serviceAccount", "project": "aaaaaaaaaaaaaaaaaaaaaaaaa1"}),
+            serde_json::json!({"sub_kind": "serviceAccount", "project": format!("{PROJECT}a")}),
+            serde_json::json!({"sub_kind": "Person", "project": "my-project"}),
+            serde_json::json!({}),
+        ];
+        for extra in refused {
+            assert_eq!(
+                required.with_project(with(extra.clone())).map(|_| ()),
+                Err(super::Rejected::NoProject),
+                "{extra}"
+            );
+        }
+        let off = super::Verifier::new("realm");
+        assert!(off
+            .with_project(with(serde_json::json!({"sub_kind": "app"})))
+            .is_ok());
     }
 
     /// P-3-03: a full memo trades one entry for the new one instead of forgetting every caller.

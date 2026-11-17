@@ -178,14 +178,10 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     let mut organization_realms = None;
     let gateway = match (&config.oidc_issuer, &config.oidc_jwks_url) {
         (Some(issuer), Some(jwks_url)) => {
-            let verifier = Arc::new(
-                config
-                    .oidc_organizations
-                    .iter()
-                    .fold(Verifier::new(issuer.clone()), |verifier, own| {
-                        verifier.with_organization(&own.organization, &own.issuer)
-                    }),
-            );
+            let verifier = Arc::new(config.oidc_organizations.iter().fold(
+                Verifier::new(issuer.clone()).requiring_project(config.oidc_require_project),
+                |verifier, own| verifier.with_organization(&own.organization, &own.issuer),
+            ));
             let reach = config.oidc_jwks_reach;
             if let Err(error) = jwks::refresh_at(&verifier, jwks_url, reach).await {
                 tracing::error!(%error, "cannot load the realm signing keys");

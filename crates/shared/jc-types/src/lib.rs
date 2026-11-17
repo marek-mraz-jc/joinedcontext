@@ -23,6 +23,8 @@ pub enum KeyError {
     NotAPathSegment(&'static str),
     /// A label outside the slug grammar (ARCH/MCP-31).
     NotALabel,
+    /// Not `{OrgId}__{ProjectId}__{label}` (ARCH/TEN-10).
+    NotAnInternalName,
 }
 
 impl fmt::Display for KeyError {
@@ -34,6 +36,9 @@ impl fmt::Display for KeyError {
             }
             Self::NotALabel => f.write_str(
                 "a name must be lower-case letters, digits and hyphens, start with a letter and hold at most 63 characters, e.g. bikes-public",
+            ),
+            Self::NotAnInternalName => f.write_str(
+                "an internal name is two 26-character ids and a name joined by __, e.g. {OrgId}__{ProjectId}__bikes",
             ),
         }
     }
@@ -160,10 +165,27 @@ impl ProjectKey {
         Self { org, project }
     }
 
-    /// Object store prefix `org/{OrgId}/project/{ProjectId}/` (ARCH/STO-14, SEC-02).
+    /// Object store prefix `org/{OrgId}/project/{ProjectId}/` (ARCH/STO-14, SEC-02), ids in their
+    /// path form (TEN-01): the dashed UUID text never stands in a path.
     #[must_use]
     pub fn object_prefix(&self) -> String {
-        format!("org/{}/project/{}/", self.org, self.project)
+        format!(
+            "org/{}/project/{}/",
+            self.org.path_segment(),
+            self.project.path_segment()
+        )
+    }
+
+    /// `{OrgId}-{ProjectId}`, 53 characters: the key in a carrier that forbids `_` (DNS label,
+    /// Kubernetes object name, S3 user or bucket name). Such a carrier holds ids only, never a
+    /// name, and parses by the fixed id positions (ARCH/TEN-04).
+    #[must_use]
+    pub fn dns_label(&self) -> String {
+        format!(
+            "{}-{}",
+            self.org.path_segment(),
+            self.project.path_segment()
+        )
     }
 
     /// NATS subject `jc.{OrgId}.{ProjectId}.{module}.{event}` (ARCH/STO-15). Module and event
@@ -228,6 +250,20 @@ impl InternalName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The key and label of a name [`internal_name`] built; anything else is refused.
+    pub fn parse(text: &str) -> Result<(ProjectKey, Label), KeyError> {
+        let mut parts = text.splitn(3, INTERNAL_NAME_JOINER);
+        let (Some(org), Some(project), Some(label)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(KeyError::NotAnInternalName);
+        };
+        let key = ProjectKey::new(
+            OrgId::from_path_segment(org)?,
+            ProjectId::from_path_segment(project)?,
+        );
+        Ok((key, Label::parse(label)?))
+    }
 }
 
 impl fmt::Display for InternalName {
@@ -236,17 +272,21 @@ impl fmt::Display for InternalName {
     }
 }
 
-/// Longest internal name: two path segments, two separators and a label.
-pub const INTERNAL_NAME_MAX: usize = 2 * PATH_SEGMENT_LEN + 2 + 63;
+/// The joiner of an internal name: no id (base32) and no label (slug grammar) holds `_`, so the
+/// parts split back without ambiguity (ARCH/TEN-10).
+pub const INTERNAL_NAME_JOINER: &str = "__";
 
-/// The one builder of internal space, Tenant, subject, object, queue and bucket names
-/// (ARCH/TEN-10): `{OrgId}-{ProjectId}-{label}`, ids in their path form. Two projects with the
-/// same label never share a name; the label is checked, so the name holds `a-z`, `2-7`,
-/// digits and `-` only and fits [`INTERNAL_NAME_MAX`].
+/// Longest internal name: two path segments, two joiners and a label.
+pub const INTERNAL_NAME_MAX: usize = 2 * PATH_SEGMENT_LEN + 2 * INTERNAL_NAME_JOINER.len() + 63;
+
+/// The one builder of internal space, Tenant, queue and table-key names (ARCH/TEN-10):
+/// `{OrgId}__{ProjectId}__{label}`, ids in their path form. Two projects with the same label never
+/// share a name; the label is checked, so the name fits [`INTERNAL_NAME_MAX`] and
+/// [`InternalName::parse`] gives back the key and the label.
 #[must_use]
 pub fn internal_name(key: ProjectKey, name: &Label) -> InternalName {
     InternalName(format!(
-        "{}-{}-{}",
+        "{}{INTERNAL_NAME_JOINER}{}{INTERNAL_NAME_JOINER}{}",
         key.org.path_segment(),
         key.project.path_segment(),
         name.0
@@ -328,13 +368,14 @@ mod tests {
         let a = internal_name(parent, &space);
         let b = internal_name(branch, &space);
         assert_ne!(a, b);
-        assert!(a.as_str().ends_with("-bikes"));
+        assert!(a.as_str().ends_with("__bikes"));
         assert!(a.as_str().len() <= INTERNAL_NAME_MAX);
         assert!(
             a.as_str()
                 .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-' || c == b'_')
         );
+        assert_eq!(InternalName::parse(a.as_str()), Ok((parent, space.clone())));
         let other_org = ProjectKey::new(OrgId::mint(), parent.project);
         assert_ne!(internal_name(other_org, &space), a);
     }
@@ -347,6 +388,49 @@ mod tests {
         let s = k.subject(&m, &e);
         assert_eq!(s.split('.').count(), 5);
         assert_eq!(s.split('.').nth(2), Some(k.project.path_segment().as_str()));
-        assert!(k.object_prefix().contains(&k.project.to_string()));
+        assert!(k.object_prefix().contains(&k.project.path_segment()));
+    }
+
+    /// ARCH/TEN-01, TEN-04: every carrier of one key spells the ids the same way, in the same
+    /// order; only the joiner follows the carrier, and the dashed UUID text is in none of them.
+    #[test]
+    fn every_carrier_spells_one_key_the_same_way() {
+        let k = ProjectKey::new(OrgId::mint(), ProjectId::mint());
+        let (o, p) = (k.org.path_segment(), k.project.path_segment());
+        let m = Label::parse("shako").unwrap_or_else(|e| panic!("{e}"));
+        let n = Label::parse("bikes").unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(k.object_prefix(), format!("org/{o}/project/{p}/"));
+        assert_eq!(k.subject(&m, &m), format!("jc.{o}.{p}.shako.shako"));
+        assert_eq!(internal_name(k, &n).as_str(), format!("{o}__{p}__bikes"));
+        assert_eq!(k.dns_label(), format!("{o}-{p}"));
+        assert!(k.dns_label().len() <= 63);
+        for carrier in [
+            k.object_prefix(),
+            k.subject(&m, &m),
+            internal_name(k, &n).0,
+            k.dns_label(),
+        ] {
+            assert!(!carrier.contains(&k.org.to_string()), "{carrier}");
+            assert!(!carrier.contains(&k.project.to_string()), "{carrier}");
+        }
+    }
+
+    #[test]
+    fn an_internal_name_parses_back_and_nothing_else_does() {
+        let k = ProjectKey::new(OrgId::mint(), ProjectId::mint());
+        let n = Label::parse("air-quality").unwrap_or_else(|e| panic!("{e}"));
+        let name = internal_name(k, &n);
+        assert_eq!(InternalName::parse(name.as_str()), Ok((k, n.clone())));
+        let (o, p) = (k.org.path_segment(), k.project.path_segment());
+        for bad in [
+            format!("{o}-{p}-bikes"),
+            format!("{o}__{p}"),
+            format!("{o}__{p}__bi__kes"),
+            format!("{o}__{p}__Bikes"),
+            format!("{}__{p}__bikes", k.org),
+            format!("__{p}__bikes"),
+        ] {
+            assert!(InternalName::parse(&bad).is_err(), "{bad}");
+        }
     }
 }

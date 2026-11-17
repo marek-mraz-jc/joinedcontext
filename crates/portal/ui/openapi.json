@@ -4612,6 +4612,181 @@
         }
       }
     },
+    "/api/v1/organization/backups/data/versions/{version}/copy": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Restore a Project into a New Project",
+        "description": "Restores one project's folder of the Organization's data archive into a new project: a new project id whose parent is the source, the folder's rows under the new name with new row ids, the source's approved erasures applied again. The source project is never written. `apply` false checks only. A project deleted since the backup is refused (TEN-16); a project the caller may not read answers 404 like an id the archive does not hold (T-7208).",
+        "operationId": "data_copy",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataCopyInput"
+              },
+              "example": {
+                "apply": false,
+                "identity": "AGE-SECRET-KEY-1…",
+                "name": "air-quality-restored",
+                "project": "bm6wyhdpioruxguvhqpu4lt2ca"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the copy writes, or wrote",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyPlan"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version, or no project by that id the caller may read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or no database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A deleted source project, a name taken or not a DNS label, a format 1 archive; `errors` names the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/backups/data/versions/{version}/projects": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Projects of a Data Backup",
+        "description": "Opens one version of the Organization's data archive with the identity given for this request only and lists its project folders the caller may restore into a new project: live projects of the Organization they may read. Projects deleted since the backup are named apart and never restored (T-7208, TEN-16).",
+        "operationId": "data_projects",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "path",
+            "description": "S3 version id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataProjectsInput"
+              },
+              "example": {
+                "identity": "AGE-SECRET-KEY-1…"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The folders the caller may restore",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchivedProjects"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No target, or no database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Another Organization's version, or an identity that does not open it; `errors` names the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/backups/data/versions/{version}/restore": {
       "post": {
         "tags": [
@@ -50285,6 +50460,47 @@
         },
         "additionalProperties": false
       },
+      "ArchivedProject": {
+        "type": "object",
+        "description": "One project folder of an archive the person may restore.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The project's id in its 26-character path form, the folder's name."
+          },
+          "name": {
+            "type": "string",
+            "description": "The project's name today."
+          }
+        }
+      },
+      "ArchivedProjects": {
+        "type": "object",
+        "description": "The folders of one archive: those the person may restore, and how many it leaves out.",
+        "required": [
+          "projects",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Names of the archive's projects deleted since the backup: never restored (TEN-16)."
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArchivedProject"
+            }
+          }
+        }
+      },
       "Artifacts": {
         "type": "object",
         "description": "What one Model Tools run rendered. Every artifact is optional: a version that does not\nrender one omits it, and a source that does not compile yet answers with `errors` filled in\nand the artifacts absent. A half-written model is the normal state of an editor.",
@@ -53963,6 +54179,90 @@
           }
         }
       },
+      "CopyCounts": {
+        "type": "object",
+        "required": [
+          "create",
+          "refused"
+        ],
+        "properties": {
+          "create": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "refused": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CopyPlan": {
+        "type": "object",
+        "description": "What a copy writes, or wrote.",
+        "required": [
+          "versionId",
+          "takenAt",
+          "source",
+          "sourceName",
+          "name",
+          "projectId",
+          "tables",
+          "notRestored",
+          "erasuresReplayed"
+        ],
+        "properties": {
+          "erasuresReplayed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Approved erasures of the source applied to the copy (on a check: that would be).",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The new project's name."
+          },
+          "notRestored": {
+            "type": "object",
+            "description": "The tables a copy leaves alone, with why.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "projectId": {
+            "type": "string",
+            "description": "The new project's id in its path form; empty on a check, which mints none."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source project's id (26-character path form) and name."
+          },
+          "sourceName": {
+            "type": "string"
+          },
+          "tables": {
+            "type": "object",
+            "description": "Rows written per table, and rows a unique rule or a missing reference refused.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CopyCounts"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "takenAt": {
+            "type": "string",
+            "description": "When the backup was taken, RFC 3339."
+          },
+          "versionId": {
+            "type": "string"
+          }
+        }
+      },
       "CostPrices": {
         "type": "object",
         "description": "The operator's price table: what the cloud bills a month.",
@@ -54541,6 +54841,34 @@
         },
         "additionalProperties": false
       },
+      "DataCopyInput": {
+        "type": "object",
+        "description": "One project folder restored into a new project.",
+        "required": [
+          "identity",
+          "project",
+          "name"
+        ],
+        "properties": {
+          "apply": {
+            "type": "boolean",
+            "description": "`false` (the default) checks only; `true` writes the new project."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The new project's name, a DNS label no project holds, e.g. `air-quality-restored`."
+          },
+          "project": {
+            "type": "string",
+            "description": "The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`."
+          }
+        },
+        "additionalProperties": false
+      },
       "DataPlan": {
         "type": "object",
         "description": "The dry run of one version, or what its restore did.",
@@ -54607,6 +54935,20 @@
             "type": "string"
           }
         }
+      },
+      "DataProjectsInput": {
+        "type": "object",
+        "description": "The identity that opens the archive, to list its project folders.",
+        "required": [
+          "identity"
+        ],
+        "properties": {
+          "identity": {
+            "type": "string",
+            "description": "The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`."
+          }
+        },
+        "additionalProperties": false
       },
       "DataRestoreAnswer": {
         "type": "object",

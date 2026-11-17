@@ -45,6 +45,11 @@ use crate::store::{ListOptions, Mirror};
 /// `{project}/{name}`.
 pub const ACCOUNT_ATTRIBUTE: &str = "joinedcontext.serviceaccount";
 
+/// The client attribute holding the `ProjectId` (path form) a ServiceAccount's client belongs to:
+/// kaisatsu reads its `project` claim from here (kaisatsu_core::CLIENT_PROJECT_ATTRIBUTE, ARCH/
+/// IDN-02, TEN-04), never from the client id. Written from the project registry only.
+pub const PROJECT_ATTRIBUTE: &str = "jc.project";
+
 /// The client attribute by which a deployment's realm file lets the Portal add Endpoint audiences
 /// to an imported pipeline client it did not create (kaisatsu admits that one write, T-6972).
 pub const AUDIENCES_MANAGED_BY: &str = "audiences-managed-by";
@@ -185,6 +190,11 @@ pub fn desired_external(project: &str, name: &str, credential: &ClientCredential
         want["attributes"]["jwks.string"] = json!(jwks);
     }
     want
+}
+
+/// Writes `key`'s project id into a client representation's [`PROJECT_ATTRIBUTE`].
+pub fn with_project(want: &mut Value, key: &jc_types::ProjectKey) {
+    want["attributes"][PROJECT_ATTRIBUTE] = json!(key.project.path_segment());
 }
 
 /// The audiences an account's token carries (PF-47): the slug of every Endpoint of `project` on
@@ -803,6 +813,9 @@ pub struct WorkloadClientSync {
     /// `JC_PIPELINE_SECRET_<CLIENT>`). Held for the host runner
     /// alone, never logged.
     host_secrets: std::sync::RwLock<BTreeMap<String, String>>,
+    /// The project registry whose ids each managed client's [`PROJECT_ATTRIBUTE`] carries; `None`
+    /// writes none, and kaisatsu then issues the client's tokens with no `project`.
+    keys: Option<sqlx::PgPool>,
 }
 
 impl WorkloadClientSync {
@@ -819,7 +832,14 @@ impl WorkloadClientSync {
             host: None,
             own_pipeline_clients: false,
             host_secrets: std::sync::RwLock::default(),
+            keys: None,
         })
+    }
+
+    /// Reads each account's project id from the registry `pool` for its client (T-7194 PK-4a).
+    pub fn with_keys(mut self, pool: sqlx::PgPool) -> Self {
+        self.keys = Some(pool);
+        self
     }
 
     /// Says whether the pipeline runner shares this process, in place of asking
@@ -1292,12 +1312,22 @@ impl WorkloadClientSync {
     ) -> ClientOutcome {
         let mut outcome = ClientOutcome::of(&account.label());
         let id = keycloak_client_id(&account.project, &account.name);
-        let want = match &account.auth {
+        let mut want = match &account.auth {
             Auth::External(credential) => {
                 desired_external(&account.project, &account.name, credential)
             }
             Auth::Workload(binding) => desired(&account.project, &account.name, binding),
         };
+        if let Some(pool) = self.keys.as_ref() {
+            match crate::project_ids::recorded(pool, &account.project).await {
+                Ok(Some(key)) => with_project(&mut want, &key),
+                Ok(None) => {}
+                Err(err) => {
+                    outcome.error = Some(format!("its project id was not read: {err}"));
+                    return outcome;
+                }
+            }
+        }
 
         let held = match self.admin.find(token, &id).await {
             Ok(held) => held,
@@ -1458,6 +1488,26 @@ mod tests {
             ]
         );
         assert!(missing.is_empty());
+    }
+
+    /// T-7194 PK-4a: a managed client carries its project's id from the registry, in the path
+    /// form kaisatsu reads its `project` claim from; a live client missing it drifts and is updated,
+    /// its client id unchanged (MIG-03).
+    #[test]
+    fn a_managed_client_carries_its_project_id_and_a_live_one_without_it_drifts() {
+        let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        let mut want = desired_external("helsinki", "vendor", &ClientCredential::Secret);
+        let live = want.clone();
+        with_project(&mut want, &key);
+        assert_eq!(
+            want["attributes"][PROJECT_ATTRIBUTE],
+            key.project.path_segment()
+        );
+        assert_eq!(want["clientId"], live["clientId"]);
+        let found = crate::reconciler::app_clients::drift(&want, &live);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains(PROJECT_ATTRIBUTE), "{found:?}");
+        assert!(crate::reconciler::app_clients::drift(&want, &want).is_empty());
     }
 
     #[test]
