@@ -189,9 +189,9 @@ BEGIN
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype AND a.attgenerated = ''
   LOOP
     EXECUTE format(
-      'UPDATE %I SET %I = tenant_token(%I, $1, $2)
-        WHERE (%s OR %L IN (SELECT tbl FROM tenant_naming_tables()))
-          AND %I::text LIKE $3', t, c, c, reserved_rows(), t, c) USING p_old, p_new, tok;
+      'UPDATE %I SET %I = tenant_token(%I, $1, $2) WHERE %s AND %I::text LIKE $3', t, c, c,
+      CASE WHEN t IN (SELECT tbl FROM tenant_naming_tables()) THEN 'true' ELSE reserved_rows() END,
+      c) USING p_old, p_new, tok;
     GET DIAGNOSTICS n = ROW_COUNT;
     total := total + n;
   END LOOP;
@@ -234,9 +234,12 @@ BEGIN
       FROM pg_attribute a JOIN tenant_tables() tt ON a.attrelid = tt.tbl::regclass
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype
   LOOP
+    -- the predicate is chosen here: an `OR ... IN (SELECT ...)` in the
+    -- statement turns the index scan of `entities` into a full scan
     EXECUTE format(
-      'SELECT count(*) FROM %I WHERE (%s OR %L IN (SELECT tbl FROM tenant_naming_tables()))
-          AND %I::text ~ $1', t, reserved_rows(), t, c) INTO n
+      'SELECT count(*) FROM %I WHERE %s AND %I::text ~ $1', t,
+      CASE WHEN t IN (SELECT tbl FROM tenant_naming_tables()) THEN 'true' ELSE reserved_rows() END,
+      c) INTO n
       USING '(^|[^A-Za-z0-9_-])' || p_old || '($|[^A-Za-z0-9_-])';
     total := total + n;
   END LOOP;

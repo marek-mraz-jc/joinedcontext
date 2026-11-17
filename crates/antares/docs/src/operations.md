@@ -614,7 +614,10 @@ the broker's role is refused), in a window with the gateway's writes held:
   `text_still_naming_old`: rows where `old` stays inside a longer string,
   for the operator to read. It refuses, moving nothing, for a reserved or
   default name, an unknown `old`, a `new` outside the grammar, a `new` that
-  holds a row or that an earlier rename wrote.
+  holds a row or that an earlier rename wrote. Run as a superuser, it skips
+  the `entities` triggers for its transaction (the rename moves the
+  catalogue and `entity_values` itself); a BYPASSRLS owner runs them and
+  needs temp disk for two copies of the Tenant's `entities` rows.
 - `antares_tenant_digest(tenant)` returns per table a row count and an
   order-free hash with the Tenant's name normalised, so the digest before
   under `old` equals the digest after under `new`.
