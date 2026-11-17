@@ -111,6 +111,7 @@
  "test_edge_attack_surface.py": 17.8,
  "test_edge_caller.py": 0.1,
  "test_edge_ckan_cache.py": 3.5,
+ "test_edge_composer_admission.py": 19.6,
  "test_edge_csp_baseline.py": 2.5,
  "test_edge_error_pages.py": 2.9,
  "test_edge_session_cookie.py": 3.2,
