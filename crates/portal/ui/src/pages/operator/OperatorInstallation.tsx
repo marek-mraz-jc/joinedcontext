@@ -110,14 +110,6 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           )
         }
       />
-      {open ? (
-        <Alert tone="info" className="mt-4">
-          {t("operator.installation.email.waiting")}{" "}
-          <Link to="/organization/$tab" params={{ tab: "operator-changes" }} className="underline">
-            {t("operator.installation.email.toChanges")}
-          </Link>
-        </Alert>
-      ) : null}
       {!smtp && !open ? (
         <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.empty")}</p>
       ) : null}
@@ -131,6 +123,9 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         <Field id="smtp-host" label={t("operator.installation.email.host")} help={t("operator.installation.email.hint.host")} errors={fieldOf("host")} required>
           <Input id="smtp-host" value={host} onChange={(e) => setHost(e.target.value)} autoComplete="off" spellCheck={false} required />
         </Field>
+        <Field id="smtp-from" label={t("operator.installation.email.from")} help={t("operator.installation.email.hint.from")} errors={fieldOf("from")} required>
+          <Input id="smtp-from" type="email" value={from} onChange={(e) => setFrom(e.target.value)} autoComplete="off" spellCheck={false} required />
+        </Field>
         <Field id="smtp-tls" label={t("operator.installation.email.tls")} help={t("operator.installation.email.hint.tls")} errors={fieldOf("tls")}>
           <Select id="smtp-tls" value={tls} onChange={(e) => onTls(e.target.value as Tls)}>
             <option value="starttls">{t("operator.installation.email.tlsStarttls")}</option>
@@ -139,9 +134,6 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         </Field>
         <Field id="smtp-port" label={t("operator.installation.email.port")} help={t("operator.installation.email.hint.port")} errors={fieldOf("port")} required>
           <Input id="smtp-port" type="number" inputMode="numeric" min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} required />
-        </Field>
-        <Field id="smtp-from" label={t("operator.installation.email.from")} help={t("operator.installation.email.hint.from")} errors={fieldOf("from")} required>
-          <Input id="smtp-from" type="email" value={from} onChange={(e) => setFrom(e.target.value)} autoComplete="off" spellCheck={false} required />
         </Field>
         <Field id="smtp-user" label={t("operator.installation.email.user")} help={t("operator.installation.email.hint.user")} errors={fieldOf("user")}>
           <Input id="smtp-user" value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" spellCheck={false} />
@@ -176,6 +168,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           <Button
             type="submit"
             form="smtp-form"
+            variant="primary"
             loading={propose.isPending}
             disabled={Boolean(open) || !changed}
             disabledReason={open ? t("operator.installation.email.waitingShort") : t("operator.installation.email.unchanged")}

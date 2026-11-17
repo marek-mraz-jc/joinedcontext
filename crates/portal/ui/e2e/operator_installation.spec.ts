@@ -131,7 +131,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("Asked for", { exact: true })).toBeVisible();
       await expect(page.getByText("smtp.bbsk.sk", { exact: true })).toBeVisible();
       await expect(page.getByText("A new one, sealed until the change is decided", { exact: true })).toBeVisible();
-      await expect(page.getByText("A change of the e-mail server waits for a second operator.", { exact: false })).toBeVisible();
+      await expect(page.getByText("A change already waits for a second operator.", { exact: false })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-waiting-${width}`);
 

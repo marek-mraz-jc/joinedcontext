@@ -338,7 +338,7 @@ describe("installation", () => {
           ? json({ items: [asked] })
           : undefined,
     );
-    expect(await screen.findByText(E.waiting, { exact: false })).toBeTruthy();
+    expect(await screen.findByText(E.waitingOwn, { exact: false })).toBeTruthy();
     expect(screen.queryByRole("button", { name: E.propose })).toBeNull();
     // The waiting change and the server in force, side by side as text; no field to type in.
     expect(await screen.findByText("smtp.next.example.org")).toBeTruthy();

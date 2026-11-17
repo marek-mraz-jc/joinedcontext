@@ -13756,7 +13756,6 @@
         "waitingBadge": "Wartet auf Freigabe",
         "unchanged": "Ändern Sie zuerst ein Feld; nichts weicht vom gespeicherten Server ab.",
         "empty": "Noch kein E-Mail-Server, daher werden keine Einladungen und Passwort-Zurücksetzungen gesendet. Tragen Sie den Server Ihres Mail-Anbieters ein und speichern Sie ihn.",
-        "waiting": "Eine Änderung des E-Mail-Servers wartet auf einen zweiten Operator.",
         "waitingShort": "Eine Änderung wartet bereits auf einen zweiten Operator: genehmigen oder ablehnen Sie sie zuerst.",
         "notAsked": "Das Portal hat die Änderung abgelehnt: es wurde keine Änderung angelegt",
         "fixField": "{field} wurde abgelehnt: korrigieren Sie es wie darunter beschrieben und beantragen Sie die Änderung erneut.",

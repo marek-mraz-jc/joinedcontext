@@ -13756,7 +13756,6 @@
         "waitingBadge": "Čeká na schválení",
         "unchanged": "Nejprve změňte některé pole; nic se neliší od uloženého serveru.",
         "empty": "Zatím žádný e-mailový server, takže se pozvánky a obnovení hesla neposílají. Vyplňte server od vašeho poskytovatele pošty a uložte ho.",
-        "waiting": "Změna e-mailového serveru čeká na druhého operátora.",
         "waitingShort": "Změna už čeká na druhého operátora: nejprve ji schvalte nebo zamítněte.",
         "notAsked": "Portál změnu odmítl: žádná změna nevznikla",
         "fixField": "Pole {field} bylo odmítnuto: opravte ho podle textu pod ním a požádejte o změnu znovu.",
