@@ -110,10 +110,10 @@ describe("Organization → Setup", () => {
     cleanup();
     renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: false }));
     await screen.findByText(en.organization.setup.operatorLeadMember);
-    // Only the e-mail server is the operators' on the Installation page; the deployment sets the rest.
-    // The badge says the state, the line says who sets it, each once.
-    expect(screen.getAllByText(en.organization.setup.operatorSets, { exact: false })).toHaveLength(1);
-    expect(screen.getAllByText(en.organization.setup.notYet)).toHaveLength(1);
+    // Branding, sign-in look and e-mail server are the operators' on the Installation page; the
+    // deployment sets the rest. The badge says the state, the line says who sets it, each once.
+    expect(screen.getAllByText(en.organization.setup.operatorSets, { exact: false })).toHaveLength(3);
+    expect(screen.getAllByText(en.organization.setup.notYet)).toHaveLength(3);
     expect(screen.getAllByText(en.organization.setup.deploymentSets).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: en.organization.setup.setIt })).toBeNull();
     expect(document.body.textContent).not.toMatch(/keycloak|branding_file|JC_|postgres\./i);
