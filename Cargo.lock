@@ -7408,6 +7408,7 @@ dependencies = [
  "jc-chart",
  "jc-core",
  "jc-router",
+ "jc-types",
  "jcctl",
  "jsonschema",
  "jsonwebtoken 9.3.1",
