@@ -22,6 +22,7 @@ import {
 import { importBody } from "../src/api/proposal";
 import { callOperation } from "../src/api/operations";
 import { readModelSource, writeModelSource } from "../src/api/datamodelSource";
+import { readPermissions } from "../src/api/permissions";
 import { activeWorkspace } from "../src/components/layout/WorkspaceContext";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
@@ -197,7 +198,7 @@ describe("the Portal's OData client (T-6812)", () => {
       sent.push(request);
       return odataValue(request.url.includes("portal_model_source") ? "id: air\n" : { ok: true });
     });
-    await door("portal_permissions_me", {}, "air");
+    await readPermissions("air");
     const pipeline = { kind: "Pipeline", spec: { input: { stdin: {} } } };
     await expect(callOperation("air", "jc_pipeline_validate", { pipeline, records: [] })).resolves.toEqual({ ok: true, status: 200, output: { ok: true } });
     await expect(readModelSource("air", "weather")).resolves.toBe("id: air\n");
@@ -212,6 +213,9 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_model_source(name=@name)");
     expect(new URL(sent[3].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_preview_error_report");
     await expect(sent[3].json()).resolves.toEqual({ id: "r1", body: { message: "boom" } });
+    // The Organization's own rules: no project door serves `org` (train smoke 43982518651).
+    await readPermissions("org");
+    expect(new URL(sent.at(-1)!.url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_org_permissions_me()");
   });
 
   it("reads and writes a workspace's copy, a kind's page, a space's count and the projects through their doors (T-7177)", async () => {

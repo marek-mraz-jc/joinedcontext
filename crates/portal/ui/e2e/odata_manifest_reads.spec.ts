@@ -6,7 +6,7 @@ import { odataBody } from "../tests/odata";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_project_list"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_org_permissions_me", "portal_project_list"]));
 
 // T-7103: the Group and Endpoint pages read their manifests through the Organization's OData
 // service, a kind's set with $select of spec, status and metadata (api/odata.ts listManifests,
