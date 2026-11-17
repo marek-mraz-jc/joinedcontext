@@ -3026,6 +3026,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open A Branch
+         * @description Opens a branch of the project: a new project of its own, empty, with no grant of the parent, that answers only on its own id address and lives 7 days unless renewed (TEN-12, CHG-15). Needs a role that may propose in the project.
+         */
+        post: operations["open_branch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/branches/{id}/renewal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Renew A Branch
+         * @description Renews a live branch by 7 days, never past 30 days from its creation; each renewal is audited (CHG-15). Its creator renews it while it may propose in the parent; an approver of the parent renews any; an agent renews only a branch it opened.
+         */
+        post: operations["renew_branch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/catalogue/drafts": {
         parameters: {
             query?: never;
@@ -4600,6 +4640,29 @@ export interface paths {
          * @description Checks a v1alpha2 Pipeline draft with one kpi step by jc-core's admission rules (PL-102, PL-103), with each attribute's unit from its space's model, and says of each source whether the pipeline's account may read it. `preview: true` also computes the indicator on each source Endpoint's current page, read as the person (PL-105), and a `prev` term on its history (PL-117). Needs propose on Pipeline in the project, from a person's session; a source in a space the caller may not read is named as unknown. Changes no data.
          */
         post: operations["check_kpi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The project door (ARCH/MCP-33, T-7194): the router places `/{org}/{ProjectId}/api/mcp` here.
+         *     Every message is held to `project`: one naming another project, in `params`, its
+         *     `arguments` or a `jc://` resource address, is answered as an unknown project, and the rest
+         *     are answered as `/api/v1/mcp` answers them with `project` set, so `tools/list` is that
+         *     project's. The handshake names the server `{org}.{ProjectId}.manage`.
+         */
+        post: operations["handle_project_mcp"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9512,6 +9575,23 @@ export interface components {
             label?: string;
             name: string;
             type: string;
+        };
+        /** @description A branch project as its doors answer it. */
+        Branch: {
+            /**
+             * Format: date-time
+             * @description When the branch stops answering unless renewed (CHG-15).
+             */
+            expiresAt: string;
+            /**
+             * @description The branch's project id in the path form, what its id address carries (RTE-05).
+             * @example bxq4m2c7d5t6v3n8k9p0r1s2wa
+             */
+            id: string;
+            /** @description The branch's project name, `b-` and its id: only its own id address reaches it. */
+            name: string;
+            /** @description The project it branches from. */
+            parent: string;
         };
         /** @description Everything the Portal shows that names or themes an installation. */
         Branding: {
@@ -24666,6 +24746,144 @@ export interface operations {
             };
         };
     };
+    open_branch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The project to branch from, e.g. helsinki */
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The branch, with its id and expiry */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Branch"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No role here may propose */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such project for this caller */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project keeps as many live branches as allowed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No project registry */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    renew_branch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The parent project, e.g. helsinki */
+                project: string;
+                /** @description The branch's id in the path form, e.g. bxq4m2c7d5t6v3n8k9p0r1s2wa */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The branch with its new expiry */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Branch"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller may not renew this branch */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No live branch of that id under the project */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The branch already lives to its 30 days */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No project registry */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     draft_publication: {
         parameters: {
             query?: never;
@@ -30802,6 +31020,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    handle_project_mcp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The project every message is held to, e.g. `traffic` */
+                project: string;
+            };
+            cookie?: never;
+        };
+        /** @description A JSON-RPC 2.0 request object, as on `/api/v1/mcp`. A message naming another project in `params`, its `arguments` or a `jc://` address is answered as an unknown project (MCP-33). */
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "id": 1,
+                 *       "jsonrpc": "2.0",
+                 *       "method": "tools/list",
+                 *       "params": {}
+                 *     }
+                 */
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description The JSON-RPC response object; `tools/list` lists this project's tools and the handshake names the server `{org}.{ProjectId}.manage` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description No bearer, or one this realm did not sign; the answer carries `WWW-Authenticate` with the metadata document */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description The token is valid and its account may not use this door */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Method not allowed: the door takes POST */
+            405: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Past the per-subject rate limit of this minute (AG-60) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
                 };
             };
         };

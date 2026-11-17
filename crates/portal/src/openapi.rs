@@ -422,6 +422,7 @@ use crate::tools::model_tools::{
         crate::api::datasource_test::guess_datasource_paging,
         crate::api::assistant::propose_endpoint,
         crate::mcp::handle_mcp,
+        crate::mcp::handle_project_mcp,
         crate::api::connectors::list_connectors,
         crate::api::connectors::create_connector,
         crate::api::connectors::connector_options,

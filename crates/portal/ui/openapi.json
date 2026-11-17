@@ -11394,6 +11394,181 @@
         }
       }
     },
+    "/api/v1/projects/{project}/branches": {
+      "post": {
+        "tags": [
+          "resources"
+        ],
+        "summary": "Open A Branch",
+        "description": "Opens a branch of the project: a new project of its own, empty, with no grant of the parent, that answers only on its own id address and lives 7 days unless renewed (TEN-12, CHG-15). Needs a role that may propose in the project.",
+        "operationId": "open_branch",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "The project to branch from, e.g. helsinki",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The branch, with its id and expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Branch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No role here may propose",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such project for this caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The project keeps as many live branches as allowed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No project registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project}/branches/{id}/renewal": {
+      "post": {
+        "tags": [
+          "resources"
+        ],
+        "summary": "Renew A Branch",
+        "description": "Renews a live branch by 7 days, never past 30 days from its creation; each renewal is audited (CHG-15). Its creator renews it while it may propose in the parent; an approver of the parent renews any; an agent renews only a branch it opened.",
+        "operationId": "renew_branch",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "The parent project, e.g. helsinki",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The branch's id in the path form, e.g. bxq4m2c7d5t6v3n8k9p0r1s2wa",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The branch with its new expiry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Branch"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller may not renew this branch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No live branch of that id under the project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The branch already lives to its 30 days",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No project registry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/catalogue/drafts": {
       "post": {
         "tags": [
@@ -19870,6 +20045,93 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/projects/{project}/mcp": {
+      "post": {
+        "tags": [
+          "mcp"
+        ],
+        "summary": "The project door (ARCH/MCP-33, T-7194): the router places `/{org}/{ProjectId}/api/mcp` here.\nEvery message is held to `project`: one naming another project, in `params`, its\n`arguments` or a `jc://` resource address, is answered as an unknown project, and the rest\nare answered as `/api/v1/mcp` answers them with `project` set, so `tools/list` is that\nproject's. The handshake names the server `{org}.{ProjectId}.manage`.",
+        "operationId": "handle_project_mcp",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "The project every message is held to, e.g. `traffic`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "A JSON-RPC 2.0 request object, as on `/api/v1/mcp`. A message naming another project in `params`, its `arguments` or a `jc://` address is answered as an unknown project (MCP-33).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "id": 1,
+                "jsonrpc": "2.0",
+                "method": "tools/list",
+                "params": {}
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The JSON-RPC response object; `tools/list` lists this project's tools and the handshake names the server `{org}.{ProjectId}.manage`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No bearer, or one this realm did not sign; the answer carries `WWW-Authenticate` with the metadata document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The token is valid and its account may not use this door",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Method not allowed: the door takes POST"
+          },
+          "429": {
+            "description": "Past the per-subject rate limit of this minute (AG-60)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "mcp_bearer": []
+          }
+        ]
       }
     },
     "/api/v1/projects/{project}/mcp-elicitations/{id}": {
@@ -51197,6 +51459,36 @@
           }
         },
         "additionalProperties": false
+      },
+      "Branch": {
+        "type": "object",
+        "description": "A branch project as its doors answer it.",
+        "required": [
+          "id",
+          "name",
+          "parent",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the branch stops answering unless renewed (CHG-15)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The branch's project id in the path form, what its id address carries (RTE-05).",
+            "example": "bxq4m2c7d5t6v3n8k9p0r1s2wa"
+          },
+          "name": {
+            "type": "string",
+            "description": "The branch's project name, `b-` and its id: only its own id address reaches it."
+          },
+          "parent": {
+            "type": "string",
+            "description": "The project it branches from."
+          }
+        }
       },
       "Branding": {
         "type": "object",
