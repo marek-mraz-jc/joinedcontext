@@ -12688,7 +12688,7 @@ export interface components {
              * @description When the id was minted; none while the record is not checked yet.
              */
             mintedAt?: string | null;
-            /** @description The Organizations whose `spec.domain` is this domain. */
+            /** @description The active Organizations this id belongs to, or whose domain it is. */
             organizations: string[];
             /** @description The TXT record's name, `_joinedcontext.{domain}`. */
             recordName: string;

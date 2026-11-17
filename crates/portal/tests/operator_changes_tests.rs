@@ -186,7 +186,7 @@ async fn only_an_operator_reads_the_hosts_the_audit_and_the_organizations() {
     let (state, _) = world().await;
     let r = run("read");
     let domain = format!("{r}.sk");
-    organization(&state, &r, &domain);
+    organization(&state, &r, &domain).await;
     let host = format!("smartcity.{r}.{BASE}");
     let pool = state.db.as_ref().expect("db");
     sqlx::query(
@@ -633,7 +633,7 @@ async fn the_changes_and_the_audit_name_the_operator_who_asked() {
     let mut jana = operator(&state, "jana");
     jana.subject = subject.clone();
     let r = run("n");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     let host = format!("named.{r}.{BASE}");
     let (status, made) = propose(
         &state,

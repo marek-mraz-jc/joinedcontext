@@ -1205,7 +1205,7 @@ pub struct OperatorOrganizationId {
     /// When the id was minted; none while the record is not checked yet.
     #[schema(value_type = Option<String>, format = DateTime)]
     pub minted_at: Option<DateTime<Utc>>,
-    /// The Organizations whose `spec.domain` is this domain.
+    /// The active Organizations this id belongs to, or whose domain it is.
     pub organizations: Vec<String>,
 }
 
@@ -1254,34 +1254,6 @@ pub async fn organizations(
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    let manifests = state.mirror.matching(|env| {
-        env.kind == "Organization" && env.metadata.namespace.as_deref() == Some(ORG_NAMESPACE)
-    });
-    let domain_of = |env: &crate::resource::ResourceEnvelope| {
-        env.spec
-            .get("domain")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let mut items: Vec<OperatorOrganization> = manifests
-        .iter()
-        .map(|env| OperatorOrganization {
-            name: env.metadata.name.clone(),
-            title: env
-                .spec
-                .get("title")
-                .or_else(|| env.spec.get("displayName"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            domain: domain_of(env),
-            hosts: counts
-                .iter()
-                .filter(|(org, _, _)| *org == env.metadata.name)
-                .map(|(_, host_state, n)| (host_state.clone(), *n))
-                .collect(),
-        })
-        .collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name));
     let rows: Vec<(String, String, String, i64, Option<i64>)> = sqlx::query_as(
         "SELECT id, domain, challenge, extract(epoch FROM requested_at)::bigint, \
          extract(epoch FROM minted_at)::bigint FROM organization_ids ORDER BY domain",
@@ -1289,20 +1261,71 @@ pub async fn organizations(
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    let ids = rows
+    // The Organizations are the registry's active rows (T-7181); the manifest adds the title and,
+    // for a row with no id yet, the `spec.domain` the gateway derives one from.
+    let organizations: Vec<host_registry::OrganizationRow> = host_registry::organizations(pool)
+        .await
+        .map_err(db)?
         .into_iter()
+        .filter(|row| row.state == "active")
+        .collect();
+    let manifest = |name: &str| {
+        state
+            .mirror
+            .get(crate::permissions::ORG_NAMESPACE, "Organization", name)
+    };
+    let domain_of = |row: &host_registry::OrganizationRow| {
+        row.organization_id
+            .as_deref()
+            .and_then(|id| {
+                rows.iter()
+                    .find(|(minted, _, _, _, at)| minted == id && at.is_some())
+                    .map(|(_, domain, _, _, _)| domain.clone())
+            })
+            .or_else(|| {
+                manifest(&row.name)?
+                    .spec
+                    .get("domain")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+    };
+    let items: Vec<OperatorOrganization> = organizations
+        .iter()
+        .map(|row| OperatorOrganization {
+            name: row.name.clone(),
+            title: manifest(&row.name).and_then(|env| {
+                env.spec
+                    .get("title")
+                    .or_else(|| env.spec.get("displayName"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }),
+            domain: domain_of(row),
+            hosts: counts
+                .iter()
+                .filter(|(org, _, _)| *org == row.name)
+                .map(|(_, host_state, n)| (host_state.clone(), *n))
+                .collect(),
+        })
+        .collect();
+    let ids = rows
+        .iter()
         .map(
             |(id, domain, challenge, requested_at, minted_at)| OperatorOrganizationId {
-                record_name: txt_name(&domain),
+                record_name: txt_name(domain),
                 record_value: format!("jc-verify={challenge}"),
-                organizations: manifests
+                organizations: organizations
                     .iter()
-                    .filter(|env| domain_of(env).as_deref() == Some(domain.as_str()))
-                    .map(|env| env.metadata.name.clone())
+                    .filter(|row| {
+                        row.organization_id.as_deref() == Some(id.as_str())
+                            || domain_of(row).as_deref() == Some(domain.as_str())
+                    })
+                    .map(|row| row.name.clone())
                     .collect(),
-                id,
-                domain,
-                requested_at: at(requested_at),
+                id: id.clone(),
+                domain: domain.clone(),
+                requested_at: at(*requested_at),
                 minted_at: minted_at.map(at),
             },
         )

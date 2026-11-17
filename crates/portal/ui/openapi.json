@@ -59540,7 +59540,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The Organizations whose `spec.domain` is this domain."
+            "description": "The active Organizations this id belongs to, or whose domain it is."
           },
           "recordName": {
             "type": "string",
