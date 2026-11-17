@@ -82,17 +82,19 @@ async fn admitted(
         .filter(|token| !token.is_empty())
         .ok_or(ApiError::Unauthorized)?;
     let not_found = || ApiError::NotFound(format!("build {id} not found"));
-    let held = build_records::token_of(&db, id)
+    // The pod names only the id: the build is found in its project's key, and its token is read
+    // from that project's row alone (T-7203).
+    let build = build_records::get(&db, id)
+        .await
+        .map_err(store)?
+        .ok_or_else(not_found)?;
+    let held = build_records::token_of(&db, &build.project, id)
         .await
         .map_err(store)?
         .ok_or_else(not_found)?;
     if !build_records::same_hash(&held, &build_records::token_hash(token)) {
         return Err(not_found());
     }
-    let build = build_records::get(&db, id)
-        .await
-        .map_err(store)?
-        .ok_or_else(not_found)?;
     if build.state != "running" {
         return Err(ApiError::Conflict(format!(
             "build {id} is {}, and takes nothing more",
@@ -182,7 +184,7 @@ async fn artifact(
             "a build uploads bundle, image or sbom, not '{name}'"
         ))
     })?;
-    let (db, settings, _) = admitted(&state, id, &headers).await?;
+    let (db, settings, build) = admitted(&state, id, &headers).await?;
     let declared = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
@@ -198,10 +200,11 @@ async fn artifact(
         .map_err(|err| ApiError::Internal(format!("the build's folder: {err}")))?;
     let partial = dir.join(format!("{name}.part"));
     write_capped(body, &partial, limit).await?;
-    let landed =
-        build_records::while_running(&db, id, || std::fs::rename(&partial, dir.join(&name)))
-            .await
-            .map_err(store)?;
+    let landed = build_records::while_running(&db, &build.project, id, || {
+        std::fs::rename(&partial, dir.join(&name))
+    })
+    .await
+    .map_err(store)?;
     if !landed {
         let _ = tokio::fs::remove_file(&partial).await;
         return Err(ApiError::Conflict(format!(
@@ -218,7 +221,7 @@ async fn log(
     headers: HeaderMap,
     body: Body,
 ) -> Result<Response, ApiError> {
-    let (db, _, _) = admitted(&state, id, &headers).await?;
+    let (db, _, build) = admitted(&state, id, &headers).await?;
     let bytes = axum::body::to_bytes(body, build_records::MAX_LOG_BYTES)
         .await
         .map_err(|_| {
@@ -227,7 +230,7 @@ async fn log(
                 build_records::MAX_LOG_BYTES
             ))
         })?;
-    build_records::set_log(&db, id, &String::from_utf8_lossy(&bytes))
+    build_records::set_log(&db, &build.project, id, &String::from_utf8_lossy(&bytes))
         .await
         .map_err(store)?;
     Ok(axum::http::StatusCode::NO_CONTENT.into_response())
@@ -267,7 +270,10 @@ async fn finish(
     Json(report): Json<Report>,
 ) -> Result<Json<Outcome>, ApiError> {
     let (db, settings, build) = admitted(&state, id, &headers).await?;
-    if !build_records::freeze(&db, id).await.map_err(store)? {
+    if !build_records::freeze(&db, &build.project, id)
+        .await
+        .map_err(store)?
+    {
         return Err(ApiError::Conflict(format!(
             "build {id} is no longer running"
         )));
@@ -303,8 +309,13 @@ async fn conclude(
             .unwrap_or_else(|| "the build failed; its log says why".to_owned()))
     };
     let _ = tokio::fs::remove_dir_all(&dir).await;
-    let ended =
-        build_records::finish(&db, build.id, outcome.as_deref().map_err(String::as_str)).await;
+    let ended = build_records::finish(
+        &db,
+        &build.project,
+        build.id,
+        outcome.as_deref().map_err(String::as_str),
+    )
+    .await;
     if let Err(err) = ended {
         tracing::warn!(build = build.id, error = %err, "the build's end was not recorded");
     }
