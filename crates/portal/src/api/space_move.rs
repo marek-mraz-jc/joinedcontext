@@ -107,7 +107,8 @@ pub async fn start_move(
         .ok_or_else(|| ApiError::Internal("ContextSpace is not in the catalogue".into()))?;
     let path = crate::api::mutate::resolve_repo_path(&envelope, kind, &project)?;
     let plan = Plan {
-        tenant: crate::spaces::segment(&state.mirror, &project, &space),
+        tenant: crate::spaces::tenant(&state.mirror, &project, &space)
+            .map_err(ApiError::Unavailable)?,
         project,
         space,
         from,

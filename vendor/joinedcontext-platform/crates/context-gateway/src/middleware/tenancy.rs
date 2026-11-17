@@ -27,17 +27,32 @@ pub const SPACE_ORGANIZATION: HeaderName = HeaderName::from_static("x-jc-space-o
 pub const ORGANIZATION_ID: HeaderName = HeaderName::from_static("x-jc-organization-id");
 
 /// The tenant a hop to the broker is pinned to (EP-22, PF-130): a [`TenantName`] under
-/// `JC_TENANT_NAMES=organization`, the space's segment under `segment` (the release before the
+/// `JC_TENANT_NAMES=project-key`, the space's segment under `segment` (the release before the
 /// rename). Both are checked when built, so the header value is always legal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tenant {
     value: HeaderValue,
+    /// The tenant's Organization half, sent to the broker, which compares it with the name.
     organization: Option<HeaderValue>,
+    /// The Organization id (`sk_bbsk`) a member's token names for this space (`jc_org_id`).
+    member_claim: Option<String>,
 }
 
 impl Tenant {
-    /// The tenant `{organization id}__{segment}`, which names its Organization to the broker.
+    /// A tenant `{organization id}__{segment}` (the 2026-11-15 form), which names its
+    /// Organization to the broker and whose members' tokens name that same id.
     pub fn named(name: &TenantName) -> jc_core::Result<Self> {
+        let org = jc_core::names::OrganizationId::parse(name.organization())?;
+        Self::keyed(name, &org)
+    }
+
+    /// A tenant whose members' tokens name Organization `claim`: for a project-key tenant
+    /// (`{OrgId}__{ProjectId}__{space}`) the broker hears the `OrgId` half, a member is a
+    /// caller whose token names the project's Organization `claim` (ARCH/TEN-10).
+    pub fn keyed(
+        name: &TenantName,
+        claim: &jc_core::names::OrganizationId,
+    ) -> jc_core::Result<Self> {
         let header = |value: &str| {
             HeaderValue::from_str(value).map_err(|_| jc_core::Error::Name {
                 field: "tenant",
@@ -48,6 +63,7 @@ impl Tenant {
         Ok(Self {
             value: header(name.as_str())?,
             organization: Some(header(name.organization())?),
+            member_claim: Some(claim.as_str().to_owned()),
         })
     }
 
@@ -63,6 +79,7 @@ impl Tenant {
                 reason: "must be a legal header value",
             })?,
             organization: None,
+            member_claim: None,
         })
     }
 
@@ -287,9 +304,13 @@ pub fn pin_caller(
     }
     request_id(headers);
     headers.extend(caller_headers(subject));
-    let home = tenant
-        .organization()
-        .filter(|org| subject.member_of_organization && subject.organization_ids.contains(*org));
+    let home = tenant.organization().filter(|_| {
+        subject.member_of_organization
+            && tenant
+                .member_claim
+                .as_ref()
+                .is_some_and(|claim| subject.organization_ids.contains(claim))
+    });
     one(headers, ORGANIZATION_ID, home);
     if subject.agreement.is_some() {
         return Ok(());
@@ -826,9 +847,10 @@ mod tests {
         Tenant::named(&TenantName::parse(raw).expect("a tenant name")).expect("a header value")
     }
 
-    /// EP-188, PF-130: an organization tenant pins `{org}__{segment}` and its space's
-    /// Organization on every hop, and a member's hop carries the `jc_org_id` entry naming that
-    /// Organization, per admission path; what a client sent under those names never survives.
+    /// EP-188, PF-130, ARCH/TEN-10: an Organization tenant (`{org}__{segment}`, and the
+    /// project-key `{OrgId}__{ProjectId}__{space}`) pins its name and its Organization half on
+    /// every hop, and a member's hop, whose `jc_org_id` names the space's Organization, carries
+    /// that half, per admission path; what a client sent under those names never survives.
     #[test]
     fn an_organization_tenant_names_its_organization_per_admission_path() {
         let ids = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect();
@@ -876,8 +898,25 @@ mod tests {
                 None,
             ),
         ];
-        let tenant = named("sk_bbsk__mobility");
-        for (path, subject, home) in cases {
+        let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        let keyed = Tenant::keyed(
+            &TenantName::of_space(key, "mobility").expect("a space name"),
+            &jc_core::names::OrganizationId::parse("sk_bbsk").expect("an id"),
+        )
+        .expect("a header value");
+        for (tenant, path, subject, home) in [named("sk_bbsk__mobility"), keyed]
+            .into_iter()
+            .flat_map(|tenant| {
+                cases
+                    .iter()
+                    .map(move |(path, subject, home)| (tenant.clone(), path, subject, home))
+            })
+        {
+            let org = tenant
+                .organization()
+                .expect("an Organization half")
+                .to_owned();
+            let home = home.map(|_| org.as_str());
             let mut request = Request::new(axum::body::Body::empty());
             for (name, value) in [
                 ("ngsild-tenant", "sk_evil__mobility"),
@@ -889,7 +928,7 @@ mod tests {
                     .append(name, HeaderValue::from_static(value));
             }
             strip_client_headers(&mut request);
-            pin_caller(&mut request, Some(&tenant), &subject).expect("a tenant");
+            pin_caller(&mut request, Some(&tenant), subject).expect("a tenant");
             let headers = request.headers();
             let all = |name: &str| {
                 headers
@@ -898,8 +937,8 @@ mod tests {
                     .map(|v| v.to_str().unwrap_or("?"))
                     .collect::<Vec<_>>()
             };
-            assert_eq!(all("ngsild-tenant"), ["sk_bbsk__mobility"], "{path}");
-            assert_eq!(all("x-jc-space-organization"), ["sk_bbsk"], "{path}");
+            assert_eq!(all("ngsild-tenant"), [tenant.as_str()], "{path}");
+            assert_eq!(all("x-jc-space-organization"), [org.as_str()], "{path}");
             assert_eq!(
                 all("x-jc-organization-id"),
                 home.into_iter().collect::<Vec<_>>(),
@@ -909,8 +948,8 @@ mod tests {
             let mut own = HeaderMap::new();
             copy_tenant(headers, &mut own);
             as_gateway(&mut own);
-            assert_eq!(pinned_tenant(&own), Some("sk_bbsk__mobility"), "{path}");
-            assert_eq!(own[&SPACE_ORGANIZATION], "sk_bbsk", "{path}");
+            assert_eq!(pinned_tenant(&own), Some(tenant.as_str()), "{path}");
+            assert_eq!(own[&SPACE_ORGANIZATION], org.as_str(), "{path}");
             assert!(!own.contains_key(&ORGANIZATION_ID), "{path}");
         }
     }

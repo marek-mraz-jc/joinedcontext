@@ -24,6 +24,12 @@ const EXEMPT: &[(&str, &str)] = &[
          mirrors and answer /q/tenants",
     ),
     (
+        "tenant_rename",
+        "one row per tenant NAME the rename moved away (0036), like tenants: \
+         tenant_standing reads it before a request sets antares.tenant, and \
+         only the BYPASSRLS rename functions of 0037 write it",
+    ),
+    (
         "jsonld_contexts",
         "5.13.1: Cached rows are copies of documents the broker fetched from \
          public URLs and belong to no tenant. The tenant-authored kinds \

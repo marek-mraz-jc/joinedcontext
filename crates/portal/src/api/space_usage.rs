@@ -96,7 +96,7 @@ fn readable(
     }
     Ok((
         crate::spaces::broker(&state.mirror, project, space),
-        crate::spaces::segment(&state.mirror, project, space),
+        crate::spaces::tenant(&state.mirror, project, space).map_err(ApiError::Unavailable)?,
     ))
 }
 

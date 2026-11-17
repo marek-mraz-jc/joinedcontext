@@ -181,6 +181,18 @@ pub struct TenantStats {
     pub dist_subs: u64,
 }
 
+/// What the store holds about a tenant name beyond its existence, for the
+/// Organization check (EP-188, design 10.1 and 10.5).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TenantStanding {
+    /// The name was renamed away (`tenant_rename.old`): it answers as an
+    /// unknown tenant and is never created again.
+    pub tombstoned: bool,
+    /// The Organization id written when the tenant row was created; `None`
+    /// for a tenant created before the column, or a store that keeps none.
+    pub organization: Option<String>,
+}
+
 /// How many bytes one tenant's Entities take in the store (T-2890), measured
 /// there and never estimated: the stored row on Postgres, the serialized
 /// document in memory.
@@ -809,6 +821,11 @@ pub trait CurrentStateDriver: Send + Sync {
     }
     /// 5.5.10: the default Tenant implicitly exists; others once created.
     async fn tenant_exists(&self, tenant: &TenantId) -> Result<bool, NgsiError>;
+    /// The tombstone and stored Organization of `tenant` ([`TenantStanding`]);
+    /// a store without either answers the default, and the name alone decides.
+    async fn tenant_standing(&self, _tenant: &TenantId) -> Result<TenantStanding, NgsiError> {
+        Ok(TenantStanding::default())
+    }
     /// The iteration domain of the interval sweep and of every mirror
     /// hydration: a tenant holding a Subscription, a Context Source
     /// Registration Subscription OR a Registration SHALL appear. A superset

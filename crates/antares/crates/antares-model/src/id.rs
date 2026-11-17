@@ -47,6 +47,42 @@ impl TenantId {
             || Self::RESERVED_EXACT.contains(&raw)
     }
 
+    /// The Organization half of a tenant name (PF-130, ARCH/TEN-10): the
+    /// 26-character `OrgId` of `{OrgId}__{ProjectId}__{space}`, or the
+    /// Organization id of the 2026-11-15 form `{organization id}__{segment}`,
+    /// which the platform parses until the rename ran. Split at the first
+    /// `__`, so the left half holds no `__`; an `OrgId` holds no `_` and an
+    /// Organization id one, so the two forms never read as each other, and
+    /// neither half is empty. The full grammar is the platform's
+    /// (`jc_core::names::TenantName`); this is the shape a comparison needs and
+    /// never a prefix match (`sk_a` is not `sk_ab`).
+    ///
+    /// ```
+    /// use ngsild_model::TenantId;
+    /// assert_eq!(TenantId::organization_of("sk_bbsk__mobility"), Some("sk_bbsk"));
+    /// assert_eq!(
+    ///     TenantId::organization_of("apniwb5dkdjn5j4ik4hv7zugza__d3d2ouepc7jkdlbvzor5vezejv__mobility"),
+    ///     Some("apniwb5dkdjn5j4ik4hv7zugza")
+    /// );
+    /// assert_eq!(TenantId::organization_of("mobility"), None);
+    /// ```
+    #[must_use]
+    pub fn organization_of(raw: &str) -> Option<&str> {
+        let (organization, rest) = raw.split_once("__")?;
+        if let Some((project, space)) = rest.split_once("__") {
+            return (is_key_id(organization)
+                && is_key_id(project)
+                && !space.is_empty()
+                && !space.contains('_'))
+            .then_some(organization);
+        }
+        (!organization.is_empty()
+            && organization.contains('_')
+            && !rest.is_empty()
+            && !rest.contains('_'))
+        .then_some(organization)
+    }
+
     /// Whether this is one of the broker's own tenants rather than a client's.
     /// Internal tenants stay out of the `tenants` inventory and out of
     /// `/q/tenants`: that table is the list of customer accounts.
@@ -254,6 +290,19 @@ impl fmt::Display for EntityId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
+}
+
+/// A key id in its path form: 26 characters of `a-z` and `2-7`, the first
+/// `a`..`h` (jc-types, ARCH/TEN-01).
+fn is_key_id(text: &str) -> bool {
+    text.len() == 26
+        && text.bytes().enumerate().all(|(i, b)| {
+            if i == 0 {
+                (b'a'..=b'h').contains(&b)
+            } else {
+                b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b)
+            }
+        })
 }
 
 #[cfg(test)]

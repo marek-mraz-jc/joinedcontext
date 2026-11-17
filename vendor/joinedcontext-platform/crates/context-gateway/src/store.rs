@@ -224,16 +224,20 @@ pub struct SpaceBrokers {
     pub tenants: BTreeMap<String, String>,
 }
 
-/// How the gateway names a space at the broker (`JC_TENANT_NAMES`, PF-130): `segment` (the
-/// default) pins the space's segment as before, `organization` pins `{organization id}__{segment}`.
-/// Set per broker once its rename is done (design 10.6), so one release carries both.
+/// How the gateway names a space at the broker (`JC_TENANT_NAMES`, PF-130, ARCH/TEN-10):
+/// `segment` (the default) pins the space's segment as before, `project-key` pins
+/// `{OrgId}__{ProjectId}__{space}` ([`jc_core::names::TenantName::of_space`]). Set per broker once
+/// its rename is done (T-7039, design 10.6), so one release carries both. The 2026-11-15 value
+/// `organization` (`{organization id}__{segment}`) is refused: no broker was renamed to it, and
+/// the rename goes straight to the project key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TenantNames {
     /// `{segment}`, the name every space has today.
     #[default]
     Segment,
-    /// `{organization id}__{segment}` ([`jc_core::names::TenantName`]).
-    Organization,
+    /// `{OrgId}__{ProjectId}__{space}`, the ids from the Portal's project registry
+    /// ([`PROJECT_KEYS`]).
+    ProjectKey,
 }
 
 impl TenantNames {
@@ -241,9 +245,13 @@ impl TenantNames {
     pub fn parse(value: Option<&str>) -> Result<Self, String> {
         match value.map(str::trim).unwrap_or_default() {
             "" | "segment" => Ok(Self::Segment),
-            "organization" => Ok(Self::Organization),
+            "project-key" => Ok(Self::ProjectKey),
+            "organization" => Err("JC_TENANT_NAMES=organization was replaced by `project-key` \
+                 (`{OrgId}__{ProjectId}__{space}`, ARCH/TEN-10): set `project-key` once the broker's \
+                 rename ran, or `segment` before"
+                .to_owned()),
             other => Err(format!(
-                "JC_TENANT_NAMES must be `segment` or `organization`, not `{other}`"
+                "JC_TENANT_NAMES must be `segment` or `project-key`, not `{other}`"
             )),
         }
     }
@@ -255,43 +263,104 @@ impl TenantNames {
     }
 }
 
-/// The tenant of the space `segment` of `project` (PF-130, EP-22): the segment under
-/// [`TenantNames::Segment`]; under `Organization`, the project's Organization from the repository
-/// alone ([`Repository::space_organization`], no installation fallback) joined to the segment.
-/// `Err` names the missing link.
+/// Each project's key (`OrgId`, `ProjectId`) by project name, as the Portal's project registry
+/// holds it (ARCH/TEN-04). `jc` publishes it on every registry rebuild, beside the router's
+/// id addresses; the gateway reads it when it builds its tables under
+/// [`TenantNames::ProjectKey`]. Empty until published, so a gateway without a Portal pins no
+/// project-key tenant and its Endpoints answer 503.
+pub static PROJECT_KEYS: std::sync::RwLock<BTreeMap<String, jc_types::ProjectKey>> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+/// Counts the changes of [`PROJECT_KEYS`]: the reaper's fingerprint holds it, so a new or
+/// changed key reloads the tables like a changed manifest does.
+pub static PROJECT_KEYS_GENERATION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// Replaces [`PROJECT_KEYS`]; `true` when it changed, which also moves
+/// [`PROJECT_KEYS_GENERATION`].
+pub fn publish_project_keys(keys: BTreeMap<String, jc_types::ProjectKey>) -> bool {
+    let mut held = PROJECT_KEYS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let changed = *held != keys;
+    if changed {
+        *held = keys;
+        PROJECT_KEYS_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    changed
+}
+
+fn project_key(project: &str) -> Option<jc_types::ProjectKey> {
+    PROJECT_KEYS
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(project)
+        .copied()
+}
+
+/// The name of the broker tenant of space `space` of `project` (PF-130, ARCH/TEN-10): `segment`
+/// under [`TenantNames::Segment`], `{OrgId}__{ProjectId}__{space}` under `ProjectKey`. The one
+/// rule the gateway, the Portal and its reconciler share, so all three name one tenant.
+pub fn tenant_name(
+    project: &str,
+    space: &str,
+    segment: impl FnOnce() -> String,
+    names: TenantNames,
+) -> Result<String, String> {
+    match names {
+        TenantNames::Segment => Ok(segment()),
+        TenantNames::ProjectKey => {
+            let key = project_key(project).ok_or_else(|| {
+                format!("project `{project}` has no id in the Portal's project registry yet")
+            })?;
+            jc_core::names::TenantName::of_space(key, space)
+                .map(|name| name.as_str().to_owned())
+                .map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// The tenant of the space `space` of `project` (PF-130, EP-22, ARCH/TEN-10): its segment under
+/// [`TenantNames::Segment`]; under `ProjectKey`, `internal_name(OrgId, ProjectId, space)` with
+/// the project's key from [`PROJECT_KEYS`], and the project's Organization from the repository
+/// alone ([`Repository::space_organization`], no installation fallback), the id a member's
+/// token names. `Err` names the missing link.
 pub fn space_tenant(
     repo: &Repository,
     project: &str,
-    segment: &str,
+    space: &str,
     names: TenantNames,
 ) -> Result<Tenant, String> {
     match names {
-        TenantNames::Segment => Tenant::segment(segment).map_err(|err| err.to_string()),
-        TenantNames::Organization => {
+        TenantNames::Segment => {
+            Tenant::segment(&repo.space_segment(project, space)).map_err(|err| err.to_string())
+        }
+        TenantNames::ProjectKey => {
             let organization = repo.space_organization(project)?;
-            jc_core::names::TenantName::new(&organization, segment)
-                .and_then(|name| Tenant::named(&name))
+            let name = tenant_name(project, space, String::new, names)?;
+            jc_core::names::TenantName::parse(&name)
+                .and_then(|name| Tenant::keyed(&name, &organization))
                 .map_err(|err| err.to_string())
         }
     }
 }
 
 /// [`space_tenant`], with the operator event for a space that gets none: its Endpoints answer
-/// 503 until the Project names a resolving Organization.
+/// 503 until the Project names a resolving Organization and has a key.
 fn tenant_or_event(
     repo: &Repository,
     project: &str,
-    segment: &str,
+    space: &str,
     names: TenantNames,
 ) -> Option<Tenant> {
-    space_tenant(repo, project, segment, names)
+    space_tenant(repo, project, space, names)
         .map_err(|reason| {
             tracing::error!(
                 %project,
-                space = %segment,
+                %space,
                 %reason,
                 "the space has no tenant: its Endpoints answer 503 until the Project names an \
-                 Organization with a verified domain"
+                 Organization with a verified domain and the Portal has recorded the project's id"
             );
         })
         .ok()
@@ -327,8 +396,8 @@ pub fn brokers_of(repo: &Repository, endpoints: &[Endpoint], names: TenantNames)
             .get("annotations")
             .and_then(|annotations| annotations.get(jc_core::envelope::annotations::MOVING_TO))
             .is_some();
-        // An organization tenant routes and holds by its own name (PF-130).
-        let tenant = space_tenant(repo, &project, &segment, names)
+        // A project-key tenant routes and holds by its own name (PF-130, ARCH/TEN-10).
+        let tenant = space_tenant(repo, &project, &id.name, names)
             .ok()
             .map(|tenant| tenant.as_str().to_owned())
             .filter(|tenant| *tenant != segment);
@@ -921,7 +990,7 @@ fn endpoints_from(
         // Entity ids and policy URNs carry the rendered segment (PF-84), the tenant its
         // Organization too (PF-130); the manifests beside the endpoint name the space locally.
         let space = repo.space_segment(&project, &space_name);
-        let tenant = tenant_or_event(repo, &project, &space, names);
+        let tenant = tenant_or_event(repo, &project, &space_name, names);
         let key = (project.clone(), space_name.clone());
         let named = policies.get(&key).map(Vec::as_slice).unwrap_or_default();
         let app_client = app_of(repo, &project, &id.name);
@@ -1214,7 +1283,7 @@ fn spaces_from(repo: &Repository, models: &ModelSet, names: TenantNames) -> Vec<
                 title: BTreeMap::new(),
                 description: BTreeMap::new(),
                 space: segment.clone(),
-                tenant: tenant_or_event(repo, &project, &segment, names),
+                tenant: tenant_or_event(repo, &project, &id.name, names),
                 project,
                 audience: Audience::Public,
                 allowed_projects: Vec::new(),

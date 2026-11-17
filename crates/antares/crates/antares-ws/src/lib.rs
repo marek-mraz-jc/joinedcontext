@@ -145,7 +145,7 @@ impl Surface for Ws {
         Router::new().route(
             "/ngsi-ld/v1",
             get(move |caller: Caller, req: Request| async move {
-                upgrade(hub, ops, None, caller, req, Channel::Envelope)
+                upgrade(hub, ops, None, caller, req, Channel::Envelope).await
             }),
         )
     }
@@ -170,7 +170,7 @@ impl Surface for ViewWs {
             "/{view}/ws",
             get(
                 move |Path(view): Path<String>, caller: Caller, req: Request| async move {
-                    upgrade(hub, ops, Some(view), caller, req, Channel::Envelope)
+                    upgrade(hub, ops, Some(view), caller, req, Channel::Envelope).await
                 },
             ),
         )
@@ -222,7 +222,7 @@ impl Surface for StaMqtt {
                             "MQTT over WebSocket: offer the subprotocol mqtt in Sec-WebSocket-Protocol",
                         );
                     }
-                    upgrade(hub, ops, Some(view), caller, req, Channel::StaMqtt)
+                    upgrade(hub, ops, Some(view), caller, req, Channel::StaMqtt).await
                 },
             ),
         )
@@ -331,9 +331,51 @@ fn asked_tenant(headers: &axum::http::HeaderMap) -> Result<Option<String>, &'sta
     })
 }
 
+/// The Tenant the socket serves and its runner: the one the client named
+/// (or `default`) on the Tenant root, the view's own on a view; else the
+/// answer to send.
+async fn served_tenant(
+    ops: Ops,
+    view: Option<&str>,
+    asked: Option<String>,
+    headers: &axum::http::HeaderMap,
+) -> Result<(String, hub::Runner), Box<Response>> {
+    match view {
+        None => {
+            // EP-188: the Tenant root's door; a view's Tenant is checked
+            // where the view is looked up.
+            if let Some(refused) = ops.tenant_door(asked.as_deref(), headers).await {
+                return Err(Box::new(refused));
+            }
+            Ok((
+                asked.unwrap_or_else(|| "default".to_owned()),
+                hub::Runner::Root(ops),
+            ))
+        }
+        Some(id) => {
+            let Some(v) = ops.view(id) else {
+                return Err(Box::new(problem(
+                    StatusCode::NOT_FOUND,
+                    "ResourceNotFound",
+                    "no such view",
+                )));
+            };
+            let tenant = v.tenant().to_owned();
+            if asked.is_some_and(|a| a != tenant) {
+                return Err(Box::new(problem(
+                    StatusCode::BAD_REQUEST,
+                    "BadRequestData",
+                    "a view serves one tenant",
+                )));
+            }
+            Ok((tenant, hub::Runner::View(ops, id.to_owned())))
+        }
+    }
+}
+
 /// The upgrade (rules 2, 8 and 10): the handshake, the `Origin` allowlist,
 /// the Tenant (or the view's), the admission caps, then the socket.
-fn upgrade(
+async fn upgrade(
     hub: Arc<Hub>,
     ops: Ops,
     view: Option<String>,
@@ -365,25 +407,10 @@ fn upgrade(
         Err(detail) => return problem(StatusCode::BAD_REQUEST, "BadRequestData", detail),
     };
     let (mqtt_ops, view_id) = (ops.clone(), view.clone().unwrap_or_default());
-    let (tenant, runner) = match &view {
-        None => (
-            asked.unwrap_or_else(|| "default".to_owned()),
-            hub::Runner::Root(ops),
-        ),
-        Some(id) => {
-            let Some(v) = ops.view(id) else {
-                return problem(StatusCode::NOT_FOUND, "ResourceNotFound", "no such view");
-            };
-            let tenant = v.tenant().to_owned();
-            if asked.is_some_and(|a| a != tenant) {
-                return problem(
-                    StatusCode::BAD_REQUEST,
-                    "BadRequestData",
-                    "a view serves one tenant",
-                );
-            }
-            (tenant, hub::Runner::View(ops, id.clone()))
-        }
+    let headers = req.headers().clone();
+    let (tenant, runner) = match served_tenant(ops, view.as_deref(), asked, &headers).await {
+        Ok(served) => served,
+        Err(refused) => return *refused,
     };
     let subject = caller.subject();
     let conn = match hub.open(tenant, view, caller, subject, runner) {

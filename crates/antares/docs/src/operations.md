@@ -596,6 +596,78 @@ holds the later write):
 Every pair was written on 2026-11-11 or 2026-11-12, so both segments came
 from pipelines live in the week of the URN owner change.
 
+## Renaming Tenants
+
+A jc Tenant is named `{OrgId}__{ProjectId}__{space}` (ARCH/TEN-10, jc-types
+`internal_name`, ids as 26-character base32). Tenants written before carry
+the space's segment, `{project}-{space}`. Migration 0037 (T-7039) installs
+the functions that move a Tenant to its new name; nothing calls them. The
+deployer runs them by hand, as the database owner (superuser or BYPASSRLS;
+the broker's role is refused), in a window with the gateway's writes held:
+
+- `antares_tenant_rename(old, new)` moves every row of `old` in one
+  transaction: each table's `tenant_id`, the hosted `@context`s by owner,
+  the reserved-tenant documents whose `tenant` member or id names `old`
+  (views, policy rules, the distributed-subscription index), and
+  `csource_index.tenant_at_peer`. It writes `tenant_rename(old, new,
+  renamed_at)` and returns the moved rows per table as JSON, with
+  `text_still_naming_old`: rows where `old` stays inside a longer string,
+  for the operator to read. It refuses, moving nothing, for a reserved or
+  default name, an unknown `old`, a `new` outside the grammar, a `new` that
+  holds a row or that an earlier rename wrote. Run as a superuser, it skips
+  the `entities` triggers for its transaction (the rename moves the
+  catalogue and `entity_values` itself); a BYPASSRLS owner runs them and
+  needs temp disk for two copies of the Tenant's `entities` rows.
+- `antares_tenant_digest(tenant)` returns per table a row count and an
+  order-free hash with the Tenant's name normalised, so the digest before
+  under `old` equals the digest after under `new`.
+- `antares_tenant_rename_rollback(new)` moves the Tenant back by its
+  `tenant_rename` row and deletes that row.
+
+The runbook, per broker database:
+
+1. The map. `crates/antares/dev/tenant-rename-map.py tenants.txt
+   projects.tsv [pins.json]` writes `{map, unmapped}` from the broker's
+   `tenants` and the Portal's project registry (the header names both
+   queries). Every `unmapped` Tenant gets a recorded decision in the
+   window's task before step 3: a pin, kept under its name (admin-only, no
+   gateway route reaches it any more), or purged after the dump.
+2. The dump. `pg_dump -Fc` of the database, and the row count of
+   `attr_rows_short` (unlogged: the dump keeps it, a crash does not). Free
+   disk of at least twice the largest Tenant: a moved row is a new row
+   version until vacuum.
+3. The rehearsal. Restore the dump into a throwaway Postgres and run
+   `crates/antares/dev/tenant-rename-rehearsal.py <url> map.json <log>`:
+   per Tenant the digest before and after, the whole-database row counts,
+   no old name left, and a rollback round trip of the smallest Tenant. It
+   exits 0 only when every check holds; the log names Tenants by index and
+   size, never a row.
+4. The window. Hold the gateway's writes, run `SELECT
+   antares_tenant_rename(old, new)` per mapped Tenant, largest first,
+   compare each digest, then set `JC_TENANT_NAMES=project-key` on the
+   gateway and roll it. A Tenant is never half-moved: no per-range
+   batching, a reader between two ranges would see the Tenant split in two.
+5. Rollback, in this order: the smoke or digest check is off, so
+   `antares_tenant_rename_rollback(new)` per renamed Tenant, then
+   `JC_TENANT_NAMES=segment` and roll the gateway. A rename that failed
+   rolled back by itself.
+
+Under `ANTARES_BUS=nats` the bus's key-value entries are keyed
+`{tenant}.{hash}`: purge the old Tenant's keys after the rename (jc runs
+`ANTARES_BUS=local`, so jc has none). On TimescaleDB compressed chunks
+refuse the UPDATE: decompress the Tenant's chunks first.
+
+Budget (jc-dev copy of 2026-11-17, Postgres 16 container on a shared disk):
+108 Tenants, 32.9 M `entity_values` rows, 38 GB, every digest and table
+count equal, run as superuser. The largest Tenant (16.7 M rows) took 992 s,
+5.6 M rows 394 s, 3.0 M rows 267 s, a Tenant under 100 k rows 0.2 to 5 s;
+the whole map about 45 min. Writers wait on one Tenant's locks for its own
+time; readers go on. The rename takes its table locks all within 300 ms or
+lets them go and tries again, for up to 60 s, so it never deadlocks a writer;
+under steady writes it stops with "writers held the tables of Tenant ...":
+stop the brokers' writers or run it again. Before 0037 skipped the `entities` triggers, a
+209 k-entity Tenant ran over 20 min on 7.5 GB of temp files.
+
 ## Where the proofs run
 
 | Claim | Workflow |

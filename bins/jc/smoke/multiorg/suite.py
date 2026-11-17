@@ -75,6 +75,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "deploy" / "rehears
 import rehearsal as R  # noqa: E402  (Http, sign-in, person helpers of the rehearsal kit)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common import SECOND_FACTOR, realm_of  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "endpoints"))
+import export as ex  # noqa: E402  (the Tenant name grammar, jc-core TenantName::parse)
 
 CONFIG = ("joinedcontext", "configuration")
 DENIED = (403, 404)
@@ -1022,6 +1024,40 @@ class Suite:
                      f"{value[(b, pb)]}, unchanged", f"{how} {got!r}", got == value[(b, pb)])
         if not self.live:
             self.same_connectors(orgs, slugs, value)
+            self.same_tenants(orgs)
+
+    def same_tenants(self, orgs):
+        """The broker's Tenants after the `same` writes (PF-130, ARCH/TEN-10): every listed name is a
+        Tenant name of one form, never both (a mix is a rename stopped half way), and each
+        Organization's `iso-space` is a Tenant of its own: under `JC_TENANT_NAMES=project-key`
+        `{OrgId}__{ProjectId}__iso-space` with one OrgId per Organization, under `segment` the
+        project's `{project}-iso-space`. Local only: the list needs the broker's admin token."""
+        try:
+            auth = {"Authorization": f"Bearer {R.read_secret(self.state, 'antares-admin-token')}"}
+        except OSError as err:
+            self.row("same.tenants.one-form", "broker", "read the broker's admin token of the local jc",
+                     "the state dir holds antares-admin-token", f"{type(err).__name__}", False)
+            return
+        st, body = self.client().json("GET", "/broker/q/tenants", headers=auth)
+        names = [n for n in body if isinstance(n, str)] if st == 200 and isinstance(body, list) else []
+        keyed = [n for n in names if n.count("__") == 2]
+        bad = [n for n in names if n != "default" and not ex.is_tenant_name(n) and "__" in n]
+        mixed = bool(keyed) and len(keyed) != len([n for n in names if n != "default"])
+        self.row("same.tenants.one-form", "broker", "GET /broker/q/tenants with the broker's admin token",
+                 "200, Tenant names of one form only", f"{st}, {len(names)} names, {len(keyed)} project-key, "
+                 f"{len(bad)} outside the grammar", st == 200 and not bad and not mixed)
+        projects = sorted(p for o in orgs for p in self.iso[o])
+        space = ISO["spaces"]
+        if keyed:
+            ours = [n for n in keyed if n.endswith(f"__{space}")]
+            apart = len({n.split("__")[0] for n in ours}) >= len(orgs) and len(ours) >= len(projects)
+            want = f"{len(projects)} `{{OrgId}}__{{ProjectId}}__{space}` names of {len(orgs)} OrgIds"
+            got = f"{len(ours)} names of {len({n.split('__')[0] for n in ours})} OrgIds"
+        else:
+            missing = [p for p in projects if f"{p}-{space}" not in names]
+            apart, want, got = not missing, f"`{{project}}-{space}` of {projects}", f"missing {missing}"
+        self.row("same.tenants.apart", "->".join(orgs[:2]), f"the {space} Tenants on the broker", want, got,
+                 st == 200 and apart)
 
     def same_catalogue(self, orgs, slugs):
         """The readable catalogue lists the own iso Endpoints and none of another Organization's;

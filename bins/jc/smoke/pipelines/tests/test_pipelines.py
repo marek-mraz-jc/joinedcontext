@@ -544,3 +544,17 @@ def test_a_source_down_for_prod_too_is_the_named_skip_source_unreachable(monkeyp
 def test_source_unreachable_without_one_of_its_conditions_stays_a_fail(monkeypatch, tmp_path, drop, why):
     row = unreachable_case(monkeypatch, tmp_path, drop)
     assert row["result"] == "fail" and why in row["actual"], row
+
+
+def test_a_bench_tenant_takes_the_project_key_when_one_is_named(monkeypatch):
+    """T-7038: with JC_BENCH_PROJECT_KEY the bench Tenant is `{OrgId}__{ProjectId}__bench-...`,
+    which jc-core's TenantName parses; without it, the plain label."""
+    import proxy
+
+    monkeypatch.delenv("JC_BENCH_PROJECT_KEY", raising=False)
+    plain = proxy.tenant_of("run-1")
+    assert plain.startswith("bench-") and len(plain) == 18
+    monkeypatch.setenv("JC_BENCH_PROJECT_KEY",
+                       "0f6a2c1e-8d43-4b7a-9e21-5c3d7f9a1b20/7b1e9d42-3c5f-4a86-b0d7-2e8f6a4c9135")
+    keyed = proxy.tenant_of("run-1")
+    assert keyed == f"apniwb5dkdjn5j4ik4hv7zugza__d3d2ouepc7jkdlbvzor5vezejv__{plain}"

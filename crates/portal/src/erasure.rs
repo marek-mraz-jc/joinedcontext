@@ -767,7 +767,7 @@ async fn broker(state: &AppState, erasure: &Erasure) -> Result<(u64, Option<u64>
         .views
         .as_ref()
         .ok_or("this Portal has no broker address or admin token")?;
-    let tenant = crate::spaces::segment(&state.mirror, &erasure.project, &erasure.space);
+    let tenant = crate::spaces::tenant(&state.mirror, &erasure.project, &erasure.space)?;
     let (mut entities, mut history) = (0, 0);
     for group in erasure.groups.iter().filter(|g| !g.entities.is_empty()) {
         let counts = views
@@ -897,7 +897,7 @@ pub(crate) async fn reapply(state: &AppState, pool: &PgPool) -> Result<(usize, u
     let mut held: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut resent = 0;
     for erasure in &done {
-        let tenant = crate::spaces::segment(&state.mirror, &erasure.project, &erasure.space);
+        let tenant = crate::spaces::tenant(&state.mirror, &erasure.project, &erasure.space)?;
         if !held.contains_key(&tenant) {
             held.insert(tenant.clone(), views.erasure_records(&tenant).await?);
         }

@@ -219,7 +219,7 @@ impl RegistrationSync {
                     envelope.metadata.name,
                     MemberSource {
                         endpoint: self.ngsi_ld(mirror, project, &space)?,
-                        tenant: crate::spaces::segment(mirror, project, &space),
+                        tenant: crate::spaces::tenant(mirror, project, &space).ok()?,
                         gateway,
                     },
                 ))
@@ -353,8 +353,19 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
                     continue;
                 }
             };
-            // The broker tenant is the space's rendered segment (PF-84).
-            let space = crate::spaces::segment(mirror, &namespace, spec.context_space_ref.name());
+            // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
+            let space =
+                match crate::spaces::tenant(mirror, &namespace, spec.context_space_ref.name()) {
+                    Ok(tenant) => tenant,
+                    Err(reason) => {
+                        refused.push((
+                            namespace.clone(),
+                            name,
+                            format!("not registered: {reason}"),
+                        ));
+                        continue;
+                    }
+                };
             found.push((
                 namespace.clone(),
                 name,

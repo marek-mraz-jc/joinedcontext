@@ -834,10 +834,9 @@ fn one_key(name: &'static str, values: Vec<String>) -> BTreeMap<&'static str, Ve
     BTreeMap::from([(name, values)])
 }
 
-/// The broker tenant of every Context Space of the Organization's projects: the space's
-/// segment, as the gateway names it at the broker (`spaces::segment`).
-/// ponytail: segment-named tenants only; a broker switched to `{organization id}__{segment}`
-/// (JC_TENANT_NAMES=organization, PF-130) needs that name here too.
+/// The broker tenant of every Context Space of the Organization's projects, as the gateway
+/// names it at the broker (`spaces::tenant`: the segment, or the project-key name after the
+/// rename). A space with no tenant yet holds no broker data to back up.
 pub fn antares_tenants(state: &AppState, organization: &str) -> Vec<String> {
     let mut tenants: Vec<String> = super::projects_of(&state.mirror, organization)
         .iter()
@@ -851,8 +850,8 @@ pub fn antares_tenants(state: &AppState, organization: &str) -> Vec<String> {
                 )
                 .items
                 .into_iter()
-                .map(move |space| {
-                    crate::spaces::segment(&state.mirror, project, &space.metadata.name)
+                .filter_map(move |space| {
+                    crate::spaces::tenant(&state.mirror, project, &space.metadata.name).ok()
                 })
         })
         .collect();

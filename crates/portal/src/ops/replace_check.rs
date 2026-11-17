@@ -91,12 +91,15 @@ async fn refused(
         );
     };
     let broker = crate::spaces::broker(&state.mirror, project, &space);
-    let tenant = crate::spaces::segment(&state.mirror, project, &space);
-    let (names, partial) = match state
-        .space_usage
-        .stored_attributes(&broker, &tenant, entity_type)
-        .await
-    {
+    let (names, partial) = match match crate::spaces::tenant(&state.mirror, project, &space) {
+        Ok(tenant) => {
+            state
+                .space_usage
+                .stored_attributes(&broker, &tenant, entity_type)
+                .await
+        }
+        Err(reason) => Err(reason),
+    } {
         Ok(read) => read,
         Err(why) => return unchecked(endpoint, &why),
     };

@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import re
+import tempfile
 import urllib.parse
 from pathlib import Path
 
@@ -273,6 +274,29 @@ def test_a_forged_host_that_switches_the_organization_or_the_issuer_fails_its_ro
         assert got["forged.hel-admin.xfh.zilina"] == got["forged.hel-admin.host.zilina"] == want
         assert got["forged.issuer.host"] == got["forged.issuer.xfh"] == want
         assert next(r for r in s.rows if r["id"] == "forged.hel-admin.host.zilina")["target"] == "hel->zilina"
+
+
+def test_the_tenant_rows_want_one_name_form_and_a_tenant_per_organization(tmp_path):
+    # T-7040: two Organizations with the same space name are two Tenants on the broker; a list
+    # holding both name forms is a rename stopped half way.
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "antares-admin-token").write_text("t")
+    a, b, p = "apniwb5dkdjn5j4ik4hv7zugza", "bpniwb5dkdjn5j4ik4hv7zugza", "d3d2ouepc7jkdlbvzor5vezejv"
+    keyed = ["default", f"{a}__{p}__iso-space", f"{b}__{p}__iso-space"]
+    s = suite.Suite(args(tmp_path, str(state)))
+    s.state = state
+    s.iso = {"ctl-a": {"ctl-a-iso": "x"}, "ctl-b": {"ctl-b-iso": "y"}}
+    for listed, one_form, apart in [(keyed, "pass", "pass"),
+                                    ([*keyed, "ctl-a-iso-iso-space"], "fail", "pass"),
+                                    (keyed[:2], "pass", "fail"),
+                                    (["default", "ctl-a-iso-iso-space", "ctl-b-iso-iso-space"], "pass", "pass")]:
+        s.rows = []
+        s.client = lambda org=None, kind="portal", listed=listed: type(
+            "H", (), {"json": staticmethod(lambda m, path, headers=None: (200, listed))})()
+        s.same_tenants(["ctl-a", "ctl-b"])
+        got = {r["id"]: r["result"] for r in s.rows}
+        assert (got["same.tenants.one-form"], got["same.tenants.apart"]) == (one_form, apart), listed
 
 
 def test_a_refusal_that_names_the_owners_objects_fails_its_isolation_row(tmp_path):
@@ -792,7 +816,8 @@ class SameNameJc:
     def install(self, s):
         s.iso = {o: {p: f"s-{p}" for p in ps} for o, ps in self.PROJECTS.items()}
         s.exp = {o: {"projects": {p: EMPTY for p in ps}} for o, ps in self.PROJECTS.items()}
-        s.state = Path("state")
+        s.state = Path(tempfile.mkdtemp())
+        (s.state / "antares-admin-token").write_text("admin")
         jc = self
 
         def exchange(key, slug):
@@ -802,6 +827,8 @@ class SameNameJc:
 
         class Api:
             def json(self, method, path, headers=None):
+                if path == "/broker/q/tenants" and headers["Authorization"] == "Bearer admin":
+                    return 200, ["default", *(f"{p}-iso-space" for ps in jc.PROJECTS.values() for p in ps)]
                 slug = path.split("/")[3]
                 if headers["Authorization"] != f"Bearer tok|{slug}":
                     return 401, {"detail": "token is not bound to this resource"}

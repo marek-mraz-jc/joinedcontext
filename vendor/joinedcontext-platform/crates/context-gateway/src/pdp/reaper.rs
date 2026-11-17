@@ -197,6 +197,12 @@ impl Reaper {
         {
             all.extend(more);
         }
+        // A project key published by the Portal's registry renames a tenant (ARCH/TEN-10).
+        all.push((
+            PathBuf::from("<project keys>"),
+            store::PROJECT_KEYS_GENERATION.load(std::sync::atomic::Ordering::SeqCst),
+            None,
+        ));
         Some(all)
     }
 

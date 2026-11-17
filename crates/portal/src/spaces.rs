@@ -45,6 +45,45 @@ pub fn segment(mirror: &Mirror, project: &str, name: &str) -> String {
     )
 }
 
+/// The broker tenant of the Context Space `name` of `project` (PF-130, ARCH/TEN-10): the one the
+/// gateway pins, through `context_gateway::store::tenant_name` (`JC_TENANT_NAMES`): its
+/// [`segment`] until the broker's rename ran, `{OrgId}__{ProjectId}__{name}` after. `Err` names
+/// what is missing (a project the registry has no id for yet); a caller never falls back to the
+/// segment, which the rename tombstoned.
+pub fn tenant(mirror: &Mirror, project: &str, name: &str) -> Result<String, String> {
+    tenant_as(
+        mirror,
+        project,
+        name,
+        context_gateway::store::TenantNames::from_env(),
+    )
+}
+
+fn tenant_as(
+    mirror: &Mirror,
+    project: &str,
+    name: &str,
+    names: context_gateway::store::TenantNames,
+) -> Result<String, String> {
+    context_gateway::store::tenant_name(project, name, || segment(mirror, project, name), names)
+        .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
+}
+
+/// [`tenant`] of a space read from a manifest repository (the reconciler's view of the files).
+pub fn repo_tenant(
+    repo: &jcctl::loader::Repository,
+    project: &str,
+    name: &str,
+) -> Result<String, String> {
+    context_gateway::store::tenant_name(
+        project,
+        name,
+        || repo.space_segment(project, name),
+        context_gateway::store::TenantNames::from_env(),
+    )
+    .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
+}
+
 /// The broker the Context Space `name` of `project` lives on (PF-111): its `brokerRef`, else the
 /// organization's default, else the implicit `main`. Empty when its `brokerRef` names no
 /// `ContextBroker`: such a space is never served from another broker.
@@ -259,6 +298,30 @@ mod tests {
                 }),
             ),
         ]
+    }
+
+    #[test]
+    fn a_space_tenant_is_its_segment_or_its_project_key_name_never_a_fallback() {
+        use context_gateway::store::{publish_project_keys, TenantNames};
+        let state = world(Vec::new());
+        assert_eq!(
+            tenant_as(&state.mirror, "ovzdusie", "mhd", TenantNames::Segment).as_deref(),
+            Ok("ovzdusie-mhd")
+        );
+        let missing = tenant_as(&state.mirror, "ovzdusie", "mhd", TenantNames::ProjectKey)
+            .expect_err("a project without a key has no tenant, not its segment");
+        assert!(missing.contains("ovzdusie/mhd"), "{missing}");
+        // The fixture's first minted case (crates/shared/jc-types/fixtures/tenant_names.json).
+        let key = jc_types::ProjectKey::new(
+            jc_types::OrgId::parse_verified("0f6a2c1e-8d43-4b7a-9e21-5c3d7f9a1b20").expect("org"),
+            jc_types::ProjectId::parse_verified("7b1e9d42-3c5f-4a86-b0d7-2e8f6a4c9135")
+                .expect("project"),
+        );
+        publish_project_keys([("ovzdusie".to_owned(), key)].into());
+        assert_eq!(
+            tenant_as(&state.mirror, "ovzdusie", "mhd", TenantNames::ProjectKey).as_deref(),
+            Ok("apniwb5dkdjn5j4ik4hv7zugza__d3d2ouepc7jkdlbvzor5vezejv__mhd")
+        );
     }
 
     #[test]

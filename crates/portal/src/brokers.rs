@@ -122,7 +122,8 @@ pub async fn check_move(
     if next == now {
         return Ok(());
     }
-    let tenant = crate::spaces::segment(&state.mirror, project, name);
+    let tenant =
+        crate::spaces::tenant(&state.mirror, project, name).map_err(ApiError::Unavailable)?;
     // a fresh count: a kept zero up to hours old must not let entities stay behind
     match state.space_usage.measure_now(&now, &tenant).await {
         Ok(usage) if usage.entities == 0 => Ok(()),

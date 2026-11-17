@@ -1971,6 +1971,15 @@ def _chunks(items, limit=MAX_BATCH_BYTES, count=MAX_BATCH_ENTITIES):
         yield batch
 
 
+def _tenant_map(export: Path) -> dict:
+    """antares/tenant-map.json of the export, {segment: Tenant}: the `map` member
+    crates/antares/dev/tenant-rename-map.py writes for an installation whose broker runs
+    JC_TENANT_NAMES=project-key (T-7038), so the import writes each space's rows into the Tenant
+    the gateway pins. Absent: every Tenant keeps the export's name (`segment`)."""
+    path = export / "antares" / "tenant-map.json"
+    return json.loads(path.read_text()).get("map", {}) if path.exists() else {}
+
+
 def _tenant_batches(lines):
     """(tenant, batch) from a stream of {tenant, entity} lines; the file need not be sorted."""
     def runs():
@@ -2097,8 +2106,9 @@ def import_antares(h: Http, export: Path, cutoff: dt.datetime, report: dict, adm
             for line in _jsonl(export / "antares" / "entities.jsonl"):
                 out["exportEntities"] += 1
                 yield line
-        for job in _tenant_batches(lines()):
-            pending.add(pool.submit(upsert, job))
+        renamed = _tenant_map(export)
+        for tenant, batch in _tenant_batches(lines()):
+            pending.add(pool.submit(upsert, (renamed.get(tenant, tenant), batch)))
             if len(pending) >= IMPORT_WORKERS * 2:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for f in done:

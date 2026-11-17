@@ -344,13 +344,19 @@ impl Sources {
             match id.kind.as_str() {
                 "ContextSpace" => {
                     let parsed = serde_json::from_value::<ContextSpaceSpec>(spec.clone()).ok();
-                    let tenant = repo.space_segment(&project, &id.name);
+                    let tenant = match crate::spaces::repo_tenant(repo, &project, &id.name) {
+                        Ok(tenant) => tenant,
+                        Err(reason) => {
+                            tracing::warn!(%reason, "the space's views wait for its tenant");
+                            continue;
+                        }
+                    };
                     let named = declared.iter().map(|(name, spec)| (name.as_str(), spec));
                     let broker_ref = parsed.as_ref().and_then(|spec| spec.broker_ref.as_deref());
                     let broker = jc_core::kinds::broker_of(broker_ref, named)
                         .map(str::to_owned)
                         .unwrap_or_default();
-                    sources.brokers.insert(tenant, broker);
+                    sources.brokers.insert(tenant.clone(), broker);
                     let model = parsed.as_ref().and_then(|spec| spec.data_model_ref.clone());
                     if let Some(spec) = parsed {
                         if spec.quality.iter().any(quarantines) {
@@ -371,12 +377,17 @@ impl Sources {
                             model_source(repo, &project, model.name()),
                         );
                     }
-                    let tenant = repo.space_segment(&project, &id.name);
                     sources.spaces.push((project, id.name.clone(), tenant));
                 }
                 "Endpoint" => {
                     if let Ok(spec) = serde_json::from_value::<EndpointSpec>(spec.clone()) {
-                        let tenant = repo.space_segment(&project, spec.context_space_ref.name());
+                        let Ok(tenant) = crate::spaces::repo_tenant(
+                            repo,
+                            &project,
+                            spec.context_space_ref.name(),
+                        ) else {
+                            continue;
+                        };
                         sources.endpoints.push(EndpointSource {
                             project,
                             name: id.name.clone(),

@@ -43,8 +43,21 @@ def _fixture_key():
 
 
 def tenant_of(run: str) -> str:
-    """One tenant per run, so each run's count starts at zero (Antares refuses a long name)."""
-    return "bench-" + hashlib.sha256(run.encode()).hexdigest()[:12]
+    """One tenant per run, so each run's count starts at zero: `bench-{sha12}`, or with
+    JC_BENCH_PROJECT_KEY=`{organization uuid}/{project uuid}` (a broker that refuses a Tenant
+    outside the platform grammar, ANTARES_TENANT_ORGANIZATION=enforce) that label under the
+    project's key, `{OrgId}__{ProjectId}__bench-{sha12}` (ARCH/TEN-10, T-7038)."""
+    label = "bench-" + hashlib.sha256(run.encode()).hexdigest()[:12]
+    key = os.environ.get("JC_BENCH_PROJECT_KEY", "").strip()
+    if not key:
+        return label
+    org, sep, project = key.partition("/")
+    if not sep:
+        raise SystemExit("JC_BENCH_PROJECT_KEY must be {organization uuid}/{project uuid}")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "endpoints"))
+    from export import tenant_name
+
+    return tenant_name(org, project, label)
 
 
 def entities_in(route: str, body: bytes) -> int | None:

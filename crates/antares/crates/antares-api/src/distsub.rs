@@ -876,14 +876,22 @@ async fn split_merge(
 /// notifications from forwarded subscription copies. 5.8.1.4: "the mapping
 /// of the received subscriptionId with the own Subscription identifier …
 /// to enable forwarding received notifications to the original subscriber."
-pub async fn remote_notify(State(st): State<AppState>, body: Bytes) -> Response {
-    match remote_notify_inner(&st, &body).await {
+pub async fn remote_notify(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    match remote_notify_inner(&st, &headers, &body).await {
         Ok(r) => r,
         Err(e) => e.into_response(),
     }
 }
 
-async fn remote_notify_inner(st: &AppState, body: &[u8]) -> ApiResult<Response> {
+async fn remote_notify_inner(
+    st: &AppState,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> ApiResult<Response> {
     let v: Value = serde_json::from_slice(body)
         .map_err(|e| NgsiError::InvalidRequest(format!("body is not valid JSON: {e}")))?;
     // Peer-facing entry point: the Entity count is capped before any store
@@ -913,6 +921,16 @@ async fn remote_notify_inner(st: &AppState, body: &[u8]) -> ApiResult<Response> 
     // read back from the broker's own inbound index, not from the request
     let tenant = TenantId::new_internal(&tenant)
         .map_err(|_| NgsiError::InternalError("stored tenant invalid".into()))?;
+    // EP-188: the Tenant is the stored one; a refused one answers as a
+    // mapping this broker does not hold, so the peer learns nothing more.
+    if crate::admin_auth::tenant_door(st, Some(tenant.as_str()), headers, true)
+        .await
+        .is_some()
+    {
+        return Err(ApiError::from(NgsiError::ResourceNotFound(format!(
+            "no distributed subscription maps {sid}"
+        ))));
+    }
     let Some(sub) = st
         .store
         .get(&tenant, Kind::Subscription, &own_id)
@@ -1842,13 +1860,19 @@ mod tests {
             })
             .to_string()
         };
-        let over = remote_notify(State(st.clone()), Bytes::from(body(cap + 1))).await;
+        let over = remote_notify(
+            State(st.clone()),
+            HeaderMap::new(),
+            Bytes::from(body(cap + 1)),
+        )
+        .await;
         assert_eq!(
             over.status(),
             StatusCode::BAD_REQUEST,
             "an over-cap notification is rejected before the mapping lookup"
         );
-        let at_cap = remote_notify(State(st.clone()), Bytes::from(body(cap))).await;
+        let at_cap =
+            remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body(cap))).await;
         assert_eq!(
             at_cap.status(),
             StatusCode::NOT_FOUND,
@@ -1868,7 +1892,7 @@ mod tests {
         inbound_put(&st, remote, &t, "urn:ngsi-ld:Subscription:gone").await;
         let body =
             json!({"type": "Notification", "subscriptionId": remote, "data": []}).to_string();
-        let resp = remote_notify(State(st.clone()), Bytes::from(body)).await;
+        let resp = remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body)).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
             inbound_get(&st, remote).await.is_none(),
@@ -1997,7 +2021,7 @@ mod tests {
             }],
         })
         .to_string();
-        let resp = remote_notify(State(st.clone()), Bytes::from(body)).await;
+        let resp = remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body)).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let mut delivered = None;
