@@ -195,6 +195,60 @@ pub fn holds_at_organization(
             })
 }
 
+/// The rights in a branch (TEN-12, ADM-04): no grant is inherited, its creator and the parent's
+/// approvers (people) get their grants of the whole parent and no more; a grant bound to one of
+/// the parent's spaces names a space the branch does not hold, so it is left out. An expired
+/// branch, or a branch this Portal does not know, gives nobody anything.
+fn branch_effective(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    project: &str,
+    now: DateTime<Utc>,
+) -> Effective {
+    let mut effective = Effective {
+        project: project.to_owned(),
+        bootstrap: false,
+        grants: Vec::new(),
+        projects: None,
+    };
+    let crate::project_ids::BranchState::Live(branch) = crate::project_ids::branch_state(project)
+    else {
+        return effective;
+    };
+    let parent = effective_of_parent(mirror, bootstrap_group, identity, &branch.parent, now);
+    let creator = identity.subject == branch.created_by;
+    let approver = identity.client.is_none() && parent.may_anything(Verb::Approve);
+    if parent.bootstrap || creator || approver {
+        effective.bootstrap = parent.bootstrap;
+        effective.grants = parent
+            .grants
+            .into_iter()
+            .filter(|grant| grant.space.is_none() && grant.organization.is_none())
+            .collect();
+    }
+    effective
+}
+
+/// [`effective`] of a branch's parent, which is never itself a branch (the door refuses one).
+fn effective_of_parent(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    parent: &str,
+    now: DateTime<Utc>,
+) -> Effective {
+    if jc_router::branch_name(parent) {
+        return Effective {
+            project: parent.to_owned(),
+            bootstrap: false,
+            grants: Vec::new(),
+            projects: None,
+        };
+    }
+    effective(mirror, bootstrap_group, identity, parent, now)
+}
+
 /// Reads every `Role` and `RoleBinding` of the mirror and keeps the rules whose binding names
 /// the caller, covers the project and is in force at `now`.
 pub fn effective(
@@ -204,6 +258,9 @@ pub fn effective(
     project: &str,
     now: DateTime<Utc>,
 ) -> Effective {
+    if jc_router::branch_name(project) {
+        return branch_effective(mirror, bootstrap_group, identity, project, now);
+    }
     // On an Organization's own Portal host (`organization_host`) only its projects exist, for
     // everyone, the bootstrap group included: another Organization's project reads as absent.
     let pin = crate::organization_host::organization();

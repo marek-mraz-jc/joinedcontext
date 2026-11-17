@@ -315,14 +315,14 @@ pub async fn open_branch(
     per_parent: u32,
 ) -> Result<Option<BranchRow>, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let organization: Option<(String,)> = sqlx::query_as(
-        "SELECT organization FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
+    let organization: Option<(String, String)> = sqlx::query_as(
+        "SELECT organization, name FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
          AND NOT reserved AND organization IS NOT NULL FOR UPDATE",
     )
     .bind(parent.project.to_string())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((organization,)) = organization else {
+    let Some((organization, parent_name)) = organization else {
         return Ok(None);
     };
     let (live,): (i64,) = sqlx::query_as(
@@ -357,6 +357,14 @@ pub async fn open_branch(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
+    note_branch(
+        &name,
+        BranchEntry {
+            parent: parent_name,
+            created_by: created_by.to_owned(),
+            expires_at,
+        },
+    );
     Ok(Some(BranchRow {
         id,
         name,
@@ -412,7 +420,189 @@ pub async fn renew_branch(
     .bind(renewed_by)
     .fetch_optional(pool)
     .await?;
-    Ok(renewed.map(|(expires_at,)| expires_at))
+    let expires_at = renewed.map(|(expires_at,)| expires_at);
+    if let Some(expires_at) = expires_at {
+        let name = format!("b-{}", id.path_segment());
+        if let Some(entry) = branch_entry(&name) {
+            note_branch(
+                &name,
+                BranchEntry {
+                    expires_at,
+                    ..entry
+                },
+            );
+        }
+    }
+    Ok(expires_at)
+}
+
+/// A branch as the Portal's rights and mirror read it (TEN-12, CHG-15): its parent's name, who
+/// opened it (a token's `sub`) and when it stops answering, in Unix seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchEntry {
+    pub parent: String,
+    pub created_by: String,
+    pub expires_at: i64,
+}
+
+/// What this Portal knows of a `b-{id}` name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchState {
+    /// The branch table has not loaded yet (a Portal without a database, or before startup
+    /// read it): nothing is decided by it.
+    Unread,
+    Live(BranchEntry),
+    /// Expired, or no branch of the registry: it answers like an unknown project.
+    Gone,
+}
+
+/// Every branch of the registry by name, read at startup and every [`BRANCH_WATCH`] after, and
+/// written at once by [`open_branch`] and [`renew_branch`]: the permissions and the mirror are
+/// synchronous, so they read this table rather than the database.
+static BRANCHES: std::sync::RwLock<Option<HashMap<String, BranchEntry>>> =
+    std::sync::RwLock::new(None);
+
+/// How often the branch table is read again and expired branches swept.
+pub const BRANCH_WATCH: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn note_branch(name: &str, entry: BranchEntry) {
+    let mut table = BRANCHES.write().unwrap_or_else(|p| p.into_inner());
+    table
+        .get_or_insert_with(HashMap::new)
+        .insert(name.to_owned(), entry);
+}
+
+fn branch_entry(name: &str) -> Option<BranchEntry> {
+    BRANCHES
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(|table| table.get(name).cloned())
+}
+
+/// The state of the branch `name` now.
+pub fn branch_state(name: &str) -> BranchState {
+    let table = BRANCHES.read().unwrap_or_else(|p| p.into_inner());
+    let Some(table) = table.as_ref() else {
+        return BranchState::Unread;
+    };
+    match table.get(name) {
+        Some(entry) if entry.expires_at > crate::auth::session::now_unix() => {
+            BranchState::Live(entry.clone())
+        }
+        _ => BranchState::Gone,
+    }
+}
+
+/// Reads every branch of the registry into the table.
+pub async fn read_branches(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT p.name, parent.name, b.created_by, extract(epoch FROM b.expires_at)::bigint \
+         FROM project_branches b JOIN project_ids p ON p.id = b.id \
+         JOIN project_ids parent ON parent.id = p.parent",
+    )
+    .fetch_all(pool)
+    .await?;
+    let table = rows
+        .into_iter()
+        .map(|(name, parent, created_by, expires_at)| {
+            (
+                name,
+                BranchEntry {
+                    parent,
+                    created_by,
+                    expires_at,
+                },
+            )
+        })
+        .collect();
+    *BRANCHES.write().unwrap_or_else(|p| p.into_inner()) = Some(table);
+    Ok(())
+}
+
+/// The expiry job (CHG-15): every branch expired more than an hour ago and not swept yet loses
+/// (the reconciler's runs in that hour revoke its clients first: an expired branch's manifests
+/// leave the mirror at once, so their clients are removed and their tokens ended)
+/// its rows in each Portal table of a project's data, under its own key, and is marked swept;
+/// its `project_ids` and `project_branches` rows stay as the tombstone. A table whose rows
+/// refuse deletion (an append-only audit) keeps them. Returns the branches swept.
+pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    let due: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT p.name, o.key::text, p.id::text FROM project_branches b \
+         JOIN project_ids p ON p.id = b.id JOIN organizations o ON o.name = p.organization \
+         WHERE b.swept_at IS NULL AND b.expires_at < now() - interval '1 hour'",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut swept = Vec::new();
+    for (name, org, project) in due {
+        let Some(key) = parsed(&org, &project) else {
+            continue;
+        };
+        for table in crate::org_backup::data::PORTAL_TABLES {
+            if table.keys != "projects" {
+                continue;
+            }
+            let mut tx = crate::db::tenant_tx(pool, key).await?;
+            let column = key_column(table.name);
+            let statement = format!("DELETE FROM {} WHERE {column} = $1", table.name);
+            // The table name is one of PORTAL_TABLES, a constant; the branch name is bound.
+            match sqlx::query(sqlx::AssertSqlSafe(statement)).bind(&name).execute(&mut *tx).await {
+                Ok(_) => tx.commit().await?,
+                Err(err) => {
+                    tracing::info!(branch = %name, table = table.name, error = %err, "a branch's rows are kept");
+                    tx.rollback().await?;
+                }
+            }
+        }
+        sqlx::query("UPDATE project_branches SET swept_at = now() WHERE id = $1::uuid")
+            .bind(&project)
+            .execute(pool)
+            .await?;
+        tracing::info!(branch = %name, "an expired branch's data was deleted; its id stays a tombstone");
+        swept.push(name);
+    }
+    Ok(swept)
+}
+
+/// Reads the branch table once, then keeps it fresh and sweeps expired branches every
+/// [`BRANCH_WATCH`] in the background.
+pub async fn watch_branches(pool: PgPool) {
+    if let Err(err) = read_branches(&pool).await {
+        tracing::warn!(error = %err, "the branch table could not be read; branches wait for the next read");
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(BRANCH_WATCH);
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if let Err(err) = read_branches(&pool).await {
+                tracing::warn!(error = %err, "the branch table could not be read");
+            }
+            if let Err(err) = sweep_expired_branches(&pool).await {
+                tracing::warn!(error = %err, "expired branches could not be swept");
+            }
+        }
+    });
+}
+
+/// Whether `env`, a manifest of a branch, would reach beyond its Organization or the public
+/// (TEN-12): a public Endpoint, an Endpoint with a catalogue record, a shared space, a context
+/// source registration or a data space object. A branch renders none of them; turning one on is
+/// a new approval in the parent.
+pub fn shares_beyond_branch(env: &crate::resource::ResourceEnvelope) -> bool {
+    match env.kind.as_str() {
+        "SharedSpaceReference"
+        | "ContextSourceRegistration"
+        | "DataSpaceParticipant"
+        | "DataOffer"
+        | "DataAgreement" => true,
+        "Endpoint" => {
+            env.spec.get("audience").and_then(serde_json::Value::as_str) == Some("public")
+                || env.spec.get("catalog").is_some_and(|c| !c.is_null())
+        }
+        _ => false,
+    }
 }
 
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: it
