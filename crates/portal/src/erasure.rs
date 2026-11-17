@@ -661,7 +661,7 @@ pub async fn decline(
 
 /// The erasures matching `filter` in every project, oldest first: one `db::tenant_tx` per key
 /// the registry recorded (STO-07), a project that left the mirror included, so its erasure still
-/// finishes (T-7202). Every row has a key since the forcing migration 0079 (T-7201).
+/// finishes (T-7202). Every row has a key since the forcing migration 0080 (T-7201).
 async fn every_project(pool: &PgPool, filter: &str) -> Result<Vec<Erasure>, sqlx::Error> {
     let mut found = Vec::new();
     // `filter` is one of this file's constants, never input.

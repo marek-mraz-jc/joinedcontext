@@ -331,11 +331,15 @@ pub(crate) fn chrono_to_odt(dt: DateTime<Utc>) -> time::OffsetDateTime {
 pub enum ActivityError {
     #[error("database error: {0}")]
     Db(String),
+    /// Projects with no tenancy key (T-7201): their Organization is not an active one of the
+    /// registry, so their events were not kept; the other projects' events were.
+    #[error("the projects {0} belong to no active Organization of this installation's registry, so they keep no activity; an operator adds their Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 enum Inner {
-    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7205 PK-1g), unkeyed
-    /// while the project has none (phase one).
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7205 PK-1g); a project
+    /// without one holds no event (0080 forces the key, T-7201).
     Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     /// `(id, event)`, newest last. One process, no durability: what a Portal without a database
     /// shows is what happened since it started.
@@ -369,10 +373,11 @@ impl ActivityStore {
 
     /// Records events that have already been validated, and hands each to the live tail. One
     /// malformed record must not cost the other four hundred, so the caller rejects those on
-    /// their own before calling this. A project with no tenancy key yet (its Organization is not
-    /// an active one of the registry) keeps its events unkeyed until the backfill keys them.
+    /// their own before calling this. A project with no tenancy key (its Organization is not an
+    /// active one of the registry) keeps no event: the others are stored and the answer names it.
     pub async fn append(&self, events: &[ActivityEvent]) -> Result<(), ActivityError> {
         let mut stored: Vec<&ActivityEvent> = Vec::with_capacity(events.len());
+        let mut unplaced: Vec<&str> = Vec::new();
         match &*self.inner {
             Inner::Memory(rows) => {
                 let mut w = rows.write().await;
@@ -391,9 +396,13 @@ impl ActivityStore {
                 projects.sort_unstable();
                 projects.dedup();
                 for project in projects {
-                    let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project)
+                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project)
                         .await
-                        .map_err(db)?;
+                        .map_err(db)?
+                    else {
+                        unplaced.push(project);
+                        continue;
+                    };
                     let part: Vec<&ActivityEvent> =
                         events.iter().filter(|e| e.project == project).collect();
                     for event in &part {
@@ -424,6 +433,9 @@ impl ActivityStore {
                 hub.publish(event).await;
             }
         }
+        if !unplaced.is_empty() {
+            return Err(ActivityError::Unplaced(unplaced.join(", ")));
+        }
         Ok(())
     }
 
@@ -453,9 +465,12 @@ impl ActivityStore {
             }
             Inner::Db(pool, mirror) => {
                 let db = |err: sqlx::Error| ActivityError::Db(err.to_string());
-                let mut tx = crate::project_ids::tx_or_unkeyed(pool, mirror, project)
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project)
                     .await
-                    .map_err(db)?;
+                    .map_err(db)?
+                else {
+                    return Ok(Self::page_of(Vec::new(), limit));
+                };
                 let page = Self::list_db(&mut tx, project, filter, limit).await?;
                 tx.commit().await.map_err(db)?;
                 Ok(page)
@@ -642,26 +657,6 @@ impl ActivityStore {
                         if deleted < TRIM_BATCH as u64 {
                             break;
                         }
-                    }
-                }
-                // The events of a project with no key yet, kept unkeyed in phase one.
-                loop {
-                    let deleted = sqlx::query(
-                        "DELETE FROM activity WHERE ctid IN \
-                         (SELECT ctid FROM activity WHERE project_id IS NULL AND time < $1 LIMIT $2)",
-                    )
-                    .bind(chrono_to_odt(floor))
-                    .bind(TRIM_BATCH)
-                    .execute(pool)
-                    .await
-                    .map_err(db)?
-                    .rows_affected();
-                    if deleted > 0 {
-                        done.rows += deleted;
-                        done.batches += 1;
-                    }
-                    if deleted < TRIM_BATCH as u64 {
-                        break;
                     }
                 }
                 Ok(done)

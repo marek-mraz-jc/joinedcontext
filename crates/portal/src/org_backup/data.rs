@@ -649,6 +649,15 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     ),
     ("user_preferences", "a person's own settings"),
     (
+        "project_branches",
+        "a branch lives at most 30 days and its id stays a tombstone (CHG-15): a restore never \
+         revives one",
+    ),
+    (
+        "project_branch_renewals",
+        "the renewal audit of branches, which a restore never revives (CHG-15)",
+    ),
+    (
         "revocations",
         "sign-in revocations of people, installation-wide",
     ),
