@@ -169,6 +169,8 @@ DECLARE
   total bigint;
   tok text := '%"' || p_old || '"%';
   super boolean;
+  deadline timestamptz;
+  tbls text;
 BEGIN
   PERFORM tenant_rename_guard(p_old, p_new);
   PERFORM set_config('lock_timeout', '30s', true);
@@ -183,9 +185,26 @@ BEGIN
   IF super THEN
     PERFORM set_config('session_replication_role', 'replica', true);
   END IF;
-  -- writers wait until the transaction ends; readers go on
-  FOR t IN SELECT tbl FROM tenant_tables() UNION SELECT 'tenants' UNION SELECT 'jsonld_contexts' LOOP
-    EXECUTE format('LOCK TABLE %I IN EXCLUSIVE MODE', t);
+  -- writers wait until the transaction ends; readers go on. All tables in
+  -- one NOWAIT statement inside a subtransaction: an attempt that meets a
+  -- writer releases what it took, so the rename never holds part of the set
+  -- while it waits for the rest (a writer locking entities, then the
+  -- catalogue, deadlocked a table-by-table loop).
+  SELECT string_agg(format('%I', s.tbl), ', ') INTO tbls
+    FROM (SELECT tbl FROM tenant_tables() UNION SELECT 'tenants' UNION SELECT 'jsonld_contexts') s;
+  deadline := clock_timestamp() + interval '30 seconds';
+  LOOP
+    BEGIN
+      EXECUTE format('LOCK TABLE %s IN EXCLUSIVE MODE NOWAIT', tbls);
+      EXIT;
+    EXCEPTION WHEN lock_not_available THEN
+      IF clock_timestamp() > deadline THEN
+        RAISE EXCEPTION 'writers held the tables of Tenant % for 30 s', p_old
+          USING ERRCODE = 'lock_not_available',
+                HINT = 'run the rename again in a quieter window, or stop the brokers first';
+      END IF;
+      PERFORM pg_sleep(0.02 + random() * 0.08);
+    END;
   END LOOP;
 
   FOR t IN SELECT tbl FROM tenant_tables() LOOP
