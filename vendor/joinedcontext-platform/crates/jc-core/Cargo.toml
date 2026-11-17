@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 # The tenancy key and the one internal-name builder (ARCH/TEN-10): a broker tenant is
 # `internal_name(OrgId, ProjectId, space)` (T-7038).
-jc-types = { path = "../../../../crates/shared/jc-types" }
+jc-types = { version = "0.1.0", path = "../../../../crates/shared/jc-types" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 serde_norway = "0.9"
