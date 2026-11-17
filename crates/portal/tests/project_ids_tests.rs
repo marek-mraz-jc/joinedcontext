@@ -741,64 +741,9 @@ const ALERTS_HEALTH_ROWS: &[(&str, &str)] = &[
 #[tokio::test]
 async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key() {
     use joinedcontext_portal::alerts::{Delivery, Event, Scope};
-    let pool = pool().await;
-    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
-    let org = organization(&pool, "ahorg").await;
-    let placed = run_name("ahplaced");
-    let orphan = run_name("ahorphan");
-    for (project, organization) in [(&placed, org.clone()), (&orphan, run_name("ahnoorg"))] {
-        state.mirror.upsert(envelope(
-            "Project",
-            project,
-            joinedcontext_portal::permissions::ORG_NAMESPACE,
-            json!({ "organizationRef": organization }),
-        ));
-    }
-    for project in [&placed, &orphan] {
-        for (table, insert) in ALERTS_HEALTH_ROWS {
-            sqlx::query(*insert)
-                .bind(project)
-                .execute(&pool)
-                .await
-                .unwrap_or_else(|err| panic!("{table}: {err}"));
-        }
-    }
-    for (table, _) in ALERTS_HEALTH_ROWS {
-        assert!(
-            project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is backfilled"
-        );
-    }
-
-    let waiting = project_ids::backfill(&pool, &state.mirror)
-        .await
-        .expect("backfill");
-    assert!(waiting.contains(&orphan), "{waiting:?}");
-    assert!(!waiting.contains(&placed), "{waiting:?}");
-    let key = project_ids::key_of(&pool, &state.mirror, &placed)
-        .await
-        .expect("key")
-        .expect("a placed project has a key");
-    for (table, _) in ALERTS_HEALTH_ROWS {
-        let keyed: Vec<(String, Option<String>, Option<String>)> =
-            sqlx::query_as(sqlx::AssertSqlSafe(format!(
-                "SELECT project, org_id::text, project_id::text FROM {table} WHERE project = ANY($1)"
-            )))
-            .bind([placed.clone(), orphan.clone()])
-            .fetch_all(&pool)
-            .await
-            .expect("rows");
-        assert_eq!(keyed.len(), 2, "{table}: {keyed:?}");
-        for (project, org_id, project_id) in keyed {
-            let expected = if project == placed {
-                (Some(key.org.to_string()), Some(key.project.to_string()))
-            } else {
-                (None, None)
-            };
-            assert_eq!((org_id, project_id), expected, "{table} {project}");
-        }
-    }
-
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(ALERTS_HEALTH_ROWS, "ah").await;
+    let pool = state.db.clone().expect("a database");
     // The stores write in the key, and keep nothing for a project without one.
     let made = state
         .alerts
@@ -842,13 +787,83 @@ async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key(
         "{theirs:?}"
     );
     assert!(state.alerts.remove("eeva", made.id).await.expect("remove"));
+}
+
+/// Rows of `rows` (table, insert binding `$1` to the project) for a placed and an unplaced
+/// project of this run: the backfill keys the placed one's and names the other as waiting, and
+/// under the policy the forcing migration turns on (rolled back here) each table reads the placed
+/// project's row under its key only. Answers the state, the two projects and the key.
+async fn rows_keyed_and_read_only_under_their_key(
+    rows: &'static [(&'static str, &'static str)],
+    test: &str,
+) -> (AppState, String, String, jc_types::ProjectKey) {
+    let pool = pool().await;
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    let org = organization(&pool, &format!("{test}org")).await;
+    let placed = run_name(&format!("{test}placed"));
+    let orphan = run_name(&format!("{test}orphan"));
+    for (project, organization) in [
+        (&placed, org.clone()),
+        (&orphan, run_name(&format!("{test}noorg"))),
+    ] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    for project in [&placed, &orphan] {
+        for (table, insert) in rows {
+            sqlx::query(*insert)
+                .bind(project)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|err| panic!("{table}: {err}"));
+        }
+    }
+    for (table, _) in rows {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+
+    let waiting = project_ids::backfill(&pool, &state.mirror)
+        .await
+        .expect("backfill");
+    assert!(waiting.contains(&orphan), "{waiting:?}");
+    assert!(!waiting.contains(&placed), "{waiting:?}");
+    let key = project_ids::key_of(&pool, &state.mirror, &placed)
+        .await
+        .expect("key")
+        .expect("a placed project has a key");
+    for (table, _) in rows {
+        let keyed: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT project, org_id::text, project_id::text FROM {table} WHERE project = ANY($1)"
+            )))
+            .bind([placed.clone(), orphan.clone()])
+            .fetch_all(&pool)
+            .await
+            .expect("rows");
+        assert_eq!(keyed.len(), 2, "{table}: {keyed:?}");
+        for (project, org_id, project_id) in keyed {
+            let expected = if project == placed {
+                (Some(key.org.to_string()), Some(key.project.to_string()))
+            } else {
+                (None, None)
+            };
+            assert_eq!((org_id, project_id), expected, "{table} {project}");
+        }
+    }
 
     // What the forcing migration turns on, rolled back here: the key alone decides what is read.
     let other = project_ids::reserved(&pool, &org)
         .await
         .expect("reserved")
         .expect("a key");
-    let tables: Vec<&str> = ALERTS_HEALTH_ROWS.iter().map(|(t, _)| *t).collect();
+    let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
@@ -893,4 +908,103 @@ async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key(
             tx.rollback().await.expect("rollback");
         }
     }
+    (state, placed, orphan, key)
+}
+
+/// A row of each table T-7200 keys for `project`, written as before the key. `$1` is the project.
+const PROJECT_ROWS_0071: &[(&str, &str)] = &[
+    (
+        "app_service_usage",
+        "INSERT INTO app_service_usage (project, app, service, subject, day, used) \
+         VALUES ($1, 'road-defects', 'email', '', current_date, 1)",
+    ),
+    (
+        "email_unsubscribes",
+        "INSERT INTO email_unsubscribes (project, app, subject) VALUES ($1, 'road-defects', 'sub-anna')",
+    ),
+    (
+        "mqtt_capture",
+        "INSERT INTO mqtt_capture (project, broker, topic, received_at, expires_at, bytes, payload) \
+         VALUES ($1, 'cams', 'cams/1', now(), now() + interval '1 hour', 1, '\\x00')",
+    ),
+    (
+        "entity_trash",
+        "INSERT INTO entity_trash (project, space, owner, urn, type, entity) \
+         VALUES ($1, 'air', 'f:1:anna', 'urn:ngsi-ld:T:x:1', 'T', '{}')",
+    ),
+    (
+        "entity_comments",
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ($1, 'air', 'urn:ngsi-ld:T:x:1', 'anna', 'Anna', 'Looks off')",
+    ),
+    (
+        "data_views",
+        "INSERT INTO data_views (id, project, space, entity_type, kind, mode, title, owner_subject, owner_name, config) \
+         VALUES ('dv-' || md5($1), $1, 'air', 'T', 'table', 'personal', 'Mine', 'sub-anna', 'Anna', '{}')",
+    ),
+];
+
+/// T-7200 PK-1h: the App service counters, unsubscribes, MQTT capture, trash, comments and data
+/// views of today are keyed by the backfill and read only under their key; the stores write new
+/// rows in the key and keep none for a project without one.
+#[tokio::test]
+async fn app_capture_trash_comment_and_view_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PROJECT_ROWS_0071, "pr").await;
+    let pool = state.db.clone().expect("a database");
+    for (table, _) in PROJECT_ROWS_0071 {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+    let entity = json!({ "id": "urn:ngsi-ld:T:x:2", "type": "T" });
+    let kept = state
+        .trash
+        .keep(
+            (&placed, "air", "f:1:sami"),
+            "urn:ngsi-ld:T:x:2",
+            "T",
+            &entity,
+        )
+        .await
+        .expect("keep")
+        .expect("a placed project keeps its trash");
+    let stamped: (Option<String>,) =
+        sqlx::query_as("SELECT project_id::text FROM entity_trash WHERE id = $1")
+            .bind(kept.id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stamped.0, Some(key.project.to_string()));
+    assert_eq!(
+        state
+            .trash
+            .keep(
+                (&orphan, "air", "f:1:sami"),
+                "urn:ngsi-ld:T:x:2",
+                "T",
+                &entity
+            )
+            .await
+            .expect("keep"),
+        None,
+        "a project with no Organization of the registry keeps no trash"
+    );
+    assert!(state
+        .trash
+        .list((&orphan, "air", "f:1:anna"))
+        .await
+        .expect("list")
+        .is_empty());
+    assert_eq!(
+        state
+            .trash
+            .list((&placed, "air", "f:1:anna"))
+            .await
+            .expect("list")
+            .len(),
+        1,
+        "the backfilled row reads in its key"
+    );
 }

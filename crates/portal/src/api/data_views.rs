@@ -36,6 +36,7 @@ impl From<DataViewError> for ApiError {
         match err {
             DataViewError::Invalid(detail) => ApiError::BadRequest(detail),
             DataViewError::NotFound => ApiError::NotFound("no such view in this space".into()),
+            DataViewError::Unplaced(_) => ApiError::NotFound(err.to_string()),
             DataViewError::Conflict(_) | DataViewError::Limit => {
                 ApiError::Conflict(err.to_string())
             }

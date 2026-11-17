@@ -6,8 +6,8 @@
 use joinedcontext_portal::entity_trash::TrashStore;
 use serde_json::json;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 #[tokio::test]
 async fn copies_are_kept_per_keeper_newest_first_and_forgotten_by_their_keeper_only() {
@@ -21,8 +21,15 @@ async fn copies_are_kept_per_keeper_newest_first_and_forgotten_by_their_keeper_o
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = TrashStore::new(Some(pool));
+    // The project in an Organization of the registry: its trash is keyed (T-7200).
     let project = format!("trash-{}", crate::unique::unique());
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    )
+    .with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    let store: &TrashStore = &state.trash;
     let mine = (project.as_str(), "air", "f:1:sami");
     let theirs = (project.as_str(), "air", "f:1:anna");
     let entity = |n: u32| json!({ "id": format!("urn:ngsi-ld:T:x:{n}"), "type": "T" });
@@ -30,15 +37,18 @@ async fn copies_are_kept_per_keeper_newest_first_and_forgotten_by_their_keeper_o
     let first = store
         .keep(mine, "urn:ngsi-ld:T:x:1", "T", &entity(1))
         .await
-        .expect("kept");
+        .expect("kept")
+        .expect("a placed project keeps it");
     store
         .keep(mine, "urn:ngsi-ld:T:x:2", "T", &entity(2))
         .await
-        .expect("kept");
+        .expect("kept")
+        .expect("a placed project keeps it");
     store
         .keep(theirs, "urn:ngsi-ld:T:x:3", "T", &entity(3))
         .await
-        .expect("kept");
+        .expect("kept")
+        .expect("a placed project keeps it");
 
     let listed = store.list(mine).await.expect("listed");
     assert_eq!(

@@ -7,8 +7,8 @@ use joinedcontext_portal::entity_comments::{
     approvers_of, Author, CommentStore, NewComment, Notice,
 };
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 #[tokio::test]
 async fn a_comment_notifies_its_mentions_and_leaves_with_its_notifications() {
@@ -22,8 +22,15 @@ async fn a_comment_notifies_its_mentions_and_leaves_with_its_notifications() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = CommentStore::new(Some(pool));
+    // The project in an Organization of the registry: its comments are keyed (T-7200).
     let project = format!("comments-{}", crate::unique::unique());
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    )
+    .with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    let store: &CommentStore = &state.comments;
     let anna = format!("anna@{project}.example");
     let pia = format!("pia@{project}.example");
     let mentions = vec![anna.clone(), pia.clone()];
@@ -136,7 +143,7 @@ async fn a_connector_event_reaches_each_reader_of_its_audience_once() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = CommentStore::new(Some(pool));
+    let store = CommentStore::new(Some(pool), Default::default());
     let project = format!("notices-{}", crate::unique::unique());
     let audience = approvers_of(&project);
     let link = format!("/projects/{project}/approvals/cr-1");

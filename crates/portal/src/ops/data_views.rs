@@ -148,6 +148,10 @@ pub enum DataViewError {
     Limit,
     #[error("database error: {0}")]
     Db(String),
+    /// The project has no tenancy key (T-7200): its Organization is not an active one of the
+    /// registry, so it keeps no view.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no view; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// An NGSI-LD type name as the gateway accepts it.
@@ -372,7 +376,8 @@ pub fn is_id(id: &str) -> bool {
 type Key = (String, String);
 
 enum Inner {
-    Db(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7200 PK-1h).
+    Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     Memory(RwLock<BTreeMap<Key, Vec<DataView>>>),
 }
 
@@ -417,9 +422,9 @@ pub struct Owner<'a> {
 }
 
 impl DataViewStore {
-    pub fn new(pool: Option<sqlx::PgPool>) -> Self {
+    pub fn new(pool: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         let inner = match pool {
-            Some(pool) => Inner::Db(pool),
+            Some(pool) => Inner::Db(pool, mirror),
             None => Inner::Memory(RwLock::new(BTreeMap::new())),
         };
         Self {
@@ -427,7 +432,21 @@ impl DataViewStore {
         }
     }
 
-    /// Every view of one space, oldest first; who may see which is the caller's to filter.
+    /// A transaction in `project`'s key; [`DataViewError::Unplaced`] when it has none.
+    async fn tenant(
+        pool: &sqlx::PgPool,
+        mirror: &crate::store::Mirror,
+        project: &str,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, DataViewError> {
+        let key = crate::project_ids::key_of(pool, mirror, project)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| DataViewError::Unplaced(project.to_owned()))?;
+        crate::db::tenant_tx(pool, key).await.map_err(db)
+    }
+
+    /// Every view of one space, oldest first; who may see which is the caller's to filter. A
+    /// project with no tenancy key has none.
     pub async fn list(&self, project: &str, space: &str) -> Result<Vec<DataView>, DataViewError> {
         match &*self.inner {
             Inner::Memory(map) => Ok(map
@@ -436,19 +455,25 @@ impl DataViewStore {
                 .get(&(project.to_owned(), space.to_owned()))
                 .cloned()
                 .unwrap_or_default()),
-            Inner::Db(pool) => sqlx::query(concat!(
-                "SELECT ",
-                columns!(),
-                " FROM data_views WHERE project = $1 AND space = $2 ORDER BY created_at, id"
-            ))
-            .bind(project)
-            .bind(space)
-            .fetch_all(pool)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(row_to_view)
-            .collect(),
+            Inner::Db(pool, mirror) => {
+                let mut tx = match Self::tenant(pool, mirror, project).await {
+                    Ok(tx) => tx,
+                    Err(DataViewError::Unplaced(_)) => return Ok(Vec::new()),
+                    Err(err) => return Err(err),
+                };
+                let rows = sqlx::query(concat!(
+                    "SELECT ",
+                    columns!(),
+                    " FROM data_views WHERE project = $1 AND space = $2 ORDER BY created_at, id"
+                ))
+                .bind(project)
+                .bind(space)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                rows.into_iter().map(row_to_view).collect()
+            }
         }
     }
 
@@ -465,20 +490,28 @@ impl DataViewStore {
                 .get(&(project.to_owned(), space.to_owned()))
                 .and_then(|views| views.iter().find(|v| v.id == id).cloned())
                 .ok_or(DataViewError::NotFound),
-            Inner::Db(pool) => sqlx::query(concat!(
-                "SELECT ",
-                columns!(),
-                " FROM data_views WHERE project = $1 AND space = $2 AND id = $3"
-            ))
-            .bind(project)
-            .bind(space)
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db)?
-            .map(row_to_view)
-            .transpose()?
-            .ok_or(DataViewError::NotFound),
+            Inner::Db(pool, mirror) => {
+                let mut tx = match Self::tenant(pool, mirror, project).await {
+                    Ok(tx) => tx,
+                    Err(DataViewError::Unplaced(_)) => return Err(DataViewError::NotFound),
+                    Err(err) => return Err(err),
+                };
+                let row = sqlx::query(concat!(
+                    "SELECT ",
+                    columns!(),
+                    " FROM data_views WHERE project = $1 AND space = $2 AND id = $3"
+                ))
+                .bind(project)
+                .bind(space)
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                row.map(row_to_view)
+                    .transpose()?
+                    .ok_or(DataViewError::NotFound)
+            }
         }
     }
 
@@ -523,10 +556,10 @@ impl DataViewStore {
                 views.push(view.clone());
                 Ok(view)
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror) => {
                 let config = serde_json::to_value(&view.config)
                     .map_err(|e| DataViewError::Db(e.to_string()))?;
-                let mut tx = pool.begin().await.map_err(db)?;
+                let mut tx = Self::tenant(pool, mirror, project).await?;
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || '/' || $2 || '/' || $3, 0))")
                     .bind(project)
                     .bind(space)
@@ -602,9 +635,10 @@ impl DataViewStore {
                 view.updated_at = Utc::now();
                 Ok(view.clone())
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror) => {
                 let config = serde_json::to_value(&request.config)
                     .map_err(|e| DataViewError::Db(e.to_string()))?;
+                let mut tx = Self::tenant(pool, mirror, project).await?;
                 let updated = sqlx::query(concat!(
                     "UPDATE data_views SET kind = $4, mode = $5, title = $6, config = $7, version = version + 1, updated_at = $8 \
                      WHERE project = $1 AND space = $2 AND id = $3 AND ($9::bigint IS NULL OR version = $9) \
@@ -620,9 +654,10 @@ impl DataViewStore {
                 .bind(config)
                 .bind(chrono_to_odt(Utc::now()))
                 .bind(request.expected_version)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 match updated {
                     Some(row) => row_to_view(row),
                     // Not written: gone, or moved on since the caller read it.
@@ -648,16 +683,18 @@ impl DataViewStore {
                 }
                 Ok(())
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror) => {
+                let mut tx = Self::tenant(pool, mirror, project).await?;
                 let done = sqlx::query(
                     "DELETE FROM data_views WHERE project = $1 AND space = $2 AND id = $3",
                 )
                 .bind(project)
                 .bind(space)
                 .bind(id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 if done.rows_affected() == 0 {
                     return Err(DataViewError::NotFound);
                 }
@@ -826,7 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn saves_lists_updates_with_versions_and_deletes() {
-        let store = DataViewStore::new(None);
+        let store = DataViewStore::new(None, Default::default());
         let saved = store
             .create("hel", "bikes", JANA, view())
             .await
@@ -886,7 +923,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_person_keeps_at_most_the_limit_per_space() {
-        let store = DataViewStore::new(None);
+        let store = DataViewStore::new(None, Default::default());
         for _ in 0..MAX_PER_PERSON {
             store.create("hel", "bikes", JANA, view()).await.unwrap();
         }

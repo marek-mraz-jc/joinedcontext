@@ -26,6 +26,13 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "space_quality",
     "endpoint_usage_daily",
     "link_check",
+    // T-7200 PK-1h, migration 0071.
+    "app_service_usage",
+    "email_unsubscribes",
+    "mqtt_capture",
+    "entity_trash",
+    "entity_comments",
+    "data_views",
 ];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
@@ -125,6 +132,30 @@ pub async fn key_of(
         Some(organization) => key(pool, &organization, project).await,
         None => Ok(None),
     }
+}
+
+/// The key of `project` for a write of `what` (T-7200): a project whose Organization is not an
+/// active one of the registry keeps none, which the caller answers as 404 naming the
+/// Organizations page; a database that does not answer is 503.
+pub(crate) async fn required(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+    what: &str,
+) -> Result<ProjectKey, crate::error::ApiError> {
+    key_of(pool, mirror, project)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = %err, %project, "the project key could not be read");
+            crate::error::ApiError::Unavailable(format!("the {what} could not be read or written"))
+        })?
+        .ok_or_else(|| {
+            crate::error::ApiError::NotFound(format!(
+                "the project {project} belongs to no active Organization of this installation's \
+                 registry, so it keeps no {what}; an operator adds its Organization on the \
+                 Organizations page first"
+            ))
+        })
 }
 
 /// Every Project of the mirror with its key, by name: what a read over every project fans out

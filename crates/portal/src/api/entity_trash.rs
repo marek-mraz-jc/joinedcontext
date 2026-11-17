@@ -156,7 +156,14 @@ pub async fn keep(
             &request.entity,
         )
         .await
-        .map_err(stored)?;
+        .map_err(stored)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the project {project} belongs to no active Organization of this installation's \
+                 registry, so it keeps no trash; an operator adds its Organization on the \
+                 Organizations page first"
+            ))
+        })?;
     Ok((StatusCode::CREATED, Json(item)))
 }
 

@@ -180,7 +180,8 @@ fn at(millis: i64) -> DateTime<Utc> {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7200 PK-1h).
+    Postgres(sqlx::PgPool, Arc<crate::store::Mirror>),
     Memory(Mutex<BTreeMap<Key, VecDeque<Message>>>),
 }
 
@@ -203,10 +204,10 @@ const TRIM: &str = "DELETE FROM mqtt_capture WHERE project = $1 AND broker = $2 
     WHERE n <= $5 AND total <= $6)";
 
 impl CaptureStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(Mutex::default()),
             },
         }
@@ -218,7 +219,8 @@ impl CaptureStore {
         memory.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Adds `batch` (oldest first) to the broker's capture and trims it to its caps.
+    /// Adds `batch` (oldest first) to the broker's capture and trims it to its caps; a project
+    /// with no tenancy key keeps no capture.
     pub async fn keep(
         &self,
         project: &str,
@@ -227,7 +229,7 @@ impl CaptureStore {
         batch: Vec<Message>,
         now: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
-        let pool = match &self.inner {
+        let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
                 let mut memory = Self::memory(memory);
                 let kept = memory
@@ -237,9 +239,12 @@ impl CaptureStore {
                 trim(kept, per_topic, now);
                 return Ok(());
             }
-            Inner::Postgres(pool) => pool,
+            Inner::Postgres(pool, mirror) => (pool, mirror),
         };
-        let mut tx = pool.begin().await?;
+        let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+            return Ok(());
+        };
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         if !batch.is_empty() {
             let mut topics = Vec::with_capacity(batch.len());
             let mut clients = Vec::with_capacity(batch.len());
@@ -303,7 +308,11 @@ impl CaptureStore {
                         .collect()
                 })
                 .unwrap_or_default(),
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok((Vec::new(), false));
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let rows: Vec<Row> = sqlx::query_as(
                     "SELECT topic, client_id, (extract(epoch FROM received_at) * 1000)::bigint, \
                          (extract(epoch FROM expires_at) * 1000)::bigint, payload FROM mqtt_capture \
@@ -315,8 +324,9 @@ impl CaptureStore {
                 .bind(now.timestamp_millis())
                 .bind(topic)
                 .bind(i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX))
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 rows.into_iter()
                     .map(
                         |(topic, client_id, received_at, expires_at, payload)| Message {
@@ -341,19 +351,26 @@ impl CaptureStore {
             Inner::Memory(memory) => Ok(Self::memory(memory)
                 .remove(&(project.to_owned(), broker.to_owned()))
                 .map_or(0, |kept| kept.len() as u64)),
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "DELETE FROM mqtt_capture WHERE project = $1 AND broker = $2",
-            )
-            .bind(project)
-            .bind(broker)
-            .execute(pool)
-            .await?
-            .rows_affected()),
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(0);
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
+                let gone =
+                    sqlx::query("DELETE FROM mqtt_capture WHERE project = $1 AND broker = $2")
+                        .bind(project)
+                        .bind(broker)
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                tx.commit().await?;
+                Ok(gone)
+            }
         }
     }
 
     /// Deletes every expired message, and every message of a broker not in `capturing` (it left
-    /// `capture` or was deleted).
+    /// `capture` or was deleted), project by project in its key (STO-07).
     pub async fn sweep(
         &self,
         capturing: &BTreeSet<Key>,
@@ -370,19 +387,28 @@ impl CaptureStore {
                 let after: usize = memory.values().map(VecDeque::len).sum();
                 Ok((before - after) as u64)
             }
-            Inner::Postgres(pool) => {
-                let (projects, brokers): (Vec<String>, Vec<String>) =
-                    capturing.iter().cloned().unzip();
-                Ok(sqlx::query(
-                    "DELETE FROM mqtt_capture WHERE expires_at <= to_timestamp($1 / 1000.0) OR (project, broker) NOT IN \
-                     (SELECT * FROM UNNEST($2::text[], $3::text[]))",
-                )
-                .bind(now.timestamp_millis())
-                .bind(projects)
-                .bind(brokers)
-                .execute(pool)
-                .await?
-                .rows_affected())
+            Inner::Postgres(pool, mirror) => {
+                let mut gone = 0;
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+                    let brokers: Vec<&str> = capturing
+                        .iter()
+                        .filter(|(p, _)| *p == project)
+                        .map(|(_, b)| b.as_str())
+                        .collect();
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    gone += sqlx::query(
+                        "DELETE FROM mqtt_capture WHERE project = $2 \
+                         AND (expires_at <= to_timestamp($1 / 1000.0) OR NOT (broker = ANY($3)))",
+                    )
+                    .bind(now.timestamp_millis())
+                    .bind(&project)
+                    .bind(&brokers)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                    tx.commit().await?;
+                }
+                Ok(gone)
             }
         }
     }
@@ -645,7 +671,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_subscriber_runs_per_capture_broker_and_its_capture_goes_with_the_mode() {
-        let store = Arc::new(CaptureStore::new(None));
+        let store = Arc::new(CaptureStore::new(None, Default::default()));
         let now = Utc::now();
         let fresh = |topic: &str| Message {
             expires_at: now + chrono::Duration::hours(1),
@@ -696,7 +722,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_window_purges_and_the_mode_leaving_deletes() {
-        let store = CaptureStore::new(None);
+        let store = CaptureStore::new(None, Default::default());
         let batch = vec![message("a", 0, 1), message("a", 30, 1), message("b", 40, 1)];
         store
             .keep("p", "cams", 20, batch, at(41))

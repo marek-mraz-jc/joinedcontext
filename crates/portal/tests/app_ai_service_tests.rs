@@ -145,6 +145,9 @@ async fn state(proxy: &MockServer, project: &str, org_services: Value) -> Option
         }),
     ));
     common::bind(&state.mirror, "jana", project);
+    // The project in the Organization's registry row: its day's counters are keyed (T-7200).
+    let pool = state.db.clone()?;
+    common::keyed_project(&state, &pool, project, "helsinki").await;
     Some(state)
 }
 

@@ -313,7 +313,7 @@ impl AppState {
             drafts,
             draft_events,
             workspaces: crate::ops::workspaces::WorkspaceStore::new(None),
-            data_views: crate::ops::data_views::DataViewStore::new(None),
+            data_views: crate::ops::data_views::DataViewStore::new(None, Arc::default()),
             pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(None),
             previews: Arc::default(),
             activity,
@@ -327,8 +327,11 @@ impl AppState {
             space_moves: Arc::default(),
             model_schemas,
             rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
-            trash: Arc::new(crate::entity_trash::TrashStore::new(None)),
-            comments: Arc::new(crate::entity_comments::CommentStore::new(None)),
+            trash: Arc::new(crate::entity_trash::TrashStore::new(None, Arc::default())),
+            comments: Arc::new(crate::entity_comments::CommentStore::new(
+                None,
+                Arc::default(),
+            )),
             feedback: Arc::new(crate::feedback::FeedbackStore::new(None)),
             org_backups: Arc::new(crate::org_backup::BackupStore::new(None)),
             org_backup_egress: Arc::new(crate::org_backup::Egress::default()),
@@ -342,7 +345,7 @@ impl AppState {
             )),
             link_check: Arc::new(crate::link_check::LinkStore::new(None, Arc::default())),
             endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None, Arc::default())),
-            mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None)),
+            mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None, Arc::default())),
             live: Arc::new(crate::live::LiveHub::new(&public_base, None)),
             pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None)),
             source_ledger: Arc::new(crate::pipeline_source_deletes::Ledger::new(None)),
@@ -1263,13 +1266,20 @@ impl AppState {
             self.draft_events.connect(db.clone());
         }
         self.workspaces = crate::ops::workspaces::WorkspaceStore::new(db.clone());
-        self.data_views = crate::ops::data_views::DataViewStore::new(db.clone());
+        self.data_views =
+            crate::ops::data_views::DataViewStore::new(db.clone(), self.mirror.clone());
         self.pipeline_templates = crate::ops::pipeline_templates::TemplateStore::new(db.clone());
         self.activity =
             crate::activity::ActivityStore::new(db.clone()).with_hub(self.activity_events.clone());
         self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(db.clone()));
-        self.trash = Arc::new(crate::entity_trash::TrashStore::new(db.clone()));
-        self.comments = Arc::new(crate::entity_comments::CommentStore::new(db.clone()));
+        self.trash = Arc::new(crate::entity_trash::TrashStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.comments = Arc::new(crate::entity_comments::CommentStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
         self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
         self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
@@ -1289,7 +1299,10 @@ impl AppState {
             db.clone(),
             self.mirror.clone(),
         ));
-        self.mqtt_capture = Arc::new(crate::mqtt_capture::CaptureStore::new(db.clone()));
+        self.mqtt_capture = Arc::new(crate::mqtt_capture::CaptureStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
         self.quality = Arc::new(crate::quality::Store::new(db.clone(), self.mirror.clone()));
         self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(db.clone()));
         self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(db.clone()));
