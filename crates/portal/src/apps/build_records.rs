@@ -132,9 +132,50 @@ pub fn new_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The keys a pass over every project's builds runs under, one transaction each (STO-07): every
+/// project the registry recorded, then `None` for the rows no key reaches yet (phase one; the
+/// forcing migration waits until none is). A build is addressed by its project and id (T-7203).
+///
+/// ponytail: one statement per recorded project each dispatcher pass; a queue table of its own
+/// (id, project, state) when installations hold hundreds of projects.
+async fn every_key(db: &PgPool) -> Result<Vec<Option<jc_types::ProjectKey>>, sqlx::Error> {
+    let mut keys: Vec<Option<jc_types::ProjectKey>> = crate::project_ids::every_recorded(db)
+        .await?
+        .into_iter()
+        .map(|(_, key)| Some(key))
+        .collect();
+    keys.push(None);
+    Ok(keys)
+}
+
+/// The rows of `query` (`$1` the key's project id, `IS NOT DISTINCT FROM`, `$2` the `bind`) under
+/// every key, by id.
+async fn every_project(
+    db: &PgPool,
+    query: &str,
+    bind: Option<&str>,
+) -> Result<Vec<Record>, sqlx::Error> {
+    let mut found = Vec::new();
+    for key in every_key(db).await? {
+        let mut tx = match key {
+            Some(key) => crate::db::tenant_tx(db, key).await?,
+            None => db.begin().await?,
+        };
+        let mut rows = sqlx::query_as::<_, Row>(AssertSqlSafe(query.to_owned()))
+            .bind(key.map(|key| key.project.to_string()));
+        if let Some(bind) = bind {
+            rows = rows.bind(bind);
+        }
+        found.extend(rows.fetch_all(&mut *tx).await?);
+        tx.commit().await?;
+    }
+    found.sort_by_key(|row| row.id);
+    Ok(found.into_iter().map(Record::from).collect())
+}
+
 /// Queues a build of `commit`: the App's pending build takes the new commit when there is one
 /// (a newer head replaces the queued one, keeping its place), else a new one waits. Returns the
-/// pending build's id.
+/// pending build's id. The row takes the key the registry recorded for `project`.
 pub async fn enqueue(
     db: &PgPool,
     project: &str,
@@ -144,7 +185,9 @@ pub async fn enqueue(
     trigger: Trigger,
     requested_by: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
+    // The unique index of one pending build per App holds across keys.
+    let id = sqlx::query_scalar(
         "INSERT INTO app_builds (project, app, commit, class, trigger, requested_by, state) \
          VALUES ($1, $2, $3, $4, $5, $6, 'pending') \
          ON CONFLICT (project, app) WHERE state = 'pending' DO UPDATE \
@@ -158,8 +201,10 @@ pub async fn enqueue(
     .bind(class.name())
     .bind(trigger.name())
     .bind(requested_by)
-    .fetch_one(db)
-    .await
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(id)
 }
 
 /// Whether any build of `commit` of the App was ever queued: a push is built once, and a
@@ -176,31 +221,43 @@ pub async fn known(
     .bind(project)
     .bind(app)
     .bind(commit)
-    .fetch_one(db)
+    .fetch_one(&mut *crate::project_ids::recorded_tx(db, project).await?)
     .await
 }
 
-/// One build by id.
+/// One build by id, in whichever project's key it is: what a build pod's call, which names only
+/// the id, is first resolved by. Every later step names the build's project with the id.
 pub async fn get(db: &PgPool, id: i64) -> Result<Option<Record>, sqlx::Error> {
-    let row: Option<Row> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM app_builds WHERE id = $1"
-    )))
-    .bind(id)
-    .fetch_optional(db)
-    .await?;
-    Ok(row.map(Record::from))
+    let id = id.to_string();
+    Ok(every_project(
+        db,
+        &format!(
+            "SELECT {COLUMNS} FROM app_builds WHERE project_id IS NOT DISTINCT FROM $1::uuid \
+             AND id = $2::bigint"
+        ),
+        Some(&id),
+    )
+    .await?
+    .into_iter()
+    .next())
 }
 
-/// One build of the App by id: `None` for a build of another App.
+/// One build of the App by id, in its project's key: `None` for a build of another App.
 pub async fn get_of(
     db: &PgPool,
     project: &str,
     app: &str,
     id: i64,
 ) -> Result<Option<Record>, sqlx::Error> {
-    Ok(get(db, id)
-        .await?
-        .filter(|build| build.project == project && build.app == app))
+    let row: Option<Row> = sqlx::query_as(AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM app_builds WHERE id = $1 AND project = $2 AND app = $3"
+    )))
+    .bind(id)
+    .bind(project)
+    .bind(app)
+    .fetch_optional(&mut *crate::project_ids::recorded_tx(db, project).await?)
+    .await?;
+    Ok(row.map(Record::from))
 }
 
 /// The App's newest builds, newest first.
@@ -216,74 +273,90 @@ pub async fn latest(
     .bind(project)
     .bind(app)
     .bind(limit)
-    .fetch_all(db)
+    .fetch_all(&mut *crate::project_ids::recorded_tx(db, project).await?)
     .await?;
     Ok(rows.into_iter().map(Record::from).collect())
 }
 
-/// Every build in `state`, oldest first.
+/// Every build in `state` of every project, oldest first.
 pub async fn in_state(db: &PgPool, state: &str) -> Result<Vec<Record>, sqlx::Error> {
-    let rows: Vec<Row> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM app_builds WHERE state = $1 ORDER BY id"
-    )))
-    .bind(state)
-    .fetch_all(db)
-    .await?;
-    Ok(rows.into_iter().map(Record::from).collect())
+    every_project(
+        db,
+        &format!(
+            "SELECT {COLUMNS} FROM app_builds WHERE project_id IS NOT DISTINCT FROM $1::uuid \
+             AND state = $2"
+        ),
+        Some(state),
+    )
+    .await
 }
 
-/// The oldest pending build of an App that has none running: the next to start (FIFO, one
-/// build at a time per App).
+/// The oldest pending build of an App that has none running, of every project: the next to
+/// start (FIFO, one build at a time per App).
 pub async fn next_pending(db: &PgPool) -> Result<Option<Record>, sqlx::Error> {
-    let row: Option<Row> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT {COLUMNS} FROM app_builds p WHERE state = 'pending' AND NOT EXISTS ( \
-           SELECT 1 FROM app_builds r WHERE r.project = p.project AND r.app = p.app \
-           AND r.state IN ('running', 'verifying')) ORDER BY id LIMIT 1"
-    )))
-    .fetch_optional(db)
-    .await?;
-    Ok(row.map(Record::from))
+    Ok(every_project(
+        db,
+        &format!(
+            "SELECT {COLUMNS} FROM app_builds p WHERE project_id IS NOT DISTINCT FROM $1::uuid \
+             AND state = 'pending' AND NOT EXISTS ( \
+               SELECT 1 FROM app_builds r WHERE r.project = p.project AND r.app = p.app \
+               AND r.state IN ('running', 'verifying')) ORDER BY id LIMIT 1"
+        ),
+        None,
+    )
+    .await?
+    .into_iter()
+    .next())
 }
 
 /// Starts a pending build with the hash of its token, valid for `valid_for`; `false` when it is
 /// no longer pending (another pass took it).
 pub async fn start(
     db: &PgPool,
+    project: &str,
     id: i64,
     token: &str,
     valid_for: chrono::Duration,
 ) -> Result<bool, sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
     let started = sqlx::query(
-        "UPDATE app_builds SET state = 'running', token_sha256 = $2, started_at = now(), \
-         expires_at = now() + make_interval(secs => $3) WHERE id = $1 AND state = 'pending'",
+        "UPDATE app_builds SET state = 'running', token_sha256 = $3, started_at = now(), \
+         expires_at = now() + make_interval(secs => $4) \
+         WHERE id = $1 AND project = $2 AND state = 'pending'",
     )
     .bind(id)
+    .bind(project)
     .bind(token_hash(token))
     .bind(valid_for.num_milliseconds() as f64 / 1000.0)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(started.rows_affected() == 1)
 }
 
 /// Puts a build whose Job could not be started back in the queue, its token forgotten.
-pub async fn requeue(db: &PgPool, id: i64) -> Result<(), sqlx::Error> {
+pub async fn requeue(db: &PgPool, project: &str, id: i64) -> Result<(), sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
     sqlx::query(
         "UPDATE app_builds SET state = 'pending', token_sha256 = NULL, started_at = NULL, \
-         expires_at = NULL WHERE id = $1 AND state = 'running'",
+         expires_at = NULL WHERE id = $1 AND project = $2 AND state = 'running'",
     )
     .bind(id)
-    .execute(db)
-    .await
-    .map(|_| ())
+    .bind(project)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
-/// The token hash of a build, for its routes' check.
-pub async fn token_of(db: &PgPool, id: i64) -> Result<Option<Vec<u8>>, sqlx::Error> {
+/// The token hash of a build of `project`, for its routes' check: a build of another project
+/// answers `None`, so a token is only ever compared with its own project's build.
+pub async fn token_of(db: &PgPool, project: &str, id: i64) -> Result<Option<Vec<u8>>, sqlx::Error> {
     Ok(sqlx::query_scalar::<_, Option<Vec<u8>>>(
-        "SELECT token_sha256 FROM app_builds WHERE id = $1",
+        "SELECT token_sha256 FROM app_builds WHERE id = $1 AND project = $2",
     )
     .bind(id)
-    .fetch_optional(db)
+    .bind(project)
+    .fetch_optional(&mut *crate::project_ids::recorded_tx(db, project).await?)
     .await?
     .flatten())
 }
@@ -291,13 +364,16 @@ pub async fn token_of(db: &PgPool, id: i64) -> Result<Option<Vec<u8>>, sqlx::Err
 /// Freezes a running build: from here on no upload lands and its token admits nothing (its
 /// hash stays, so the pod hears 409, not 404), so what the Portal hashes next is what it
 /// publishes. `false` when it was not running.
-pub async fn freeze(db: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
+pub async fn freeze(db: &PgPool, project: &str, id: i64) -> Result<bool, sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
     let frozen = sqlx::query(
-        "UPDATE app_builds SET state = 'verifying' WHERE id = $1 AND state = 'running'",
+        "UPDATE app_builds SET state = 'verifying' WHERE id = $1 AND project = $2 AND state = 'running'",
     )
     .bind(id)
-    .execute(db)
+    .bind(project)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(frozen.rows_affected() == 1)
 }
 
@@ -306,15 +382,18 @@ pub async fn freeze(db: &PgPool, id: i64) -> Result<bool, sqlx::Error> {
 /// frozen, so no upload lands once the Portal hashes. `false` when it was not running.
 pub async fn while_running(
     db: &PgPool,
+    project: &str,
     id: i64,
     land: impl FnOnce() -> std::io::Result<()>,
 ) -> Result<bool, sqlx::Error> {
-    let mut held = db.begin().await?;
-    let state: Option<String> =
-        sqlx::query_scalar("SELECT state FROM app_builds WHERE id = $1 FOR UPDATE")
-            .bind(id)
-            .fetch_optional(&mut *held)
-            .await?;
+    let mut held = crate::project_ids::recorded_tx(db, project).await?;
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM app_builds WHERE id = $1 AND project = $2 FOR UPDATE",
+    )
+    .bind(id)
+    .bind(project)
+    .fetch_optional(&mut *held)
+    .await?;
     if state.as_deref() != Some("running") {
         return Ok(false);
     }
@@ -325,46 +404,58 @@ pub async fn while_running(
 
 /// Ends a build: `succeeded` with its digest, or `failed` with the reason; its token admits
 /// nothing more. Only a build not ended already is ended.
-pub async fn finish(db: &PgPool, id: i64, outcome: Result<&str, &str>) -> Result<(), sqlx::Error> {
+pub async fn finish(
+    db: &PgPool,
+    project: &str,
+    id: i64,
+    outcome: Result<&str, &str>,
+) -> Result<(), sqlx::Error> {
     let (state, digest, reason) = match outcome {
         Ok(digest) => ("succeeded", Some(digest), None),
         Err(reason) => ("failed", None, Some(reason)),
     };
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
     sqlx::query(
-        "UPDATE app_builds SET state = $2, digest = $3, reason = $4, finished_at = now() \
-         WHERE id = $1 AND state IN ('pending', 'running', 'verifying')",
+        "UPDATE app_builds SET state = $3, digest = $4, reason = $5, finished_at = now() \
+         WHERE id = $1 AND project = $2 AND state IN ('pending', 'running', 'verifying')",
     )
     .bind(id)
+    .bind(project)
     .bind(state)
     .bind(digest)
     .bind(reason)
-    .execute(db)
-    .await
-    .map(|_| ())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 /// The log the pod sent, at most [`MAX_LOG_BYTES`].
-pub async fn log(db: &PgPool, id: i64) -> Result<Option<String>, sqlx::Error> {
-    Ok(
-        sqlx::query_scalar::<_, Option<String>>("SELECT log FROM app_builds WHERE id = $1")
-            .bind(id)
-            .fetch_optional(db)
-            .await?
-            .flatten(),
+pub async fn log(db: &PgPool, project: &str, id: i64) -> Result<Option<String>, sqlx::Error> {
+    Ok(sqlx::query_scalar::<_, Option<String>>(
+        "SELECT log FROM app_builds WHERE id = $1 AND project = $2",
     )
+    .bind(id)
+    .bind(project)
+    .fetch_optional(&mut *crate::project_ids::recorded_tx(db, project).await?)
+    .await?
+    .flatten())
 }
 
 /// The longest log a build keeps.
 pub const MAX_LOG_BYTES: usize = 1024 * 1024;
 
 /// Replaces a running build's log.
-pub async fn set_log(db: &PgPool, id: i64, text: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE app_builds SET log = $2 WHERE id = $1 AND state = 'running'")
-        .bind(id)
-        .bind(text)
-        .execute(db)
-        .await
-        .map(|_| ())
+pub async fn set_log(db: &PgPool, project: &str, id: i64, text: &str) -> Result<(), sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(db, project).await?;
+    sqlx::query(
+        "UPDATE app_builds SET log = $3 WHERE id = $1 AND project = $2 AND state = 'running'",
+    )
+    .bind(id)
+    .bind(project)
+    .bind(text)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 #[cfg(test)]
