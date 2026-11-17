@@ -17,7 +17,8 @@ test.beforeEach(({ page }) => {
 // in-browser registry answers the operator doors with the server's shapes; the page is the real build.
 
 const ME = "s1";
-const OTHER = "a1b2c3";
+const OTHER = "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23";
+const OTHER_NAME = "Peter Kováč";
 const IDENTITY = { subject: ME, username: "jana.operator", name: "Jana Operator", email: "jana@joinedcontext.com", roles: [] };
 
 interface Registry {
@@ -32,7 +33,9 @@ function fresh(): Registry {
   return {
     organizations: [
       { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1, approved: 1 } },
-      { name: "zilina", title: "Žilinský kraj", domain: null, hosts: {} },
+      // Žilina's administrator wrote its domain in Settings; Prešov has none yet.
+      { name: "zilina", title: "Žilinský kraj", domain: "zilina.sk", hosts: {} },
+      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {} },
     ],
     ids: [
       { id: "sk_bbsk", domain: "bbsk.sk", recordName: "_joinedcontext.bbsk.sk", recordValue: "jc-verify=4f1c9a", requestedAt: "2026-11-16T09:00:00Z", mintedAt: "2026-11-16T09:10:00Z", organizations: ["bbsk"] },
@@ -43,12 +46,12 @@ function fresh(): Registry {
       { host: "api.bbsk.sk", organization: "bbsk", organizationId: "sk_bbsk", role: "api", state: "approved", detail: "its DNS answers 203.0.113.9, not the edge's address", detailAt: "2026-11-17T09:05:00Z", updatedAt: "2026-11-17T09:05:00Z" },
     ],
     changes: [
-      { id: "1c0e3a5f-2b3c-4d4e-9fa0-112233445566", kind: "HostAdd", payload: { host: "signin.bbsk.sk", organization: "bbsk", organizationId: "sk_bbsk", role: "signin" }, state: "proposed", proposedBy: OTHER, proposedAt: "2026-11-17T08:30:00Z", decidedBy: null, decidedAt: null },
+      { id: "1c0e3a5f-2b3c-4d4e-9fa0-112233445566", kind: "HostAdd", payload: { host: "signin.bbsk.sk", organization: "bbsk", organizationId: "sk_bbsk", role: "signin" }, state: "proposed", proposedBy: OTHER, proposedByName: OTHER_NAME, proposedAt: "2026-11-17T08:30:00Z", decidedBy: null, decidedAt: null },
     ],
     audit: [
       { id: 3, at: "2026-11-17T09:00:00Z", actor: "reconciler", changeId: null, action: "certificate.created", before: null, after: { host: "opendata.bbsk.sk" }, sourceIp: null },
       { id: 2, at: "2026-11-16T09:30:00Z", actor: "reconciler", changeId: null, action: "host.served", before: { host: "smartcity.bbsk.sk", state: "cert-issued" }, after: { host: "smartcity.bbsk.sk", state: "served" }, sourceIp: null },
-      { id: 1, at: "2026-11-16T09:00:00Z", actor: OTHER, changeId: null, action: "proposed HostAdd", before: null, after: { kind: "HostAdd", payload: { host: "smartcity.bbsk.sk" } }, sourceIp: "198.51.100.4" },
+      { id: 1, at: "2026-11-16T09:00:00Z", actor: OTHER, actorName: OTHER_NAME, changeId: null, action: "proposed HostAdd", before: null, after: { kind: "HostAdd", payload: { host: "smartcity.bbsk.sk" } }, sourceIp: "198.51.100.4" },
     ],
   };
 }
@@ -114,7 +117,8 @@ async function stubApi(page: Page, registry: Registry, operator = true): Promise
     if (path === "/api/v1/organization-ids/challenge") {
       const { domain } = request.postDataJSON() as { domain: string };
       const id = `sk_${domain.split(".")[0]}`;
-      registry.ids.push({ id, domain, recordName: `_joinedcontext.${domain}`, recordValue: "jc-verify=8d2e71", requestedAt: "2026-11-17T10:00:00Z", mintedAt: null, organizations: [] });
+      const named = registry.organizations.filter((org) => org.domain === domain).map((org) => org.name);
+      registry.ids.push({ id, domain, recordName: `_joinedcontext.${domain}`, recordValue: "jc-verify=8d2e71", requestedAt: "2026-11-17T10:00:00Z", mintedAt: null, organizations: named });
       return route.fulfill(json({ domain, organizationId: id, name: `_joinedcontext.${domain}`, value: "jc-verify=8d2e71", record: `_joinedcontext.${domain} TXT "jc-verify=8d2e71"` }));
     }
     if (path === "/api/v1/organization-ids" && method === "POST") {
@@ -150,6 +154,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await expect(page.getByRole("heading", { name: "Organizations", level: 2 })).toBeVisible();
       await expect(page.getByText("Banskobystrický kraj").filter({ visible: true }).first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
+      await expect(page.getByText("Not set yet").filter({ visible: true }).first()).toBeVisible();
       await shot(page, `operator-organizations-${width}`);
 
       await page.getByLabel("Domain", { exact: true }).fill("zilina.sk");
@@ -172,6 +177,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
 
       await page.goto("/organization/operator-changes?lang=en");
       await expect(page.getByText("Another operator approves this.").filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText(OTHER_NAME).filter({ visible: true }).first()).toBeVisible();
       await page.getByRole("button", { name: "Approve" }).filter({ visible: true }).first().click();
       await expect(page.getByText("The Change for signin.bbsk.sk is applied.")).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
@@ -192,6 +198,8 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.goto("/organization/operator-audit?lang=en");
       await expect(page.getByText("Asked for: Remove a host").filter({ visible: true }).first()).toBeVisible();
       await expect(page.getByText("The Portal (reconciler)").filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText(OTHER_NAME).filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText(OTHER)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-audit-${width}`);
     });
