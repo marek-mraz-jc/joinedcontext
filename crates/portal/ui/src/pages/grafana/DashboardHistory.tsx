@@ -116,9 +116,9 @@ export function DashboardHistory({ project, uid, mayEdit }: { project: string; u
       {items.length > 0 ? (
         <ol className="flex flex-col divide-y divide-border" aria-label={t("dashboardHistory.title")}>
           {items.map((version, index) => (
-            <li key={version.sha} className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5">
+            <li key={version.sha} className={`flex flex-wrap items-center gap-x-4 gap-y-2 py-2.5${compared === version.sha ? " -mx-2 rounded-md bg-surface-subtle px-2" : ""}`}>
               <div className="min-w-0 flex-1 max-sm:basis-full">
-                <p className="truncate text-body font-medium text-fg">
+                <p className="break-words text-body font-medium text-fg">
                   {version.message || t("dashboardHistory.noMessage")}
                   {index === 0 ? <span className="ml-2 text-caption font-normal text-fg-muted">{t("dashboardHistory.newest")}</span> : null}
                 </p>
