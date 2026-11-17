@@ -103,6 +103,23 @@ pub fn subject(binding: &KubernetesBinding) -> String {
     )
 }
 
+/// The registry of the realm's managed workload clients in `listed`: client id to the account
+/// `{project}/{name}` its [`ACCOUNT_ATTRIBUTE`] names (ARCH/TEN-04). A client this wave did not
+/// create says nothing about who its `azp` is, whatever its attributes hold.
+pub fn registry(listed: &Value) -> BTreeMap<String, String> {
+    listed
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|client| managed(client))
+        .filter_map(|client| {
+            let id = client.get("clientId")?.as_str()?;
+            let account = client.get("attributes")?.get(ACCOUNT_ATTRIBUTE)?.as_str()?;
+            Some((id.to_owned(), account.to_owned()))
+        })
+        .collect()
+}
+
 /// The client a workload-bound account should have, as Keycloak's representation (PF-47).
 pub fn desired(project: &str, name: &str, binding: &KubernetesBinding) -> Value {
     json!({
@@ -922,6 +939,20 @@ impl WorkloadClientSync {
             }
         };
 
+        let clients = registry(&listed);
+        // One registry for every reader of a client id in this process: jc's gateway, MQTT door
+        // and manifest assembly read it through jc_core's keycloak_client_id (T-7214).
+        jc_core::kinds::service_account::set_client_registry(
+            clients
+                .iter()
+                .filter_map(|(id, account)| {
+                    let (project, name) = account.split_once('/')?;
+                    Some((id.clone(), (project.to_owned(), name.to_owned())))
+                })
+                .collect(),
+        );
+        mirror.set_workload_clients(clients);
+
         let mut accounts = bound(mirror);
         if let Some(namespace) = &self.pipelines {
             accounts.extend(pipeline_accounts(mirror, namespace, bentos));
@@ -972,11 +1003,11 @@ impl WorkloadClientSync {
                 Vec::new()
             };
             let mut outcome = self
-                .converge_one(&token, account, &audiences, &imported)
+                .converge_one(&token, mirror, account, &audiences, &imported)
                 .await;
             if host && matches!(account.reach, Reach::Pipeline(_)) {
                 if outcome.error.is_none() {
-                    self.read_host_secret(&token, account, &mut secrets, &mut outcome)
+                    self.read_host_secret(&token, mirror, account, &mut secrets, &mut outcome)
                         .await;
                 } else {
                     // A realm busy for one run keeps the runner's credential.
@@ -1077,6 +1108,7 @@ impl WorkloadClientSync {
     async fn read_host_secret(
         &self,
         token: &str,
+        mirror: &Mirror,
         account: &BoundAccount,
         secrets: &mut BTreeMap<String, String>,
         outcome: &mut ClientOutcome,
@@ -1085,7 +1117,7 @@ impl WorkloadClientSync {
             return;
         }
         let variable = host_variable(account);
-        let id = keycloak_client_id(&account.project, &account.name);
+        let id = mirror.client_id(&account.project, &account.name);
         let read = match self.admin.find(token, &id).await {
             Ok(Some(client))
                 if managed(&client)
@@ -1303,24 +1335,65 @@ impl WorkloadClientSync {
         }
     }
 
+    /// The id a new client of `account` gets: `jc_types::internal_name` of its project's key and
+    /// its name (ARCH/TEN-10, T-7214), when the registry holds no client of the account and the
+    /// realm holds none under its present `id` (the derived `{project}-{name}`) either, so every
+    /// live client keeps its id (MIG-03). `None` keeps `id`: a client exists, or the name is no
+    /// label of the key.
+    async fn new_client_id(
+        &self,
+        token: &str,
+        mirror: &Mirror,
+        account: &BoundAccount,
+        id: &str,
+        key: jc_types::ProjectKey,
+    ) -> Result<Option<String>, String> {
+        if mirror.client_account(id).is_some() {
+            return Ok(None);
+        }
+        let Ok(label) = jc_types::Label::parse(&account.name) else {
+            return Ok(None);
+        };
+        if self.admin.find(token, id).await?.is_some() {
+            return Ok(None);
+        }
+        Ok(Some(jc_types::internal_name(key, &label).to_string()))
+    }
+
     async fn converge_one(
         &self,
         token: &str,
+        mirror: &Mirror,
         account: &BoundAccount,
         audiences: &[String],
         imported: &[String],
     ) -> ClientOutcome {
         let mut outcome = ClientOutcome::of(&account.label());
-        let id = keycloak_client_id(&account.project, &account.name);
+        let mut id = mirror.client_id(&account.project, &account.name);
         let mut want = match &account.auth {
             Auth::External(credential) => {
                 desired_external(&account.project, &account.name, credential)
             }
             Auth::Workload(binding) => desired(&account.project, &account.name, binding),
         };
+        // The id the realm holds for the account stays its id (MIG-03).
+        want["clientId"] = json!(id);
         if let Some(pool) = self.keys.as_ref() {
             match crate::project_ids::recorded(pool, &account.project).await {
-                Ok(Some(key)) => with_project(&mut want, &key),
+                Ok(Some(key)) => {
+                    with_project(&mut want, &key);
+                    match self.new_client_id(token, mirror, account, &id, key).await {
+                        Ok(Some(new)) => {
+                            id = new;
+                            want["clientId"] = json!(id);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            outcome.error = Some(err);
+                            return outcome;
+                        }
+                    }
+                }
                 Ok(None) => {}
                 Err(err) => {
                     outcome.error = Some(format!("its project id was not read: {err}"));
@@ -1400,7 +1473,14 @@ impl WorkloadClientSync {
                 }
                 match self.admin.find(token, &id).await {
                     Ok(Some(client)) => match client.get("id").and_then(Value::as_str) {
-                        Some(uuid) => uuid.to_owned(),
+                        Some(uuid) => {
+                            jc_core::kinds::service_account::record_client(
+                                &id,
+                                &account.project,
+                                &account.name,
+                            );
+                            uuid.to_owned()
+                        }
                         None => {
                             outcome.error = Some(format!("the realm answered {id} without an id"));
                             return outcome;
@@ -1444,6 +1524,29 @@ impl WorkloadClientSync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7214: the registry holds what this wave created, by its account attribute, whatever the
+    /// client id says: a live `{project}-{name}` id and a new `internal_name` id alike; a client
+    /// someone else made is nobody's here, whatever account it claims.
+    #[test]
+    fn the_registry_holds_managed_clients_by_their_account_attribute() {
+        let managed = |id: &str, account: &str| json!({ "clientId": id, "attributes": { MANAGED_BY: MANAGED_VALUE, ACCOUNT_ATTRIBUTE: account } });
+        let new = "0b0c6c2e1d1e4a409f0e2a5a3c__5f1d2c3b4a594b6c8d7e9f0a1b__vendor-ci";
+        let listed = json!([
+            managed("ovzdusie-legacy", "ovzdusie/legacy"),
+            managed(new, "ovzdusie/vendor-ci"),
+            { "clientId": "ovzdusie-forged", "attributes": { ACCOUNT_ATTRIBUTE: "ovzdusie/admin" } },
+            { "clientId": "portal" },
+        ]);
+        assert_eq!(
+            registry(&listed),
+            BTreeMap::from([
+                ("ovzdusie-legacy".to_owned(), "ovzdusie/legacy".to_owned()),
+                (new.to_owned(), "ovzdusie/vendor-ci".to_owned()),
+            ])
+        );
+        assert!(registry(&Value::Null).is_empty());
+    }
 
     fn scopes(names: &[&str]) -> Vec<KcNamed> {
         names

@@ -46,6 +46,10 @@ pub struct Mirror {
     /// last good revision to serve (CHG-05). Kept apart from `resources`, so no converge step
     /// and no reader of the mirror acts on one; only a person's read of the project shows it.
     refused: RwLock<BTreeMap<ResourceKey, Arc<ResourceEnvelope>>>,
+    /// The realm's managed workload clients as the workload-client sync last listed them: client
+    /// id to the account `{project}/{name}` its registry attribute names (ARCH/TEN-04). Who an
+    /// `azp` is comes from here, never from the id text; a live client keeps its id (MIG-03).
+    clients: RwLock<BTreeMap<String, String>>,
 }
 
 impl Mirror {
@@ -105,6 +109,32 @@ impl Mirror {
     pub fn hold_removals(&self, held: bool) {
         self.removals_held
             .store(held, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Records the realm's managed workload clients, client id to `{project}/{name}`.
+    pub fn set_workload_clients(&self, clients: BTreeMap<String, String>) {
+        *self.clients.write().unwrap_or_else(|p| p.into_inner()) = clients;
+    }
+
+    /// The client id the realm holds for account `name` of `project`, or the derived
+    /// `{project}-{name}` while it holds none (a new account, or before the first sync).
+    pub fn client_id(&self, project: &str, name: &str) -> String {
+        let label = format!("{project}/{name}");
+        self.clients
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|(_, account)| **account == label)
+            .map(|(id, _)| id.clone())
+            .unwrap_or_else(|| jc_core::kinds::service_account::keycloak_client_id(project, name))
+    }
+
+    /// The account (`project`, `name`) the realm's managed client `client` belongs to, by its
+    /// registry attribute; `None` for a client the last listing did not hold.
+    pub fn client_account(&self, client: &str) -> Option<(String, String)> {
+        let clients = self.clients.read().unwrap_or_else(|p| p.into_inner());
+        let (project, name) = clients.get(client)?.split_once('/')?;
+        Some((project.to_owned(), name.to_owned()))
     }
 
     /// Every registered project's own repository, by slug.

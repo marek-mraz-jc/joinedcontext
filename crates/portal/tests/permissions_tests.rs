@@ -11,7 +11,7 @@ use jc_core::kinds::Verb;
 use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::permissions::{effective, ORG_NAMESPACE};
+use joinedcontext_portal::permissions::{effective, is_service_account, ORG_NAMESPACE};
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
@@ -1083,6 +1083,74 @@ fn a_service_accounts_declared_roles_are_in_force_for_its_own_client_and_nobody_
         effective(&twice, "platform-admins", &ambiguous, "ovzdusie", now)
             .grants
             .is_empty()
+    );
+}
+
+/// T-7214 (ARCH/TEN-04): who an `azp` is comes from the realm's registry of managed clients, so a
+/// client named `internal_name(OrgId, ProjectId, name)` is its account's, its derived
+/// `{project}-{name}` no longer is, and an id two accounts derive belongs to the one the registry
+/// names. A client the registry does not hold resolves by its derived id, as before.
+#[test]
+fn an_azp_is_the_account_the_realms_registry_names_old_and_new_names_alike() {
+    let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+    let roles = json!([{ "role": "pipeline-admin", "scope": { "project": "ovzdusie" } }]);
+    let mirror = mirror_with(vec![
+        pipeline_admin_role(),
+        account("ovzdusie", "vendor-ci", roles.clone()),
+        account("ovzdusie", "x-ci", roles.clone()),
+        account("ovzdusie-x", "ci", roles),
+        account("ovzdusie", "legacy", json!([])),
+    ]);
+    let key = jc_types::ProjectKey::new(
+        jc_types::OrgId::parse_verified("0b0c6c2e-1d1e-4a40-9f0e-2a5a3c1f0b01").expect("an id"),
+        jc_types::ProjectId::parse_verified("5f1d2c3b-4a59-4b6c-8d7e-9f0a1b2c3d4e").expect("an id"),
+    );
+    let new = jc_types::internal_name(key, &jc_types::Label::parse("vendor-ci").expect("a label"))
+        .to_string();
+    mirror.set_workload_clients(
+        [
+            (new.clone(), "ovzdusie/vendor-ci".to_owned()),
+            ("ovzdusie-x-ci".to_owned(), "ovzdusie/x-ci".to_owned()),
+        ]
+        .into(),
+    );
+    let grants = |client: &str| {
+        effective(
+            &mirror,
+            "platform-admins",
+            &token_of(client, &format!("service-account-{client}")),
+            "ovzdusie",
+            now,
+        )
+        .grants
+    };
+    assert_eq!(
+        grants(&new)[0].binding,
+        "serviceaccount/vendor-ci",
+        "the new name"
+    );
+    assert!(
+        grants("ovzdusie-vendor-ci").is_empty(),
+        "the derived id of an account the registry names under another id is nobody's"
+    );
+    assert_eq!(
+        grants("ovzdusie-x-ci")[0].binding,
+        "serviceaccount/x-ci",
+        "an id two accounts derive is the account's the registry names"
+    );
+    assert_eq!(mirror.client_id("ovzdusie", "vendor-ci"), new);
+    assert_eq!(mirror.client_id("ovzdusie", "legacy"), "ovzdusie-legacy");
+    assert_eq!(
+        mirror.client_account(&new),
+        Some(("ovzdusie".to_owned(), "vendor-ci".to_owned()))
+    );
+    assert_eq!(mirror.client_account("ovzdusie-legacy"), None);
+    assert!(
+        is_service_account(
+            &mirror,
+            &token_of("ovzdusie-legacy", "service-account-ovzdusie-legacy")
+        ),
+        "a client the registry does not hold resolves by its derived id (the old name)"
     );
 }
 

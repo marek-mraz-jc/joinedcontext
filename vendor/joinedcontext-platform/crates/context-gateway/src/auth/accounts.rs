@@ -470,6 +470,39 @@ mod tests {
         assert!(!ServiceAccounts::new().holds("espoo", "kpi", now), "gone");
     }
 
+    /// T-7214: an account whose client the realm's registry names by `internal_name` gets its
+    /// grants under that `azp`, and its derived `{project}-{name}` resolves to nobody.
+    #[test]
+    fn an_account_resolves_by_the_client_id_the_registry_holds() {
+        let new = "aaaaaaaaaaaaaaaaaaaaaaaaab__baaaaaaaaaaaaaaaaaaaaaaaab__kpi";
+        jc_core::kinds::service_account::record_client(new, "gwreg", "kpi");
+        let dir = std::env::temp_dir().join(format!(
+            "gw-registry-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        std::fs::write(
+            dir.join("sa.yaml"),
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: kpi\n  \
+             namespace: gwreg\nspec:\n  owner: { user: jana@hel.fi }\n  purpose: the KPI job\n  \
+             roles: []\n  credentials: []\n",
+        )
+        .expect("a manifest");
+        let accounts = crate::store::load(&dir).expect("the repository loads").2;
+        let _ = std::fs::remove_dir_all(&dir);
+        let account = accounts.resolve(new).expect("the registry's client id");
+        assert_eq!(
+            (account.project.as_str(), account.name.as_str()),
+            ("gwreg", "kpi")
+        );
+        assert!(
+            accounts.resolve("gwreg-kpi").is_none(),
+            "the derived id is nobody's"
+        );
+    }
+
     /// AP-113, AP-14a: the client `app-{name}` is one for the realm, so an App name two projects
     /// declare admits that client on neither project's Endpoint; a name one project declares
     /// alone keeps its App's Endpoint.
