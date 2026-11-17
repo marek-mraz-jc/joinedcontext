@@ -136,6 +136,23 @@ class HostHttp(R.Http):
         return super().call(method, wire, body, {**(headers or {}), "Host": netloc}, form, timeout)
 
 
+def catalog_ids(doc) -> list:
+    """The `@id` of every dcat:Catalog node of a JSON-LD document, at any depth (`@graph`,
+    `@included` or nested)."""
+    found, todo = [], [doc]
+    while todo:
+        node = todo.pop()
+        if isinstance(node, list):
+            todo.extend(node)
+        elif isinstance(node, dict):
+            types = node.get("@type", [])
+            types = [types] if isinstance(types, str) else types
+            if any(isinstance(t, str) and re.search(r"(^|[:#])Catalog$", t) for t in types) and isinstance(node.get("@id"), str):
+                found.append(node["@id"])
+            todo.extend(node.values())
+    return found
+
+
 class Refused(RuntimeError):
     """A request the live allowlist does not admit; raised before anything is sent."""
 
@@ -1278,20 +1295,17 @@ class Suite:
 
     def check_people(self):
         """The members list of an org admin names its own people and nobody bound only to another
-        Organization. The installation Organization's admins hold the realm-wide Person read
+        Organization (T-7220). The installation Organization's admins hold the realm-wide Person read
         (ADR-N-058 §2.2): their row is a skip naming that, for the owner to decide."""
         for org in self.exp:
             st, body = self.session(f"{org}-admin").json("GET", "/api/v1/organization/people")
             emails = {i.get("email", "") for i in (body or {}).get("items", [])} if st == 200 else set()
             own = {f"mo-{org}-admin@rehearsal.invalid", f"mo-{org}-member@rehearsal.invalid"}
             foreign = users(x for x in emails if (m := re.match(r"mo-(.+)-(admin|member)@", x)) and m.group(1) != org)
-            # The list is realm-wide (people.rs list_people asks read on Person at the installation):
-            # an admin of another Organization is refused it and has no list of its own members.
-            gap = org != self.installation and st in DENIED
+            # Another Organization's admin lists its own people on a shared realm (T-7220,
+            # api/people.rs listed_organizations); the installation's the realm's.
             self.row(f"people.{org}-admin.own", org, "GET /api/v1/organization/people", f"{users(own)} listed",
-                     f"{st}, missing {users(own - emails)}", None if gap else (st == 200 and own <= emails),
-                     "gap: the Portal has no per-Organization people list; the realm-wide one is the "
-                     "installation's (ADR-N-058 2.2), so this admin cannot list its own members" if gap else "")
+                     f"{st}, missing {users(own - emails)}", st == 200 and own <= emails)
             if org == self.installation:
                 self.row(f"people.{org}-admin.no-foreign", org, "GET /api/v1/organization/people",
                          "nobody of another org", f"{st}, foreign {foreign}", None if foreign else st == 200,
@@ -1621,9 +1635,11 @@ class Suite:
         results = (body or {}).get("result", {}).get("results", []) if st == 200 else []
         self.row("catalogue.datasets-published", "dataroom", "GET /opendata/api/3/action/package_search",
                  "> 0 datasets", f"{st}, {len(results)}", st == 200 and len(results) > 0)
-        for org, e in self.exp.items():
-            mine = {c for p in e["projects"].values() for c in p["ckanOrgs"]}
-            others = {c for o, oe in self.exp.items() if o != org for p in oe["projects"].values() for c in p["ckanOrgs"]}
+        self.check_catalogue_origin("catalogue.origin", "dataroom", h, f"{self.base.rstrip('/')}/opendata", "/opendata")
+        routed = {org: self.ckan_orgs(org) for org in self.exp}
+        for org in self.exp:
+            mine = routed[org]
+            others = {c for o, cs in routed.items() if o != org for c in cs}
             for c in sorted(mine):
                 q = urllib.parse.quote(f'organization:"{c}"')
                 st, body = h.json("GET", f"/opendata/api/3/action/package_search?fq={q}&rows=1000")
@@ -1656,6 +1672,29 @@ class Suite:
                              None if empty else (st == 200 and own and not leaked),
                              f"no dataset published to {c} yet: dataroom has no such organisation" if empty else "")
 
+    def ckan_orgs(self, org: str) -> set:
+        """The CKAN organisations `org`'s projects publish into, as the Portal routes them
+        (reconciler/ckan.rs `routed`): on a repository of several Organizations the one of the
+        Organization's own name, when one of its projects has a public Endpoint; on a repository
+        of one, each CkanInstance's organizationDefault."""
+        projects = self.exp[org]["projects"].values()
+        if len(self.exp) == 1:
+            return {c for p in projects for c in p["ckanOrgs"]}
+        publishes = any(set(p["Endpoint"]) - {n for n, _ in p["closed"].values()} for p in projects)
+        return {org} if publishes else set()
+
+    def check_catalogue_origin(self, rid: str, org: str, h, base: str, prefix: str):
+        """The catalogue names itself by the address it was asked on (the router's Mount, dataroom
+        lib.rs RequestOrigin): package_search's `help` and the DCAT catalogue's `@id` start with
+        this deployment's scheme, host and mount, never a configured or raw-header host."""
+        st, body = h.json("GET", f"{prefix}/api/3/action/package_search?rows=1")
+        help_url = str(body.get("help", "")) if st == 200 and isinstance(body, dict) else ""
+        st_dcat, dcat = h.json("GET", f"{prefix}/catalog.jsonld")
+        ids = catalog_ids(dcat) if st_dcat == 200 else []
+        self.row(rid, org, f"GET {prefix or '{opendata}'}/api/3/action/package_search, {prefix}/catalog.jsonld",
+                 f"help and the Catalog @id under {base}/", f"{st} help {help_url}, {st_dcat} @id {ids[:2]}",
+                 help_url.startswith(f"{base}/") and bool(ids) and all(i.startswith(f"{base}/") or i == base for i in ids))
+
     def check_catalogue_hosts(self):
         """Host mode: each Organization's open data host is its own catalogue, the Portal publishes
         its Endpoints there under the CKAN organisation of its name, and it lists, searches and
@@ -1677,6 +1716,8 @@ class Suite:
             names = (body or {}).get("result", []) if st == 200 else []
             self.row(f"catalogue.{org}.organisations", org, "GET {opendata}/api/3/action/organization_list",
                      f"[{org}] alone", f"{st}, {names}", st == 200 and set(names) <= {org})
+            scheme = urllib.parse.urlparse(self.base).scheme
+            self.check_catalogue_origin(f"catalogue.{org}.origin", org, h, f"{scheme}://{self.hosts[org]['opendata']}", "")
         for org in self.exp:
             h = self.client(org, "opendata")
             other_names = {n for o, ns in found.items() if o != org for n in ns} - found[org]

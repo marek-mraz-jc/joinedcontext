@@ -170,19 +170,20 @@ def test_a_bundle_with_a_pair_of_organizations_without_a_row_fails_setup(tmp_pat
 
 def test_skips_are_counted_per_row_template_and_may_not_outgrow_the_bound(tmp_path):
     bound = json.loads(suite.BOUND.read_text())
-    # the six-Organization bundle's five: every Organization but the installation's (the gap)
-    assert bound["path"]["people.{o}-admin.own"] == 5
+    # the six-Organization bundle's three Organizations with no project; T-7220 closed the
+    # people.{o}-admin.own gap, so that template may skip nothing
+    assert bound["path"]["dashboards.{o}"] == 3 and "people.{o}-admin.own" not in bound["path"]
     orgs = ("hel", "zilina", "barcelona", "bbsk", "ctl-a", "ctl-b")
     exp = {o: {"projects": {f"{o}-p": EMPTY}} for o in orgs}
-    rows = [row(f"people.{o}-admin.own", o, "skip") for o in orgs[1:]]
+    rows = [row(f"dashboards.{o}", o, "skip") for o in orgs[3:]]
     s, n = counted(tmp_path, [dict(r) for r in rows], exp, full=False)
-    assert n["skipsByTemplate"] == {"people.{o}-admin.own": 5} and not [r for r in s.rows if r["result"] == "fail"]
-    rows.append(row("people.hel-admin.own", "hel", "skip"))
+    assert n["skipsByTemplate"] == {"dashboards.{o}": 3} and not [r for r in s.rows if r["result"] == "fail"]
+    rows.append(row("dashboards.hel", "hel", "skip"))
     # a template the bound does not name may skip nothing
-    rows.append(row("operators.hel-admin.propose.groups", "hel", "skip"))
+    rows.append(row("people.zilina-admin.own", "zilina", "skip"))
     s, n = counted(tmp_path, rows, exp, full=False)
     over = sorted((r["id"], r["actual"]) for r in s.rows if r["result"] == "fail" and r["id"].startswith("skips."))
-    assert over == [("skips.operators.{o}-admin.propose.groups", "1"), ("skips.people.{o}-admin.own", "6")]
+    assert over == [("skips.dashboards.{o}", "4"), ("skips.people.{o}-admin.own", "1")]
 
 
 def test_a_template_names_organizations_and_projects_alike_and_the_longest_name_first(tmp_path):
@@ -953,9 +954,70 @@ def test_an_organization_whose_only_endpoints_are_closed_publishes_nothing(tmp_p
         def call(self, method, path):
             return 200, {}, b'{"result": []}' if "package_list" in path else b'{"result": {"results": []}}'
     s.client = lambda org=None, kind="portal": OpenData()
+    s.hosts = {"ctl-a": {"opendata": "data.ctl-a.test"}}
     s.check_catalogue_hosts()
     row = next(r for r in s.rows if r["id"] == "catalogue.ctl-a.published")
     assert row["result"] == ("pass" if passes else "fail"), row
+
+
+class Catalogue:
+    """A dataroom at `base` holding hel's dataset `bikes` in the CKAN organisation `hel`, its links
+    under `named` (the address it was asked on, or a configured host when it gets that wrong)."""
+
+    def __init__(self, base, named=None):
+        self.base, self.named, self.asked = base, named or base, []
+
+    def json(self, method, path):
+        self.asked.append(path)
+        if path.endswith("/catalog.jsonld"):
+            return 200, {"@context": {}, "@graph": [{"@id": f"{self.named}/catalog", "@type": "dcat:Catalog"},
+                                                    {"@id": f"{self.named}/dataset/bikes", "@type": "dcat:Dataset"}]}
+        if "organization%3A%22hel%22" in path or "fq" not in path:
+            return 200, {"help": f"{self.named}/api/3/action/help_show?name=package_search",
+                         "result": {"results": [{"name": "bikes", "organization": {"name": "hel"}}]}}
+        return 200, {"result": {"results": []}}
+
+    def call(self, method, path):
+        self.asked.append(path)
+        return (200, {}, b"/opendata/dataset/bikes") if "/hel" in path else (404, {}, b"")
+
+
+def test_catalogue_rows_follow_the_organizations_own_ckan_organisation(tmp_path):
+    # T-7221: on a repository of several Organizations the Portal publishes into the CKAN
+    # organisation of the Organization's name (reconciler/ckan.rs routed), not organizationDefault
+    s = suite.Suite(args(tmp_path))
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"Endpoint": ["bikes"], "ckanOrgs": ["hel-fi"]}}},
+             "zilina": {"projects": {"zilina": EMPTY | {"Endpoint": ["iso"], "closed": {"s1": ("iso", "organization")}}}}}
+    jc = Catalogue("http://127.0.0.1:9/opendata")
+    s.client = lambda org=None, kind="portal": jc
+    s.check_catalogue()
+    results = {r["id"]: r["result"] for r in s.rows}
+    for kind in ("search", "page", "dcat", "ttl", "atom"):
+        assert results[f"catalogue.hel.hel.{kind}"] == "pass", s.rows
+    assert not [i for i in results if "hel-fi" in i or i.startswith("catalogue.zilina.")]
+    assert results["catalogue.origin"] == "pass"
+    assert s.template("catalogue.hel.hel.page") == "catalogue.{o}.{o}.page"
+    s.exp = {"hel": s.exp["hel"]}
+    assert s.ckan_orgs("hel") == {"hel-fi"}, "a one-Organization repository follows organizationDefault"
+
+
+@pytest.mark.parametrize("named,passes", [("http://127.0.0.1:9/opendata", True),
+                                          ("https://data.hel.fi", False),
+                                          ("http://127.0.0.1:9", False)])
+def test_the_catalogue_names_itself_by_the_address_it_was_asked_on(tmp_path, named, passes):
+    s = suite.Suite(args(tmp_path))
+    s.check_catalogue_origin("catalogue.origin", "dataroom", Catalogue("", named), "http://127.0.0.1:9/opendata", "/opendata")
+    assert s.rows[-1]["result"] == ("pass" if passes else "fail"), s.rows[-1]
+    s.check_catalogue_origin("catalogue.hel.origin", "hel", Catalogue("", "http://data.hel.test:9"),
+                             "http://data.hel.test:9", "")
+    assert s.rows[-1]["result"] == "pass", s.rows[-1]
+
+
+def test_catalog_ids_reads_the_catalogue_node_at_any_depth():
+    doc = {"@graph": [{"@id": "a", "@type": ["http://www.w3.org/ns/dcat#Catalog"]},
+                      {"@id": "b", "@type": "dcat:Dataset", "x": {"@id": "c", "@type": "Catalog"}}]}
+    assert sorted(suite.catalog_ids(doc)) == ["a", "c"]
+    assert suite.catalog_ids("<html>") == []
 
 
 def test_a_live_run_reads_the_fixtures_and_their_refusals_and_writes_no_entity(tmp_path):
