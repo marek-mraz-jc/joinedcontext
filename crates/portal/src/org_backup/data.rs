@@ -583,7 +583,9 @@ pub const PORTAL_TABLES: &[Table] = &[
         name: "project_ids",
         columns: &["id", "name", "parent", "minted_at"],
         keys: "projects",
-        filter: "name = ANY($1)",
+        // A reserved row carries its Organization's name (0067): a project spelled like another
+        // Organization must not carry that Organization's reserved id into this archive.
+        filter: "name = ANY($1) AND NOT reserved",
     },
 ];
 
@@ -617,10 +619,6 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     (
         "organizations",
         "the installation's Organization registry: an Organization is created again, never restored",
-    ),
-    (
-        "project_ids",
-        "the installation's project id registry: ids are never reused, so a restore mints none (one folder per project is T-7192)",
     ),
     (
         "operator_changes",

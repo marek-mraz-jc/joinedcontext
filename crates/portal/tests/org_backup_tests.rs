@@ -652,6 +652,25 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     let Some(db) = seeded_portal_db().await else {
         return;
     };
+    // An Organization spelled like alfa's project: its reserved row carries the name `alfa-city`
+    // (0067), and alfa's archive keeps only the project's own id.
+    let city = joinedcontext_portal::project_ids::ensure(&db, &["alfa-city".to_string()])
+        .await
+        .expect("minted")["alfa-city"]
+        .to_string();
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) \
+         VALUES ('alfa-city', 'alfa-city.example', 'active', 'seed')",
+    )
+    .execute(&db)
+    .await
+    .expect("an Organization named like the project");
+    let reserved: String = sqlx::query_scalar(
+        "SELECT id::text FROM project_ids WHERE reserved AND name = 'alfa-city'",
+    )
+    .fetch_one(&db)
+    .await
+    .expect("its reserved project");
     let world = world_with("alfa", "Enabled", Some(db)).await;
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
@@ -698,6 +717,15 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
         assert!(all.contains(mark), "{mark} is missing");
     }
     assert!(files["module/portal/agent_run_events.jsonl"].contains("run-alfa-1"));
+    let registry = &files["module/portal/project_ids.jsonl"];
+    assert!(
+        registry.contains(&city),
+        "alfa-city's id is kept: {registry}"
+    );
+    assert!(
+        !registry.contains(&reserved),
+        "another Organization's reserved id left: {registry}"
+    );
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
     assert_eq!(index["formatVersion"], 1);
     assert_eq!(index["organization"], "alfa");
