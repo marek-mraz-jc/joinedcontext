@@ -2,7 +2,9 @@
 //!
 //! Path-style requests (`{endpoint}/{bucket}/{key}`), so MinIO, Ceph and AWS answer alike. The
 //! body of every call is held in memory: a configuration bundle is manifests and schemas, capped
-//! by [`MAX_OBJECT_BYTES`]. Errors name the call and the status, never the credentials.
+//! by [`MAX_OBJECT_BYTES`]; a data archive past that goes up from its file in parts of
+//! [`PART_BYTES`] ([`Bucket::put_file`], T-7170). Errors name the call and the status, never the
+//! credentials.
 
 use std::time::Duration;
 
@@ -13,6 +15,8 @@ use zeroize::Zeroizing;
 
 /// The largest object a backup writes or reads back.
 pub const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
+/// One part of a multipart upload: S3 takes 5 MiB to 5 GiB a part and 10 000 parts.
+pub const PART_BYTES: usize = 64 * 1024 * 1024;
 /// The longest an answer to an S3 call may take.
 pub const TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -202,6 +206,21 @@ pub fn parse_versions(xml: &str) -> Vec<Version> {
     }
     out.sort_by(|a, b| b.last_modified.cmp(&a.last_modified));
     out
+}
+
+/// The next `part` bytes of `file` (fewer at its end, none past it), read off the runtime.
+async fn read_part(file: std::fs::File, part: usize) -> Result<(std::fs::File, Vec<u8>), S3Error> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut body = Vec::with_capacity(part);
+        let mut file = file;
+        (&mut file).take(part as u64).read_to_end(&mut body)?;
+        Ok::<_, std::io::Error>((file, body))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .ok_or(S3Error::Unreadable("the archive file"))
 }
 
 impl Bucket {
@@ -399,6 +418,125 @@ impl Bucket {
             .map_err(|_| S3Error::Unreadable(CALL))
     }
 
+    /// The file at `path` (`size` bytes) as the next version of `key`: one PutObject up to
+    /// `part` bytes, a multipart upload in parts of `part` bytes above that, aborted when a part
+    /// fails so the bucket keeps no stray parts. The new version's id.
+    pub async fn put_file(
+        &self,
+        http: &reqwest::Client,
+        key: &str,
+        path: &std::path::Path,
+        size: u64,
+        part: usize,
+    ) -> Result<String, S3Error> {
+        let file = std::fs::File::open(path).map_err(|_| S3Error::Unreadable("the archive file"))?;
+        if size <= part as u64 {
+            let (_, body) = read_part(file, part).await?;
+            return self.put(http, key, body).await;
+        }
+        const CREATE: &str = "CreateMultipartUpload";
+        let created = self
+            .call(http, CREATE, reqwest::Method::POST, Some(key), &[("uploads", "")], Vec::new())
+            .await?;
+        let upload = tag(&Self::text(created, CREATE).await?, "UploadId")
+            .ok_or(S3Error::Unreadable(CREATE))?;
+        let parts = self.put_parts(http, key, &upload, file, part).await;
+        let completed = match parts {
+            Ok(etags) => {
+                let body: String = etags
+                    .iter()
+                    .enumerate()
+                    .map(|(at, etag)| {
+                        format!("<Part><PartNumber>{}</PartNumber><ETag>{etag}</ETag></Part>", at + 1)
+                    })
+                    .collect();
+                self.call(
+                    http,
+                    "CompleteMultipartUpload",
+                    reqwest::Method::POST,
+                    Some(key),
+                    &[("uploadId", upload.as_str())],
+                    format!("<CompleteMultipartUpload>{body}</CompleteMultipartUpload>").into_bytes(),
+                )
+                .await
+            }
+            Err(err) => Err(err),
+        };
+        match completed {
+            Ok(response) => {
+                let version = response
+                    .headers()
+                    .get("x-amz-version-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_owned();
+                // S3 answers 200 with an <Error> body when the assembly fails late.
+                let text = Self::text(response, "CompleteMultipartUpload").await?;
+                if let Some(code) = tag(&text, "Code").filter(|_| text.contains("<Error>")) {
+                    return Err(S3Error::Status {
+                        call: "CompleteMultipartUpload",
+                        status: 200,
+                        code,
+                    });
+                }
+                Ok(version)
+            }
+            Err(err) => {
+                let aborted = self
+                    .call(
+                        http,
+                        "AbortMultipartUpload",
+                        reqwest::Method::DELETE,
+                        Some(key),
+                        &[("uploadId", upload.as_str())],
+                        Vec::new(),
+                    )
+                    .await;
+                if let Err(abort) = aborted {
+                    tracing::warn!(error = %abort, "a failed multipart upload was not aborted");
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// UploadPart of each `part` bytes of `file`, in order: their ETags.
+    async fn put_parts(
+        &self,
+        http: &reqwest::Client,
+        key: &str,
+        upload: &str,
+        mut file: std::fs::File,
+        part: usize,
+    ) -> Result<Vec<String>, S3Error> {
+        let mut etags = Vec::new();
+        loop {
+            let (rest, body) = read_part(file, part).await?;
+            file = rest;
+            if body.is_empty() {
+                return Ok(etags);
+            }
+            let number = (etags.len() + 1).to_string();
+            let response = self
+                .call(
+                    http,
+                    "UploadPart",
+                    reqwest::Method::PUT,
+                    Some(key),
+                    &[("partNumber", number.as_str()), ("uploadId", upload)],
+                    body,
+                )
+                .await?;
+            let etag = response
+                .headers()
+                .get(reqwest::header::ETAG)
+                .and_then(|v| v.to_str().ok())
+                .ok_or(S3Error::Unreadable("UploadPart"))?
+                .to_owned();
+            etags.push(etag);
+        }
+    }
+
     /// DeleteObject. Without a version id a versioned bucket only adds a delete marker (the soft
     /// delete); with one it removes that version for good, which only retention does.
     pub async fn delete(
@@ -424,6 +562,68 @@ impl Bucket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file past one part goes up as a multipart upload whose parts, in order, rebuild it, and
+    /// the completed version's id comes back.
+    #[tokio::test]
+    async fn a_large_archive_goes_up_in_parts_that_rebuild_it() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "<InitiateMultipartUploadResult><UploadId>up-1</UploadId></InitiateMultipartUploadResult>",
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "up-1"))
+            .respond_with(|request: &Request| {
+                let number = request
+                    .url
+                    .query_pairs()
+                    .find(|(k, _)| k == "partNumber")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                ResponseTemplate::new(200).insert_header("ETag", format!("\"etag-{number}\""))
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "up-1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("x-amz-version-id", "v-big")
+                    .set_body_string("<CompleteMultipartUploadResult/>"),
+            )
+            .mount(&server)
+            .await;
+        let bucket = Bucket {
+            endpoint: server.uri().parse().expect("url"),
+            region: "eu-central-1".into(),
+            bucket: "b".into(),
+            access_key_id: "AKID".into(),
+            secret_access_key: Zeroizing::new("secret".into()),
+        };
+        let dir = std::env::temp_dir().join(format!("s3-parts-{}", std::process::id()));
+        let file: Vec<u8> = (0..2500u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&dir, &file).expect("file");
+        let version = bucket
+            .put_file(&reqwest::Client::new(), "jc/a/data/archive.zip.age", &dir, 2500, 1000)
+            .await
+            .expect("uploaded");
+        std::fs::remove_file(&dir).ok();
+        assert_eq!(version, "v-big");
+        let received = server.received_requests().await.expect("requests");
+        let parts: Vec<&Request> = received.iter().filter(|r| r.method.as_str() == "PUT").collect();
+        assert_eq!(parts.iter().map(|r| r.body.len()).collect::<Vec<_>>(), vec![1000, 1000, 500]);
+        let rebuilt: Vec<u8> = parts.iter().flat_map(|r| r.body.clone()).collect();
+        assert_eq!(rebuilt, file);
+        let complete = received.last().expect("complete");
+        let body = String::from_utf8_lossy(&complete.body);
+        assert!(body.contains("<PartNumber>3</PartNumber><ETag>\"etag-3\"</ETag>"), "{body}");
+    }
 
     /// The GET Object example of the AWS SigV4 documentation ("Examples of Signature
     /// Calculations", examplebucket, 20130524T000000Z): the published signature.

@@ -405,6 +405,63 @@ pub(crate) fn organization_vars(
     out
 }
 
+/// `JC_PORTAL_BACKUP_TENANTS` (T-7169): the tenant of each module running here as its data
+/// backup reader sets it for row-level security: shako's one `[instance, org]`, daiya's
+/// installation (each project's daiya organization derives from it) and each Organization's
+/// dataroom OrgId and catalogue. Empty when none of them runs here; an environment value still
+/// wins.
+pub(crate) fn backup_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
+    let mut tenants = serde_json::Map::new();
+    #[cfg(feature = "shako")]
+    if cfg.roles.contains(&Module::Shako) {
+        tenants.insert(
+            "shako".to_owned(),
+            serde_json::json!([
+                crate::modules::shako::INSTANCE.to_string(),
+                crate::modules::shako::ORG.to_string()
+            ]),
+        );
+    }
+    #[cfg(feature = "daiya")]
+    if cfg.roles.contains(&Module::Daiya) {
+        // DaiyaState::for_standalone's installation, the one jc's daiya runs as.
+        tenants.insert(
+            "daiyaInstallation".to_owned(),
+            daiya_model::InstallationId::from_u128(1).to_string().into(),
+        );
+    }
+    #[cfg(feature = "dataroom")]
+    if cfg.roles.contains(&Module::Dataroom) {
+        use dataroom_core::{CatalogueId, OrgId};
+        // A malformed id stops dataroom's own start with the reason; here it names no tenant.
+        if let Ok(installation) = OrgId::parse_verified(&cfg.dataroom.org_id) {
+            let own: serde_json::Map<String, serde_json::Value> = cfg
+                .organizations
+                .iter()
+                .filter_map(|org| {
+                    let catalogue = CatalogueId::parse_verified(&org.catalogue_id).ok()?;
+                    Some((
+                        org.name.clone(),
+                        serde_json::json!({
+                            "org": OrgId::of_organization(installation, &org.name).to_string(),
+                            "catalogue": catalogue.to_string(),
+                        }),
+                    ))
+                })
+                .collect();
+            tenants.insert("dataroom".to_owned(), own.into());
+        }
+    }
+    let mut out = BTreeMap::new();
+    if !tenants.is_empty() {
+        out.insert(
+            "JC_PORTAL_BACKUP_TENANTS".to_owned(),
+            serde_json::Value::Object(tenants).to_string(),
+        );
+    }
+    out
+}
+
 /// `JC_PORTAL_APPS_URL`, the apex every App host sits under, from the Portal's App-host entry
 /// `*.apps.{domain}` (edge-session-design S4a): `{scheme}://{domain}`, and
 /// `JC_PORTAL_SERVE_APP_HOSTS`, since no edge composes the App routes in front of jc. Empty
@@ -604,6 +661,44 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.broker_url.as_deref(), Some("https://broker.example"));
     }
+    /// T-7169: the Portal's data backup sets each module's tenant as the module itself keys its
+    /// rows: shako's forge tenant, daiya's installation and each Organization's own dataroom
+    /// OrgId and catalogue, in the shape the Portal reads.
+    #[test]
+    #[cfg(all(feature = "shako", feature = "daiya", feature = "dataroom"))]
+    fn the_backup_tenants_are_the_ones_the_modules_key_rows_by() {
+        use clap::Parser as _;
+        let text = include_str!("../../tests/fixtures/two-orgs.toml");
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cli =
+            |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
+        let cfg = crate::config::Config::merge(cli("portal,dataroom,shako,daiya"), file.clone())
+            .expect("config");
+        let vars = backup_vars(&cfg);
+        let read = joinedcontext_portal::org_backup::modules::BackupModules::from_lookup(|k| {
+            vars.get(k).cloned()
+        })
+        .expect("the Portal reads what jc writes");
+        let tenants = read.tenants;
+        let one = "00000000-0000-0000-0000-000000000001".to_owned();
+        assert_eq!(
+            tenants.shako.map(|pair| pair.map(|id| id.to_string())),
+            Some([one.clone(), one.clone()])
+        );
+        assert_eq!(tenants.daiya_installation.map(|id| id.to_string()), Some(one));
+        let installation = dataroom_core::OrgId::parse_verified(&cfg.dataroom.org_id).unwrap();
+        let alpha = &tenants.dataroom["alpha"];
+        assert_eq!(
+            alpha.org.to_string(),
+            dataroom_core::OrgId::of_organization(installation, "alpha").to_string()
+        );
+        assert_eq!(alpha.catalogue.to_string(), "00000000-0000-7000-8000-0000000000a1");
+        assert_ne!(tenants.dataroom["beta"].org, alpha.org);
+        let portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
+        assert!(backup_vars(&portal_only).is_empty());
+    }
+
     /// jc-multiorg-portal: every Organization's Portal host reaches the Portal, and with
     /// dataroom here its own catalogue, called on this jc under the catalogue's name, with the
     /// Organization's token file; an Organization without a token publishes nowhere.

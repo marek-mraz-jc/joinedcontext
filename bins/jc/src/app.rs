@@ -1264,6 +1264,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         vars.extend(modules::portal::apps_vars(cfg));
         vars.extend(modules::portal::ingest_vars(cfg));
         vars.extend(modules::portal::limits_vars(cfg));
+        vars.extend(modules::portal::backup_vars(cfg));
         vars.extend(modules::portal::reconciler_vars(cfg));
         modules::portal::config(mount, env, vars)?;
     }
@@ -1427,6 +1428,7 @@ async fn portal_attempt(
                     .chain(modules::portal::apps_vars(&cfg))
                     .chain(modules::portal::ingest_vars(&cfg))
                     .chain(modules::portal::limits_vars(&cfg))
+                    .chain(modules::portal::backup_vars(&cfg))
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
                 modules::portal::registry_seed(&cfg),

@@ -87,6 +87,11 @@ spec:
           value: {{ $role.type | default "readonly" | quote }}
         - name: DB_OWNER
           value: {{ $config.user | quote }}
+        {{- if eq ($role.type | default "readonly") "backup" }}
+        # backup: SELECT on these columns only, the list the program that reads them names.
+        - name: ROLE_GRANTS
+          value: {{ required "a backup role names its grants" $role.grants | toJson | quote }}
+        {{- end }}
         command:
         - /bin/sh
         - -c
@@ -129,7 +134,29 @@ spec:
               :'role_name', :'role_password') \gexec
           EOSQL
 
-          if [ "${ROLE_TYPE}" = "login" ]; then
+          if [ "${ROLE_TYPE}" = "backup" ]; then
+          # backup: a reader of named columns that never passes row-level security (T-7169).
+          # Everything it held is revoked first, so a column taken off its list stops leaving;
+          # a table the program has not migrated yet is granted at the next upgrade.
+          psql -v ON_ERROR_STOP=1 <<-'EOSQL'
+            \getenv role_name ROLE_NAME
+            \getenv grants ROLE_GRANTS
+            \getenv database PGDATABASE
+            SELECT format('ALTER ROLE %I NOBYPASSRLS', :'role_name') \gexec
+            SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database', :'role_name') \gexec
+            SELECT format('REVOKE ALL ON ALL TABLES IN SCHEMA %I FROM %I', s, :'role_name')
+              FROM (SELECT DISTINCT g->>'schema' AS s FROM jsonb_array_elements(:'grants'::jsonb) g) x
+              WHERE to_regnamespace(quote_ident(s)) IS NOT NULL \gexec
+            SELECT format('GRANT USAGE ON SCHEMA %I TO %I', s, :'role_name')
+              FROM (SELECT DISTINCT g->>'schema' AS s FROM jsonb_array_elements(:'grants'::jsonb) g) x
+              WHERE to_regnamespace(quote_ident(s)) IS NOT NULL \gexec
+            SELECT format('GRANT SELECT (%s) ON %I.%I TO %I',
+                (SELECT string_agg(quote_ident(c), ', ') FROM jsonb_array_elements_text(g->'columns') c),
+                g->>'schema', g->>'table', :'role_name')
+              FROM jsonb_array_elements(:'grants'::jsonb) g
+              WHERE to_regclass(format('%I.%I', g->>'schema', g->>'table')) IS NOT NULL \gexec
+          EOSQL
+          elif [ "${ROLE_TYPE}" = "login" ]; then
           # login: the program's own migrations grant this role its tables (jc's shako, daiya,
           # dataroom and ekiben request roles); the revoke below would strip them at every upgrade.
           psql -v ON_ERROR_STOP=1 -c "GRANT CONNECT ON DATABASE \"${PGDATABASE}\" TO \"${ROLE_NAME}\""
@@ -180,11 +207,12 @@ spec:
 
           # Verify the role has no access to other databases by ensuring no extra privileges
           echo "Verifying role is limited to database ${PGDATABASE}..."
-          psql -v ON_ERROR_STOP=1 -t <<-EOSQL | grep -q "^ *0$" || { echo "ERROR: role ${ROLE_NAME} holds superuser, createrole or createdb"; exit 1; }
+          psql -v ON_ERROR_STOP=1 -t <<-EOSQL | grep -q "^ *0$" || { echo "ERROR: role ${ROLE_NAME} holds superuser, createrole, createdb or (a backup role) bypassrls"; exit 1; }
             SELECT count(*)
             FROM pg_roles
             WHERE rolname = '${ROLE_NAME}'
-              AND (rolsuper = true OR rolcreaterole = true OR rolcreatedb = true);
+              AND (rolsuper = true OR rolcreaterole = true OR rolcreatedb = true
+                OR (rolbypassrls = true AND '${ROLE_TYPE}' = 'backup'));
           EOSQL
           echo "✓ Role has no system-level privileges"
 

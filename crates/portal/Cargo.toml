@@ -154,6 +154,7 @@ base64 = "0.23"
 oxc = { version = "0.149", default-features = false, features = ["transformer", "codegen", "semantic", "ast_visit"] }
 hmac = "0.12"
 sha2 = "0.10"
+uuid = { version = "1", features = ["serde"] }
 # The secret form writes the repository's SOPS files (T-5971); jcctl reads them back. Both
 # already in the graph through jcctl.
 age = { version = "0.12", default-features = false, features = ["armor"] }

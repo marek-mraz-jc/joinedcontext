@@ -464,6 +464,21 @@ envSecret:
   BROKER_DB_PASSWORD:
     secret: db-jc-antares
     key: password
+  BACKUP_ANTARES_DB_PASSWORD:
+    secret: db-jc-antares-backup
+    key: password
+  BACKUP_KAISATSU_DB_PASSWORD:
+    secret: db-jc-kaisatsu-backup
+    key: password
+  BACKUP_SHAKO_DB_PASSWORD:
+    secret: db-jc-shako-backup
+    key: password
+  BACKUP_DAIYA_DB_PASSWORD:
+    secret: db-jc-daiya-backup
+    key: password
+  BACKUP_DATAROOM_DB_PASSWORD:
+    secret: db-jc-dataroom-backup
+    key: password
 {{- if $wasmOn }}
   # The wasm Apps' database login (AP-149): the Portal makes every App's schema and roles.
   APPS_DB_PASSWORD:
@@ -541,6 +556,13 @@ env:
   ANTARES_BUS: "local"
   ANTARES_ALLOW_SHARED_LOCAL: "1"
   JC_PORTAL_DATABASE_URL: "postgresql://jc_portal:$(PORTAL_DB_PASSWORD)@{{ $pg }}:5432/jc_portal"
+  # The data backup's readers of the module databases (T-7169): SELECT on the exported columns,
+  # under each module's row-level security (databases.yaml `<module>_backup`).
+  JC_PORTAL_BACKUP_ANTARES_DATABASE_URL: "postgresql://antares_backup:$(BACKUP_ANTARES_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
+  JC_PORTAL_BACKUP_KAISATSU_DATABASE_URL: "postgresql://kaisatsu_backup:$(BACKUP_KAISATSU_DB_PASSWORD)@{{ $pg }}:5432/jc_kaisatsu"
+  JC_PORTAL_BACKUP_SHAKO_DATABASE_URL: "postgresql://shako_backup:$(BACKUP_SHAKO_DB_PASSWORD)@{{ $pg }}:5432/jc_shako"
+  JC_PORTAL_BACKUP_DAIYA_DATABASE_URL: "postgresql://daiya_backup:$(BACKUP_DAIYA_DB_PASSWORD)@{{ $pg }}:5432/jc_daiya"
+  JC_PORTAL_BACKUP_DATAROOM_DATABASE_URL: "postgresql://dataroom_backup:$(BACKUP_DATAROOM_DB_PASSWORD)@{{ $pg }}:5432/jc_dataroom"
   ANTARES_STORE: "postgres"
   ANTARES_DATABASE_URL: "postgresql://jc_antares:$(BROKER_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
   ANTARES_PG_POOL: {{ $jc.antaresPool | quote }}

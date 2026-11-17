@@ -516,6 +516,19 @@ pub async fn run(
             .collect(),
         erasures_replayed: 0,
     };
+    // Decided (T-7171, worker-t7169): the Portal holds a read-only role on the module databases
+    // (least privilege), so a module's rows come back by the module's own restore, not here.
+    for (module, part) in &opened.index.modules {
+        if part.exported && module != "portal" {
+            plan.not_restored.insert(
+                format!("{module}/*"),
+                format!(
+                    "the Portal only reads the {module} database; its rows are in \
+                     module/{module}/ of the archive for the {module} operator to restore"
+                ),
+            );
+        }
+    }
     let exported = opened
         .index
         .modules

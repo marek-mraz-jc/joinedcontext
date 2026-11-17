@@ -73,10 +73,12 @@ def sql(name: str, query: str, db: str = "postgres") -> str:
     return done.stdout.strip()
 
 
-def run_job(name: str, role: str = "app_read", role_type: str = "readonly") -> subprocess.CompletedProcess:
+def run_job(name: str, role: str = "app_read", role_type: str = "readonly",
+            grants: str = "") -> subprocess.CompletedProcess:
     env = {"HOME": "/tmp", "PGHOST": "127.0.0.1", "PGPORT": "5432", "PGDATABASE": "app",
            "PGUSER": "postgres", "PGPASSWORD": "su", "ROLE_NAME": role,
-           "ROLE_PASSWORD": PASSWORD, "ROLE_TYPE": role_type, "DB_OWNER": "app"}
+           "ROLE_PASSWORD": PASSWORD, "ROLE_TYPE": role_type, "DB_OWNER": "app",
+           "ROLE_GRANTS": grants}
     flags = [f for key, value in env.items() for f in ("-e", f"{key}={value}")]
     return subprocess.run(["docker", "exec", *flags, name, "/bin/sh", "-c", role_script()],
                           capture_output=True, text=True)
@@ -110,6 +112,31 @@ def test_a_login_role_keeps_the_grants_its_program_migrated(postgres):
     # Red check: the readonly type strips the same grant.
     assert run_job(postgres, "app_login", "readonly").returncode == 0
     assert sql(postgres, "SELECT has_table_privilege('app_login', 'migrated', 'INSERT')", db="app") == "f"
+
+
+def test_a_backup_role_reads_its_columns_only_and_never_passes_row_security(postgres):
+    # T-7169: the Portal's data backup reader of a module's database.
+    sql(postgres, "CREATE SCHEMA m AUTHORIZATION app; CREATE TABLE m.t (id int, org text, secret text);"
+        " CREATE TABLE m.gone (id int); ALTER TABLE m.t ENABLE ROW LEVEL SECURITY;"
+        " ALTER TABLE m.t FORCE ROW LEVEL SECURITY;"
+        " CREATE POLICY p ON m.t USING (org = current_setting('m.org', true));"
+        " INSERT INTO m.t VALUES (1, 'a', 's1'), (2, 'b', 's2')", db="app")
+    grants = ('[{"schema": "m", "table": "t", "columns": ["id", "org"]},'
+              ' {"schema": "m", "table": "later", "columns": ["id"]}]')
+    sql(postgres, "CREATE ROLE app_backup LOGIN BYPASSRLS")
+    sql(postgres, "GRANT SELECT ON m.gone TO app_backup", db="app")
+    done = run_job(postgres, "app_backup", "backup", grants)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert sql(postgres, "SELECT rolbypassrls FROM pg_roles WHERE rolname = 'app_backup'") == "f"
+    def reads(*queries: str) -> subprocess.CompletedProcess:
+        commands = [f for q in queries for f in ("-c", q)]
+        return subprocess.run(
+            ["docker", "exec", "-e", f"PGPASSWORD={PASSWORD}", postgres, "psql", "-h", "127.0.0.1",
+             "-U", "app_backup", "-d", "app", "-qtA", *commands], capture_output=True, text=True)
+    seen = reads("SET m.org TO 'a'", "SELECT id, org FROM m.t")
+    assert seen.stdout.split() == ["1|a"], seen.stdout + seen.stderr
+    assert "permission denied" in reads("SELECT secret FROM m.t").stderr
+    assert "permission denied" in reads("SELECT id FROM m.gone").stderr
 
 
 def test_a_role_made_earlier_as_superuser_loses_its_rights(postgres):

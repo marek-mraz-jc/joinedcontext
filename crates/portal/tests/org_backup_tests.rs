@@ -298,6 +298,15 @@ async fn world(installation: &str, versioning: &str) -> World {
 }
 
 async fn world_with(installation: &str, versioning: &str, db: Option<sqlx::PgPool>) -> World {
+    world_configured(installation, versioning, db, |_| {}).await
+}
+
+async fn world_configured(
+    installation: &str,
+    versioning: &str,
+    db: Option<sqlx::PgPool>,
+    tweak: impl FnOnce(&mut Config),
+) -> World {
     let identity = age::x25519::Identity::generate();
     let dir = std::env::temp_dir().join(format!(
         "org-backup-{}-{}",
@@ -315,6 +324,7 @@ async fn world_with(installation: &str, versioning: &str, db: Option<sqlx::PgPoo
     config.pipeline_secrets = Some(joinedcontext_portal::pipeline_secrets::Backend::Sops {
         age_key_file: key_file,
     });
+    tweak(&mut config);
     let forge = forge().await;
     let (endpoint, bucket) = fake_s3(versioning).await;
     let shako =
@@ -700,6 +710,403 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
         .as_str()
         .is_some_and(|s| !s.is_empty()));
     assert!(files["README.md"].contains("consistent in itself"));
+}
+
+/// The modules' own schemas (their migrations as they ship), each with a row of alfa and of
+/// bravo, read only through the `<module>_backup` role with the grants the deployment gives it
+/// (deploy/components/jc/databases.yaml, which must name the Portal's column lists exactly).
+const MODULE_SEED: &[(&str, &str)] = &[
+    (
+        "antares",
+        "INSERT INTO entities (tenant_id, id, entity, version, types, location_ambiguous,
+           created_at, modified_at)
+         VALUES
+           ('alfa-city-air', 'urn:ngsi-ld:Air:alfa-entity-mark', '{\"id\": \"alfa-value-mark\"}', 1,
+            '{Air}', false, now(), now()),
+           ('bravo-town-air', 'urn:ngsi-ld:Air:b1', '{\"id\": \"bravo-value\"}', 1, '{Air}', false,
+            now(), now()),
+           ('alfa-city-air-x', 'urn:ngsi-ld:Air:b2', '{\"id\": \"bravo-lookalike\"}', 1, '{Air}',
+            false, now(), now());
+         INSERT INTO iri_ids (tenant_id, iri) VALUES ('alfa-city-air', 'https://alfa.example/temperature-mark'),
+           ('bravo-town-air', 'https://bravo.example/humidity');
+         INSERT INTO attr_versions (tenant_id, entity_id, attr_id, instance_id, observed_at, version,
+           data, superseded_at)
+         VALUES ('alfa-city-air', 'urn:ngsi-ld:Air:alfa-entity-mark', 'temperature', 'i1', now(), 1,
+           '{\"value\": \"alfa-history-mark\"}', now()),
+           ('bravo-town-air', 'urn:ngsi-ld:Air:b1', 'humidity', 'i1', now(), 1,
+           '{\"value\": \"bravo-history\"}', now())",
+    ),
+    (
+        "kaisatsu",
+        "INSERT INTO kaisatsu.realms (realm_id, name, doc, smtp_password_enc) VALUES
+           ('alfa', 'alfa', '{}', '\x01'), ('bravo', 'bravo', '{}', '\x02');
+         INSERT INTO kaisatsu.people (realm_id, id, username_lower, email_lower, doc) VALUES
+           ('alfa', 'p-1', 'ada-alfa-mark', 'ada@alfa.example', '{}'),
+           ('bravo', 'p-2', 'bob-bravo', 'bob@bravo.example', '{}');
+         INSERT INTO kaisatsu.applications (realm_id, id, client_id, doc, secret_enc) VALUES
+           ('alfa', 'a-1', 'alfa-client-mark', '{}', 'ALFA_CLIENT_SECRET_ENC'::bytea),
+           ('bravo', 'a-2', 'bravo-client', '{}', 'BRAVO_CLIENT_SECRET_ENC'::bytea);
+         INSERT INTO kaisatsu.credentials (realm_id, id, user_id, credential_type, doc) VALUES
+           ('alfa', 'c-1', 'p-1', 'password', '{\"hash\": \"ALFA_PASSWORD_HASH\"}')",
+    ),
+    (
+        "shako",
+        "INSERT INTO shako.repo (id, instance_id, org_id, project_id, owner, name, description,
+           default_branch, private, archived, size_bytes, next_pr_number, created_at, updated_at)
+         VALUES
+           ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000001',
+            '00000000-0000-0000-0000-000000000001', 'alfa-city-config', 'jc', 'alfa-city-config',
+            'alfa-repo-mark', 'main', true, false, 0, 1, now(), now()),
+           ('00000000-0000-0000-0000-0000000000b1', '00000000-0000-0000-0000-000000000001',
+            '00000000-0000-0000-0000-000000000001', 'bravo-town-config', 'jc', 'bravo-town-config',
+            'bravo-repo', 'main', true, false, 0, 1, now(), now()),
+           ('00000000-0000-0000-0000-0000000000c1', '00000000-0000-0000-0000-000000000001',
+            '00000000-0000-0000-0000-000000000001', 'alfa-city-config', 'jc-apps',
+            'alfa-city-config', 'bravo-app-named-like-alfa', 'main', true, false, 0, 1, now(), now());
+         INSERT INTO shako.webhook (id, instance_id, org_id, repo_id, url, events, active,
+           secret_ref, created_at)
+         VALUES ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-000000000001',
+           '00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a1',
+           'https://hook.example', '[]', true, 'ALFA_WEBHOOK_SECRET_REF', now())",
+    ),
+    (
+        "daiya",
+        "INSERT INTO cr_folder (installation_id, org_id, instance_id, project_id, uid, title,
+           version, created_by, updated_by, created_at, updated_at)
+         VALUES
+           ('00000000-0000-0000-0000-000000000001', '{alfa_daiya}',
+            '00000000-0000-0000-0000-000000000001', 'alfa-city', 'f-1', 'alfa-folder-mark', 1,
+            'ada', 'ada', now(), now()),
+           ('00000000-0000-0000-0000-000000000001', '{bravo_daiya}',
+            '00000000-0000-0000-0000-000000000001', 'bravo-town', 'f-2', 'bravo-folder', 1,
+            'bob', 'bob', now(), now());
+         INSERT INTO cr_public_dashboard (installation_id, org_id, instance_id, uid,
+           dashboard_uid, access_token_hash, is_enabled, time_selection_enabled,
+           annotations_enabled, show_query_text, share, created_by, updated_by, created_at,
+           updated_at)
+         VALUES ('00000000-0000-0000-0000-000000000001', '{alfa_daiya}',
+           '00000000-0000-0000-0000-000000000001', 'pd-1', 'd-1', 'ALFA_SHARE_TOKEN_HASH', true,
+           false, false, false, 'public', 'ada', 'ada', now(), now())",
+    ),
+    (
+        "dataroom",
+        "INSERT INTO dataroom.cat_catalogue (org_id, id, name, host, title, default_language,
+           main_profile, modified, doc)
+         VALUES
+           ('{alfa_org}', '{alfa_catalogue}', 'alfa', 'data.alfa.example', 'alfa-catalogue-mark',
+            'en', 'dcat-ap', now(), '{{}}'),
+           ('{bravo_org}', '{bravo_catalogue}', 'bravo', 'data.bravo.example', 'bravo-catalogue',
+            'en', 'dcat-ap', now(), '{{}}');
+         INSERT INTO dataroom.cat_harvest_source (org_id, catalogue_id, id, name, kind, url,
+           publisher_id, enabled, modified, doc)
+         VALUES ('{alfa_org}', '{alfa_catalogue}', 'h-1', 'alfa-harvest-mark', 'ckan',
+           'https://ckan.example', 'pub-1', true, now(), '{{\"token\": \"ALFA_HARVEST_TOKEN\"}}')",
+    ),
+];
+
+const ONE: &str = "00000000-0000-0000-0000-000000000001";
+
+fn module_migrations(module: &str) -> Vec<&'static str> {
+    match module {
+        "antares" => vec![
+            include_str!("../../antares/crates/antares-sql/migrations/0001_init.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0002_dead_letters.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0003_comma_seconds_fraction.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0004_drop_entity_maps.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0005_service_escape_by_command.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0006_context_tenant.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0007_outbox_claim_check.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0008_views.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0009_dataset_instances.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0010_history_retention_index.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0011_versions_provenance.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0012_entity_types.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0013_type_page_indexes.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0014_attrs_expire_at.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0015_rls_index_paths.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0016_entity_type_statistics.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0017_history_one_index.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0018_typed_location_paths.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0019_drop_entities_jsonb.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0020_history_integer_keys.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0021_name_key.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0022_iri_no_plpgsql.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0023_breaking_short_history_unlogged.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0024_entity_values.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0025_entity_attrs.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0026_views_digest.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0027_entities_id_bytes.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0028_offset_until.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0029_entity_values_diff.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0030_temporal_bare.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0031_versions_never_rewritten.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0032_entity_scope_keys.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0033_entity_id_remint.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0034_remint_batched.sql"),
+            include_str!("../../antares/crates/antares-sql/migrations/0035_remint_ranges_bounded.sql"),
+        ],
+        "kaisatsu" => vec![
+            include_str!("../../kaisatsu/store-pg/migrations/0001_init.sql"),
+            include_str!("../../kaisatsu/store-pg/migrations/0002_k_items.sql"),
+            include_str!("../../kaisatsu/store-pg/migrations/0003_device_code.sql"),
+        ],
+        "shako" => vec![
+            include_str!("../../shako/store-pg/migrations/0001_init.sql"),
+            include_str!("../../shako/store-pg/migrations/0002_store_log.sql"),
+        ],
+        "daiya" => vec![include_str!("../../daiya/store-pg/migrations/0001_initial.sql")],
+        _ => vec![include_str!("../../dataroom/store-pg/migrations/0001_init.sql")],
+    }
+}
+
+/// The deployment's grants of `<module>_backup`, as the role Job applies them.
+fn deployed_grants(module: &str) -> Vec<(String, String, Vec<String>)> {
+    let text = include_str!("../../../deploy/components/jc/databases.yaml");
+    let databases: Value = serde_norway::from_str(text).expect("databases.yaml");
+    let role = databases[format!("jc_{module}")]["additionalRoles"]
+        .as_array()
+        .and_then(|roles| {
+            roles
+                .iter()
+                .find(|r| r["name"] == format!("{module}_backup").as_str())
+        })
+        .unwrap_or_else(|| panic!("databases.yaml has no {module}_backup role"))
+        .clone();
+    assert_eq!(role["type"], "backup");
+    role["grants"]
+        .as_array()
+        .expect("grants")
+        .iter()
+        .map(|g| {
+            (
+                g["schema"].as_str().expect("schema").to_owned(),
+                g["table"].as_str().expect("table").to_owned(),
+                g["columns"]
+                    .as_array()
+                    .expect("columns")
+                    .iter()
+                    .map(|c| c.as_str().expect("column").to_owned())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn the_deployment_grants_each_backup_reader_exactly_the_columns_the_portal_exports() {
+    use joinedcontext_portal::org_backup::modules::MODULE_TABLES;
+    for (module, schema, tables) in MODULE_TABLES {
+        let portal: Vec<(String, String, Vec<String>)> = tables
+            .iter()
+            .map(|t| {
+                (
+                    (*schema).to_owned(),
+                    t.name.to_owned(),
+                    t.columns.iter().map(|c| (*c).to_owned()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(deployed_grants(module), portal, "{module}");
+    }
+}
+
+/// One database per module, migrated as the module migrates it, seeded with alfa's and
+/// bravo's rows, the backup reader granted as the deployment grants it; the reader's URL by
+/// module. `None` without `JC_PORTAL_TEST_DATABASE_URL`.
+async fn seeded_module_dbs(seed: &BTreeMap<&str, String>) -> Option<BTreeMap<&'static str, String>> {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())?;
+    let admin = sqlx::PgPool::connect(&url).await.expect("the test database");
+    // Roles are the cluster's: made once, kept for the next run.
+    sqlx::raw_sql(
+        "DO $$ DECLARE r text; BEGIN
+           FOREACH r IN ARRAY ARRAY['kaisatsu_app', 'shako_migrate', 'shako_app', 'daiya_migrate',
+             'daiya_app', 'dataroom_app'] LOOP
+             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) THEN
+               EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+             END IF;
+           END LOOP;
+           FOREACH r IN ARRAY ARRAY['antares_backup', 'kaisatsu_backup', 'shako_backup',
+             'daiya_backup', 'dataroom_backup'] LOOP
+             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) THEN
+               EXECUTE format('CREATE ROLE %I LOGIN NOBYPASSRLS', r);
+             END IF;
+             EXECUTE format('ALTER ROLE %I PASSWORD %L', r, 'backup-reader');
+           END LOOP;
+         END $$",
+    )
+    .execute(&admin)
+    .await
+    .expect("roles");
+    let mut readers = BTreeMap::new();
+    for (module, _) in MODULE_SEED {
+        let name = format!("org_mod_{module}_{}", common::unique::unique().replace('-', "_"));
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("a fresh database");
+        let mut own = url::Url::parse(&url).expect("url");
+        own.set_path(&format!("/{name}"));
+        let db = sqlx::PgPool::connect(own.as_str()).await.expect("module db");
+        for migration in module_migrations(module) {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(migration))
+                .execute(&db)
+                .await
+                .unwrap_or_else(|e| panic!("{module} migration: {e}"));
+        }
+        sqlx::raw_sql(sqlx::AssertSqlSafe(seed[module].clone()))
+            .execute(&db)
+            .await
+            .unwrap_or_else(|e| panic!("{module} seed: {e}"));
+        let role = format!("{module}_backup");
+        let mut grants = format!("GRANT CONNECT ON DATABASE {name} TO {role};");
+        let grants_of = deployed_grants(module);
+        let schemas: std::collections::BTreeSet<&String> =
+            grants_of.iter().map(|(s, _, _)| s).collect();
+        for schema in schemas {
+            grants.push_str(&format!(
+                "REVOKE ALL ON ALL TABLES IN SCHEMA {schema} FROM {role};
+                 GRANT USAGE ON SCHEMA {schema} TO {role};"
+            ));
+        }
+        for (schema, table, columns) in &grants_of {
+            grants.push_str(&format!(
+                "GRANT SELECT ({}) ON {schema}.{table} TO {role};",
+                columns.join(", ")
+            ));
+        }
+        sqlx::raw_sql(sqlx::AssertSqlSafe(grants))
+            .execute(&db)
+            .await
+            .unwrap_or_else(|e| panic!("{module} grants: {e}"));
+        own.set_username(&role).expect("user");
+        own.set_password(Some("backup-reader")).expect("password");
+        readers.insert(*module, own.to_string());
+    }
+    Some(readers)
+}
+
+#[tokio::test]
+async fn each_modules_rows_leave_only_for_their_organization_and_no_secret_column_does() {
+    use joinedcontext_portal::org_backup::modules::{daiya_org, DataroomTenant, Tenants};
+    let one: uuid::Uuid = ONE.parse().expect("uuid");
+    let tenant = |org: u128, catalogue: u128| DataroomTenant {
+        org: uuid::Uuid::from_u128(org),
+        catalogue: uuid::Uuid::from_u128(catalogue),
+    };
+    let dataroom = BTreeMap::from([
+        ("alfa".to_owned(), tenant(0xa0, 0xa1)),
+        ("bravo".to_owned(), tenant(0xb0, 0xb1)),
+    ]);
+    let fill = |text: &str| {
+        text.replace("{alfa_daiya}", &daiya_org(one, "alfa-city").to_string())
+            .replace("{bravo_daiya}", &daiya_org(one, "bravo-town").to_string())
+            .replace("{alfa_org}", &dataroom["alfa"].org.to_string())
+            .replace("{bravo_org}", &dataroom["bravo"].org.to_string())
+            .replace("{alfa_catalogue}", &dataroom["alfa"].catalogue.to_string())
+            .replace("{bravo_catalogue}", &dataroom["bravo"].catalogue.to_string())
+            .replace("{{", "{")
+            .replace("}}", "}")
+    };
+    let seed: BTreeMap<&str, String> = MODULE_SEED.iter().map(|(m, s)| (*m, fill(s))).collect();
+    let Some(readers) = seeded_module_dbs(&seed).await else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let mut world = world_configured("alfa", "Enabled", None, |config| {
+        config.backup_modules.readers = readers;
+        config.backup_modules.tenants = Tenants {
+            shako: Some([one, one]),
+            daiya_installation: Some(one),
+            dataroom,
+        };
+    })
+    .await;
+    // alfa-city's space `air` is tenant alfa-city-air; bravo's project alfa-city-air (named like
+    // it) has space `x`, tenant alfa-city-air-x, which is bravo's.
+    let m = &world.state.mirror;
+    m.upsert(org("Project", "alfa-city-air", json!({ "organizationRef": "bravo" })));
+    for (project, space) in [("alfa-city", "air"), ("bravo-town", "air"), ("alfa-city-air", "x")] {
+        m.upsert(common::envelope("ContextSpace", space, project, json!({})));
+    }
+    world.state.mirror.set_repositories(BTreeMap::from([
+        ("alfa-city".to_owned(), "alfa-city-config".to_owned()),
+        ("bravo-town".to_owned(), "bravo-town-config".to_owned()),
+    ]));
+    // alfa signs in through a realm of its own; bravo's realm is never read for alfa.
+    let oidc = joinedcontext_portal::config::OidcConfig {
+        issuer: "https://idm.example/realms/jc".parse().expect("url"),
+        client_id: "portal".into(),
+        auth: joinedcontext_portal::auth::client_auth::ClientAuth::Secret("s".into()),
+        extra_ca_pem: None,
+        admin_url: None,
+    };
+    let setting = joinedcontext_portal::auth::realms::RealmSetting {
+        organization: "alfa".into(),
+        issuer: "https://idm.alfa.example/realms/alfa".parse().expect("url"),
+        jwks_url: "http://127.0.0.1:9/realms/alfa/protocol/openid-connect/certs"
+            .parse()
+            .expect("url"),
+    };
+    world.state.organization_realms = Arc::new(BTreeMap::from([(
+        "alfa".to_owned(),
+        Arc::new(joinedcontext_portal::auth::realms::OrganizationRealm::new(
+            &setting,
+            &oidc,
+            &"https://portal.alfa.example".parse().expect("url"),
+            None,
+        )),
+    )]));
+
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let files = unzip(&decrypt(&latest(&world.bucket, DATA_KEY), &ids[0]));
+    let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    for module in ["antares", "kaisatsu", "shako", "daiya", "dataroom"] {
+        assert_eq!(
+            index["modules"][module]["exported"], true,
+            "{module}: {}",
+            index["modules"][module]
+        );
+    }
+    for (path, text) in files.iter().filter(|(p, _)| p.starts_with("module/")) {
+        for foreign in ["bravo", "bob", "lookalike", "alfa-city-air-x"] {
+            assert!(!text.contains(foreign), "{foreign} in {path}: {text}");
+        }
+        for secret in [
+            "SECRET_ENC",
+            "secret_enc",
+            "smtp_password_enc",
+            "PASSWORD_HASH",
+            "WEBHOOK_SECRET_REF",
+            "secret_ref",
+            "SHARE_TOKEN_HASH",
+            "access_token_hash",
+            "HARVEST_TOKEN",
+        ] {
+            assert!(!text.contains(secret), "{secret} in {path}");
+        }
+    }
+    for (path, mark) in [
+        ("module/antares/entities.jsonl", "alfa-value-mark"),
+        ("module/antares/iri_ids.jsonl", "temperature-mark"),
+        ("module/antares/attr_versions.jsonl", "alfa-history-mark"),
+        ("module/kaisatsu/people.jsonl", "ada-alfa-mark"),
+        ("module/kaisatsu/applications.jsonl", "alfa-client-mark"),
+        ("module/shako/repo.jsonl", "alfa-repo-mark"),
+        ("module/daiya/cr_folder.jsonl", "alfa-folder-mark"),
+        ("module/dataroom/cat_catalogue.jsonl", "alfa-catalogue-mark"),
+        ("module/dataroom/cat_harvest_source.jsonl", "alfa-harvest-mark"),
+    ] {
+        assert!(files[path].contains(mark), "{mark} missing from {path}");
+    }
+    assert_eq!(index["modules"]["antares"]["keys"]["tenants"], json!(["alfa-city-air"]));
+    assert_eq!(index["modules"]["antares"]["tables"]["entities"], 1);
+    // A repository of the Apps' owner named like alfa's project repository is not alfa's.
+    assert_eq!(index["modules"]["shako"]["tables"]["repo"], 1);
+    assert!(!files.keys().any(|p| p.contains("credentials") || p.contains("webhook")));
 }
 
 #[tokio::test]
