@@ -6,8 +6,8 @@
 
 use joinedcontext_portal::pipeline_log::LogStore;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -30,8 +30,11 @@ async fn a_logged_run_keeps_its_stream_hash_and_the_newest_run_names_it() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let log = LogStore::new(Some(pool));
     let project = fresh_project();
+    let log = LogStore::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project]).await,
+    );
     let p = project.as_str();
     let key = (project.clone(), "trees".to_owned());
     // A run with no row keeps nothing.

@@ -55,6 +55,10 @@ pub enum TemplateError {
     NotFound,
     #[error("database: {0}")]
     Db(String),
+    /// The project has no tenancy key (T-7198): its Organization is not an active one of the
+    /// registry, so it keeps no template.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no pipeline template; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// The spec a template keeps: the manifest's `spec` without the credentials and the references
@@ -107,7 +111,8 @@ pub fn template_spec(manifest: &Value) -> Result<Value, TemplateError> {
 }
 
 enum Inner {
-    Db(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
+    Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     Memory(RwLock<BTreeMap<String, Vec<PipelineTemplate>>>),
 }
 
@@ -120,10 +125,22 @@ fn db(err: sqlx::Error) -> TemplateError {
     TemplateError::Db(err.to_string())
 }
 
+/// A transaction in `project`'s key; [`TemplateError::Unplaced`] when it has none.
+async fn tenant(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    project: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, TemplateError> {
+    crate::project_ids::tx_of(pool, mirror, project)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| TemplateError::Unplaced(project.to_owned()))
+}
+
 impl TemplateStore {
-    pub fn new(pool: Option<sqlx::PgPool>) -> Self {
+    pub fn new(pool: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         let inner = match pool {
-            Some(pool) => Inner::Db(pool),
+            Some(pool) => Inner::Db(pool, mirror),
             None => Inner::Memory(RwLock::new(BTreeMap::new())),
         };
         Self {
@@ -139,25 +156,33 @@ impl TemplateStore {
                 items.reverse();
                 Ok(items)
             }
-            Inner::Db(pool) => sqlx::query(
-                "SELECT id, title, spec, created_by, created_at FROM pipeline_templates \
-                 WHERE project = $1 ORDER BY seq DESC",
-            )
-            .bind(project)
-            .fetch_all(pool)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(|row| {
-                Ok(PipelineTemplate {
-                    id: row.get("id"),
-                    title: row.get("title"),
-                    spec: row.get("spec"),
-                    created_by: row.get("created_by"),
-                    created_at: odt_to_chrono(row.get("created_at")),
-                })
-            })
-            .collect(),
+            Inner::Db(pool, mirror) => {
+                let mut tx = match tenant(pool, mirror, project).await {
+                    Ok(tx) => tx,
+                    Err(TemplateError::Unplaced(_)) => return Ok(Vec::new()),
+                    Err(err) => return Err(err),
+                };
+                let rows = sqlx::query(
+                    "SELECT id, title, spec, created_by, created_at FROM pipeline_templates \
+                     WHERE project = $1 ORDER BY seq DESC",
+                )
+                .bind(project)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(db)?;
+                tx.commit().await.map_err(db)?;
+                rows.into_iter()
+                    .map(|row| {
+                        Ok(PipelineTemplate {
+                            id: row.get("id"),
+                            title: row.get("title"),
+                            spec: row.get("spec"),
+                            created_by: row.get("created_by"),
+                            created_at: odt_to_chrono(row.get("created_at")),
+                        })
+                    })
+                    .collect()
+            }
         }
     }
 
@@ -192,8 +217,8 @@ impl TemplateStore {
                 }
                 items.push(template.clone());
             }
-            Inner::Db(pool) => {
-                let mut tx = pool.begin().await.map_err(db)?;
+            Inner::Db(pool, mirror) => {
+                let mut tx = tenant(pool, mirror, project).await?;
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('pipeline_templates/' || $1, 0))")
                     .bind(project)
                     .execute(&mut *tx)
@@ -240,14 +265,16 @@ impl TemplateStore {
                 }
                 Ok(())
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror) => {
+                let mut tx = tenant(pool, mirror, project).await?;
                 let done =
                     sqlx::query("DELETE FROM pipeline_templates WHERE project = $1 AND id = $2")
                         .bind(project)
                         .bind(id)
-                        .execute(pool)
+                        .execute(&mut *tx)
                         .await
                         .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 if done.rows_affected() == 0 {
                     return Err(TemplateError::NotFound);
                 }
@@ -341,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_project_keeps_its_own_templates_and_no_more_than_the_limit() {
-        let store = TemplateStore::new(None);
+        let store = TemplateStore::new(None, Default::default());
         let make = |title: &str| CreateTemplate {
             title: title.into(),
             manifest: json!({ "kind": "Pipeline", "spec": { "class": "batch" } }),

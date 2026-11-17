@@ -1909,7 +1909,7 @@ mod tests {
     async fn a_source_failing_three_runs_in_a_row_opens_a_failure_once_an_hour_is_read() {
         let mirror = mirror();
         let store = Arc::new(AlertStore::new(None, Default::default()));
-        let runs = Arc::new(crate::pipeline_log::LogStore::new(None));
+        let runs = Arc::new(crate::pipeline_log::LogStore::new(None, Default::default()));
         let evaluator = Evaluator::new(
             Arc::clone(&mirror),
             Arc::new(crate::quality::Store::default()),

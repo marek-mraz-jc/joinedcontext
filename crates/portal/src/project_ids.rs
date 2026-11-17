@@ -33,6 +33,17 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "entity_trash",
     "entity_comments",
     "data_views",
+    // T-7198 PK-1f, migration 0072.
+    "pipeline_log",
+    "pipeline_runs",
+    "pipeline_rejected",
+    "pipeline_status",
+    "pipeline_templates",
+    "pipeline_record_hashes",
+    "pipeline_source_ledger",
+    "pipeline_source_holds",
+    "pipeline_source_complete",
+    "pipeline_source_removed",
 ];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
@@ -156,6 +167,18 @@ pub(crate) async fn required(
                  Organizations page first"
             ))
         })
+}
+
+/// A `db::tenant_tx` of `project`'s key as the mirror places it; `None` when it has none.
+pub(crate) async fn tx_of(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, sqlx::Error> {
+    match key_of(pool, mirror, project).await? {
+        Some(key) => Ok(Some(crate::db::tenant_tx(pool, key).await?)),
+        None => Ok(None),
+    }
 }
 
 /// Every Project of the mirror with its key, by name: what a read over every project fans out
