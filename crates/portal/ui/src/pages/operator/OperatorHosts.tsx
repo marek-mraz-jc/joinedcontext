@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { reasonOf } from "../../api/client";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import { Alert, Badge, Button, Card, CardHeader, ConfirmDialog } from "../../components/ui";
-import { operatorHosts, operatorKeys, proposeChange, stateTone, when } from "./operatorApi";
+import { operatorHosts, operatorKeys, proposeChange, sentence, stateTone, useOrganizationTitles, when } from "./operatorApi";
 import type { OperatorHost } from "./operatorApi";
 
 /**
@@ -17,6 +17,7 @@ export function OperatorHosts(): JSX.Element {
   const { t, i18n } = useTranslation();
   const client = useQueryClient();
   const hosts = useQuery({ queryKey: operatorKeys.hosts, queryFn: operatorHosts });
+  const title = useOrganizationTitles();
   const [removing, setRemoving] = useState<OperatorHost | null>(null);
   const remove = useMutation({
     mutationFn: (host: string) => proposeChange({ kind: "HostRemove", host }),
@@ -61,7 +62,21 @@ export function OperatorHosts(): JSX.Element {
         empty={t("operator.hosts.empty")}
         stack
         columns={[
-          { key: "host", label: t("operator.hosts.host"), text: (row) => row.host, cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{row.host}</span> },
+          // What answers and for whom sit under the host, so a phone card shows them before its
+          // More details (three fields).
+          {
+            key: "host",
+            label: t("operator.hosts.host"),
+            text: (row) => `${row.host} ${title(row.organization)}`,
+            cell: (row) => (
+              <span className="block min-w-0">
+                <span className="block font-mono [overflow-wrap:anywhere]">{row.host}</span>
+                <span className="block text-caption text-fg-muted">
+                  {t(`operator.role.${row.role}`, { defaultValue: row.role })} · {title(row.organization)}
+                </span>
+              </span>
+            ),
+          },
           {
             key: "state",
             label: t("operator.hosts.state"),
@@ -72,10 +87,8 @@ export function OperatorHosts(): JSX.Element {
             key: "detail",
             label: t("operator.hosts.detail"),
             text: (row) => row.detail ?? "",
-            cell: (row) => <span className="text-fg-muted">{row.detail ?? t(`operator.stateHint.${row.state}`, { defaultValue: "" })}</span>,
+            cell: (row) => <span className="text-fg-muted">{row.detail ? sentence(row.detail) : t(`operator.stateHint.${row.state}`, { defaultValue: "" })}</span>,
           },
-          { key: "role", label: t("operator.hosts.role"), text: (row) => t(`operator.role.${row.role}`, { defaultValue: row.role }) },
-          { key: "organization", label: t("operator.hosts.organization"), text: (row) => row.organization },
           {
             key: "actions",
             label: t("operator.hosts.actions"),

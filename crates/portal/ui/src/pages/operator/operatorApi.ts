@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { door, doorAction } from "../../api/odata";
 import type { components } from "../../api/schema";
 
@@ -26,6 +27,17 @@ export const operatorKeys = {
   changes: ["operator", "changes"] as const,
   audit: ["operator", "audit"] as const,
 };
+
+/** Each Organization's title by its name, so a list shows "Banskobystrický kraj", not "bbsk". */
+export function useOrganizationTitles(): (name: string | null | undefined) => string {
+  const list = useQuery({ queryKey: operatorKeys.organizations, queryFn: operatorOrganizations });
+  return (name) => (name ? (list.data?.items.find((org) => org.name === name)?.title ?? name) : "");
+}
+
+/** A server sentence as the start of a line: "Waiting for …", not "waiting for …". */
+export function sentence(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 
 export async function operatorOrganizations(): Promise<{
   items: OperatorOrganization[];

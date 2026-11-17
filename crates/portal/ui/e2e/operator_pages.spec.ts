@@ -91,7 +91,9 @@ async function stubApi(page: Page, registry: Registry, operator = true): Promise
     if (path === "/api/v1/operator/changes" && method === "POST") {
       const input = request.postDataJSON() as Record<string, string>;
       if (input.kind === "HostAdd" && !input.host.endsWith(".zilina.sk") && !input.host.endsWith(".bbsk.sk")) {
-        const detail = `host: '${input.host}' is not under the domain of Organization id ${input.organizationId ?? "sk_bbsk"}`;
+        // The server's sentence (jc-router registry::admit) names the Organization's verified domain.
+        const domain = registry.organizations.find((org) => org.name === input.organization)?.domain ?? "bbsk.sk";
+        const detail = `host: host '${input.host}' is not under ${domain}, the Organization's verified domain`;
         return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [detail] }, 422));
       }
       const { kind, ...payload } = input;
@@ -166,7 +168,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.getByLabel("Host", { exact: true }).fill("smartcity.example.org");
       await page.getByLabel("Organization", { exact: true }).selectOption("zilina");
       await page.getByRole("button", { name: "Ask for the host" }).click();
-      await expect(page.getByText(/is not under the domain/)).toBeVisible();
+      await expect(page.getByText(/is not under zilina\.sk, the Organization's verified domain/)).toBeVisible();
       await shot(page, `operator-add-refused-${width}`);
 
       await page.getByLabel("Host", { exact: true }).fill("smartcity.zilina.sk");
@@ -186,7 +188,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.goto("/organization/operator-hosts?lang=en");
       await expect(page.getByText("signin.bbsk.sk").filter({ visible: true }).first()).toBeVisible();
       await expect(page.getByText(/new certificates requested in the last 24 hours/)).toBeVisible();
-      await expect(page.getByText("waiting for a certificate slot until 18 Nov 2026 09:00 UTC").filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText("Waiting for a certificate slot until 18 Nov 2026 09:00 UTC").filter({ visible: true }).first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-hosts-${width}`);
       await page.getByRole("button", { name: "Remove" }).filter({ visible: true }).first().click();
@@ -213,6 +215,9 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.goto("/organization/operator-organizations?lang=en");
       await expect(page.getByText("No Organization exists yet", { exact: false })).toBeVisible();
       await shot(page, `operator-organizations-empty-${width}`);
+      await page.goto("/organization/operator-audit?lang=en");
+      await expect(page.getByText("Nothing recorded yet. The first operator Change writes the first row.")).toBeVisible();
+      await shot(page, `operator-audit-empty-${width}`);
     });
 
     test(`an Organization administrator who is no operator meets no operator section at ${width} px`, async ({ page }) => {

@@ -84,7 +84,9 @@ describe("hosts", () => {
     expect(await screen.findAllByText("smartcity.bbsk.sk")).not.toHaveLength(0);
     expect(screen.getAllByText(en.operator.state.served).length).toBeGreaterThan(0);
     expect(screen.getAllByText(en.operator.state["dns-ok"]).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("waiting for a certificate slot until 2026-11-18 09:00 UTC").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Waiting for a certificate slot until 2026-11-18 09:00 UTC").length).toBeGreaterThan(0);
+    // The role and the Organization ride under the host, so a phone card keeps them.
+    expect(screen.getAllByText(`${en.operator.role.working} · bbsk`).length).toBeGreaterThan(0);
     expect(screen.getByText("10 of 10 new certificates requested in the last 24 hours.")).toBeTruthy();
     await expectNoAxeViolations(document.body);
   });

@@ -14,6 +14,7 @@ import {
   operatorOrganizations,
   proposeChange,
   requestChallenge,
+  sentence,
 } from "./operatorApi";
 import type { Challenge, OperatorOrganization, OperatorOrganizationId } from "./operatorApi";
 
@@ -43,6 +44,7 @@ export function OperatorOrganizations(): JSX.Element {
         rowKey={(row) => row.name}
         storageKey="operator.organizations"
         empty={t("operator.organizations.empty")}
+        noSearch={items.length < 10}
         stack
         columns={[
           {
@@ -86,7 +88,7 @@ function hostSummary(row: OperatorOrganization, t: (key: string, options?: Recor
   const waiting = Object.entries(row.hosts)
     .filter(([state]) => state !== "served" && state !== "removed")
     .reduce((sum, [, n]) => sum + n, 0);
-  return t("operator.organizations.hostCount", { served, waiting });
+  return served + waiting === 0 ? t("operator.organizations.noHost") : t("operator.organizations.hostCount", { served, waiting });
 }
 
 /** Each Organization id and its TXT record; an id not minted yet is checked again here. */
@@ -111,6 +113,7 @@ function IdList({ ids }: { ids: OperatorOrganizationId[] }): JSX.Element {
         rowKey={(row) => row.id}
         storageKey="operator.ids"
         empty={t("operator.ids.empty")}
+        noSearch={ids.length < 10}
         stack
         columns={[
           { key: "domain", label: t("operator.ids.domain"), text: (row) => row.domain, cell: (row) => <span className="font-mono">{row.domain}</span> },
@@ -174,7 +177,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
   const said = (error: unknown) => (error ? reasonOf(error, t("operator.tryAgain")) : "");
   const fieldOf = (error: unknown, field: string): string[] | undefined => {
     const text = said(error);
-    return text.startsWith(`${field}:`) ? [text.slice(field.length + 1).trim()] : undefined;
+    return text.startsWith(`${field}:`) ? [sentence(text.slice(field.length + 1).trim())] : undefined;
   };
   const proposeFields = ["host", "organization", "organizationId", "role"];
   const proposeElsewhere = propose.isError && !proposeFields.some((field) => fieldOf(propose.error, field));

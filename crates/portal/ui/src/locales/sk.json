@@ -12373,7 +12373,7 @@
     "installationTitle": "Opýtajte sa správcov inštalácie",
     "ownSections": "Otvoriť členov vašej organizácie",
     "installationContacts": "Kontakty inštalácie",
-    "noInstallationContacts": "Inštalácia zatiaľ nezverejňuje žiadny kontakt.",
+    "noInstallationContacts": "Inštalácia zatiaľ nezverejňuje kontakt. Osoba, ktorá zriadila vašu organizáciu, sa spojila s jej operátormi: obráťte sa na ňu.",
     "contacts": "Kontakty vašej organizácie",
     "back": "Späť na vaše projekty"
   },
@@ -13595,7 +13595,8 @@
       "noDomain": "Zatiaľ nenastavená",
       "hosts": "Hostitelia",
       "hostCount": "{served} v prevádzke, {waiting} na ceste",
-      "setDomain": "Zapíšte jej preukázanú doménu v Nastaveniach"
+      "setDomain": "Zapíšte jej preukázanú doménu v Nastaveniach",
+      "noHost": "Zatiaľ bez hostiteľa"
     },
     "ids": {
       "title": "Domény a ich TXT záznamy",
@@ -13677,8 +13678,6 @@
       "caption": "Hostitelia",
       "empty": "Zatiaľ žiadny hostiteľ. V Organizáciách pridajte doménu a požiadajte o jej prvého hostiteľa.",
       "host": "Hostiteľ",
-      "organization": "Organizácia",
-      "role": "Úloha",
       "state": "Stav",
       "detail": "Na čo čaká",
       "actions": "Akcie",

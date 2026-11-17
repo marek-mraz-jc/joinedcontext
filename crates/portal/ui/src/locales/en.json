@@ -12373,7 +12373,7 @@
     "installationTitle": "Ask the installation's administrators",
     "ownSections": "Open your Organization's members",
     "installationContacts": "The installation's contacts",
-    "noInstallationContacts": "The installation publishes no contact yet.",
+    "noInstallationContacts": "The installation publishes no contact yet. The person who set up your Organization reached its operators: ask them.",
     "contacts": "Your organization's contacts",
     "back": "Back to your projects"
   },
@@ -13595,7 +13595,8 @@
       "noDomain": "Not set yet",
       "hosts": "Hosts",
       "hostCount": "{served} served, {waiting} on their way",
-      "setDomain": "Write its proved domain in Settings"
+      "setDomain": "Write its proved domain in Settings",
+      "noHost": "No host yet"
     },
     "ids": {
       "title": "Domains and their TXT records",
@@ -13677,8 +13678,6 @@
       "caption": "Hosts",
       "empty": "No host yet. Add a domain and ask for its first host under Organizations.",
       "host": "Host",
-      "organization": "Organization",
-      "role": "Role",
       "state": "State",
       "detail": "What it waits for",
       "actions": "Actions",

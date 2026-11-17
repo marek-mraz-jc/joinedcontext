@@ -5,7 +5,7 @@ import { reasonOf } from "../../api/client";
 import { useIdentity } from "../../auth/AuthProvider";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import { Alert, Badge, Button } from "../../components/ui";
-import { decideChange, operatorChanges, operatorKeys, when } from "./operatorApi";
+import { decideChange, operatorChanges, operatorKeys, useOrganizationTitles, when } from "./operatorApi";
 import type { OperatorChange } from "./operatorApi";
 
 /**
@@ -18,6 +18,7 @@ export function OperatorChanges(): JSX.Element {
   const client = useQueryClient();
   const me = useIdentity()?.subject;
   const changes = useQuery({ queryKey: operatorKeys.changes, queryFn: operatorChanges });
+  const title = useOrganizationTitles();
   const decide = useMutation({
     mutationFn: ({ id, verb }: { id: string; verb: "approve" | "reject" }) => decideChange(id, verb),
     onSettled: () => client.invalidateQueries({ queryKey: ["operator"] }),
@@ -57,13 +58,13 @@ export function OperatorChanges(): JSX.Element {
           {
             key: "target",
             label: t("operator.changes.target"),
-            text: (row) => [target(row), row.payload.organization].filter(Boolean).join(" "),
+            text: (row) => [target(row), title(row.payload.organization)].filter(Boolean).join(" "),
             cell: (row) => (
               <span className="block min-w-0">
                 <span className="block font-mono [overflow-wrap:anywhere]">{target(row)}</span>
                 {row.payload.organization ? (
                   <span className="block text-caption text-fg-muted">
-                    {t("operator.changes.organization")}: {row.payload.organization}
+                    {t("operator.changes.organization")}: {title(row.payload.organization)}
                   </span>
                 ) : null}
               </span>
