@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -27,7 +27,12 @@ export function OperatorInstallation(): JSX.Element {
         </h2>
         <p className="text-body text-fg-muted">{t("operator.installation.lead")}</p>
       </div>
-      <EmailServer smtp={installation.data.smtp ?? undefined} open={installation.data.smtpChange ?? undefined} />
+      {/* Keyed by what is saved: an approved change starts the form again from it. */}
+      <EmailServer
+        key={JSON.stringify(installation.data.smtp ?? null)}
+        smtp={installation.data.smtp ?? undefined}
+        open={installation.data.smtpChange ?? undefined}
+      />
     </section>
   );
 }
@@ -43,14 +48,6 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   const [from, setFrom] = useState(smtp?.from ?? "");
   const [user, setUser] = useState(smtp?.user ?? "");
   const [password, setPassword] = useState("");
-  useEffect(() => {
-    if (!smtp) return;
-    setHost(smtp.host);
-    setPort(String(smtp.port));
-    setTls(smtp.tls === "ssl" ? "ssl" : "starttls");
-    setFrom(smtp.from);
-    setUser(smtp.user);
-  }, [smtp]);
   const refresh = () => client.invalidateQueries({ queryKey: ["operator"] });
   const propose = useMutation({ mutationFn: proposeChange, onSuccess: () => setPassword(""), onSettled: refresh });
   const test = useMutation({ mutationFn: sendTestEmail, onSettled: refresh });
@@ -64,6 +61,14 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   };
   const fields = ["host", "port", "tls", "from", "user", "password"];
   const elsewhere = propose.isError && !fields.some((field) => fieldOf(field));
+  const changed =
+    !smtp ||
+    password !== "" ||
+    host.trim().toLowerCase() !== smtp.host ||
+    Number(port) !== smtp.port ||
+    tls !== smtp.tls ||
+    from.trim() !== smtp.from ||
+    user.trim() !== (smtp.user ?? "");
   const onTls = (value: Tls) => {
     setTls(value);
     // The port that goes with each protection, unless one of the operator's own is typed.
@@ -90,9 +95,13 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         title={t("operator.installation.email.title")}
         description={t("operator.installation.email.lead")}
         actions={
-          <Badge tone={smtp ? "success" : "warning"}>
-            {smtp ? t("operator.installation.email.set") : t("operator.installation.email.unset")}
-          </Badge>
+          open ? (
+            <Badge tone="info">{t("operator.installation.email.waitingBadge")}</Badge>
+          ) : (
+            <Badge tone={smtp ? "success" : "warning"}>
+              {smtp ? t("operator.installation.email.set") : t("operator.installation.email.unset")}
+            </Badge>
+          )
         }
       />
       {open ? (
@@ -106,7 +115,9 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
       {!smtp && !open ? (
         <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.empty")}</p>
       ) : null}
-      <form className="mt-4 grid gap-4 sm:grid-cols-2" onSubmit={onSave} aria-label={t("operator.installation.email.title")}>
+      <form className="mt-4 grid max-w-3xl gap-4 sm:grid-cols-2" onSubmit={onSave} aria-label={t("operator.installation.email.title")}>
+        {/* Read-only while a change waits: it is decided first, then the next one is asked for. */}
+        <fieldset className="contents" disabled={Boolean(open)}>
         <Field id="smtp-host" label={t("operator.installation.email.host")} help={t("operator.installation.email.hint.host")} errors={fieldOf("host")} required>
           <Input id="smtp-host" value={host} onChange={(e) => setHost(e.target.value)} autoComplete="off" spellCheck={false} required />
         </Field>
@@ -140,8 +151,14 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
             placeholder={smtp?.passwordSet ? t("operator.installation.email.passwordStored") : undefined}
           />
         </Field>
+        </fieldset>
         <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
-          <Button type="submit" loading={propose.isPending} disabled={Boolean(open)} disabledReason={t("operator.installation.email.waitingShort")}>
+          <Button
+            type="submit"
+            loading={propose.isPending}
+            disabled={Boolean(open) || !changed}
+            disabledReason={open ? t("operator.installation.email.waitingShort") : t("operator.installation.email.unchanged")}
+          >
             {t("operator.installation.email.propose")}
           </Button>
           <Button
@@ -154,6 +171,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           >
             {t("operator.installation.email.test")}
           </Button>
+          {!smtp ? <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p> : null}
         </div>
       </form>
       {elsewhere ? (
@@ -161,7 +179,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           {sentence(said(propose.error))}
         </Alert>
       ) : null}
-      {propose.isSuccess ? (
+      {propose.isSuccess && !open ? (
         <Alert tone="success" className="mt-4">
           {t("operator.installation.email.proposed")}{" "}
           <Link to="/organization/$tab" params={{ tab: "operator-changes" }} className="underline">

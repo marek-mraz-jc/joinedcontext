@@ -8488,12 +8488,12 @@
       "operator": {
         "branding": {
           "title": "Značka",
-          "hint": "Název, logo a barvy instalace. Dnes se nastavují v konfiguraci jc: soubor značky ([kaisatsu] branding_file, JC_BRANDING_FILE).",
+          "hint": "Název, logo a barvy instalace. Dnes se nastavují v souboru značky instalace, který dodává vaše nasazení.",
           "about": "Název, logo a barvy instalace."
         },
         "loginTheme": {
           "title": "Přihlašovací stránky",
-          "hint": "Jak vypadají přihlašovací stránky. Dnes se nastavují v konfiguraci jc: přihlašovací blok souboru značky ([kaisatsu] branding_file).",
+          "hint": "Jak vypadají přihlašovací stránky. Dnes se nastavují v přihlašovací části souboru značky instalace.",
           "about": "Jak vypadají přihlašovací stránky."
         },
         "smtp": {
@@ -13749,6 +13749,8 @@
         "lead": "Server SMTP, přes který přihlašovací služba posílá pozvánky a obnovení hesla. Po schválení platí pro další e-mail, bez restartu.",
         "set": "Nastaven",
         "unset": "Nenastaven",
+        "waitingBadge": "Čeká na schválení",
+        "unchanged": "Nejprve změňte některé pole; nic se neliší od uloženého serveru.",
         "empty": "Zatím žádný e-mailový server, takže se pozvánky a obnovení hesla neposílají. Vyplňte server od vašeho poskytovatele pošty a uložte ho.",
         "waiting": "Změna e-mailového serveru čeká na druhého operátora.",
         "waitingShort": "Změna už čeká na druhého operátora: nejprve ji schvalte nebo zamítněte.",
@@ -13763,7 +13765,7 @@
         "tlsSsl": "TLS od začátku (obvykle port 465)",
         "passwordStored": "Uloženo; zadejte nové, chcete-li ho nahradit",
         "hint": {
-          "host": "Název hostitele serveru, např. smtp.example.org. Žádná adresa clusteru.",
+          "host": "Název hostitele serveru, např. smtp.example.org. Žádná interní adresa ani adresa clusteru.",
           "tls": "Nešifrované SMTP se nenabízí; váš poskytovatel uvádí, který ze dvou způsobů používá.",
           "port": "např. 587 pro STARTTLS, 465 pro TLS od začátku.",
           "from": "Odesílatel, kterého lidé vidí, např. noreply@example.org.",

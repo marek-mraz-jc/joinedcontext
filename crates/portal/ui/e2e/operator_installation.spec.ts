@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { axeViolations } from "./axe";
 import { doorsAsRest, manifestReadsAsRest } from "./manifestReads";
+import { odataBody } from "../tests/odata";
 
 test.beforeEach(({ page }) => {
   manifestReadsAsRest(page);
@@ -20,6 +21,7 @@ const ME = "s1";
 const IDENTITY = { subject: ME, username: "jana.operator", name: "Jana Operator", email: "jana@joinedcontext.com", roles: [] };
 const STEPS = ["organization", "domain", "people", "project", "publishers", "policies"];
 const OPERATOR_ITEMS = ["branding", "loginTheme", "smtp", "backups"];
+const MEMBER = { subject: "s2", username: "eva.admin", name: "Eva Admin", email: "eva@bbsk.sk", roles: [] };
 const FORBIDDEN = { type: "about:blank", title: "Forbidden", status: 403, detail: "operator Changes are for a person of the installation's operators' group" };
 
 interface World {
@@ -37,20 +39,21 @@ async function stubApi(page: Page, world: World, operator = true): Promise<void>
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const method = request.method();
-    if (path.endsWith("/auth/me")) return route.fulfill(json(IDENTITY));
+    if (path.endsWith("/auth/me")) return route.fulfill(json(operator ? IDENTITY : MEMBER));
     if (path === "/api/v1/projects") return route.fulfill(json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: [{ name: "bbsk" }] }));
     if (path.endsWith("/permissions/me"))
       return route.fulfill(
         json(
           operator
             ? { project: "org", bootstrap: true, grants: [] }
-            : { project: "org", bootstrap: false, grants: [{ role: "org-admin", binding: "admins", rule: { kinds: ["Organization", "Project", "RoleBinding"], verbs: ["read", "propose", "approve"] } }] },
+            : { project: "org", bootstrap: false, grants: [{ role: "org-admin", binding: "admins", scope: "organization", rule: { kinds: ["Organization", "Project", "RoleBinding"], verbs: ["read", "propose", "approve", "delete"] } }] },
         ),
       );
-    if (path === "/api/v1/organization/setup") {
+    // The setup checklist is the Organization reading `setup` (jc_organization_read, T-7098).
+    if (decodeURIComponent(path).startsWith("/api/v1/Organization/JoinedContext.Portal.jc_organization_read(")) {
       const steps = STEPS.map((id, i) => ({ id, done: i < 3 }));
       const items = OPERATOR_ITEMS.map((id) => ({ id, done: id === "smtp" ? world.smtp !== null : id === "branding" }));
-      return route.fulfill(json({ complete: false, steps, operator: items, operates: operator }));
+      return route.fulfill({ status: 200, contentType: "application/json", body: odataBody({ complete: false, steps, operator: items, operates: operator }) });
     }
     if (path.startsWith("/api/v1/operator/") && !operator) return route.fulfill(json(FORBIDDEN, 403));
     if (path === "/api/v1/operator/installation") return route.fulfill(json({ smtp: world.smtp, smtpChange: world.smtpChange }));
@@ -113,7 +116,8 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
 
       await page.getByLabel("SMTP host", { exact: false }).fill("smtp.bbsk.sk");
       await page.getByRole("button", { name: "Ask for this change" }).click();
-      await expect(page.getByText("Asked for. A second operator approves it in the Changes.", { exact: false })).toBeVisible();
+      await expect(page.getByText("Waiting for approval", { exact: true })).toBeVisible();
+      await expect(page.getByLabel("SMTP host", { exact: false })).toBeDisabled();
       await expect(page.getByText("A change of the e-mail server waits for a second operator.", { exact: false })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-waiting-${width}`);
@@ -125,6 +129,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("Set", { exact: true })).toBeVisible();
       await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
       await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("placeholder", "Stored; type a new one to replace it");
+      await expect(page.getByRole("button", { name: "Ask for this change" })).toHaveAttribute("aria-disabled", "true");
       await page.getByRole("button", { name: "Send a test e-mail" }).click();
       await expect(page.getByText("The server took the test e-mail.", { exact: false })).toBeVisible();
       expect(world.tested).toBe(1);

@@ -8488,12 +8488,12 @@
       "operator": {
         "branding": {
           "title": "Branding",
-          "hint": "The installation's name, logo and colours. Set today in jc's configuration: the branding file ([kaisatsu] branding_file, JC_BRANDING_FILE).",
+          "hint": "The installation's name, logo and colours. Set today in the installation's branding file, which your deployment provides.",
           "about": "The installation's name, logo and colours."
         },
         "loginTheme": {
           "title": "Sign-in pages",
-          "hint": "How the sign-in pages look. Set today in jc's configuration: the sign-in block of the branding file ([kaisatsu] branding_file).",
+          "hint": "How the sign-in pages look. Set today in the sign-in part of the installation's branding file.",
           "about": "How the sign-in pages look."
         },
         "smtp": {
@@ -13749,6 +13749,8 @@
         "lead": "The SMTP server the sign-in service sends invitations and password resets through. It applies to the next e-mail once approved, without a restart.",
         "set": "Set",
         "unset": "Not set",
+        "waitingBadge": "Waiting for approval",
+        "unchanged": "Change a field first; nothing differs from the saved server.",
         "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and save it.",
         "waiting": "A change of the e-mail server waits for a second operator.",
         "waitingShort": "A change already waits for a second operator: approve or reject it first.",
@@ -13763,7 +13765,7 @@
         "tlsSsl": "TLS from the start (usually port 465)",
         "passwordStored": "Stored; type a new one to replace it",
         "hint": {
-          "host": "The server's host name, e.g. smtp.example.org. No address of the cluster.",
+          "host": "The server's host name, e.g. smtp.example.org. Not an internal or cluster address.",
           "tls": "Plain SMTP is not offered; your provider says which of the two it uses.",
           "port": "e.g. 587 for STARTTLS, 465 for TLS from the start.",
           "from": "The sender people see, e.g. noreply@example.org.",

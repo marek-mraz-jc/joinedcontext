@@ -8488,12 +8488,12 @@
       "operator": {
         "branding": {
           "title": "Markenauftritt",
-          "hint": "Name, Logo und Farben der Installation. Heute in der Konfiguration von jc festgelegt: die Branding-Datei ([kaisatsu] branding_file, JC_BRANDING_FILE).",
+          "hint": "Name, Logo und Farben der Installation. Heute in der Branding-Datei der Installation festgelegt, die Ihre Bereitstellung mitbringt.",
           "about": "Name, Logo und Farben der Installation."
         },
         "loginTheme": {
           "title": "Anmeldeseiten",
-          "hint": "Wie die Anmeldeseiten aussehen. Heute in der Konfiguration von jc festgelegt: der Anmeldeblock der Branding-Datei ([kaisatsu] branding_file).",
+          "hint": "Wie die Anmeldeseiten aussehen. Heute im Anmeldeteil der Branding-Datei der Installation festgelegt.",
           "about": "Wie die Anmeldeseiten aussehen."
         },
         "smtp": {
@@ -13749,6 +13749,8 @@
         "lead": "Der SMTP-Server, über den der Anmeldedienst Einladungen und Passwort-Zurücksetzungen sendet. Nach der Genehmigung gilt er für die nächste E-Mail, ohne Neustart.",
         "set": "Festgelegt",
         "unset": "Nicht festgelegt",
+        "waitingBadge": "Wartet auf Freigabe",
+        "unchanged": "Ändern Sie zuerst ein Feld; nichts weicht vom gespeicherten Server ab.",
         "empty": "Noch kein E-Mail-Server, daher werden keine Einladungen und Passwort-Zurücksetzungen gesendet. Tragen Sie den Server Ihres Mail-Anbieters ein und speichern Sie ihn.",
         "waiting": "Eine Änderung des E-Mail-Servers wartet auf einen zweiten Operator.",
         "waitingShort": "Eine Änderung wartet bereits auf einen zweiten Operator: genehmigen oder ablehnen Sie sie zuerst.",
@@ -13763,7 +13765,7 @@
         "tlsSsl": "TLS von Anfang an (meist Port 465)",
         "passwordStored": "Gespeichert; geben Sie ein neues ein, um es zu ersetzen",
         "hint": {
-          "host": "Der Hostname des Servers, z. B. smtp.example.org. Keine Adresse des Clusters.",
+          "host": "Der Hostname des Servers, z. B. smtp.example.org. Keine interne Adresse und keine des Clusters.",
           "tls": "Unverschlüsseltes SMTP wird nicht angeboten; Ihr Anbieter sagt, welche der beiden Varianten er nutzt.",
           "port": "z. B. 587 für STARTTLS, 465 für TLS von Anfang an.",
           "from": "Der Absender, den Empfänger sehen, z. B. noreply@example.org.",
