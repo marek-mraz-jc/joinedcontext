@@ -808,6 +808,7 @@ fn listed_organizations(
 /// One page of the people of `organizations` on a shared realm, each once, by username, matched
 /// as the realm's own search does: a substring of the username, e-mail or a name, any case.
 async fn organization_page(
+    state: &AppState,
     admin: &Admin,
     organizations: &[String],
     search: &str,
@@ -817,7 +818,12 @@ async fn organization_page(
     let needle = search.to_lowercase();
     let mut found = BTreeMap::new();
     for organization in organizations {
-        for user in admin.people_of(organization).await? {
+        let bound = crate::permissions::organization_scoped_people(
+            &state.mirror,
+            organization,
+            chrono::Utc::now(),
+        );
+        for user in admin.people_of(organization, &bound).await? {
             let fields = [
                 Some(&user.username),
                 user.email.as_ref(),
@@ -895,7 +901,7 @@ pub async fn list_people(
     let mut users = match organizations {
         None => admin.list(search, first, max + 1).await?,
         Some(organizations) => {
-            organization_page(&admin, &organizations, search, first, max + 1).await?
+            organization_page(&state, &admin, &organizations, search, first, max + 1).await?
         }
     };
     let next = (users.len() > max as usize).then(|| first + max);

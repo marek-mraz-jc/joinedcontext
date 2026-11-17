@@ -6,7 +6,7 @@
 //! every right these calls need. Nothing here logs a password, a token or a request body.
 
 use crate::config::ClientAuth;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::time::Duration;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
@@ -693,20 +693,37 @@ impl Admin {
     }
 
     /// The people of `organization` on a shared realm, in full: its `/{organization}/members`
-    /// and the group of its Organization-scoped bindings (ADR-N-067 2.2, T-7220). A person in
-    /// both comes twice; a realm with neither group has nobody.
-    pub async fn people_of(&self, organization: &str) -> Result<Vec<KcUser>, PeopleError> {
-        let bound = crate::reconciler::groups::organization_group(organization);
-        let groups = [
-            self.members_group(organization).await?,
-            self.top_group(&bound).await?,
-        ];
-        let mut people = Vec::new();
-        for group in groups.into_iter().flatten() {
-            people.extend(
+    /// and `bound`, the subjects of its Organization-scoped bindings, by Keycloak user id or
+    /// e-mail (ADR-N-067 2.2, T-7220). A subject the realm does not hold, or a service account,
+    /// is left out; a person in both comes twice.
+    pub async fn people_of(
+        &self,
+        organization: &str,
+        bound: &BTreeSet<String>,
+    ) -> Result<Vec<KcUser>, PeopleError> {
+        let mut people = match self.members_group(organization).await? {
+            Some(group) => {
                 self.pages_as(&format!("/groups/{group}/members"), false)
-                    .await?,
-            );
+                    .await?
+            }
+            None => Vec::new(),
+        };
+        for subject in bound {
+            let id = if crate::permissions::is_person_id(subject) {
+                subject.clone()
+            } else if subject.contains('@') {
+                match self.id_of_email(subject).await? {
+                    Some(id) => id,
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            match self.get(&id).await {
+                Ok(user) => people.push(user),
+                Err(PeopleError::NotFound) => {}
+                Err(err) => return Err(err),
+            }
         }
         Ok(people)
     }

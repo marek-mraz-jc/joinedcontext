@@ -873,33 +873,23 @@ async fn another_organizations_admin_is_refused_on_every_people_route() {
 }
 
 /// T-7220: on a shared realm an administrator of another Organization (ctl-a) lists ctl-a's
-/// people alone: `/ctl-a/members` and its bound group, each person once and no service account,
-/// searched and paged by the Portal; the installation's people and the realm-wide list are never
-/// asked for. A caller bound at ctl-a without Person read is still refused.
+/// people alone: `/ctl-a/members` and whom ctl-a's Organization-scoped bindings name (by e-mail or
+/// Keycloak id; ctl-a has no project, so the reconciler made no group of them), each once and no
+/// service account, searched and paged by the Portal. The installation's people and the
+/// realm-wide list are never asked for. A caller bound at ctl-a without Person read is refused.
 #[tokio::test]
 async fn another_organizations_admin_lists_its_own_people_alone() {
+    const ELI: &str = "0b6c1a52-1111-4222-8333-444455556666";
     let (kc, shako) = (realm(true).await, forge().await);
-    for (search, groups) in [
-        (
-            "members",
-            json!([
-                { "id": "hel-id", "path": "/hel", "subGroups": [{ "id": "hel-members", "path": "/hel/members" }] },
-                { "id": "ctla-id", "path": "/ctl-a", "subGroups": [{ "id": "ctla-members", "path": "/ctl-a/members" }] },
-            ]),
-        ),
-        (
-            "ctl-a_bound",
-            json!([{ "id": "ctla-bound", "path": "/ctl-a_bound" }]),
-        ),
-    ] {
-        Mock::given(method("GET"))
-            .and(path(format!("{ADMIN}/groups")))
-            .and(query_param("search", search))
-            .respond_with(ResponseTemplate::new(200).set_body_json(groups))
-            .with_priority(1)
-            .mount(&kc)
-            .await;
-    }
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/groups")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "hel-id", "path": "/hel", "subGroups": [{ "id": "hel-members", "path": "/hel/members" }] },
+            { "id": "ctla-id", "path": "/ctl-a", "subGroups": [{ "id": "ctla-members", "path": "/ctl-a/members" }] },
+        ])))
+        .with_priority(1)
+        .mount(&kc)
+        .await;
     for (group, people) in [
         (
             "ctla-members",
@@ -908,19 +898,29 @@ async fn another_organizations_admin_lists_its_own_people_alone() {
                 user("cara-id", "cara@hel.fi")
             ]),
         ),
-        (
-            "ctla-bound",
-            json!([
-                user("cara-id", "cara@hel.fi"),
-                user("eli-id", "eli@ctl-a.example"),
-                user("sa-id", "service-account-ctl-a"),
-            ]),
-        ),
         ("hel-members", json!([user("ada-id", "ada@hel.fi")])),
     ] {
         Mock::given(method("GET"))
             .and(path(format!("{ADMIN}/groups/{group}/members")))
             .respond_with(ResponseTemplate::new(200).set_body_json(people))
+            .mount(&kc)
+            .await;
+    }
+    for (id, email) in [
+        ("cara-id", "cara@hel.fi"),
+        ("dora-id", "dora@hel.fi"),
+        (ELI, "eli@ctl-a.example"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("email", email))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([user(id, email)])))
+            .with_priority(1)
+            .mount(&kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(user(id, email)))
             .mount(&kc)
             .await;
     }
@@ -936,6 +936,8 @@ async fn another_organizations_admin_lists_its_own_people_alone() {
     for (name, user, role) in [
         ("ctl-a-admins", "cara@hel.fi", "org-admin"),
         ("ctl-a-readers", "dora@hel.fi", "pipeline-reader"),
+        ("ctl-a-eli", ELI, "pipeline-reader"),
+        ("ctl-a-robot", "service-account-ctl-a", "pipeline-reader"),
     ] {
         state.mirror.upsert(envelope(
             "RoleBinding",
@@ -959,7 +961,12 @@ async fn another_organizations_admin_lists_its_own_people_alone() {
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
     assert_eq!(
         emails(&listed.text),
-        ["cara@hel.fi", "dan@ctl-a.example", "eli@ctl-a.example"]
+        [
+            "cara@hel.fi",
+            "dan@ctl-a.example",
+            "dora@hel.fi",
+            "eli@ctl-a.example"
+        ]
     );
     let searched = send(
         &state,
@@ -984,12 +991,15 @@ async fn another_organizations_admin_lists_its_own_people_alone() {
 
     let refused = send(&state, person("dora"), "GET", PEOPLE, None).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
-    for asked in ["/groups/hel-members/members", "/users"] {
-        assert!(
-            received(&kc, "GET", asked).await.is_empty(),
-            "{asked} was never asked for"
-        );
-    }
+    assert!(received(&kc, "GET", "/groups/hel-members/members")
+        .await
+        .is_empty());
+    let realm_wide = received(&kc, "GET", "/users")
+        .await
+        .into_iter()
+        .filter(|r| !r.url.query_pairs().any(|(key, _)| key == "email"))
+        .count();
+    assert_eq!(realm_wide, 0, "the realm-wide list was never asked for");
 }
 
 /// PF-93, PF-03: nobody disables or deletes themselves, or the last Organization Administrator.
