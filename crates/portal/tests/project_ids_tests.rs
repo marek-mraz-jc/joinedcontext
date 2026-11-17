@@ -577,14 +577,16 @@ async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<S
     .expect("the row")
 }
 
-/// T-7196 phase one: a row written before the key is keyed by the backfill once the mirror places
-/// its project; a project the mirror lacks, or whose Organization is not of the registry, keeps
-/// no key and is named; a row written through the store carries the key by the column default;
-/// and the policy the forcing migration turns on lets each key read only its own rows.
+/// T-7196 phase one and T-7201 phase two, on a database of the release before 0079: a row written
+/// before the key is keyed by the backfill once the mirror places its project; a project the
+/// mirror lacks, or whose Organization is not of the registry, keeps no key and is named; a row
+/// written through the store carries the key by the column default; the forcing migration refuses
+/// while a row has no key and names its project, then forces the policy, which lets each key read
+/// only its own rows.
 #[tokio::test]
 async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_key() {
     use joinedcontext_portal::grafana::{self, Kind, Visualization};
-    let pool = pool().await;
+    let pool = migrated_before(79, "pkbf").await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, "bforg").await;
     let placed = run_name("bfplaced");
@@ -602,7 +604,7 @@ async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_
     let unplaced = unkeyed_visualization(&pool, &orphan).await;
     let removed = unkeyed_visualization(&pool, &gone).await;
 
-    let waiting = project_ids::backfill(&pool, &state.mirror)
+    let waiting = project_ids::backfill_tables(&pool, &state.mirror, &["grafana_visualizations"])
         .await
         .expect("backfill");
     let key = project_ids::key_of(&pool, &state.mirror, &placed)
@@ -645,7 +647,22 @@ async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_
     let listed = grafana::list(&pool, key, &placed).await.expect("list");
     assert_eq!(listed.len(), 2, "{listed:?}");
 
-    // What the forcing migration turns on, rolled back here: the key alone decides what is read.
+    // T-7201: the forcing migration waits for the two projects with no key, then forces it.
+    let refused = migrate_on(&pool)
+        .await
+        .expect_err("refused while a row has no key")
+        .to_string();
+    for project in [&orphan, &gone] {
+        assert!(refused.contains(project.as_str()), "{project}: {refused}");
+    }
+    assert!(refused.contains("Organizations page"), "{refused}");
+    sqlx::query("DELETE FROM grafana_visualizations WHERE project_id IS NULL")
+        .execute(&pool)
+        .await
+        .expect("the rows no project keys removed");
+    migrate_on(&pool).await.expect("forced");
+
+    // The forced table: the key alone decides what a role without BYPASSRLS reads.
     let other = project_ids::reserved(&pool, &org)
         .await
         .expect("reserved")
@@ -660,13 +677,6 @@ async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_
     .expect("the reader role");
     for (key, expected) in [(Some(key), 2_i64), (Some(other), 0), (None, 0)] {
         let mut tx = pool.begin().await.expect("begin");
-        sqlx::raw_sql(
-            "ALTER TABLE grafana_visualizations ENABLE ROW LEVEL SECURITY; \
-             ALTER TABLE grafana_visualizations FORCE ROW LEVEL SECURITY",
-        )
-        .execute(&mut *tx)
-        .await
-        .expect("forced in this transaction");
         if let Some(key) = key {
             sqlx::query(
                 "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
@@ -789,6 +799,43 @@ async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key(
     assert!(state.alerts.remove("eeva", made.id).await.expect("remove"));
 }
 
+/// A fresh database migrated up to `before` (excluded), as an installation running the release
+/// before that migration holds it; dropped by nothing: each run's name is its own.
+async fn migrated_before(before: i64, test: &str) -> sqlx::PgPool {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL");
+    let name = format!("{test}_{}", ProjectId::mint().path_segment());
+    let admin = sqlx::PgPool::connect(&url)
+        .await
+        .expect("the test database");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .expect("a fresh database");
+    admin.close().await;
+    let mut own = url::Url::parse(&url).expect("url");
+    own.set_path(&format!("/{name}"));
+    let pool = sqlx::PgPool::connect(own.as_str()).await.expect("fresh");
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.migrations = migrator
+        .migrations
+        .iter()
+        .filter(|m| m.version < before)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    migrator.run(&pool).await.expect("migrated");
+    pool
+}
+
+/// Applies every migration this release ships, the forcing migration 0079 (T-7201) included.
+/// Without the migrator's advisory lock: a refused run returns its connection to the pool still
+/// holding it, and the test's next run would wait for it forever.
+async fn migrate_on(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_locking(false);
+    migrator.run(pool).await
+}
+
 /// Rows of `rows` (table, insert binding `$1` to the project) for a placed and an unplaced
 /// project of this run: the backfill keys the placed one's and names the other as waiting, and
 /// under the policy the forcing migration turns on (rolled back here) each table reads the placed
@@ -797,7 +844,7 @@ async fn rows_keyed_and_read_only_under_their_key(
     rows: &'static [(&'static str, &'static str)],
     test: &str,
 ) -> (AppState, String, String, jc_types::ProjectKey) {
-    let pool = pool().await;
+    let pool = migrated_before(79, &format!("pk{test}")).await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, &format!("{test}org")).await;
     let placed = run_name(&format!("{test}placed"));
@@ -822,14 +869,15 @@ async fn rows_keyed_and_read_only_under_their_key(
                 .unwrap_or_else(|err| panic!("{table}: {err}"));
         }
     }
-    for (table, _) in rows {
+    let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
+    for table in &tables {
         assert!(
-            project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is backfilled"
+            !project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is forced by 0079 and off the list"
         );
     }
 
-    let waiting = project_ids::backfill(&pool, &state.mirror)
+    let waiting = project_ids::backfill_tables(&pool, &state.mirror, &tables)
         .await
         .expect("backfill");
     assert!(waiting.contains(&orphan), "{waiting:?}");
@@ -858,12 +906,57 @@ async fn rows_keyed_and_read_only_under_their_key(
         }
     }
 
-    // What the forcing migration turns on, rolled back here: the key alone decides what is read.
+    // T-7201: the forcing migration refuses while the orphan's rows have no key, naming each
+    // table and project and the next step; once they are gone it forces the key.
+    let refused = migrate_on(&pool)
+        .await
+        .expect_err("refused while a row has no key")
+        .to_string();
+    for table in &tables {
+        assert!(
+            refused.contains(&format!("{table} (projects ")),
+            "{table}: {refused}"
+        );
+    }
+    assert!(refused.contains(&orphan), "{refused}");
+    assert!(!refused.contains(&placed), "{refused}");
+    for table in &tables {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE {} = $1",
+            project_ids::key_column(table)
+        )))
+        .bind(&orphan)
+        .execute(&pool)
+        .await
+        .expect("the orphan's rows removed");
+    }
+    migrate_on(&pool)
+        .await
+        .expect("forced once every row has a key");
+    for table in &tables {
+        let shape: (i64, bool) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' \
+                     AND table_name = $1 AND column_name IN ('org_id', 'project_id') \
+                     AND is_nullable = 'NO'), \
+                    (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class \
+                     WHERE oid = to_regclass('public.' || $1))",
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("catalog");
+        assert_eq!(
+            shape,
+            (2, true),
+            "{table}: both key columns NOT NULL, RLS forced"
+        );
+    }
+
+    // The forced tables: the key alone decides what a role without BYPASSRLS reads.
     let other = project_ids::reserved(&pool, &org)
         .await
         .expect("reserved")
         .expect("a key");
-    let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
     sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
@@ -876,13 +969,6 @@ async fn rows_keyed_and_read_only_under_their_key(
     for table in &tables {
         for (key, expected) in [(Some(key), 1_i64), (Some(other), 0), (None, 0)] {
             let mut tx = pool.begin().await.expect("begin");
-            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
-                "ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; \
-                 ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
-            )))
-            .execute(&mut *tx)
-            .await
-            .expect("forced in this transaction");
             if let Some(key) = key {
                 sqlx::query(
                     "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
@@ -1252,12 +1338,6 @@ async fn app_capture_trash_comment_and_view_rows_are_keyed_and_read_only_under_t
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(PROJECT_ROWS_0071, "pr").await;
     let pool = state.db.clone().expect("a database");
-    for (table, _) in PROJECT_ROWS_0071 {
-        assert!(
-            project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is backfilled"
-        );
-    }
     let entity = json!({ "id": "urn:ngsi-ld:T:x:2", "type": "T" });
     let kept = state
         .trash
@@ -1378,8 +1458,8 @@ async fn erasure_and_access_request_rows_are_keyed_and_read_only_under_their_key
             .await
             .expect("incoming")
             .len(),
-        1,
-        "an unkeyed request still reads while the forcing migration waits"
+        0,
+        "the orphan's unkeyed request was removed before the forcing migration"
     );
 
     // The placed project leaves the mirror: its approved erasure with a pending store is still
@@ -1406,11 +1486,12 @@ async fn erasure_and_access_request_rows_are_keyed_and_read_only_under_their_key
     let open = joinedcontext_portal::erasure::open(&pool)
         .await
         .expect("open");
-    for project in [&placed, &orphan] {
+    for (project, expected) in [(&placed, 1), (&orphan, 0)] {
         assert_eq!(
             open.iter().filter(|e| &e.project == project).count(),
-            1,
-            "{project}: one open erasure, read once: {open:?}"
+            expected,
+            "{project}: the placed one's erasure is open, read once; the orphan's was removed \
+             before the forcing migration: {open:?}"
         );
     }
 }
@@ -1471,12 +1552,6 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(PIPELINE_ROWS_0072, "pl").await;
     let pool = state.db.clone().expect("a database");
-    for (table, _) in PIPELINE_ROWS_0072 {
-        assert!(
-            project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is backfilled"
-        );
-    }
     let line = joinedcontext_portal::pipeline_log::NewLine {
         record_id: "urn:ngsi-ld:Tree:2".into(),
         step: None,
