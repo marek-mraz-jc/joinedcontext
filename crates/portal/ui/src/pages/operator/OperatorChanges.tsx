@@ -50,6 +50,7 @@ export function OperatorChanges(): JSX.Element {
         rowKey={(row) => row.id}
         storageKey="operator.changes"
         empty={t("operator.changes.empty")}
+        noSearch={(changes.data ?? []).length < 10}
         stack
         columns={[
           { key: "kind", label: t("operator.changes.kind"), text: (row) => t(`operator.kind.${row.kind}`) },

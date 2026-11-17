@@ -13604,13 +13604,14 @@
       "caption": "Identifikátory organizácií",
       "empty": "Zatiaľ nepožiadali ste o žiadnu doménu. Začnite krokom 1 nižšie.",
       "domain": "Doména",
-      "id": "Identifikátor organizácie",
       "record": "TXT záznam",
       "state": "Stav",
       "minted": "Vydaný",
       "waiting": "Čaká na záznam",
       "check": "Overiť záznam teraz",
-      "notMinted": "Identifikátor nebol vydaný"
+      "notMinted": "Identifikátor nebol vydaný",
+      "organization": "Organizácia",
+      "unclaimed": "Túto doménu zatiaľ nemá žiadna organizácia"
     },
     "add": {
       "title": "Pridať doménu a jej prvého hostiteľa",

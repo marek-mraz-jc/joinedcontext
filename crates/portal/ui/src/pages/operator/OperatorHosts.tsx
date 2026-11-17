@@ -60,6 +60,7 @@ export function OperatorHosts(): JSX.Element {
         rowKey={(row) => row.host}
         storageKey="operator.hosts"
         empty={t("operator.hosts.empty")}
+        noSearch={(hosts.data?.items ?? []).length < 10}
         stack
         columns={[
           // What answers and for whom sit under the host, so a phone card shows them before its

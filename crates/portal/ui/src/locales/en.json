@@ -13604,13 +13604,14 @@
       "caption": "Organization ids",
       "empty": "No domain asked for yet. Start with step 1 below.",
       "domain": "Domain",
-      "id": "Organization id",
       "record": "TXT record",
       "state": "State",
       "minted": "Minted",
       "waiting": "Waiting for the record",
       "check": "Check the record now",
-      "notMinted": "The id was not minted"
+      "notMinted": "The id was not minted",
+      "organization": "Organization",
+      "unclaimed": "No Organization has this domain yet"
     },
     "add": {
       "title": "Add a domain and its first host",

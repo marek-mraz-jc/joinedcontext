@@ -61,6 +61,7 @@ export function OperatorAudit(): JSX.Element {
         rowKey={(row) => String(row.id)}
         storageKey="operator.audit"
         empty={t("operator.audit.empty")}
+        noSearch={(audit.data ?? []).length < 10}
         stack
         columns={[
           { key: "at", label: t("operator.audit.at"), text: (row) => when(row.at, i18n.language, true) },

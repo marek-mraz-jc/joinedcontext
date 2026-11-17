@@ -77,7 +77,7 @@ export function OperatorOrganizations(): JSX.Element {
           { key: "hosts", label: t("operator.organizations.hosts"), text: (row) => hostSummary(row, t) },
         ]}
       />
-      <IdList ids={ids} />
+      <IdList ids={ids} organizations={items} />
       <AddDomain organizations={items} />
     </section>
   );
@@ -92,13 +92,17 @@ function hostSummary(row: OperatorOrganization, t: (key: string, options?: Recor
 }
 
 /** Each Organization id and its TXT record; an id not minted yet is checked again here. */
-function IdList({ ids }: { ids: OperatorOrganizationId[] }): JSX.Element {
+function IdList({ ids, organizations }: { ids: OperatorOrganizationId[]; organizations: OperatorOrganization[] }): JSX.Element {
   const { t } = useTranslation();
   const client = useQueryClient();
   const mint = useMutation({
     mutationFn: mintId,
     onSettled: () => client.invalidateQueries({ queryKey: operatorKeys.organizations }),
   });
+  const named = (row: OperatorOrganizationId) =>
+    row.organizations.length > 0
+      ? row.organizations.map((name) => organizations.find((org) => org.name === name)?.title ?? name).join(", ")
+      : t("operator.ids.unclaimed");
   return (
     <Card>
       <CardHeader title={t("operator.ids.title")} description={t("operator.ids.lead")} />
@@ -117,7 +121,17 @@ function IdList({ ids }: { ids: OperatorOrganizationId[] }): JSX.Element {
         stack
         columns={[
           { key: "domain", label: t("operator.ids.domain"), text: (row) => row.domain, cell: (row) => <span className="font-mono">{row.domain}</span> },
-          { key: "id", label: t("operator.ids.id"), text: (row) => row.id, cell: (row) => <span className="font-mono">{row.id}</span> },
+          {
+            key: "id",
+            label: t("operator.ids.organization"),
+            text: (row) => `${named(row)} ${row.id}`,
+            cell: (row) => (
+              <span className="block">
+                <span className={`block ${row.organizations.length > 0 ? "text-fg" : "text-fg-muted"}`}>{named(row)}</span>
+                <span className="block font-mono text-caption text-fg-muted">{row.id}</span>
+              </span>
+            ),
+          },
           {
             key: "record",
             label: t("operator.ids.record"),

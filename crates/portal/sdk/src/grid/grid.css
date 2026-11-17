@@ -3177,6 +3177,13 @@ a.jc-cell--link:focus-visible {
   justify-content: space-between;
   gap: var(--jc-space-2, 8px);
 }
+/* A grid with no search keeps only its Arrange control: a slim strip at the end, not a bar. */
+.jc-data-grid-toolbar:not(:has(.jc-data-grid-search)) {
+  justify-content: flex-end;
+  padding-block: 2px;
+  border-bottom: none;
+}
+.jc-data-grid-toolbar:not(:has(.jc-data-grid-search)) .jc-grid-arrange-toggle { margin-top: 0; }
 
 .jc-data-grid-search {
   display: flex;

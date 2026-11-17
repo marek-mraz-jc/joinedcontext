@@ -13604,13 +13604,14 @@
       "caption": "Organisationskennungen",
       "empty": "Noch keine Domäne angefragt. Beginnen Sie unten mit Schritt 1.",
       "domain": "Domäne",
-      "id": "Organisationskennung",
       "record": "TXT-Eintrag",
       "state": "Status",
       "minted": "Vergeben",
       "waiting": "Wartet auf den Eintrag",
       "check": "Eintrag jetzt prüfen",
-      "notMinted": "Die Kennung wurde nicht vergeben"
+      "notMinted": "Die Kennung wurde nicht vergeben",
+      "organization": "Organisation",
+      "unclaimed": "Noch keine Organisation hat diese Domain"
     },
     "add": {
       "title": "Eine Domäne und ihren ersten Host hinzufügen",
