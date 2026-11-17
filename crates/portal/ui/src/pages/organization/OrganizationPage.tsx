@@ -315,21 +315,25 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {/* An Organization's own administrator reads what the refused section is for. */}
         <PageHeader
           title={t("organization.title")}
-          description={known && own !== undefined ? t(`organization.groupLead.${groupOf(tab)}`) : t("organization.lead")}
+          description={
+            known && operatorTab
+              ? // The lead names what the refused operator section holds (T-7152).
+                t(`operator.${tab.slice("operator-".length)}.lead`)
+              : known && own !== undefined
+                ? t(`organization.groupLead.${groupOf(tab)}`)
+                : t("organization.lead")
+          }
         />
         {known ? (
           operatorTab ? (
-            // The section names itself in its H2 like every other; the block says its operators
-            // open it and whom to ask, one word for the role.
-            <div className="space-y-3">
-              <h2 className="text-title font-semibold text-fg">{t(`organization.tab.${tab}`)}</h2>
-              <AskAdmins
-                title={t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}
-                message={t("operator.only")}
-                back={anchor}
-                installation
-              />
-            </div>
+            // A lock panel whose H2 names the section and its operators, one word for the role.
+            <AskAdmins
+              title={t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}
+              message={t("operator.only")}
+              back={anchor}
+              installation
+              locked
+            />
           ) : own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own
             // sections are beside it in the menu, and the installation's administrators decide this one.

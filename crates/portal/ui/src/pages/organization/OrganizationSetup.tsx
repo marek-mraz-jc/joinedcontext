@@ -49,7 +49,8 @@ function State({ done, theirs }: { done: boolean; theirs?: "member" | "deploymen
   const { t } = useTranslation();
   // An item somebody else sets is no alarm for the person reading it (T-7152): a member's
   // operators set it, and the deployment still sets what the Installation page does not yet.
-  const open = theirs === "deployment" ? "organization.setup.deploymentSets" : theirs ? "organization.setup.notYet" : "organization.setup.todo";
+  // A member's badge alone says who sets it, so the row names its state once.
+  const open = theirs === "deployment" ? "organization.setup.deploymentSets" : theirs ? "organization.setup.operatorSets" : "organization.setup.todo";
   return (
     <Badge tone={done ? "success" : theirs ? "neutral" : "warning"}>
       {done ? t("organization.setup.done") : t(open)}
@@ -64,10 +65,8 @@ function State({ done, theirs }: { done: boolean; theirs?: "member" | "deploymen
 function OperatorAction({ item, operates }: { item: string; operates: boolean }): JSX.Element | null {
   const { t } = useTranslation();
   // Only the e-mail server is set on the Installation page today; the deployment still sets the rest.
-  if (item !== "smtp") return null;
-  if (!operates) {
-    return <span className="text-caption text-fg-muted">{t("organization.setup.operatorSets")}</span>;
-  }
+  // Anybody else reads who sets it in the row's badge.
+  if (item !== "smtp" || !operates) return null;
   return (
     <Link to="/organization/$tab" params={{ tab: "operator-installation" }} className={buttonClass("secondary", "sm")}>
       {t("organization.setup.setIt")}
@@ -135,19 +134,20 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
             {t(operates ? "organization.setup.operatorLead" : "organization.setup.operatorLeadMember")}
           </p>
         </div>
-        <ul className="space-y-3">
+        {/* One compact list card: each item is a line and a badge, not a card of its own. */}
+        <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
           {operator.map((item) => (
             <li
               key={item.id}
-              className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
+              className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
             >
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0">
                 <h3 className="text-body font-semibold text-fg">{t(`organization.setup.operator.${item.id}.title`)}</h3>
-                <p className="text-body text-fg-muted">
+                <p className="text-caption text-fg-muted">
                   {t(`organization.setup.operator.${item.id}.${operates ? "hint" : "about"}`)}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
                 {/* Only the e-mail server is set on the Installation page today: the other items are no
                     red to-do for anybody yet (branding T-7188, backups T-7189). */}
                 <State done={item.done} theirs={item.id !== "smtp" ? "deployment" : operates ? undefined : "member"} />

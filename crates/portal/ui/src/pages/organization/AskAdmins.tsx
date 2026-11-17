@@ -6,7 +6,7 @@ import { queryKeys } from "../../api/client";
 import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { useAdministers } from "../../api/permissions";
-import { Alert } from "../../components/ui";
+import { Alert, Icon } from "../../components/ui";
 
 interface Contact {
   role?: string;
@@ -25,6 +25,7 @@ export function AskAdmins({
   back,
   installation = false,
   title,
+  locked = false,
 }: {
   message: string;
   back?: string;
@@ -32,6 +33,11 @@ export function AskAdmins({
   installation?: boolean;
   /** A heading that names the refused section, in place of the generic "ask" title. */
   title?: string;
+  /**
+   * The whole section is closed to the person: a lock and the title as the section's H2 in a
+   * centred panel, so a refusal never looks like the info hints around it (T-7152).
+   */
+  locked?: boolean;
 }): JSX.Element {
   const { t } = useTranslation();
   const { own } = useAdministers();
@@ -43,43 +49,95 @@ export function AskAdmins({
   });
   const items = asManifests(organizations.data?.items ?? []);
   const organization =
-    (installation ? undefined : items.find((item) => item.metadata.name === own)) ??
-    items.find((item) => (item.spec as { installation?: boolean } | undefined)?.installation === true) ??
+    (installation
+      ? undefined
+      : items.find((item) => item.metadata.name === own)) ??
+    items.find(
+      (item) =>
+        (item.spec as { installation?: boolean } | undefined)?.installation ===
+        true,
+    ) ??
     (items.length === 1 ? items[0] : undefined);
-  const contacts = ((organization?.spec as { contacts?: Contact[] } | undefined)?.contacts ?? []).filter(
-    (contact) => contact.name || contact.email,
+  const contacts = (
+    (organization?.spec as { contacts?: Contact[] } | undefined)?.contacts ?? []
+  ).filter((contact) => contact.name || contact.email);
+  const heading =
+    title ??
+    t(installation ? "askAdmins.installationTitle" : "askAdmins.title");
+  const body = (
+    <div
+      className={
+        locked ? "flex flex-col items-center gap-2" : "flex flex-col gap-2"
+      }
+    >
+      <p>{message}</p>
+      {contacts.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <p className="font-medium">
+            {t(
+              installation
+                ? "askAdmins.installationContacts"
+                : "askAdmins.contacts",
+            )}
+          </p>
+          <ul className="flex flex-col gap-0.5">
+            {contacts.map((contact, index) => (
+              <li
+                key={`${contact.email ?? contact.name ?? ""}-${index}`}
+                className="[overflow-wrap:anywhere]"
+              >
+                {t(
+                  `organization.contactRole.${contact.role ?? "administrative"}`,
+                  { defaultValue: contact.role },
+                )}
+                : {[contact.name, contact.email].filter(Boolean).join(", ")}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : installation && organizations.isSuccess ? (
+        <p>{t("askAdmins.noInstallationContacts")}</p>
+      ) : null}
+      {installation ? (
+        <Link
+          to="/organization/$tab"
+          params={{ tab: "members" }}
+          className="w-fit font-medium underline hover:no-underline"
+        >
+          {t("askAdmins.ownSections")}
+        </Link>
+      ) : null}
+      {/* The organization's namespace is no project to go back to (PF-61). */}
+      {back && back !== ORG_NAMESPACE ? (
+        <Link
+          to="/projects/$project/home"
+          params={{ project: back }}
+          className="w-fit font-medium underline hover:no-underline"
+        >
+          {t("askAdmins.back")}
+        </Link>
+      ) : null}
+    </div>
   );
+  if (!locked) {
+    return (
+      <Alert tone="info" title={heading}>
+        {body}
+      </Alert>
+    );
+  }
   return (
-    <Alert tone="info" title={title ?? t(installation ? "askAdmins.installationTitle" : "askAdmins.title")}>
-      <div className="flex flex-col gap-2">
-        <p>{message}</p>
-        {contacts.length > 0 ? (
-          <div className="flex flex-col gap-1">
-            <p className="font-medium">{t(installation ? "askAdmins.installationContacts" : "askAdmins.contacts")}</p>
-            <ul className="flex flex-col gap-0.5">
-              {contacts.map((contact, index) => (
-                <li key={`${contact.email ?? contact.name ?? ""}-${index}`} className="[overflow-wrap:anywhere]">
-                  {t(`organization.contactRole.${contact.role ?? "administrative"}`, { defaultValue: contact.role })}:{" "}
-                  {[contact.name, contact.email].filter(Boolean).join(", ")}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : installation && organizations.isSuccess ? (
-          <p>{t("askAdmins.noInstallationContacts")}</p>
-        ) : null}
-        {installation ? (
-          <Link to="/organization/$tab" params={{ tab: "members" }} className="w-fit font-medium underline hover:no-underline">
-            {t("askAdmins.ownSections")}
-          </Link>
-        ) : null}
-        {/* The organization's namespace is no project to go back to (PF-61). */}
-        {back && back !== ORG_NAMESPACE ? (
-          <Link to="/projects/$project/home" params={{ project: back }} className="w-fit font-medium underline hover:no-underline">
-            {t("askAdmins.back")}
-          </Link>
-        ) : null}
-      </div>
-    </Alert>
+    <section
+      aria-labelledby="ask-admins-locked"
+      className="mx-auto flex w-full max-w-xl flex-col items-center gap-3 rounded-lg border border-border bg-surface px-6 py-12 text-center text-body text-fg"
+    >
+      <span className="inline-flex size-12 items-center justify-center rounded-full bg-warning-soft text-fg">
+        <Icon name="lock" className="size-5" />
+      </span>
+      <h2 id="ask-admins-locked" className="text-title font-semibold text-fg">
+        {heading}
+      </h2>
+      {body}
+    </section>
   );
 }

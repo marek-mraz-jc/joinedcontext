@@ -161,7 +161,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("Whom to ask", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-member-${width}`);
       await page.goto("/organization/operator-installation?lang=en");
-      await expect(page.getByRole("heading", { name: "Installation", level: 2 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Installation is for the installation's operators", level: 2 })).toBeVisible();
       await expect(page.getByText("This section belongs to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toHaveCount(0);
       // One word for the role: the refusal names the operators, never "administrators".

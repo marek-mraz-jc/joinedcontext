@@ -8453,7 +8453,6 @@
       "operatorLeadMember": "The installation's operators set these once for every Organization.",
       "setIt": "Open Installation",
       "operatorSets": "Your installation's operators set this",
-      "notYet": "Not set yet",
       "whomToAsk": "Whom to ask",
       "whomToAskLead": "The installation's operators set the e-mail server; ask them for it.",
       "deploymentSets": "Deployment sets this",
