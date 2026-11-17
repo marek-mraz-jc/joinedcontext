@@ -109,7 +109,7 @@ fn mapper_applies_to(mapper: &ProtocolMapperRepresentation, kind: TokenKind) -> 
 /// verified-email flag, the Organization claim the `organization:` scope sets, a data space
 /// transfer token's agreement and participant (the gateway serves them as a DID), and a logout
 /// token's `events`.
-const PROTECTED_CLAIMS: [&str; 22] = [
+const PROTECTED_CLAIMS: [&str; 24] = [
     "iss",
     "sub",
     "aud",
@@ -132,7 +132,49 @@ const PROTECTED_CLAIMS: [&str; 22] = [
     "agreementId",
     "participant",
     "events",
+    "sub_kind",
+    "project",
 ];
+
+/// The client attribute naming the project a ServiceAccount's or App's client belongs to (ARCH/
+/// TEN-04, IDN-02): the `ProjectId` in its 26-character path form, written by the Portal into the
+/// client registry row. The `project` claim is read from here and never parsed from the client id.
+pub const CLIENT_PROJECT_ATTRIBUTE: &str = "jc.project";
+/// The client attribute that marks an App's client (`app`); any other service-account client is
+/// a ServiceAccount's.
+pub const CLIENT_KIND_ATTRIBUTE: &str = "jc.kind";
+
+/// `sub_kind` (`person`, `serviceAccount`, `app`) and, for a non-person subject, its project's id
+/// from the client registry row, when that holds one in the path form (IDN-02). A malformed
+/// value is left out, never repaired: the verifier refuses a non-person token without `project`.
+fn subject_kind(
+    client: &ClientRepresentation,
+    user: &UserRepresentation,
+) -> (&'static str, Option<String>) {
+    if user.service_account_client_id.is_none() {
+        return ("person", None);
+    }
+    let kind = match client
+        .attributes
+        .get(CLIENT_KIND_ATTRIBUTE)
+        .map(String::as_str)
+    {
+        Some("app") => "app",
+        _ => "serviceAccount",
+    };
+    let project = client
+        .attributes
+        .get(CLIENT_PROJECT_ATTRIBUTE)
+        .filter(|id| {
+            id.len() == 26
+                && (b'a'..=b'h').contains(&id.as_bytes()[0])
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+        })
+        .cloned();
+    (kind, project)
+}
 /// Claims that carry authority (roles, group and organization membership, the identity a
 /// relying party names the person by): only the mapper that reads that authority from the store
 /// writes them, at its own path. The gateway matches a Policy's group assignees on `groups`.
@@ -272,6 +314,11 @@ pub fn evaluate_mappers(ctx: &MapperContext<'_>, kind: TokenKind) -> Result<Map<
                 "scope".into(),
                 Value::String(ctx.granted_scope_string.to_owned()),
             );
+            let (sub_kind, project) = subject_kind(ctx.client, ctx.user);
+            claims.insert("sub_kind".into(), Value::String(sub_kind.into()));
+            if let Some(project) = project {
+                claims.insert("project".into(), Value::String(project));
+            }
         }
         if kind == TokenKind::IdToken
             && let Some(nonce) = ctx.nonce

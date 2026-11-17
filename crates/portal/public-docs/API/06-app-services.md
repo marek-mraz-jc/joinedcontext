@@ -29,7 +29,7 @@ spec:
 |---|---|---|---|
 | `identity` | yes | who is signed in and what they may do, from the App's Keycloak client (AP-111) | none |
 | `data` | yes | the App's Endpoint compiled from `dataNeeds` (AP-05) | the Endpoint's own limits (AP-17) |
-| `files` | no | objects under the App's prefix `apps/<shard>/<id>/` (AP-170) | `filesMiB` |
+| `files` | no | objects under the App's prefix `org/<OrgId>/project/<ProjectId>/apps/<id>/` (AP-170, ARCH/STO-14; files from before the project key are read under `apps/<shard>/<id>/` until the Portal has moved them) | `filesMiB` |
 | `email` | no | a message to people of the organization (AP-168) | `emailsPerDay` |
 | `jobs` | with `spec.server.jobs[]` | the schedules of a `wasm` App; declaring jobs lists the service (AP-154, AP-162) | at most 10 jobs |
 | `ai` | no | a completion from a model of the organization's list (AP-169) | `aiTokensPerDay` |

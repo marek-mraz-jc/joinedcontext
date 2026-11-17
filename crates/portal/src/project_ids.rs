@@ -233,6 +233,26 @@ pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, 
         .collect())
 }
 
+/// [`every_recorded`] with each project's Organization name: what a pass that still reads an old
+/// name-built layout fans out over (TEN-15).
+pub async fn every_recorded_owned(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, ProjectKey)>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT p.organization, p.name, o.key::text, p.id::text FROM project_ids p \
+         JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.organization, p.name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(organization, name, org, project)| {
+            parsed(&org, &project).map(|key| (organization, name, key))
+        })
+        .collect())
+}
+
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: in
 /// phase one its rows are unkeyed then, and the forcing migration waits until none is.
 pub async fn recorded_tx(

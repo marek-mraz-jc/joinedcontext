@@ -244,6 +244,67 @@ fn built_in_claims_differ_per_token_kind() {
     assert!(at.get("realm_access").is_none() && at.get("resource_access").is_none());
 }
 
+/// IDN-02, TEN-04: a token says what kind of subject it names; a workload's token also carries its
+/// project's id, read from the client registry row and never from the client id's text. A mapper
+/// cannot write either claim, and a malformed id is left out for the verifier to refuse.
+#[test]
+fn a_token_carries_its_subject_kind_and_a_workloads_project_from_the_client_row() {
+    const PROJECT: &str = "c7i5ym2kleuwxdl6t4fbwlb5ju";
+    let forged = mapper(
+        "oidc-hardcoded-claim-mapper",
+        &[
+            ("claim.name", "project"),
+            ("claim.value", "dyvezrufpfgtvhc6d6vdwtcvnq"),
+        ],
+    );
+    let kinded = mapper(
+        "oidc-hardcoded-claim-mapper",
+        &[("claim.name", "sub_kind"), ("claim.value", "person")],
+    );
+    let mut fixture = Fixture::new(vec![forged, kinded]);
+    let person = fixture.eval(TokenKind::AccessToken);
+    assert_eq!(person["sub_kind"], "person");
+    assert!(
+        !person.contains_key("project"),
+        "a person's token names no project"
+    );
+
+    fixture.user.service_account_client_id = Some("edge".into());
+    fixture.client.client_id = format!("ad2z3bvobuqkfmd3f2vjyhqnqe__{PROJECT}__ingest");
+    fixture
+        .client
+        .attributes
+        .insert(CLIENT_PROJECT_ATTRIBUTE.into(), PROJECT.into());
+    let workload = fixture.eval(TokenKind::AccessToken);
+    assert_eq!(workload["sub_kind"], "serviceAccount");
+    assert_eq!(workload["project"], PROJECT);
+    assert_eq!(fixture.eval(TokenKind::Introspection)["project"], PROJECT);
+    assert!(!fixture.eval(TokenKind::IdToken).contains_key("sub_kind"));
+
+    fixture
+        .client
+        .attributes
+        .insert(CLIENT_KIND_ATTRIBUTE.into(), "app".into());
+    assert_eq!(fixture.eval(TokenKind::AccessToken)["sub_kind"], "app");
+
+    // The id text of the client is never the source: without the attribute there is no claim.
+    for bad in [
+        "",
+        "C7I5YM2KLEUWXDL6T4FBWLB5JU",
+        "z7i5ym2kleuwxdl6t4fbwlb5ju",
+        "5f1d2c3b-4a59-4b6c-8d7e-9f0a1b2c3d4e",
+    ] {
+        fixture
+            .client
+            .attributes
+            .insert(CLIENT_PROJECT_ATTRIBUTE.into(), bad.into());
+        assert!(
+            !fixture.eval(TokenKind::AccessToken).contains_key("project"),
+            "{bad}"
+        );
+    }
+}
+
 #[test]
 fn every_mapper_kind_writes_its_claim() {
     let f = Fixture::new(vec![

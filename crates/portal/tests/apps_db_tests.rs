@@ -429,6 +429,7 @@ fn wasm_apps(
         db: w.db.clone(),
         store: std::sync::Arc::new(client),
         bucket: "apps".into(),
+        keys: None,
     }
 }
 
