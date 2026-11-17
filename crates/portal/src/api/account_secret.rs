@@ -14,7 +14,6 @@ use axum::http::{header, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use jc_core::kinds::service_account::keycloak_client_id;
 use jc_core::kinds::{ServiceAccountSpec, Verb};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -173,7 +172,7 @@ async fn regenerate(
         ApiError::Unavailable("Keycloak did not answer; try again in a minute".into())
     };
     let token = admin.token().await.map_err(unreachable)?;
-    let client_id = keycloak_client_id(project, name);
+    let client_id = state.mirror.client_id(project, name);
     let client = admin
         .find(&token, &client_id)
         .await

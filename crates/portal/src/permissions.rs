@@ -1268,10 +1268,12 @@ pub fn is_service_account(mirror: &Mirror, identity: &Identity) -> bool {
     account_of(mirror, identity).is_some()
 }
 
-/// The account a bearer token speaks for (PF-46, PF-49): its `azp` is the derived client id of
-/// exactly one `ServiceAccount`, and its user is that client's own service account, so a person
-/// who signed in through some client is never mistaken for it. An id two accounts derive is
-/// nobody's, as at the gateway (T-1454).
+/// The account a bearer token speaks for (PF-46, PF-49): its `azp` is the client the realm's
+/// registry holds for exactly one `ServiceAccount` (ARCH/TEN-04, [`Mirror::client_account`]), or,
+/// for a client the registry does not hold yet, the derived id of exactly one account that has no
+/// other client; and its user is that client's own service account, so a person who signed in
+/// through some client is never mistaken for it. An id two accounts derive is nobody's, as at the
+/// gateway (T-1454).
 fn account_of(mirror: &Mirror, identity: &Identity) -> Option<(String, ServiceAccountSpec)> {
     use jc_core::kinds::service_account::keycloak_client_id;
     let client = identity.client.as_deref()?;
@@ -1281,21 +1283,30 @@ fn account_of(mirror: &Mirror, identity: &Identity) -> Option<(String, ServiceAc
     {
         return None;
     }
-    let mut matches = mirror.namespaces().into_iter().flat_map(|namespace| {
-        mirror
-            .list(&namespace, "ServiceAccount", &ListOptions::default())
-            .items
-            .into_iter()
-            .filter(move |env| keycloak_client_id(&namespace, &env.metadata.name) == client)
-    });
-    let env = matches.next()?;
-    if matches.next().is_some() {
-        tracing::warn!(
-            client,
-            "two ServiceAccounts derive this Keycloak client id; it grants nothing"
-        );
-        return None;
-    }
+    let env = match mirror.client_account(client) {
+        Some((project, name)) => mirror.get(&project, "ServiceAccount", &name)?,
+        None => {
+            let mut matches = mirror.namespaces().into_iter().flat_map(|namespace| {
+                mirror
+                    .list(&namespace, "ServiceAccount", &ListOptions::default())
+                    .items
+                    .into_iter()
+                    .filter(move |env| {
+                        keycloak_client_id(&namespace, &env.metadata.name) == client
+                            && mirror.client_id(&namespace, &env.metadata.name) == client
+                    })
+            });
+            let env = matches.next()?;
+            if matches.next().is_some() {
+                tracing::warn!(
+                    client,
+                    "two ServiceAccounts derive this Keycloak client id; it grants nothing"
+                );
+                return None;
+            }
+            env
+        }
+    };
     match serde_json::from_value::<ServiceAccountSpec>(env.spec) {
         Ok(spec) => Some((env.metadata.name, spec)),
         Err(e) => {
