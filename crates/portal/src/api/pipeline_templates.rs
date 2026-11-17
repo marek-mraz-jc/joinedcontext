@@ -32,9 +32,7 @@ impl From<TemplateError> for ApiError {
                 ApiError::BadRequest(err.to_string())
             }
             TemplateError::Limit => ApiError::Conflict(err.to_string()),
-            TemplateError::NotFound | TemplateError::Unplaced(_) => {
-                ApiError::NotFound(err.to_string())
-            }
+            TemplateError::NotFound => ApiError::NotFound(err.to_string()),
             TemplateError::Db(detail) => {
                 tracing::error!(error = %detail, "pipeline templates database call failed");
                 ApiError::Internal("the pipeline templates database did not answer".into())
