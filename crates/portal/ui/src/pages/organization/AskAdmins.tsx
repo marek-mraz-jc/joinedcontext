@@ -7,7 +7,7 @@ import { listOrganizations } from "../../api/odata";
 import { asManifests, ORG_NAMESPACE } from "../../api/manifest";
 import { useAdministers } from "../../api/permissions";
 import { clsx } from "clsx";
-import { Alert, Icon, buttonClass } from "../../components/ui";
+import { Alert, Card, Icon, buttonClass } from "../../components/ui";
 
 interface Contact {
   role?: string;
@@ -133,9 +133,11 @@ export function AskAdmins({
     );
   }
   return (
-    <section
+    <Card
+      as="section"
+      flush
       aria-labelledby="ask-admins-locked"
-      className="mx-auto flex w-full max-w-xl flex-col items-center gap-3 rounded-lg border border-border bg-surface px-6 py-12 text-center text-body text-fg"
+      className="mx-auto flex w-full max-w-xl flex-col items-center gap-3 px-6 py-12 text-center text-body text-fg"
     >
       <span className="inline-flex size-12 items-center justify-center rounded-full bg-warning-soft text-fg">
         <Icon name="lock" className="size-5" />
@@ -144,6 +146,6 @@ export function AskAdmins({
         {heading}
       </h2>
       {body}
-    </section>
+    </Card>
   );
 }

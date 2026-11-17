@@ -8,6 +8,7 @@ import {
   Alert,
   Badge,
   buttonClass,
+  Card,
   PageFailed,
   PageLoading,
 } from "../../components/ui";
@@ -196,7 +197,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
           </p>
         </div>
         {/* One compact list card: each item is a line and a badge, not a card of its own. */}
-        <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
+        <Card as="ul" flush className="divide-y divide-border">
           {operator.map((item) => (
             <li
               key={item.id}
@@ -233,7 +234,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
               </div>
             </li>
           ))}
-        </ul>
+        </Card>
         {/* Whoever cannot set these reads whom to ask (the installation's contacts, T-7152). */}
         {operates ? null : (
           <AskAdmins
