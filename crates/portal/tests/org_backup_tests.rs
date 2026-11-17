@@ -812,7 +812,7 @@ async fn the_serving_role_exports_each_forced_project_row_once_in_its_key() {
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
-    let files = unzip(&decrypt(&latest(&world.bucket, DATA_KEY), &ids[0]));
+    let files = unzip(&decrypt(&latest(&world.bucket, &key_of(&world, "alfa", "data").await), &ids[0]));
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
     for table in ["activity", "entity_comments", "agent_runs", "workspaces"] {
         assert_eq!(
