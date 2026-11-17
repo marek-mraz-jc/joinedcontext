@@ -338,6 +338,7 @@ async fn save_of(
         updated_by: identity.username.clone(),
         updated_at: String::new(),
         last_run_at: None,
+        key: None,
     };
     // The bucket is asked before anything is saved: an unversioned bucket is refused here, and
     // a wrong key or bucket name is said now rather than at 3 a.m.
@@ -461,13 +462,21 @@ async fn versions_of(
     let bucket = org_backup::bucket(state, &target)?;
     let versioning = bucket.versioning(http).await.map_err(s3_unavailable)?;
     let object_lock = bucket.object_lock(http).await;
-    let key = target.object_key();
-    let versions = bucket
-        .versions(http, &target.folder())
+    // The folder of today's key, then the one before T-7207 while its versions last (TEN-15).
+    let (key, legacy) = (target.object_key()?, target.legacy_object_key());
+    let mut found = bucket
+        .versions(http, &target.folder()?)
         .await
-        .map_err(s3_unavailable)?
+        .map_err(s3_unavailable)?;
+    found.extend(
+        bucket
+            .versions(http, &target.legacy_folder())
+            .await
+            .map_err(s3_unavailable)?,
+    );
+    let versions = found
         .into_iter()
-        .filter(|v| v.key == key)
+        .filter(|v| v.key == key || v.key == legacy)
         .map(|v| BundleVersion {
             version_id: v.version_id,
             last_modified: v.last_modified,
@@ -498,15 +507,26 @@ fn valid_version(version: &str) -> Result<(), ApiError> {
 async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u8>, ApiError> {
     valid_version(version)?;
     let bucket = org_backup::bucket(state, target)?;
-    bucket
-        .get(&state.org_backup_egress.http, &target.object_key(), version)
-        .await
-        .map_err(|err| match err {
-            s3::S3Error::Status { status: 404, .. } => {
-                ApiError::NotFound(format!("version '{version}' not found"))
-            }
-            other => s3_unavailable(other),
-        })
+    let http = &state.org_backup_egress.http;
+    let not_found = || ApiError::NotFound(format!("version '{version}' not found"));
+    match bucket.get(http, &target.object_key()?, version).await {
+        Ok(bytes) => Ok(bytes),
+        // A version id belongs to one key: one the run wrote before T-7207 is read at the key of
+        // then, as long as the bucket keeps it (TEN-15). An S3 refuses another key's version id
+        // as unknown (404) or as not one of this key's (400).
+        Err(s3::S3Error::Status {
+            status: 404 | 400, ..
+        }) => bucket
+            .get(http, &target.legacy_object_key(), version)
+            .await
+            .map_err(|err| match err {
+                s3::S3Error::Status {
+                    status: 404 | 400, ..
+                } => not_found(),
+                other => s3_unavailable(other),
+            }),
+        Err(other) => Err(s3_unavailable(other)),
+    }
 }
 
 #[utoipa::path(
@@ -598,8 +618,23 @@ async fn soft_delete_of(
     let bucket = org_backup::bucket(state, &target)?;
     // Without versioning a delete is for good: refused, as a save would be.
     org_backup::require_versioning(http, &bucket).await?;
-    let key = target.object_key();
-    let outcome = bucket.delete(http, &key, None).await;
+    let key = target.object_key()?;
+    let mut outcome = bucket.delete(http, &key, None).await;
+    // A backup still current at the key before T-7207 is hidden by the same delete (TEN-15).
+    let legacy = target.legacy_object_key();
+    if outcome.is_ok() {
+        outcome = match bucket.versions(http, &target.legacy_folder()).await {
+            Ok(found)
+                if found
+                    .iter()
+                    .any(|v| v.key == legacy && v.is_latest && !v.delete_marker) =>
+            {
+                bucket.delete(http, &legacy, None).await
+            }
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        };
+    }
     state
         .org_backups
         .log(NewEntry {
