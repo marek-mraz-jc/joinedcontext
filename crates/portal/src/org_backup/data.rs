@@ -51,8 +51,8 @@ pub struct Source {
     pub tables: &'static [Table],
     /// The session settings the module's row-level security reads, one list per tenant of the
     /// Organization: every table is read once per tenant, `set_config(name, value, true)`
-    /// inside the one snapshot. Empty: each table is read once with nothing set (the Portal's
-    /// own database has no row-level security).
+    /// inside the one snapshot. Empty: each table is read once with nothing set (a table with
+    /// row-level security then answers no row).
     pub scopes: Vec<Vec<(&'static str, String)>>,
 }
 
@@ -611,6 +611,10 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
         "the installation's Organization registry: an Organization is created again, never restored",
     ),
     (
+        "project_ids",
+        "the installation's project id registry: ids are never reused, so a restore mints none (one folder per project is T-7192)",
+    ),
+    (
         "operator_changes",
         "the installation operators' Changes: hosts and operators, not an Organization's",
     ),
@@ -632,11 +636,17 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
 /// The Portal's own source: its database, keyed by the Organization's projects (explicit
 /// `organizationRef`, the installation fallback only for the installation's Organization, as
 /// [`projects_of`] decides) and by the Organization's name.
-fn portal_source(state: &AppState, organization: &str) -> Result<Source, String> {
+async fn portal_source(state: &AppState, organization: &str) -> Result<Source, String> {
     let pool = state
         .db
         .clone()
         .ok_or_else(|| "this Portal runs without a database".to_owned())?;
+    // The Organization's own rows (its backup audit) answer only under its reserved project's
+    // key (T-7191); the project tables without row-level security ignore the setting. An
+    // Organization outside the registry has no such rows, and its project rows still export.
+    let key = crate::project_ids::reserved(&pool, organization)
+        .await
+        .map_err(|err| format!("the Organization registry could not be read: {err}"))?;
     let mut keys = BTreeMap::new();
     keys.insert("projects", projects_of(&state.mirror, organization));
     keys.insert("organization", vec![organization.to_owned()]);
@@ -645,7 +655,14 @@ fn portal_source(state: &AppState, organization: &str) -> Result<Source, String>
         schema: "",
         keys,
         tables: PORTAL_TABLES,
-        scopes: Vec::new(),
+        scopes: key
+            .map(|key| {
+                vec![vec![
+                    ("jc.org", key.org.to_string()),
+                    ("jc.project", key.project.to_string()),
+                ]]
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -654,7 +671,7 @@ async fn sources(
     state: &AppState,
     organization: &str,
 ) -> Vec<(&'static str, Result<Source, String>)> {
-    let mut all = vec![("portal", portal_source(state, organization))];
+    let mut all = vec![("portal", portal_source(state, organization).await)];
     all.extend(super::modules::sources(state, organization).await);
     all
 }

@@ -559,6 +559,7 @@ INSERT INTO agent_run_events (run_id, seq, kind, payload) VALUES ('run-alfa-1', 
 INSERT INTO app_builds (project, app, commit, class, trigger, state, token_sha256) VALUES ('alfa-city', 'app', 'c', 'node', 'push', 'pending', 'ALFA_BUILD_TOKEN_SECRET');
 INSERT INTO workspaces (name, project, owner, base_revision, scope, expires_at, preview_salt) VALUES ('ws-alfa', 'alfa-city', 'ada', 'r', '{}', now(), 'ALFA_PREVIEW_SALT_SECRET');
 INSERT INTO domain_verifications (organization, domain, challenge, state) VALUES ('alfa', 'alfa.example', 'ALFA_DNS_CHALLENGE_SECRET', 'pending');
+INSERT INTO organizations (name, host, state, created_by) VALUES ('alfa', 'alfa.example', 'active', 'seed');
 ";
 
 /// A database of its own for one test, migrated and seeded with both Organizations' rows; `None`
