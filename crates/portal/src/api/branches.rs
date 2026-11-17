@@ -183,12 +183,16 @@ pub async fn open_branch(
     )
     .await
     .map_err(unread)?
-    .ok_or_else(|| {
-        ApiError::Conflict(format!(
+    .map_err(|why| match why {
+        // A copy or a branch is no parent (TEN-12): it answers like an unknown project.
+        project_ids::NoBranch::NotAParent => {
+            ApiError::NotFound(format!("project '{project}' not found"))
+        }
+        project_ids::NoBranch::AtLimit => ApiError::Conflict(format!(
             "project {project} keeps {} live branches, as many as this installation allows; \
              let one expire or ask an operator to raise branches per project",
             settings.per_parent
-        ))
+        )),
     })?;
     tracing::info!(%project, branch = %row.name, "branch opened");
     Ok((StatusCode::CREATED, Json(Branch::of(row, &project))))

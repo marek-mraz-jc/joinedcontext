@@ -305,15 +305,14 @@ pub struct BranchRow {
 /// Opens a branch of the live project `parent` for `created_by`, living `lifetime_days` (TEN-12,
 /// CHG-15): its `project_ids` row (name `b-{id}`, the parent, the parent's Organization) and its
 /// `project_branches` row in one transaction, the parent's row locked so two requests count the
-/// same live branches. `None` when the parent already keeps `per_parent` live branches or is not
-/// a live project of an Organization (a reserved project, a branch, a copy).
+/// same live branches; [`NoBranch`] says why none was opened.
 pub async fn open_branch(
     pool: &PgPool,
     parent: ProjectKey,
     created_by: &str,
     lifetime_days: u32,
     per_parent: u32,
-) -> Result<Option<BranchRow>, sqlx::Error> {
+) -> Result<Result<BranchRow, NoBranch>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let organization: Option<(String,)> = sqlx::query_as(
         "SELECT organization FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
@@ -323,7 +322,7 @@ pub async fn open_branch(
     .fetch_optional(&mut *tx)
     .await?;
     let Some((organization,)) = organization else {
-        return Ok(None);
+        return Ok(Err(NoBranch::NotAParent));
     };
     let (live,): (i64,) = sqlx::query_as(
         "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
@@ -333,7 +332,7 @@ pub async fn open_branch(
     .fetch_one(&mut *tx)
     .await?;
     if live >= i64::from(per_parent) {
-        return Ok(None);
+        return Ok(Err(NoBranch::AtLimit));
     }
     let id = ProjectId::mint();
     let name = format!("b-{}", id.path_segment());
@@ -357,12 +356,21 @@ pub async fn open_branch(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(Some(BranchRow {
+    Ok(Ok(BranchRow {
         id,
         name,
         created_by: created_by.to_owned(),
         expires_at,
     }))
+}
+
+/// Why [`open_branch`] opened no branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoBranch {
+    /// The parent is no live project of an Organization: a reserved project, a branch or a copy.
+    NotAParent,
+    /// The parent already keeps as many live branches as the deployment allows.
+    AtLimit,
 }
 
 /// The live branch `id` of `parent`; `None` once it expired or when it is another project's.
