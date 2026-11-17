@@ -2661,9 +2661,15 @@ pub(crate) fn check_unmade_writes(
             }
         })
     };
+    // At a load of `main` an open-data Endpoint that binds a write is marked, not dropped
+    // (EP-187, T-6972 step 4): `mark_open_data_writes` sets its `Degraded` and the gateway
+    // refuses the writes. That finding is the only one `jcctl validate` puts on an Endpoint.
+    let marked = |unmade: &jcctl::commands::validate::UnmadeWrite| {
+        ground.load && unmade.id.kind == "Endpoint"
+    };
     let lines: Vec<String> = unmade_writes(&proposed, domain)
         .into_iter()
-        .filter(|unmade| !before.contains(unmade))
+        .filter(|unmade| !before.contains(unmade) && !marked(unmade))
         .map(|unmade| match field(&unmade) {
             Some(field) => format!("{field}: {}", unmade.message),
             None => unmade.message,
