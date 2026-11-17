@@ -45433,6 +45433,68 @@
         }
       }
     },
+    "/api/v1/projects/{project}/spaces/{space}/tenant": {
+      "get": {
+        "tags": [
+          "spaces"
+        ],
+        "summary": "Read Space Tenant",
+        "description": "The broker Tenant the space's data is filed under: its URN segment, or `{OrgId}__{ProjectId}__{space}` once the broker's Tenants were renamed to project-key names. A Tenant that is not known yet answers 200 with `reason` and no `tenant`. Read-only, for anyone who may read the space.",
+        "operationId": "get_tenant",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "Project name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "space",
+            "in": "path",
+            "description": "Context Space name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The space's Tenant, or why it is not known yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpaceTenant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such space the caller may read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project}/spaces/{space}/trash": {
       "get": {
         "tags": [
@@ -65873,6 +65935,26 @@
               "$ref": "#/components/schemas/TypeQuality"
             },
             "description": "Per entity type: how complete each attribute is, the newest change, numeric ranges and\noutliers (T-3252)."
+          }
+        }
+      },
+      "SpaceTenant": {
+        "type": "object",
+        "description": "The broker Tenant of one space: the name the broker files its data under, or why it is not\nknown yet (a project the registry has no id for yet).",
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why there is no Tenant yet; `None` when `tenant` is set."
+          },
+          "tenant": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Tenant, e.g. `helsinki-air`, or `{OrgId}__{ProjectId}__air` under project-key names."
           }
         }
       },

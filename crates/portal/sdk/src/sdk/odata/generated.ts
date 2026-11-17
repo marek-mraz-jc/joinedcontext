@@ -1099,6 +1099,7 @@ export interface Functions {
   portal_space_source_removals: { space: string };
   portal_space_surface_fit: { space: string };
   portal_space_temporal_audit: { space: string; pipeline?: string };
+  portal_space_tenant: { space: string };
   portal_space_usage: { space: string };
   portal_space_view_list: { space: string };
   portal_trash_list: { space: string };
@@ -1282,6 +1283,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_space_source_removals: ["Project"],
   portal_space_surface_fit: ["Project"],
   portal_space_temporal_audit: ["Project"],
+  portal_space_tenant: ["Project"],
   portal_space_usage: ["Project"],
   portal_space_view_list: ["Project"],
   portal_trash_list: ["Project"],

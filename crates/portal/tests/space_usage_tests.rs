@@ -383,6 +383,28 @@ async fn recalculate(state: &AppState, email: &str, uri: &str) -> (StatusCode, V
 
 /// T-6208: a reader recalculates a space they may read; nobody else learns it is there, and a
 /// caller without a session is asked to sign in.
+/// T-7216: the Space page shows the broker Tenant read-only, with the space's own read rule.
+#[tokio::test]
+async fn a_reader_sees_the_spaces_tenant_and_a_stranger_gets_404() {
+    let state = world(None);
+    let (status, body) = get(
+        &state,
+        READER,
+        "/api/v1/projects/helsinki/spaces/air/tenant",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({ "tenant": "air", "reason": null }));
+    for (who, uri) in [
+        (STRANGER, "/api/v1/projects/helsinki/spaces/air/tenant"),
+        (READER, "/api/v1/projects/helsinki/spaces/mobility/tenant"),
+        (READER, "/api/v1/projects/helsinki/spaces/nowhere/tenant"),
+    ] {
+        let (status, body) = get(&state, who, uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{who} {uri}: {body}");
+    }
+}
+
 #[tokio::test]
 async fn a_reader_recalculates_and_nobody_else_may() {
     let broker = MockServer::start().await;

@@ -347,6 +347,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_manifest_replace: ["PUT", "/projects/{project}/{plural}/{name}"],
   portal_manifest_delete: ["DELETE", "/projects/{project}/{plural}/{name}"],
   portal_space_usage: ["GET", "/projects/{project}/spaces/{space}/usage"],
+  portal_space_tenant: ["GET", "/projects/{project}/spaces/{space}/tenant"],
   portal_model_source_set: ["PUT", "/projects/{project}/datamodels/{name}/source"],
   portal_org_model_source: ["GET", "/projects/org/datamodels/{name}/source"],
   portal_org_model_source_set: ["PUT", "/projects/org/datamodels/{name}/source"],

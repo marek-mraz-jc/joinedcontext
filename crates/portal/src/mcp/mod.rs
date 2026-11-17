@@ -488,12 +488,19 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
                     .into_iter()
                     .filter(|item| effective.may_read_envelope(info.kind, item))
                 {
-                    resources.push(json!({
+                    let mut resource = json!({
                         "uri": format!("jc://{project}/{}/{}", info.plural, item.metadata.name),
                         "name": item.metadata.name,
                         "title": format!("{} {}", info.kind, item.metadata.name),
                         "mimeType": "application/json"
-                    }));
+                    });
+                    // The broker Tenant a space's data is filed under, as its page shows it
+                    // (T-7216): a model that reads the broker directly names the right one.
+                    if info.kind == "ContextSpace" {
+                        resource["description"] =
+                            json!(space_description(&state, &project, &item.metadata.name));
+                    }
+                    resources.push(resource);
                 }
             }
             // AG-81: the organization's own resources belong to no project, so they are listed
@@ -749,6 +756,15 @@ fn negotiated_version(asked: Option<&str>) -> &'static str {
         .and_then(|asked| PROTOCOL_VERSIONS.iter().find(|known| **known == asked))
         .copied()
         .unwrap_or(PROTOCOL_VERSIONS[0])
+}
+
+/// The `resources/list` description of a Context Space: its broker Tenant, or why it is not
+/// known yet (T-7216).
+fn space_description(state: &AppState, project: &str, space: &str) -> String {
+    match crate::spaces::tenant(&state.mirror, project, space) {
+        Ok(tenant) => format!("Context Space {space}; broker tenant: {tenant}"),
+        Err(reason) => format!("Context Space {space}; broker tenant not known yet: {reason}"),
+    }
 }
 
 fn may_read(state: &AppState, caller: &crate::ops::Caller, project: &str) -> bool {

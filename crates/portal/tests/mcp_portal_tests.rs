@@ -1140,6 +1140,18 @@ async fn a_space_bound_caller_neither_lists_nor_reads_another_spaces_manifests_o
         .unwrap_or_default();
     assert!(uris.contains(&"jc://ovzdusie/endpoints/air-a"), "{listed}");
     assert!(!uris.contains(&"jc://ovzdusie/endpoints/air-b"), "{uris:?}");
+    // T-7216: a space's description names the broker Tenant its data is filed under.
+    let space = listed["result"]["resources"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|r| r["uri"] == "jc://ovzdusie/spaces/space-a")
+        })
+        .unwrap_or(&Value::Null);
+    assert_eq!(
+        space["description"], "Context Space space-a; broker tenant: ovzdusie-space-a",
+        "{listed}"
+    );
     assert!(
         !uris.contains(&"jc://ovzdusie/drafts/Endpoint/draft-b"),
         "{uris:?}"

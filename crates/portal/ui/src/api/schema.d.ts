@@ -8085,6 +8085,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project}/spaces/{space}/tenant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Space Tenant
+         * @description The broker Tenant the space's data is filed under: its URN segment, or `{OrgId}__{ProjectId}__{space}` once the broker's Tenants were renamed to project-key names. A Tenant that is not known yet answers 200 with `reason` and no `tenant`. Read-only, for anyone who may read the space.
+         */
+        get: operations["get_tenant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project}/spaces/{space}/trash": {
         parameters: {
             query?: never;
@@ -15030,6 +15050,16 @@ export interface components {
              *     outliers (T-3252).
              */
             types: components["schemas"]["TypeQuality"][];
+        };
+        /**
+         * @description The broker Tenant of one space: the name the broker files its data under, or why it is not
+         *     known yet (a project the registry has no id for yet).
+         */
+        SpaceTenant: {
+            /** @description Why there is no Tenant yet; `None` when `tenant` is set. */
+            reason?: string | null;
+            /** @description The Tenant, e.g. `helsinki-air`, or `{OrgId}__{ProjectId}__air` under project-key names. */
+            tenant?: string | null;
         };
         /** @description What one space holds. */
         SpaceUsage: {
@@ -46560,6 +46590,49 @@ export interface operations {
                 };
             };
             /** @description No such space the caller may read, or no such pipeline the caller may read */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    get_tenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project name */
+                project: string;
+                /** @description Context Space name */
+                space: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The space's Tenant, or why it is not known yet */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpaceTenant"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such space the caller may read */
             404: {
                 headers: {
                     [name: string]: unknown;

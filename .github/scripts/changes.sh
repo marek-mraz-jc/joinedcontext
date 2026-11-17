@@ -37,7 +37,7 @@ map() {
     # the App bundles both images ship in /srv/apps: their lists must stay equal; the App images
     # (ci.yml ship-apps) build from crates/portal/builder
     /^bins\/jc\/Dockerfile$/ || /^crates\/portal\/Dockerfile$/ || /^crates\/portal\/apps\// || /^crates\/portal\/builder\// || /^crates\/portal\/scripts\/(app-integrity\.mjs|ci\/check-dockerfile-members\.py)$/ { on["dockerfiles"] = "true" }
-    /(^|\/)Cargo\.lock$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
+    /(^|\/)Cargo\.(lock|toml)$/ || /(^|\/)deny\.toml$/ || /(^|\/)\.cargo\/audit\.toml$/ { on["supply"] = "true" }
     # the vendored platform crates (platform-test), the assistant aside (a root member), and the
     # root lockfile and manifest its lockfile repeats
     /^vendor\/joinedcontext-platform\// && !/^vendor\/joinedcontext-platform\/crates\/assistant\// { on["platform"] = "true" }
@@ -197,6 +197,7 @@ if [ "${1:-}" = --selftest ]; then
   check 'vendor/joinedcontext-platform/crates/assistant/src/lib.rs' 'root portal'
   check 'bins/jc/Dockerfile' 'root image dockerfiles'
   check 'Cargo.lock' 'root supply platform'
+  check 'vendor/joinedcontext-platform/crates/jc-core/Cargo.toml' 'root portal supply platform'
   check '.github/workflows/image.yml' 'workflows'
   check '.github/actions/deploy-tools/action.yml' 'workflows deploy'
   check 'deploy/components/jc/images.yaml' 'deploy'
