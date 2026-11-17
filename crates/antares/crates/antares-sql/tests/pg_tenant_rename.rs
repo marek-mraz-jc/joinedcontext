@@ -307,6 +307,56 @@ async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
     assert_eq!(digest(&pool, &a).await, before);
 }
 
+/// A database owner that bypasses row-level security without being superuser
+/// runs the rename with `entities`' triggers on (a superuser skips them): the
+/// Tenant moves the same, and the transaction keeps its triggers afterwards.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bypassrls_owner_moves_the_tenant_the_same_with_the_triggers_on() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let n = run_id();
+    let old = format!("renu{n}-air");
+    seed(&pool, &TenantId::new(&old).expect("tenant")).await;
+    let before = digest(&pool, &old).await;
+    let new = keyed(n, "air");
+    let role = format!("renameowner{n}");
+    let mut tx = pool.begin().await.expect("tx");
+    for stmt in [
+        format!("CREATE ROLE {role} NOSUPERUSER BYPASSRLS"),
+        format!("GRANT ALL ON ALL TABLES IN SCHEMA public TO {role}"),
+        format!("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO {role}"),
+        format!("GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO {role}"),
+        format!("SET LOCAL ROLE {role}"),
+    ] {
+        // the role name is this test's own
+        sqlx::query(sqlx::AssertSqlSafe(stmt.clone()))
+            .execute(&mut *tx)
+            .await
+            .expect(&stmt);
+    }
+    sqlx::query("SELECT antares_tenant_rename($1, $2)")
+        .bind(&old)
+        .bind(&new)
+        .execute(&mut *tx)
+        .await
+        .expect("renamed by the owner");
+    let after: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT tbl, row_count, digest::text FROM antares_tenant_digest($1) ORDER BY tbl",
+    )
+    .bind(&new)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("digest");
+    let replication: String =
+        sqlx::query_scalar("SELECT current_setting('session_replication_role')")
+            .fetch_one(&mut *tx)
+            .await
+            .expect("setting");
+    tx.rollback().await.expect("rollback");
+    assert_eq!(after, before);
+    assert_eq!(replication, "origin");
+}
+
 /// The functions run only as a role that bypasses row-level security: the
 /// broker's own role can never move a Tenant or read every row of one.
 #[tokio::test(flavor = "multi_thread")]

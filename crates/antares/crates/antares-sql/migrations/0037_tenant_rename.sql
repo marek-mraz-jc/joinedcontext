@@ -147,9 +147,21 @@ DECLARE
   n bigint;
   total bigint;
   tok text := '%"' || p_old || '"%';
+  super boolean;
 BEGIN
   PERFORM tenant_rename_guard(p_old, p_new);
   PERFORM set_config('lock_timeout', '30s', true);
+  -- `entities`' statement triggers keep the catalogue and `entity_values` of
+  -- a written document; the rename moves both itself, so the triggers would
+  -- only copy every moved row twice into transition tables (7.5 GB of temp
+  -- files for a 209 k entity Tenant of jc-dev). A superuser skips them for
+  -- this transaction; a BYPASSRLS owner runs them, slower, with the same result.
+  -- The foreign keys' own triggers go with them: csource_index follows its
+  -- registrations by the UPDATE below instead of the cascade.
+  super := (SELECT rolsuper FROM pg_roles WHERE rolname = current_user);
+  IF super THEN
+    PERFORM set_config('session_replication_role', 'replica', true);
+  END IF;
   -- writers wait until the transaction ends; readers go on
   FOR t IN SELECT tbl FROM tenant_tables() UNION SELECT 'tenants' UNION SELECT 'jsonld_contexts' LOOP
     EXECUTE format('LOCK TABLE %I IN EXCLUSIVE MODE', t);
@@ -199,6 +211,9 @@ BEGIN
 
   UPDATE tenants SET tenant_id = p_new, organization_id = tenant_organization(p_new)
    WHERE tenant_id = p_old;
+  IF super THEN
+    PERFORM set_config('session_replication_role', 'origin', true);
+  END IF;
   RETURN out;
 END $$;
 
