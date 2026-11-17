@@ -1,6 +1,10 @@
 {
   "$comment": "T-4945: text boxes whose label names a picked thing (tests/free_text.ts PICKED) or cannot be read, each with why it stays a box. FREE stays; REF, ENUM and SUGGEST with a task are waiting for that task, which removes the entry. rule: the server rule that decides which values a person may pick.",
   "fields": {
+    "src/pages/organization/Backups.tsx :: New project name": {
+      "class": "FREE",
+      "reason": "the name of a project that does not exist yet; the server refuses one any project, copy or Organization holds (422 naming name)"
+    },
     "src/pages/mcp/AiConnectorsPage.tsx :: Find a project, space or Endpoint": {
       "class": "FREE",
       "reason": "a search over the tick tree below it: it narrows the list and submits nothing"

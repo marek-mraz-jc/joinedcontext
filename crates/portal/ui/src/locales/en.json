@@ -13604,7 +13604,7 @@
       "list": "Show the projects",
       "project": "Project of this backup",
       "pick": "Pick a project",
-      "none": "This backup holds no project you may restore. Pick another version, or ask an administrator of the project for read access.",
+      "none": "No project of this backup you may restore",
       "deleted": "Deleted since this backup, never restored: {names}",
       "name": "New project name",
       "check": "Check",
@@ -13613,7 +13613,8 @@
       "done": "Restored into {name} (project id {id}). {source} was not changed.",
       "first": "Pick a project and type a name first",
       "caption": "Rows per table the copy writes",
-      "refusedNote": "Refused rows break a rule of today's data (a name another row holds, or a link to a row the copy does not hold) and are left out; the rest is copied."
+      "refusedNote": "Refused rows break a rule of today's data (a name another row holds, or a link to a row the copy does not hold) and are left out; the rest is copied.",
+      "noneHint": "Pick another version, or ask an administrator of the project for read access."
     }
   },
   "operator": {

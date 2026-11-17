@@ -656,7 +656,7 @@ function ProjectCopy({ version, onClose }: { version: string; onClose: () => voi
         {done ? null : <IdentityField id="backup-copy-identity" value={identity} onChange={setIdentity} error={keyError} />}
         {projects && !done ? (
           projects.projects.length === 0 ? (
-            <EmptyState bare title={t("backups.copy.none")} />
+            <EmptyState bare title={t("backups.copy.none")} description={t("backups.copy.noneHint")} />
           ) : (
             <>
               <Field id="backup-copy-project" label={t("backups.copy.project")} help={t("backups.hint.copyProject")} errors={projectError ? [projectError] : undefined}>

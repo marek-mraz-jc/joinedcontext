@@ -13604,7 +13604,7 @@
       "list": "Zobrazit projekty",
       "project": "Projekt této zálohy",
       "pick": "Vyberte projekt",
-      "none": "Tato záloha nemá projekt, který smíte obnovit. Vyberte jinou verzi nebo požádejte správce projektu o přístup ke čtení.",
+      "none": "Žádný projekt této zálohy, který smíte obnovit",
       "deleted": "Smazané od této zálohy, nikdy se neobnoví: {names}",
       "name": "Název nového projektu",
       "check": "Zkontrolovat",
@@ -13613,7 +13613,8 @@
       "done": "Obnoveno do {name} (id projektu {id}). {source} se nezměnil.",
       "first": "Nejprve vyberte projekt a napište název",
       "caption": "Záznamy podle tabulek, které kopie zapíše",
-      "refusedNote": "Odmítnuté záznamy porušují pravidlo dnešních dat (název, který má jiný záznam, nebo odkaz na záznam, který kopie nemá) a vynechají se; zbytek se zkopíruje."
+      "refusedNote": "Odmítnuté záznamy porušují pravidlo dnešních dat (název, který má jiný záznam, nebo odkaz na záznam, který kopie nemá) a vynechají se; zbytek se zkopíruje.",
+      "noneHint": "Vyberte jinou verzi nebo požádejte správce projektu o přístup ke čtení."
     }
   },
   "operator": {

@@ -13604,7 +13604,7 @@
       "list": "Projekte anzeigen",
       "project": "Projekt dieser Sicherung",
       "pick": "Projekt wählen",
-      "none": "Diese Sicherung enthält kein Projekt, das Sie wiederherstellen dürfen. Wählen Sie eine andere Version oder bitten Sie die Projektverwaltung um Lesezugriff.",
+      "none": "Kein Projekt dieser Sicherung, das Sie wiederherstellen dürfen",
       "deleted": "Seit dieser Sicherung gelöscht, nie wiederhergestellt: {names}",
       "name": "Name des neuen Projekts",
       "check": "Prüfen",
@@ -13613,7 +13613,8 @@
       "done": "In {name} wiederhergestellt (Projekt-ID {id}). {source} wurde nicht verändert.",
       "first": "Wählen Sie zuerst ein Projekt und geben Sie einen Namen ein",
       "caption": "Zeilen je Tabelle, die die Kopie schreibt",
-      "refusedNote": "Abgelehnte Zeilen verletzen eine Regel der heutigen Daten (ein Name, den eine andere Zeile hat, oder ein Verweis auf eine Zeile, die die Kopie nicht hat) und werden ausgelassen; der Rest wird kopiert."
+      "refusedNote": "Abgelehnte Zeilen verletzen eine Regel der heutigen Daten (ein Name, den eine andere Zeile hat, oder ein Verweis auf eine Zeile, die die Kopie nicht hat) und werden ausgelassen; der Rest wird kopiert.",
+      "noneHint": "Wählen Sie eine andere Version oder bitten Sie die Projektverwaltung um Lesezugriff."
     }
   },
   "operator": {
