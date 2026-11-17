@@ -870,12 +870,17 @@ async fn rows_keyed_and_read_only_under_their_key(
         }
     }
     let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
-    for table in &tables {
-        assert!(
-            !project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is forced by 0080 and off the list"
-        );
-    }
+    // Tables still on the list are phase one (0074's, T-7203): 0080 neither checks nor forces them.
+    let phase_one = tables
+        .iter()
+        .all(|t| project_ids::KEYED_BY_NAME.contains(t));
+    assert!(
+        phase_one
+            || tables
+                .iter()
+                .all(|t| !project_ids::KEYED_BY_NAME.contains(t)),
+        "{tables:?}: all forced by 0080 or all phase one"
+    );
 
     let waiting = project_ids::backfill_tables(&pool, &state.mirror, &tables)
         .await
@@ -904,6 +909,15 @@ async fn rows_keyed_and_read_only_under_their_key(
             };
             assert_eq!((org_id, project_id), expected, "{table} {project}");
         }
+    }
+
+    if phase_one {
+        // 0080 runs over the orphan's unkeyed rows and leaves these tables as they are.
+        migrate_on(&pool)
+            .await
+            .expect("0080 ignores phase-one rows");
+        rls_reads_only_under_the_key(&pool, &org, &tables, &placed, key, true).await;
+        return (state, placed, orphan, key);
     }
 
     // T-7201: the forcing migration refuses while the orphan's rows have no key, naming each
@@ -952,8 +966,22 @@ async fn rows_keyed_and_read_only_under_their_key(
         );
     }
 
-    // The forced tables: the key alone decides what a role without BYPASSRLS reads.
-    let other = project_ids::reserved(&pool, &org)
+    rls_reads_only_under_the_key(&pool, &org, &tables, &placed, key, false).await;
+    (state, placed, orphan, key)
+}
+
+/// Under forced row-level security (turned on in each rolled-back transaction when `force`, for a
+/// phase-one table), a role without BYPASSRLS reads `placed`'s row of each table under its key
+/// only: none under another key of the Organization, none unkeyed.
+async fn rls_reads_only_under_the_key(
+    pool: &sqlx::PgPool,
+    org: &str,
+    tables: &[&str],
+    placed: &str,
+    key: jc_types::ProjectKey,
+    force: bool,
+) {
+    let other = project_ids::reserved(pool, org)
         .await
         .expect("reserved")
         .expect("a key");
@@ -963,12 +991,21 @@ async fn rows_keyed_and_read_only_under_their_key(
          GRANT SELECT ON {} TO pk_rls_reader",
         tables.join(", ")
     )))
-    .execute(&pool)
+    .execute(pool)
     .await
     .expect("the reader role");
-    for table in &tables {
+    for table in tables {
         for (key, expected) in [(Some(key), 1_i64), (Some(other), 0), (None, 0)] {
             let mut tx = pool.begin().await.expect("begin");
+            if force {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; \
+                     ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
+                )))
+                .execute(&mut *tx)
+                .await
+                .expect("forced in this transaction");
+            }
             if let Some(key) = key {
                 sqlx::query(
                     "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
@@ -986,7 +1023,7 @@ async fn rows_keyed_and_read_only_under_their_key(
             let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT count(*) FROM {table} WHERE project = $1"
             )))
-            .bind(&placed)
+            .bind(placed)
             .fetch_one(&mut *tx)
             .await
             .expect("count");
@@ -994,7 +1031,6 @@ async fn rows_keyed_and_read_only_under_their_key(
             tx.rollback().await.expect("rollback");
         }
     }
-    (state, placed, orphan, key)
 }
 
 /// Places `project` under a new Organization of the registry and runs the backfill, as an operator
