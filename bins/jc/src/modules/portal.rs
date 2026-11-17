@@ -69,6 +69,13 @@ pub async fn build(
     };
     let follow_hosts = env("JC_PORTAL_ORGANIZATION_HOSTS").is_none()
         && organizations.contains_key("JC_PORTAL_ORGANIZATION_HOSTS");
+    // jc lists the Organizations' catalogues and addresses: the run-time ones join them (T-7185),
+    // their catalogue in this process's dataroom alone.
+    let follow_catalogues = organizations.contains_key("JC_PORTAL_ORGANIZATION_ADDRESSES");
+    let catalogue_reach = ctx
+        .siblings
+        .get(Module::Dataroom)
+        .map(|_| crate::siblings::reach(ctx.siblings.listener));
     siblings.extend(organizations);
     let follow_realms = organization_realm_vars(
         &super::sign_in::from_config(orgs),
@@ -140,6 +147,18 @@ pub async fn build(
     }
     let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
+    if follow_catalogues {
+        let (portal, scheme) = (state.clone(), mount.scheme.clone());
+        super::follow::ORGANIZATIONS.follow("portal", move |set| {
+            let (catalogues, addresses) = run_time_entries(set, &scheme, catalogue_reach);
+            let held = catalogues.len();
+            portal.replace_run_time_organizations(catalogues, addresses, &set.removed);
+            tracing::info!(
+                catalogues = held,
+                "portal: run-time Organizations' catalogues and addresses replaced"
+            );
+        });
+    }
     if let Some(reach) = follow_realms {
         let (portal, scheme) = (state.clone(), mount.scheme.clone());
         super::sign_in::follow("portal", move |set| {
@@ -256,7 +275,8 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
     let organizations = joinedcontext_portal::host_registry::organizations(pool)
         .await
         .map_err(|e| format!("the Organization registry could not be read: {e}"))?;
-    let served = apply(run, &rows, &organizations)?;
+    let (served, run_time) = apply(run, &rows, &organizations)?;
+    super::follow::ORGANIZATIONS.publish(run_time);
     super::sign_in::publish(super::sign_in::from_registry(
         rows.iter().map(|r| {
             (
@@ -286,12 +306,13 @@ struct Run {
 /// (T-7183), the gateway links the Organizations jc.toml does not name and the router mounts each
 /// module of jc on the hosts jc.toml did not mount (T-7184); last the host table takes only the
 /// `served` hosts of `active` Organizations (T-7181), and a removed Organization leaves it whole,
-/// its shared paths too. A step that fails stops the rest: the table that answers stays.
+/// its shared paths too. A step that fails stops the rest: the table that answers stays. Beside
+/// the count, the run-time Organizations for the modules that follow them (T-7186).
 fn apply(
     run: &Run,
     rows: &[joinedcontext_portal::host_registry::HostRow],
     organizations: &[joinedcontext_portal::host_registry::OrganizationRow],
-) -> Result<usize, String> {
+) -> Result<(usize, super::follow::Organizations), String> {
     let known = active(organizations);
     let registry: Vec<jc_router::RegistryHost<'_>> = rows
         .iter()
@@ -337,7 +358,40 @@ fn apply(
     run.hosts
         .rebuild_without(&registry, &removed)
         .map_err(|e| e.to_string())?;
-    Ok(registry.iter().filter(|r| r.served).count())
+    let set = super::follow::Organizations {
+        run_time: run_time(organizations, orgs, &run.named),
+        removed: removed.iter().map(|&name| name.to_owned()).collect(),
+    };
+    Ok((registry.iter().filter(|r| r.served).count(), set))
+}
+
+/// Each `active` row jc.toml does not name (`named`), with a served working host, as the
+/// `[[organizations]]` entry its served hosts make; its catalogue the row's, empty while it has
+/// none. No Portal token file: such an Organization's catalogue grants the Portal in process.
+fn run_time(
+    organizations: &[joinedcontext_portal::host_registry::OrganizationRow],
+    mut served: BTreeMap<String, crate::config::OrganizationHosts>,
+    named: &[String],
+) -> Vec<crate::config::OrganizationSection> {
+    organizations
+        .iter()
+        .filter(|o| o.state == "active" && !named.contains(&o.name))
+        .filter_map(|o| {
+            let hosts = served.remove(&o.name).filter(|h| !h.portal.is_empty())?;
+            Some(crate::config::OrganizationSection {
+                name: o.name.clone(),
+                id: o
+                    .organization_id
+                    .as_deref()
+                    .and_then(|id| jc_core::names::OrganizationId::parse(id).ok()),
+                hosts,
+                host: None,
+                same_site_apps: false,
+                catalogue_id: o.catalogue_id.clone().unwrap_or_default(),
+                portal_token_file: None,
+            })
+        })
+        .collect()
 }
 
 /// `JC_PORTAL_ORGANIZATION_HOSTS` from the registry (T-7183): each `active` Organization at its
@@ -382,6 +436,7 @@ pub(crate) fn organization_seed(cfg: &crate::config::Config) -> Vec<SeedOrganiza
             name: o.name.clone(),
             organization_id: o.id.as_ref().map(|id| id.as_str().to_owned()),
             host: o.hosts.portal.to_ascii_lowercase(),
+            catalogue_id: Some(o.catalogue_id.clone()),
         })
         .collect()
 }
@@ -509,6 +564,45 @@ fn runner_reaches(config: &mut Config, addr: std::net::SocketAddr) {
     }
 }
 
+/// The addresses every Organization has on its own hosts: its Portal, open data portal, APIs,
+/// MCP servers and further portal hosts, as `{kind, url}` (`JC_PORTAL_ORGANIZATION_ADDRESSES`).
+fn own_addresses(org: &crate::config::OrganizationSection, scheme: &str) -> Vec<serde_json::Value> {
+    let at = |kind: &str, host: &str, path: &str| serde_json::json!({ "kind": kind, "url": format!("{scheme}://{host}{path}") });
+    let h = &org.hosts;
+    // The router's first segment on a shared host: the id once set, else the name.
+    let segment = org.id.as_ref().map_or(org.name.as_str(), |id| id.as_str());
+    let root = if h.shared {
+        format!("/{segment}/")
+    } else {
+        "/".to_owned()
+    };
+    let opendata = match &h.opendata {
+        Some(host) => at("opendata", host, &root),
+        None => at(
+            "opendata",
+            &h.portal,
+            &format!("{}/", crate::config::DATAROOM_ON_WORKING_HOST),
+        ),
+    };
+    // Without an API host of its own the gateway answers on the working host's paths.
+    let (api_host, api_root, api_path) = match &h.api {
+        Some(host) => (host.as_str(), root.clone(), root.clone()),
+        None => (
+            h.portal.as_str(),
+            "/".to_owned(),
+            "/api/endpoint/".to_owned(),
+        ),
+    };
+    let mcp = match h.mcp.as_deref().filter(|m| Some(*m) != h.api.as_deref()) {
+        Some(host) => at("mcp", host, "/api/mcp/"),
+        None => at("mcp", api_host, &format!("{api_root}api/mcp/")),
+    };
+    let api = at("api", api_host, &api_path);
+    let mut addresses = vec![at("portal", &h.portal, "/"), opendata, api, mcp];
+    addresses.extend(h.portals.iter().map(|p| at("portal-site", p, "/")));
+    addresses
+}
+
 /// Every address of each `[[organizations]]` row as the host registry routes it (API/15 §2,
 /// T-7013), for the Organization page's Addresses: its own hosts, the `[[hosts]]` bound to it
 /// and, while the base host is shared, its `/{id}/` path there (its name until an id is set).
@@ -529,38 +623,8 @@ fn organization_addresses(cfg: &crate::config::Config) -> serde_json::Value {
         .organizations
         .iter()
         .map(|org| {
-            let h = &org.hosts;
-            // The router's first segment on a shared host: the id once set, else the name.
             let segment = org.id.as_ref().map_or(org.name.as_str(), |id| id.as_str());
-            let root = if h.shared {
-                format!("/{segment}/")
-            } else {
-                "/".to_owned()
-            };
-            let opendata = match &h.opendata {
-                Some(host) => at("opendata", host, &root),
-                None => at(
-                    "opendata",
-                    &h.portal,
-                    &format!("{}/", crate::config::DATAROOM_ON_WORKING_HOST),
-                ),
-            };
-            // Without an API host of its own the gateway answers on the working host's paths.
-            let (api_host, api_root, api_path) = match &h.api {
-                Some(host) => (host.as_str(), root.clone(), root.clone()),
-                None => (
-                    h.portal.as_str(),
-                    "/".to_owned(),
-                    "/api/endpoint/".to_owned(),
-                ),
-            };
-            let mcp = match h.mcp.as_deref().filter(|m| Some(*m) != h.api.as_deref()) {
-                Some(host) => at("mcp", host, "/api/mcp/"),
-                None => at("mcp", api_host, &format!("{api_root}api/mcp/")),
-            };
-            let api = at("api", api_host, &api_path);
-            let mut addresses = vec![at("portal", &h.portal, "/"), opendata, api, mcp];
-            addresses.extend(h.portals.iter().map(|p| at("portal-site", p, "/")));
+            let mut addresses = own_addresses(org, scheme);
             addresses.extend(
                 cfg.hosts
                     .iter()
@@ -649,26 +713,9 @@ pub(crate) fn organization_vars(
             .iter()
             .filter_map(|org| {
                 let token = org.portal_token_file.as_ref()?;
-                // The gateway links a dataset's resources; off https a whole origin.
-                let data_host = match scheme.as_str() {
-                    "https" => org.api_base(),
-                    _ => format!("{scheme}://{}", org.api_base()),
-                };
-                // The Portal writes into the catalogue on the working host's `/data`: the open
-                // data host answers reads only (T-6991 §1).
-                let writes = format!(
-                    "{}{}",
-                    org.hosts.portal,
-                    crate::config::DATAROOM_ON_WORKING_HOST
-                );
-                Some(serde_json::json!({
-                    "organization": org.name,
-                    "url": format!("{scheme}://{}", org.opendata_base()),
-                    "api": format!("http://{writes}"),
-                    "reach": reach.to_string(),
-                    "dataHost": data_host,
-                    "tokenFile": token,
-                }))
+                let mut entry = catalogue_entry(org, scheme, reach);
+                entry["tokenFile"] = serde_json::json!(token);
+                Some(entry)
             })
             .collect();
         if !catalogues.is_empty() {
@@ -679,6 +726,84 @@ pub(crate) fn organization_vars(
         }
     }
     out
+}
+
+/// One Organization's catalogue as the Portal publishes into it (`OrganizationCatalogue`, without
+/// its token): at its open data base, called on this jc's `reach` under the working host's
+/// `/data`, its datasets linking its API base.
+fn catalogue_entry(
+    org: &crate::config::OrganizationSection,
+    scheme: &str,
+    reach: std::net::SocketAddr,
+) -> serde_json::Value {
+    // The gateway links a dataset's resources; off https a whole origin.
+    let data_host = match scheme {
+        "https" => org.api_base(),
+        _ => format!("{scheme}://{}", org.api_base()),
+    };
+    // The Portal writes into the catalogue on the working host's `/data`: the open data host
+    // answers reads only (T-6991 §1).
+    let writes = format!(
+        "{}{}",
+        org.hosts.portal,
+        crate::config::DATAROOM_ON_WORKING_HOST
+    );
+    serde_json::json!({
+        "organization": org.name,
+        "url": format!("{scheme}://{}", org.opendata_base()),
+        "api": format!("http://{writes}"),
+        "reach": reach.to_string(),
+        "dataHost": data_host,
+    })
+}
+
+/// The Portal's catalogues and addresses of the registry's run-time Organizations (T-7185):
+/// each with a catalogue in this process's dataroom (`reach` set, its row naming one) publishes
+/// there with the token jc minted for it ([`super::follow::catalogue_token`]), never a file.
+fn run_time_entries(
+    set: &super::follow::Organizations,
+    scheme: &str,
+    reach: Option<std::net::SocketAddr>,
+) -> (
+    Vec<joinedcontext_portal::organization_host::OrganizationCatalogue>,
+    Vec<joinedcontext_portal::organization_host::OrganizationAddresses>,
+) {
+    use joinedcontext_portal::organization_host::{
+        CatalogueToken, OrganizationAddresses, OrganizationCatalogue,
+    };
+    let mut catalogues = Vec::new();
+    let mut addresses = Vec::new();
+    for org in &set.run_time {
+        let listed = serde_json::json!({
+            "organization": org.name,
+            "organizationId": org.id.as_ref().map(|id| id.as_str()),
+            "addresses": own_addresses(org, scheme),
+        });
+        match serde_json::from_value::<OrganizationAddresses>(listed) {
+            Ok(a) => addresses.push(a),
+            Err(e) => {
+                tracing::warn!(organization = %org.name, error = %e, "portal: no addresses listed for this Organization")
+            }
+        }
+        // The row's catalogue id is a UUID column: empty is the one value that names none.
+        let Some(reach) = reach.filter(|_| !org.catalogue_id.is_empty()) else {
+            continue;
+        };
+        let entry =
+            serde_json::from_value::<OrganizationCatalogue>(catalogue_entry(org, scheme, reach))
+                .map_err(|e| e.to_string())
+                .and_then(|mut c| {
+                    c.token = Some(CatalogueToken(super::follow::catalogue_token(&org.name)?));
+                    Ok(c)
+                });
+        match entry {
+            Ok(c) => catalogues.push(c),
+            Err(e) => {
+                tracing::warn!(organization = %org.name, error = %e, "portal: no catalogue of its own for this Organization")
+            }
+        }
+    }
+    (catalogues, addresses)
 }
 
 /// `JC_PORTAL_BACKUP_TENANTS` (T-7169): the tenant of each module running here as its data
@@ -1020,7 +1145,7 @@ mod tests {
         assert!(parsed[0].reach.is_some_and(|r| r.ip().is_loopback()));
         assert_eq!(
             parsed[0].token_file,
-            std::path::PathBuf::from("/run/alpha-token")
+            Some(std::path::PathBuf::from("/run/alpha-token"))
         );
         assert!(!vars["JC_PORTAL_ORGANIZATION_CATALOGUES"].contains("beta"));
         // T-7013: every address the Portal lists under Addresses, read back by its own parser.
@@ -1209,6 +1334,7 @@ mod tests {
             organization_id: None,
             host: format!("smartcity.{name}.sk"),
             state: state.into(),
+            catalogue_id: None,
         };
         let get = |host: &'static str, path: &'static str| {
             let jc = jc.clone();
@@ -1234,7 +1360,22 @@ mod tests {
             &rows,
             &[org("bbsk", "active"), org("rt7184", "active")],
         );
-        assert_eq!(served, Ok(3));
+        let (served, set) = served.expect("applied");
+        assert_eq!(served, 3);
+        // T-7186: the run-time Organization goes to the modules that follow the set.
+        assert_eq!(
+            set.run_time
+                .iter()
+                .map(|o| (
+                    o.name.as_str(),
+                    o.hosts.portal.as_str(),
+                    o.hosts.api.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            [("rt7184", "smartcity.rt7184.sk", Some("api.rt7184.sk"))],
+            "jc.toml's bbsk is no run-time Organization"
+        );
+        assert!(set.removed.is_empty());
         assert_eq!(get("smartcity.rt7184.sk", "/").await, ok("portal|rt7184"));
         assert_eq!(
             get("smartcity.rt7184.sk", "/api/endpoint/x").await,
@@ -1256,7 +1397,10 @@ mod tests {
             &rows,
             &[org("bbsk", "active"), org("rt7184", "removed")],
         );
-        assert_eq!(served, Ok(1));
+        let (served, set) = served.expect("applied");
+        assert_eq!(served, 1);
+        assert!(set.run_time.is_empty());
+        assert_eq!(set.removed, ["rt7184"]);
         for at in ["smartcity.rt7184.sk", "api.rt7184.sk"] {
             assert_eq!(
                 get(at, "/").await.0,
@@ -1267,8 +1411,69 @@ mod tests {
         assert!(!super::super::gateway::registry_links().contains_key("rt7184"));
     }
 
-    /// T-7181: the Organization registry's seed is each Organization's name, id and working
-    /// host; the sign-in set follows the registry's active rows, never jc.toml's names.
+    /// T-7185: a run-time Organization with a catalogue in this process's dataroom publishes
+    /// there with jc's in-process token at its own hosts, and lists its addresses; one without a
+    /// catalogue id, or with the dataroom in another container, lists addresses only.
+    #[test]
+    fn a_run_time_organization_gets_its_catalogue_entry_and_in_process_token() {
+        let org = |name: &str, catalogue: &str| crate::config::OrganizationSection {
+            name: name.into(),
+            id: None,
+            hosts: crate::config::OrganizationHosts {
+                portal: format!("smartcity.{name}.sk"),
+                opendata: Some(format!("data.{name}.sk")),
+                ..Default::default()
+            },
+            host: None,
+            same_site_apps: false,
+            catalogue_id: catalogue.into(),
+            portal_token_file: None,
+        };
+        let set = super::super::follow::Organizations {
+            run_time: vec![
+                org("rt7185", "00000000-0000-7000-8000-000000007185"),
+                org("bare", ""),
+            ],
+            removed: vec!["gone".into()],
+        };
+        let reach = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+        let (catalogues, addresses) = run_time_entries(&set, "https", Some(reach));
+        assert_eq!(catalogues.len(), 1);
+        let c = &catalogues[0];
+        assert_eq!(
+            (
+                c.organization.as_str(),
+                c.url.as_str(),
+                c.reach,
+                c.token_file.as_ref()
+            ),
+            ("rt7185", "https://data.rt7185.sk/", Some(reach), None)
+        );
+        assert_eq!(
+            c.api.as_ref().map(url::Url::as_str),
+            Some("http://smartcity.rt7185.sk/data")
+        );
+        let minted = super::super::follow::catalogue_token("rt7185").unwrap();
+        assert!(
+            c.token
+                .as_ref()
+                .is_some_and(|t| std::sync::Arc::ptr_eq(&t.0, &minted))
+        );
+        let names: Vec<&str> = addresses.iter().map(|a| a.organization.as_str()).collect();
+        assert_eq!(names, ["rt7185", "bare"]);
+        assert!(
+            addresses[0]
+                .addresses
+                .iter()
+                .any(|a| a.url.as_str() == "https://data.rt7185.sk/")
+        );
+        let (catalogues, addresses) = run_time_entries(&set, "https", None);
+        assert!(catalogues.is_empty(), "no dataroom here, no catalogue");
+        assert_eq!(addresses.len(), 2);
+    }
+
+    /// T-7181: the Organization registry's seed is each Organization's name, id, working host
+    /// and catalogue (T-7186); the sign-in set follows the registry's active rows, never jc.toml's names.
     #[test]
     fn the_organization_seed_is_name_id_and_working_host_and_only_active_rows_run() {
         let text = "base_host = \"city.example\"\n\
@@ -1285,11 +1490,13 @@ mod tests {
                     name: "bbsk".into(),
                     organization_id: Some("sk_bbsk".into()),
                     host: "smartcity.bbsk.sk:8443".into(),
+                    catalogue_id: Some("00000000-0000-7000-8000-0000000000a1".into()),
                 },
                 SeedOrganization {
                     name: "zilina".into(),
                     organization_id: None,
                     host: "zilina.city.example".into(),
+                    catalogue_id: Some("00000000-0000-7000-8000-0000000000a2".into()),
                 },
             ]
         );
@@ -1298,6 +1505,7 @@ mod tests {
             organization_id: None,
             host: format!("smartcity.{name}.sk"),
             state: state.into(),
+            catalogue_id: None,
         };
         assert_eq!(
             active(&[row("bbsk", "removed"), row("run-time", "active")]),

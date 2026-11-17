@@ -75,6 +75,9 @@ pub struct SeedOrganization {
     pub organization_id: Option<String>,
     /// The working host, lowercase, with the port jc.toml gives it (none on https).
     pub host: String,
+    /// The dataroom catalogue jc.toml gives it (`catalogue_id`, a UUID); set once, only while no
+    /// other Organization holds it (migration 0064, T-7186).
+    pub catalogue_id: Option<String>,
 }
 
 /// One Organization row.
@@ -85,12 +88,15 @@ pub struct OrganizationRow {
     pub host: String,
     /// `active` or `removed`.
     pub state: String,
+    /// Its dataroom catalogue, a UUID, once set (migration 0064).
+    pub catalogue_id: Option<String>,
 }
 
 /// Inserts each seeded Organization that has no row yet, as `active`; returns the rows
 /// inserted. A row already there keeps its working host and its state (a `removed` one stays
 /// removed); the only changes are the id an `active` row without one gets once jc.toml names a
-/// minted one, because the id is never set from a request, and the working host of a row
+/// minted one, because the id is never set from a request, the catalogue id an `active` row
+/// without one gets from jc.toml (never one another row holds), and the working host of a row
 /// migration 0063 made.
 pub async fn seed_organizations(
     pool: &PgPool,
@@ -107,14 +113,34 @@ pub async fn seed_organizations(
         .bind(&o.organization_id)
         .fetch_optional(&mut *tx)
         .await?;
+        // A catalogue id jc.toml's check let through, held by no other row (UNIQUE would fail
+        // the whole seed).
+        let catalogue: Option<String> = match o
+            .catalogue_id
+            .as_deref()
+            .and_then(|c| uuid::Uuid::parse_str(c).ok())
+        {
+            Some(c) => {
+                sqlx::query_scalar(
+                    "SELECT $2::uuid::text WHERE NOT EXISTS \
+                     (SELECT 1 FROM organizations WHERE catalogue_id = $2::uuid AND name <> $1)",
+                )
+                .bind(&o.name)
+                .bind(c.to_string())
+                .fetch_optional(&mut *tx)
+                .await?
+            }
+            None => None,
+        };
         let added = sqlx::query(
-            "INSERT INTO organizations (name, organization_id, host, state, created_by) \
-             VALUES ($1, $2, $3, 'active', $4) ON CONFLICT (name) DO NOTHING",
+            "INSERT INTO organizations (name, organization_id, host, state, created_by, catalogue_id) \
+             VALUES ($1, $2, $3, 'active', $4, $5::uuid) ON CONFLICT (name) DO NOTHING",
         )
         .bind(&o.name)
         .bind(&id)
         .bind(&o.host)
         .bind(SEEDED_BY)
+        .bind(&catalogue)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -142,6 +168,16 @@ pub async fn seed_organizations(
             .execute(&mut *tx)
             .await?;
         }
+        if added == 0 && catalogue.is_some() {
+            sqlx::query(
+                "UPDATE organizations SET catalogue_id = $2::uuid, updated_at = now() \
+                 WHERE name = $1 AND catalogue_id IS NULL AND state = 'active'",
+            )
+            .bind(&o.name)
+            .bind(&catalogue)
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         inserted += added;
     }
@@ -150,9 +186,12 @@ pub async fn seed_organizations(
 
 /// Every Organization row, removed ones included, by name.
 pub async fn organizations(pool: &PgPool) -> Result<Vec<OrganizationRow>, sqlx::Error> {
-    sqlx::query_as("SELECT name, organization_id, host, state FROM organizations ORDER BY name")
-        .fetch_all(pool)
-        .await
+    sqlx::query_as(
+        "SELECT name, organization_id, host, state, catalogue_id::text AS catalogue_id \
+         FROM organizations ORDER BY name",
+    )
+    .fetch_all(pool)
+    .await
 }
 
 /// Every row, removed ones included, by host.

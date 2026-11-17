@@ -205,6 +205,19 @@ impl CatalogueWriter {
     pub async fn delete(&self, org: OrgId, id: CatalogueId) -> Result<bool> {
         let _serial = self.serial.lock().await;
         let deleted = self.state.store.delete_catalogue(org, id).await?;
+        self.forget(org, id);
+        Ok(deleted)
+    }
+
+    /// Stops serving the catalogue (its Organization was removed): its principal, grants,
+    /// routes, base, Organization entry and harvest go, its datasets and publishers stay in the
+    /// store, so nothing is lost and an import can bring them back.
+    pub async fn withdraw(&self, org: OrgId, id: CatalogueId) {
+        let _serial = self.serial.lock().await;
+        self.forget(org, id);
+    }
+
+    fn forget(&self, org: OrgId, id: CatalogueId) {
         let principal = principal_of(id);
         write(&self.state.tokens)
             .retain(|b| b.subject.actor_id.as_deref() != Some(principal.as_str()));
@@ -213,7 +226,6 @@ impl CatalogueWriter {
         self.state.portals.unroute(id);
         write(&self.state.organization_catalogues).retain(|_, v| *v != (org, id));
         write(&self.harvested).retain(|v| *v != (org, id));
-        Ok(deleted)
     }
 
     /// Creates or updates a harvest source of the catalogue, and `publisher`, the CKAN

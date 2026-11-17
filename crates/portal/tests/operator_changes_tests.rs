@@ -101,6 +101,7 @@ async fn organization(state: &AppState, name: &str, domain: &str) {
             name: name.to_owned(),
             organization_id: None,
             host: format!("smartcity.{domain}"),
+            catalogue_id: None,
         }],
     )
     .await

@@ -75,8 +75,8 @@ pub async fn list_portal_hosts(
                 .cloned()
                 .unwrap_or_default(),
             opendata: state
-                .config
                 .organization_catalogues
+                .current()
                 .iter()
                 .find(|c| c.organization == organization)
                 .map(|c| c.url.as_str().trim_end_matches('/').to_owned()),
