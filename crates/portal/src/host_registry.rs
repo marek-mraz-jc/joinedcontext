@@ -3,6 +3,10 @@
 //! from jc.toml at start ([`seed`]); an operator's host Change writes through [`propose`], which
 //! holds the rules jc holds on the seed (`jc_router::registry`), and [`remove`] leaves a
 //! tombstone the seed never revives.
+//!
+//! Beside it, table `organizations` (migration 0063, T-7181): the Organizations jc runs, each
+//! with its name, the minted id it is proved by and its working host. jc seeds it from jc.toml
+//! the same way ([`seed_organizations`]); a host names one of its `active` rows.
 
 use crate::error::ApiError;
 use crate::store::Mirror;
@@ -59,6 +63,98 @@ pub async fn seed(pool: &PgPool, hosts: &[SeedHost]) -> Result<u64, sqlx::Error>
     Ok(inserted)
 }
 
+/// Who wrote an Organization row migration 0063 made from the host registry.
+const MIGRATED_BY: &str = "migration 0063";
+
+/// One `[[organizations]]` entry of jc.toml.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeedOrganization {
+    pub name: String,
+    /// The Organization id jc.toml sets (`sk_bbsk`); linked only when it is in `organization_ids`
+    /// and no other Organization holds it.
+    pub organization_id: Option<String>,
+    /// The working host, lowercase, with the port jc.toml gives it (none on https).
+    pub host: String,
+}
+
+/// One Organization row.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct OrganizationRow {
+    pub name: String,
+    pub organization_id: Option<String>,
+    pub host: String,
+    /// `active` or `removed`.
+    pub state: String,
+}
+
+/// Inserts each seeded Organization that has no row yet, as `active`; returns the rows
+/// inserted. A row already there keeps its working host and its state (a `removed` one stays
+/// removed); the only changes are the id an `active` row without one gets once jc.toml names a
+/// minted one, because the id is never set from a request, and the working host of a row
+/// migration 0063 made.
+pub async fn seed_organizations(
+    pool: &PgPool,
+    orgs: &[SeedOrganization],
+) -> Result<u64, sqlx::Error> {
+    let mut inserted = 0;
+    for o in orgs {
+        let mut tx = pool.begin().await?;
+        let id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM organization_ids WHERE id = $2 \
+             AND NOT EXISTS (SELECT 1 FROM organizations WHERE organization_id = $2 AND name <> $1)",
+        )
+        .bind(&o.name)
+        .bind(&o.organization_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let added = sqlx::query(
+            "INSERT INTO organizations (name, organization_id, host, state, created_by) \
+             VALUES ($1, $2, $3, 'active', $4) ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(&o.name)
+        .bind(&id)
+        .bind(&o.host)
+        .bind(SEEDED_BY)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if added == 0 {
+            // A row migration 0063 made from the host registry takes jc.toml's working host
+            // once (its port included), and is jc.toml's from then on.
+            sqlx::query(
+                "UPDATE organizations SET host = $2, created_by = $3, updated_at = now() \
+                 WHERE name = $1 AND created_by = $4 AND state = 'active'",
+            )
+            .bind(&o.name)
+            .bind(&o.host)
+            .bind(SEEDED_BY)
+            .bind(MIGRATED_BY)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if added == 0 && id.is_some() {
+            sqlx::query(
+                "UPDATE organizations SET organization_id = $2, updated_at = now() \
+                 WHERE name = $1 AND organization_id IS NULL AND state = 'active'",
+            )
+            .bind(&o.name)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        inserted += added;
+    }
+    Ok(inserted)
+}
+
+/// Every Organization row, removed ones included, by name.
+pub async fn organizations(pool: &PgPool) -> Result<Vec<OrganizationRow>, sqlx::Error> {
+    sqlx::query_as("SELECT name, organization_id, host, state FROM organizations ORDER BY name")
+        .fetch_all(pool)
+        .await
+}
+
 /// Every row, removed ones included, by host.
 pub async fn rows(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
     sqlx::query_as(
@@ -82,8 +178,9 @@ pub struct Proposal<'a> {
 
 /// Adds `p` as `proposed` once the registry's rules hold against every row, in one
 /// transaction that locks out a concurrent write (two Changes for one host: the second is `409`).
-/// A host outside the installation's domain must lie under the domain of the minted id `p` names,
-/// and that id must be the one `p.organization`'s manifest in `mirror` derives.
+/// `p.organization` must be an `active` Organization row. A host outside the installation's
+/// domain must lie under the domain of the minted id `p` names, and that id must be the row's
+/// (the one its manifest in `mirror` derives while the row has none).
 pub async fn propose(
     pool: &PgPool,
     mirror: &Mirror,
@@ -130,8 +227,25 @@ async fn admit(
     rules: &Rules<'_>,
     p: &Proposal<'_>,
 ) -> Result<String, ApiError> {
+    let row: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT organization_id FROM organizations WHERE name = $1 AND state = 'active'",
+    )
+    .bind(p.organization)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db)?;
+    let Some(row_id) = row else {
+        let m = format!("the installation has no Organization '{}'", p.organization);
+        return Err(ApiError::Unprocessable {
+            detail: m.clone(),
+            errors: vec![format!("organization: {m}")],
+        });
+    };
     if let Some(id) = p.organization_id {
-        let own = crate::reconciler::groups::organization_id(mirror, p.organization);
+        // The row's id; an Organization seeded before jc.toml named one is proved by the id its
+        // manifest's `spec.domain` derives, as before the row existed.
+        let own =
+            row_id.or_else(|| crate::reconciler::groups::organization_id(mirror, p.organization));
         if own.as_deref() != Some(id) {
             return Err(refused(Refusal::Invalid(format!(
                 "organizationId '{id}' is not the id of Organization '{}'",
