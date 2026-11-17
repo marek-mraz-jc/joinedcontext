@@ -13798,7 +13798,7 @@
         },
         "logoSvg": "Logo",
         "faviconSvg": "Ikona stránky",
-        "fromFile": "Ze souboru vzhledu",
+        "fromFile": "Zobrazuje se ze souboru vzhledu",
         "removeFile": "Odstranit",
         "unchanged": "Nejprve změňte pole",
         "hint": {

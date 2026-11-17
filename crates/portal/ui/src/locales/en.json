@@ -13798,7 +13798,7 @@
         },
         "logoSvg": "Logo",
         "faviconSvg": "Favicon",
-        "fromFile": "The branding file's",
+        "fromFile": "Shows the branding file's",
         "removeFile": "Remove",
         "unchanged": "Change a field first",
         "hint": {

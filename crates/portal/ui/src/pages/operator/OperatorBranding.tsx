@@ -150,7 +150,7 @@ export function OperatorBranding({
                 {t("operator.installation.email.waitingBadge")}
               </Badge>
             ) : (
-              <Badge tone={look ? "success" : "warning"}>
+              <Badge tone={look ? "success" : "neutral"}>
                 {look
                   ? t("operator.installation.branding.set")
                   : t("operator.installation.branding.unset")}
@@ -229,7 +229,7 @@ export function OperatorBranding({
                   onChange={(e) =>
                     setColours((c) => ({ ...c, [name]: e.target.value }))
                   }
-                  placeholder="#0b5394"
+                  placeholder="#rrggbb"
                   maxLength={7}
                   spellCheck={false}
                   autoComplete="off"
@@ -279,7 +279,7 @@ export function OperatorBranding({
                   label={t(`operator.installation.branding.${field}`)}
                   accept=".svg,image/svg+xml"
                   onFile={(file) => void onFile(field, set)(file)}
-                  className={buttonClass("secondary", "sm")}
+                  className={buttonClass("secondary", "sm", open ? "pointer-events-none opacity-50" : undefined)}
                 >
                   {t("operator.installation.branding.chooseFile")}
                 </FilePicker>
@@ -326,7 +326,7 @@ export function OperatorBranding({
         />
         <div className="mt-4 flex flex-wrap items-start gap-6">
           {(["desktop", "phone"] as const).map((size) => (
-            <figure key={size} className="space-y-2">
+            <figure key={size} className={size === "desktop" ? "w-full max-w-xl space-y-2" : "space-y-2"}>
               <SignInPreview
                 size={size}
                 name={
@@ -367,14 +367,15 @@ function SignInPreview({
       ? (colours[colour]?.trim() as string)
       : fallback;
   // The page at its real width, scaled into the frame: the card keeps kaisatsu's 360 px.
-  const [width, height] = size === "desktop" ? [1440, 900] : [400, 800];
+  // Desktop shows the middle of a 1440 px page, so the card is large enough to read.
+  const [width, height] = size === "desktop" ? [960, 600] : [400, 800];
   const x = (width - 360) / 2;
   return (
     <svg
       role="img"
       aria-label={t("operator.installation.signIn.previewOf", { which: t(`operator.installation.signIn.${size}`) })}
       viewBox={`0 0 ${width} ${height}`}
-      className={`${size === "desktop" ? "w-72" : "w-24"} h-auto rounded-md border border-border`}
+      className={`${size === "desktop" ? "w-full" : "w-48"} h-auto rounded-md border border-border`}
     >
       <rect width={width} height={height} fill={paint("background", "#f5f7fa")} />
       <rect x={x} y={height / 2 - 200} width={360} height={400} rx={12} fill="#ffffff" />
