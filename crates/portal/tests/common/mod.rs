@@ -82,6 +82,30 @@ pub fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> Resourc
     }
 }
 
+/// Gives `project` an Organization of the registry (T-7196): its Project in the mirror names
+/// `organization`, which gets an active row in `organizations`, so the project has a tenancy key.
+pub async fn keyed_project(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    project: &str,
+    organization: &str,
+) {
+    state.mirror.upsert(envelope(
+        "Project",
+        project,
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "organizationRef": organization }),
+    ));
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) \
+         VALUES ($1, $1 || '.example', 'active', 'test') ON CONFLICT DO NOTHING",
+    )
+    .bind(organization)
+    .execute(pool)
+    .await
+    .expect("an Organization of the registry");
+}
+
 /// Binds `{who}@hel.fi` to reading Apps in `project`: what makes a person a member of the project,
 /// and so of the organization, for an App's visibility (T-4910).
 pub fn bind(mirror: &Mirror, who: &str, project: &str) {

@@ -8,8 +8,8 @@ use joinedcontext_portal::erasure::{self, Group, Store, StoreState};
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 #[tokio::test]
 async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
@@ -26,6 +26,7 @@ async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
     let project = format!("erase-{}", crate::unique::unique());
     // No broker and no assistant: the broker fails, the conversations have nothing to hold.
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
     let trip = "urn:ngsi-ld:BikeTrip:hel.fi:t-42";
     let other = "urn:ngsi-ld:BikeTrip:hel.fi:t-43";
     for urn in [trip, other] {
@@ -38,7 +39,8 @@ async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
                 &json!({"id": urn, "type": "BikeTrip"}),
             )
             .await
-            .expect("kept");
+            .expect("kept")
+            .expect("a placed project keeps it");
     }
     sqlx::query(
         "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \

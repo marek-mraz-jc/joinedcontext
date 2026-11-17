@@ -8,6 +8,33 @@ use std::collections::HashMap;
 use jc_types::{OrgId, ProjectId, ProjectKey};
 use sqlx::PgPool;
 
+use crate::permissions::{organization_of, ORG_NAMESPACE};
+use crate::store::Mirror;
+
+/// The project tables keyed by name until a project's Organization is known (T-7196 PK-1d, phase
+/// one): `org_id` and `project_id` are nullable and default to the transaction's key, every
+/// statement runs in a `db::tenant_tx`, and [`backfill`] keys the rows written before. A later
+/// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security.
+pub const KEYED_BY_NAME: &[&str] = &[
+    "grafana_visualizations",
+    // T-7197 PK-1e, migration 0070.
+    "alert_subscriptions",
+    "alert_incidents",
+    "alert_notices",
+    "health_check",
+    "health_check_history",
+    "space_quality",
+    "endpoint_usage_daily",
+    "link_check",
+    // T-7200 PK-1h, migration 0071.
+    "app_service_usage",
+    "email_unsubscribes",
+    "mqtt_capture",
+    "entity_trash",
+    "entity_comments",
+    "data_views",
+];
+
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
 /// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
 /// Organization's reserved project never answers for a project spelled like it (TEN-11).
@@ -90,9 +117,154 @@ pub async fn reserved(
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
 }
 
+/// The key of `project` as the mirror places it: its Organization from the Project's
+/// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
+/// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.
+pub async fn key_of(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    if mirror.get(ORG_NAMESPACE, "Project", project).is_none() {
+        return Ok(None);
+    }
+    match organization_of(mirror, project) {
+        Some(organization) => key(pool, &organization, project).await,
+        None => Ok(None),
+    }
+}
+
+/// The key of `project` for a write of `what` (T-7200): a project whose Organization is not an
+/// active one of the registry keeps none, which the caller answers as 404 naming the
+/// Organizations page; a database that does not answer is 503.
+pub(crate) async fn required(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+    what: &str,
+) -> Result<ProjectKey, crate::error::ApiError> {
+    key_of(pool, mirror, project)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = %err, %project, "the project key could not be read");
+            crate::error::ApiError::Unavailable(format!("the {what} could not be read or written"))
+        })?
+        .ok_or_else(|| {
+            crate::error::ApiError::NotFound(format!(
+                "the project {project} belongs to no active Organization of this installation's \
+                 registry, so it keeps no {what}; an operator adds its Organization on the \
+                 Organizations page first"
+            ))
+        })
+}
+
+/// Every Project of the mirror with its key, by name: what a read over every project fans out
+/// over, one `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
+pub async fn keyed_projects(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
+    let projects = mirror.list(
+        ORG_NAMESPACE,
+        "Project",
+        &crate::store::ListOptions::default(),
+    );
+    let mut keyed = Vec::with_capacity(projects.items.len());
+    for project in &projects.items {
+        let name = project.metadata.name.as_str();
+        if let Some(key) = key_of(pool, mirror, name).await? {
+            keyed.push((name.to_owned(), key));
+        }
+    }
+    Ok(keyed)
+}
+
+/// Keys every row of [`KEYED_BY_NAME`] that has none yet with its project's key; answers the
+/// project names it could not key (no Project in the mirror, or no active Organization of the
+/// registry), sorted, so the caller says which ones wait.
+pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sqlx::Error> {
+    let mut waiting = std::collections::BTreeSet::new();
+    // The table names are this file's constants, never input, so the formatted SQL binds the rest.
+    for table in KEYED_BY_NAME {
+        let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT DISTINCT project FROM {table} WHERE project_id IS NULL"
+        )))
+        .fetch_all(pool)
+        .await?;
+        for name in names {
+            let Some(key) = key_of(pool, mirror, &name).await? else {
+                waiting.insert(name);
+                continue;
+            };
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid \
+                 WHERE project = $3 AND project_id IS NULL"
+            )))
+            .bind(key.org.to_string())
+            .bind(key.project.to_string())
+            .bind(&name)
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(waiting.into_iter().collect())
+}
+
+/// Runs [`backfill`] each minute once the mirror holds a sync (a project's Organization lives
+/// only in Git), on the replica that leads; says each change of the projects that wait.
+pub(crate) fn spawn_backfill(state: crate::state::AppState) {
+    let (Some(pool), Some(syncer)) = (state.db.clone(), state.syncer.clone()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut said: Vec<String> = Vec::new();
+        loop {
+            tick.tick().await;
+            if syncer.status().revision.is_none() || !state.leads() {
+                continue;
+            }
+            match backfill(&pool, &state.mirror).await {
+                Ok(waiting) if waiting != said => {
+                    if !waiting.is_empty() {
+                        tracing::warn!(projects = ?waiting, "project rows keep no key: their project is not in the mirror or its Organization is not an active one of the registry; an operator adds the Organization on the Organizations page");
+                    }
+                    said = waiting;
+                }
+                Ok(_) => {}
+                Err(err) => tracing::warn!(error = %err, "project rows were not keyed this minute"),
+            }
+        }
+    });
+}
+
 fn parsed(org: &str, project: &str) -> Option<ProjectKey> {
     Some(ProjectKey::new(
         OrgId::parse_verified(org).ok()?,
         ProjectId::parse_verified(project).ok()?,
     ))
+}
+
+/// Gives `project` an Organization of the registry, as tests/common `keyed_project` does, for the
+/// crate's own tests of keyed stores.
+#[cfg(test)]
+pub(crate) async fn placed(pool: &PgPool, mirror: &Mirror, project: &str, organization: &str) {
+    mirror.upsert(
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": { "name": project, "namespace": ORG_NAMESPACE },
+            "spec": { "organizationRef": organization },
+        }))
+        .expect("a Project"),
+    );
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) \
+         VALUES ($1, $1 || '.example', 'active', 'test') ON CONFLICT DO NOTHING",
+    )
+    .bind(organization)
+    .execute(pool)
+    .await
+    .expect("an Organization of the registry");
 }

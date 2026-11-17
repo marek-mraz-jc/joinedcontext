@@ -375,6 +375,10 @@ pub fn spawn_background(state: &AppState) {
     crate::erasure::spawn_periodic(state.clone());
     // Each Organization's scheduled configuration backup, claimed by one replica (T-7154).
     crate::org_backup::spawn_schedule(state.clone());
+    // The project rows written before their project had a key, keyed once the mirror says (T-7196).
+    crate::project_ids::spawn_backfill(state.clone());
+    // The kept data-quality reports, read per project once the mirror places them (T-7197).
+    crate::quality::spawn_load(state.clone());
     // The assistant's kept answers, forgotten when a Policy or an Endpoint changes (T-4731).
     crate::answers::spawn_periodic(state.clone());
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).

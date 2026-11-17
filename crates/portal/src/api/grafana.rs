@@ -123,6 +123,25 @@ pub(crate) fn stored(err: sqlx::Error) -> ApiError {
     ApiError::Unavailable("the saved visualizations could not be read or written".into())
 }
 
+/// The project's tenancy key (T-7196); a project whose Organization is not an active one of the
+/// registry has none, and its visualizations can be neither kept nor removed.
+pub(crate) async fn project_key(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    project: &str,
+) -> Result<jc_types::ProjectKey, ApiError> {
+    crate::project_ids::key_of(pool, &state.mirror, project)
+        .await
+        .map_err(stored)?
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the project {project} belongs to no active Organization of this installation's \
+                 registry, so it keeps no visualization; an operator adds its Organization on the \
+                 Organizations page first"
+            ))
+        })
+}
+
 pub(crate) fn refused(field: &str, detail: String) -> ApiError {
     ApiError::Unprocessable {
         detail: detail.clone(),
@@ -258,7 +277,13 @@ pub async fn grafana_page(
         },
     };
     let rows = match state.db.as_ref() {
-        Some(pool) => grafana::list(pool, Some(&project)).await.map_err(stored)?,
+        Some(pool) => match crate::project_ids::key_of(pool, &state.mirror, &project)
+            .await
+            .map_err(stored)?
+        {
+            Some(key) => grafana::list(pool, key, &project).await.map_err(stored)?,
+            None => Vec::new(),
+        },
         None => Vec::new(),
     };
     let items = rows
@@ -486,6 +511,7 @@ pub async fn save_visualization(
     let pool = state.db.as_ref().ok_or_else(|| {
         ApiError::Unavailable("this Portal has no database to keep visualizations in".into())
     })?;
+    let key = project_key(&state, pool, &project).await?;
     let org = organization(&state, &project).await?;
     let config = state
         .config
@@ -518,7 +544,7 @@ pub async fn save_visualization(
             ),
         ));
     }
-    grafana::insert(pool, &row).await.map_err(stored)?;
+    grafana::insert(pool, key, &row).await.map_err(stored)?;
     Ok((
         StatusCode::CREATED,
         Json(item(&state, row, &endpoint, Some(org))),
@@ -554,7 +580,8 @@ pub async fn remove_visualization(
     let pool = state.db.as_ref().ok_or_else(|| {
         ApiError::Unavailable("this Portal has no database to keep visualizations in".into())
     })?;
-    let row = grafana::find(pool, &project, &id)
+    let key = project_key(&state, pool, &project).await?;
+    let row = grafana::find(pool, key, &project, &id)
         .await
         .map_err(stored)?
         .ok_or_else(|| ApiError::NotFound(format!("visualization {id} not found")))?;
@@ -565,7 +592,9 @@ pub async fn remove_visualization(
         .as_ref()
         .ok_or_else(|| ApiError::Conflict(no_grafana()))?;
     Client::new(config).remove(org, &row.uid()).await?;
-    grafana::delete(pool, &id).await.map_err(stored)?;
+    grafana::delete(pool, key, &project, &id)
+        .await
+        .map_err(stored)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

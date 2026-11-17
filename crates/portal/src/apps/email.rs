@@ -160,12 +160,17 @@ pub(super) async fn send(
         Ok(recipients) => recipients,
         Err(refused) => return *refused,
     };
-    let recipients = match not_unsubscribed(db, &project, &name, recipients).await {
+    // The unsubscribes and the day's counters are the project's rows, in its key (T-7200).
+    let key = match crate::project_ids::required(db, &state.mirror, &project, "App mail").await {
+        Ok(key) => key,
+        Err(refused) => return refused.into_response(),
+    };
+    let recipients = match not_unsubscribed(db, key, &project, &name, recipients).await {
         Ok(recipients) => recipients,
         Err(err) => return ApiError::Internal(err.to_string()).into_response(),
     };
     let limit = services::quota(&state.mirror, &project, &spec, Quota::EmailsPerDay);
-    match counted(db, (&project, &name), &recipients, limit).await {
+    match counted(db, key, (&project, &name), &recipients, limit).await {
         Ok(None) => {}
         Ok(Some(quota)) => {
             return services::quota_used(
@@ -304,19 +309,22 @@ async fn recipients(
 /// `recipients` without those who stopped this App's mail.
 async fn not_unsubscribed(
     db: &sqlx::PgPool,
+    key: jc_types::ProjectKey,
     project: &str,
     app: &str,
     recipients: Vec<Recipient>,
 ) -> Result<Vec<Recipient>, sqlx::Error> {
     let ids: Vec<String> = recipients.iter().map(|r| r.id.clone()).collect();
+    let mut tx = crate::db::tenant_tx(db, key).await?;
     let stopped: Vec<String> = sqlx::query_scalar(
         "SELECT subject FROM email_unsubscribes WHERE project = $1 AND app = $2 AND subject = ANY($3)",
     )
     .bind(project)
     .bind(app)
     .bind(&ids)
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(recipients
         .into_iter()
         .filter(|r| !stopped.contains(&r.id))
@@ -327,14 +335,15 @@ async fn not_unsubscribed(
 /// the quota that ran out when one did.
 async fn counted(
     db: &sqlx::PgPool,
+    key: jc_types::ProjectKey,
     app: (&str, &str),
     recipients: &[Recipient],
     limit: u32,
 ) -> Result<Option<&'static str>, sqlx::Error> {
-    let mut tx = db.begin().await?;
+    let mut tx = crate::db::tenant_tx(db, key).await?;
     for recipient in recipients {
-        if !services::take(
-            &mut *tx,
+        if !services::take_in(
+            &mut tx,
             app,
             "email",
             &recipient.id,
@@ -347,7 +356,7 @@ async fn counted(
         }
     }
     let count = u32::try_from(recipients.len()).unwrap_or(u32::MAX);
-    if count > 0 && !services::take(&mut *tx, app, "email", "", count, limit).await? {
+    if count > 0 && !services::take_in(&mut tx, app, "email", "", count, limit).await? {
         return Ok(Some("emailsPerDay"));
     }
     tx.commit().await?;
@@ -496,14 +505,31 @@ pub async fn unsubscribe(
     let Some(db) = state.db.as_ref() else {
         return ApiError::Unavailable("no database".into()).into_response();
     };
-    let stored = sqlx::query(
-        "INSERT INTO email_unsubscribes (project, app, subject) VALUES ($1, $2, $3) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(&link.p)
-    .bind(&link.a)
-    .bind(&link.s)
-    .execute(db)
+    // A project with no tenancy key sends no App mail (`send` refuses it), so nothing waits to
+    // be stopped; the choice is kept in the project's key (T-7200).
+    let key = match crate::project_ids::key_of(db, &state.mirror, &link.p).await {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            return page(
+                StatusCode::NOT_FOUND,
+                "<p>This App's project sends no mail now, so there is nothing to stop.</p>".into(),
+            )
+        }
+        Err(err) => return ApiError::Internal(err.to_string()).into_response(),
+    };
+    let stored = async {
+        let mut tx = crate::db::tenant_tx(db, key).await?;
+        sqlx::query(
+            "INSERT INTO email_unsubscribes (project, app, subject) VALUES ($1, $2, $3) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(&link.p)
+        .bind(&link.a)
+        .bind(&link.s)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await
+    }
     .await;
     if let Err(err) = stored {
         return ApiError::Internal(err.to_string()).into_response();

@@ -663,7 +663,8 @@ impl Memory {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7197 PK-1e).
+    Postgres(sqlx::PgPool, std::sync::Arc<Mirror>),
     Memory(RwLock<Memory>),
 }
 
@@ -693,10 +694,10 @@ pub struct HealthStore {
 }
 
 impl HealthStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new(Memory::default())),
             },
             written: tokio::sync::Mutex::new(None),
@@ -720,24 +721,39 @@ impl HealthStore {
 
     /// Replaces the latest rows with `findings` (a check no longer found is gone with its
     /// resource), adds a history point per changed status or per hour, drops history past
-    /// [`KEEP`].
+    /// [`KEEP`]. Project by project, each in its own key (STO-07): a project with no tenancy key
+    /// keeps no row.
     pub async fn record(
         &self,
         now: DateTime<Utc>,
         findings: Vec<Finding>,
     ) -> Result<(), sqlx::Error> {
-        let pool = match &self.inner {
+        let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
                 if let Ok(mut memory) = memory.write() {
                     memory.record(now, findings);
                 }
                 return Ok(());
             }
-            Inner::Postgres(pool) => pool,
+            Inner::Postgres(pool, mirror) => (pool, mirror),
         };
-        let column = |f: fn(&Finding) -> String| findings.iter().map(f).collect::<Vec<_>>();
+        for (project, key) in crate::project_ids::keyed_projects(pool, mirror).await? {
+            let theirs: Vec<&Finding> = findings.iter().filter(|f| f.project == project).collect();
+            Self::record_project(pool, key, now, &theirs).await?;
+        }
+        Ok(())
+    }
+
+    /// [`Self::record`] for one project's findings, in its key.
+    async fn record_project(
+        pool: &sqlx::PgPool,
+        key: jc_types::ProjectKey,
+        now: DateTime<Utc>,
+        findings: &[&Finding],
+    ) -> Result<(), sqlx::Error> {
+        let column = |f: fn(&Finding) -> String| findings.iter().map(|x| f(x)).collect::<Vec<_>>();
         let at = chrono_to_odt(now);
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         sqlx::query(
             "INSERT INTO health_check AS h (project, kind, name, \"check\", status, since, last_ok, \
              checked_at, detail, fix_hint, evidence_url, detail_say, fix_say) \
@@ -810,7 +826,8 @@ impl HealthStore {
         self.list_from(Some(project), now).await
     }
 
-    /// The checks with their history after `from`.
+    /// The checks with their history after `from`; for `None`, every project's, each read in
+    /// its own key (STO-07). A project with no tenancy key has none.
     async fn list_from(
         &self,
         project: Option<&str>,
@@ -821,8 +838,19 @@ impl HealthStore {
                 .read()
                 .map(|memory| memory.list(project, from))
                 .unwrap_or_default(),
-            Inner::Postgres(pool) => {
-                let rows: Vec<Row> = sqlx::query_as(
+            Inner::Postgres(pool, mirror) => {
+                let projects = match project {
+                    Some(project) => crate::project_ids::key_of(pool, mirror, project)
+                        .await?
+                        .map(|key| (project.to_owned(), key))
+                        .into_iter()
+                        .collect(),
+                    None => crate::project_ids::keyed_projects(pool, mirror).await?,
+                };
+                let mut rows: Vec<Row> = Vec::new();
+                for (project, key) in projects {
+                    let mut tx = crate::db::tenant_tx(pool, key).await?;
+                    rows.extend(sqlx::query_as::<_, Row>(
                     "SELECT h.project, h.kind, h.name, h.\"check\", h.status, h.since, h.last_ok, \
                      h.checked_at, h.detail, h.fix_hint, h.evidence_url, \
                      COALESCE(p.ats, '{}'), COALESCE(p.statuses, '{}'), \
@@ -833,12 +861,14 @@ impl HealthStore {
                        FROM health_check_history x \
                        WHERE x.project = h.project AND x.kind = h.kind AND x.name = h.name \
                          AND x.\"check\" = h.\"check\" AND x.at > $2) p ON true \
-                     WHERE $1::text IS NULL OR h.project = $1",
-                )
-                .bind(project)
-                .bind(chrono_to_odt(from))
-                .fetch_all(pool)
-                .await?;
+                     WHERE h.project = $1",
+                    )
+                    .bind(&project)
+                    .bind(chrono_to_odt(from))
+                    .fetch_all(&mut *tx)
+                    .await?);
+                    tx.commit().await?;
+                }
                 rows.into_iter()
                     .filter_map(|row| {
                         Some(Check {
@@ -1087,7 +1117,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_check_keeps_since_while_it_holds_and_recovers_with_last_ok() {
-        let store = HealthStore::new(None);
+        let store = HealthStore::new(None, Default::default());
         let t0 = at("2026-10-21T08:00:00Z");
         store
             .record(t0, vec![finding(Status::Ok)])
@@ -1128,7 +1158,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_history_is_sampled_hourly_and_bounded_to_90_days() {
-        let store = HealthStore::new(None);
+        let store = HealthStore::new(None, Default::default());
         let t0 = at("2026-07-01T00:00:00Z");
         for hour in 0..3 {
             for minute in [0, 20, 40] {
@@ -1159,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_removed_resource_leaves_the_log_and_writes_are_throttled() {
-        let store = HealthStore::new(None);
+        let store = HealthStore::new(None, Default::default());
         let t0 = at("2026-10-21T08:00:00Z");
         store
             .record_due(t0, vec![finding(Status::Ok)])

@@ -377,10 +377,33 @@ async fn every_keyed_table_has_forced_row_level_security_on_the_key_alone() {
     .fetch_all(&pool)
     .await
     .expect("catalog");
+    // Phase one of T-7196 keys these by name first; the forcing migration takes them off the list.
+    let unforced: Vec<String> = unforced
+        .into_iter()
+        .filter(|t| !project_ids::KEYED_BY_NAME.contains(&t.as_str()))
+        .collect();
     assert!(
         unforced.is_empty(),
         "a table with org_id and no forced RLS (STO-03): {unforced:?}"
     );
+    for table in project_ids::KEYED_BY_NAME {
+        let ready: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' \
+                     AND tablename = $1 AND policyname = 'tenant'), \
+                    (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' \
+                     AND table_name = $1 AND column_name IN ('org_id', 'project_id') \
+                     AND column_default LIKE '%current_setting(''jc.%')",
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("catalog");
+        assert_eq!(
+            ready,
+            (1, 2),
+            "{table}: the tenant policy and both key columns defaulting to the transaction's key"
+        );
+    }
     let keyed: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' AND c.relforcerowsecurity ORDER BY 1",
@@ -527,4 +550,461 @@ async fn a_backup_row_answers_only_under_its_organizations_key() {
     .execute(&mut *tx)
     .await
     .expect_err("the key unset writes no row");
+}
+
+/// A grafana_visualizations row of `project` written as before T-7196: no key.
+async fn unkeyed_visualization(pool: &sqlx::PgPool, project: &str) -> String {
+    let id = run_name("viz");
+    sqlx::query(
+        "INSERT INTO grafana_visualizations (id, project, title, endpoint, entity_type, attribute, kind) \
+         VALUES ($1, $2, 'Free bikes', 'bikes', 'BikeHireDockingStation', 'availableBikeNumber', 'stat')",
+    )
+    .bind(&id)
+    .bind(project)
+    .execute(pool)
+    .await
+    .expect("a row of today");
+    id
+}
+
+async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT org_id::text, project_id::text FROM grafana_visualizations WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .expect("the row")
+}
+
+/// T-7196 phase one: a row written before the key is keyed by the backfill once the mirror places
+/// its project; a project the mirror lacks, or whose Organization is not of the registry, keeps
+/// no key and is named; a row written through the store carries the key by the column default;
+/// and the policy the forcing migration turns on lets each key read only its own rows.
+#[tokio::test]
+async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_key() {
+    use joinedcontext_portal::grafana::{self, Kind, Visualization};
+    let pool = pool().await;
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    let org = organization(&pool, "bforg").await;
+    let placed = run_name("bfplaced");
+    let orphan = run_name("bforphan");
+    let gone = run_name("bfgone");
+    for (project, organization) in [(&placed, org.clone()), (&orphan, run_name("bfnoorg"))] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    let old = unkeyed_visualization(&pool, &placed).await;
+    let unplaced = unkeyed_visualization(&pool, &orphan).await;
+    let removed = unkeyed_visualization(&pool, &gone).await;
+
+    let waiting = project_ids::backfill(&pool, &state.mirror)
+        .await
+        .expect("backfill");
+    let key = project_ids::key_of(&pool, &state.mirror, &placed)
+        .await
+        .expect("key")
+        .expect("a placed project has a key");
+    assert_eq!(
+        key_columns(&pool, &old).await,
+        (Some(key.org.to_string()), Some(key.project.to_string()))
+    );
+    for (project, id) in [(&orphan, &unplaced), (&gone, &removed)] {
+        assert!(waiting.contains(project), "{project} waits: {waiting:?}");
+        assert_eq!(key_columns(&pool, id).await, (None, None), "{project}");
+    }
+    assert!(!waiting.contains(&placed), "{waiting:?}");
+    assert_eq!(
+        project_ids::key_of(&pool, &state.mirror, &gone)
+            .await
+            .expect("key"),
+        None,
+        "a name the mirror holds no Project of gets no key, and no id minted"
+    );
+
+    let new = Visualization {
+        id: run_name("viznew"),
+        project: placed.clone(),
+        title: "Free bikes over time".into(),
+        endpoint: "bikes".into(),
+        entity_type: "BikeHireDockingStation".into(),
+        attribute: "availableBikeNumber".into(),
+        kind: Kind::Timeseries,
+        created_at: String::new(),
+    };
+    grafana::insert(&pool, key, &new).await.expect("insert");
+    assert_eq!(
+        key_columns(&pool, &new.id).await,
+        (Some(key.org.to_string()), Some(key.project.to_string())),
+        "a row written in the tenant transaction carries its key"
+    );
+    let listed = grafana::list(&pool, key, &placed).await.expect("list");
+    assert_eq!(listed.len(), 2, "{listed:?}");
+
+    // What the forcing migration turns on, rolled back here: the key alone decides what is read.
+    let other = project_ids::reserved(&pool, &org)
+        .await
+        .expect("reserved")
+        .expect("a key");
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT ON grafana_visualizations TO pk_rls_reader",
+    )
+    .execute(&pool)
+    .await
+    .expect("the reader role");
+    for (key, expected) in [(Some(key), 2_i64), (Some(other), 0), (None, 0)] {
+        let mut tx = pool.begin().await.expect("begin");
+        sqlx::raw_sql(
+            "ALTER TABLE grafana_visualizations ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE grafana_visualizations FORCE ROW LEVEL SECURITY",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("forced in this transaction");
+        if let Some(key) = key {
+            sqlx::query(
+                "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
+            )
+            .bind(key.org.to_string())
+            .bind(key.project.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("keyed");
+        }
+        sqlx::query("SET LOCAL ROLE pk_rls_reader")
+            .execute(&mut *tx)
+            .await
+            .expect("role");
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM grafana_visualizations WHERE project = $1")
+                .bind(&placed)
+                .fetch_one(&mut *tx)
+                .await
+                .expect("count");
+        assert_eq!(n, expected, "{key:?}");
+        tx.rollback().await.expect("rollback");
+    }
+}
+
+/// A row of each table of T-7197 for `project`, written as before the key: what the backfill
+/// finds on a database of today. `$1` is the project.
+const ALERTS_HEALTH_ROWS: &[(&str, &str)] = &[
+    (
+        "alert_subscriptions",
+        "INSERT INTO alert_subscriptions (subject, project, scope, target, events, delivery) \
+         VALUES ('jana', $1, 'pipeline', 'bikes', '{failure}', 'portal')",
+    ),
+    (
+        "alert_incidents",
+        "INSERT INTO alert_incidents (project, pipeline, event) VALUES ($1, 'bikes', 'failure')",
+    ),
+    (
+        "alert_notices",
+        "INSERT INTO alert_notices (recipient, subscription, project, pipeline, event, change) \
+         SELECT 'jana', id, $1, 'bikes', 'failure', 'opened' FROM alert_subscriptions WHERE project = $1",
+    ),
+    (
+        "health_check",
+        "INSERT INTO health_check (project, kind, name, \"check\", status, since, checked_at) \
+         VALUES ($1, 'pipeline', 'bikes', 'runs', 'ok', now(), now())",
+    ),
+    (
+        "health_check_history",
+        "INSERT INTO health_check_history (project, kind, name, \"check\", at, status) \
+         VALUES ($1, 'pipeline', 'bikes', 'runs', now(), 'ok')",
+    ),
+    (
+        "space_quality",
+        "INSERT INTO space_quality (project, space, report) VALUES ($1, 'mobility', '{}')",
+    ),
+    (
+        "endpoint_usage_daily",
+        "INSERT INTO endpoint_usage_daily (project, endpoint, surface, day, caller, calls) \
+         VALUES ($1, 'bikes', 'ogc', current_date, 'person', 1)",
+    ),
+    (
+        "link_check",
+        "INSERT INTO link_check (project, pipeline, checked_at, result) VALUES ($1, 'bikes', now(), '{}')",
+    ),
+];
+
+/// T-7197 PK-1e: every alerts, health, quality, usage and link check row of today is keyed by
+/// the backfill once the mirror places its project, a project with no Organization waits, and
+/// under the policy the forcing migration turns on each key reads only its own rows. The stores
+/// write new rows in the key, and keep none for a project without one.
+#[tokio::test]
+async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key() {
+    use joinedcontext_portal::alerts::{Delivery, Event, Scope};
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(ALERTS_HEALTH_ROWS, "ah").await;
+    let pool = state.db.clone().expect("a database");
+    // The stores write in the key, and keep nothing for a project without one.
+    let made = state
+        .alerts
+        .upsert(
+            "eeva",
+            &placed,
+            Scope::Pipeline,
+            "trams",
+            &[Event::Stale],
+            Delivery::Portal,
+        )
+        .await
+        .expect("upsert")
+        .expect("a placed project keeps alerts");
+    let stamped: (Option<String>,) =
+        sqlx::query_as("SELECT project_id::text FROM alert_subscriptions WHERE id = $1")
+            .bind(made.id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stamped.0, Some(key.project.to_string()));
+    assert_eq!(
+        state
+            .alerts
+            .upsert(
+                "eeva",
+                &orphan,
+                Scope::Pipeline,
+                "trams",
+                &[Event::Stale],
+                Delivery::Portal
+            )
+            .await
+            .expect("upsert"),
+        None,
+        "a project with no Organization of the registry keeps no alert"
+    );
+    let theirs = state.alerts.subscriptions_of("eeva").await.expect("read");
+    assert!(
+        theirs.iter().any(|s| s.id == made.id) && theirs.iter().all(|s| s.project != orphan),
+        "{theirs:?}"
+    );
+    assert!(state.alerts.remove("eeva", made.id).await.expect("remove"));
+}
+
+/// Rows of `rows` (table, insert binding `$1` to the project) for a placed and an unplaced
+/// project of this run: the backfill keys the placed one's and names the other as waiting, and
+/// under the policy the forcing migration turns on (rolled back here) each table reads the placed
+/// project's row under its key only. Answers the state, the two projects and the key.
+async fn rows_keyed_and_read_only_under_their_key(
+    rows: &'static [(&'static str, &'static str)],
+    test: &str,
+) -> (AppState, String, String, jc_types::ProjectKey) {
+    let pool = pool().await;
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    let org = organization(&pool, &format!("{test}org")).await;
+    let placed = run_name(&format!("{test}placed"));
+    let orphan = run_name(&format!("{test}orphan"));
+    for (project, organization) in [
+        (&placed, org.clone()),
+        (&orphan, run_name(&format!("{test}noorg"))),
+    ] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    for project in [&placed, &orphan] {
+        for (table, insert) in rows {
+            sqlx::query(*insert)
+                .bind(project)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|err| panic!("{table}: {err}"));
+        }
+    }
+    for (table, _) in rows {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+
+    let waiting = project_ids::backfill(&pool, &state.mirror)
+        .await
+        .expect("backfill");
+    assert!(waiting.contains(&orphan), "{waiting:?}");
+    assert!(!waiting.contains(&placed), "{waiting:?}");
+    let key = project_ids::key_of(&pool, &state.mirror, &placed)
+        .await
+        .expect("key")
+        .expect("a placed project has a key");
+    for (table, _) in rows {
+        let keyed: Vec<(String, Option<String>, Option<String>)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT project, org_id::text, project_id::text FROM {table} WHERE project = ANY($1)"
+            )))
+            .bind([placed.clone(), orphan.clone()])
+            .fetch_all(&pool)
+            .await
+            .expect("rows");
+        assert_eq!(keyed.len(), 2, "{table}: {keyed:?}");
+        for (project, org_id, project_id) in keyed {
+            let expected = if project == placed {
+                (Some(key.org.to_string()), Some(key.project.to_string()))
+            } else {
+                (None, None)
+            };
+            assert_eq!((org_id, project_id), expected, "{table} {project}");
+        }
+    }
+
+    // What the forcing migration turns on, rolled back here: the key alone decides what is read.
+    let other = project_ids::reserved(&pool, &org)
+        .await
+        .expect("reserved")
+        .expect("a key");
+    let tables: Vec<&str> = rows.iter().map(|(t, _)| *t).collect();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT ON {} TO pk_rls_reader",
+        tables.join(", ")
+    )))
+    .execute(&pool)
+    .await
+    .expect("the reader role");
+    for table in &tables {
+        for (key, expected) in [(Some(key), 1_i64), (Some(other), 0), (None, 0)] {
+            let mut tx = pool.begin().await.expect("begin");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE {table} ENABLE ROW LEVEL SECURITY; \
+                 ALTER TABLE {table} FORCE ROW LEVEL SECURITY"
+            )))
+            .execute(&mut *tx)
+            .await
+            .expect("forced in this transaction");
+            if let Some(key) = key {
+                sqlx::query(
+                    "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
+                )
+                .bind(key.org.to_string())
+                .bind(key.project.to_string())
+                .execute(&mut *tx)
+                .await
+                .expect("keyed");
+            }
+            sqlx::query("SET LOCAL ROLE pk_rls_reader")
+                .execute(&mut *tx)
+                .await
+                .expect("role");
+            let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT count(*) FROM {table} WHERE project = $1"
+            )))
+            .bind(&placed)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("count");
+            assert_eq!(n, expected, "{table} {key:?}");
+            tx.rollback().await.expect("rollback");
+        }
+    }
+    (state, placed, orphan, key)
+}
+
+/// A row of each table T-7200 keys for `project`, written as before the key. `$1` is the project.
+const PROJECT_ROWS_0071: &[(&str, &str)] = &[
+    (
+        "app_service_usage",
+        "INSERT INTO app_service_usage (project, app, service, subject, day, used) \
+         VALUES ($1, 'road-defects', 'email', '', current_date, 1)",
+    ),
+    (
+        "email_unsubscribes",
+        "INSERT INTO email_unsubscribes (project, app, subject) VALUES ($1, 'road-defects', 'sub-anna')",
+    ),
+    (
+        "mqtt_capture",
+        "INSERT INTO mqtt_capture (project, broker, topic, received_at, expires_at, bytes, payload) \
+         VALUES ($1, 'cams', 'cams/1', now(), now() + interval '1 hour', 1, '\\x00')",
+    ),
+    (
+        "entity_trash",
+        "INSERT INTO entity_trash (project, space, owner, urn, type, entity) \
+         VALUES ($1, 'air', 'f:1:anna', 'urn:ngsi-ld:T:x:1', 'T', '{}')",
+    ),
+    (
+        "entity_comments",
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ($1, 'air', 'urn:ngsi-ld:T:x:1', 'anna', 'Anna', 'Looks off')",
+    ),
+    (
+        "data_views",
+        "INSERT INTO data_views (id, project, space, entity_type, kind, mode, title, owner_subject, owner_name, config) \
+         VALUES ('dv-' || md5($1), $1, 'air', 'T', 'table', 'personal', 'Mine', 'sub-anna', 'Anna', '{}')",
+    ),
+];
+
+/// T-7200 PK-1h: the App service counters, unsubscribes, MQTT capture, trash, comments and data
+/// views of today are keyed by the backfill and read only under their key; the stores write new
+/// rows in the key and keep none for a project without one.
+#[tokio::test]
+async fn app_capture_trash_comment_and_view_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PROJECT_ROWS_0071, "pr").await;
+    let pool = state.db.clone().expect("a database");
+    for (table, _) in PROJECT_ROWS_0071 {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+    let entity = json!({ "id": "urn:ngsi-ld:T:x:2", "type": "T" });
+    let kept = state
+        .trash
+        .keep(
+            (&placed, "air", "f:1:sami"),
+            "urn:ngsi-ld:T:x:2",
+            "T",
+            &entity,
+        )
+        .await
+        .expect("keep")
+        .expect("a placed project keeps its trash");
+    let stamped: (Option<String>,) =
+        sqlx::query_as("SELECT project_id::text FROM entity_trash WHERE id = $1")
+            .bind(kept.id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stamped.0, Some(key.project.to_string()));
+    assert_eq!(
+        state
+            .trash
+            .keep(
+                (&orphan, "air", "f:1:sami"),
+                "urn:ngsi-ld:T:x:2",
+                "T",
+                &entity
+            )
+            .await
+            .expect("keep"),
+        None,
+        "a project with no Organization of the registry keeps no trash"
+    );
+    assert!(state
+        .trash
+        .list((&orphan, "air", "f:1:anna"))
+        .await
+        .expect("list")
+        .is_empty());
+    assert_eq!(
+        state
+            .trash
+            .list((&placed, "air", "f:1:anna"))
+            .await
+            .expect("list")
+            .len(),
+        1,
+        "the backfilled row reads in its key"
+    );
 }

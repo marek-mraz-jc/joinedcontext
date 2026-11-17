@@ -235,7 +235,8 @@ pub fn csv(rows: &[Stored]) -> String {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7197 PK-1e).
+    Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<BTreeMap<Key, u64>>),
 }
 
@@ -245,19 +246,20 @@ pub struct UsageStore {
 }
 
 impl UsageStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::default()),
             },
         }
     }
 
-    /// Adds `rows` and drops what is older than [`KEEP_DAYS`] before `today`.
+    /// Adds `rows` and drops what is older than [`KEEP_DAYS`] before `today`, project by project
+    /// in its key (STO-07); the calls of a project with no tenancy key are not kept.
     pub async fn add(&self, rows: BTreeMap<Key, u64>, today: NaiveDate) -> Result<(), sqlx::Error> {
         let oldest = today - Duration::days(KEEP_DAYS);
-        let pool = match &self.inner {
+        let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
                 let mut memory = memory.write().unwrap_or_else(|e| e.into_inner());
                 for (key, calls) in rows {
@@ -267,14 +269,37 @@ impl UsageStore {
                 memory.retain(|key, _| key.3 >= oldest);
                 return Ok(());
             }
-            Inner::Postgres(pool) => pool,
+            Inner::Postgres(pool, mirror) => (pool, mirror),
         };
-        let column = |f: fn(&Key) -> String| rows.keys().map(f).collect::<Vec<_>>();
+        let keyed = crate::project_ids::keyed_projects(pool, mirror).await?;
+        let unkept: std::collections::BTreeSet<&str> = rows
+            .keys()
+            .map(|k| k.0.as_str())
+            .filter(|p| !keyed.iter().any(|(name, _)| name == p))
+            .collect();
+        if !unkept.is_empty() {
+            tracing::warn!(projects = ?unkept, "endpoint calls not counted: the project has no tenancy key; an operator adds its Organization on the Organizations page");
+        }
+        for (project, key) in keyed {
+            let theirs: BTreeMap<&Key, &u64> =
+                rows.iter().filter(|(k, _)| k.0 == project).collect();
+            Self::add_project(pool, key, &theirs, oldest).await?;
+        }
+        Ok(())
+    }
+
+    async fn add_project(
+        pool: &sqlx::PgPool,
+        key: jc_types::ProjectKey,
+        rows: &BTreeMap<&Key, &u64>,
+        oldest: NaiveDate,
+    ) -> Result<(), sqlx::Error> {
+        let column = |f: fn(&Key) -> String| rows.keys().map(|k| f(k)).collect::<Vec<_>>();
         let calls: Vec<i64> = rows
             .values()
-            .map(|n| i64::try_from(*n).unwrap_or(i64::MAX))
+            .map(|n| i64::try_from(**n).unwrap_or(i64::MAX))
             .collect();
-        let mut tx = pool.begin().await?;
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         sqlx::query(
             "INSERT INTO endpoint_usage_daily AS u (project, endpoint, surface, day, caller, calls) \
              SELECT p, e, s, d::date, k, c FROM UNNEST($1::text[], $2::text[], $3::text[], \
@@ -297,14 +322,14 @@ impl UsageStore {
         tx.commit().await
     }
 
-    /// `project`'s rows from `from` to `to`, both inclusive.
+    /// `project`'s rows from `from` to `to`, both inclusive; none for a project with no key.
     pub async fn read(
         &self,
         project: &str,
         from: NaiveDate,
         to: NaiveDate,
     ) -> Result<Vec<Stored>, sqlx::Error> {
-        let pool = match &self.inner {
+        let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
                 let memory = memory.read().unwrap_or_else(|e| e.into_inner());
                 return Ok(memory
@@ -319,8 +344,12 @@ impl UsageStore {
                     })
                     .collect());
             }
-            Inner::Postgres(pool) => pool,
+            Inner::Postgres(pool, mirror) => (pool, mirror),
         };
+        let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+            return Ok(Vec::new());
+        };
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
         let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
             "SELECT endpoint, surface, to_char(day, 'YYYY-MM-DD'), caller, calls \
              FROM endpoint_usage_daily \
@@ -329,8 +358,9 @@ impl UsageStore {
         .bind(project)
         .bind(from.to_string())
         .bind(to.to_string())
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(rows
             .into_iter()
             .filter_map(|(name, surface, day, caller, calls)| {
@@ -537,7 +567,7 @@ mod tests {
     /// The store holds names, a day and a number; it has no column a person could be in.
     #[tokio::test]
     async fn the_memory_store_adds_reads_and_forgets_after_its_keep() {
-        let store = UsageStore::new(None);
+        let store = UsageStore::new(None, Default::default());
         let today = date("2026-10-22");
         let key = |day| {
             (

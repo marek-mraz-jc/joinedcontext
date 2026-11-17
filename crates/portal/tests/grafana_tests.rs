@@ -535,6 +535,7 @@ async fn a_save_lands_in_the_project_folder_comes_back_after_a_restart_and_can_b
     mount_saves(&server).await;
     let mut state = world(Some(&server));
     state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
 
     let saved = send(&state, person("eva"), "POST", PAGE, Some(asked(json!({})))).await;
     assert_eq!(saved.status, StatusCode::CREATED, "{}", saved.text);
@@ -594,7 +595,8 @@ async fn a_public_endpoint_gets_an_anonymous_datasource_and_a_closed_one_without
     let server = grafana_with_organization().await;
     mount_saves(&server).await;
     let mut state = world(Some(&server));
-    state.db = Some(pool);
+    state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
     state.model_schemas.replace({
         let model = state.model_schemas.get(PROJECT, "bikes").expect("a model");
         std::collections::HashMap::from([

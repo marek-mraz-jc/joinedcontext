@@ -10,8 +10,8 @@ use joinedcontext_portal::ops::data_views::{
 };
 use serde_json::json;
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -47,8 +47,15 @@ async fn views_round_trip_through_postgres() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = DataViewStore::new(Some(pool));
+    // The project in an Organization of the registry: its views are keyed (T-7200).
     let project = fresh_project();
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    )
+    .with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    let store: DataViewStore = state.data_views.clone();
 
     let saved = store
         .create(&project, "bikes", JANA, view("collaborative"))
@@ -127,8 +134,15 @@ async fn the_per_person_limit_holds_in_the_insert_itself() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = DataViewStore::new(Some(pool));
+    // The project in an Organization of the registry: its views are keyed (T-7200).
     let project = fresh_project();
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    )
+    .with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    let store: DataViewStore = state.data_views.clone();
     // Saved concurrently, as two windows would: the count and the insert are one statement.
     let saves =
         (0..MAX_PER_PERSON + 5).map(|_| store.create(&project, "bikes", JANA, view("personal")));
