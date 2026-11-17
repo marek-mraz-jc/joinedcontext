@@ -225,21 +225,6 @@ pub(crate) async fn tx_of(
     }
 }
 
-/// A transaction in `project`'s key as the mirror places it, or an unkeyed one while it has none:
-/// in phase one (row-level security off) a project made before the registry knew its Organization
-/// keeps its drafts and activity, and [`backfill`] keys those rows once an operator adds the
-/// Organization; the forcing migration waits until none is unkeyed.
-pub(crate) async fn tx_or_unkeyed(
-    pool: &PgPool,
-    mirror: &Mirror,
-    project: &str,
-) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
-    match tx_of(pool, mirror, project).await? {
-        Some(tx) => Ok(tx),
-        None => pool.begin().await,
-    }
-}
-
 /// Every Project of the mirror with its key, by name, then [`ORG_NAMESPACE`] with the
 /// installation Organization's reserved key: what a read over every project fans out over, one
 /// `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.

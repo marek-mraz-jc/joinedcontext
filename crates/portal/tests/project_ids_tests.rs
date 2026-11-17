@@ -1026,10 +1026,12 @@ const DRAFT_ROWS_0076: &[(&str, &str)] = &[(
 )];
 
 /// T-7204 PK-1g: the drafts of today are keyed by the backfill and read only under their key; the
-/// store writes a new draft in the key, and a project without a key yet (one made before the
-/// registry knew its Organization) keeps working unkeyed until the backfill keys it.
+/// store writes a new draft in the key. T-7201: once 0080 forced the key, a project with no key
+/// (its Organization not an active one of the registry) keeps no draft: the put is refused with
+/// the step that fixes it and writes no row, and once the Organization is added it keeps drafts.
 #[tokio::test]
 async fn drafts_are_keyed_and_read_only_under_their_key() {
+    use joinedcontext_portal::ops::drafts::DraftError;
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(DRAFT_ROWS_0076, "dr").await;
     let pool = state.db.clone().expect("a database");
@@ -1047,44 +1049,66 @@ async fn drafts_are_keyed_and_read_only_under_their_key() {
         )
         .await
         .expect("a placed project keeps a draft");
+    let refused = state
+        .drafts
+        .put(
+            &orphan,
+            "Endpoint",
+            "water",
+            manifest.clone(),
+            None,
+            "anna",
+            "human",
+        )
+        .await
+        .expect_err("a project with no key keeps no draft once 0080 forced the key");
+    assert!(
+        matches!(refused, DraftError::Unplaced(ref p) if p == &orphan),
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("Organizations page first"),
+        "{refused}"
+    );
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM drafts WHERE name = 'water' AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(
+        stamped,
+        [(placed.clone(), Some(key.project.to_string()))],
+        "no row for the refused project"
+    );
+    assert!(state.drafts.list(&orphan).await.expect("list").is_empty());
+    assert!(state
+        .drafts
+        .get(&orphan, "Endpoint", "water")
+        .await
+        .expect("get")
+        .is_none());
+    assert!(!state
+        .drafts
+        .drop(&orphan, "Endpoint", "water")
+        .await
+        .expect("drop"));
+    let later = placed_later(&state, &orphan, "drlate").await;
     state
         .drafts
         .put(
             &orphan, "Endpoint", "water", manifest, None, "anna", "human",
         )
         .await
-        .expect("a project with no key yet keeps its draft unkeyed (phase one)");
-    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT project, project_id::text FROM drafts WHERE name = 'water' AND project = ANY($1) \
-         ORDER BY project = $2",
-    )
-    .bind(vec![placed.clone(), orphan.clone()])
-    .bind(&orphan)
-    .fetch_all(&pool)
-    .await
-    .expect("rows");
-    assert_eq!(
-        stamped,
-        [
-            (placed.clone(), Some(key.project.to_string())),
-            (orphan.clone(), None)
-        ]
-    );
-    assert_eq!(state.drafts.list(&orphan).await.expect("list").len(), 2);
-    assert!(state
-        .drafts
-        .get(&orphan, "Endpoint", "air")
-        .await
-        .expect("get")
-        .is_some());
-    let later = placed_later(&state, &orphan, "drlate").await;
+        .expect("kept once its Organization is added");
     let keyed: Vec<Option<String>> =
         sqlx::query_scalar("SELECT project_id::text FROM drafts WHERE project = $1")
             .bind(&orphan)
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string())]);
     let names: Vec<String> = state
         .drafts
         .list(&placed)
@@ -1113,11 +1137,12 @@ const ACTIVITY_ROWS_0077: &[(&str, &str)] = &[(
 )];
 
 /// T-7205 PK-1g: the activity of today is keyed by the backfill and read only under its key; a
-/// new event lands in its project's key, and a project without a key yet keeps and reads its
-/// events unkeyed until the backfill keys them.
+/// new event lands in its project's key. T-7201: once 0080 forced the key, a project with no key
+/// keeps no event: the batch stores every other project's events, names the refused project, and
+/// the tail hears nothing of it; once its Organization is added its events are kept in its key.
 #[tokio::test]
 async fn activity_rows_are_keyed_and_read_only_under_their_key() {
-    use joinedcontext_portal::activity::{ActivityEvent, ActivityFilter};
+    use joinedcontext_portal::activity::{ActivityError, ActivityEvent, ActivityFilter};
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0077, "ac").await;
     let pool = state.db.clone().expect("a database");
@@ -1133,51 +1158,51 @@ async fn activity_rows_are_keyed_and_read_only_under_their_key() {
         details: Value::Null,
     };
     let mut tail = state.activity_events.subscribe(&orphan).await;
-    state
+    let refused = state
         .activity
-        .append(&[event(&placed), event(&orphan)])
+        .append(&[event(&orphan), event(&placed)])
         .await
-        .expect("append");
+        .expect_err("a project with no key keeps no event");
     assert!(
-        tail.try_recv().is_ok(),
-        "the tail hears the event kept unkeyed"
+        matches!(refused, ActivityError::Unplaced(ref p) if p == &orphan),
+        "{refused}"
     );
+    assert!(tail.try_recv().is_err(), "the tail hears no refused event");
     let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT project, project_id::text FROM activity WHERE summary = 'Applied again.' \
-         AND project = ANY($1) ORDER BY project = $2",
+         AND project = ANY($1)",
     )
     .bind(vec![placed.clone(), orphan.clone()])
-    .bind(&orphan)
     .fetch_all(&pool)
     .await
     .expect("rows");
     assert_eq!(
         stamped,
-        [
-            (placed.clone(), Some(key.project.to_string())),
-            (orphan.clone(), None)
-        ]
+        [(placed.clone(), Some(key.project.to_string()))],
+        "the placed project's event is kept, the refused one's is not"
     );
     let filter = ActivityFilter {
         limit: 10,
         ..ActivityFilter::default()
     };
     let unkeyed = state.activity.list(&orphan, &filter).await.expect("list");
-    assert_eq!(
-        unkeyed.items.len(),
-        2,
-        "a project with no key yet reads its events"
-    );
+    assert!(unkeyed.items.is_empty(), "a project with no key reads none");
     let page = state.activity.list(&placed, &filter).await.expect("list");
     assert_eq!(page.items.len(), 2, "the backfilled event and the new one");
     let later = placed_later(&state, &orphan, "aclate").await;
+    state
+        .activity
+        .append(&[event(&orphan)])
+        .await
+        .expect("kept once its Organization is added");
+    assert!(tail.try_recv().is_ok(), "the tail hears the kept event");
     let keyed: Vec<Option<String>> =
         sqlx::query_scalar("SELECT project_id::text FROM activity WHERE project = $1")
             .bind(&orphan)
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string())]);
 
     // The Organization's own events (people, roles) take its reserved project's key (TEN-11).
     let org = joinedcontext_portal::permissions::organization_of(&state.mirror, &placed)
