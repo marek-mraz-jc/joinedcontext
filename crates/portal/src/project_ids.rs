@@ -33,7 +33,18 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "entity_trash",
     "entity_comments",
     "data_views",
-    // T-7202 PK-1i, migration 0072: an access request is keyed by its Endpoint's project.
+    // T-7198 PK-1f, migration 0072.
+    "pipeline_log",
+    "pipeline_runs",
+    "pipeline_rejected",
+    "pipeline_status",
+    "pipeline_templates",
+    "pipeline_record_hashes",
+    "pipeline_source_ledger",
+    "pipeline_source_holds",
+    "pipeline_source_complete",
+    "pipeline_source_removed",
+    // T-7202 PK-1i, migration 0073: an access request is keyed by its Endpoint's project.
     "erasures",
     "access_requests",
 ];
@@ -209,13 +220,25 @@ pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, 
 
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: in
 /// phase one its rows are unkeyed then, and the forcing migration waits until none is.
-pub async fn tx_of(
+pub async fn recorded_tx(
     pool: &PgPool,
     project: &str,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
     match recorded(pool, project).await? {
         Some(key) => crate::db::tenant_tx(pool, key).await,
         None => pool.begin().await,
+    }
+}
+
+/// A `db::tenant_tx` of `project`'s key as the mirror places it; `None` when it has none.
+pub(crate) async fn tx_of(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, sqlx::Error> {
+    match key_of(pool, mirror, project).await? {
+        Some(key) => Ok(Some(crate::db::tenant_tx(pool, key).await?)),
+        None => Ok(None),
     }
 }
 

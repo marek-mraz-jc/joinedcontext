@@ -535,7 +535,7 @@ fn from_row(row: Row) -> Erasure {
 
 /// Logs a new erasure in its project's key (T-7202).
 pub async fn insert(pool: &PgPool, erasure: &Erasure) -> Result<(), sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, &erasure.project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, &erasure.project).await?;
     sqlx::query(
         "INSERT INTO erasures (id, project, space, subject, reason, actor, requested_at, groups, stores, approval) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -570,7 +570,7 @@ pub async fn get(
     .bind(id)
     .bind(project)
     .bind(space)
-    .fetch_optional(&mut *crate::project_ids::tx_of(pool, project).await?)
+    .fetch_optional(&mut *crate::project_ids::recorded_tx(pool, project).await?)
     .await
     .map(|row| row.map(from_row))
 }
@@ -584,7 +584,7 @@ pub async fn list(pool: &PgPool, project: &str, space: &str) -> Result<Vec<Erasu
     ))
     .bind(project)
     .bind(space)
-    .fetch_all(&mut *crate::project_ids::tx_of(pool, project).await?)
+    .fetch_all(&mut *crate::project_ids::recorded_tx(pool, project).await?)
     .await
     .map(|rows| rows.into_iter().map(from_row).collect())
 }
@@ -614,7 +614,7 @@ pub async fn approve(
     approver: &str,
     groups: &[Group],
 ) -> Result<Option<Erasure>, sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
     let row = sqlx::query_as::<_, Row>(concat!(
         "UPDATE erasures SET approval = 'approved', decided_by = $4, decided_at = now(), groups = $5 \
          WHERE id = $1 AND project = $2 AND space = $3 AND approval = 'proposed' AND actor <> $4 \
@@ -640,7 +640,7 @@ pub async fn decline(
     decider: &str,
     reason: &str,
 ) -> Result<Option<Erasure>, sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
     let row = sqlx::query_as::<_, Row>(concat!(
         "UPDATE erasures SET approval = 'declined', decided_by = $4, decided_at = now(), decline_reason = $5 \
          WHERE id = $1 AND project = $2 AND space = $3 AND approval = 'proposed' \
@@ -715,7 +715,7 @@ pub async fn save(
     name: &str,
     store: &Store,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
     sqlx::query(
         "UPDATE erasures SET stores = jsonb_set(stores, ARRAY[$2], $3), \
            completed_at = CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_each(jsonb_set(stores, ARRAY[$2], $3)) s \
@@ -824,7 +824,7 @@ pub async fn erase_portal_copies(
 /// transaction reaches while the forcing migration waits for the backfill.
 async fn portal_copies(pool: &PgPool, erasure: &Erasure) -> Result<u64, String> {
     let unreached = |err: sqlx::Error| format!("the Portal's copies were not reached: {err}");
-    let mut tx = crate::project_ids::tx_of(pool, &erasure.project)
+    let mut tx = crate::project_ids::recorded_tx(pool, &erasure.project)
         .await
         .map_err(unreached)?;
     let gone = erase_portal_copies(&mut tx, erasure).await?;

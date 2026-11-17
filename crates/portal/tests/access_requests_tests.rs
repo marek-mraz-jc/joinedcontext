@@ -341,7 +341,9 @@ async fn a_request_is_approved_in_the_owning_project_and_revoked_there() {
         .expect("a revoked grant refuses");
     assert_eq!(reason, format!("access revoked by olli on {}", now.date()));
     let key = (KPIS.to_owned(), pipeline.clone());
-    let log = joinedcontext_portal::pipeline_log::LogStore::new(Some(pool.clone()));
+    common::keyed_project(&state, pool, KPIS, "helsinki").await;
+    let log =
+        joinedcontext_portal::pipeline_log::LogStore::new(Some(pool.clone()), state.mirror.clone());
     let line = || joinedcontext_portal::pipeline_log::NewLine {
         record_id: String::new(),
         step: None,

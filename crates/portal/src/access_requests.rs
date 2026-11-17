@@ -634,7 +634,7 @@ macro_rules! select {
 /// Stores a new request; `Ok(false)` when the pipeline or the person already has an open or
 /// granted one for that Endpoint (PL-90).
 pub async fn insert(pool: &PgPool, request: &AccessRequest) -> Result<bool, sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, &request.endpoint_project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, &request.endpoint_project).await?;
     let done = sqlx::query(
         "INSERT INTO access_requests (id, project, pipeline, person, endpoint_project, endpoint, space, \
            operations, types, until, reason, state, requested_by, requested_at) \
@@ -671,7 +671,7 @@ pub async fn get(
     sqlx::query_as::<_, Row>(select!("WHERE id = $1 AND endpoint_project = $2"))
         .bind(id)
         .bind(endpoint_project)
-        .fetch_optional(&mut *crate::project_ids::tx_of(pool, endpoint_project).await?)
+        .fetch_optional(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
         .await
         .map(|row| row.map(AccessRequest::from))
 }
@@ -685,7 +685,7 @@ pub async fn incoming(
         "WHERE endpoint_project = $1 ORDER BY requested_at DESC LIMIT 200"
     ))
     .bind(endpoint_project)
-    .fetch_all(&mut *crate::project_ids::tx_of(pool, endpoint_project).await?)
+    .fetch_all(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
     .await
     .map(|rows| rows.into_iter().map(AccessRequest::from).collect())
 }
@@ -745,7 +745,7 @@ pub async fn of_person(
     .bind(person)
     .bind(endpoint_project)
     .bind(endpoint)
-    .fetch_all(&mut *crate::project_ids::tx_of(pool, endpoint_project).await?)
+    .fetch_all(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
     .await
     .map(|rows| rows.into_iter().map(AccessRequest::from).collect())
 }
@@ -760,7 +760,7 @@ pub(crate) async fn decide(
     reason: Option<&str>,
     change: Option<&str>,
 ) -> Result<bool, sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, &request.endpoint_project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, &request.endpoint_project).await?;
     let done = sqlx::query(
         "UPDATE access_requests SET state = $3, decided_by = $4, decided_at = now(), \
            decision_reason = COALESCE($5, decision_reason), change = COALESCE($6, change) \
@@ -786,7 +786,7 @@ pub(crate) async fn take_back(
     claimed: &str,
     by: &str,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, &request.endpoint_project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, &request.endpoint_project).await?;
     sqlx::query(
         "UPDATE access_requests SET state = $2, decided_by = $3, decided_at = $4, \
            decision_reason = $5 \
@@ -811,7 +811,7 @@ pub(crate) async fn record_change(
     request: &AccessRequest,
     change: &str,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = crate::project_ids::tx_of(pool, &request.endpoint_project).await?;
+    let mut tx = crate::project_ids::recorded_tx(pool, &request.endpoint_project).await?;
     sqlx::query("UPDATE access_requests SET change = $2 WHERE id = $1")
         .bind(&request.id)
         .bind(change)
