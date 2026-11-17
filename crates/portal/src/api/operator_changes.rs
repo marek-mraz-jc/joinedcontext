@@ -363,8 +363,103 @@ async fn holds(
                 ))
             }
         }
-        OperatorKind::OperatorAdd | OperatorKind::OperatorRemove => Ok(()),
+        OperatorKind::OperatorAdd | OperatorKind::OperatorRemove => {
+            let subject = payload.subject.as_deref().unwrap_or_default();
+            let found = people(state)?
+                .admin()
+                .await?
+                .get(subject)
+                .await
+                .map_err(|e| match e {
+                    crate::people::PeopleError::NotFound => invalid(
+                        "subject",
+                        format!("the installation realm has no person '{subject}'"),
+                    ),
+                    other => other.into(),
+                })?;
+            if kind == OperatorKind::OperatorAdd && found.is_service_account() {
+                return Err(invalid(
+                    "subject",
+                    format!(
+                        "'{subject}' is a client's service account; an operator is a person who signs in"
+                    ),
+                ));
+            }
+            Ok(())
+        }
     }
+}
+
+fn people(state: &AppState) -> Result<&crate::people::People, ApiError> {
+    state.people.as_deref().ok_or_else(|| {
+        ApiError::Unavailable(
+            "no Keycloak admin client is configured, so the operators' group cannot be changed here"
+                .into(),
+        )
+    })
+}
+
+/// The fewest operators the installation keeps: a Change needs a second operator to approve it,
+/// so with one left nothing could be approved again without the cluster.
+const FEWEST_OPERATORS: usize = 2;
+
+/// Operator-group Changes of every Portal replica apply one at a time (a transaction-scoped
+/// advisory lock), so two removals approved at once cannot both pass the count below.
+const OPERATOR_LOCK: i64 = 0x6a63_6f70_7273; // "jcoprs"
+
+/// The proposer is still in the operators' group (or holds its realm role) when a second
+/// operator approves: one who left takes their open Changes' four eyes with them.
+async fn proposer_holds(
+    admin: &crate::people::Admin<'_>,
+    group: &str,
+    proposer: &str,
+) -> Result<(), ApiError> {
+    if admin
+        .groups_and_roles(proposer)
+        .await?
+        .iter()
+        .any(|name| name == group)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::Conflict(
+            "the operator who asked for this Change is no operator any more; reject it and ask again"
+                .into(),
+        ))
+    }
+}
+
+/// What an approval of an operator-group Change needs from the realm, read under
+/// [`OPERATOR_LOCK`]: the proposer is still an operator, and a removal leaves
+/// [`FEWEST_OPERATORS`].
+async fn operators_hold(
+    tx: &mut sqlx::PgConnection,
+    admin: &crate::people::Admin<'_>,
+    group: &str,
+    found: &OperatorChange,
+) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(OPERATOR_LOCK)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+    proposer_holds(admin, group, &found.proposed_by).await?;
+    if found.kind == OperatorKind::OperatorRemove {
+        let subject = found.payload.subject.as_deref().unwrap_or_default();
+        let left = admin
+            .group_members(group)
+            .await?
+            .unwrap_or_default()
+            .iter()
+            .filter(|m| m.enabled && !m.is_service_account() && m.id != subject)
+            .count();
+        if left < FEWEST_OPERATORS {
+            return Err(ApiError::Conflict(format!(
+                "subject: removing '{subject}' would leave {left} operator(s); the installation keeps at least {FEWEST_OPERATORS}, so add another operator first"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A Change as it is read: times in epoch seconds (sqlx here speaks `time`, the answer chrono).
@@ -499,7 +594,7 @@ pub async fn list(
         (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
         (status = 409, description = "An open Change for the same host or person, or the host is taken", body = ProblemDetails),
         (status = 422, description = "A field breaks a rule; the error names it", body = ProblemDetails),
-        (status = 503, description = "No database, or the installation's hosts are unknown", body = ProblemDetails)
+        (status = 503, description = "No database, the installation's hosts are unknown, or no realm admin client for an operator Change", body = ProblemDetails)
     )
 )]
 pub async fn propose(
@@ -652,7 +747,7 @@ async fn decide(
         (status = 401, description = "Not signed in", body = ProblemDetails),
         (status = 403, description = "Not an operator, no second factor, or the proposer", body = ProblemDetails),
         (status = 404, description = "No such Change", body = ProblemDetails),
-        (status = 409, description = "Decided already, or the host was taken since", body = ProblemDetails),
+        (status = 409, description = "Decided already, the host was taken since, the proposer is no operator any more, or a removal would leave fewer than two operators", body = ProblemDetails),
         (status = 422, description = "A rule no longer holds, e.g. the TXT record lapsed; the error names the field", body = ProblemDetails),
         (status = 503, description = "No database or no realm admin client", body = ProblemDetails)
     )
@@ -676,6 +771,18 @@ pub async fn approve(
         ));
     }
     holds(&state, pool, found.kind, &found.payload, &found.proposed_by).await?;
+    // A host Change re-reads its proposer where the realm can be asked; an operator Change
+    // always does, under its lock (`operators_hold`).
+    if let (Some(people), OperatorKind::HostAdd | OperatorKind::HostRemove) =
+        (state.people.as_deref(), found.kind)
+    {
+        proposer_holds(
+            &people.admin().await?,
+            &state.config.bootstrap_admins,
+            &found.proposed_by,
+        )
+        .await?;
+    }
     let payload = &found.payload;
     let (before, after) = match found.kind {
         OperatorKind::HostAdd => {
@@ -709,38 +816,7 @@ pub async fn approve(
             )
         }
         OperatorKind::OperatorAdd | OperatorKind::OperatorRemove => {
-            let subject = payload.subject.as_deref().unwrap_or_default();
-            let group = &state.config.bootstrap_admins;
-            let people = state.people.as_ref().ok_or_else(|| {
-                ApiError::Unavailable(
-                    "no Keycloak admin client is configured, so the operators' group cannot be changed here"
-                        .into(),
-                )
-            })?;
-            let admin = people.admin().await?;
-            admin.get(subject).await.map_err(|e| match e {
-                crate::people::PeopleError::NotFound => invalid(
-                    "subject",
-                    format!("the installation realm has no person '{subject}'"),
-                ),
-                other => other.into(),
-            })?;
-            let joined = if found.kind == OperatorKind::OperatorAdd {
-                admin.join_group(subject, group).await?
-            } else {
-                admin.leave_group(subject, group).await?
-            };
-            if !joined {
-                return Err(ApiError::Conflict(format!(
-                    "the installation realm has no group '{group}': the operators are a realm \
-                     role there, which only the realm's administrator changes"
-                )));
-            }
-            let member = found.kind == OperatorKind::OperatorAdd;
-            (
-                Some(json!({ "subject": subject, "operator": !member })),
-                Some(json!({ "subject": subject, "operator": member })),
-            )
+            return apply_operator(&state, tx, &found, &identity.subject, source(client)).await;
         }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
@@ -756,6 +832,60 @@ pub async fn approve(
     )
     .await?;
     tx.commit().await.map_err(db)?;
+    Ok(Json(decided))
+}
+
+/// Applies an approved `OperatorAdd` or `OperatorRemove`. The decision and its audit row are
+/// written first, the realm is changed next, and the transaction commits only once the realm
+/// answered: a refused realm call leaves the Change open and unaudited. A commit that fails after
+/// the realm changed is undone in the realm.
+async fn apply_operator(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    found: &OperatorChange,
+    by: &str,
+    ip: Option<String>,
+) -> Result<Json<OperatorChange>, ApiError> {
+    let subject = found.payload.subject.as_deref().unwrap_or_default();
+    let group = &state.config.bootstrap_admins;
+    let admin = people(state)?.admin().await?;
+    operators_hold(&mut tx, &admin, group, found).await?;
+    let member = found.kind == OperatorKind::OperatorAdd;
+    let decided = decide(&mut tx, &found.id, "applied", by).await?;
+    audit(
+        &mut tx,
+        by,
+        &found.id,
+        &format!("applied {}", found.kind.as_str()),
+        Some(&json!({ "subject": subject, "operator": !member })),
+        Some(&json!({ "subject": subject, "operator": member })),
+        ip.as_deref(),
+    )
+    .await?;
+    let changed = if member {
+        admin.join_group(subject, group).await?
+    } else {
+        admin.leave_group(subject, group).await?
+    };
+    if !changed {
+        return Err(ApiError::Conflict(format!(
+            "the installation realm has no group '{group}': the operators are a realm \
+             role there, which only the realm's administrator changes"
+        )));
+    }
+    if let Err(err) = tx.commit().await {
+        let undone = if member {
+            admin.leave_group(subject, group).await
+        } else {
+            admin.join_group(subject, group).await
+        };
+        tracing::error!(
+            change = %found.id,
+            undone = undone.is_ok(),
+            "operator change: the commit failed after the realm changed: {err}"
+        );
+        return Err(db(err));
+    }
     Ok(Json(decided))
 }
 

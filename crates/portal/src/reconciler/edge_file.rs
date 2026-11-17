@@ -371,7 +371,8 @@ fn routable(host: &str) -> bool {
 /// Adds a route to jc for each served host of the registry (T-7129 §2, T-7137): a copy of the
 /// base's route [`JC_ROUTE`] (its upstream, its plugin chain, `/*`) on that host alone, so header
 /// stripping and limits stay helm's. A host whose route id the base holds keeps helm's route;
-/// a host that is no plain DNS name gets none and is returned with the reason.
+/// a host that is no plain DNS name, or whose route id an earlier host took, gets none and is
+/// returned with the reason.
 fn add_org_hosts(
     document: &mut Value,
     hosts: &[String],
@@ -387,6 +388,7 @@ fn add_org_hosts(
         )));
     }
     let taken = ids(document, "routes");
+    let mut added: std::collections::BTreeMap<String, &String> = std::collections::BTreeMap::new();
     let mut hosts: Vec<&String> = hosts.iter().collect();
     hosts.sort();
     hosts.dedup();
@@ -396,9 +398,18 @@ fn add_org_hosts(
             continue;
         }
         let id = org_host_route(host);
+        if let Some(first) = added.get(&id) {
+            // `.` and `-` both read as `-` in a route id: a-b.sk and a.b-sk share one.
+            skipped.push((
+                host.clone(),
+                format!("its route id {id} is the route of {first} already"),
+            ));
+            continue;
+        }
         if taken.contains(&id) {
             continue;
         }
+        added.insert(id.clone(), host);
         let mut route = json!({
             "id": id,
             "name": id,
@@ -1221,7 +1232,8 @@ routes:
     /// T-7137 (T-7129 §2, §7 O2): each served registry host gets one route to jc on that host
     /// alone, with the base route's upstream and plugin chain; no route is host-less; a name the
     /// edge must never route to jc (`localhost`, an address, a wildcard) gets none; a host helm
-    /// routes keeps helm's route; a host no longer served loses its route on the next run.
+    /// routes keeps helm's route; a host no longer served loses its route on the next run; a host
+    /// whose route id another host took is reported.
     #[test]
     fn each_served_registry_host_gets_its_own_route_to_jc_and_nothing_else() {
         let base = base_with_jc();
@@ -1233,6 +1245,8 @@ routes:
             "*.zilina.sk",
             "a..sk",
             "data.zilina.sk",
+            "x-y.zilina.sk",
+            "x.y.zilina.sk",
         ]
         .map(str::to_owned)
         .to_vec();
@@ -1250,7 +1264,7 @@ routes:
             .iter()
             .filter(|r| r["id"].as_str().is_some_and(|id| id.starts_with("jc-org-")))
             .collect();
-        assert_eq!(to_jc.len(), 2, "{to_jc:?}");
+        assert_eq!(to_jc.len(), 3, "{to_jc:?}");
         let zilina = by_id(&file, "routes", "jc-org-data-zilina-sk").expect("a route");
         assert_eq!(zilina["host"], "data.zilina.sk");
         assert_eq!(zilina["uri"], "/*");
@@ -1264,7 +1278,17 @@ routes:
             .iter()
             .map(|(h, _)| h.as_str())
             .collect();
-        assert_eq!(unrouted, ["*.zilina.sk", "127.0.0.1", "a..sk", "localhost"]);
+        // x.y.zilina.sk's route id is x-y.zilina.sk's: it is named, never silently dropped.
+        assert_eq!(
+            unrouted,
+            [
+                "*.zilina.sk",
+                "127.0.0.1",
+                "a..sk",
+                "localhost",
+                "x.y.zilina.sk"
+            ]
+        );
         assert!(composed.skipped.is_empty());
         // The next run without the host: its route is gone, the base is back as it was.
         let next = compose_hosts(&base, &[], &EdgeLimits::default(), &[]).expect("composes");
