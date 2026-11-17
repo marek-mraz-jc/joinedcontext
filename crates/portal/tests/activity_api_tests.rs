@@ -349,6 +349,15 @@ async fn a_backlog_is_trimmed_in_bounded_batches() {
     let Some((pool, project)) = activity_db().await else {
         return;
     };
+    let mirror = common::keyed_mirror(&pool, &[&project]).await;
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &mirror, &project)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    // In the project's key, as every writer of the forced table writes (T-7201).
+    let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+        .await
+        .expect("tx");
     sqlx::query(
         "INSERT INTO activity (time, project, kind, source, summary, severity, details) \
          SELECT now() - make_interval(days => $2::int), $1, 'config.applied', 'reconciler', \
@@ -356,17 +365,15 @@ async fn a_backlog_is_trimmed_in_bounded_batches() {
     )
     .bind(&project)
     .bind(i32::try_from(RETENTION_DAYS + 1).expect("days fit"))
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .expect("seeded");
+    tx.commit().await.expect("seeded");
 
-    let done = ActivityStore::new(
-        Some(pool.clone()),
-        common::keyed_mirror(&pool, &[&project]).await,
-    )
-    .trim(Utc::now())
-    .await
-    .expect("trimmed");
+    let done = ActivityStore::new(Some(pool.clone()), mirror)
+        .trim(Utc::now())
+        .await
+        .expect("trimmed");
     assert_eq!(rows_of(&pool, &project).await, 0);
     assert!(done.rows >= 25_000, "{done:?}");
     // 25,000 of this test's rows alone take 3; other suites' old rows add to both counts alike.

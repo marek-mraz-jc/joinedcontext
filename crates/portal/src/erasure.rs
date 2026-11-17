@@ -661,7 +661,7 @@ pub async fn decline(
 
 /// The erasures matching `filter` in every project, oldest first: one `db::tenant_tx` per key
 /// the registry recorded (STO-07), a project that left the mirror included, so its erasure still
-/// finishes (T-7202); then the rows no key reaches yet, which the forcing migration ends.
+/// finishes (T-7202). Every row has a key since the forcing migration 0079 (T-7201).
 async fn every_project(pool: &PgPool, filter: &str) -> Result<Vec<Erasure>, sqlx::Error> {
     let mut found = Vec::new();
     // `filter` is one of this file's constants, never input.
@@ -679,14 +679,6 @@ async fn every_project(pool: &PgPool, filter: &str) -> Result<Vec<Erasure>, sqlx
         );
         tx.commit().await?;
     }
-    found.extend(
-        sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!(
-            "SELECT {} FROM erasures WHERE project_id IS NULL AND {filter}",
-            columns!()
-        )))
-        .fetch_all(pool)
-        .await?,
-    );
     let mut found: Vec<Erasure> = found.into_iter().map(from_row).collect();
     found.sort_by_key(|e| e.requested_at);
     Ok(found)

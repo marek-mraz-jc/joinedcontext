@@ -395,6 +395,16 @@ routes:
     body: {"identity": "AGE-SECRET-KEY-1", "request": false}
     expect: [403, 403, 403, 403, 403, allow, 403, 403]
     note: "the identity is used for this request only; no target in the fixture: 409 for the administrator (T-7171)"
+  - route: POST /organization/backups/data/versions/{version}/projects
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7208)"
+    body: {"identity": "AGE-SECRET-KEY-1"}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "lists the archive's project folders the caller may read; no target in the fixture: 409 for the administrator (T-7208)"
+  - route: POST /organization/backups/data/versions/{version}/copy
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7208)"
+    body: {"identity": "AGE-SECRET-KEY-1", "project": "bm6wyhdpioruxguvhqpu4lt2ca", "name": "air-quality-restored", "apply": false}
+    expect: [403, 403, 403, 403, 403, allow, 403, 403]
+    note: "restores one project folder into a new project; no target in the fixture: 409 for the administrator (T-7208)"
   - route: GET /organization/backups/data/restores
     rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7171)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

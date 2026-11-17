@@ -42,15 +42,24 @@ async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
             .expect("kept")
             .expect("a placed project keeps it");
     }
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, &project)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    // In the project's key, as every writer of the forced table writes (T-7201).
+    let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+        .await
+        .expect("tx");
     sqlx::query(
         "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
          VALUES ($1, 'trips', $2, 'f:1:anna', 'Anna', 'Ján rode it')",
     )
     .bind(&project)
     .bind(trip)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .expect("a comment");
+    tx.commit().await.expect("a comment");
 
     let groups = vec![Group {
         class: "BikeTrip".into(),
@@ -187,6 +196,14 @@ async fn a_proposal_is_approved_once_by_a_second_person_before_it_expires() {
         .await
         .expect("the test database answers and migrates");
     let project = format!("four-eyes-{}", crate::unique::unique());
+    // The erasure log is keyed (T-7202) and forced (T-7201): only a placed project keeps one.
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    // What the door's `project_ids::required` does first: records the project's key.
+    joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, &project)
+        .await
+        .expect("the registry")
+        .expect("a placed project has a key");
     let groups = vec![Group {
         class: "BikeTrip".into(),
         entities: vec!["urn:ngsi-ld:BikeTrip:t-1".into()],

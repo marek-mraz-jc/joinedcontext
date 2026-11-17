@@ -3,6 +3,7 @@
  * marked under that field; a saved bucket never shows its secret; a deleted backup says its
  * versions are kept; and nothing is fetched for anybody but an administrator.
  * T-7164: a restore lists the version's people missing today to invite by hand, never proposes them.
+ * T-7208: one project of a data version restores into a new project, picked from the list the server filters.
  */
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -57,6 +58,20 @@ const RESTORES = [
   { id: 8, versionId: "d1", requestedBy: "jana.kovacova", requestedAt: "2026-11-16T09:40:00Z", state: "pending", plan: PLAN, decidedBy: null, decidedAt: null, message: "" },
 ];
 
+const SOURCE = "bm6wyhdpioruxguvhqpu4lt2ca";
+const COPIED = "lyvhyrangvhw5crmtupc6m2ewa";
+const COPY_PLAN = {
+  versionId: "d1",
+  takenAt: "2026-11-16T09:00:00Z",
+  source: SOURCE,
+  sourceName: "air-quality",
+  name: "air-quality-restored",
+  projectId: "",
+  tables: { entity_comments: { create: 2, refused: 0 }, activity: { create: 0, refused: 0 } },
+  notRestored: { "portal/access_requests": "an access decision" },
+  erasuresReplayed: 1,
+};
+
 const configuration = async () => within(await screen.findByTestId("backup-configuration"));
 const data = async () => within(await screen.findByTestId("backup-data"));
 
@@ -92,6 +107,14 @@ function render(permissions: Effective, target: unknown, refuse = false, deleted
       if (url.pathname.startsWith("/api/v1/organization/backups/data/versions/") && url.pathname.endsWith("/restore")) {
         const asked = JSON.parse(await request.clone().text()) as { request?: boolean };
         return json({ plan: PLAN, request: asked.request ? { ...RESTORES[1], id: 9 } : null });
+      }
+      if (url.pathname === "/api/v1/organization/backups/data/versions/d1/projects")
+        return json({ projects: [{ id: SOURCE, name: "air-quality" }], deleted: ["old-pilot"] });
+      if (url.pathname === "/api/v1/organization/backups/data/versions/d1/copy") {
+        const asked = JSON.parse(await request.clone().text()) as { name: string; apply: boolean };
+        if (asked.name === "air-quality")
+          return json({ title: "Unprocessable Content", status: 422, detail: "name: air-quality is taken", errors: ["name: air-quality is taken by a project, a copy or an Organization; pick a new name"] }, 422);
+        return json({ ...COPY_PLAN, name: asked.name, projectId: asked.apply ? COPIED : "" });
       }
       if (url.pathname === "/api/v1/organization/backups/data/versions")
         return json({ versioning: "Enabled", objectLock: false, versions: [{ versionId: "d1", lastModified: "2026-11-16T09:00:00Z", size: 4096, isLatest: true, deleteMarker: false }] });
@@ -141,7 +164,9 @@ describe("Administration → Backups", () => {
     const { container } = render(ADMIN, null);
     expect(await (await configuration()).findByText(en.backups.form.emptyTitle)).toBeInTheDocument();
     expect(await (await data()).findByText(en.backups.form.emptyTitle)).toBeInTheDocument();
-    for (const hint of Object.values(en.backups.hint)) expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
+    // The copy dialog's two hints show in that dialog; its own test reads them there.
+    for (const [key, hint] of Object.entries(en.backups.hint))
+      if (!key.startsWith("copy")) expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
     expect((await data()).getByText(en.backups.hint.workingRecipient)).toBeInTheDocument();
     expect((await configuration()).queryByText(en.backups.hint.workingRecipient)).toBeNull();
     await expectNoAxeViolations(container);
@@ -197,6 +222,39 @@ describe("Administration → Backups", () => {
     expect(await dialog.findByText(en.backups.data.requested)).toBeInTheDocument();
     const asks = requests.filter((r) => r.path.endsWith("/versions/d1/restore")).map((r) => JSON.parse(r.body ?? "{}") as { request: boolean; identity: string });
     expect(asks.map((a) => a.request)).toEqual([false, true]);
+    expect(dialog.queryByLabelText(en.backups.data.identity)).toBeNull();
+  });
+
+  it("restores one project of a data version into a new project, checked first, the taken name marked", async () => {
+    const { requests, container } = render(ADMIN, null, false, false, DATA_TARGET);
+    fireEvent.click(await (await data()).findByRole("button", { name: en.backups.copy.action }));
+    const dialog = within(await screen.findByTestId("backup-project-copy"));
+    expect(dialog.getByRole("button", { name: en.backups.copy.list })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.change(dialog.getByLabelText(en.backups.data.identity), { target: { value: "AGE-SECRET-KEY-1TEST" } });
+    fireEvent.click(dialog.getByRole("button", { name: en.backups.copy.list }));
+    const picker = await dialog.findByLabelText(en.backups.copy.project);
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([en.backups.copy.pick, "air-quality"]);
+    expect(picker).toHaveValue(SOURCE);
+    expect(dialog.getByText(/old-pilot/)).toBeInTheDocument();
+    expect(dialog.getByText(en.backups.hint.copyName)).toBeInTheDocument();
+    expect(dialog.getByText(en.backups.hint.copyProject)).toBeInTheDocument();
+    fireEvent.change(dialog.getByLabelText(en.backups.copy.name), { target: { value: "air-quality" } });
+    fireEvent.click(dialog.getByRole("button", { name: en.backups.copy.check }));
+    expect(await dialog.findByText(/air-quality is taken by a project/)).toBeInTheDocument();
+    fireEvent.change(dialog.getByLabelText(en.backups.copy.name), { target: { value: "air-quality-restored" } });
+    fireEvent.click(dialog.getByRole("button", { name: en.backups.copy.check }));
+    expect(await dialog.findByRole("rowheader", { name: "entity_comments" })).toBeInTheDocument();
+    expect(dialog.queryByRole("rowheader", { name: "activity" })).toBeNull();
+    await expectNoAxeViolations(container);
+    fireEvent.click(dialog.getByRole("button", { name: en.backups.copy.apply }));
+    expect(await dialog.findByText(new RegExp(`Restored into air-quality-restored \\(project id ${COPIED}\\)`))).toBeInTheDocument();
+    const asks = requests.filter((r) => r.path.endsWith("/versions/d1/copy")).map((r) => JSON.parse(r.body ?? "{}") as { apply: boolean; project: string; name: string });
+    expect(asks.map((a) => [a.name, a.apply])).toEqual([
+      ["air-quality", false],
+      ["air-quality-restored", false],
+      ["air-quality-restored", true],
+    ]);
+    expect(asks.every((a) => a.project === SOURCE)).toBe(true);
     expect(dialog.queryByLabelText(en.backups.data.identity)).toBeNull();
   });
 
