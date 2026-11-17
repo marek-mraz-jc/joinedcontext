@@ -998,7 +998,7 @@ async fn drafts_are_keyed_and_read_only_under_their_key() {
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, [Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
     let names: Vec<String> = state
         .drafts
         .list(&placed)
@@ -1091,7 +1091,7 @@ async fn activity_rows_are_keyed_and_read_only_under_their_key() {
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, [Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
 
     // The Organization's own events (people, roles) take its reserved project's key (TEN-11).
     let org = joinedcontext_portal::permissions::organization_of(&state.mirror, &placed)
