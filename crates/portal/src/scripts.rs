@@ -368,6 +368,7 @@ mod tests {
             apex: None,
             domain: None,
             portals: None,
+            load: false,
         };
         check(&ground, "helsinki", proposed)
     }

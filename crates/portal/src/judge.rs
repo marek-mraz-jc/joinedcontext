@@ -29,6 +29,9 @@ pub struct Ground<'a> {
     /// The hosts listed for each Organization's portals and `portals.max` (ODP-08, ODP-09);
     /// `None` at a load of `main`, which checks what the mirror alone decides.
     pub portals: Option<&'a crate::portals::PortalSettings>,
+    /// A load of `main` ([`replay`]): an open-data Endpoint that binds a write stays served,
+    /// marked `Degraded` by the reconciler, where a proposal of it is refused (EP-187, T-7219).
+    pub load: bool,
 }
 
 impl<'a> Ground<'a> {
@@ -41,6 +44,7 @@ impl<'a> Ground<'a> {
             apex: settings.map(|s| s.apex.as_str()),
             domain: settings.map(|s| s.org_domain.as_str()),
             portals: Some(&state.config.portal_settings),
+            load: false,
         }
     }
 
@@ -131,7 +135,8 @@ pub fn reason(err: &ApiError) -> String {
 /// deriving one client id, or an App past the quota, is refused as its proposal would be; in
 /// `base` it keeps the status the one it replaces had, which the checks read (a verified
 /// domain). `envelopes` carry no status: a manifest never does (MF-04). Returns each refused
-/// manifest with its reason.
+/// manifest with its reason. An open-data Endpoint that binds a write is no refusal here
+/// ([`Ground::load`]): the reconciler marks it `Degraded` and it keeps serving reads.
 pub fn replay(
     base: &Mirror,
     settings: (&OrganizationBounds, Option<&str>, Option<&str>),
@@ -163,6 +168,7 @@ pub fn replay(
                     apex,
                     domain,
                     portals: None,
+                    load: true,
                 };
                 match manifest(&ground, &namespace, envelope) {
                     Ok(()) => {
@@ -888,6 +894,7 @@ mod tests {
                 apex: None,
                 domain: None,
                 portals: None,
+                load: false,
             };
             let project = proposed.metadata.namespace.clone().unwrap_or_default();
             let alone = check(&ground, &project, &proposed)
@@ -920,6 +927,7 @@ mod tests {
             apex: None,
             domain: None,
             portals: None,
+            load: false,
         };
         let said = |refusal: &str| {
             assert!(
@@ -949,6 +957,7 @@ mod tests {
             apex: None,
             domain: None,
             portals: None,
+            load: false,
         };
         let named = |name: &str| {
             envelope(
@@ -1095,6 +1104,67 @@ mod tests {
             .map(|(e, _)| e.metadata.name.as_str())
             .collect();
         assert_eq!(names, ["leftover-write"], "{refused:?}");
+    }
+
+    /// EP-187 (T-7219): an open-data Endpoint that binds a write is no refusal at a load of
+    /// `main` (the reconciler marks it `Degraded`), and the same Endpoint proposed onto the same
+    /// project is still a 422 naming the write Policy.
+    #[test]
+    fn an_open_data_endpoint_binding_a_write_loads_and_its_proposal_is_refused() {
+        let bounds = OrganizationBounds::default();
+        let policy = |name: &str, assignee: Value, operation: &str| {
+            envelope(
+                "Policy",
+                name,
+                "ovzdusie",
+                json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                        "assigner": "did:web:hel.fi", "assignee": assignee,
+                        "operations": [operation] }),
+            )
+        };
+        let held = [
+            envelope("ContextSpace", "air", "ovzdusie", json!({})),
+            policy(
+                "air-read",
+                json!({ "kind": "role", "id": "public" }),
+                "retrieveOps",
+            ),
+            policy(
+                "pipelines-write",
+                json!({ "kind": "serviceAccount", "id": "pipelines" }),
+                "upsertBatch",
+            ),
+        ];
+        let open = envelope(
+            "Endpoint",
+            "air",
+            "ovzdusie",
+            json!({ "contextSpaceRef": "air", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                    "audience": "public", "enabledRepresentations": ["ngsi-ld"] }),
+        );
+        let mut all = held.to_vec();
+        all.push(open.clone());
+        let refused = replay(&Mirror::new(), (&bounds, None, Some("hel.fi")), all);
+        assert!(refused.is_empty(), "{refused:?}");
+
+        let mirror = Mirror::new();
+        held.into_iter().for_each(|e| mirror.upsert(e));
+        let ground = Ground {
+            mirror: &mirror,
+            bounds: &bounds,
+            apex: None,
+            domain: Some("hel.fi"),
+            portals: None,
+            load: false,
+        };
+        match manifest(&ground, "ovzdusie", &open) {
+            Err(ApiError::Unprocessable { detail, .. }) => assert!(
+                detail.contains("an open-data Endpoint is read-only (EP-187)")
+                    && detail.contains("pipelines-write"),
+                "{detail}"
+            ),
+            other => panic!("a fresh proposal is a 422: {other:?}"),
+        }
     }
 
     /// P-15: `validate --as-portal` finds in a checkout what the Portal would refuse at load,

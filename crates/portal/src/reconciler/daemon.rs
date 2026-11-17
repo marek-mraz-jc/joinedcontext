@@ -7234,6 +7234,102 @@ output_error{stream="kpi"} 6
         assert!(run(&[(path, fixed)], "dddd4444").is_empty(), "unchanged");
     }
 
+    /// EP-187 (T-7219): an open-data Endpoint already on `main` that binds a write stays in the
+    /// mirror after a restart (no `accepted` yet), marked `Degraded`, beside the write Policy and
+    /// the Pipeline aimed at it; the load refuses none of them, where a proposal is a 422.
+    #[test]
+    fn an_open_data_endpoint_binding_a_write_stays_served_after_a_restart() {
+        let dir = Scratch::new("t7219").expect("a scratch directory");
+        let policy = |name: &str, assignee: serde_json::Value, operation: &str| {
+            manifest(
+                "Policy",
+                name,
+                json!({
+                    "contextSpaceRef": "air",
+                    "assigner": "did:web:city.example",
+                    "assignee": assignee,
+                    "operations": [operation],
+                }),
+            )
+        };
+        let (endpoint, open) = vendor_endpoint();
+        let pipeline = PIPELINE
+            .replace("NAME", "feed")
+            .replace("example.org:ovzdusie:all", "air")
+            .replace("ovzdusie", "city");
+        let files = [
+            (
+                "projects/city/spaces/air/space.yaml",
+                manifest("ContextSpace", "air", json!({})),
+            ),
+            (endpoint, open),
+            (
+                "projects/city/policies/public-read.yaml",
+                policy(
+                    "public-read",
+                    json!({"kind": "role", "id": "public"}),
+                    "queryEntity",
+                ),
+            ),
+            (
+                "projects/city/policies/pipelines-write.yaml",
+                policy(
+                    "pipelines-write",
+                    json!({"kind": "serviceAccount", "id": "pl-feed"}),
+                    "upsertBatch",
+                ),
+            ),
+            ("projects/city/pipelines/feed/feed.yaml", pipeline),
+            (
+                "projects/city/pipelines/feed/bento.yaml",
+                "input: {}\n".to_owned(),
+            ),
+        ];
+        let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+        write_tree(dir.path(), &files);
+        let render = Render {
+            layout: 1,
+            root: dir.path().to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let syncer = bare_syncer();
+        assert!(syncer.accepted.lock().expect("lock").is_none(), "a restart");
+        let loaded = Repository::load(dir.path()).expect("the repository loads");
+        let (served, refusals) =
+            syncer.refuse_invalid(&render, Arc::new(loaded), "aaaa1111", "main");
+        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
+        assert!(refusals.is_empty(), "{reasons:?}");
+        let (fresh, _) = syncer
+            .load_mirror(&render, &served, &refusals, "aaaa1111", "main")
+            .expect("the mirror loads");
+        for (kind, name) in [
+            ("Endpoint", "air"),
+            ("Policy", "pipelines-write"),
+            ("Pipeline", "feed"),
+        ] {
+            assert!(
+                fresh.get("city", kind, name).is_some(),
+                "{kind} {name} served"
+            );
+        }
+        mark_open_data_writes(&fresh);
+        let marks: Vec<_> = fresh
+            .get("city", "Endpoint", "air")
+            .and_then(|served| served.status)
+            .expect("the load gives the Endpoint a status")
+            .conditions
+            .into_iter()
+            .filter(|held| held.r#type == "Degraded")
+            .collect();
+        assert_eq!(marks.len(), 1, "{marks:?}");
+        assert_eq!(marks[0].reason.as_deref(), Some(OPEN_DATA_WRITES));
+    }
+
     /// CHG-04, CHG-05: a manifest its kind refuses is never what a converge step reads. The
     /// last good revision serves in its place with the reason beside it; a new one is listed
     /// apart and served nowhere; a valid fix clears both.
