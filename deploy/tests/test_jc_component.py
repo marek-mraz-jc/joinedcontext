@@ -251,7 +251,7 @@ def test_jc_streams_sign_in_as_their_pipelines_own_client(rendered, env):
 
 
 @requires_helmfile
-@pytest.mark.parametrize("env", ["jc-prod", "jc-dev"])
+@pytest.mark.parametrize("env", jc_environments())
 def test_jc_portal_serves_as_a_role_apart_from_the_one_that_migrates(rendered, env):
     # T-7179: the Portal migrates as jc_portal, the owner, and serves as jc_portal_app, so the
     # running Portal cannot drop the operators' audit triggers. Each password from its own Secret.
