@@ -8488,12 +8488,12 @@
       "operator": {
         "branding": {
           "title": "Branding",
-          "hint": "The installation's name, logo and colours. Set today in the installation's branding file, which your deployment provides.",
+          "hint": "The installation's name, logo and colours. An operator sets them on the Installation page; the branding file is the default.",
           "about": "The installation's name, logo and colours."
         },
         "loginTheme": {
           "title": "Sign-in pages",
-          "hint": "How the sign-in pages look. Set today in the sign-in part of the installation's branding file.",
+          "hint": "How the sign-in pages look: the logo and colours an operator sets on the Installation page.",
           "about": "How the sign-in pages look."
         },
         "smtp": {
@@ -13779,6 +13779,49 @@
         "testFirst": "Save an e-mail server first; the test uses the saved one.",
         "testSent": "The server took the test e-mail. It goes to your own address; check your inbox.",
         "testFailed": "The test e-mail was not sent. Fix what the line below names, then send the test again."
+      },
+      "branding": {
+        "title": "Branding",
+        "lead": "The installation's name, colours, logo and favicon on the Portal and the sign-in pages. An Organization's own appearance goes over it; an empty field keeps the branding file's.",
+        "set": "Set",
+        "unset": "From the branding file",
+        "waiting": "A branding change waits for a second operator. It shows once approved.",
+        "empty": "Nothing set here yet: the Portal and the sign-in pages show the branding file's name and look.",
+        "instanceName": "Full name",
+        "shortName": "Short name",
+        "colour": {
+          "primary": "Primary colour",
+          "secondary": "Secondary colour",
+          "accent": "Accent colour",
+          "background": "Background colour",
+          "text": "Text colour"
+        },
+        "logoSvg": "Logo",
+        "faviconSvg": "Favicon",
+        "fromFile": "The branding file's",
+        "removeFile": "Remove",
+        "unchanged": "Change a field first",
+        "hint": {
+          "instanceName": "On page titles and the sign-in page, for example Smart City Banská Bystrica.",
+          "shortName": "In the sidebar and browser tabs, for example Smart BB; empty takes the full name.",
+          "colour": "A hex colour, for example #0b5394; empty keeps the branding file's.",
+          "svg": "An SVG file of at most 64 KB without script, for example logo.svg."
+        },
+        "file": {
+          "size": "The file is over 64 KB. Choose a smaller SVG.",
+          "type": "The file is no SVG image. Choose an .svg file.",
+          "script": "The SVG holds script or an event handler. Export it again without them."
+        },
+        "propose": "Ask for this branding change",
+        "chooseFile": "Choose an SVG file"
+      },
+      "signIn": {
+        "title": "Sign-in pages",
+        "lead": "The sign-in pages take the logo and colours above, from the next sign-in after the approval. The preview draws them at desktop and phone width.",
+        "defaultName": "Your installation",
+        "desktop": "Desktop width",
+        "phone": "Phone width",
+        "previewOf": "Sign-in page preview, {which}"
       }
     },
     "action": {

@@ -94,13 +94,16 @@ describe("Organization → Setup", () => {
   });
 
   it("links an operator to the Installation page and tells anybody else their operator sets it", async () => {
-    // T-7152: no Keycloak value names; the e-mail server is set on the Installation page.
+    // T-7152, T-7188: no Keycloak value names; the branding, the sign-in look and the e-mail
+    // server are set on the Installation page, the backups not yet.
     renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: true }));
     await screen.findByText(en.organization.setup.operatorLead);
-    const smtp = screen.getByRole("heading", { name: en.organization.setup.operator.smtp.title }).closest("li") as HTMLElement;
-    expect(within(smtp).getByRole("link", { name: en.organization.setup.setIt })).toHaveAttribute("href", "/organization/operator-installation");
-    const branding = screen.getByRole("heading", { name: en.organization.setup.operator.branding.title }).closest("li") as HTMLElement;
-    expect(within(branding).queryByRole("link")).toBeNull();
+    for (const id of ["branding", "loginTheme", "smtp"] as const) {
+      const item = screen.getByRole("heading", { name: en.organization.setup.operator[id].title }).closest("li") as HTMLElement;
+      expect(within(item).getByRole("link", { name: en.organization.setup.setIt })).toHaveAttribute("href", "/organization/operator-installation");
+    }
+    const backups = screen.getByRole("heading", { name: en.organization.setup.operator.backups.title }).closest("li") as HTMLElement;
+    expect(within(backups).queryByRole("link")).toBeNull();
     expect(document.body.textContent).not.toMatch(/keycloak/i);
     cleanup();
     renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: false }));

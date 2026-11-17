@@ -14,6 +14,7 @@ import type { Effective } from "../src/api/permissions";
 import { OperatorAudit } from "../src/pages/operator/OperatorAudit";
 import { OperatorChanges } from "../src/pages/operator/OperatorChanges";
 import { OperatorHosts } from "../src/pages/operator/OperatorHosts";
+import { MAX_SVG_BYTES, svgRefusal } from "../src/pages/operator/OperatorBranding";
 import { OperatorInstallation } from "../src/pages/operator/OperatorInstallation";
 import { OperatorOrganizations } from "../src/pages/operator/OperatorOrganizations";
 import { HOST_STATES, stateTone, when } from "../src/pages/operator/operatorApi";
@@ -337,6 +338,90 @@ describe("installation", () => {
     render(<OperatorInstallation />, (path) => (path === "/api/v1/operator/installation" ? json(REFUSED, 403) : undefined), ADMIN);
     expect(await screen.findByText(/operators' group/)).toBeTruthy();
     expect(screen.queryByLabelText(E.host, { exact: false })).toBeNull();
+  });
+});
+
+describe("installation branding", () => {
+  const B = en.operator.installation.branding;
+  const S = en.operator.installation.signIn;
+  const LOGO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>';
+  const svgFile = (text: string, name = "logo.svg") => new File([text], name, { type: "image/svg+xml" });
+
+  it("asks for the name, colours and an uploaded logo as one BrandingSet Change and previews the sign-in page", async () => {
+    const seen = render(<OperatorInstallation />, (path, method) => {
+      if (path === "/api/v1/operator/installation") return json({ smtp: null, smtpChange: null, branding: null, brandingChange: null });
+      if (path === "/api/v1/operator/changes" && method === "POST")
+        return json({ id: "b1", kind: "BrandingSet", payload: {}, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T08:00:00Z", decidedBy: null, decidedAt: null }, 201);
+      return undefined;
+    });
+    expect(await screen.findByText(B.empty)).toBeTruthy();
+    for (const hint of [B.hint.instanceName, B.hint.shortName]) expect(screen.getByText(hint)).toBeTruthy();
+    expect(screen.getAllByText(B.hint.colour)).toHaveLength(5);
+    expect(screen.getAllByText(B.hint.svg)).toHaveLength(2);
+    expect(screen.getByRole("button", { name: B.propose })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.change(screen.getByLabelText(B.instanceName), { target: { value: " Smart City BB " } });
+    fireEvent.change(screen.getByLabelText(B.colour.primary), { target: { value: "#0b5394" } });
+    fireEvent.change(screen.getByLabelText(B.logoSvg), { target: { files: [svgFile(LOGO)] } });
+    expect(await screen.findByRole("img", { name: B.logoSvg })).toBeTruthy();
+    expect(screen.getByRole("img", { name: S.previewOf.replace("{which}", S.desktop) })).toBeTruthy();
+    expect(screen.getByRole("img", { name: S.previewOf.replace("{which}", S.phone) })).toBeTruthy();
+    expect(screen.getAllByText("Smart City BB")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: B.propose }));
+    expect(await screen.findByText(en.operator.installation.email.proposed, { exact: false })).toBeTruthy();
+    const posted = seen.find((r) => r.method === "POST" && r.path === "/api/v1/operator/changes");
+    expect(JSON.parse(posted?.body ?? "{}")).toEqual({
+      kind: "BrandingSet",
+      branding: { instanceName: "Smart City BB", colours: { primary: "#0b5394" }, logoSvg: LOGO },
+    });
+  });
+
+  it("judges an SVG file by size, type and script before it is sent", () => {
+    expect(svgRefusal(LOGO, LOGO.length)).toBeUndefined();
+    expect(svgRefusal('<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"/>', 40)).toBeUndefined();
+    expect(svgRefusal(LOGO, MAX_SVG_BYTES + 1)).toBe("size");
+    expect(svgRefusal("<html><svg/></html>", 20)).toBe("type");
+    for (const bad of ['<svg onload="x()"/>', "<svg><script/></svg>", '<svg><a href="javascript:x()"/></svg>']) {
+      expect(svgRefusal(bad, bad.length)).toBe("script");
+    }
+  });
+
+  it("refuses a logo with script, one over 64 KB and a file that is no SVG before sending it", async () => {
+    const seen = render(<OperatorInstallation />, (path) =>
+      path === "/api/v1/operator/installation" ? json({ smtp: null, smtpChange: null, branding: null, brandingChange: null }) : undefined,
+    );
+    const input = await screen.findByLabelText(B.logoSvg);
+    for (const [file, said] of [
+      [svgFile('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), B.file.script],
+      [svgFile(`<svg>${" ".repeat(70 * 1024)}</svg>`), B.file.size],
+      [svgFile("GIF89a", "logo.gif"), B.file.type],
+    ] as const) {
+      fireEvent.change(input, { target: { files: [file] } });
+      expect(await screen.findByText(said)).toBeTruthy();
+    }
+    expect(screen.queryByRole("img", { name: B.logoSvg })).toBeNull();
+    expect(seen.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("names the field the server refuses, shows the saved look and holds the form while a Change waits", async () => {
+    render(<OperatorInstallation />, (path, method) => {
+      if (path === "/api/v1/operator/installation") return json({ smtp: null, smtpChange: null, branding: { instanceName: "Smart City BB", logoSvg: LOGO }, brandingChange: null });
+      if (path === "/api/v1/operator/changes" && method === "POST")
+        return json({ title: "Unprocessable Content", status: 422, detail: "the Change cannot be taken", errors: ["branding.colours.primary: branding.colours.primary must be a hex colour such as #0b5394"] }, 422);
+      return undefined;
+    });
+    expect(await screen.findByText(B.set)).toBeTruthy();
+    expect(screen.getByLabelText(B.instanceName)).toHaveValue("Smart City BB");
+    expect(screen.getByRole("img", { name: B.logoSvg })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(B.colour.primary), { target: { value: "#0b539" } });
+    fireEvent.click(screen.getByRole("button", { name: B.propose }));
+    expect(await screen.findByText("Must be a hex colour such as #0b5394")).toBeTruthy();
+    expect(screen.getByLabelText(B.colour.primary)).toHaveAttribute("aria-invalid", "true");
+    cleanup();
+    render(<OperatorInstallation />, (path) =>
+      path === "/api/v1/operator/installation" ? json({ smtp: null, smtpChange: null, branding: null, brandingChange: "b2" }) : undefined,
+    );
+    expect(await screen.findByText(B.waiting, { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: B.propose })).toHaveAttribute("aria-disabled", "true");
   });
 });
 

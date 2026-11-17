@@ -52691,6 +52691,9 @@
         "type": "object",
         "description": "The rows a Change writes, as it was asked for and checked.",
         "properties": {
+          "branding": {
+            "$ref": "#/components/schemas/OrganizationAppearance"
+          },
           "host": {
             "type": [
               "string",
@@ -52846,6 +52849,9 @@
           "kind"
         ],
         "properties": {
+          "branding": {
+            "$ref": "#/components/schemas/OrganizationAppearance"
+          },
           "host": {
             "type": [
               "string",
@@ -57529,6 +57535,16 @@
         "type": "object",
         "description": "What the installation provides, as its operators set it from the Installation page (T-7152).",
         "properties": {
+          "branding": {
+            "$ref": "#/components/schemas/OrganizationAppearance"
+          },
+          "brandingChange": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The open `BrandingSet` Change waiting for a second operator, if any."
+          },
           "smtp": {
             "oneOf": [
               {
@@ -59628,7 +59644,8 @@
           "HostRemove",
           "OperatorAdd",
           "OperatorRemove",
-          "SmtpSet"
+          "SmtpSet",
+          "BrandingSet"
         ]
       },
       "OperatorOrganization": {
@@ -59802,6 +59819,154 @@
             "description": "One entry per Organization the caller belongs to, by name; empty when the deployment\nlists no Organization addresses."
           }
         }
+      },
+      "OrganizationAppearance": {
+        "type": "object",
+        "title": "OrganizationAppearance",
+        "description": "`spec.appearance` (UIX-16).",
+        "properties": {
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The city or region the Organization serves, e.g. `Banská Bystrica`."
+          },
+          "colours": {
+            "type": "object",
+            "description": "The colour tokens, each a hex colour such as `#0b5394`.",
+            "properties": {
+              "accent": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Highlight colour, e.g. `#f59e0b`."
+              },
+              "background": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Page background, e.g. `#ffffff`."
+              },
+              "primary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Primary action colour, e.g. `#0b5394`."
+              },
+              "secondary": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Secondary colour for links and focus, e.g. `#0f766e`."
+              },
+              "text": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Body text, e.g. `#0f172a`."
+              }
+            },
+            "additionalProperties": false
+          },
+          "contactEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`."
+          },
+          "faviconSvg": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The favicon as an SVG document of at most 64 KiB, under the same rules as the logo."
+          },
+          "homeWidgets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779)."
+          },
+          "instanceName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`."
+          },
+          "licenseDefault": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The licence a new dataset starts with, e.g. `CC-BY-4.0`."
+          },
+          "logoSvg": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The logo as an SVG document of at most 64 KiB, without script, event handler or external reference."
+          },
+          "opendataWidgets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780)."
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "`spec.appearance.pages[]`: one page of the open data portal in one language (T-7031).",
+              "required": [
+                "lang",
+                "markdown",
+                "page"
+              ],
+              "properties": {
+                "lang": {
+                  "type": "string",
+                  "description": "The language as a two-letter code, e.g. `sk`."
+                },
+                "markdown": {
+                  "type": "string",
+                  "description": "The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\\n\\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text."
+                },
+                "page": {
+                  "type": "string",
+                  "description": "The page: `connector`, `privacy`, `terms`, `support` or `accessibility`."
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text."
+          },
+          "publisher": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`."
+          },
+          "shortName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short name on sidebars and tabs, e.g. `BB`."
+          }
+        },
+        "additionalProperties": false
       },
       "OrganizationLimits": {
         "type": "object",

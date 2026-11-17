@@ -10082,6 +10082,7 @@ export interface components {
         };
         /** @description The rows a Change writes, as it was asked for and checked. */
         ChangePayload: {
+            branding?: components["schemas"]["OrganizationAppearance"];
             host?: string | null;
             organization?: string | null;
             organizationId?: string | null;
@@ -10140,6 +10141,7 @@ export interface components {
          *     }
          */
         ChangeRequest: {
+            branding?: components["schemas"]["OrganizationAppearance"];
             /** @description `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`. */
             host?: string | null;
             kind: components["schemas"]["OperatorKind"];
@@ -11907,6 +11909,9 @@ export interface components {
         };
         /** @description What the installation provides, as its operators set it from the Installation page (T-7152). */
         Installation: {
+            branding?: components["schemas"]["OrganizationAppearance"];
+            /** @description The open `BrandingSet` Change waiting for a second operator, if any. */
+            brandingChange?: string | null;
             smtp?: null | components["schemas"]["SmtpServer"];
             /** @description The open `SmtpSet` Change waiting for a second operator, if any. */
             smtpChange?: string | null;
@@ -12714,7 +12719,7 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
             domain?: string | null;
@@ -12772,6 +12777,54 @@ export interface components {
              *     lists no Organization addresses.
              */
             items: components["schemas"]["OrganizationAddressList"][];
+        };
+        /**
+         * OrganizationAppearance
+         * @description `spec.appearance` (UIX-16).
+         */
+        OrganizationAppearance: {
+            /** @description The city or region the Organization serves, e.g. `Banská Bystrica`. */
+            city?: string | null;
+            /** @description The colour tokens, each a hex colour such as `#0b5394`. */
+            colours?: {
+                /** @description Highlight colour, e.g. `#f59e0b`. */
+                accent?: string | null;
+                /** @description Page background, e.g. `#ffffff`. */
+                background?: string | null;
+                /** @description Primary action colour, e.g. `#0b5394`. */
+                primary?: string | null;
+                /** @description Secondary colour for links and focus, e.g. `#0f766e`. */
+                secondary?: string | null;
+                /** @description Body text, e.g. `#0f172a`. */
+                text?: string | null;
+            };
+            /** @description The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. */
+            contactEmail?: string | null;
+            /** @description The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. */
+            faviconSvg?: string | null;
+            /** @description Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779). */
+            homeWidgets?: string[];
+            /** @description Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`. */
+            instanceName?: string | null;
+            /** @description The licence a new dataset starts with, e.g. `CC-BY-4.0`. */
+            licenseDefault?: string | null;
+            /** @description The logo as an SVG document of at most 64 KiB, without script, event handler or external reference. */
+            logoSvg?: string | null;
+            /** @description Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780). */
+            opendataWidgets?: string[];
+            /** @description The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text. */
+            pages?: {
+                /** @description The language as a two-letter code, e.g. `sk`. */
+                lang: string;
+                /** @description The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\n\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text. */
+                markdown: string;
+                /** @description The page: `connector`, `privacy`, `terms`, `support` or `accessibility`. */
+                page: string;
+            }[];
+            /** @description The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. */
+            publisher?: string | null;
+            /** @description Short name on sidebars and tabs, e.g. `BB`. */
+            shortName?: string | null;
         };
         OrganizationLimits: {
             entries: components["schemas"]["LimitEntry"][];

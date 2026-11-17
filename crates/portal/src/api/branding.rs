@@ -84,13 +84,16 @@ pub async fn get_asset(
     // The request's Organization carries its own as an SVG in its manifest (UIX-16), checked
     // when the Change was proposed; served as an attachment that never sniffs into a page, so
     // even an SVG the check missed renders only inside an `<img>` (RTE-14).
+    // An Organization without its own takes the one the installation's operators set (T-7188).
     if name == Branding::INLINE_SVG {
+        let pick = |look: &jc_core::kinds::OrganizationAppearance| match asset.as_str() {
+            "logo" => look.logo_svg.clone(),
+            _ => look.favicon_svg.clone(),
+        };
         let svg = state
             .pinned_organization()
-            .and_then(|spec| match asset.as_str() {
-                "logo" => spec.appearance.logo_svg,
-                _ => spec.appearance.favicon_svg,
-            });
+            .and_then(|spec| pick(&spec.appearance))
+            .or_else(|| state.installation_look().and_then(|look| pick(&look)));
         let svg = svg.ok_or_else(|| ApiError::NotFound(format!("no {asset} is configured")))?;
         return Ok(served(&format!("{asset}.svg"), svg.into_bytes()));
     }

@@ -55,14 +55,14 @@ function State({ done }: { done: boolean }): JSX.Element {
 
 /**
  * What an operator item offers: an operator opens the Installation page where it is set (the
- * e-mail server today, T-7152); anybody else reads that their operator sets it.
+ * branding and the sign-in look, T-7188, and the e-mail server, T-7152); anybody else reads that their operator sets it.
  */
 function OperatorAction({ item, operates }: { item: string; operates: boolean }): JSX.Element | null {
   const { t } = useTranslation();
   if (!operates) {
     return <span className="text-caption text-fg-muted">{t("organization.setup.operatorSets")}</span>;
   }
-  if (item !== "smtp") return null;
+  if (!["branding", "loginTheme", "smtp"].includes(item)) return null;
   return (
     <Link to="/organization/$tab" params={{ tab: "operator-installation" }} className={buttonClass("secondary", "sm")}>
       {t("organization.setup.setIt")}
