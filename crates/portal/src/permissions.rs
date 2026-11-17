@@ -195,6 +195,60 @@ pub fn holds_at_organization(
             })
 }
 
+/// The rights in a branch (TEN-12, ADM-04): no grant is inherited, its creator and the parent's
+/// approvers (people) get their grants of the whole parent and no more; a grant bound to one of
+/// the parent's spaces names a space the branch does not hold, so it is left out. An expired
+/// branch, or a branch this Portal does not know, gives nobody anything.
+fn branch_effective(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    project: &str,
+    now: DateTime<Utc>,
+) -> Effective {
+    let mut effective = Effective {
+        project: project.to_owned(),
+        bootstrap: false,
+        grants: Vec::new(),
+        projects: None,
+    };
+    let crate::project_ids::BranchState::Live(branch) = crate::project_ids::branch_state(project)
+    else {
+        return effective;
+    };
+    let parent = effective_of_parent(mirror, bootstrap_group, identity, &branch.parent, now);
+    let creator = identity.subject == branch.created_by;
+    let approver = identity.client.is_none() && parent.may_anything(Verb::Approve);
+    if parent.bootstrap || creator || approver {
+        effective.bootstrap = parent.bootstrap;
+        effective.grants = parent
+            .grants
+            .into_iter()
+            .filter(|grant| grant.space.is_none() && grant.organization.is_none())
+            .collect();
+    }
+    effective
+}
+
+/// [`effective`] of a branch's parent, which is never itself a branch (the door refuses one).
+fn effective_of_parent(
+    mirror: &Mirror,
+    bootstrap_group: &str,
+    identity: &Identity,
+    parent: &str,
+    now: DateTime<Utc>,
+) -> Effective {
+    if jc_router::branch_name(parent) {
+        return Effective {
+            project: parent.to_owned(),
+            bootstrap: false,
+            grants: Vec::new(),
+            projects: None,
+        };
+    }
+    effective(mirror, bootstrap_group, identity, parent, now)
+}
+
 /// Reads every `Role` and `RoleBinding` of the mirror and keeps the rules whose binding names
 /// the caller, covers the project and is in force at `now`.
 pub fn effective(
@@ -204,6 +258,9 @@ pub fn effective(
     project: &str,
     now: DateTime<Utc>,
 ) -> Effective {
+    if jc_router::branch_name(project) {
+        return branch_effective(mirror, bootstrap_group, identity, project, now);
+    }
     // On an Organization's own Portal host (`organization_host`) only its projects exist, for
     // everyone, the bootstrap group included: another Organization's project reads as absent.
     let pin = crate::organization_host::organization();
@@ -1268,10 +1325,12 @@ pub fn is_service_account(mirror: &Mirror, identity: &Identity) -> bool {
     account_of(mirror, identity).is_some()
 }
 
-/// The account a bearer token speaks for (PF-46, PF-49): its `azp` is the derived client id of
-/// exactly one `ServiceAccount`, and its user is that client's own service account, so a person
-/// who signed in through some client is never mistaken for it. An id two accounts derive is
-/// nobody's, as at the gateway (T-1454).
+/// The account a bearer token speaks for (PF-46, PF-49): its `azp` is the client the realm's
+/// registry holds for exactly one `ServiceAccount` (ARCH/TEN-04, [`Mirror::client_account`]), or,
+/// for a client the registry does not hold yet, the derived id of exactly one account that has no
+/// other client; and its user is that client's own service account, so a person who signed in
+/// through some client is never mistaken for it. An id two accounts derive is nobody's, as at the
+/// gateway (T-1454).
 fn account_of(mirror: &Mirror, identity: &Identity) -> Option<(String, ServiceAccountSpec)> {
     use jc_core::kinds::service_account::keycloak_client_id;
     let client = identity.client.as_deref()?;
@@ -1281,21 +1340,30 @@ fn account_of(mirror: &Mirror, identity: &Identity) -> Option<(String, ServiceAc
     {
         return None;
     }
-    let mut matches = mirror.namespaces().into_iter().flat_map(|namespace| {
-        mirror
-            .list(&namespace, "ServiceAccount", &ListOptions::default())
-            .items
-            .into_iter()
-            .filter(move |env| keycloak_client_id(&namespace, &env.metadata.name) == client)
-    });
-    let env = matches.next()?;
-    if matches.next().is_some() {
-        tracing::warn!(
-            client,
-            "two ServiceAccounts derive this Keycloak client id; it grants nothing"
-        );
-        return None;
-    }
+    let env = match mirror.client_account(client) {
+        Some((project, name)) => mirror.get(&project, "ServiceAccount", &name)?,
+        None => {
+            let mut matches = mirror.namespaces().into_iter().flat_map(|namespace| {
+                mirror
+                    .list(&namespace, "ServiceAccount", &ListOptions::default())
+                    .items
+                    .into_iter()
+                    .filter(move |env| {
+                        keycloak_client_id(&namespace, &env.metadata.name) == client
+                            && mirror.client_id(&namespace, &env.metadata.name) == client
+                    })
+            });
+            let env = matches.next()?;
+            if matches.next().is_some() {
+                tracing::warn!(
+                    client,
+                    "two ServiceAccounts derive this Keycloak client id; it grants nothing"
+                );
+                return None;
+            }
+            env
+        }
+    };
     match serde_json::from_value::<ServiceAccountSpec>(env.spec) {
         Ok(spec) => Some((env.metadata.name, spec)),
         Err(e) => {

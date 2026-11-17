@@ -509,6 +509,8 @@ fn claims_of(state: &AppState, session: &Session) -> Claims {
             participant: None,
             aud: Vec::new(),
             scope: None,
+            sub_kind: Some("person".to_owned()),
+            project: None,
         })
 }
 

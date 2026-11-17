@@ -399,8 +399,52 @@ fn check_mqtt_binding(binding: &RoleBinding) -> Result<()> {
     Ok(())
 }
 
-/// The Keycloak client id of a service account: derived, never chosen (Architecture/12 §3).
+/// The realm's workload clients, client id to (project, account), as the process that lists the
+/// realm last recorded them ([`set_client_registry`]): the Portal's reconciler in `jc`, whose
+/// gateway, MQTT door and manifest assembly share this process and so this table (T-7214).
+static CLIENTS: std::sync::RwLock<std::collections::BTreeMap<String, (String, String)>> =
+    std::sync::RwLock::new(std::collections::BTreeMap::new());
+
+/// Replaces the client registry with the realm's managed workload clients, client id to
+/// (project, account name).
+pub fn set_client_registry(clients: std::collections::BTreeMap<String, (String, String)>) {
+    *CLIENTS.write().unwrap_or_else(|p| p.into_inner()) = clients;
+}
+
+/// Adds one client the realm now holds for (project, account), between two listings.
+pub fn record_client(id: &str, project: &str, name: &str) {
+    CLIENTS
+        .write()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(id.to_owned(), (project.to_owned(), name.to_owned()));
+}
+
+/// The account (project, name) the registry holds for the client `id`, `None` for a client it
+/// does not hold.
+pub fn client_account(id: &str) -> Option<(String, String)> {
+    CLIENTS
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(id)
+        .cloned()
+}
+
+/// The Keycloak client id of a service account: the id the realm's registry holds for it (a new
+/// client is named by `jc_types::internal_name`, ARCH/TEN-10), else the derived
+/// `{project}-{name}` every live client keeps (MIG-03) and a process without the registry reads
+/// (Architecture/12 §3).
 pub fn keycloak_client_id(project: &str, name: &str) -> String {
+    CLIENTS
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .find(|(_, (p, n))| p == project && n == name)
+        .map(|(id, _)| id.clone())
+        .unwrap_or_else(|| derived_client_id(project, name))
+}
+
+/// The id a service account's client had before the registry: `{project}-{name}`.
+pub fn derived_client_id(project: &str, name: &str) -> String {
     format!("{project}-{name}")
 }
 
@@ -613,5 +657,30 @@ impl BindingValidity {
     /// `true` when `now` is inside the window (bounds inclusive).
     pub fn contains(&self, now: DateTime<Utc>) -> bool {
         self.not_before.is_none_or(|from| from <= now) && self.not_after.is_none_or(|to| now <= to)
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    /// T-7214: a client id round trip through the registry, a new name and a derived one alike;
+    /// an account the registry does not hold keeps its derived id.
+    #[test]
+    fn a_client_id_resolves_through_the_registry_old_and_new_names_alike() {
+        let new = "aaaaaaaaaaaaaaaaaaaaaaaaab__baaaaaaaaaaaaaaaaaaaaaaaab__ingest";
+        record_client(new, "regtest-a", "ingest");
+        record_client("regtest-b-pipelines", "regtest-b", "pipelines");
+        assert_eq!(keycloak_client_id("regtest-a", "ingest"), new);
+        assert_eq!(
+            client_account(new),
+            Some(("regtest-a".into(), "ingest".into()))
+        );
+        assert_eq!(
+            keycloak_client_id("regtest-b", "pipelines"),
+            "regtest-b-pipelines"
+        );
+        assert_eq!(keycloak_client_id("regtest-c", "kpi"), "regtest-c-kpi");
+        assert_eq!(client_account("regtest-c-kpi"), None);
     }
 }

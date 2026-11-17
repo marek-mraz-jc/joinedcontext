@@ -644,3 +644,31 @@ pub(super) fn written() -> Value {
         ],
     }})
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-7214: a project's `pipelines` client the realm's registry names by `internal_name` is the
+    /// client a stream presents, and a pipeline's own client its secret variable is named after.
+    #[test]
+    fn a_stream_presents_the_client_id_the_registry_holds() {
+        let new = "aaaaaaaaaaaaaaaaaaaaaaaaab__baaaaaaaaaaaaaaaaaaaaaaaac__pipelines";
+        jc_core::kinds::service_account::record_client(new, "idreg", PIPELINE_ACCOUNT);
+        assert_eq!(pipeline_oauth2("idreg")["client_key"], new);
+        let own = "aaaaaaaaaaaaaaaaaaaaaaaaab__baaaaaaaaaaaaaaaaaaaaaaaac__pl-trees";
+        jc_core::kinds::service_account::record_client(
+            own,
+            "idreg",
+            &jc_core::kinds::pipeline_identity::account_name("trees"),
+        );
+        assert_eq!(
+            pipeline_secret_var("idreg", "trees"),
+            own_client_secret_var(own)
+        );
+        assert_eq!(
+            pipeline_oauth2("idother")["client_key"],
+            "idother-pipelines"
+        );
+    }
+}

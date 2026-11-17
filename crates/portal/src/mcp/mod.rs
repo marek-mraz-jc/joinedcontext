@@ -38,7 +38,7 @@
 //!   `413` naming what to narrow, so one call cannot spend the Portal's memory on one client.
 
 use axum::body::{Body, Bytes};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -83,6 +83,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/v1/mcp",
             post(handle_mcp).get(|| async { StatusCode::METHOD_NOT_ALLOWED }),
+        )
+        .route(
+            "/api/v1/projects/{project}/mcp",
+            post(handle_project_mcp).get(|| async { StatusCode::METHOD_NOT_ALLOWED }),
         )
         .route(
             "/.well-known/oauth-protected-resource/api/v1/mcp",
@@ -211,6 +215,115 @@ pub async fn handle_mcp(
     };
 
     dispatch(state, caller, body).await
+}
+
+/// The project door (ARCH/MCP-33, T-7194): the router places `/{org}/{ProjectId}/api/mcp` here.
+/// Every message is held to `project`: one naming another project, in `params`, its
+/// `arguments` or a `jc://` resource address, is answered as an unknown project, and the rest
+/// are answered as `/api/v1/mcp` answers them with `project` set, so `tools/list` is that
+/// project's. The handshake names the server `{org}.{ProjectId}.manage`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/mcp",
+    tag = "mcp",
+    params(("project" = String, Path, description = "The project every message is held to, e.g. `traffic`")),
+    request_body(
+        content = Object,
+        description = "A JSON-RPC 2.0 request object, as on `/api/v1/mcp`. A message naming another \
+                       project in `params`, its `arguments` or a `jc://` address is answered as an \
+                       unknown project (MCP-33).",
+        content_type = "application/json",
+        example = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} })
+    ),
+    responses(
+        (status = 200, description = "The JSON-RPC response object; `tools/list` lists this \
+                                      project's tools and the handshake names the server \
+                                      `{org}.{ProjectId}.manage`", body = Object),
+        (status = 401, description = "No bearer, or one this realm did not sign; the answer \
+                                      carries `WWW-Authenticate` with the metadata document", body = Object),
+        (status = 403, description = "The token is valid and its account may not use this door", body = Object),
+        (status = 405, description = "Method not allowed: the door takes POST"),
+        (status = 429, description = "Past the per-subject rate limit of this minute (AG-60)", body = Object)
+    ),
+    security(("mcp_bearer" = []))
+)]
+pub async fn handle_project_mcp(
+    State(state): State<AppState>,
+    Path(project): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let body = match held_to(&body, &project) {
+        Ok(body) => body,
+        Err(Some(id)) => {
+            return json_response(StatusCode::OK, &error(id, -32602, "unknown project"));
+        }
+        Err(None) => return parse_error(),
+    };
+    let initialize = serde_json::from_slice::<Value>(&body)
+        .is_ok_and(|m| m.get("method").and_then(Value::as_str) == Some("initialize"));
+    let resp = handle_mcp(State(state.clone()), headers, body).await;
+    if !initialize || resp.status() != StatusCode::OK {
+        return resp;
+    }
+    let Some(pool) = state.db.as_ref() else {
+        return resp;
+    };
+    let Ok(Some((organization, key))) = crate::project_ids::owned(pool, &project).await else {
+        return resp;
+    };
+    let (parts, answer) = resp.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(answer, MAX_RESPONSE_BYTES).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let Ok(mut message) = serde_json::from_slice::<Value>(&bytes) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    if let Some(info) = message.pointer_mut("/result/serverInfo/name") {
+        *info = Value::String(format!(
+            "{organization}.{}.manage",
+            key.project.path_segment()
+        ));
+    }
+    json_response(StatusCode::OK, &message)
+}
+
+/// `body` with `params.project` set to `project`; `Err(Some(id))` when the message names another
+/// project (MCP-33: not found), `Err(None)` when it is no JSON-RPC object.
+fn held_to(body: &Bytes, project: &str) -> Result<Bytes, Option<Value>> {
+    let Ok(Value::Object(mut message)) = serde_json::from_slice::<Value>(body) else {
+        return Err(None);
+    };
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    let params = message
+        .entry("params")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(params) = params.as_object_mut() else {
+        return Err(Some(id));
+    };
+    let named = [
+        params.get("project"),
+        params.get("arguments").and_then(|a| a.get("project")),
+    ];
+    if named
+        .into_iter()
+        .flatten()
+        .any(|p| p.as_str() != Some(project))
+    {
+        return Err(Some(id));
+    }
+    let foreign_uri = params
+        .get("uri")
+        .and_then(Value::as_str)
+        .and_then(|uri| uri.strip_prefix("jc://"))
+        .is_some_and(|rest| !matches!(rest.split('/').next(), Some(p) if p == project || p == "-"));
+    if foreign_uri {
+        return Err(Some(id));
+    }
+    params.insert("project".into(), Value::String(project.to_owned()));
+    serde_json::to_vec(&message)
+        .map(Bytes::from)
+        .map_err(|_| None)
 }
 
 /// The JSON-RPC half every door shares: what the message asks for, answered as the caller.
@@ -1647,6 +1760,34 @@ fn too_many_at_once() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MCP-33 (T-7194): the project door holds every message to its project; one naming
+    /// another project, by params, arguments or a resource address, is not found.
+    #[test]
+    fn the_project_door_holds_a_message_to_its_project() {
+        let held = |body: Value| held_to(&Bytes::from(body.to_string()), "doprava");
+        let set = held(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})).expect("held");
+        let set: Value = serde_json::from_slice(&set).expect("json");
+        assert_eq!(set["params"]["project"], "doprava");
+        for same in [
+            json!({"id": 2, "method": "tools/call", "params": {"name": "x", "arguments": {"project": "doprava"}}}),
+            json!({"id": 3, "method": "resources/read", "params": {"uri": "jc://doprava/spaces/a"}}),
+            json!({"id": 4, "method": "resources/read", "params": {"uri": "jc://-/organizations/a"}}),
+        ] {
+            assert!(held(same.clone()).is_ok(), "{same}");
+        }
+        for other in [
+            json!({"id": 5, "method": "tools/list", "params": {"project": "ovzdusie"}}),
+            json!({"id": 6, "method": "tools/call", "params": {"name": "x", "arguments": {"project": "ovzdusie"}}}),
+            json!({"id": 7, "method": "tools/call", "params": {"name": "x", "arguments": {"project": 7}}}),
+            json!({"id": 8, "method": "resources/read", "params": {"uri": "jc://ovzdusie/spaces/a"}}),
+            json!({"id": 9, "method": "tools/list", "params": "doprava"}),
+        ] {
+            let id = other["id"].clone();
+            assert_eq!(held(other.clone()).err(), Some(Some(id)), "{other}");
+        }
+        assert_eq!(held(json!([1])).err(), Some(None));
+    }
 
     /// JC2-24: the challenge names the scope a Keycloak client asks for (MCP authorization,
     /// scope selection), as the connector door's challenge does.

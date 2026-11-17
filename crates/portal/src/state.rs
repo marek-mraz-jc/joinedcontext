@@ -484,6 +484,10 @@ impl AppState {
         };
         let mut state = Self::new(config, oidc);
         state.attach_stores(&db);
+        // Before the first sync: a branch's manifests and rights are read against this table.
+        if let Some(pool) = db.as_ref() {
+            crate::project_ids::watch_branches(pool.clone()).await;
+        }
         // The live updates write their subscriptions as the reconciler writes declared ones: through
         // the space surface, as this Portal's own ServiceAccount (API/01 §32).
         if let (Some(base), Some(oidc), Some((id, secret)), Some(domain)) = (
@@ -997,6 +1001,10 @@ impl AppState {
                                 .await
                         })
                     }));
+                    let clients = match self.db.clone() {
+                        Some(pool) => clients.with_keys(pool),
+                        None => clients,
+                    };
                     syncer = syncer.with_workload_clients(Arc::new(clients))
                 }
                 None => tracing::warn!(

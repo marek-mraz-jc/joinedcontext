@@ -379,7 +379,7 @@
       "create": {
         "live": {
           "spec": "readiness-project.spec.ts",
-          "test": "a project is opened, duplicated where it can be, and deleted"
+          "test": "a project is opened, branched and renewed, duplicated where it can be, and deleted"
         },
         "assistant": "jc_project_create",
         "routes": [
@@ -396,11 +396,31 @@
       "copy": {
         "live": {
           "spec": "readiness-project.spec.ts",
-          "test": "a project is opened, duplicated where it can be, and deleted"
+          "test": "a project is opened, branched and renewed, duplicated where it can be, and deleted"
         },
         "personOnly": "copying a whole repository of the forge under a new slug is a person's decision in the Portal, not a tool a run holds (PF-89)",
         "routes": [
           "POST /api/v1/projects/{project}/duplicate"
+        ]
+      },
+      "branch": {
+        "live": {
+          "spec": "readiness-project.spec.ts",
+          "test": "a project is opened, branched and renewed, duplicated where it can be, and deleted"
+        },
+        "personOnly": "the Portal's assistant prototypes in a workspace copy (jc_workspace_open); a branch is a project of its own with only its creator's rights in the parent, opened at its REST door by a person or by an agent with its own token (TEN-12, RTE-05)",
+        "routes": [
+          "POST /api/v1/projects/{project}/branches"
+        ]
+      },
+      "renew-branch": {
+        "live": {
+          "spec": "readiness-project.spec.ts",
+          "test": "a project is opened, branched and renewed, duplicated where it can be, and deleted"
+        },
+        "personOnly": "renewing keeps a branch alive past its 7 days, at most to 30, and is audited per renewal; only its creator or an approver of the parent renews it at the REST door, and the Portal's assistant opens none (CHG-15)",
+        "routes": [
+          "POST /api/v1/projects/{project}/branches/{id}/renewal"
         ]
       },
       "pin-release": {
@@ -416,7 +436,7 @@
       "retire": {
         "live": {
           "spec": "readiness-project.spec.ts",
-          "test": "a project is opened, duplicated where it can be, and deleted"
+          "test": "a project is opened, branched and renewed, duplicated where it can be, and deleted"
         },
         "personOnly": "deleting a project removes its repository and every resource in it, and no agent may take that act (AG-11)",
         "routes": [
@@ -1669,6 +1689,17 @@
           "POST /api/v1/projects/{project}/mcp-elicitations/{id}/decision",
           "POST /api/v1/mcp-confirmations/{id}/decision"
         ]
+      },
+      "propose-by-mcp-client": {
+        "live": {
+          "spec": "an-mcp-client-does-the-load-journey-with.spec.ts",
+          "test": "an MCP client with a ServiceAccount token checks and proposes a data source and a pipeline, is refused approval and bringing a workspace back, and a person approves"
+        },
+        "assistant": "jc_resource_propose",
+        "routes": [
+          "POST /api/v1/mcp",
+          "POST /api/v1/projects/{project}/mcp"
+        ]
       }
     },
     "draft": {
@@ -2024,6 +2055,8 @@
         "routes": [
           "POST /api/v1/organization/backups/configuration/versions/{version}/restore",
           "POST /api/v1/organization/backups/data/versions/{version}/restore",
+          "POST /api/v1/organization/backups/data/versions/{version}/projects",
+          "POST /api/v1/organization/backups/data/versions/{version}/copy",
           "POST /api/v1/organization/backups/data/restores/{id}/approve",
           "POST /api/v1/organization/backups/data/restores/{id}/decline"
         ]
@@ -2033,9 +2066,6 @@
   "unclaimed": {
     "POST /api/v1/activity": {
       "why": "the browser's own activity log, sent as a side effect of every page and never a step a person takes"
-    },
-    "POST /api/v1/mcp": {
-      "why": "the MCP door carries every registered operation, and each operation is claimed by the step whose tool it is"
     },
     "PUT /api/v1/preferences": {
       "why": "a person's own language, theme and last project, stored for them and never a workflow step"

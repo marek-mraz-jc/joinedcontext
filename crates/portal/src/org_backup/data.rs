@@ -28,8 +28,18 @@ use super::{projects_of, Target};
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// The archive layout this code writes; a restore refuses any other.
-pub const FORMAT_VERSION: u32 = 1;
+/// The archive layout this code writes (T-7208): the Portal's rows of each project in a folder
+/// named by its id. A restore reads this one and [`FORMAT_FLAT`].
+pub const FORMAT_VERSION: u32 = 2;
+
+/// The layout before project folders (T-7168): every Portal row in `module/portal/<table>.jsonl`.
+pub const FORMAT_FLAT: u32 = 1;
+
+/// The folder of one project's Portal rows: `module/portal/project/<ProjectId>/`, the id in its
+/// 26-character path form (TEN-01), never the dashed UUID.
+pub fn project_folder(project: &jc_types::ProjectId) -> String {
+    format!("module/portal/project/{}/", project.path_segment())
+}
 
 /// One table a module exports: the rows `filter` selects (`$1` is the key list named by `keys`,
 /// a `text[]`), with only the `columns` named here.
@@ -55,6 +65,18 @@ pub struct Source {
     /// each table is read once with nothing set (a table with row-level security then answers no
     /// row).
     pub scopes: Vec<Vec<(&'static str, String)>>,
+    /// The Portal's project folders (format 2, T-7208): when set, each table is read once per
+    /// folder under that folder's key into its own file instead of once per scope. Empty for
+    /// the modules, which keep one file per table.
+    pub folders: Vec<Folder>,
+}
+
+/// One project folder of the Portal's part: the rows of `project` read under `key`; `None` is
+/// the Organization's own rows, under its reserved project (TEN-11).
+#[derive(Debug, Clone)]
+pub struct Folder {
+    pub key: jc_types::ProjectKey,
+    pub project: Option<String>,
 }
 
 /// One module's part of the index.
@@ -71,9 +93,17 @@ pub struct ModuleIndex {
     /// The keys that selected the Organization's rows, by name (critique row 3).
     #[serde(default)]
     pub keys: BTreeMap<String, Vec<String>>,
-    /// Rows per table, each in `module/<module>/<table>.jsonl`.
+    /// Rows per table, each in `module/<module>/<table>.jsonl`, or for the Portal (format 2)
+    /// summed over its project folders.
     #[serde(default)]
     pub tables: BTreeMap<String, u64>,
+    /// The project folders, by project id in its path form: the project's name when the backup
+    /// ran (format 2).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub projects: BTreeMap<String, String>,
+    /// The folder of the Organization's own rows, its reserved project's id (format 2).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub organization_project: String,
 }
 
 /// `index.yaml` of a data archive.
@@ -588,6 +618,22 @@ pub const PORTAL_TABLES: &[Table] = &[
         // Organization must not carry that Organization's reserved id into this archive.
         filter: "name = ANY($1) AND NOT reserved",
     },
+    // The lineage of each project an administrator restored from a backup folder (T-7208).
+    Table {
+        name: "project_copies",
+        columns: &[
+            "id",
+            "source",
+            "organization",
+            "version_id",
+            "taken_at",
+            "copied_by",
+            "copied_at",
+            "rows",
+        ],
+        keys: "organization",
+        filter: "organization = ANY($1)",
+    },
 ];
 
 /// The Portal tables left out of the data backup on purpose, with the reason. Every table of
@@ -602,6 +648,15 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
         "a person's connector calls, not an Organization's",
     ),
     ("user_preferences", "a person's own settings"),
+    (
+        "project_branches",
+        "a branch lives at most 30 days and its id stays a tombstone (CHG-15): a restore never \
+         revives one",
+    ),
+    (
+        "project_branch_renewals",
+        "the renewal audit of branches, which a restore never revives (CHG-15)",
+    ),
     (
         "revocations",
         "sign-in revocations of people, installation-wide",
@@ -654,21 +709,33 @@ async fn portal_source(state: &AppState, organization: &str) -> Result<Source, S
     // keyed rows, and its other project rows still export.
     let projects = projects_of(&state.mirror, organization);
     let unreadable = |err: sqlx::Error| format!("the project registry could not be read: {err}");
-    let mut keys_of = Vec::new();
+    let mut folders = Vec::new();
     if let Some(key) = crate::project_ids::reserved(&pool, organization)
         .await
         .map_err(unreadable)?
     {
-        keys_of.push(key);
+        folders.push(Folder { key, project: None });
     }
     for project in &projects {
         if let Some(key) = crate::project_ids::key_of(&pool, &state.mirror, project)
             .await
             .map_err(unreadable)?
         {
-            keys_of.push(key);
+            folders.push(Folder {
+                key,
+                project: Some(project.clone()),
+            });
         }
     }
+    let keys_of: Vec<_> = folders.iter().map(|f| f.key).collect();
+    // Folders only when every project and the Organization have a key: else one flat file per
+    // table, so no project's unkeyed rows go missing (ponytail: an Organization outside the
+    // registry; the next backup after its registration writes folders).
+    let folders = if folders.len() == projects.len() + 1 {
+        folders
+    } else {
+        Vec::new()
+    };
     let mut keys = BTreeMap::new();
     keys.insert("projects", projects);
     keys.insert("organization", vec![organization.to_owned()]);
@@ -686,6 +753,7 @@ async fn portal_source(state: &AppState, organization: &str) -> Result<Source, S
                 ]
             })
             .collect(),
+        folders,
     })
 }
 
@@ -765,7 +833,28 @@ async fn export_module(
             .collect(),
         ..ModuleIndex::default()
     };
+    for folder in &source.folders {
+        match &folder.project {
+            Some(name) => index
+                .projects
+                .insert(folder.key.project.path_segment(), name.clone()),
+            None => {
+                index.organization_project = folder.key.project.path_segment();
+                None
+            }
+        };
+    }
     for table in source.tables {
+        if !source.folders.is_empty() {
+            let rows = export_folders(zip, &mut tx, source, table, options)
+                .await
+                .map_err(|e| match e {
+                    Exported::Db(e) => failed(e),
+                    Exported::Archive(e) => e,
+                })?;
+            index.tables.insert(table.name.to_owned(), rows);
+            continue;
+        }
         let keys = source.keys.get(table.keys).cloned().unwrap_or_default();
         zip.start_file(format!("module/{module}/{}.jsonl", table.name), options)
             .map_err(archive_error)?;
@@ -812,6 +901,63 @@ async fn export_module(
     Ok(index)
 }
 
+enum Exported {
+    Db(sqlx::Error),
+    Archive(ApiError),
+}
+
+/// Reads `table` once per project folder of `source`, under that folder's key, into
+/// `module/portal/project/<id>/<table>.jsonl`: a table keyed by project into each project's
+/// folder, a table of the Organization into its reserved project's. A table row-level security
+/// guards binds every key and the policy keeps the folder's rows; any other table binds only the
+/// folder's own project. Answers the rows written.
+async fn export_folders(
+    zip: &mut Zip,
+    tx: &mut sqlx::PgConnection,
+    source: &Source,
+    table: &Table,
+    options: zip::write::SimpleFileOptions,
+) -> Result<u64, Exported> {
+    let guarded: bool = sqlx::query_scalar("SELECT row_security_active($1::regclass)")
+        .bind(quoted(table.name))
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(Exported::Db)?;
+    let all = source.keys.get(table.keys).cloned().unwrap_or_default();
+    let sql = select_of(source.schema, table);
+    let mut rows = 0u64;
+    for folder in &source.folders {
+        let keys = match (&folder.project, table.keys) {
+            (None, "organization") => all.clone(),
+            (Some(_), "projects") if guarded => all.clone(),
+            (Some(project), "projects") => vec![project.clone()],
+            _ => continue,
+        };
+        crate::db::enter(&mut *tx, folder.key)
+            .await
+            .map_err(Exported::Db)?;
+        zip.start_file(
+            format!(
+                "{}{}.jsonl",
+                project_folder(&folder.key.project),
+                table.name
+            ),
+            options,
+        )
+        .map_err(|e| Exported::Archive(archive_error(e)))?;
+        let mut stream = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(&keys)
+            .fetch(&mut *tx);
+        while let Some(line) = stream.try_next().await.map_err(Exported::Db)? {
+            zip.write_all(line.as_bytes())
+                .and_then(|()| zip.write_all(b"\n"))
+                .map_err(|e| Exported::Archive(archive_error(e)))?;
+            rows += 1;
+        }
+    }
+    Ok(rows)
+}
+
 const README_LEFT_OUT: &str = "\
 ## Left out on purpose
 
@@ -825,7 +971,9 @@ fn readme(index: &DataIndex) -> String {
     let mut text = format!(
         "# Data backup of {}\n\nTaken {} by {}. Format version {}. `index.yaml` lists every \
          module, the keys that selected the Organization's rows there and the rows per table.\n\n\
-         Each module's rows are `module/<module>/<table>.jsonl`, one JSON object per line. The \
+         Each module's rows are `module/<module>/<table>.jsonl`, one JSON object per line; the \
+         Portal's are `module/portal/project/<project id>/<table>.jsonl`, one folder per project \
+         (`index.yaml` names each) and one for the Organization's own rows. The \
          rows of one database were read in one snapshot, so each database's part is consistent \
          in itself; two databases were read one after the other, not in one transaction.\n\n\
          ## Modules\n\n",

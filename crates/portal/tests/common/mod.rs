@@ -276,6 +276,43 @@ pub async fn send_body(
     }
 }
 
+/// [`send`] as jc-router hands on a request it placed under the id address `placed` (RTE-05): the
+/// `IdAddress` extension a client can never send.
+pub async fn send_placed(
+    state: &AppState,
+    identity: Identity,
+    http: &str,
+    uri: &str,
+    placed: &str,
+) -> Answer {
+    let config = state.config.clone();
+    let mut request = Request::builder()
+        .method(http)
+        .uri(uri)
+        .header(header::COOKIE, cookie(&config, identity))
+        .header(CSRF_HEADER, CSRF)
+        .body(Body::empty())
+        .expect("request");
+    request
+        .extensions_mut()
+        .insert(jc_router::IdAddress(placed.to_owned()));
+    let response = server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    Answer {
+        status,
+        text: String::from_utf8_lossy(&bytes).into_owned(),
+    }
+}
+
 /// A request the way every door makes it since T-0956 (PF-57): a proposal of a manifest — POST,
 /// PUT or PATCH on a resource route, or a `*_propose` operation carrying a `manifest` — is checked
 /// first with the same body (`?dryRun=All`, or `jc_manifest_dry_run`), and then sent. Any other

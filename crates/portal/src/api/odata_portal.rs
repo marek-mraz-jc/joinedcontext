@@ -507,6 +507,22 @@ pub static DOORS: &[Door] = &[
         Who::Administrator,
     ),
     door(
+        "portal_backup_data_projects",
+        Org,
+        Method::POST,
+        "/organization/backups/data/versions/{version}/projects",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
+        "portal_backup_data_copy",
+        Org,
+        Method::POST,
+        "/organization/backups/data/versions/{version}/copy",
+        &[VERSION, BODY],
+        Who::Administrator,
+    ),
+    door(
         "portal_backup_data_delete",
         Org,
         Method::DELETE,

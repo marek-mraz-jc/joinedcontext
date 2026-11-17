@@ -97,6 +97,118 @@ async fn a_branch_with_its_parents_name_never_answers_for_the_parent() {
     assert_ne!(live[&name], branch);
 }
 
+/// CHG-15 (T-7212, migration 0082): a branch row needs a parented project, renews only while it
+/// lives, by at most 7 days at a time and to at most 30 days from creation, keeps its creation,
+/// and is never deleted, so an expired id stays a tombstone; the router reads it with its expiry.
+#[tokio::test]
+async fn a_branch_lives_renews_and_stays_a_tombstone() {
+    let pool = pool().await;
+    let org = organization(&pool, "branch-life").await;
+    let parent = ProjectId::mint();
+    let branch = ProjectId::mint();
+    let expired = ProjectId::mint();
+    for (id, name, parent) in [
+        (parent, run_name("branch-parent"), None),
+        (branch, format!("b-{}", branch.path_segment()), Some(parent)),
+        (
+            expired,
+            format!("b-{}", expired.path_segment()),
+            Some(parent),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO project_ids (id, name, parent, organization) VALUES ($1::uuid, $2, $3::uuid, $4)",
+        )
+        .bind(id.to_string())
+        .bind(name)
+        .bind(parent.map(|p| p.to_string()))
+        .bind(&org)
+        .execute(&pool)
+        .await
+        .expect("a project row");
+    }
+    let refused = |statement: &'static str, id: ProjectId| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(statement)
+                .bind(id.to_string())
+                .execute(&pool)
+                .await
+                .expect_err(statement)
+                .to_string()
+        }
+    };
+    let no_parent = refused(
+        "INSERT INTO project_branches (id, created_by, expires_at) VALUES ($1::uuid, 'ana', now() + interval '7 days')",
+        parent,
+    )
+    .await;
+    assert!(no_parent.contains("no branch"), "{no_parent}");
+    sqlx::query(
+        "INSERT INTO project_branches (id, created_by, expires_at) VALUES ($1::uuid, 'ana', now() + interval '7 days')",
+    )
+    .bind(branch.to_string())
+    .execute(&pool)
+    .await
+    .expect("a branch");
+    sqlx::query(
+        "INSERT INTO project_branches (id, created_by, created_at, expires_at) \
+         VALUES ($1::uuid, 'ana', now() - interval '8 days', now() - interval '1 day')",
+    )
+    .bind(expired.to_string())
+    .execute(&pool)
+    .await
+    .expect("an expired branch");
+    let renewed = "UPDATE project_branches SET expires_at = expires_at + interval '7 days' WHERE id = $1::uuid";
+    sqlx::query(renewed)
+        .bind(branch.to_string())
+        .execute(&pool)
+        .await
+        .expect("a live branch renews by 7 days");
+    for (statement, id, says) in [
+        (renewed, expired, "only while it lives"),
+        (
+            "UPDATE project_branches SET expires_at = expires_at + interval '8 days' WHERE id = $1::uuid",
+            branch,
+            "at most 7 days",
+        ),
+        (
+            "UPDATE project_branches SET expires_at = created_at + interval '31 days' WHERE id = $1::uuid",
+            branch,
+            "renewed",
+        ),
+        (
+            "UPDATE project_branches SET expires_at = expires_at - interval '1 day' WHERE id = $1::uuid",
+            branch,
+            "at most 7 days",
+        ),
+        (
+            "UPDATE project_branches SET created_by = 'eve' WHERE id = $1::uuid",
+            branch,
+            "keeps its creation",
+        ),
+        ("DELETE FROM project_branches WHERE id = $1::uuid", expired, "tombstone"),
+    ] {
+        let err = refused(statement, id).await;
+        assert!(err.contains(says), "{statement}: {err}");
+    }
+    let listed = project_ids::every_branch_owned(&pool)
+        .await
+        .expect("branches");
+    let mine: Vec<_> = listed.iter().filter(|(o, ..)| *o == org).collect();
+    assert_eq!(mine.len(), 2, "{mine:?}");
+    let now = chrono::Utc::now().timestamp();
+    for (_, name, key, expires_at) in mine {
+        assert_eq!(*name, format!("b-{}", key.project.path_segment()));
+        if key.project == expired {
+            assert!(*expires_at < now);
+        } else {
+            assert_eq!(key.project, branch);
+            assert!(*expires_at > now + 13 * 86_400);
+        }
+    }
+}
+
 #[tokio::test]
 async fn the_project_list_shows_each_readable_projects_id() {
     let pool = pool().await;
