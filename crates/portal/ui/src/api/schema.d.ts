@@ -13748,6 +13748,13 @@ export interface components {
             usage: Record<string, never>;
         };
         ProjectSummary: {
+            /**
+             * @description The project's id (ARCH/TEN-01, T-7190): 26 characters of lower-case base32, minted once and
+             *     never reused, the `{projectId}` segment of `/{org}/{projectId}/api/...` (TEN-13). Absent
+             *     when the Portal runs without its database.
+             * @example aerf3ql7mk5r4o2dvsxbq6ntcy
+             */
+            id?: string | null;
             /** @description The project slug, the `{project}` segment of every other path. */
             name: string;
             /** @description The Organization that owns the project, its `spec.organizationRef` (PF-122). */
