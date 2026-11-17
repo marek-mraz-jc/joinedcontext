@@ -147,7 +147,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByRole("link", { name: "Installation" })).toHaveCount(0);
       await shot(page, `installation-setup-member-${width}`);
       await page.goto("/organization/operator-installation?lang=en");
-      await expect(page.getByText("These sections belong to the installation's administrators, its operators.", { exact: false })).toBeVisible();
+      await expect(page.getByText("These sections belong to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-refused-${width}`);

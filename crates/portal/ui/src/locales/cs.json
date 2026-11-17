@@ -13591,7 +13591,7 @@
     }
   },
   "operator": {
-    "only": "Tyto sekce patří správcům instalace, jejím operátorům. Požádejte některého z nich o novou organizaci, doménu nebo hostitele.",
+    "only": "Tyto sekce patří operátorům instalace. Požádejte některého z nich o novou organizaci, doménu nebo hostitele, nebo o e-mailový server.",
     "tryAgain": "Požadavek neprošel. Zkuste to za chvíli znovu.",
     "organizations": {
       "title": "Organizace",

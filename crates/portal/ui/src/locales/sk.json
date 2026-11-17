@@ -13591,7 +13591,7 @@
     }
   },
   "operator": {
-    "only": "Tieto sekcie patria správcom inštalácie, jej operátorom. Požiadajte niektorého z nich o novú organizáciu, doménu alebo hostiteľa.",
+    "only": "Tieto sekcie patria operátorom inštalácie. Požiadajte niektorého z nich o novú organizáciu, doménu alebo hostiteľa, alebo o e-mailový server.",
     "tryAgain": "Požiadavka neprešla. Skúste to o chvíľu znova.",
     "organizations": {
       "title": "Organizácie",

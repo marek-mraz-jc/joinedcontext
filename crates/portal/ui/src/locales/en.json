@@ -13591,7 +13591,7 @@
     }
   },
   "operator": {
-    "only": "These sections belong to the installation's administrators, its operators. Ask one of them for a new Organization, domain or host.",
+    "only": "These sections belong to the installation's operators. Ask one of them for a new Organization, domain or host, or for the e-mail server.",
     "tryAgain": "The request did not go through. Try again in a moment.",
     "organizations": {
       "title": "Organizations",
