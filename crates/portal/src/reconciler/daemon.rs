@@ -320,9 +320,13 @@ pub struct Syncer {
     /// The bundles this Portal's image ships (AP-87): a published App with no build of its own
     /// is served from here, and one with neither serves nothing (T-2989).
     apps_dir: Option<String>,
-    /// The artifact store's admin API, held with the root credential. `None` leaves every
-    /// organization without a scoped credential and the store untouched (PF-32).
-    artifact_store: Option<Arc<crate::artifact_store::Client>>,
+    /// The artifact store's admin API, held with the root credential, and the project registry
+    /// whose keys name every credential and prefix (T-7210). `None`, or no registry, leaves every
+    /// project without a scoped credential and the store untouched (PF-32).
+    artifact_store: Option<(Arc<crate::artifact_store::Client>, Option<sqlx::PgPool>)>,
+    /// Projects whose old name-built artifact layout is empty: their reader no longer reads it,
+    /// and the converge no longer lists it (TEN-15). The store is the record; this spares listings.
+    artifacts_moved: std::sync::Mutex<std::collections::HashSet<jc_types::ProjectKey>>,
     /// Where an organization's reader credential is handed to the workloads that serve
     /// artifacts: the cluster to write the Secret into, and the namespace it belongs in
     /// (T-0925). `None` mints the credentials and hands them to nobody.
@@ -447,6 +451,7 @@ impl Syncer {
             apps_cache_dir: None,
             apps_dir: None,
             artifact_store: None,
+            artifacts_moved: Default::default(),
             credentials: None,
             pipeline_secrets: None,
             author_rights: None,
@@ -482,8 +487,14 @@ impl Syncer {
         self
     }
 
-    pub fn with_artifact_store(mut self, store: Arc<crate::artifact_store::Client>) -> Self {
-        self.artifact_store = Some(store);
+    /// The store and the project registry `keys` its credentials are keyed by; without the
+    /// registry nothing is issued, since no credential is ever named after a name (T-7210).
+    pub fn with_artifact_store(
+        mut self,
+        store: Arc<crate::artifact_store::Client>,
+        keys: Option<sqlx::PgPool>,
+    ) -> Self {
+        self.artifact_store = Some((store, keys));
         self
     }
 
@@ -2981,7 +2992,12 @@ impl Syncer {
                     .matching(|env| env.kind == "App" || env.kind == "Endpoint"),
             );
             for problem in shards
-                .converge(&placed, self.artifact_store.as_deref())
+                .converge(
+                    &placed,
+                    self.artifact_store
+                        .as_ref()
+                        .map(|(store, _)| store.as_ref()),
+                )
                 .await
             {
                 tracing::warn!(%problem, "a WASM shard is not as it should be");
@@ -3128,45 +3144,102 @@ impl Syncer {
         cleared("published Apps with no build to serve", &change);
     }
 
+    /// Every keyed project gets its artifact pair under its key, its old `{area}/{org}/{project}/`
+    /// objects moved there first (TEN-15), and its reader handed over (T-7210). A refusal marks
+    /// the project's Organization; one project's failure is not the run's.
     async fn converge_artifact_store(&self, transitions: &super::transitions::Transitions) {
-        if let Some(store) = self.artifact_store.as_ref() {
-            for name in self
-                .mirror
-                .matching(|envelope| envelope.kind == "Organization")
-                .into_iter()
-                .map(|envelope| envelope.metadata.name)
-            {
-                match store.ensure_organization(&name).await {
-                    Ok(credentials) => {
-                        tracing::info!(
-                            organization = %name,
-                            issued = credentials.len(),
-                            "artifact store credentials are in place"
-                        );
-                        self.hand_over_reader(&name, store.as_ref()).await;
-                    }
-                    Err(err) => {
-                        tracing::warn!(organization = %name, error = %err, "the artifact store issued no credential");
-                        let Some(mut envelope) = self
-                            .mirror
-                            .find(|env| env.kind == "Organization" && env.metadata.name == name)
-                        else {
-                            continue;
-                        };
-                        if let Some(status) = envelope.status.as_mut() {
-                            status.conditions = vec![super::streams::make_condition(
-                                "ArtifactStoreCredentials",
-                                "False",
-                                "StoreRefused",
-                                &err.to_string(),
-                            )];
-                        }
-                        transitions.keep(&mut envelope);
-                        self.mirror.upsert(envelope);
-                    }
+        let Some((store, Some(pool))) = self.artifact_store.as_ref() else {
+            return;
+        };
+        let projects = match crate::project_ids::every_recorded_owned(pool).await {
+            Ok(projects) => projects,
+            Err(err) => {
+                tracing::warn!(error = %err, "the project registry was not read, so no artifact credential is issued this run");
+                return;
+            }
+        };
+        for (organization, project, key) in projects {
+            let legacy = self
+                .move_artifacts(store, &organization, &project, &key)
+                .await;
+            match store.ensure_project(&key, legacy.as_ref()).await {
+                Ok(credentials) => {
+                    tracing::info!(
+                        project = %project,
+                        issued = credentials.len(),
+                        old_layout_read = legacy.is_some(),
+                        "artifact store credentials are in place"
+                    );
+                    self.hand_over_reader(&key, store.as_ref()).await;
+                }
+                Err(err) => {
+                    tracing::warn!(project = %project, error = %err, "the artifact store issued no credential");
+                    self.mark_artifact_store(transitions, &organization, &err.to_string());
                 }
             }
         }
+    }
+
+    /// Moves one project's old artifacts under its key unless it is known moved; the old layout
+    /// its reader keeps reading, `None` once it is empty (or its names were never a key).
+    async fn move_artifacts(
+        &self,
+        store: &crate::artifact_store::Client,
+        organization: &str,
+        project: &str,
+        key: &jc_types::ProjectKey,
+    ) -> Option<crate::artifact_store::Legacy> {
+        if self
+            .artifacts_moved
+            .lock()
+            .is_ok_and(|moved| moved.contains(key))
+        {
+            return None;
+        }
+        let legacy = crate::artifact_store::Legacy::new(organization, project)?;
+        let at = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        match crate::artifact_store::move_artifacts(store, key, &legacy, &at).await {
+            Ok(moved) => {
+                if moved.copied + moved.superseded > 0 {
+                    tracing::info!(project = %project, copied = moved.copied, superseded = moved.superseded, "a project's artifacts moved under its project key");
+                }
+                if !moved.done {
+                    return Some(legacy);
+                }
+                if let Ok(mut done) = self.artifacts_moved.lock() {
+                    done.insert(*key);
+                }
+                None
+            }
+            Err(why) => {
+                tracing::warn!(project = %project, error = %why, "a project's artifacts were not moved under its project key; the old layout stays read");
+                Some(legacy)
+            }
+        }
+    }
+
+    fn mark_artifact_store(
+        &self,
+        transitions: &super::transitions::Transitions,
+        organization: &str,
+        why: &str,
+    ) {
+        let Some(mut envelope) = self
+            .mirror
+            .find(|env| env.kind == "Organization" && env.metadata.name == organization)
+        else {
+            return;
+        };
+        if let Some(status) = envelope.status.as_mut() {
+            status.conditions = vec![super::streams::make_condition(
+                "ArtifactStoreCredentials",
+                "False",
+                "StoreRefused",
+                why,
+            )];
+        }
+        transitions.keep(&mut envelope);
+        self.mirror.upsert(envelope);
     }
 
     async fn verify_domains(&self) {
@@ -3592,26 +3665,30 @@ impl Syncer {
         true
     }
 
-    /// Writes one organization's reader credential into the namespace its serving workloads
-    /// read, so a credential the reconciler minted actually reaches them (T-0925, PF-32).
+    /// Writes one project's reader credential into the namespace its serving workloads read, so
+    /// a credential the reconciler minted actually reaches them (T-0925, PF-32).
     ///
     /// A cluster that refuses the write costs the run a line in the log and nothing else, the
     /// way one app's failure is not the run's: the credential is derived, so the next sync
     /// writes exactly the same bytes and the one after that too.
-    async fn hand_over_reader(&self, organization: &str, store: &crate::artifact_store::Client) {
+    async fn hand_over_reader(
+        &self,
+        key: &jc_types::ProjectKey,
+        store: &crate::artifact_store::Client,
+    ) {
         let Some((kube, namespace)) = self.credentials.as_ref() else {
             return;
         };
-        let reader = store.credential(organization, crate::artifact_store::Role::Reader);
-        let secret = crate::artifact_store::reader_secret(namespace, organization, &reader);
+        let reader = store.credential(key, crate::artifact_store::Role::Reader);
+        let secret = crate::artifact_store::reader_secret(namespace, key, &reader);
+        let name = crate::artifact_store::reader_secret_name(key);
         match kube.apply(&secret).await {
             Ok(()) => tracing::info!(
-                organization = %organization,
-                secret = %crate::artifact_store::reader_secret_name(organization),
+                secret = %name,
                 "the artifact store reader is in the namespace that serves"
             ),
             Err(err) => tracing::warn!(
-                organization = %organization,
+                secret = %name,
                 error = %err,
                 "the reader credential was minted and not handed over"
             ),

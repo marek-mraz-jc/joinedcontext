@@ -499,44 +499,85 @@ async fn the_run_hands_the_reader_credential_to_the_namespace_that_serves() {
 
     let kube_api = MockServer::start().await;
     Mock::given(method("PATCH"))
-        .and(path(
-            "/api/v1/namespaces/dev/secrets/artifact-store-reader-hel",
-        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"kind": "Secret"})))
         .mount(&kube_api)
         .await;
-    let kube = joinedcontext_portal::apps::kube::KubeClient::with_token(&kube_api.uri(), "token")
-        .expect("a kube client");
+    let kube = Arc::new(
+        joinedcontext_portal::apps::kube::KubeClient::with_token(&kube_api.uri(), "token")
+            .expect("a kube client"),
+    );
+    let store = Arc::new(store);
 
-    let mirror = Arc::new(Mirror::new());
-    let syncer = Syncer::new(client(&server), Arc::clone(&mirror))
-        .with_artifact_store(Arc::new(store))
-        .with_credential_secrets(Arc::new(kube), "dev");
+    // Without the project registry nothing is issued: no credential is named after a name
+    // (T-7210).
+    let syncer = Syncer::new(client(&server), Arc::new(Mirror::new()))
+        .with_artifact_store(Arc::clone(&store), None)
+        .with_credential_secrets(Arc::clone(&kube), "dev");
+    syncer.sync_once().await.expect("the run loads");
+    assert!(store_api
+        .received_requests()
+        .await
+        .expect("recorded")
+        .is_empty());
+    assert!(kube_api
+        .received_requests()
+        .await
+        .expect("recorded")
+        .is_empty());
+
+    let Some(url) = database_url() else {
+        eprintln!("skipped the keyed half: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect and migrate");
+    let org = format!("hel-{}", jc_types::ProjectId::mint().path_segment());
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $1 || '.example', 'active', 'test')",
+    )
+    .bind(&org)
+    .execute(&pool)
+    .await
+    .expect("an Organization");
+    let key = joinedcontext_portal::project_ids::key(
+        &pool,
+        &org,
+        &format!("air-{}", jc_types::ProjectId::mint().path_segment()),
+    )
+    .await
+    .expect("key")
+    .expect("a project of an active Organization has a key");
+    let syncer = Syncer::new(client(&server), Arc::new(Mirror::new()))
+        .with_artifact_store(store, Some(pool))
+        .with_credential_secrets(kube, "dev");
     syncer.sync_once().await.expect("the run loads");
 
+    let name = joinedcontext_portal::artifact_store::reader_secret_name(&key);
     let written = kube_api
         .received_requests()
         .await
         .expect("the API server was asked")
         .into_iter()
-        .find(|r| r.url.path().ends_with("/secrets/artifact-store-reader-hel"))
-        .expect("the reader Secret was applied");
+        .find(|r| r.url.path().ends_with(&format!("/secrets/{name}")))
+        .expect("the project's reader Secret was applied");
     let body: serde_json::Value = serde_json::from_slice(&written.body).expect("a Secret");
     let reader = joinedcontext_portal::artifact_store::Credential::derive(
         ROOT,
-        "hel",
+        &key,
         joinedcontext_portal::artifact_store::Role::Reader,
     );
     let writer = joinedcontext_portal::artifact_store::Credential::derive(
         ROOT,
-        "hel",
+        &key,
         joinedcontext_portal::artifact_store::Role::Writer,
     );
-    assert_eq!(body["stringData"]["ACCESS_KEY_ID"], "jc-hel-reader");
+    assert_eq!(body["stringData"]["ACCESS_KEY_ID"], reader.access_key);
     assert_eq!(body["stringData"]["ACCESS_SECRET_KEY"], reader.secret_key);
     let serialised = body.to_string();
     assert!(!serialised.contains(&writer.secret_key), "the writer's key");
     assert!(!serialised.contains(ROOT), "the root secret");
+    assert!(!serialised.contains(&org), "a name in the Secret");
 }
 
 /// Edge cases of one pass: the leader order, the pipelines' secrets and what reaches the mirror

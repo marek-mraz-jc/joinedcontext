@@ -54,7 +54,14 @@ async fn a_hung_artifact_store_costs_provisioning_an_error_not_the_loop() {
     })
     .expect("a store client");
 
-    let outcome = tokio::time::timeout(GUARD, client.ensure_organization("hel")).await;
+    let outcome = tokio::time::timeout(
+        GUARD,
+        client.ensure_project(
+            &jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint()),
+            None,
+        ),
+    )
+    .await;
 
     let result = outcome.expect("the call waited past any sane bound: the client has no timeout");
     assert!(result.is_err(), "a hung store is not an answer");

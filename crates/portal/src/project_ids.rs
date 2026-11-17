@@ -17,7 +17,13 @@ use crate::store::Mirror;
 /// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security,
 /// and takes its tables off this list: migration 0080 (T-7201) forced the 31 tables of PK-1d to
 /// PK-1h, from grafana_visualizations to agent_runs.
-pub const KEYED_BY_NAME: &[&str] = &[];
+pub const KEYED_BY_NAME: &[&str] = &[
+    // T-7203 PK-1j, migration 0074: an installation's connector event (project '') takes the
+    // installation Organization's reserved project key, see [`installation`]. Phase one until
+    // their own forcing migration.
+    "notifications",
+    "app_builds",
+];
 
 /// The column naming the project whose key a row of `table` takes: the project of the Endpoint
 /// an access request asks for, whose owners decide it (T-7202); `project` everywhere else.
@@ -118,6 +124,19 @@ pub async fn reserved(
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
 }
 
+/// The key of the installation Organization's reserved project (TEN-11): what an installation's
+/// own rows take, a connector event with project '' (T-7203). `None` while the mirror names no
+/// installation Organization or the registry holds no active one by that name.
+pub async fn installation(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    match crate::permissions::installation_organization(mirror) {
+        Some(organization) => reserved(pool, &organization).await,
+        None => Ok(None),
+    }
+}
+
 /// The key of `project` as the mirror places it: its Organization from the Project's
 /// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
 /// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.
@@ -197,6 +216,26 @@ pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, 
     Ok(rows
         .into_iter()
         .filter_map(|(name, org, project)| parsed(&org, &project).map(|key| (name, key)))
+        .collect())
+}
+
+/// [`every_recorded`] with each project's Organization name: what a pass that still reads an old
+/// name-built layout fans out over (TEN-15).
+pub async fn every_recorded_owned(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, ProjectKey)>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT p.organization, p.name, o.key::text, p.id::text FROM project_ids p \
+         JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.organization, p.name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(organization, name, org, project)| {
+            parsed(&org, &project).map(|key| (organization, name, key))
+        })
         .collect())
 }
 
@@ -281,7 +320,12 @@ pub async fn backfill_tables(
         .fetch_all(pool)
         .await?;
         for name in names {
-            let Some(key) = key_of(pool, mirror, &name).await? else {
+            let key = if name.is_empty() && *table == "notifications" {
+                installation(pool, mirror).await?
+            } else {
+                key_of(pool, mirror, &name).await?
+            };
+            let Some(key) = key else {
                 waiting.insert(name);
                 continue;
             };

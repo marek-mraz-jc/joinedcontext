@@ -1,17 +1,18 @@
-//! Per-organization credentials for the artifact store (PF-29, PF-31, PF-32, ADR-N-015).
+//! Per-project credentials for the artifact store (PF-29, PF-31, PF-32, ADR-N-015).
 //!
 //! The store ships with one generated root credential in the Secret `artifact-store-root`,
 //! because a Helm chart cannot mint a scoped one. Sharing that key with every writer and reader
-//! would make one organization's credential a key to every other organization's artifacts, so
+//! would make one project's credential a key to every other project's artifacts, so
 //! the reconciler — the only component that holds the root credential — mints a pair per
-//! organization instead: a writer that may `PutObject` under that organization's five prefixes
-//! and nothing else, and a reader that may `GetObject` there and nothing else (PF-32).
+//! project instead: a writer that may `PutObject` under that project's artifact areas and nothing
+//! else, and a reader that may `GetObject` there and nothing else (PF-32). Every key and every
+//! user name is built from the project's ids, never from a name (TEN-04, STO-14, T-7210).
 //!
 //! **Nothing is stored.** The Portal has no secret store to write to (`sync::remote` refuses a
 //! `secretRef` for the same reason, and OpenBao is T-0423), so the secret key is *derived* from
-//! the root secret with HMAC-SHA256. The same root secret and organization always give the same
+//! the root secret with HMAC-SHA256. The same root secret and project always give the same
 //! pair: the reconciler can re-issue or verify a credential at any time without keeping one,
-//! rotating the root secret rotates every organization's credential at once, and a credential
+//! rotating the root secret rotates every project's credential at once, and a credential
 //! never lands in Git, a log, an image or a task file (CC-06).
 
 use std::collections::BTreeMap;
@@ -19,15 +20,45 @@ use std::fmt;
 
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
+use jc_types::{Label, ProjectKey};
 use sha2::{Digest, Sha256};
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// The prefixes one organization owns, from Architecture/17 §2. Every key in the bucket starts
-/// with one of these and the organization's name, which is what makes a per-organization policy
-/// expressible at all (PF-31). `endpoints/` and `filecache/` are keyed by endpoint slug rather
-/// than by organization and belong to no organization's credential.
-pub const OWNED_PREFIXES: [&str; 5] = ["schemas", "mappings", "dumps", "exports", "apps"];
+/// The artifact areas one project owns (Architecture/17 §2), each under the project's
+/// [`ProjectKey::object_prefix`]: `org/{OrgId}/project/{ProjectId}/{area}/`, which is what makes
+/// a per-project policy expressible at all (PF-31, STO-14). App files live under the same project
+/// prefix in the Apps bucket with a shard's key of their own (`apps::files`). `endpoints/` and
+/// `filecache/` are keyed by endpoint slug and belong to no project's credential.
+pub const ARTIFACT_AREAS: [&str; 4] = ["schemas", "mappings", "dumps", "exports"];
+
+/// A project's artifacts in the layout before the project key, `{area}/{organization}/{project}/`:
+/// read until [`move_artifacts`] has moved them, then refused (TEN-15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Legacy {
+    organization: Label,
+    project: Label,
+}
+
+impl Legacy {
+    /// `None` when either name is no label: such a name never reached a key jcctl wrote (it
+    /// refuses one, T-5702), and it must never reach a policy resource either.
+    pub fn new(organization: &str, project: &str) -> Option<Self> {
+        Some(Self {
+            organization: Label::parse(organization).ok()?,
+            project: Label::parse(project).ok()?,
+        })
+    }
+
+    /// `{area}/{organization}/{project}/`.
+    pub fn prefix(&self, area: &str) -> String {
+        format!(
+            "{area}/{}/{}/",
+            self.organization.as_str(),
+            self.project.as_str()
+        )
+    }
+}
 
 /// What a credential may do. There are two roles and there is no third: a writer that publishes
 /// and a reader that serves (Architecture/17 §3).
@@ -69,15 +100,16 @@ impl fmt::Debug for Credential {
 }
 
 impl Credential {
-    /// The pair an organization's role gets, derived and not drawn: see the module comment for
-    /// why nothing is stored. The context string is versioned so a future derivation can change
-    /// without silently handing out the old keys under the new rule.
-    pub fn derive(root_secret: &str, org: &str, role: Role) -> Self {
+    /// The pair a project's role gets, derived and not drawn: see the module comment for why
+    /// nothing is stored. The context string is versioned: v1 named an Organization, v2 the
+    /// project key, so no v2 key equals a v1 one.
+    pub fn derive(root_secret: &str, key: &ProjectKey, role: Role) -> Self {
         let mut mac = HmacSha256::new_from_slice(root_secret.as_bytes())
             .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
         mac.update(
             format!(
-                "joinedcontext/artifact-store/v1/{org}/{role}",
+                "joinedcontext/artifact-store/v2/{}/{role}",
+                key.dns_label(),
                 role = role.as_str()
             )
             .as_bytes(),
@@ -88,7 +120,7 @@ impl Credential {
         // every operator expects to see; the remaining bits of the digest add nothing.
         secret_key.truncate(40);
         Self {
-            access_key: name(org, role),
+            access_key: name(key, role),
             secret_key,
         }
     }
@@ -117,31 +149,37 @@ pub fn shard_name(shard: u32) -> String {
 }
 
 /// What one shard's key may do in the Apps bucket (AP-158, ADR-N-044 §2.5): read, write and
-/// delete its own Apps' objects under `apps/<shard>/`, list that prefix and no other, and read
-/// the components every shard loads. Not a word about another shard's prefix: the store itself
-/// refuses it.
-pub fn shard_policy_document(bucket: &str, shard: u32) -> serde_json::Value {
-    serde_json::json!({
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-                "Resource": [format!("arn:aws:s3:::{bucket}/apps/{shard}/*")],
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:ListBucket"],
-                "Resource": [format!("arn:aws:s3:::{bucket}")],
-                "Condition": { "StringLike": { "s3:prefix": [format!("apps/{shard}/*")] } },
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:GetObject"],
-                "Resource": [format!("arn:aws:s3:::{bucket}/components/*")],
-            },
-        ],
-    })
+/// delete the objects of the Apps placed on it, each under its own `prefixes` (its project's
+/// `org/{OrgId}/project/{ProjectId}/apps/{id}/`, and `apps/{shard}/{id}/` until its files are
+/// moved, TEN-15), list those prefixes and no other, and read the components every shard loads.
+/// Not a word about another App's prefix: the store itself refuses it.
+pub fn shard_policy_document(bucket: &str, prefixes: &[String]) -> serde_json::Value {
+    let mut statements = vec![serde_json::json!({
+        "Effect": "Allow",
+        "Action": ["s3:GetObject"],
+        "Resource": [format!("arn:aws:s3:::{bucket}/components/*")],
+    })];
+    // A shard with no App gets no object right at all: an empty resource list is no policy.
+    if !prefixes.is_empty() {
+        statements.push(serde_json::json!({
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+            "Resource": prefixes
+                .iter()
+                .map(|prefix| format!("arn:aws:s3:::{bucket}/{prefix}*"))
+                .collect::<Vec<_>>(),
+        }));
+        statements.push(serde_json::json!({
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket"],
+            "Resource": [format!("arn:aws:s3:::{bucket}")],
+            "Condition": { "StringLike": { "s3:prefix": prefixes
+                .iter()
+                .map(|prefix| format!("{prefix}*"))
+                .collect::<Vec<_>>() } },
+        }));
+    }
+    serde_json::json!({ "Version": "2012-10-17", "Statement": statements })
 }
 
 /// The Secret a shard mounts its key from, `apps-host-<shard>-store` (AP-158); the host reads
@@ -165,29 +203,41 @@ pub fn shard_secret(namespace: &str, shard: u32, key: &Credential) -> serde_json
 
 /// The name of the user and of the policy that carries its rights. One name for both: a user
 /// and a canned policy live in different namespaces in the store, and reading `jc-hel-reader`
-/// in either place should name the same thing.
-pub fn name(org: &str, role: Role) -> String {
-    format!("jc-{org}-{role}", role = role.as_str())
+/// in either place should name the same thing. `jc-{OrgId}-{ProjectId}-{role}`: ids, never a name.
+pub fn name(key: &ProjectKey, role: Role) -> String {
+    format!("jc-{}-{role}", key.dns_label(), role = role.as_str())
 }
 
-/// The policy one role of one organization gets, in the AWS shape the store parses.
+/// The policy one role of one project gets, in the AWS shape the store parses.
 ///
-/// The resources are the organization's own five prefixes and nothing else. A policy naming
-/// `arn:aws:s3:::{bucket}/*` would hand this organization every other organization's artifacts,
+/// The resources are the project's own artifact areas under its key and nothing else. A policy
+/// naming `arn:aws:s3:::{bucket}/*` would hand this project every other project's artifacts,
 /// which is the one thing this module exists to prevent (PF-31, PF-32). The writer gets no
 /// delete action, because a published artifact is object-locked and is replaced by a new key,
-/// never overwritten (PF-33); the reader gets no write action at all.
-pub fn policy_document(bucket: &str, org: &str, role: Role) -> serde_json::Value {
+/// never overwritten (PF-33); the reader gets no write action at all. While `legacy` names the
+/// old layout the reader also reads it, and only it: the writer writes under the key alone.
+pub fn policy_document(
+    bucket: &str,
+    key: &ProjectKey,
+    role: Role,
+    legacy: Option<&Legacy>,
+) -> serde_json::Value {
     let actions: &[&str] = match role {
         // `s3:PutObject` covers the multipart upload of a large dump; aborting an upload the
         // writer itself started is the one cleanup it needs.
         Role::Writer => &["s3:PutObject", "s3:AbortMultipartUpload"],
         Role::Reader => &["s3:GetObject"],
     };
-    let resources: Vec<serde_json::Value> = OWNED_PREFIXES
+    let prefix = key.object_prefix();
+    let mut resources: Vec<serde_json::Value> = ARTIFACT_AREAS
         .iter()
-        .map(|prefix| serde_json::json!(format!("arn:aws:s3:::{bucket}/{prefix}/{org}/*")))
+        .map(|area| serde_json::json!(format!("arn:aws:s3:::{bucket}/{prefix}{area}/*")))
         .collect();
+    if let (Role::Reader, Some(legacy)) = (role, legacy) {
+        resources.extend(ARTIFACT_AREAS.iter().map(|area| {
+            serde_json::json!(format!("arn:aws:s3:::{bucket}/{}*", legacy.prefix(area)))
+        }));
+    }
     serde_json::json!({
         "Version": "2012-10-17",
         "Statement": [{
@@ -281,23 +331,32 @@ impl Client {
     }
 
     /// The credential a consumer would be handed, computed without touching the store.
-    pub fn credential(&self, org: &str, role: Role) -> Credential {
-        Credential::derive(&self.settings.root_secret_key, org, role)
+    pub fn credential(&self, key: &ProjectKey, role: Role) -> Credential {
+        Credential::derive(&self.settings.root_secret_key, key, role)
     }
 
-    /// Makes both policies and both users of one organization exist, and returns the pair in the
-    /// order of [`Role::BOTH`].
+    /// The artifacts bucket.
+    pub fn bucket(&self) -> &str {
+        &self.settings.bucket
+    }
+
+    /// Makes both policies and both users of one project exist, and returns the pair in the order
+    /// of [`Role::BOTH`]. `legacy` is the old layout the reader still reads ([`policy_document`]).
     ///
     /// Idempotent: `add-canned-policy` and `add-user` are upserts and the derivation is
     /// deterministic, so a second run writes the same values and changes nothing. That is what
     /// lets the reconciler call it on every sync without keeping a record of what it did.
-    pub async fn ensure_organization(&self, org: &str) -> Result<Vec<Credential>, Error> {
+    pub async fn ensure_project(
+        &self,
+        key: &ProjectKey,
+        legacy: Option<&Legacy>,
+    ) -> Result<Vec<Credential>, Error> {
         let mut issued = Vec::with_capacity(Role::BOTH.len());
         for role in Role::BOTH {
-            let credential = self.credential(org, role);
+            let credential = self.credential(key, role);
             self.ensure_user(
-                &name(org, role),
-                &policy_document(&self.settings.bucket, org, role),
+                &name(key, role),
+                &policy_document(&self.settings.bucket, key, role, legacy),
                 &credential,
             )
             .await?;
@@ -306,13 +365,19 @@ impl Client {
         Ok(issued)
     }
 
-    /// Makes one WASM shard's policy and user exist in the Apps bucket `bucket`, and returns its
-    /// key (AP-158). Idempotent, as [`Client::ensure_organization`] is.
-    pub async fn ensure_shard(&self, bucket: &str, shard: u32) -> Result<Credential, Error> {
+    /// Makes one WASM shard's policy over its Apps' `prefixes` and its user exist in the Apps
+    /// bucket `bucket`, and returns its key (AP-158). Idempotent, as
+    /// [`Client::ensure_project`] is.
+    pub async fn ensure_shard(
+        &self,
+        bucket: &str,
+        shard: u32,
+        prefixes: &[String],
+    ) -> Result<Credential, Error> {
         let credential = Credential::derive_shard(&self.settings.root_secret_key, shard);
         self.ensure_user(
             &shard_name(shard),
-            &shard_policy_document(bucket, shard),
+            &shard_policy_document(bucket, prefixes),
             &credential,
         )
         .await?;
@@ -620,6 +685,30 @@ impl Client {
         }
     }
 
+    /// Copies `from` to `to` unless `to` exists (`If-None-Match: *`): `false` when it does, so a
+    /// move never overwrites a newer write (TEN-15).
+    pub async fn copy_if_absent(&self, bucket: &str, from: &str, to: &str) -> Result<bool, Error> {
+        let source = Self::object_path(bucket, from);
+        match self
+            .object(
+                reqwest::Method::PUT,
+                bucket,
+                to,
+                Vec::new(),
+                &[("x-amz-copy-source", source), ("if-none-match", "*".into())],
+                "copy an object",
+            )
+            .await?
+        {
+            (200..=299, _, _) => Ok(true),
+            (412, _, _) => Ok(false),
+            (status, _, _) => Err(Error::Refused {
+                operation: "copy an object",
+                status,
+            }),
+        }
+    }
+
     /// Deletes `key`; one already gone is deleted.
     pub async fn delete_object(&self, bucket: &str, key: &str) -> Result<(), Error> {
         match self
@@ -800,7 +889,157 @@ fn encode(raw: &str) -> String {
         .collect()
 }
 
-/// The Secret a workload of one organization reads its artifact-store credential from (T-0925).
+/// What one [`move_prefix`] did with the old prefix.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Moved {
+    /// Objects copied under the keyed prefix and verified there.
+    pub copied: usize,
+    /// Old objects whose key the keyed prefix already held from a newer write: dropped.
+    pub superseded: usize,
+    /// The old prefix holds nothing any more: reads stop looking there.
+    pub done: bool,
+}
+
+/// Moves every object under `legacy` to `keyed` (TEN-15): each object copied only where the keyed
+/// prefix has no object of its key (`If-None-Match`, so a write made meanwhile wins and is never
+/// lost), its bytes read back and compared by SHA-256, then the rollback entry `rollback` written
+/// (`record`'s members, both prefixes, each key with its size, hash and outcome, no payload), and
+/// only then the old objects deleted. A copy that does not read back the same stops the move with
+/// the old prefix untouched, still read. Writers need no fence: they write under the keyed prefix
+/// the whole time.
+/// ponytail: each object is read whole to hash it, which every bounded write keeps small; stream
+/// the hash when unsized objects appear.
+pub async fn move_prefix(
+    store: &Client,
+    bucket: &str,
+    (legacy, keyed): (&str, &str),
+    rollback: &str,
+    mut record: serde_json::Map<String, serde_json::Value>,
+) -> Result<Moved, String> {
+    let old = store
+        .list(bucket, legacy)
+        .await
+        .map_err(|err| format!("the old prefix could not be listed: {err}"))?;
+    if old.is_empty() {
+        return Ok(Moved {
+            done: true,
+            ..Moved::default()
+        });
+    }
+    let hash = |bytes: &[u8]| hex(&Sha256::digest(bytes));
+    let read = |key: String| async move {
+        match store
+            .object(
+                reqwest::Method::GET,
+                bucket,
+                &key,
+                Vec::new(),
+                &[],
+                "read an object",
+            )
+            .await
+        {
+            Ok((200, _, body)) => Ok(Some(body)),
+            Ok((404, _, _)) => Ok(None),
+            Ok((status, _, _)) => Err(format!("the store answered {status} to a read")),
+            Err(err) => Err(err.to_string()),
+        }
+    };
+    let mut moved = Moved::default();
+    let mut entries = Vec::with_capacity(old.len());
+    for object in &old {
+        let Some(relative) = object.key.strip_prefix(legacy) else {
+            continue;
+        };
+        let target = format!("{keyed}{relative}");
+        // Gone since the listing: deleted meanwhile, and nothing is left to move.
+        let Some(before) = read(object.key.clone()).await? else {
+            continue;
+        };
+        let sha256 = hash(&before);
+        let outcome = if store
+            .copy_if_absent(bucket, &object.key, &target)
+            .await
+            .map_err(|err| format!("an object could not be copied: {err}"))?
+        {
+            let after = read(target.clone()).await?;
+            if after.as_deref().map(hash).as_deref() != Some(sha256.as_str()) {
+                return Err(format!(
+                    "the copy of {relative} did not read back the same bytes; the old prefix stays"
+                ));
+            }
+            moved.copied += 1;
+            "copied"
+        } else {
+            moved.superseded += 1;
+            "superseded"
+        };
+        entries.push(serde_json::json!({
+            "key": relative, "size": before.len(), "sha256": sha256, "outcome": outcome,
+        }));
+    }
+    record.insert("from".into(), legacy.into());
+    record.insert("to".into(), keyed.into());
+    record.insert("objects".into(), entries.into());
+    store
+        .put_object(
+            bucket,
+            rollback,
+            serde_json::Value::Object(record).to_string().into_bytes(),
+            "write a move's rollback entry",
+        )
+        .await
+        .map_err(|err| format!("the rollback entry could not be written: {err}"))?;
+    for object in &old {
+        store
+            .delete_object(bucket, &object.key)
+            .await
+            .map_err(|err| format!("an old object could not be deleted: {err}"))?;
+    }
+    moved.done = store
+        .list(bucket, legacy)
+        .await
+        .map_err(|err| format!("the old prefix could not be listed: {err}"))?
+        .is_empty();
+    Ok(moved)
+}
+
+/// Moves one project's artifacts from the old layout to its key, area by area ([`move_prefix`]);
+/// each area's rollback entry is `moved/{area}/{organization}/{project}/{at}.json`, outside every
+/// project's prefix, so no project credential reads or changes it. `done` once every old area is
+/// empty; the reader keeps the old layout until then.
+pub async fn move_artifacts(
+    store: &Client,
+    key: &ProjectKey,
+    legacy: &Legacy,
+    at: &str,
+) -> Result<Moved, String> {
+    let mut total = Moved {
+        done: true,
+        ..Moved::default()
+    };
+    for area in ARTIFACT_AREAS {
+        let old = legacy.prefix(area);
+        let keyed = format!("{}{area}/", key.object_prefix());
+        let mut record = serde_json::Map::new();
+        record.insert("area".into(), area.into());
+        record.insert("at".into(), at.into());
+        let moved = move_prefix(
+            store,
+            store.bucket(),
+            (&old, &keyed),
+            &format!("moved/{old}{at}.json"),
+            record,
+        )
+        .await?;
+        total.copied += moved.copied;
+        total.superseded += moved.superseded;
+        total.done &= moved.done;
+    }
+    Ok(total)
+}
+
+/// The Secret a workload of one project reads its artifact-store credential from (T-0925).
 ///
 /// The reader's pair and no other: the writer publishes, and a workload that serves artifacts has
 /// no business holding a key that can replace one (PF-32). The values are `stringData`, so the
@@ -808,19 +1047,20 @@ fn encode(raw: &str) -> String {
 /// back; the object is applied with the same field manager as every other object the reconciler
 /// owns, so an operator's edit is corrected on the next sync (CC-18).
 ///
-/// Derived, so this is a pure function of the root secret and the organization: re-running it
-/// writes the same bytes, and rotating the root secret rewrites every organization's Secret on
+/// Derived, so this is a pure function of the root secret and the project key: re-running it
+/// writes the same bytes, and rotating the root secret rewrites every project's Secret on
 /// the next sync without a migration.
-pub fn reader_secret(namespace: &str, org: &str, reader: &Credential) -> serde_json::Value {
+pub fn reader_secret(namespace: &str, key: &ProjectKey, reader: &Credential) -> serde_json::Value {
     serde_json::json!({
         "apiVersion": "v1",
         "kind": "Secret",
         "metadata": {
-            "name": reader_secret_name(org),
+            "name": reader_secret_name(key),
             "namespace": namespace,
             "labels": {
                 "app.kubernetes.io/managed-by": "joinedcontext-portal",
-                "joinedcontext.com/organization": org,
+                "joinedcontext.com/organization-id": key.org.path_segment(),
+                "joinedcontext.com/project-id": key.project.path_segment(),
                 "joinedcontext.com/artifact-store-role": Role::Reader.as_str(),
             },
         },
@@ -834,17 +1074,29 @@ pub fn reader_secret(namespace: &str, org: &str, reader: &Credential) -> serde_j
 
 /// The name of that Secret. `artifactStore.credentialsSecretRef` of the workload's values names
 /// the same string, which is the whole coupling between the two (Architecture/17 §4).
-pub fn reader_secret_name(org: &str) -> String {
-    format!("artifact-store-reader-{org}")
+/// `{OrgId}-{ProjectId}-artifacts`, 63 characters: a Kubernetes name is a DNS label, so it holds
+/// the ids and a fixed role word, never a name (ARCH/TEN-04).
+pub fn reader_secret_name(key: &ProjectKey) -> String {
+    format!("{}-artifacts", key.dns_label())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jc_types::{OrgId, ProjectId};
+
+    fn key() -> ProjectKey {
+        ProjectKey::new(OrgId::mint(), ProjectId::mint())
+    }
 
     #[test]
     fn a_reader_credential_grants_no_write_action() {
-        let policy = policy_document("jc-artifacts", "hel", Role::Reader);
+        let policy = policy_document(
+            "jc-artifacts",
+            &key(),
+            Role::Reader,
+            Legacy::new("hel", "air").as_ref(),
+        );
         let actions = policy["Statement"][0]["Action"].to_string();
         assert!(actions.contains("s3:GetObject"));
         for write in ["PutObject", "DeleteObject", "Multipart", "s3:*"] {
@@ -854,7 +1106,12 @@ mod tests {
 
     #[test]
     fn a_writer_credential_grants_no_read_and_no_delete() {
-        let policy = policy_document("jc-artifacts", "hel", Role::Writer);
+        let policy = policy_document(
+            "jc-artifacts",
+            &key(),
+            Role::Writer,
+            Legacy::new("hel", "air").as_ref(),
+        );
         let actions = policy["Statement"][0]["Action"].to_string();
         assert!(actions.contains("s3:PutObject"));
         for forbidden in ["GetObject", "DeleteObject", "s3:*"] {
@@ -865,73 +1122,112 @@ mod tests {
         }
     }
 
+    fn resources(policy: &serde_json::Value) -> Vec<String> {
+        policy["Statement"][0]["Resource"]
+            .as_array()
+            .expect("resources are a list")
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
     #[test]
-    fn a_policy_names_only_the_five_prefixes_of_its_own_organization() {
+    fn a_policy_names_only_the_artifact_areas_under_its_own_project_key() {
+        let mine = key();
         for role in Role::BOTH {
-            let policy = policy_document("jc-artifacts", "hel", role);
-            let resources: Vec<String> = policy["Statement"][0]["Resource"]
-                .as_array()
-                .expect("resources are a list")
-                .iter()
-                .map(|value| value.as_str().unwrap_or_default().to_owned())
-                .collect();
-            assert_eq!(resources.len(), OWNED_PREFIXES.len());
-            for resource in &resources {
-                assert!(
-                    resource.starts_with("arn:aws:s3:::jc-artifacts/"),
-                    "{resource} is not in this installation's bucket"
+            let resources = resources(&policy_document("jc-artifacts", &mine, role, None));
+            assert_eq!(resources.len(), ARTIFACT_AREAS.len());
+            for (resource, area) in resources.iter().zip(ARTIFACT_AREAS) {
+                assert_eq!(
+                    resource,
+                    &format!("arn:aws:s3:::jc-artifacts/{}{area}/*", mine.object_prefix())
                 );
-                assert!(
-                    resource.contains("/hel/"),
-                    "{resource} is not confined to one organization"
-                );
-                assert_ne!(resource, "arn:aws:s3:::jc-artifacts/*");
             }
         }
     }
 
     #[test]
-    fn one_organization_cannot_reach_another_whose_name_starts_the_same() {
-        // `a` and `ab` are the pair a prefix rule gets wrong: `schemas/a` is a prefix of
-        // `schemas/ab`, and only the separator after the organization keeps them apart.
-        let reach = |org: &str| -> Vec<String> {
-            policy_document("jc-artifacts", org, Role::Writer)["Statement"][0]["Resource"]
-                .as_array()
-                .expect("resources are a list")
-                .iter()
-                .map(|value| {
-                    value
-                        .as_str()
-                        .unwrap_or_default()
-                        .trim_end_matches('*')
-                        .to_owned()
-                })
-                .collect()
-        };
-        for mine in reach("a") {
-            for theirs in reach("ab") {
-                assert!(
-                    !mine.starts_with(&theirs) && !theirs.starts_with(&mine),
-                    "{mine} and {theirs} overlap"
-                );
+    fn the_old_layout_is_read_by_the_reader_alone_and_only_while_named() {
+        let mine = key();
+        let legacy = Legacy::new("hel", "air");
+        let reader = resources(&policy_document(
+            "jc-artifacts",
+            &mine,
+            Role::Reader,
+            legacy.as_ref(),
+        ));
+        assert!(reader.contains(&"arn:aws:s3:::jc-artifacts/schemas/hel/air/*".to_owned()));
+        assert_eq!(reader.len(), 2 * ARTIFACT_AREAS.len());
+        let writer = resources(&policy_document(
+            "jc-artifacts",
+            &mine,
+            Role::Writer,
+            legacy.as_ref(),
+        ));
+        assert!(
+            writer.iter().all(|r| r.contains(&mine.object_prefix())),
+            "{writer:?}"
+        );
+        // A name that is no label never reaches a resource: `*` would widen the grant.
+        assert_eq!(Legacy::new("hel", "*"), None);
+        assert_eq!(Legacy::new("hel/x", "air"), None);
+    }
+
+    #[test]
+    fn project_a_never_reaches_project_b_even_in_one_organization() {
+        let a = key();
+        let b = ProjectKey::new(a.org, ProjectId::mint());
+        for role in Role::BOTH {
+            for mine in resources(&policy_document(
+                "jc-artifacts",
+                &a,
+                role,
+                Legacy::new("hel", "a").as_ref(),
+            )) {
+                let mine = mine.trim_end_matches('*');
+                for theirs in resources(&policy_document(
+                    "jc-artifacts",
+                    &b,
+                    role,
+                    Legacy::new("hel", "ab").as_ref(),
+                )) {
+                    let theirs = theirs.trim_end_matches('*');
+                    assert!(
+                        !mine.starts_with(theirs) && !theirs.starts_with(mine),
+                        "{mine} and {theirs} overlap"
+                    );
+                }
             }
         }
     }
 
     #[test]
     fn the_same_root_secret_always_derives_the_same_credential() {
-        let first = Credential::derive("root-secret", "hel", Role::Reader);
-        let again = Credential::derive("root-secret", "hel", Role::Reader);
+        let mine = key();
+        let first = Credential::derive("root-secret", &mine, Role::Reader);
+        let again = Credential::derive("root-secret", &mine, Role::Reader);
         assert_eq!(first, again);
-        assert_eq!(first.access_key, "jc-hel-reader");
+        assert_eq!(
+            first.access_key,
+            format!(
+                "jc-{}-{}-reader",
+                mine.org.path_segment(),
+                mine.project.path_segment()
+            )
+        );
     }
 
     #[test]
-    fn a_derived_secret_differs_per_role_per_organization_and_per_root_secret() {
-        let reader = Credential::derive("root-secret", "hel", Role::Reader);
-        let writer = Credential::derive("root-secret", "hel", Role::Writer);
-        let other_org = Credential::derive("root-secret", "bbx", Role::Reader);
-        let rotated = Credential::derive("root-secret-2", "hel", Role::Reader);
+    fn a_derived_secret_differs_per_role_per_project_and_per_root_secret() {
+        let mine = key();
+        let reader = Credential::derive("root-secret", &mine, Role::Reader);
+        let writer = Credential::derive("root-secret", &mine, Role::Writer);
+        let other_org = Credential::derive(
+            "root-secret",
+            &ProjectKey::new(mine.org, ProjectId::mint()),
+            Role::Reader,
+        );
+        let rotated = Credential::derive("root-secret-2", &mine, Role::Reader);
         assert_ne!(reader.secret_key, writer.secret_key);
         assert_ne!(reader.secret_key, other_org.secret_key);
         assert_ne!(reader.secret_key, rotated.secret_key);
@@ -939,7 +1235,8 @@ mod tests {
 
     #[test]
     fn a_derived_secret_is_forty_characters_and_carries_no_part_of_the_root_secret() {
-        let credential = Credential::derive("a-very-recognisable-root-secret", "hel", Role::Writer);
+        let credential =
+            Credential::derive("a-very-recognisable-root-secret", &key(), Role::Writer);
         assert_eq!(credential.secret_key.len(), 40);
         assert!(credential
             .secret_key
@@ -997,7 +1294,7 @@ mod tests {
             root_secret_key: "the-root-secret".to_owned(),
         };
         assert!(!format!("{settings:?}").contains("the-root-secret"));
-        let credential = Credential::derive("the-root-secret", "hel", Role::Reader);
+        let credential = Credential::derive("the-root-secret", &key(), Role::Reader);
         assert!(!format!("{credential:?}").contains(&credential.secret_key));
     }
 

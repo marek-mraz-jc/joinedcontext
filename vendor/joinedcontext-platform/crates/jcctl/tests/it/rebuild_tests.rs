@@ -64,11 +64,19 @@ fn repo(name: &str) -> PathBuf {
     dir
 }
 
+/// The keys the Portal answers for the two projects these tests use (T-7210).
+const OVZ: &str = "org/ad2z3bvobuqkfmd3f2vjyhqnqe/project/c7i5ym2kleuwxdl6t4fbwlb5ju/";
+const DOP: &str = "org/ad2z3bvobuqkfmd3f2vjyhqnqe/project/dyvezrufpfgtvhc6d6vdwtcvnq/";
+
 fn options(out: &Path) -> Options {
     Options {
         out_dir: out.to_path_buf(),
         space: None,
         revision: Some("3f9c2e1".to_owned()),
+        keys: [("ovzdusie", OVZ), ("doprava", DOP)]
+            .into_iter()
+            .map(|(p, k)| (p.to_owned(), k.to_owned()))
+            .collect(),
     }
 }
 
@@ -79,7 +87,7 @@ fn every_declared_artifact_is_written_under_its_store_prefix_with_an_index() {
 
     let report = artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
 
-    let schema = out.join("schemas/banskabystrica/ovzdusie/ovzdusie/air-quality/v1");
+    let schema = out.join(format!("{OVZ}schemas/ovzdusie/air-quality/v1"));
     assert_eq!(
         std::fs::read_to_string(schema.join("air-quality.v1.json")).expect("the schema"),
         SCHEMA
@@ -105,11 +113,9 @@ fn every_declared_artifact_is_written_under_its_store_prefix_with_an_index() {
     );
 
     assert_eq!(
-        std::fs::read_to_string(
-            out.join(
-                "mappings/banskabystrica/ovzdusie/ovzdusie/sensors-to-air/sensors-to-air.blobl"
-            )
-        )
+        std::fs::read_to_string(out.join(format!(
+            "{OVZ}mappings/ovzdusie/sensors-to-air/sensors-to-air.blobl"
+        )))
         .expect("the compiled mapping"),
         BLOBL
     );
@@ -161,23 +167,50 @@ fn a_space_filter_rebuilds_only_that_space() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
-/// DM-44: a repository that declares no Organization still rebuilds, under the project's name
-/// where the organization would stand, rather than failing or writing to an empty segment.
+/// T-7210: a project the rebuild has no key for is refused with the flag to pass, and nothing is
+/// written under a name in its place.
 #[test]
-fn a_repository_without_an_organization_writes_under_the_project_name() {
-    let dir = repo("rebuild-no-org-strict");
-    std::fs::remove_file(dir.join("org.yaml")).expect("the organization manifest");
-    let out = temp_dir("rebuild-no-org-strict-out");
+fn a_project_without_a_key_is_refused_and_nothing_is_keyed_by_its_name() {
+    let dir = repo("rebuild-no-key");
+    let out = temp_dir("rebuild-no-key-out");
+    let mut unkeyed = options(&out);
+    unkeyed.keys.remove("ovzdusie");
 
-    artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
-
-    assert!(out
-        .join("schemas/ovzdusie/ovzdusie/ovzdusie/air-quality/v1/air-quality.v1.json")
-        .is_file());
-    assert!(!out.join("schemas/banskabystrica").exists());
+    let error = artifacts::rebuild(&dir, &unkeyed).expect_err("no key, no rebuild");
+    let said = error.to_string();
+    assert!(said.contains("--project-key ovzdusie="), "{said}");
+    assert!(
+        !out.join("schemas").exists(),
+        "a name-built prefix was written"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&out);
+}
+
+/// T-7210, TEN-01: only two ids in their path form make a key; anything else could name another
+/// prefix or climb out of `--out-dir`.
+#[test]
+fn a_project_key_is_two_path_form_ids_and_nothing_else() {
+    let org = "ad2z3bvobuqkfmd3f2vjyhqnqe";
+    let project = "c7i5ym2kleuwxdl6t4fbwlb5ju";
+    assert_eq!(
+        artifacts::project_prefix(&format!("{org}/{project}")).as_deref(),
+        Some(OVZ)
+    );
+    for bad in [
+        format!("{org}"),
+        format!("{org}/../{project}"),
+        format!("{org}/{}", project.to_uppercase()),
+        format!("{org}/{}", "a".repeat(26)),
+        format!("{org}/z{}", &project[1..]),
+        "0b0c6c2e-1d1e-4a40-9f0e-2a5a3c1f0b01/5f1d2c3b-4a59-4b6c-8d7e-9f0a1b2c3d4e".to_owned(),
+        format!("{org}/{project}/x"),
+        format!("{org}/{project}*"),
+        "ovzdusie/ovzdusie".to_owned(),
+    ] {
+        assert_eq!(artifacts::project_prefix(&bad), None, "{bad}");
+    }
 }
 
 // --- T-2525: the edge cases of `rebuild` (DM-44, PF-29) ---
@@ -253,7 +286,7 @@ fn a_version_without_a_numeric_major_never_panics_and_prefixes_a_number() {
         });
         let out = temp_dir(&format!("rebuild-version-out-{n}"));
         if let Ok(report) = artifacts::rebuild(&dir, &options(&out)) {
-            let prefix = format!("schemas/banskabystrica/ovzdusie/ovzdusie/air-quality/{major}/");
+            let prefix = format!("{OVZ}schemas/ovzdusie/air-quality/{major}/");
             assert!(
                 report.written.iter().any(|k| k.starts_with(&prefix)),
                 "{version}: {:?}",
@@ -291,10 +324,12 @@ fn two_models_of_one_name_in_two_projects_do_not_collide_in_the_store() {
     );
     let out = temp_dir("rebuild-two-projects-out");
     let report = artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
-    let ours =
-        out.join("schemas/banskabystrica/ovzdusie/ovzdusie/air-quality/v1/air-quality.linkml.yaml");
-    let theirs =
-        out.join("schemas/banskabystrica/doprava/doprava/air-quality/v1/air-quality.linkml.yaml");
+    let ours = out.join(format!(
+        "{OVZ}schemas/ovzdusie/air-quality/v1/air-quality.linkml.yaml"
+    ));
+    let theirs = out.join(format!(
+        "{DOP}schemas/doprava/air-quality/v1/air-quality.linkml.yaml"
+    ));
     assert_eq!(std::fs::read_to_string(ours).expect("ours"), LINKML);
     assert_eq!(
         std::fs::read_to_string(theirs).expect("theirs"),
@@ -303,30 +338,7 @@ fn two_models_of_one_name_in_two_projects_do_not_collide_in_the_store() {
     assert!(report
         .written
         .iter()
-        .any(|k| k.starts_with("schemas/banskabystrica/doprava/")));
-}
-
-/// PF-29: a repository without an Organization names the store by the project.
-#[test]
-fn a_missing_organization_manifest_falls_back_to_the_project_name() {
-    let dir = repo("rebuild-no-org");
-    for entry in std::fs::read_dir(&dir).expect("the checkout").flatten() {
-        let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
-        if text.contains("kind: Organization") {
-            std::fs::remove_file(entry.path()).expect("remove the organization");
-        }
-    }
-    let out = temp_dir("rebuild-no-org-out");
-    if let Ok(report) = artifacts::rebuild(&dir, &options(&out)) {
-        assert!(
-            report
-                .written
-                .iter()
-                .all(|k| k.split('/').nth(1) == Some("ovzdusie")),
-            "{:?}",
-            report.written
-        );
-    }
+        .any(|k| k.starts_with(&format!("{DOP}schemas/doprava/"))));
 }
 
 /// DM-44: a filter naming no space writes nothing and says nothing is missing.

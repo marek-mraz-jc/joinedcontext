@@ -334,7 +334,7 @@ async fn a_queued_build_gets_one_job_its_own_cache_and_a_token_only_its_hash_is_
     );
     assert_eq!(token.len(), 64);
 
-    let held = build_records::token_of(&db, id)
+    let held = build_records::token_of(&db, PROJECT, id)
         .await
         .expect("read")
         .expect("a hash");
@@ -457,7 +457,7 @@ async fn a_second_build_waits_while_one_runs_and_one_app_never_runs_two() {
     .await
     .expect("queued");
     assert!(
-        build_records::start(&db, first, "t", chrono::Duration::minutes(25))
+        build_records::start(&db, PROJECT, first, "t", chrono::Duration::minutes(25))
             .await
             .expect("started")
     );
@@ -492,7 +492,7 @@ async fn a_second_build_waits_while_one_runs_and_one_app_never_runs_two() {
         next.app, "events",
         "the App with a running build is skipped"
     );
-    build_records::finish(&db, next.id, Err("gone"))
+    build_records::finish(&db, PROJECT, next.id, Err("gone"))
         .await
         .expect("ended");
     assert!(
@@ -502,7 +502,7 @@ async fn a_second_build_waits_while_one_runs_and_one_app_never_runs_two() {
             .is_none(),
         "bikes' second build waits until its first ends"
     );
-    build_records::finish(&db, first, Ok("sha256:x"))
+    build_records::finish(&db, PROJECT, first, Ok("sha256:x"))
         .await
         .expect("ended");
     assert_eq!(
@@ -552,7 +552,7 @@ async fn a_new_head_is_built_once_and_a_head_already_built_or_without_the_workfl
     );
 
     // The same head is never queued twice, even after its build failed.
-    build_records::finish(&db, build.id, Err("tests failed"))
+    build_records::finish(&db, PROJECT, build.id, Err("tests failed"))
         .await
         .expect("ended");
     assert!(trigger_once(&forge, &db, &state.mirror)
@@ -590,7 +590,7 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, failed, "t1", chrono::Duration::minutes(25))
+    build_records::start(&db, PROJECT, failed, "t1", chrono::Duration::minutes(25))
         .await
         .expect("s");
     let expired = build_records::enqueue(
@@ -604,7 +604,7 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, expired, "t2", chrono::Duration::seconds(-1))
+    build_records::start(&db, PROJECT, expired, "t2", chrono::Duration::seconds(-1))
         .await
         .expect("s");
     // A build the Portal was verifying when it stopped.
@@ -619,10 +619,12 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, stuck, "t3", chrono::Duration::minutes(-31))
+    build_records::start(&db, PROJECT, stuck, "t3", chrono::Duration::minutes(-31))
         .await
         .expect("s");
-    assert!(build_records::freeze(&db, stuck).await.expect("frozen"));
+    assert!(build_records::freeze(&db, PROJECT, stuck)
+        .await
+        .expect("frozen"));
     cluster(
         &server,
         json!([
@@ -670,7 +672,7 @@ async fn the_listener_answers_a_builds_own_token_and_refuses_every_other() {
         &[app_manifest("bikes", None), app_manifest("events", None)],
     );
     let (bikes, bikes_token) = started(&server, &db, &state, "bikes", COMMIT).await;
-    build_records::finish(&db, bikes, Err("ended for this test"))
+    build_records::finish(&db, PROJECT, bikes, Err("ended for this test"))
         .await
         .expect("ended");
     let (events, events_token) = started(&server, &db, &state, "events", COMMIT).await;
@@ -1000,7 +1002,7 @@ async fn a_token_of_one_build_never_writes_another_apps_status() {
         &[app_manifest("bikes", None), app_manifest("events", None)],
     );
     let (bikes, bikes_token) = started(&server, &db, &state, "bikes", COMMIT).await;
-    build_records::finish(&db, bikes, Err("ended for this test"))
+    build_records::finish(&db, PROJECT, bikes, Err("ended for this test"))
         .await
         .expect("ended");
     let (events, events_token) = started(&server, &db, &state, "events", COMMIT).await;
@@ -1059,16 +1061,18 @@ async fn an_upload_admitted_before_the_freeze_never_lands_after_it() {
     // An upload the listener admitted while the build ran lands only if the build still runs
     // when its rename comes: the row lock orders it against the freeze.
     let mut landed = false;
-    assert!(build_records::while_running(&db, id, || {
+    assert!(build_records::while_running(&db, PROJECT, id, || {
         landed = true;
         Ok(())
     })
     .await
     .expect("held"));
     assert!(landed);
-    assert!(build_records::freeze(&db, id).await.expect("frozen"));
+    assert!(build_records::freeze(&db, PROJECT, id)
+        .await
+        .expect("frozen"));
     let mut late = false;
-    assert!(!build_records::while_running(&db, id, || {
+    assert!(!build_records::while_running(&db, PROJECT, id, || {
         late = true;
         Ok(())
     })
@@ -1091,7 +1095,9 @@ async fn an_upload_after_the_finish_never_lands_and_a_moved_head_is_not_publishe
     );
     let (id, token) = started(&server, &db, &state, "air-quality", COMMIT).await;
     upload_both(&state, id, &token).await;
-    assert!(build_records::freeze(&db, id).await.expect("frozen"));
+    assert!(build_records::freeze(&db, PROJECT, id)
+        .await
+        .expect("frozen"));
     let (status, _) = listener(
         &state,
         "PUT",
