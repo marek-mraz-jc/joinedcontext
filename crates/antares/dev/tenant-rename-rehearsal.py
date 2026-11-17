@@ -4,7 +4,9 @@
     tenant-rename-rehearsal.py <libpq url of the copy> <map.json> <log>
 
 <map.json> is {old: new} for every Tenant to move (the Portal's map, or a synthetic one for a
-timing run); a Tenant of the copy that the map lacks is reported as unmapped and stays. Per Tenant:
+timing run); a Tenant of the copy that the map lacks is reported as unmapped and stays. A run that
+stopped is resumed with the map of the Tenants not yet moved: the ones `tenant_rename` records
+count as renamed earlier. Per Tenant:
 antares_tenant_digest(old) before, antares_tenant_rename(old, new) in its own transaction, then
 antares_tenant_digest(new); the digests must be equal. Then the whole-database row counts per table
 must be equal, no old name may hold a row (text still naming an old name inside a longer string is
@@ -60,8 +62,10 @@ def rehearse(url: str, mapping: dict[str, str], out) -> int:
         url, "SELECT tenant_id, count(*) FROM entity_values GROUP BY 1")}
     index = {t: f"T{i:03d}" for i, t in enumerate(sorted(tenants, key=lambda t: -sizes.get(t, 0)))}
     say(f"tenants {len(tenants)}, mapped {sum(t in mapping for t in tenants)}")
+    done = {r[0] for r in psql(url, "SELECT new FROM tenant_rename")}  # a resumed run's earlier part
+    say(f"renamed earlier {len(done)}")
     for t in tenants:
-        if t not in mapping and t != "default" and psql(url, "SELECT tenant_reserved(:'1')", t)[0][0] != "t":
+        if t not in mapping and t not in done and t != "default" and psql(url, "SELECT tenant_reserved(:'1')", t)[0][0] != "t":
             say(f"unmapped {index[t]} entity_values={sizes.get(t, 0)}: stays under its name")
     say("attr_rows_short rows " + psql(url, "SELECT count(*) FROM attr_rows_short")[0][0])
     say("database size " + psql(url, "SELECT pg_size_pretty(pg_database_size(current_database()))")[0][0])

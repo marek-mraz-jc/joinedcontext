@@ -204,8 +204,8 @@ BEGIN
     SELECT a.attrelid::regclass::text, a.attname::text
       FROM pg_attribute a JOIN tenant_tables() tt ON a.attrelid = tt.tbl::regclass
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype AND a.attgenerated = ''
-       AND (tt.tbl IN (SELECT tbl FROM tenant_naming_tables()) OR tenant_reserved_held(tt.tbl))
   LOOP
+    CONTINUE WHEN t NOT IN (SELECT tbl FROM tenant_naming_tables()) AND NOT tenant_reserved_held(t);
     EXECUTE format(
       'UPDATE %I SET %I = tenant_token(%I, $1, $2) WHERE %s AND %I::text LIKE $3', t, c, c,
       CASE WHEN t IN (SELECT tbl FROM tenant_naming_tables()) THEN 'true' ELSE reserved_rows() END,
@@ -217,8 +217,8 @@ BEGIN
   FOR t IN
     SELECT tt.tbl FROM tenant_tables() tt
       JOIN pg_attribute a ON a.attrelid = tt.tbl::regclass AND a.attname = 'id' AND a.atttypid = 'text'::regtype
-     WHERE tenant_reserved_held(tt.tbl)
   LOOP
+    CONTINUE WHEN NOT tenant_reserved_held(t);
     EXECUTE format('UPDATE %I SET id = $2 WHERE %s AND id = $1', t, reserved_rows())
       USING p_old, p_new;
     GET DIAGNOSTICS n = ROW_COUNT;
@@ -249,8 +249,8 @@ BEGIN
     SELECT a.attrelid::regclass::text, a.attname::text
       FROM pg_attribute a JOIN tenant_tables() tt ON a.attrelid = tt.tbl::regclass
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype
-       AND (tt.tbl IN (SELECT tbl FROM tenant_naming_tables()) OR tenant_reserved_held(tt.tbl))
   LOOP
+    CONTINUE WHEN t NOT IN (SELECT tbl FROM tenant_naming_tables()) AND NOT tenant_reserved_held(t);
     -- the predicate is chosen here: an `OR ... IN (SELECT ...)` in the
     -- statement turns the index scan of `entities` into a full scan
     EXECUTE format(
@@ -346,8 +346,8 @@ BEGIN
     SELECT tt.tbl, EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = tt.tbl::regclass
                                                        AND a.attname = 'id' AND a.atttypid = 'text'::regtype)
       FROM tenant_tables() tt
-     WHERE tenant_reserved_held(tt.tbl)
   LOOP
+    CONTINUE WHEN NOT tenant_reserved_held(t);
     SELECT string_agg(
              CASE WHEN a.atttypid = 'jsonb'::regtype
                   THEN format('tenant_token(%I, $1, %L)::text', a.attname, '<tenant>')
