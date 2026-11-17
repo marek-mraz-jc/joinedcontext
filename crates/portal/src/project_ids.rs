@@ -137,10 +137,14 @@ pub async fn key_of(
     if mirror.get(ORG_NAMESPACE, "Project", project).is_none() {
         return Ok(None);
     }
-    match organization_of(mirror, project) {
-        Some(organization) => key(pool, &organization, project).await,
-        None => Ok(None),
+    let key = match organization_of(mirror, project) {
+        Some(organization) => key(pool, &organization, project).await?,
+        None => None,
+    };
+    if let Some(key) = key {
+        crate::request_id::record_key(project, key);
     }
+    Ok(key)
 }
 
 /// The key of `project` for a write of `what` (T-7200): a project whose Organization is not an
