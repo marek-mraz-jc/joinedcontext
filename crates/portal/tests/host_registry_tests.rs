@@ -12,7 +12,8 @@ use axum::response::IntoResponse;
 use jc_router::registry::Rules;
 use joinedcontext_portal::error::ApiError;
 use joinedcontext_portal::host_registry::{
-    propose, remove, rows, seed, Proposal, SeedHost, SEEDED_BY,
+    organizations, propose, remove, rows, seed, seed_organizations, Proposal, SeedHost,
+    SeedOrganization, SEEDED_BY,
 };
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -64,8 +65,24 @@ fn proposal<'a>(host: &'a str, organization: &'a str, id: Option<&'a str>) -> Pr
     }
 }
 
-/// A mirror holding each `(name, domain)` as an Organization manifest.
-fn orgs(all: &[(&str, &str)]) -> Mirror {
+/// Seeds each name as an `active` Organization row without an id, as jc.toml does for an
+/// Organization it names without `id`.
+async fn register(pool: &PgPool, names: &[&str]) {
+    let seeded: Vec<SeedOrganization> = names
+        .iter()
+        .map(|name| SeedOrganization {
+            name: (*name).to_owned(),
+            organization_id: None,
+            host: format!("smartcity.{name}.jcdev.example"),
+        })
+        .collect();
+    seed_organizations(pool, &seeded).await.expect("seeded");
+}
+
+/// A mirror holding each `(name, domain)` as an Organization manifest, each also an Organization
+/// row without an id (its manifest's domain proves its hosts).
+async fn orgs(pool: &PgPool, all: &[(&str, &str)]) -> Mirror {
+    register(pool, &all.iter().map(|(name, _)| *name).collect::<Vec<_>>()).await;
     let mirror = Mirror::new();
     for (name, domain) in all {
         mirror.upsert(ResourceEnvelope {
@@ -93,7 +110,7 @@ async fn no_domain_without_proof() {
     let org = format!("o{r}");
     let unproved = format!("u{r}");
     let never = format!("never{r}.sk");
-    let mirror = orgs(&[(&org, &domain), (&unproved, &never)]);
+    let mirror = orgs(&pool, &[(&org, &domain), (&unproved, &never)]).await;
     for host in [
         "smartcity.other.sk".to_owned(),
         format!("x{domain}"),
@@ -142,14 +159,14 @@ async fn an_organization_never_proves_a_host_by_another_organizations_id() {
     minted(&pool, &format!("sk_a{r}"), &a_domain).await;
     minted(&pool, &b_id, &b_domain).await;
     let (a, b) = (format!("oa{r}"), format!("ob{r}"));
-    let mirror = orgs(&[(&a, &a_domain), (&b, &b_domain)]);
+    let mirror = orgs(&pool, &[(&a, &a_domain), (&b, &b_domain)]).await;
     let host = format!("smartcity.{b_domain}");
     // A names B's minted id to pass the minted-domain rule for a host under B's domain.
     let e = propose(&pool, &mirror, &RULES, &proposal(&host, &a, Some(&b_id)))
         .await
         .expect_err("another Organization's id");
     assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
-    // An Organization the mirror does not hold has no id to prove a host by.
+    // An Organization the registry does not hold has no id to prove a host by.
     let e = propose(
         &pool,
         &mirror,
@@ -173,6 +190,7 @@ async fn an_organization_never_proves_a_host_by_another_organizations_id() {
 async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
     let pool = pool().await;
     let org = format!("o{}", run("r"));
+    register(&pool, &[&org]).await;
     for host in [
         "api.jcdev.example",
         "login.jcdev.example",
@@ -191,6 +209,7 @@ async fn reserved_labels_hold_at_the_portal_as_on_the_seed() {
 async fn the_installations_own_domain_is_no_organizations_host() {
     let pool = pool().await;
     let org = format!("o{}", run("d"));
+    register(&pool, &[&org]).await;
     for host in ["jcdev.example", "JCDEV.example"] {
         let e = propose(&pool, &Mirror::new(), &RULES, &proposal(host, &org, None))
             .await
@@ -239,6 +258,160 @@ async fn a_registry_write_wakes_the_router() {
     assert_eq!(woke(&mut listener).await, "organization_hosts");
 }
 
+/// T-7181: a jc.toml Organization reads back from the registry as jc.toml names it, and a later
+/// start changes nothing but the id it names once minted; a removed one stays removed.
+#[tokio::test]
+async fn a_seeded_organization_reads_back_unchanged_and_a_removed_one_stays_removed() {
+    let pool = pool().await;
+    let r = run("s");
+    let id = format!("sk_s{r}");
+    minted(&pool, &id, &format!("s{r}.sk")).await;
+    let (kept, gone) = (format!("k{r}"), format!("g{r}"));
+    let mut seeded = vec![
+        SeedOrganization {
+            name: kept.clone(),
+            organization_id: None,
+            host: format!("smartcity.s{r}.sk"),
+        },
+        SeedOrganization {
+            name: gone.clone(),
+            organization_id: None,
+            host: format!("{gone}.jcdev.example"),
+        },
+    ];
+    assert_eq!(
+        seed_organizations(&pool, &seeded)
+            .await
+            .expect("first start"),
+        2
+    );
+    let read = |all: &[joinedcontext_portal::host_registry::OrganizationRow], name: &str| {
+        all.iter()
+            .find(|o| o.name == name)
+            .map(|o| (o.organization_id.clone(), o.host.clone(), o.state.clone()))
+    };
+    let all = organizations(&pool).await.expect("rows");
+    assert_eq!(
+        read(&all, &kept),
+        Some((None, format!("smartcity.s{r}.sk"), "active".to_owned()))
+    );
+    sqlx::query("UPDATE organizations SET state = 'removed' WHERE name = $1")
+        .bind(&gone)
+        .execute(&pool)
+        .await
+        .expect("removed");
+    // The next start names the minted id and another working host.
+    seeded[0].organization_id = Some(id.clone());
+    seeded[0].host = format!("other.s{r}.sk");
+    assert_eq!(
+        seed_organizations(&pool, &seeded).await.expect("restart"),
+        0
+    );
+    let all = organizations(&pool).await.expect("rows");
+    assert_eq!(
+        read(&all, &kept),
+        Some((
+            Some(id.clone()),
+            format!("smartcity.s{r}.sk"),
+            "active".to_owned()
+        )),
+        "the id is set once, the working host stays the row's"
+    );
+    assert_eq!(read(&all, &gone).map(|o| o.2).as_deref(), Some("removed"));
+    for (sql, bind) in [
+        (
+            "UPDATE organizations SET state = 'active' WHERE name = $1",
+            &gone,
+        ),
+        ("DELETE FROM organizations WHERE name = $1", &gone),
+        (
+            "UPDATE organizations SET organization_id = NULL WHERE name = $1",
+            &kept,
+        ),
+        (
+            "UPDATE organizations SET name = name || 'x' WHERE name = $1",
+            &kept,
+        ),
+    ] {
+        let err = sqlx::query(sql)
+            .bind(bind)
+            .execute(&pool)
+            .await
+            .expect_err(sql);
+        assert!(err.to_string().contains("Organization"), "{sql}: {err}");
+    }
+    // A second Organization naming the same id never takes it.
+    let twin = format!("t{r}");
+    seed_organizations(
+        &pool,
+        &[SeedOrganization {
+            name: twin.clone(),
+            organization_id: Some(id.clone()),
+            host: format!("{twin}.jcdev.example"),
+        }],
+    )
+    .await
+    .expect("seeded");
+    let all = organizations(&pool).await.expect("rows");
+    assert_eq!(read(&all, &twin).and_then(|o| o.0), None);
+}
+
+/// T-7181: an Organization created at run time (a row, as an operator Change writes it) takes
+/// hosts at once, proved by the row's id with no manifest anywhere; a removed one takes none.
+#[tokio::test]
+async fn a_run_time_organization_takes_hosts_and_a_removed_one_none() {
+    let pool = pool().await;
+    let r = run("o");
+    let domain = format!("o{r}.sk");
+    let id = format!("sk_o{r}");
+    minted(&pool, &id, &domain).await;
+    let org = format!("rt{r}");
+    let host = format!("smartcity.{domain}");
+    let none = Mirror::new();
+    let e = propose(&pool, &none, &RULES, &proposal(&host, &org, Some(&id)))
+        .await
+        .expect_err("no Organization yet");
+    assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
+    sqlx::query(
+        "INSERT INTO organizations (name, organization_id, host, state, created_by) \
+         VALUES ($1, $2, $3, 'active', 'operator-a')",
+    )
+    .bind(&org)
+    .bind(&id)
+    .bind(&host)
+    .execute(&pool)
+    .await
+    .expect("created");
+    let other = format!("sk_x{r}");
+    minted(&pool, &other, &format!("x{r}.sk")).await;
+    let e = propose(
+        &pool,
+        &none,
+        &RULES,
+        &proposal(&format!("a.x{r}.sk"), &org, Some(&other)),
+    )
+    .await
+    .expect_err("an id the row does not hold");
+    assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
+    propose(&pool, &none, &RULES, &proposal(&host, &org, Some(&id)))
+        .await
+        .expect("under the row's minted domain, no restart, no manifest");
+    sqlx::query("UPDATE organizations SET state = 'removed' WHERE name = $1")
+        .bind(&org)
+        .execute(&pool)
+        .await
+        .expect("removed");
+    let e = propose(
+        &pool,
+        &none,
+        &RULES,
+        &proposal(&format!("api.{domain}"), &org, Some(&id)),
+    )
+    .await
+    .expect_err("a removed Organization");
+    assert_eq!(status(e), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
 #[tokio::test]
 async fn one_host_one_organization_also_when_two_writes_race() {
     let pool = pool().await;
@@ -247,6 +420,7 @@ async fn one_host_one_organization_also_when_two_writes_race() {
         proposal(&host, "alpha", None),
         proposal(&host, "beta", None),
     );
+    register(&pool, &["alpha", "beta"]).await;
     let mirror = Mirror::new();
     let (a, b) = tokio::join!(
         propose(&pool, &mirror, &RULES, &alpha),

@@ -31,6 +31,55 @@ pub struct OrganizationHost {
     pub base: Url,
 }
 
+/// The Organizations' Portal hosts (T-7183): `JC_PORTAL_ORGANIZATION_HOSTS` at start, replaced
+/// whenever jc's Organization registry runs another set
+/// ([`AppState::replace_organization_hosts`]). Every clone holds the same set; a request reads
+/// the set current when it arrives.
+#[derive(Clone, Debug, Default)]
+pub struct OrganizationHosts(
+    std::sync::Arc<std::sync::RwLock<std::sync::Arc<Vec<OrganizationHost>>>>,
+);
+
+impl OrganizationHosts {
+    pub fn new(hosts: Vec<OrganizationHost>) -> Self {
+        Self(std::sync::Arc::new(std::sync::RwLock::new(
+            std::sync::Arc::new(hosts),
+        )))
+    }
+
+    /// The set held now.
+    pub fn current(&self) -> std::sync::Arc<Vec<OrganizationHost>> {
+        match self.0.read() {
+            Ok(held) => std::sync::Arc::clone(&held),
+            Err(poisoned) => std::sync::Arc::clone(&poisoned.into_inner()),
+        }
+    }
+
+    fn store(&self, next: Vec<OrganizationHost>) {
+        let next = std::sync::Arc::new(next);
+        match self.0.write() {
+            Ok(mut held) => *held = next,
+            Err(poisoned) => *poisoned.into_inner() = next,
+        }
+    }
+}
+
+impl AppState {
+    /// Makes `raw` (a `JC_PORTAL_ORGANIZATION_HOSTS` list, checked as at start) the
+    /// Organizations' Portal hosts (T-7183). An Organization left out is pinned on no host from
+    /// the next request on, and its own realm goes with it (a realm needs its Organization's
+    /// host); one added is pinned on its host at once and its realm is taken by the next
+    /// realm set. A list that fails the check changes nothing. Returns how many hosts are held.
+    pub fn replace_organization_hosts(&self, raw: &str) -> Result<usize, String> {
+        let next = parse(raw)?;
+        let count = next.len();
+        let kept: Vec<String> = next.iter().map(|h| h.organization.clone()).collect();
+        self.organization_hosts.store(next);
+        self.organization_realms.retain(&kept);
+        Ok(count)
+    }
+}
+
 /// One Organization's own catalogue (`JC_PORTAL_ORGANIZATION_CATALOGUES`): every Endpoint of its
 /// projects publishes there, into the CKAN organisation of its name, with its token, whatever
 /// the project's `CkanInstance` says; the dataroom of a jc refuses any other organisation.
@@ -250,7 +299,7 @@ pub fn for_host<'a>(hosts: &'a [OrganizationHost], host: &str) -> Option<&'a Org
 /// caller who belongs to no project of that Organization: an SSO session of another
 /// Organization's person signs them in here, and finds nothing but this 403.
 pub async fn middleware(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let hosts = &state.config.organization_hosts;
+    let hosts = state.organization_hosts.current();
     if hosts.is_empty() {
         return next.run(request).await;
     }
@@ -270,7 +319,7 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_owned)
         });
-    let Some(pin) = decided.or_else(|| host.as_deref().and_then(|h| for_host(hosts, h)).cloned())
+    let Some(pin) = decided.or_else(|| host.as_deref().and_then(|h| for_host(&hosts, h)).cloned())
     else {
         return next.run(request).await;
     };

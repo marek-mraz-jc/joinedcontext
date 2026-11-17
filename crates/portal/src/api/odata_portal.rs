@@ -37,7 +37,7 @@ pub enum Who {
     /// Any person, on any Organization they reach: what belongs to no Organization, their own
     /// notifications, preferences and alerts, and the installation's App and chart templates
     /// (T-7130); the projects they read and opening one, whose REST handler picks the
-    /// Organization (T-7177).
+    /// Organization (T-7177); their own rules in the `org` namespace (T-7176).
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -1153,14 +1153,15 @@ pub static DOORS: &[Door] = &[
         Who::ProjectReader,
     ),
     // The same for the Organization's own rules (the `org` namespace), which no project door
-    // binds to: every page asks them for its Organization controls.
+    // binds to: every page asks them for its Organization controls, so a viewer of another
+    // Organization's project reads them on the Organization it reaches (ui smoke viewer 404).
     door(
         "portal_org_permissions_me",
         Org,
         Method::GET,
         "/projects/org/permissions/me",
         &[],
-        Who::Person,
+        Who::Own,
     ),
     door(
         "portal_operation_run",

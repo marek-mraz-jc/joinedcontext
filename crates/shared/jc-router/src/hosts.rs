@@ -446,6 +446,31 @@ impl HostTable {
         Ok(table)
     }
 
+    /// The table without `organizations` (T-7184): their path segment, id and bound hosts are
+    /// gone, so a removed Organization answers on no host and no shared host's `/{org}/`.
+    #[must_use]
+    pub fn without(&self, organizations: &[&str]) -> Self {
+        let mut table = self.clone();
+        for name in organizations {
+            table.organizations.remove(*name);
+            table.ids.retain(|_, n| n != name);
+            let hosts: Vec<String> = table
+                .rows
+                .iter()
+                .filter(|(_, row)| {
+                    matches!(row, HostRow::Bound { organization, .. } if organization == name)
+                })
+                .map(|(host, _)| host.clone())
+                .collect();
+            for host in hosts {
+                table.rows.remove(&host);
+                table.roles.remove(&host);
+                table.moves.remove(&host);
+            }
+        }
+        table
+    }
+
     /// The Organizations of the deployment.
     pub fn organizations(&self) -> impl Iterator<Item = &str> {
         self.organizations.iter().map(String::as_str)

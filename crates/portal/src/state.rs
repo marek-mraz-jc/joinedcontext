@@ -38,6 +38,8 @@ pub struct AppState {
     pub bearer: Option<Arc<BearerVerifier>>,
     /// The realm of each Organization that signs in on its own host, by name (`auth::realms`).
     pub organization_realms: crate::auth::realms::OrganizationRealms,
+    /// Each Organization's Portal host, by name (`organization_host`, T-7183).
+    pub organization_hosts: crate::organization_host::OrganizationHosts,
     pub mirror: Arc<Mirror>,
     /// `None` when no forge is configured: every write answers 503. A Portal that cannot
     /// open a merge request must not fall back to a local write (CC-03).
@@ -189,11 +191,11 @@ const REVOCATION_TTL_SECS: i64 = 48 * 3600;
 /// `None` without either.
 pub(crate) fn organization_realm(
     config: &Config,
+    hosts: &[crate::organization_host::OrganizationHost],
     setting: &crate::auth::realms::RealmSetting,
 ) -> Option<(String, Arc<crate::auth::realms::OrganizationRealm>)> {
     let installation = config.oidc.as_ref()?;
-    let host = config
-        .organization_hosts
+    let host = hosts
         .iter()
         .find(|h| h.organization == setting.organization)?;
     Some((
@@ -255,9 +257,13 @@ impl AppState {
             config
                 .organization_realms
                 .iter()
-                .filter_map(|setting| organization_realm(&config, setting))
+                .filter_map(|setting| {
+                    organization_realm(&config, &config.organization_hosts, setting)
+                })
                 .collect(),
         );
+        let organization_hosts =
+            crate::organization_host::OrganizationHosts::new(config.organization_hosts.clone());
         let draft_events = DraftHub::new();
         let drafts = DraftStore::new(None).with_hub(draft_events.clone());
         let space_usage = Arc::new(
@@ -278,6 +284,7 @@ impl AppState {
         Self {
             bearer,
             organization_realms,
+            organization_hosts,
             catalogue_http: crate::api::catalogue::CKAN_HTTP.clone(),
             config: Arc::new(config),
             oidc: oidc.map(Arc::new),

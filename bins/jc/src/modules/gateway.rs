@@ -744,14 +744,15 @@ pub fn apps_router(
 /// Beside it goes the link base (`context_gateway::app::HostBase`): an API or MCP host links
 /// itself, any other address of the Organization its API host, so an answer for one
 /// Organization links no address of another's or of the deployment's.
+///
+/// An Organization jc.toml does not name takes its links from the host registry
+/// ([`replace_registry_links`], T-7184), so its host lists its own Endpoints alone too.
 pub fn by_organization(
     router: Router,
     orgs: &[crate::config::OrganizationSection],
     scheme: &str,
 ) -> Router {
     let base = |h: &str| format!("{scheme}://{h}");
-    // Organization -> (its API link base, its own API and MCP hosts with their link base).
-    type Links = BTreeMap<String, (String, BTreeMap<String, String>)>;
     let links: std::sync::Arc<Links> = std::sync::Arc::new(
         orgs.iter()
             .map(|org| {
@@ -779,15 +780,23 @@ pub fn by_organization(
                     .remove::<context_gateway::app::HostOrganization>();
                 req.extensions_mut()
                     .remove::<context_gateway::app::HostBase>();
-                let org = req
-                    .extensions()
-                    .get::<jc_router::Organization>()
-                    .and_then(|org| {
-                        let (api, own) = links.get(&org.0)?;
-                        let host = req.extensions().get::<Mount>().map(|m| bare(&m.host));
-                        let link = host.and_then(|h| own.get(h)).unwrap_or(api);
-                        Some((org.0.clone(), link.clone()))
-                    });
+                let decided = req.extensions().get::<jc_router::Organization>().cloned();
+                let org = decided.as_ref().and_then(|org| {
+                    let added = registry_links();
+                    let (api, own) = links.get(&org.0).or_else(|| added.get(&org.0))?;
+                    let host = req.extensions().get::<Mount>().map(|m| bare(&m.host));
+                    let link = host.and_then(|h| own.get(h)).unwrap_or(api);
+                    Some((org.0.clone(), link.clone()))
+                });
+                // An Organization the router placed but none of whose links jc holds (one the
+                // registry added or removed a moment ago) is refused: without it the gateway would
+                // answer for every Organization (T-7184).
+                if decided.is_some() && org.is_none() {
+                    return axum::response::IntoResponse::into_response((
+                        axum::http::StatusCode::MISDIRECTED_REQUEST,
+                        "this host is not served here",
+                    ));
+                }
                 if let Some((org, link)) = org {
                     req.extensions_mut()
                         .insert(context_gateway::app::HostOrganization(org));
@@ -798,6 +807,47 @@ pub fn by_organization(
             }
         },
     ))
+}
+
+/// Organization -> (its API link base, its own API hosts with their link base).
+type Links = BTreeMap<String, (String, BTreeMap<String, String>)>;
+
+/// The links of the Organizations the host registry serves beyond jc.toml's.
+static REGISTRY_LINKS: std::sync::LazyLock<std::sync::RwLock<std::sync::Arc<Links>>> =
+    std::sync::LazyLock::new(Default::default);
+
+pub(crate) fn registry_links() -> std::sync::Arc<Links> {
+    std::sync::Arc::clone(
+        &REGISTRY_LINKS
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+}
+
+/// Makes `orgs` (the registry's Organizations jc.toml does not name, `app::registry_hosts`)
+/// the ones [`by_organization`] links beside jc.toml's (T-7184): each at its API host, the
+/// working host without one. An Organization left out reaches the gateway with no
+/// Organization of its host from the next request on (its host answers `421` at the router).
+pub fn replace_registry_links(
+    orgs: &BTreeMap<String, crate::config::OrganizationHosts>,
+    scheme: &str,
+) {
+    let next: Links = orgs
+        .iter()
+        .filter(|(_, hosts)| !hosts.api_host().is_empty())
+        .map(|(name, hosts)| {
+            let api = format!("{scheme}://{}", hosts.api_host());
+            let own = hosts
+                .api
+                .iter()
+                .map(|h| (bare(h).to_owned(), api.clone()))
+                .collect();
+            (name.clone(), (api, own))
+        })
+        .collect();
+    *REGISTRY_LINKS
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(next);
 }
 
 /// `JC_OIDC_ORGANIZATION_REALMS` (T-7131): the realm of each Organization with its own sign-in

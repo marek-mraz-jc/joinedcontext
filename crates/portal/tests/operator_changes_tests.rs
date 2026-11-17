@@ -19,7 +19,9 @@ use futures_util::future::BoxFuture;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::{ClientAuth, Config};
 use joinedcontext_portal::domain_verification::{TxtRecords, Unanswered};
-use joinedcontext_portal::host_registry::{rows, seed, SeedHost};
+use joinedcontext_portal::host_registry::{
+    rows, seed, seed_organizations, SeedHost, SeedOrganization,
+};
 use joinedcontext_portal::people::People;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
@@ -85,14 +87,24 @@ fn operator(state: &AppState, name: &str) -> Identity {
     who
 }
 
-/// An Organization manifest, so a host can name it.
-fn organization(state: &AppState, name: &str, domain: &str) {
+/// An Organization manifest and its registry row (T-7181), so a host can name it.
+async fn organization(state: &AppState, name: &str, domain: &str) {
     state.mirror.upsert(envelope(
         "Organization",
         name,
         ORG_NAMESPACE,
         json!({ "domain": domain }),
     ));
+    seed_organizations(
+        state.db.as_ref().expect("db"),
+        &[SeedOrganization {
+            name: name.to_owned(),
+            organization_id: None,
+            host: format!("smartcity.{domain}"),
+        }],
+    )
+    .await
+    .expect("seeded");
 }
 
 fn body(text: &str) -> Value {
@@ -131,7 +143,7 @@ async fn state_of(state: &AppState, host: &str) -> Option<(String, Option<String
 async fn only_an_operator_with_a_second_factor_proposes_or_approves() {
     let (state, _) = world().await;
     let r = run("w");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     let change = json!({ "kind": "HostAdd", "host": format!("smartcity.{r}.{BASE}"), "organization": r, "role": "working" });
     let nobody = person("nobody");
     assert_eq!(
@@ -286,7 +298,7 @@ async fn only_an_operator_reads_the_hosts_the_audit_and_the_organizations() {
 async fn the_proposer_never_approves_and_a_second_operator_applies_a_host() {
     let (state, _) = world().await;
     let r = run("s");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     let host = format!("smartcity.{r}.{BASE}");
     let (status, made) = propose(
         &state,
@@ -331,7 +343,7 @@ async fn the_proposer_never_approves_and_a_second_operator_applies_a_host() {
 async fn an_operator_who_left_the_group_cannot_approve() {
     let (state, _) = world().await;
     let r = run("l");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     let (_, made) = propose(
         &state,
         operator(&state, "ops-a"),
@@ -362,7 +374,7 @@ async fn a_lapsed_txt_record_refuses_the_approval() {
     .execute(state.db.as_ref().expect("db"))
     .await
     .expect("mint");
-    organization(&state, &r, &domain);
+    organization(&state, &r, &domain).await;
     let record = format!("_joinedcontext.{domain}");
     dns.set(&record, &["jc-verify=c0ffee"]);
     let host = format!("smartcity.{domain}");
@@ -388,7 +400,7 @@ async fn a_lapsed_txt_record_refuses_the_approval() {
 async fn a_host_taken_since_the_proposal_is_409_at_approval() {
     let (state, _) = world().await;
     let r = run("c");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     let host = format!("portal.{r}.{BASE}");
     let (_, made) = propose(
         &state,
@@ -423,7 +435,7 @@ async fn a_host_taken_since_the_proposal_is_409_at_approval() {
 async fn each_field_is_checked_and_named() {
     let (state, _) = world().await;
     let r = run("f");
-    organization(&state, &r, &format!("{r}.sk"));
+    organization(&state, &r, &format!("{r}.sk")).await;
     for (change, field) in [
         (
             json!({ "kind": "HostAdd", "host": BASE, "organization": r, "role": "working" }),

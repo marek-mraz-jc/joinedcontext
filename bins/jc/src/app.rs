@@ -430,21 +430,80 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
 fn organization_specs(cfg: &Config, module: Module) -> Vec<MountSpec> {
     let mut out: Vec<MountSpec> = Vec::new();
     for org in &cfg.organizations {
-        for m in org.hosts.by_module() {
-            let spec = MountSpec {
-                module: module.name().to_owned(),
-                host: Some(m.host.to_owned()),
-                path_prefix: m.prefix.map(str::to_owned),
-            };
-            // The gateway's paths on the working host serve the Portal's pages there; a jc
-            // without the Portal leaves them to the one with it, unless there is no API host.
-            let beside_portal = module == Module::Gateway
-                && m.host == org.hosts.portal
-                && org.hosts.api.is_some()
-                && !cfg.roles.contains(&Module::Portal);
-            if m.module == module && !beside_portal && !out.contains(&spec) {
-                out.push(spec);
-            }
+        hosts_specs(
+            &org.hosts,
+            module,
+            cfg.roles.contains(&Module::Portal),
+            &mut out,
+        );
+    }
+    out
+}
+
+/// The entries of `module` on the hosts of one Organization, each once in `out`.
+fn hosts_specs(
+    hosts: &crate::config::OrganizationHosts,
+    module: Module,
+    runs_portal: bool,
+    out: &mut Vec<MountSpec>,
+) {
+    for m in hosts.by_module() {
+        let spec = MountSpec {
+            module: module.name().to_owned(),
+            host: Some(m.host.to_owned()),
+            path_prefix: m.prefix.map(str::to_owned),
+        };
+        // The gateway's paths on the working host serve the Portal's pages there; a jc
+        // without the Portal leaves them to the one with it, unless there is no API host.
+        let beside_portal = module == Module::Gateway
+            && m.host == hosts.portal
+            && hosts.api.is_some()
+            && !runs_portal;
+        if m.module == module && !m.host.is_empty() && !beside_portal && !out.contains(&spec) {
+            out.push(spec);
+        }
+    }
+}
+
+/// The hosts of each Organization as the host registry serves them (T-7184), shaped as
+/// `[[organizations]] hosts` gives them: per Organization its first `served` row of each role
+/// (working, open data, API, sign-in) and every Portal site. `rows` are `(host, Organization,
+/// role)` of `served` rows; an Apps domain and a `[[hosts]]` row stay jc.toml's (a wildcard
+/// entry and a root path the registry does not hold).
+pub(crate) fn registry_hosts<'a>(
+    rows: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+) -> std::collections::BTreeMap<String, crate::config::OrganizationHosts> {
+    use jc_router::HostRole;
+    let mut out: std::collections::BTreeMap<String, crate::config::OrganizationHosts> =
+        std::collections::BTreeMap::new();
+    for (host, organization, role) in rows {
+        let hosts = out.entry(organization.to_owned()).or_default();
+        let host = jc_router::registry::bare(host).to_ascii_lowercase();
+        let first = |slot: &mut Option<String>| {
+            slot.get_or_insert(host.clone());
+        };
+        match HostRole::parse(role) {
+            Some(HostRole::Working) if hosts.portal.is_empty() => hosts.portal = host,
+            Some(HostRole::OpenData) => first(&mut hosts.opendata),
+            Some(HostRole::Api) => first(&mut hosts.api),
+            Some(HostRole::SignIn) => first(&mut hosts.idm),
+            _ if role == "portal-site" => hosts.portals.push(host),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The entries every module of `roles` takes on the registry's hosts (`registry_hosts`); the
+/// router mounts those of hosts jc.toml did not mount (`jc_router::HostSwap::mount_hosts`).
+pub(crate) fn registry_specs(
+    orgs: &std::collections::BTreeMap<String, crate::config::OrganizationHosts>,
+    roles: &[Module],
+) -> Vec<MountSpec> {
+    let mut out = Vec::new();
+    for &module in roles {
+        for hosts in orgs.values() {
+            hosts_specs(hosts, module, roles.contains(&Module::Portal), &mut out);
         }
     }
     out
@@ -489,18 +548,20 @@ fn check_organization_hosts(cfg: &Config, plans: &[MountPlan]) -> Result<(), Sta
 
 /// Mounts `router` at every entry of `plan`, behind the whole-path rewrite for a module that
 /// answers at whole paths and behind the access log of its module.
+/// The same router answers the hosts the registry adds at run time (T-7184).
 fn mount_all(mut builder: JcRouterBuilder, plan: &MountPlan, router: &Router) -> JcRouterBuilder {
+    let router = router.clone();
+    #[cfg(feature = "gateway")]
+    let router = if plan.at_root {
+        modules::gateway::at_root(router)
+    } else {
+        router
+    };
+    let router = access::layer(plan.module.name(), router);
     for spec in plan.specs() {
-        let router = router.clone();
-        #[cfg(feature = "gateway")]
-        let router = if plan.at_root {
-            modules::gateway::at_root(router)
-        } else {
-            router
-        };
-        builder = builder.mount(spec.clone(), access::layer(plan.module.name(), router));
+        builder = builder.mount(spec.clone(), router.clone());
     }
-    builder
+    builder.module_router(plan.module.name(), router)
 }
 
 /// The Portal's mount, answered with 503 until the Portal is built. The Portal discovers its
@@ -1441,7 +1502,9 @@ async fn portal_attempt(
                     .chain(modules::portal::reconciler_vars(&cfg))
                     .collect(),
                 modules::portal::HostRegistry {
+                    organizations: modules::portal::organization_seed(&cfg),
                     seed: modules::portal::registry_seed(&cfg),
+                    roles: cfg.roles.clone(),
                     hosts: shared.hosts.clone(),
                 },
                 mount,

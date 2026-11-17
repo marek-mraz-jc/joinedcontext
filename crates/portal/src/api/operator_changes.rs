@@ -37,7 +37,6 @@ use crate::auth::session::{CurrentUser, Identity};
 use crate::domain_verification::{record, txt_name, TxtRecords, Unanswered};
 use crate::error::{ApiError, ProblemDetails};
 use crate::host_registry::{self, Proposal};
-use crate::permissions::ORG_NAMESPACE;
 use crate::state::AppState;
 
 /// The longest one TXT lookup of an approval may take.
@@ -337,18 +336,9 @@ async fn holds(
     by: &str,
 ) -> Result<(), ApiError> {
     match kind {
+        // The Organization is one of the registry's active rows (T-7181), checked in the same
+        // transaction as the host.
         OperatorKind::HostAdd => {
-            let organization = payload.organization.as_deref().unwrap_or_default();
-            if state
-                .mirror
-                .get(ORG_NAMESPACE, "Organization", organization)
-                .is_none()
-            {
-                return Err(invalid(
-                    "organization",
-                    format!("the installation has no Organization '{organization}'"),
-                ));
-            }
             let rules = rules(state)?;
             host_registry::check_proposal(pool, &state.mirror, &rules, &proposal(payload, by)).await
         }
