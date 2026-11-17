@@ -126,6 +126,12 @@ pub fn check(
 ) -> Result<(), Refusal> {
     check_labels(rules, entry)?;
     let host = entry.host;
+    // The shared host every `/{org}/` path answers on is the installation's, nobody's own.
+    if host == bare(rules.base_domain) {
+        return Err(Refusal::Invalid(format!(
+            "host '{host}' is the installation's own domain, which every Organization shares; choose a host under it"
+        )));
+    }
     if !under_domain(host, bare(rules.base_domain)) {
         match minted_domain {
             Some(domain) if under_domain(host, domain) => {}
@@ -209,6 +215,16 @@ mod tests {
         }
         check_labels(&RULES, &entry("smartcity.bbsk.jcdev.example")).expect("own label");
         check_labels(&RULES, &entry("api.bbsk.sk")).expect("a customer's own api. host");
+    }
+
+    /// T-7139 (integrator, T-7135 review): the installation's domain is every Organization's
+    /// shared host, so a write naming it is refused, while the hosts under it stay open.
+    #[test]
+    fn the_installations_own_domain_is_422() {
+        let refused = check(&RULES, &[], &entry("jcdev.example"), None).unwrap_err();
+        assert_eq!(refused.status(), 422, "{refused}");
+        assert!(refused.to_string().contains("own domain"), "{refused}");
+        check(&RULES, &[], &entry("bbsk.jcdev.example"), None).expect("a host under it");
     }
 
     #[test]

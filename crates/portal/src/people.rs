@@ -540,6 +540,46 @@ impl Admin<'_> {
             .map(|_| true)
     }
 
+    /// Adds the person to the realm's top-level group `name` (the operators' group, T-7139);
+    /// `false` when the realm has no such group. Found by an exact search of the name.
+    pub async fn join_group(&self, id: &str, name: &str) -> Result<bool, PeopleError> {
+        self.group_membership(Method::PUT, id, name).await
+    }
+
+    /// Takes the person out of the realm's top-level group `name`; `false` when the realm has
+    /// no such group.
+    pub async fn leave_group(&self, id: &str, name: &str) -> Result<bool, PeopleError> {
+        self.group_membership(Method::DELETE, id, name).await
+    }
+
+    async fn group_membership(
+        &self,
+        verb: Method,
+        id: &str,
+        name: &str,
+    ) -> Result<bool, PeopleError> {
+        let id = segment(id)?;
+        let search = self.request(Method::GET, "/groups").query(&[
+            ("search", name),
+            ("exact", "true"),
+            ("briefRepresentation", "true"),
+            ("max", "1000"),
+        ]);
+        let found: Vec<GroupNode> = self
+            .send(search)
+            .await?
+            .json()
+            .await
+            .map_err(|err| PeopleError::Unreachable(err.to_string()))?;
+        let Some(group) = find_group(&found, &format!("/{name}")) else {
+            return Ok(false);
+        };
+        let group = segment(&group)?;
+        self.send(self.request(verb, &format!("/users/{id}/groups/{group}")))
+            .await
+            .map(|_| true)
+    }
+
     /// Every person of the realm (an Organization's own realm holds that Organization's people
     /// only), page by page.
     pub async fn everyone(&self) -> Result<Vec<KcUser>, PeopleError> {

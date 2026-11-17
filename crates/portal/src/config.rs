@@ -222,6 +222,11 @@ pub struct Config {
     /// The organization's domain, the third segment of every URN this instance writes
     /// (`JC_PORTAL_ORG_DOMAIN`; `urn:ngsi-ld:{Type}:{orgDomain}:{space}:{localId}`).
     pub org_domain: Option<String>,
+    /// The installation's domain and sign-in host, as jc names them (`JC_PORTAL_INSTALLATION_DOMAIN`,
+    /// `JC_PORTAL_LOGIN_HOST`, e.g. `jcdev.dev.joinedcontext.com` and `idm.jcdev.dev.joinedcontext.com`):
+    /// the host registry's rules hold against them on every operator Change (T-7129 §1).
+    /// `None` when either is unset: no host Change is taken.
+    pub installation_hosts: Option<(String, String)>,
     /// Where a pipeline test's harness posts what it produced (PL-43): the Portal's internal
     /// listener as the project's runner reaches it, e.g. `http://portal-internal:9090`
     /// (`JC_PORTAL_PIPELINE_TEST_CAPTURE_URL`). `None` means the test route answers 503.
@@ -2313,6 +2318,15 @@ impl Config {
             broker_url_template,
             broker_admin_token_file,
             org_domain: lookup("JC_PORTAL_ORG_DOMAIN").filter(|v| !v.trim().is_empty()),
+            installation_hosts: lookup("JC_PORTAL_INSTALLATION_DOMAIN")
+                .zip(lookup("JC_PORTAL_LOGIN_HOST"))
+                .map(|(domain, login)| {
+                    (
+                        domain.trim().to_ascii_lowercase(),
+                        login.trim().to_ascii_lowercase(),
+                    )
+                })
+                .filter(|(domain, login)| !domain.is_empty() && !login.is_empty()),
             pipeline_test_capture_url,
             model_tools_url,
             sdm_mirror_dir,
@@ -2405,6 +2419,7 @@ impl Config {
             broker_url_template: None,
             broker_admin_token_file: None,
             org_domain: None,
+            installation_hosts: None,
             pipeline_test_capture_url: None,
             model_tools_url: None,
             sdm_mirror_dir: None,

@@ -90,6 +90,46 @@ pub async fn propose(
     rules: &Rules<'_>,
     p: &Proposal<'_>,
 ) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(db)?;
+    let host = admit(&mut tx, mirror, rules, p).await?;
+    insert(&mut tx, &host, p, "proposed", None).await?;
+    tx.commit().await.map_err(db)
+}
+
+/// The refusal [`propose`] would answer for `p`, writing nothing: an operator Change is
+/// refused when it is asked for, and checked again when it is approved ([`add_approved`]).
+pub async fn check_proposal(
+    pool: &PgPool,
+    mirror: &Mirror,
+    rules: &Rules<'_>,
+    p: &Proposal<'_>,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(db)?;
+    admit(&mut tx, mirror, rules, p).await?;
+    tx.rollback().await.map_err(db)
+}
+
+/// Adds `p` as `approved` by `approved_by` inside the caller's transaction, after the same
+/// rules as [`propose`] against the rows there now (a host taken since the proposal is `409`).
+pub async fn add_approved(
+    tx: &mut sqlx::PgConnection,
+    mirror: &Mirror,
+    rules: &Rules<'_>,
+    p: &Proposal<'_>,
+    approved_by: &str,
+) -> Result<(), ApiError> {
+    let host = admit(tx, mirror, rules, p).await?;
+    insert(tx, &host, p, "approved", Some(approved_by)).await
+}
+
+/// Locks the registry for the rest of the transaction and checks `p` against every row; the
+/// host as it is stored.
+async fn admit(
+    tx: &mut sqlx::PgConnection,
+    mirror: &Mirror,
+    rules: &Rules<'_>,
+    p: &Proposal<'_>,
+) -> Result<String, ApiError> {
     if let Some(id) = p.organization_id {
         let own = crate::reconciler::groups::organization_id(mirror, p.organization);
         if own.as_deref() != Some(id) {
@@ -100,7 +140,6 @@ pub async fn propose(
         }
     }
     let host = p.host.trim().to_ascii_lowercase();
-    let mut tx = pool.begin().await.map_err(db)?;
     sqlx::query("LOCK TABLE organization_hosts IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
         .await
@@ -134,30 +173,49 @@ pub async fn propose(
         sign_in: p.role == SIGN_IN_ROLE,
     };
     registry::check(rules, &entries, &new, minted.as_deref()).map_err(refused)?;
+    Ok(host)
+}
+
+async fn insert(
+    tx: &mut sqlx::PgConnection,
+    host: &str,
+    p: &Proposal<'_>,
+    state: &str,
+    approved_by: Option<&str>,
+) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO organization_hosts (host, organization, organization_id, role, state, created_by) \
-         VALUES ($1, $2, $3, $4, 'proposed', $5)",
+        "INSERT INTO organization_hosts \
+         (host, organization, organization_id, role, state, created_by, approved_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
-    .bind(&host)
+    .bind(host)
     .bind(p.organization)
     .bind(p.organization_id)
     .bind(p.role)
+    .bind(state)
     .bind(p.by)
+    .bind(approved_by)
     .execute(&mut *tx)
     .await
     .map_err(db)?;
-    tx.commit().await.map_err(db)
+    Ok(())
 }
 
 /// Marks `host` removed; `false` when it has no row or is removed already. The row stays as the
 /// tombstone that keeps the seed from adding the host again.
 pub async fn remove(pool: &PgPool, host: &str) -> Result<bool, sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    remove_in(&mut conn, host).await
+}
+
+/// [`remove`] inside the caller's transaction.
+pub async fn remove_in(conn: &mut sqlx::PgConnection, host: &str) -> Result<bool, sqlx::Error> {
     Ok(sqlx::query(
         "UPDATE organization_hosts SET state = 'removed', updated_at = now() \
          WHERE host = $1 AND state <> 'removed'",
     )
     .bind(host)
-    .execute(pool)
+    .execute(conn)
     .await?
     .rows_affected()
         == 1)
