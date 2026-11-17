@@ -48,8 +48,9 @@ fn keyed(n: u128, space: &str) -> String {
 /// documents and a registration naming it.
 async fn seed(pool: &PgPool, t: &TenantId) {
     use antares_store::{CurrentStateDriver, Kind, TemporalDriver};
-    let store =
-        antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool.clone()));
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
     store.set_outbox(true);
     let doc = |id: &str| {
         serde_json::json!({
@@ -204,7 +205,10 @@ async fn a_tenant_moves_whole_and_rolls_back() {
         .fetch_one(&pool)
         .await
         .expect("renamed");
-    assert_eq!(moved["text_still_naming_old"], 1, "the view's text: {moved}");
+    assert_eq!(
+        moved["text_still_naming_old"], 1,
+        "the view's text: {moved}"
+    );
     assert_eq!(digest(&pool, &new).await, before);
     assert_eq!(rows_of(&pool, &new).await, rows);
     assert_eq!(rows_of(&pool, &old).await, 0);
@@ -271,10 +275,18 @@ async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
         }
     };
     assert!(refused(a.clone(), b.clone()).await.contains("holds rows"));
-    assert!(refused(a.clone(), "antares-views".into()).await.contains("keep their names"));
-    assert!(refused("default".into(), keyed(n, "d")).await.contains("keep their names"));
-    assert!(refused(a.clone(), "a b".into()).await.contains("letters, digits"));
-    assert!(refused(format!("none{n}"), keyed(n, "x")).await.contains("no Tenant"));
+    assert!(refused(a.clone(), "antares-views".into())
+        .await
+        .contains("keep their names"));
+    assert!(refused("default".into(), keyed(n, "d"))
+        .await
+        .contains("keep their names"));
+    assert!(refused(a.clone(), "a b".into())
+        .await
+        .contains("letters, digits"));
+    assert!(refused(format!("none{n}"), keyed(n, "x"))
+        .await
+        .contains("no Tenant"));
     let new = keyed(n, "b");
     sqlx::query("SELECT antares_tenant_rename($1, $2)")
         .bind(&b)
@@ -282,7 +294,9 @@ async fn the_rename_refuses_a_taken_target_and_names_it_must_not_move() {
         .execute(&pool)
         .await
         .expect("renamed");
-    assert!(refused(a.clone(), b.clone()).await.contains("never used again"));
+    assert!(refused(a.clone(), b.clone())
+        .await
+        .contains("never used again"));
     let stray = sqlx::query("SELECT antares_tenant_rename_rollback($1)")
         .bind(keyed(n, "never"))
         .execute(&pool)

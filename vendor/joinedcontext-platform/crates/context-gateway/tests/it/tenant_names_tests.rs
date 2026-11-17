@@ -97,7 +97,10 @@ fn two_organizations_with_the_same_project_and_space_get_two_tenants() {
     assert_ne!(seen[0], seen[1]);
     for tenant in &seen {
         assert!(tenant.ends_with("__air"), "{tenant}");
-        assert!(jc_core::names::TenantName::parse(tenant).is_ok(), "{tenant}");
+        assert!(
+            jc_core::names::TenantName::parse(tenant).is_ok(),
+            "{tenant}"
+        );
     }
 }
 
@@ -146,8 +149,13 @@ fn a_project_whose_organization_or_key_does_not_resolve_gets_no_tenant() {
         ],
     );
     let (endpoints, ..) = store::load_named(&dir, TenantNames::ProjectKey).expect("loads");
-    let keyed = store::PROJECT_KEYS.read().expect("keys").contains_key("city");
-    let endpoint = endpoints.iter().find(|e| e.slug == "aaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let keyed = store::PROJECT_KEYS
+        .read()
+        .expect("keys")
+        .contains_key("city");
+    let endpoint = endpoints
+        .iter()
+        .find(|e| e.slug == "aaaaaaaaaaaaaaaaaaaaaaaaaa");
     // Another test of this binary may have published `city`; without it there is no tenant.
     if !keyed {
         assert_eq!(endpoint.and_then(|e| e.tenant.as_ref()), None);

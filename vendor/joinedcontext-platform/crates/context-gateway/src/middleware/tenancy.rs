@@ -912,7 +912,10 @@ mod tests {
                     .map(move |(path, subject, home)| (tenant.clone(), path, subject, home))
             })
         {
-            let org = tenant.organization().expect("an Organization half").to_owned();
+            let org = tenant
+                .organization()
+                .expect("an Organization half")
+                .to_owned();
             let home = home.map(|_| org.as_str());
             let mut request = Request::new(axum::body::Body::empty());
             for (name, value) in [

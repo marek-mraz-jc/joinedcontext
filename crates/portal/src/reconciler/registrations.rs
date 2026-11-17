@@ -354,13 +354,18 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
                 }
             };
             // The broker tenant the gateway pins for the space (PF-130, ARCH/TEN-10).
-            let space = match crate::spaces::tenant(mirror, &namespace, spec.context_space_ref.name()) {
-                Ok(tenant) => tenant,
-                Err(reason) => {
-                    refused.push((namespace.clone(), name, format!("not registered: {reason}")));
-                    continue;
-                }
-            };
+            let space =
+                match crate::spaces::tenant(mirror, &namespace, spec.context_space_ref.name()) {
+                    Ok(tenant) => tenant,
+                    Err(reason) => {
+                        refused.push((
+                            namespace.clone(),
+                            name,
+                            format!("not registered: {reason}"),
+                        ));
+                        continue;
+                    }
+                };
             found.push((
                 namespace.clone(),
                 name,

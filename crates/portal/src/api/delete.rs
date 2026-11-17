@@ -350,7 +350,10 @@ async fn goes_with(
             Ok(tenant) => {
                 state
                     .space_usage
-                    .usage(&crate::spaces::broker(&state.mirror, project, name), &tenant)
+                    .usage(
+                        &crate::spaces::broker(&state.mirror, project, name),
+                        &tenant,
+                    )
                     .await
             }
             Err(reason) => Err(reason),

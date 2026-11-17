@@ -72,7 +72,8 @@ async fn counts(
     let views = state.views.as_ref().ok_or_else(|| {
         ApiError::Unavailable("this Portal has no broker address or admin token".into())
     })?;
-    let tenant = crate::spaces::tenant(&state.mirror, project, space).map_err(ApiError::Unavailable)?;
+    let tenant =
+        crate::spaces::tenant(&state.mirror, project, space).map_err(ApiError::Unavailable)?;
     views
         .retention_counts(&tenant, draft, held)
         .await

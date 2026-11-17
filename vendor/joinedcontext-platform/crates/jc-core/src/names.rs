@@ -294,7 +294,8 @@ impl TenantName {
         let refused = || Error::Name {
             field: "tenant",
             value: raw.to_string(),
-            reason: "must be `{OrgId}__{ProjectId}__{space}` (two 26-character ids and a space name) \
+            reason:
+                "must be `{OrgId}__{ProjectId}__{space}` (two 26-character ids and a space name) \
                      or `{organization id}__{space}` (`sk_bbsk__mobility`), at most 128 characters",
         };
         if jc_types::InternalName::parse(raw).is_ok() {
@@ -728,7 +729,10 @@ mod tests {
             let parsed = TenantName::parse(tenant.as_str()).expect("parses back");
             assert_eq!(parsed.organization(), key.org.path_segment());
             assert_eq!(parsed.project(), Some(key.project.path_segment().as_str()));
-            assert!(antares_model::id::TenantId::new(tenant.as_str()).is_ok(), "{tenant}");
+            assert!(
+                antares_model::id::TenantId::new(tenant.as_str()).is_ok(),
+                "{tenant}"
+            );
         }
         for good in fixture["accepted"].as_array().expect("accepted") {
             let good = good.as_str().expect("text");
