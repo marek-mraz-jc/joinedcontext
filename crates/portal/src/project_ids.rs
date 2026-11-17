@@ -33,7 +33,27 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "entity_trash",
     "entity_comments",
     "data_views",
+    // T-7202 PK-1i, migration 0072: an access request is keyed by its Endpoint's project.
+    "erasures",
+    "access_requests",
 ];
+
+/// The column naming the project whose key a row of `table` takes: the project of the Endpoint
+/// an access request asks for, whose owners decide it (T-7202); `project` everywhere else.
+pub fn key_column(table: &str) -> &'static str {
+    match table {
+        "access_requests" => "endpoint_project",
+        _ => "project",
+    }
+}
+
+/// Tables of a project's data that stay installation-level, with the reason (T-7202). A
+/// person's invitation exists before the person belongs to any project and is read by person
+/// alone: its `project` is only the place the invitation offers, nullable.
+pub const LEFT_UNKEYED: &[(&str, &str)] = &[(
+    "person_invitations",
+    "an invitation is the person's, read by person id before they join; its project is optional",
+)];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
 /// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
@@ -158,6 +178,47 @@ pub(crate) async fn required(
         })
 }
 
+/// The key the registry recorded for `project`, whatever its Organization's state and whether the
+/// mirror still holds the Project: what reaches rows already keyed, so an erasure of a project
+/// that left the mirror still finishes (T-7202). `None` while the project has no Organization.
+pub async fn recorded(pool: &PgPool, project: &str) -> Result<Option<ProjectKey>, sqlx::Error> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT o.key::text, p.id::text FROM project_ids p JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1",
+    )
+    .bind(project)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(org, project)| parsed(&org, &project)))
+}
+
+/// Every project the registry recorded a key for, as [`recorded`]: what a pass over every
+/// project's rows fans out over, one `db::tenant_tx` each (STO-07).
+pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT p.name, o.key::text, p.id::text FROM project_ids p JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(name, org, project)| parsed(&org, &project).map(|key| (name, key)))
+        .collect())
+}
+
+/// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: in
+/// phase one its rows are unkeyed then, and the forcing migration waits until none is.
+pub async fn tx_of(
+    pool: &PgPool,
+    project: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    match recorded(pool, project).await? {
+        Some(key) => crate::db::tenant_tx(pool, key).await,
+        None => pool.begin().await,
+    }
+}
+
 /// Every Project of the mirror with its key, by name: what a read over every project fans out
 /// over, one `db::tenant_tx` each (STO-07). A Project whose Organization has no key is left out.
 pub async fn keyed_projects(
@@ -186,8 +247,9 @@ pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sql
     let mut waiting = std::collections::BTreeSet::new();
     // The table names are this file's constants, never input, so the formatted SQL binds the rest.
     for table in KEYED_BY_NAME {
+        let column = key_column(table);
         let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT DISTINCT project FROM {table} WHERE project_id IS NULL"
+            "SELECT DISTINCT {column} FROM {table} WHERE project_id IS NULL"
         )))
         .fetch_all(pool)
         .await?;
@@ -198,7 +260,7 @@ pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sql
             };
             sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid \
-                 WHERE project = $3 AND project_id IS NULL"
+                 WHERE {column} = $3 AND project_id IS NULL"
             )))
             .bind(key.org.to_string())
             .bind(key.project.to_string())
