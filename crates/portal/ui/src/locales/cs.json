@@ -13798,14 +13798,15 @@
         },
         "logoSvg": "Logo",
         "faviconSvg": "Ikona stránky",
-        "fromFile": "Zobrazuje se ze souboru vzhledu",
+        "fromFile": "Výchozí ze souboru vzhledu",
         "removeFile": "Odstranit",
-        "unchanged": "Nejprve změňte pole",
+        "unchanged": "Změňte pole, abyste mohli požádat o změnu.",
         "hint": {
           "instanceName": "V titulcích stránek a na přihlašovací stránce, například Smart City Banská Bystrica.",
           "shortName": "V postranním panelu a na kartách prohlížeče, například Smart BB; prázdný převezme celý název.",
-          "colour": "Barva v hex zápisu, například #0b5394; prázdné ponechá barvu ze souboru vzhledu.",
-          "svg": "Soubor SVG o velikosti nejvýše 64 KB bez skriptu, například logo.svg."
+          "colour": "Barva v hex zápisu, například #0b5394.",
+          "svg": "Soubor SVG o velikosti nejvýše 64 KB bez skriptu, například logo.svg.",
+          "favicon": "Soubor SVG o velikosti nejvýše 64 KB bez skriptu, například favicon.svg."
         },
         "file": {
           "size": "Soubor má více než 64 KB. Vyberte menší SVG.",

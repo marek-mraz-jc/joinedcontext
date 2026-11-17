@@ -357,7 +357,8 @@ describe("installation branding", () => {
     expect(await screen.findByText(B.empty)).toBeTruthy();
     for (const hint of [B.hint.instanceName, B.hint.shortName]) expect(screen.getByText(hint)).toBeTruthy();
     expect(screen.getAllByText(B.hint.colour)).toHaveLength(5);
-    expect(screen.getAllByText(B.hint.svg)).toHaveLength(2);
+    expect(screen.getByText(B.hint.svg)).toBeTruthy();
+    expect(screen.getByText(B.hint.favicon)).toBeTruthy();
     expect(screen.getByRole("button", { name: B.propose })).toHaveAttribute("aria-disabled", "true");
     fireEvent.change(screen.getByLabelText(B.instanceName), { target: { value: " Smart City BB " } });
     fireEvent.change(screen.getByLabelText(B.colour.primary), { target: { value: "#0b5394" } });

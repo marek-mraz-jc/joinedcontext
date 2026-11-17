@@ -246,7 +246,7 @@ export function OperatorBranding({
                 key={field}
                 id={`brand-${field}`}
                 label={t(`operator.installation.branding.${field}`)}
-                help={t("operator.installation.branding.hint.svg")}
+                help={t(field === "logoSvg" ? "operator.installation.branding.hint.svg" : "operator.installation.branding.hint.favicon")}
                 errors={fieldOf(field)}
                 aside={
                   <span className="flex items-center gap-2">
@@ -299,6 +299,7 @@ export function OperatorBranding({
             >
               {t("operator.installation.branding.propose")}
             </Button>
+            {!changed && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.branding.unchanged")}</p> : null}
           </div>
         </form>
         {elsewhere ? (
@@ -375,7 +376,7 @@ function SignInPreview({
       role="img"
       aria-label={t("operator.installation.signIn.previewOf", { which: t(`operator.installation.signIn.${size}`) })}
       viewBox={`0 0 ${width} ${height}`}
-      className={`${size === "desktop" ? "w-full" : "w-48"} h-auto rounded-md border border-border`}
+      className={`${size === "desktop" ? "w-full" : "w-56"} h-auto rounded-md border border-border`}
     >
       <rect width={width} height={height} fill={paint("background", "#f5f7fa")} />
       <rect x={x} y={height / 2 - 200} width={360} height={400} rx={12} fill="#ffffff" />

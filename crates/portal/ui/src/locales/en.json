@@ -13798,14 +13798,15 @@
         },
         "logoSvg": "Logo",
         "faviconSvg": "Favicon",
-        "fromFile": "Shows the branding file's",
+        "fromFile": "Default from the branding file",
         "removeFile": "Remove",
-        "unchanged": "Change a field first",
+        "unchanged": "Change a field to ask for a change.",
         "hint": {
           "instanceName": "On page titles and the sign-in page, for example Smart City Banská Bystrica.",
           "shortName": "In the sidebar and browser tabs, for example Smart BB; empty takes the full name.",
-          "colour": "A hex colour, for example #0b5394; empty keeps the branding file's.",
-          "svg": "An SVG file of at most 64 KB without script, for example logo.svg."
+          "colour": "A hex colour, for example #0b5394.",
+          "svg": "An SVG file of at most 64 KB without script, for example logo.svg.",
+          "favicon": "An SVG file of at most 64 KB without script, for example favicon.svg."
         },
         "file": {
           "size": "The file is over 64 KB. Choose a smaller SVG.",
