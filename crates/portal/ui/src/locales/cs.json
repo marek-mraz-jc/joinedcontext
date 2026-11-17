@@ -8173,7 +8173,11 @@
       "costs": "Náklady",
       "connectors": "Konektory",
       "data-access": "Přístup k datům",
-      "backups": "Zálohy"
+      "backups": "Zálohy",
+      "operator-organizations": "Organizace",
+      "operator-hosts": "Hostitelé a certifikáty",
+      "operator-changes": "Změny operátorů",
+      "operator-audit": "Audit operátorů"
     },
     "settings": {
       "title": "Nastavení",
@@ -8849,13 +8853,15 @@
       "access": "Lidé a přístup",
       "projects": "Projekty a aplikace",
       "platform": "Platforma",
-      "settings": "Nastavení"
+      "settings": "Nastavení",
+      "operators": "Operátoři instalace"
     },
     "groupLead": {
       "access": "Kdo patří do organizace a co smí každý člověk, skupina a servisní účet. Každá změna se navrhne a schválí.",
       "projects": "Co drží a zveřejňují všechny projekty organizace, na jednom místě.",
       "platform": "Co instalace provozuje pro každý projekt: brokery, prostředí, členství v datovém prostoru, stav a náklady.",
-      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity, zálohy konfigurace a co ještě chybí v nastavení."
+      "settings": "Doména organizace, jazyky, kontakty, pravidla a limity, zálohy konfigurace a co ještě chybí v nastavení.",
+      "operators": "Organizace instalace, jejich domény, hostitelé a certifikáty, změny, které schvaluje druhý operátor, a audit každého kroku. Tyto sekce otevírají jen operátoři instalace."
     },
     "kindHidden": "Zde je vidí jen administrátor organizace, jehož role zahrnuje {kinds}. Požádejte administrátora organizace, aby je přidal do vaší role.",
     "agents": {
@@ -13574,6 +13580,151 @@
         "declined": "Zamítnuto",
         "failed": "Neobnoveno: důvod je pod tím"
       }
+    }
+  },
+  "operator": {
+    "only": "Tyto sekce patří správcům instalace, jejím operátorům. Požádejte některého z nich o novou organizaci, doménu nebo hostitele.",
+    "tryAgain": "Požadavek neprošel. Zkuste to za chvíli znovu.",
+    "organizations": {
+      "title": "Organizace",
+      "lead": "Každá organizace instalace s doménou a hostiteli. Novou doménu nejprve prokáže její TXT záznam, teprve potom ji organizace použije.",
+      "caption": "Organizace",
+      "empty": "Zatím žádná organizace. Vytvořte ji v Nastavení, pak níže prokažte její doménu a požádejte o jejího prvního hostitele.",
+      "name": "Organizace",
+      "domain": "Doména",
+      "noDomain": "Bez domény",
+      "hosts": "Hostitelé",
+      "hostCount": "{served} v provozu, {waiting} na cestě"
+    },
+    "ids": {
+      "title": "Domény a jejich TXT záznamy",
+      "lead": "Každá doména se prokáže jedním TXT záznamem. Identifikátor vznikne, jakmile je záznam zveřejněn, a nikdy se nepoužije znovu.",
+      "caption": "Identifikátory organizací",
+      "empty": "Zatím jste nepožádali o žádnou doménu. Začněte krokem 1 níže.",
+      "domain": "Doména",
+      "id": "Identifikátor organizace",
+      "record": "TXT záznam",
+      "state": "Stav",
+      "minted": "Vydán",
+      "waiting": "Čeká na záznam",
+      "check": "Ověřit záznam nyní",
+      "notMinted": "Identifikátor nebyl vydán"
+    },
+    "add": {
+      "title": "Přidat doménu a jejího prvního hostitele",
+      "lead": "Tři kroky. Hostitel čeká na schválení druhým operátorem, potom na DNS a certifikát.",
+      "step1": "1. Doména a její TXT záznam",
+      "domain": "Doména",
+      "domainHint": "Vlastní doména organizace, malými písmeny, například bbsk.sk.",
+      "ask": "Získat TXT záznam",
+      "publish": "Zveřejněte tento záznam v DNS domény {domain} a pak ho ověřte v kroku 2.",
+      "record": "TXT záznam ke zveřejnění",
+      "step2": "2. Ověřit záznam a vydat identifikátor",
+      "step2Lead": "Portál se zeptá DNS na záznam. Záznam zveřejněný před minutou se může ukázat až za několik minut.",
+      "mint": "Ověřit a vydat identifikátor",
+      "mintFirst": "Nejprve získejte záznam TXT v kroku 1.",
+      "minted": "Doména je prokázána. Identifikátor organizace je {id}.",
+      "step3": "3. Požádat o hostitele",
+      "noOrganization": "Zatím neexistuje žádná organizace: nejprve ji vytvořte v Nastavení, pak zde požádejte o jejího hostitele.",
+      "host": "Hostitel",
+      "hostHint": "Malými písmeny, bez portu, pod prokázanou doménou nebo doménou instalace, například smartcity.bbsk.sk.",
+      "organization": "Organizace",
+      "organizationHint": "Organizace, za kterou hostitel odpovídá, například bbsk.",
+      "organizationPick": "Vyberte organizaci",
+      "role": "Co na hostiteli odpovídá",
+      "roleHint": "Například pracovní portál pro smartcity.bbsk.sk, otevřená data pro opendata.bbsk.sk.",
+      "propose": "Požádat o hostitele",
+      "proposed": "O hostitele je požádáno. Schválí ho druhý operátor.",
+      "toChanges": "Otevřít změny operátorů"
+    },
+    "role": {
+      "working": "Pracovní portál",
+      "opendata": "Otevřená data",
+      "api": "Rozhraní API",
+      "signin": "Přihlášení",
+      "apps": "Aplikace",
+      "portal-site": "Stránka portálu",
+      "host": "Sdílený hostitel"
+    },
+    "state": {
+      "proposed": "Navržen",
+      "approved": "Schválen",
+      "dns-ok": "DNS připraveno",
+      "cert-issued": "Certifikát vydán",
+      "served": "V provozu",
+      "removed": "Odstraněn"
+    },
+    "stateHint": {
+      "proposed": "Čeká na druhého operátora.",
+      "approved": "Čeká na svůj DNS záznam.",
+      "dns-ok": "Čeká na svůj certifikát.",
+      "cert-issued": "Spustí se při dalším průchodu.",
+      "served": "Nic: odpovídá na požadavky.",
+      "removed": "Už neodpovídá na žádný požadavek."
+    },
+    "hosts": {
+      "title": "Hostitelé a certifikáty",
+      "lead": "Každý hostitel každé organizace na cestě do provozu: DNS, certifikát, potom směrování na okraji sítě. Hostitel odpovídá až v provozu.",
+      "slots": "Volné certifikáty",
+      "slotsLead": "Let's Encrypt omezuje nové certifikáty, proto instalace žádá nejvýše 10 denně a {week} týdně na registrovanou doménu.",
+      "used": "{used} z {limit} nových certifikátů za posledních 24 hodin.",
+      "nextFree": "Další se uvolní v {at}.",
+      "caption": "Hostitelé",
+      "empty": "Zatím žádný hostitel. V Organizacích přidejte doménu a požádejte o jejího prvního hostitele.",
+      "host": "Hostitel",
+      "organization": "Organizace",
+      "role": "Role",
+      "state": "Stav",
+      "detail": "Na co čeká",
+      "actions": "Akce",
+      "remove": "Odstranit",
+      "removeTitle": "Odstranit {host}?",
+      "removeLead": "Tímto žádáte o odstranění. Jakmile ho druhý operátor schválí, hostitel přestane odpovídat a jeho certifikát a směrování se smažou.",
+      "removeConfirm": "Požádat o odstranění",
+      "removalProposed": "O odstranění je požádáno. Schválí ho druhý operátor."
+    },
+    "kind": {
+      "HostAdd": "Přidat hostitele",
+      "HostRemove": "Odstranit hostitele",
+      "OperatorAdd": "Přidat operátora",
+      "OperatorRemove": "Odstranit operátora"
+    },
+    "changeState": {
+      "proposed": "Čeká na schválení",
+      "applied": "Uplatněna",
+      "rejected": "Zamítnuta"
+    },
+    "changes": {
+      "title": "Změny operátorů",
+      "lead": "O co operátor požádal. Schvaluje to jiný operátor a do té doby se nic nezapíše. Zamítnout může kterýkoli operátor.",
+      "caption": "Změny operátorů",
+      "empty": "Zatím žádná změna operátorů. Hostitel, o kterého požádáte v Organizacích nebo Hostitelích, se ukáže zde.",
+      "kind": "Změna",
+      "target": "Hostitel nebo osoba",
+      "organization": "Organizace",
+      "proposedBy": "Požádal",
+      "proposedAt": "Kdy",
+      "state": "Stav",
+      "actions": "Akce",
+      "you": "Vy",
+      "ownHint": "Toto schvaluje jiný operátor.",
+      "approve": "Schválit",
+      "reject": "Zamítnout",
+      "refused": "Nerozhodnuto",
+      "applied": "Změna pro {target} je použita.",
+      "rejected": "Změna pro {target} je zamítnuta."
+    },
+    "audit": {
+      "title": "Audit operátorů",
+      "lead": "Každá změna operátorů a každý krok portálu na certifikátu a Ingressu hostitele, tak jak byly zapsány. Nic zde nelze změnit ani smazat.",
+      "caption": "Audit operátorů",
+      "empty": "Zatím nic zaznamenáno. První řádek zapíše první změna operátorů.",
+      "at": "Kdy",
+      "actor": "Kdo",
+      "reconciler": "Portál (sladění)",
+      "action": "Co",
+      "subject": "Hostitel nebo osoba",
+      "source": "Z adresy"
     }
   }
 }

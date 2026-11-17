@@ -1673,6 +1673,40 @@
         "evidence/T-5533/topics-refused-400.png"
       ]
     },
+    "src/pages/operator/OperatorChanges.tsx": {
+      "walkedBy": "worker-t7138",
+      "date": "2026-11-17",
+      "screenshots": [
+        "evidence/T-7140/operator-changes-1440.png",
+        "evidence/T-7140/operator-changes-400.png"
+      ]
+    },
+    "src/pages/operator/OperatorHosts.tsx": {
+      "walkedBy": "worker-t7138",
+      "date": "2026-11-17",
+      "screenshots": [
+        "evidence/T-7140/operator-hosts-1440.png",
+        "evidence/T-7140/operator-hosts-400.png",
+        "evidence/T-7140/operator-hosts-empty-1440.png",
+        "evidence/T-7140/operator-hosts-empty-400.png",
+        "evidence/T-7140/operator-hosts-remove-1440.png",
+        "evidence/T-7140/operator-hosts-remove-400.png"
+      ]
+    },
+    "src/pages/operator/OperatorOrganizations.tsx": {
+      "walkedBy": "worker-t7138",
+      "date": "2026-11-17",
+      "screenshots": [
+        "evidence/T-7140/operator-add-proposed-1440.png",
+        "evidence/T-7140/operator-add-proposed-400.png",
+        "evidence/T-7140/operator-add-refused-1440.png",
+        "evidence/T-7140/operator-add-refused-400.png",
+        "evidence/T-7140/operator-organizations-1440.png",
+        "evidence/T-7140/operator-organizations-400.png",
+        "evidence/T-7140/operator-organizations-empty-1440.png",
+        "evidence/T-7140/operator-organizations-empty-400.png"
+      ]
+    },
     "src/pages/organization/AgentActivity.tsx": {
       "walkedBy": "worker-t5301",
       "date": "2026-10-23",

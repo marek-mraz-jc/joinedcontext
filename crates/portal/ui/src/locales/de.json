@@ -8173,7 +8173,11 @@
       "costs": "Kosten",
       "connectors": "Konnektoren",
       "data-access": "Datenzugriff",
-      "backups": "Sicherungen"
+      "backups": "Sicherungen",
+      "operator-organizations": "Organisationen",
+      "operator-hosts": "Hosts und Zertifikate",
+      "operator-changes": "Operator-Änderungen",
+      "operator-audit": "Operator-Protokoll"
     },
     "settings": {
       "title": "Einstellungen",
@@ -8849,13 +8853,15 @@
       "access": "Personen und Zugriff",
       "projects": "Projekte und Apps",
       "platform": "Plattform",
-      "settings": "Einstellungen"
+      "settings": "Einstellungen",
+      "operators": "Betreiber der Installation"
     },
     "groupLead": {
       "access": "Wer zur Organisation gehört und was jede Person, Gruppe und jedes Dienstkonto darf. Jede Änderung wird vorgeschlagen und genehmigt.",
       "projects": "Was alle Projekte der Organisation halten und veröffentlichen, an einem Ort.",
       "platform": "Was die Installation für jedes Projekt betreibt: Broker, Umgebungen, Datenraum-Mitgliedschaft, Zustand und Kosten.",
-      "settings": "Domain, Sprachen, Kontakte, Regeln und Grenzen der Organisation, ihre Konfigurationssicherungen und was der Einrichtung noch fehlt."
+      "settings": "Domain, Sprachen, Kontakte, Regeln und Grenzen der Organisation, ihre Konfigurationssicherungen und was der Einrichtung noch fehlt.",
+      "operators": "Die Organisationen der Installation, ihre Domänen, Hosts und Zertifikate, die Änderungen, die ein zweiter Betreiber genehmigt, und das Protokoll jedes Schritts. Nur die Betreiber der Installation öffnen diese Bereiche."
     },
     "kindHidden": "Hier sieht sie nur eine Organisationsadministration, deren Rolle {kinds} umfasst. Bitten Sie die Organisationsadministration, sie Ihrer Rolle hinzuzufügen.",
     "agents": {
@@ -13574,6 +13580,151 @@
         "declined": "Abgelehnt",
         "failed": "Nicht wiederhergestellt: der Grund steht darunter"
       }
+    }
+  },
+  "operator": {
+    "only": "Diese Bereiche gehören den Administratoren der Installation, ihren Betreibern. Bitten Sie einen von ihnen um eine neue Organisation, Domain oder einen Host.",
+    "tryAgain": "Die Anfrage ist nicht durchgegangen. Versuchen Sie es gleich noch einmal.",
+    "organizations": {
+      "title": "Organisationen",
+      "lead": "Jede Organisation der Installation mit ihrer Domäne und ihren Hosts. Eine neue Domäne wird zuerst durch ihren TXT-Eintrag nachgewiesen, dann nutzt eine Organisation sie.",
+      "caption": "Organisationen",
+      "empty": "Noch keine Organisation. Legen Sie eine unter Einstellungen an, weisen Sie dann unten ihre Domain nach und beantragen Sie ihren ersten Host.",
+      "name": "Organisation",
+      "domain": "Domäne",
+      "noDomain": "Keine Domäne",
+      "hosts": "Hosts",
+      "hostCount": "{served} in Betrieb, {waiting} unterwegs"
+    },
+    "ids": {
+      "title": "Domänen und ihre TXT-Einträge",
+      "lead": "Jede Domäne weist sich mit einem TXT-Eintrag nach. Die Kennung wird vergeben, sobald der Eintrag da ist, und nie wiederverwendet.",
+      "caption": "Organisationskennungen",
+      "empty": "Noch keine Domäne angefragt. Beginnen Sie unten mit Schritt 1.",
+      "domain": "Domäne",
+      "id": "Organisationskennung",
+      "record": "TXT-Eintrag",
+      "state": "Status",
+      "minted": "Vergeben",
+      "waiting": "Wartet auf den Eintrag",
+      "check": "Eintrag jetzt prüfen",
+      "notMinted": "Die Kennung wurde nicht vergeben"
+    },
+    "add": {
+      "title": "Eine Domäne und ihren ersten Host hinzufügen",
+      "lead": "Drei Schritte. Der Host wartet auf die Genehmigung eines zweiten Betreibers, dann auf sein DNS und sein Zertifikat.",
+      "step1": "1. Die Domäne und ihr TXT-Eintrag",
+      "domain": "Domäne",
+      "domainHint": "Die eigene Domäne der Organisation, kleingeschrieben, z. B. bbsk.sk.",
+      "ask": "TXT-Eintrag abrufen",
+      "publish": "Veröffentlichen Sie diesen Eintrag im DNS von {domain} und prüfen Sie ihn dann in Schritt 2.",
+      "record": "Der zu veröffentlichende TXT-Eintrag",
+      "step2": "2. Eintrag prüfen und Kennung vergeben",
+      "step2Lead": "Das Portal fragt das DNS nach dem Eintrag. Ein vor einer Minute veröffentlichter Eintrag kann einige Minuten brauchen.",
+      "mint": "Prüfen und Kennung vergeben",
+      "mintFirst": "Holen Sie zuerst in Schritt 1 den TXT-Eintrag.",
+      "minted": "Die Domäne ist nachgewiesen. Ihre Organisationskennung ist {id}.",
+      "step3": "3. Einen Host anfordern",
+      "noOrganization": "Es gibt noch keine Organisation: Legen Sie zuerst eine in den Einstellungen an und fordern Sie dann hier ihren Host an.",
+      "host": "Host",
+      "hostHint": "Kleingeschrieben, ohne Port, unter der nachgewiesenen Domäne oder der der Installation, z. B. smartcity.bbsk.sk.",
+      "organization": "Organisation",
+      "organizationHint": "Die Organisation, für die der Host antwortet, z. B. bbsk.",
+      "organizationPick": "Organisation wählen",
+      "role": "Was auf dem Host antwortet",
+      "roleHint": "Z. B. Arbeitsportal für smartcity.bbsk.sk, offene Daten für opendata.bbsk.sk.",
+      "propose": "Host anfordern",
+      "proposed": "Der Host ist angefordert. Ein zweiter Betreiber genehmigt ihn.",
+      "toChanges": "Operator-Änderungen öffnen"
+    },
+    "role": {
+      "working": "Arbeitsportal",
+      "opendata": "Offene Daten",
+      "api": "Schnittstelle (API)",
+      "signin": "Anmeldung",
+      "apps": "Anwendungen",
+      "portal-site": "Portalseite",
+      "host": "Gemeinsamer Host"
+    },
+    "state": {
+      "proposed": "Vorgeschlagen",
+      "approved": "Genehmigt",
+      "dns-ok": "DNS bereit",
+      "cert-issued": "Zertifikat ausgestellt",
+      "served": "In Betrieb",
+      "removed": "Entfernt"
+    },
+    "stateHint": {
+      "proposed": "Wartet auf einen zweiten Betreiber.",
+      "approved": "Wartet auf seinen DNS-Eintrag.",
+      "dns-ok": "Wartet auf sein Zertifikat.",
+      "cert-issued": "Geht beim nächsten Durchlauf in Betrieb.",
+      "served": "Nichts: Er beantwortet Anfragen.",
+      "removed": "Beantwortet keine Anfrage mehr."
+    },
+    "hosts": {
+      "title": "Hosts und Zertifikate",
+      "lead": "Jeder Host jeder Organisation auf dem Weg in den Betrieb: DNS, Zertifikat, dann die Route am Netzrand. Ein Host antwortet erst, wenn er in Betrieb ist.",
+      "slots": "Freie Zertifikate",
+      "slotsLead": "Let's Encrypt begrenzt neue Zertifikate, daher fordert die Installation höchstens 10 am Tag und {week} pro Woche und registrierter Domäne an.",
+      "used": "{used} von {limit} neuen Zertifikaten in den letzten 24 Stunden angefordert.",
+      "nextFree": "Das nächste wird um {at} frei.",
+      "caption": "Hosts",
+      "empty": "Noch kein Host. Fügen Sie unter Organisationen eine Domäne hinzu und fordern Sie ihren ersten Host an.",
+      "host": "Host",
+      "organization": "Organisation",
+      "role": "Rolle",
+      "state": "Status",
+      "detail": "Worauf er wartet",
+      "actions": "Aktionen",
+      "remove": "Entfernen",
+      "removeTitle": "{host} entfernen?",
+      "removeLead": "Dies fordert eine Entfernung an. Sobald ein zweiter Betreiber sie genehmigt, beantwortet der Host keine Anfrage mehr, und Zertifikat und Route werden gelöscht.",
+      "removeConfirm": "Entfernung anfordern",
+      "removalProposed": "Die Entfernung ist angefordert. Ein zweiter Betreiber genehmigt sie."
+    },
+    "kind": {
+      "HostAdd": "Host hinzufügen",
+      "HostRemove": "Host entfernen",
+      "OperatorAdd": "Betreiber hinzufügen",
+      "OperatorRemove": "Betreiber entfernen"
+    },
+    "changeState": {
+      "proposed": "Wartet auf Genehmigung",
+      "applied": "Angewendet",
+      "rejected": "Abgelehnt"
+    },
+    "changes": {
+      "title": "Operator-Änderungen",
+      "lead": "Was ein Betreiber angefordert hat. Ein anderer Betreiber genehmigt es, vorher wird nichts geschrieben. Jeder Betreiber kann ablehnen.",
+      "caption": "Operator-Änderungen",
+      "empty": "Noch keine Operator-Änderung. Ein unter Organisationen oder Hosts angeforderter Host erscheint hier.",
+      "kind": "Änderung",
+      "target": "Host oder Person",
+      "organization": "Organisation",
+      "proposedBy": "Angefordert von",
+      "proposedAt": "Angefordert am",
+      "state": "Status",
+      "actions": "Aktionen",
+      "you": "Sie",
+      "ownHint": "Ein anderer Betreiber genehmigt dies.",
+      "approve": "Genehmigen",
+      "reject": "Ablehnen",
+      "refused": "Nicht entschieden",
+      "applied": "Die Änderung für {target} ist angewendet.",
+      "rejected": "Die Änderung für {target} ist abgelehnt."
+    },
+    "audit": {
+      "title": "Operator-Protokoll",
+      "lead": "Jede Operator-Änderung und jeder Schritt des Portals an Zertifikat und Ingress eines Hosts, wie geschrieben. Hier lässt sich nichts ändern oder löschen.",
+      "caption": "Operator-Protokoll",
+      "empty": "Noch nichts protokolliert. Die erste Operator-Änderung schreibt die erste Zeile.",
+      "at": "Wann",
+      "actor": "Wer",
+      "reconciler": "Das Portal (Abgleich)",
+      "action": "Was",
+      "subject": "Host oder Person",
+      "source": "Von Adresse"
     }
   }
 }

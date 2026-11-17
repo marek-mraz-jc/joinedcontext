@@ -1048,6 +1048,10 @@ export interface Functions {
   portal_mqtt_watch: { broker: string; account?: string; since?: string };
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
+  portal_operator_audit: Record<string, never>;
+  portal_operator_change_list: Record<string, never>;
+  portal_operator_hosts: Record<string, never>;
+  portal_operator_organizations: Record<string, never>;
   portal_org_model_source: { name: string };
   portal_org_permissions_me: Record<string, never>;
   portal_organization_address_list: Record<string, never>;
@@ -1226,6 +1230,10 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_mqtt_watch: ["Project"],
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
+  portal_operator_audit: ["Organization"],
+  portal_operator_change_list: ["Organization"],
+  portal_operator_hosts: ["Organization"],
+  portal_operator_organizations: ["Organization"],
   portal_org_model_source: ["Organization"],
   portal_org_permissions_me: ["Organization"],
   portal_organization_address_list: ["Organization"],
@@ -1401,6 +1409,9 @@ export interface Actions {
   portal_opendata_page_revert: { page: string; lang: string };
   portal_opendata_page_set: { page: string; lang: string; body?: unknown };
   portal_operation_run: { name: string; body?: unknown };
+  portal_operator_change_approve: { id: string };
+  portal_operator_change_propose: { body?: unknown };
+  portal_operator_change_reject: { id: string };
   portal_org_manifest_create: { plural: string; dryRun?: string; body?: unknown };
   portal_org_manifest_replace: { plural: string; name: string; dryRun?: string; ifMatch?: string; body?: unknown };
   portal_org_model_source_set: { name: string; dryRun?: string; space?: string; source?: string };
@@ -1408,6 +1419,8 @@ export interface Actions {
   portal_organization_change_reject: { id: string; body?: unknown };
   portal_organization_change_restore: { id: string };
   portal_organization_change_undo: { id: string };
+  portal_organization_id_challenge: { body?: unknown };
+  portal_organization_id_mint: { body?: unknown };
   portal_own_connector_create: { body?: unknown };
   portal_own_connector_edit: { id: string; body?: unknown };
   portal_own_connector_revoke: { id: string };
@@ -1578,6 +1591,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_opendata_page_revert: ["Organization"],
   portal_opendata_page_set: ["Organization"],
   portal_operation_run: ["Project"],
+  portal_operator_change_approve: ["Organization"],
+  portal_operator_change_propose: ["Organization"],
+  portal_operator_change_reject: ["Organization"],
   portal_org_manifest_create: ["Organization"],
   portal_org_manifest_replace: ["Organization"],
   portal_org_model_source_set: ["Organization"],
@@ -1585,6 +1601,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_organization_change_reject: ["Organization"],
   portal_organization_change_restore: ["Organization"],
   portal_organization_change_undo: ["Organization"],
+  portal_organization_id_challenge: ["Organization"],
+  portal_organization_id_mint: ["Organization"],
   portal_own_connector_create: ["Organization"],
   portal_own_connector_edit: ["Organization"],
   portal_own_connector_revoke: ["Organization"],
