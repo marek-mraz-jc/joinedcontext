@@ -384,6 +384,15 @@ class Live:
             raise RuntimeError(f"{ADMIN_CLIENT} client credentials: {st}")
         return body["access_token"]
 
+    def client_reader(self) -> str:
+        """portal-api's service-account token: `view-clients`, what reads a realm's full client
+        representations (kaisatsu authz, K3); the admin client is `manage-users` only (403 there)."""
+        st, body, _ = self.form(f"{self.kc}/token", {"grant_type": "client_credentials", "client_id": EXCHANGE_CLIENT,
+                                                    "client_secret": self.secret("portal-client-secret")})
+        if st != 200:
+            raise RuntimeError(f"{EXCHANGE_CLIENT} client credentials: {st}")
+        return body["access_token"]
+
     def make_person(self) -> None:
         admin = self.admin()
         st, _, raw = self.http.call("POST", f"/login/admin/realms/{self.realm}/users", token=admin, body={
@@ -881,7 +890,7 @@ def run(a, res: Results) -> dict:
         call = f"GET /login/admin/realms/{name}/clients (serviceAccountsEnabled, attributes.{PROJECT_ATTRIBUTE})"
         try:
             st, _, raw = live.http.call("GET", f"/login/admin/realms/{name}/clients?briefRepresentation=false",
-                                        token=live.admin())
+                                        token=live.client_reader())
             missing = project_less(as_json(raw) or []) if st == 200 else [f"HTTP {st}"]
         except Exception as err:  # noqa: BLE001 - an unreadable registry is a failing row, never a pass
             missing = [redact(str(err))[:200]]
