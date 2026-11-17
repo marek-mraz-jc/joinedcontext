@@ -640,6 +640,12 @@
       "tooMany": "Der Endpoint ist ausgelastet (zu viele Lesezugriffe auf einmal).",
       "lead": "Sein Datenmodell, seine Entitäten, wer sie liest und was mit ihm geschah.",
       "broker": "Er liegt auf dem Context-Broker {broker}.",
+      "brokerTenant": {
+        "label": "Broker-Tenant",
+        "hint": "Der Name, unter dem der Context-Broker die Daten dieses Bereichs ablegt, z. B. helsinki-air. Sie lesen ihn hier; die Plattform legt ihn fest.",
+        "unknown": "Noch nicht bekannt: {reason}",
+        "failed": "Der Tenant konnte nicht gelesen werden: {reason}. Versuchen Sie es erneut."
+      },
       "size": "Größe",
       "totalSize": "Er belegt {size} im Speicher des Brokers: {entities} aktueller Stand, {history} Verlauf.",
       "estimated": "Die Größen und die Anzahl der Verlaufseinträge sind aus der Datenbankstatistik geschätzt: Der Bereich ist zu groß, um ihn sofort zu messen.",

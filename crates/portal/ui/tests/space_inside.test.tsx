@@ -11,6 +11,7 @@ import { entityTypesOf, parseResultsCount, pickReadEndpoint, spaceOf } from "../
 import type { Manifest } from "../src/api/manifest";
 import { ApiError } from "../src/api/client";
 import { spaceUsageQuery, usageRefusal } from "../src/api/spaceUsage";
+import { SpaceTenantField } from "../src/pages/spaces/SpaceTenantField";
 import { readLayout, writeLayout } from "../src/components/entities/viewLayout";
 import { pageFindings } from "./pageChecks";
 import { renderPart } from "./page_contract";
@@ -153,6 +154,8 @@ function renderInside(
     models?: unknown;
     endpoints?: unknown;
     usage?: { status: number; body: unknown };
+    /** The space's broker Tenant (T-7216). */
+    tenant?: { status: number; body: unknown };
     /** The model's committed LinkML source, which the space's data reads for its field rules. */
     source?: string;
     /** The saved data views of the space (API/01 §30). */
@@ -202,6 +205,10 @@ function renderInside(
       }
       const answered = surface.answer?.(url) ?? surface.rows ?? SPACE_ROWS;
       return json(answered, 200, { "NGSILD-Results-Count": String(answered.length) });
+    }
+    if (path.endsWith("/spaces/ovzdusie/tenant")) {
+      const tenant = seed.tenant ?? { status: 200, body: { tenant: "banskabystrica-ovzdusie", reason: null } };
+      return json(tenant.body, tenant.status);
     }
     if (path.endsWith("/spaces/ovzdusie/usage")) {
       const usage = seed.usage ?? { status: 200, body: { entities: 0, broker: "main", observedAt: "2026-09-25T11:40:00Z" } };
@@ -390,6 +397,47 @@ describe("space inside view", () => {
     expect(await screen.findByTestId("space-total")).toHaveTextContent("The space holds 14,232 entities.");
     // PF-116: the space's page names the broker it lives on.
     expect(screen.getByTestId("space-broker")).toHaveTextContent("It lives on the context broker canary.");
+  });
+
+  // T-7216: the broker Tenant the space's data is filed under, read-only, with a hint.
+  it("shows the space's broker tenant read-only, and why when it is not known yet", async () => {
+    const fetchMock = renderInside({ status: 200, count: 42 }, { status: 200 }, {
+      tenant: { status: 200, body: { tenant: "01JC7Z0K3M__01JC7Z0K4N__ovzdusie", reason: null } },
+    });
+    await openTab(en.spaces.inside.model);
+    expect((await screen.findByText(en.spaces.inside.brokerTenant.label)).tagName).toBe("DT");
+    expect(await screen.findByTestId("space-tenant")).toHaveTextContent("01JC7Z0K3M__01JC7Z0K4N__ovzdusie");
+    expect(screen.getByText(en.spaces.inside.brokerTenant.hint)).toBeInTheDocument();
+    // Shown, never edited: no control to type into.
+    expect(screen.queryByRole("textbox", { name: en.spaces.inside.brokerTenant.label })).toBeNull();
+    expect(fetchMock.mock.calls.some((call) => urlOf(call[0]).pathname.endsWith("/spaces/ovzdusie/tenant"))).toBe(true);
+  });
+
+  it("says a tenant is not known yet with the server's reason, never an error page", async () => {
+    renderInside({ status: 200, count: 42 }, { status: 200 }, {
+      tenant: { status: 200, body: { tenant: null, reason: "project `banskabystrica` has no id in the Portal's project registry yet" } },
+    });
+    await openTab(en.spaces.inside.model);
+    expect(await screen.findByTestId("space-tenant-status")).toHaveTextContent(
+      "Not known yet: project `banskabystrica` has no id in the Portal's project registry yet",
+    );
+    expect(screen.queryByTestId("space-tenant")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Air quality" })).toBeInTheDocument();
+  });
+
+  it("says a tenant that could not be read with the reason and what to do", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({ title: "Bad gateway", detail: "the Portal did not answer" }), { status: 502, headers: { "Content-Type": "application/problem+json" } }))));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <SpaceTenantField project="banskabystrica" space="ovzdusie" />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("space-tenant-status")).toHaveTextContent(/The tenant could not be read: .+\. Try again\.$/),
+    );
   });
 
   // T-2890: the size the broker measured, whole and per type, in binary units; none without it.

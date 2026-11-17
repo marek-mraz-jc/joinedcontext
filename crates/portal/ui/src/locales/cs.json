@@ -640,6 +640,12 @@
       "tooMany": "Endpoint je zaneprázdněný (příliš mnoho čtení najednou).",
       "lead": "Jeho datový model, entity, kdo je čte a co se s ním stalo.",
       "broker": "Běží na kontextovém brokeru {broker}.",
+      "brokerTenant": {
+        "label": "Tenant v brokeru",
+        "hint": "Název, pod kterým kontextový broker ukládá data tohoto prostoru, např. helsinki-air. Zde ho jen čtete, nastavuje ho platforma.",
+        "unknown": "Zatím není známý: {reason}",
+        "failed": "Tenant se nepodařilo načíst: {reason}. Zkuste to znovu."
+      },
       "size": "Velikost",
       "totalSize": "V úložišti brokera zabírá {size}: aktuální stav {entities}, historie {history}.",
       "estimated": "Velikosti a počet záznamů historie jsou odhadnuty ze statistik databáze: prostor je příliš velký na okamžité změření.",

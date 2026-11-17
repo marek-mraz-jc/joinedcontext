@@ -11,6 +11,7 @@ import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
 import { bytesOfType, entityBytes, exactBytes, sizeText, spaceUsageQuery, usageRefusal } from "../../api/spaceUsage";
 import type { SpaceUsage } from "../../api/spaceUsage";
+import { SpaceTenantField } from "./SpaceTenantField";
 import { asManifests, localized, refName } from "../../api/manifest";
 import type { Change, Manifest } from "../../api/manifest";
 import { ActivityFeed } from "../../components/ActivityFeed";
@@ -2176,6 +2177,8 @@ export function SpaceInside({ project, name }: { project: string; name: string }
           </>
         )}
       </Section>
+
+      <SpaceTenantField project={project} space={name} />
 
         </div>
       ) : null}

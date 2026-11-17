@@ -844,6 +844,9 @@ routes:
   - route: GET /projects/{project}/spaces/{space}/quality
     rule: "space-read"
     expect: [401, allow, allow, allow, allow, allow, 404, allow]
+  - route: GET /projects/{project}/spaces/{space}/tenant
+    rule: "space-read"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
   - route: GET /projects/{project}/spaces/{space}/move
     rule: "org-admin (approve and delete on RoleBinding, PF-03)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

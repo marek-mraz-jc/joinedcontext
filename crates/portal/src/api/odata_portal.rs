@@ -1263,6 +1263,14 @@ pub static DOORS: &[Door] = &[
         Who::ProjectReader,
     ),
     door(
+        "portal_space_tenant",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/tenant",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
         "portal_model_source_set",
         Project,
         Method::PUT,

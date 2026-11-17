@@ -640,6 +640,12 @@
       "tooMany": "The endpoint is busy (too many reads at once).",
       "lead": "Its data model, its entities, who reads them and what happened to it.",
       "broker": "It lives on the context broker {broker}.",
+      "brokerTenant": {
+        "label": "Broker tenant",
+        "hint": "The name the context broker files this space's data under, e.g. helsinki-air. You read it here; the platform sets it.",
+        "unknown": "Not known yet: {reason}",
+        "failed": "The tenant could not be read: {reason}. Try again."
+      },
       "size": "Size",
       "totalSize": "It takes {size} in the broker's store: {entities} current state, {history} history.",
       "estimated": "The sizes and the history count are estimated from the database's statistics: the space is too large to measure at once.",

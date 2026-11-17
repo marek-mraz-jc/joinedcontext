@@ -39,6 +39,22 @@ export function spaceUsageQuery(project: string, space: string) {
   };
 }
 
+/**
+ * The broker Tenant a space's data is filed under (T-7216): read-only, the same for everyone who
+ * reads the space. One not known yet comes back as `reason`, never as an error.
+ */
+export type SpaceTenant = components["schemas"]["SpaceTenant"];
+
+export function spaceTenantQuery(project: string, space: string) {
+  return {
+    queryKey: ["space-tenant", project, space] as const,
+    staleTime: FIVE_MINUTES,
+    retry: false,
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SpaceTenant> =>
+      (await door("portal_space_tenant", { space }, project, signal)) as RestAnswer<"get_tenant">,
+  };
+}
+
 /** Why a count cannot be shown, in the server's words when it gave some. */
 export function usageRefusal(error: unknown): string {
   if (error instanceof ApiError) {
