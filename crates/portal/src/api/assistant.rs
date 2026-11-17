@@ -973,7 +973,7 @@ pub async fn start_conversation(
         state.oidc.as_deref(),
         &settings.proxy_base,
         &id,
-        crate::agents::identity::persons_token(&headers, state.config.trust_edge_token),
+        crate::agents::identity::run_token(&state, &headers).as_deref(),
     )
     .await;
     publish_event(

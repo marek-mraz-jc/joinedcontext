@@ -407,6 +407,14 @@ pub(crate) async fn file_request(
         body,
         requested_at,
     )?;
+    // No key for the Endpoint's project, no request (T-7202): 404 naming the Organizations page.
+    crate::project_ids::required(
+        pool(&state)?,
+        &state.mirror,
+        &request.endpoint_project,
+        "access requests",
+    )
+    .await?;
     if !requests::insert(pool(&state)?, &request)
         .await
         .map_err(store_error)?
@@ -694,7 +702,7 @@ pub(crate) async fn approve_request(
         }
     };
     if let Some(name) = change_name(&change) {
-        requests::record_change(pool(&state)?, &request.id, name)
+        requests::record_change(pool(&state)?, &request, name)
             .await
             .map_err(store_error)?;
     }
@@ -713,7 +721,7 @@ async fn decided(
 ) -> Result<(), ApiError> {
     let moved = requests::decide(
         pool(state)?,
-        &request.id,
+        request,
         states,
         &user.0.identity.username,
         reason,
@@ -865,7 +873,7 @@ pub(crate) async fn revoke_request(
         }
     };
     if let Some(name) = change_name(&change) {
-        requests::record_change(pool(&state)?, &request.id, name)
+        requests::record_change(pool(&state)?, &request, name)
             .await
             .map_err(store_error)?;
     }
@@ -1120,6 +1128,14 @@ pub(crate) async fn file_person_request(
         decision_reason: None,
         change: None,
     };
+    // No key for the Endpoint's project, no request (T-7202): 404 naming the Organizations page.
+    crate::project_ids::required(
+        pool(&state)?,
+        &state.mirror,
+        &request.endpoint_project,
+        "access requests",
+    )
+    .await?;
     if !requests::insert(pool(&state)?, &request)
         .await
         .map_err(store_error)?

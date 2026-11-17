@@ -8451,8 +8451,12 @@
       "operatorTitle": "Čo poskytuje inštalácia",
       "operatorLead": "Ste jedným z operátorov inštalácie: tieto položky nastavujete raz pre každú organizáciu.",
       "operatorLeadMember": "Operátori inštalácie nastavujú tieto položky raz pre každú organizáciu.",
-      "setIt": "Nastaviť",
-      "operatorSets": "Nastavuje to váš operátor",
+      "setIt": "Otvoriť inštaláciu",
+      "operatorSets": "Nastavujú to operátori vašej inštalácie.",
+      "notYet": "Zatiaľ nenastavené",
+      "whomToAsk": "Koho sa opýtať",
+      "whomToAskLead": "E-mailový server nastavujú operátori inštalácie; požiadajte o neho ich.",
+      "deploymentSets": "Nastavuje nasadenie",
       "step": {
         "organization": {
           "title": "Pomenujte organizáciu",
@@ -8503,7 +8507,7 @@
         },
         "backups": {
           "title": "Zálohy",
-          "hint": "Plánované zálohy celej databázy do objektového úložiska. Dnes ich nastavuje záloha databázy v nasadení.",
+          "hint": "Plánované zálohy celej databázy do objektového úložiska. Zatiaľ ich nastavuje záloha databázy v nasadení.",
           "about": "Plánované zálohy databázy inštalácie."
         }
       }
@@ -13591,7 +13595,7 @@
     }
   },
   "operator": {
-    "only": "Tieto sekcie patria operátorom inštalácie. Požiadajte niektorého z nich o novú organizáciu, doménu alebo hostiteľa, alebo o e-mailový server.",
+    "only": "Táto sekcia patrí operátorom inštalácie. Požiadajte niektorého z nich o novú organizáciu, doménu alebo hostiteľa, alebo o e-mailový server.",
     "tryAgain": "Požiadavka neprešla. Skúste to o chvíľu znova.",
     "organizations": {
       "title": "Organizácie",
@@ -13752,8 +13756,16 @@
         "waitingBadge": "Čaká na schválenie",
         "unchanged": "Najprv zmeňte niektoré pole; nič sa nelíši od uloženého servera.",
         "empty": "Zatiaľ žiadny e-mailový server, takže pozvánky a obnovenia hesla sa neposielajú. Vyplňte server od vášho poskytovateľa pošty a uložte ho.",
-        "waiting": "Zmena e-mailového servera čaká na druhého operátora.",
         "waitingShort": "Zmena už čaká na druhého operátora: najprv ju schváľte alebo zamietnite.",
+        "notAsked": "Portál zmenu odmietol: žiadna zmena nevznikla",
+        "fixField": "Pole {field} bolo odmietnuté: opravte ho podľa textu pod ním a požiadajte o zmenu znova.",
+        "testWaiting": "Test používa platný server; pošlite ho po rozhodnutí čakajúcej zmeny, alebo hneď pre ten platný.",
+        "noneInForce": "Zatiaľ neplatí žiadny e-mailový server: čakajúca zmena nastaví prvý.",
+        "inForce": "Platí, kým zmena nie je schválená",
+        "inForceNow": "Platí teraz",
+        "waitingOwn": "Zmena už čaká na druhého operátora. Sledujte ju, alebo ju stiahnite a požiadajte o inú, na stránke Zmeny.",
+        "askedFor": "Vyžiadané",
+        "passwordNew": "Nové, zapečatené do rozhodnutia o zmene",
         "toChanges": "Otvoriť Zmeny",
         "host": "Hostiteľ SMTP",
         "tls": "Ochrana",
@@ -13776,7 +13788,7 @@
         "propose": "Požiadať o túto zmenu",
         "proposed": "Požiadané. Druhý operátor ju schváli v Zmenách.",
         "test": "Odoslať testovací e-mail",
-        "testFirst": "Najprv uložte e-mailový server; test používa uložený.",
+        "testFirst": "Keď druhý operátor server schváli, otestujte ho tu.",
         "testSent": "Server prijal testovací e-mail. Ide na vašu vlastnú adresu; skontrolujte schránku.",
         "testFailed": "Testovací e-mail sa neodoslal. Opravte, čo uvádza riadok nižšie, a pošlite test znova."
       },
@@ -13845,6 +13857,7 @@
         "test": "Odoslaný testovací e-mail"
       }
     },
+    "refusedLead": "{section} obsahuje to, čo operátori inštalácie spravujú pre každú organizáciu.",
     "refusedTitle": "{section} je len pre operátorov inštalácie"
   }
 }

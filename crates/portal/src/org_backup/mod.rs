@@ -204,6 +204,29 @@ fn db(err: sqlx::Error) -> ApiError {
     ApiError::Internal(format!("the backup store failed: {err}"))
 }
 
+/// A transaction keyed on `organization`'s reserved project (ARCH/TEN-11, T-7191), the only key
+/// under which its backup rows answer; `None` when the Organization is not an active one of
+/// the registry, so no row of it is read or written.
+pub(crate) async fn keyed(
+    pool: &sqlx::PgPool,
+    organization: &str,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, ApiError> {
+    match crate::project_ids::reserved(pool, organization)
+        .await
+        .map_err(db)?
+    {
+        Some(key) => crate::db::tenant_tx(pool, key).await.map(Some).map_err(db),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn unregistered(organization: &str) -> ApiError {
+    ApiError::NotFound(format!(
+        "the Organization {organization} is not an active Organization of this installation's \
+         registry, so it has no backup; an operator adds it on the Organizations page first"
+    ))
+}
+
 impl BackupStore {
     pub fn new(db: Option<sqlx::PgPool>) -> Self {
         Self {
@@ -223,6 +246,9 @@ impl BackupStore {
                 .get(&(organization.to_owned(), kind.to_owned()))
                 .cloned()),
             Inner::Postgres(pool) => {
+                let Some(mut tx) = keyed(pool, organization).await? else {
+                    return Ok(None);
+                };
                 let row: Option<TargetRow> = sqlx::query_as(
                     "SELECT organization, kind, endpoint, region, bucket, prefix, access_key_id, \
                      sealed_secret, enabled, every_hours, keep_days, recipients, updated_by, \
@@ -231,9 +257,10 @@ impl BackupStore {
                 )
                 .bind(organization)
                 .bind(kind)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 Ok(row.map(target_of))
             }
         }
@@ -255,6 +282,9 @@ impl BackupStore {
                 Ok(())
             }
             Inner::Postgres(pool) => {
+                let mut tx = keyed(pool, &target.organization)
+                    .await?
+                    .ok_or_else(|| unregistered(&target.organization))?;
                 sqlx::query(
                     "INSERT INTO organization_backup_targets (organization, kind, endpoint, \
                      region, bucket, prefix, access_key_id, sealed_secret, enabled, every_hours, \
@@ -278,10 +308,10 @@ impl BackupStore {
                 .bind(target.keep_days)
                 .bind(&target.updated_by)
                 .bind(&target.recipients)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-                Ok(())
+                tx.commit().await.map_err(db)
             }
         }
     }
@@ -316,18 +346,34 @@ impl BackupStore {
                 Ok(due)
             }
             Inner::Postgres(pool) => {
-                let rows: Vec<TargetRow> = sqlx::query_as(
-                    "UPDATE organization_backup_targets SET last_run_at = now() \
+                // One keyed transaction per Organization of the registry (ARCH/STO-07): no
+                // statement reads two Organizations' targets.
+                let organizations: Vec<String> = sqlx::query_scalar(
+                    "SELECT name FROM organizations WHERE state = 'active' ORDER BY name",
+                )
+                .fetch_all(pool)
+                .await
+                .map_err(db)?;
+                let mut due = Vec::new();
+                for organization in organizations {
+                    let Some(mut tx) = keyed(pool, &organization).await? else {
+                        continue;
+                    };
+                    let rows: Vec<TargetRow> = sqlx::query_as(
+                        "UPDATE organization_backup_targets SET last_run_at = now() \
                      WHERE enabled AND (last_run_at IS NULL \
                      OR last_run_at <= now() - make_interval(hours => every_hours)) \
                      RETURNING organization, kind, endpoint, region, bucket, prefix, \
                      access_key_id, sealed_secret, enabled, every_hours, keep_days, recipients, \
                      updated_by, updated_at, last_run_at",
-                )
-                .fetch_all(pool)
-                .await
-                .map_err(db)?;
-                Ok(rows.into_iter().map(target_of).collect())
+                    )
+                    .fetch_all(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                    tx.commit().await.map_err(db)?;
+                    due.extend(rows.into_iter().map(target_of));
+                }
+                Ok(due)
             }
         }
     }
@@ -345,16 +391,19 @@ impl BackupStore {
                 Ok(())
             }
             Inner::Postgres(pool) => {
+                let Some(mut tx) = keyed(pool, organization).await? else {
+                    return Ok(());
+                };
                 sqlx::query(
                     "UPDATE organization_backup_targets SET last_run_at = now() \
                      WHERE organization = $1 AND kind = $2",
                 )
                 .bind(organization)
                 .bind(kind)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-                Ok(())
+                tx.commit().await.map_err(db)
             }
         }
     }
@@ -383,6 +432,9 @@ impl BackupStore {
                 Ok(())
             }
             Inner::Postgres(pool) => {
+                let mut tx = keyed(pool, entry.organization)
+                    .await?
+                    .ok_or_else(|| unregistered(entry.organization))?;
                 sqlx::query(
                     "INSERT INTO organization_backup_log (organization, kind, action, actor, ok, \
                      bytes, object_key, version_id, message, sha256) \
@@ -398,10 +450,10 @@ impl BackupStore {
                 .bind(entry.version_id)
                 .bind(entry.message)
                 .bind(entry.sha256)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-                Ok(())
+                tx.commit().await.map_err(db)
             }
         }
     }
@@ -425,6 +477,9 @@ impl BackupStore {
                 .cloned()
                 .collect()),
             Inner::Postgres(pool) => {
+                let Some(mut tx) = keyed(pool, organization).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<LogRow> = sqlx::query_as(
                     "SELECT id, organization, kind, action, actor, at, ok, bytes, object_key, \
                      version_id, message, sha256 FROM organization_backup_log \
@@ -433,9 +488,10 @@ impl BackupStore {
                 .bind(organization)
                 .bind(kind)
                 .bind(limit)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(db)?;
+                tx.commit().await.map_err(db)?;
                 Ok(rows
                     .into_iter()
                     .map(|r| LogEntry {

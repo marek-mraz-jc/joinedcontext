@@ -4,7 +4,11 @@
 //! otherwise.
 
 use chrono::{DateTime, Duration, Utc};
+use joinedcontext_portal::config::Config;
 use joinedcontext_portal::health_log::{Finding, HealthStore, Kind, Status, Text, KEEP};
+use joinedcontext_portal::state::AppState;
+
+mod common;
 
 fn finding(name: &str, status: Status) -> Finding {
     Finding::new("t5067", Kind::Pipeline, name, "runs").judged(
@@ -36,7 +40,10 @@ async fn the_postgres_log_keeps_since_recovers_and_bounds_its_history() {
     ] {
         sqlx::query(clean).execute(&pool).await.expect("clean");
     }
-    let store = HealthStore::new(Some(pool));
+    // The project placed in an Organization of the registry: its rows are keyed (T-7197).
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    common::keyed_project(&state, &pool, "t5067", "t5067org").await;
+    let store: &HealthStore = &state.health_log;
     let t0 = at("2026-07-01T08:00:00Z");
     let run = |now, status| {
         store.record(

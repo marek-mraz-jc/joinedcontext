@@ -42,7 +42,9 @@ pub struct TrashStore {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7200 PK-1h); a project
+    /// with no key keeps nothing in the trash.
+    Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(Memory),
 }
 
@@ -69,10 +71,10 @@ fn item(
 }
 
 impl TrashStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new((0, HashMap::new()))),
             },
         }
@@ -80,17 +82,21 @@ impl TrashStore {
 
     /// Keeps one copy and drops the keeper's oldest beyond [`KEPT_PER_SPACE`] and everything past
     /// [`KEPT_DAYS`].
+    /// Keeps a deleted Entity; `None` when its project has no tenancy key.
     pub async fn keep(
         &self,
         (project, space, owner): (&str, &str, &str),
         urn: &str,
         entity_type: &str,
         entity: &Value,
-    ) -> Result<TrashItem, sqlx::Error> {
+    ) -> Result<Option<TrashItem>, sqlx::Error> {
         let now = time::OffsetDateTime::now_utc();
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let mut tx = pool.begin().await?;
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(None);
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let (id, at): (i64, time::OffsetDateTime) = sqlx::query_as(
                     "INSERT INTO entity_trash (project, space, owner, urn, type, entity) \
                      VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, deleted_at",
@@ -117,13 +123,13 @@ impl TrashStore {
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await?;
-                Ok(item(
+                Ok(Some(item(
                     id,
                     at,
                     urn.to_owned(),
                     entity_type.to_owned(),
                     entity.clone(),
-                ))
+                )))
             }
             Inner::Memory(lock) => {
                 let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -143,13 +149,13 @@ impl TrashStore {
                 list.retain(|(_, at, ..)| *at > now - time::Duration::days(KEPT_DAYS));
                 let over = list.len().saturating_sub(KEPT_PER_SPACE);
                 list.drain(..over);
-                Ok(item(
+                Ok(Some(item(
                     id,
                     now,
                     urn.to_owned(),
                     entity_type.to_owned(),
                     entity.clone(),
-                ))
+                )))
             }
         }
     }
@@ -160,7 +166,11 @@ impl TrashStore {
         (project, space, owner): (&str, &str, &str),
     ) -> Result<Vec<TrashItem>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let rows: Vec<(i64, time::OffsetDateTime, String, String, Value)> = sqlx::query_as(
                     "SELECT id, deleted_at, urn, type, entity FROM entity_trash \
                      WHERE project = $1 AND space = $2 AND owner = $3 \
@@ -171,8 +181,9 @@ impl TrashStore {
                 .bind(owner)
                 .bind(KEPT_DAYS as i32)
                 .bind(KEPT_PER_SPACE as i64)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 Ok(rows
                     .into_iter()
                     .map(|(id, at, urn, entity_type, entity)| {
@@ -207,22 +218,30 @@ impl TrashStore {
         id: i64,
     ) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "DELETE FROM entity_trash WHERE project = $1 AND space = $2 AND owner = $3 AND id = $4",
-            )
-            .bind(project)
-            .bind(space)
-            .bind(owner)
-            .bind(id)
-            .execute(pool)
-            .await?
-            .rows_affected()
-                > 0),
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(false);
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
+                let gone = sqlx::query(
+                    "DELETE FROM entity_trash WHERE project = $1 AND space = $2 AND owner = $3 AND id = $4",
+                )
+                .bind(project)
+                .bind(space)
+                .bind(owner)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                tx.commit().await?;
+                Ok(gone > 0)
+            }
             Inner::Memory(lock) => {
                 let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
-                let Some(list) = guard
-                    .1
-                    .get_mut(&(project.to_owned(), space.to_owned(), owner.to_owned()))
+                let Some(list) =
+                    guard
+                        .1
+                        .get_mut(&(project.to_owned(), space.to_owned(), owner.to_owned()))
                 else {
                     return Ok(false);
                 };

@@ -533,7 +533,9 @@ fn from_row(row: Row) -> Erasure {
     }
 }
 
+/// Logs a new erasure in its project's key (T-7202).
 pub async fn insert(pool: &PgPool, erasure: &Erasure) -> Result<(), sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(pool, &erasure.project).await?;
     sqlx::query(
         "INSERT INTO erasures (id, project, space, subject, reason, actor, requested_at, groups, stores, approval) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
@@ -548,9 +550,9 @@ pub async fn insert(pool: &PgPool, erasure: &Erasure) -> Result<(), sqlx::Error>
     .bind(json!(erasure.groups))
     .bind(json!(erasure.stores))
     .bind(erasure.approval.as_str())
-    .execute(pool)
-    .await
-    .map(|_| ())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 /// One erasure of the space, or `None`.
@@ -568,7 +570,7 @@ pub async fn get(
     .bind(id)
     .bind(project)
     .bind(space)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *crate::project_ids::recorded_tx(pool, project).await?)
     .await
     .map(|row| row.map(from_row))
 }
@@ -582,7 +584,7 @@ pub async fn list(pool: &PgPool, project: &str, space: &str) -> Result<Vec<Erasu
     ))
     .bind(project)
     .bind(space)
-    .fetch_all(pool)
+    .fetch_all(&mut *crate::project_ids::recorded_tx(pool, project).await?)
     .await
     .map(|rows| rows.into_iter().map(from_row).collect())
 }
@@ -612,7 +614,8 @@ pub async fn approve(
     approver: &str,
     groups: &[Group],
 ) -> Result<Option<Erasure>, sqlx::Error> {
-    sqlx::query_as::<_, Row>(concat!(
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
+    let row = sqlx::query_as::<_, Row>(concat!(
         "UPDATE erasures SET approval = 'approved', decided_by = $4, decided_at = now(), groups = $5 \
          WHERE id = $1 AND project = $2 AND space = $3 AND approval = 'proposed' AND actor <> $4 \
            AND requested_at > now() - make_interval(days => $6) RETURNING ",
@@ -624,9 +627,10 @@ pub async fn approve(
     .bind(approver)
     .bind(json!(groups))
     .bind(i32::try_from(PROPOSAL_DAYS).unwrap_or(i32::MAX))
-    .fetch_optional(pool)
-    .await
-    .map(|row| row.map(from_row))
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row.map(from_row))
 }
 
 /// Declines a proposal still undecided and not expired; `None` otherwise.
@@ -636,7 +640,8 @@ pub async fn decline(
     decider: &str,
     reason: &str,
 ) -> Result<Option<Erasure>, sqlx::Error> {
-    sqlx::query_as::<_, Row>(concat!(
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
+    let row = sqlx::query_as::<_, Row>(concat!(
         "UPDATE erasures SET approval = 'declined', decided_by = $4, decided_at = now(), decline_reason = $5 \
          WHERE id = $1 AND project = $2 AND space = $3 AND approval = 'proposed' \
            AND requested_at > now() - make_interval(days => $6) RETURNING ",
@@ -648,41 +653,83 @@ pub async fn decline(
     .bind(decider)
     .bind(reason.trim())
     .bind(i32::try_from(PROPOSAL_DAYS).unwrap_or(i32::MAX))
-    .fetch_optional(pool)
-    .await
-    .map(|row| row.map(from_row))
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row.map(from_row))
+}
+
+/// The erasures matching `filter` in every project, oldest first: one `db::tenant_tx` per key
+/// the registry recorded (STO-07), a project that left the mirror included, so its erasure still
+/// finishes (T-7202); then the rows no key reaches yet, which the forcing migration ends.
+async fn every_project(pool: &PgPool, filter: &str) -> Result<Vec<Erasure>, sqlx::Error> {
+    let mut found = Vec::new();
+    // `filter` is one of this file's constants, never input.
+    let keyed = format!(
+        "SELECT {} FROM erasures WHERE project_id = $1::uuid AND {filter}",
+        columns!()
+    );
+    for (_, key) in crate::project_ids::every_recorded(pool).await? {
+        let mut tx = crate::db::tenant_tx(pool, key).await?;
+        found.extend(
+            sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(keyed.clone()))
+                .bind(key.project.to_string())
+                .fetch_all(&mut *tx)
+                .await?,
+        );
+        tx.commit().await?;
+    }
+    found.extend(
+        sqlx::query_as::<_, Row>(sqlx::AssertSqlSafe(format!(
+            "SELECT {} FROM erasures WHERE project_id IS NULL AND {filter}",
+            columns!()
+        )))
+        .fetch_all(pool)
+        .await?,
+    );
+    let mut found: Vec<Erasure> = found.into_iter().map(from_row).collect();
+    found.sort_by_key(|e| e.requested_at);
+    Ok(found)
 }
 
 /// The approved erasures with a store still pending, oldest first.
+///
+/// ponytail: one transaction per recorded project each minute; a partial index per key when
+/// installations hold thousands of projects.
 pub async fn open(pool: &PgPool) -> Result<Vec<Erasure>, sqlx::Error> {
-    sqlx::query_as::<_, Row>(concat!(
-        "SELECT ",
-        columns!(),
-        " FROM erasures WHERE completed_at IS NULL AND approval = 'approved' AND EXISTS \
-         (SELECT 1 FROM jsonb_each(stores) s WHERE s.value->>'state' = 'pending') \
-         ORDER BY requested_at LIMIT 100"
-    ))
-    .fetch_all(pool)
-    .await
-    .map(|rows| rows.into_iter().map(from_row).collect())
+    let mut open = every_project(
+        pool,
+        "completed_at IS NULL AND approval = 'approved' AND EXISTS \
+         (SELECT 1 FROM jsonb_each(stores) s WHERE s.value->>'state' = 'pending')",
+    )
+    .await?;
+    open.truncate(100);
+    Ok(open)
 }
 
 /// Writes one store's part, and the completion once every store is done. One store per
 /// statement, so two attempts of one erasure never overwrite each other.
-pub async fn save(pool: &PgPool, id: &str, name: &str, store: &Store) -> Result<(), sqlx::Error> {
+pub async fn save(
+    pool: &PgPool,
+    (project, id): (&str, &str),
+    name: &str,
+    store: &Store,
+) -> Result<(), sqlx::Error> {
+    let mut tx = crate::project_ids::recorded_tx(pool, project).await?;
     sqlx::query(
         "UPDATE erasures SET stores = jsonb_set(stores, ARRAY[$2], $3), \
            completed_at = CASE WHEN NOT EXISTS (SELECT 1 FROM jsonb_each(jsonb_set(stores, ARRAY[$2], $3)) s \
                                                 WHERE s.value->>'state' <> 'done') \
                                THEN coalesce(completed_at, now()) ELSE completed_at END \
-         WHERE id = $1",
+         WHERE id = $1 AND project = $4",
     )
     .bind(id)
     .bind(name)
     .bind(json!(store))
-    .execute(pool)
-    .await
-    .map(|_| ())
+    .bind(project)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 // --- the stores ----------------------------------------------------------------------------
@@ -701,12 +748,7 @@ pub async fn attempt(state: &AppState, pool: &PgPool, erasure: &Erasure, words: 
         }
         let outcome = match name.as_str() {
             "broker" => broker(state, erasure).await,
-            "portal" => match pool.acquire().await {
-                Ok(mut conn) => erase_portal_copies(&mut conn, erasure)
-                    .await
-                    .map(|n| (n, None)),
-                Err(err) => Err(format!("the Portal's copies were not reached: {err}")),
-            },
+            "portal" => portal_copies(pool, erasure).await.map(|n| (n, None)),
             "conversations" => conversations(state, erasure, words)
                 .await
                 .map(|n| (n, None)),
@@ -715,7 +757,14 @@ pub async fn attempt(state: &AppState, pool: &PgPool, erasure: &Erasure, words: 
         if let Err(reason) = &outcome {
             tracing::warn!(erasure = %erasure.id, store = %name, %reason, "an erasure's store did not answer; asked again in a minute");
         }
-        if let Err(err) = save(pool, &erasure.id, name, &store.after(outcome)).await {
+        if let Err(err) = save(
+            pool,
+            (&erasure.project, &erasure.id),
+            name,
+            &store.after(outcome),
+        )
+        .await
+        {
             tracing::warn!(erasure = %erasure.id, error = %err, "an erasure's outcome was not saved");
         }
     }
@@ -766,6 +815,20 @@ pub async fn erase_portal_copies(
             .map_err(|err| format!("the Portal's copies were not reached: {err}"))?
             .rows_affected();
     }
+    Ok(gone)
+}
+
+/// [`erase_portal_copies`] in the key the registry recorded for the erasure's project (T-7200,
+/// T-7202), so the keyed trash and comments answer once row-level security is forced, also after
+/// the project left the mirror; a project with no key has only unkeyed rows, which an unkeyed
+/// transaction reaches while the forcing migration waits for the backfill.
+async fn portal_copies(pool: &PgPool, erasure: &Erasure) -> Result<u64, String> {
+    let unreached = |err: sqlx::Error| format!("the Portal's copies were not reached: {err}");
+    let mut tx = crate::project_ids::recorded_tx(pool, &erasure.project)
+        .await
+        .map_err(unreached)?;
+    let gone = erase_portal_copies(&mut tx, erasure).await?;
+    tx.commit().await.map_err(unreached)?;
     Ok(gone)
 }
 
@@ -833,18 +896,12 @@ pub(crate) async fn reapply(state: &AppState, pool: &PgPool) -> Result<(usize, u
         .views
         .as_ref()
         .ok_or("this Portal has no broker address or admin token")?;
-    let done: Vec<Erasure> = sqlx::query_as::<_, Row>(concat!(
-        "SELECT ",
-        columns!(),
-        " FROM erasures WHERE approval = 'approved' AND stores->'broker'->>'state' = 'done' \
-         ORDER BY requested_at"
-    ))
-    .fetch_all(pool)
+    let done = every_project(
+        pool,
+        "approval = 'approved' AND stores->'broker'->>'state' = 'done'",
+    )
     .await
-    .map_err(|err| err.to_string())?
-    .into_iter()
-    .map(from_row)
-    .collect();
+    .map_err(|err| err.to_string())?;
     let mut held: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     let mut resent = 0;
     for erasure in &done {

@@ -406,7 +406,7 @@ pub fn fresh_state(
 }
 
 /// The last report of every space, and whether a run is under way.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Store {
     by_space: RwLock<BTreeMap<(String, String), SpaceQuality>>,
     /// Per space, the `rule path` pairs its last report broke and the one before did not.
@@ -415,6 +415,9 @@ pub struct Store {
     /// When the last run started; the next starts no sooner than `RETRY` after it.
     last_start: RwLock<Option<DateTime<Utc>>>,
     db: Option<sqlx::PgPool>,
+    /// What places each project in its Organization: every row is read and written in a
+    /// `db::tenant_tx` of its project's key (T-7197 PK-1e).
+    mirror: Arc<Mirror>,
 }
 
 /// The rules of `now` that `before` did not break, as `rule path`. A space's first report has
@@ -429,10 +432,20 @@ fn rules_new(before: Option<&SpaceQuality>, now: &SpaceQuality) -> Vec<String> {
         .collect()
 }
 
+impl std::fmt::Debug for Store {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Store")
+            .field("by_space", &self.by_space)
+            .field("running", &self.running)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Store {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<Mirror>) -> Self {
         Self {
             db,
+            mirror,
             ..Self::default()
         }
     }
@@ -481,13 +494,23 @@ impl Store {
     }
 
     /// Reads the kept reports back after a restart, so only the spaces whose report is missing
-    /// or a day old are read again. A row that no longer parses is skipped.
+    /// or a day old are read again. A row that no longer parses is skipped. Project by project in
+    /// its key (STO-07), so it waits for the mirror's first sync: [`spawn_load`].
     pub async fn load(&self) -> Result<usize, sqlx::Error> {
         let Some(db) = &self.db else { return Ok(0) };
-        let rows: Vec<(String, String, Value, Vec<String>)> =
-            sqlx::query_as("SELECT project, space, report, new_rules FROM space_quality")
-                .fetch_all(db)
-                .await?;
+        let mut rows: Vec<(String, String, Value, Vec<String>)> = Vec::new();
+        for (project, key) in crate::project_ids::keyed_projects(db, &self.mirror).await? {
+            let mut tx = crate::db::tenant_tx(db, key).await?;
+            rows.extend(
+                sqlx::query_as::<_, (String, String, Value, Vec<String>)>(
+                    "SELECT project, space, report, new_rules FROM space_quality WHERE project = $1",
+                )
+                .bind(&project)
+                .fetch_all(&mut *tx)
+                .await?,
+            );
+            tx.commit().await?;
+        }
         let mut loaded = 0;
         for (project, space, report, fresh) in rows {
             let Ok(report) = serde_json::from_value::<SpaceQuality>(report) else {
@@ -507,13 +530,18 @@ impl Store {
         Ok(loaded)
     }
 
-    /// Keeps one space's report, replacing the one before.
+    /// Keeps one space's report, replacing the one before; a project with no tenancy key keeps
+    /// it in memory only.
     async fn save(&self, project: &str, space: &str, fresh: &[String]) -> Result<(), sqlx::Error> {
         let (Some(db), Some(report)) = (&self.db, self.get(project, space)) else {
             return Ok(());
         };
+        let Some(key) = crate::project_ids::key_of(db, &self.mirror, project).await? else {
+            return Ok(());
+        };
         let report =
             serde_json::to_value(&report).map_err(|err| sqlx::Error::Encode(Box::new(err)))?;
+        let mut tx = crate::db::tenant_tx(db, key).await?;
         sqlx::query(
             "INSERT INTO space_quality (project, space, report, new_rules) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (project, space) DO UPDATE \
@@ -523,19 +551,28 @@ impl Store {
         .bind(space)
         .bind(report)
         .bind(fresh)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+        tx.commit().await
     }
 
-    /// Drops the kept reports of spaces that no longer name a model.
+    /// Drops the kept reports of spaces that no longer name a model, project by project.
     async fn forget_others(&self, spaces: &[(String, String)]) -> Result<(), sqlx::Error> {
         let Some(db) = &self.db else { return Ok(()) };
-        let keys: Vec<String> = spaces.iter().map(|(p, s)| format!("{p}/{s}")).collect();
-        sqlx::query("DELETE FROM space_quality WHERE NOT (project || '/' || space = ANY($1))")
-            .bind(keys)
-            .execute(db)
-            .await?;
+        for (project, key) in crate::project_ids::keyed_projects(db, &self.mirror).await? {
+            let kept: Vec<&str> = spaces
+                .iter()
+                .filter(|(p, _)| *p == project)
+                .map(|(_, s)| s.as_str())
+                .collect();
+            let mut tx = crate::db::tenant_tx(db, key).await?;
+            sqlx::query("DELETE FROM space_quality WHERE project = $1 AND NOT (space = ANY($2))")
+                .bind(&project)
+                .bind(&kept)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+        }
         Ok(())
     }
 
@@ -570,6 +607,26 @@ impl Store {
     fn finish(&self) {
         self.running.store(false, Ordering::Release);
     }
+}
+
+/// Reads the kept reports back once the mirror holds its first sync: a project's key comes from
+/// its Project's Organization, which lives only in Git (T-7197). Without a syncer the mirror is
+/// what the caller gave, so the reports are read at once.
+pub(crate) fn spawn_load(state: crate::state::AppState) {
+    if state.db.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Some(syncer) = state.syncer.clone() {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+            while syncer.status().revision.is_none() {
+                tick.tick().await;
+            }
+        }
+        if let Err(err) = state.quality.load().await {
+            tracing::warn!(error = %err, "the kept data-quality reports were not read");
+        }
+    });
 }
 
 /// What a run reads with and where it leaves its reports.
@@ -1054,26 +1111,32 @@ mod tests {
             return;
         };
         let db = crate::db::connect(&url).await.expect("connect and migrate");
-        let before = Store::new(Some(db.clone()));
+        // A project of its own run, placed in an Organization of the registry (T-7197).
+        let run = jc_types::ProjectId::mint().path_segment();
+        let t5066 = format!("t5066-{run}");
+        let mirror = Arc::new(Mirror::new());
+        crate::project_ids::placed(&db, &mirror, &t5066, &format!("t5066org-{run}")).await;
+        let t5066 = t5066.as_str();
+        let before = Store::new(Some(db.clone()), mirror.clone());
         let kept = report(&[("In", "status")]);
-        let fresh = before.put("t5066", "air", kept.clone());
-        before.save("t5066", "air", &fresh).await.expect("save");
-        before.put("t5066", "gone", report(&[]));
-        before.save("t5066", "gone", &[]).await.expect("save");
+        let fresh = before.put(t5066, "air", kept.clone());
+        before.save(t5066, "air", &fresh).await.expect("save");
+        before.put(t5066, "gone", report(&[]));
+        before.save(t5066, "gone", &[]).await.expect("save");
         before
-            .forget_others(&[("t5066".into(), "air".into())])
+            .forget_others(&[(t5066.into(), "air".into())])
             .await
             .expect("forget");
 
-        let after = Store::new(Some(db));
+        let after = Store::new(Some(db), mirror);
         assert_eq!(after.load().await.expect("load"), 1);
-        assert_eq!(after.get("t5066", "air"), Some(kept.clone()));
-        assert_eq!(after.get("t5066", "gone"), None);
-        assert_eq!(after.new_rules("t5066", "air"), vec!["In status"]);
+        assert_eq!(after.get(t5066, "air"), Some(kept.clone()));
+        assert_eq!(after.get(t5066, "gone"), None);
+        assert_eq!(after.new_rules(t5066, "air"), vec!["In status"]);
         assert!(
             after
                 .due(
-                    &[("t5066".into(), "air".into())],
+                    &[(t5066.into(), "air".into())],
                     kept.observed_at + chrono::Duration::hours(23)
                 )
                 .is_empty(),

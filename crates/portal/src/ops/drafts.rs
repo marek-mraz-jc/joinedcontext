@@ -135,6 +135,10 @@ pub enum DraftError {
         kind: String,
         name: String,
     },
+    /// The project has no tenancy key (T-7204 PK-1g): its Organization is not an active one of
+    /// the registry, so it keeps no draft.
+    #[error("the project {0} belongs to no active Organization of this installation's registry, so it keeps no draft; an operator adds its Organization on the Organizations page first")]
+    Unplaced(String),
 }
 
 /// The PostgreSQL channel every replica's draft events cross (OPS-51, Architecture/09 §10).
@@ -277,7 +281,8 @@ impl DraftHub {
 }
 
 enum DraftStoreInner {
-    Db(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7204 PK-1g).
+    Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     Memory(RwLock<HashMap<(String, String, String, String), Draft>>),
 }
 
@@ -285,6 +290,28 @@ enum DraftStoreInner {
 pub struct DraftStore {
     inner: Arc<DraftStoreInner>,
     hub: Option<DraftHub>,
+    /// When the idle drafts of every project were last swept, in Unix seconds: the sweep opens
+    /// one key per Project (STO-07), so a put runs it at most once per [`SWEEP_EVERY`].
+    swept: Arc<std::sync::atomic::AtomicI64>,
+}
+
+/// How long drafts sit idle before a put sweeps them, and how often that sweep runs.
+const IDLE: Duration = Duration::from_secs(24 * 3600);
+const SWEEP_EVERY: i64 = 3600;
+
+fn db_err(err: sqlx::Error) -> DraftError {
+    DraftError::Db(err.to_string())
+}
+
+/// A transaction in `project`'s key; `None` when it has none.
+async fn tenant(
+    pool: &sqlx::PgPool,
+    mirror: &crate::store::Mirror,
+    project: &str,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, DraftError> {
+    crate::project_ids::tx_of(pool, mirror, project)
+        .await
+        .map_err(db_err)
 }
 
 /// A draft's key: its workspace (empty for none), project, kind and name.
@@ -298,14 +325,15 @@ fn key(workspace: &str, project: &str, kind: &str, name: &str) -> (String, Strin
 }
 
 impl DraftStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         let inner = match db {
-            Some(pool) => DraftStoreInner::Db(pool),
+            Some(pool) => DraftStoreInner::Db(pool, mirror),
             None => DraftStoreInner::Memory(RwLock::new(HashMap::new())),
         };
         Self {
             inner: Arc::new(inner),
             hub: None,
+            swept: Arc::default(),
         }
     }
 
@@ -337,7 +365,10 @@ impl DraftStore {
                 let r = map.read().await;
                 Ok(r.get(&key(ws, project, kind, name)).cloned())
             }
-            DraftStoreInner::Db(pool) => {
+            DraftStoreInner::Db(pool, mirror) => {
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(None);
+                };
                 let row = sqlx::query(
                     "SELECT project, kind, name, workspace, manifest, verdict, touched_by, touched_kind, version, updated_at \
                      FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4",
@@ -346,9 +377,10 @@ impl DraftStore {
                 .bind(kind)
                 .bind(name)
                 .bind(ws)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
-                .map_err(|e| DraftError::Db(e.to_string()))?;
+                .map_err(db_err)?;
+                tx.commit().await.map_err(db_err)?;
 
                 row.map(row_to_draft).transpose()
             }
@@ -397,7 +429,21 @@ impl DraftStore {
             return Err(DraftError::Secret(secret_field));
         }
 
-        let _ = self.sweep(Duration::from_secs(24 * 3600)).await;
+        let now = Utc::now().timestamp();
+        let last = self.swept.load(std::sync::atomic::Ordering::Relaxed);
+        if now - last >= SWEEP_EVERY
+            && self
+                .swept
+                .compare_exchange(
+                    last,
+                    now,
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            let _ = self.sweep(IDLE).await;
+        }
 
         let key = key(ws, project, kind, name);
         let draft = match &*self.inner {
@@ -436,11 +482,10 @@ impl DraftStore {
                 w.insert(key, draft.clone());
                 draft
             }
-            DraftStoreInner::Db(pool) => {
-                let mut tx = pool
-                    .begin()
-                    .await
-                    .map_err(|e| DraftError::Db(e.to_string()))?;
+            DraftStoreInner::Db(pool, mirror) => {
+                let mut tx = tenant(pool, mirror, project)
+                    .await?
+                    .ok_or_else(|| DraftError::Unplaced(project.to_owned()))?;
                 let existing = sqlx::query(
                     "SELECT version FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4 FOR UPDATE",
                 )
@@ -560,9 +605,12 @@ impl DraftStore {
                 draft.updated_at = Utc::now();
                 draft.clone()
             }
-            DraftStoreInner::Db(pool) => {
+            DraftStoreInner::Db(pool, mirror) => {
                 let verdict_json =
                     serde_json::to_value(&verdict).map_err(|e| DraftError::Db(e.to_string()))?;
+                let mut tx = tenant(pool, mirror, project)
+                    .await?
+                    .ok_or_else(|| DraftError::Unplaced(project.to_owned()))?;
                 let row = sqlx::query(
                     // A verdict without a record check keeps the one the draft held (T-4840),
                     // as `Verdict::keeping_records` does in memory.
@@ -579,10 +627,11 @@ impl DraftStore {
                 .bind(name)
                 .bind(&verdict_json)
                 .bind(ws)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
-                .map_err(|e| DraftError::Db(e.to_string()))?
-                .ok_or_else(|| DraftError::NotFound {
+                .map_err(db_err)?;
+                tx.commit().await.map_err(db_err)?;
+                let row = row.ok_or_else(|| DraftError::NotFound {
                     project: project.to_string(),
                     kind: kind.to_string(),
                     name: name.to_string(),
@@ -633,16 +682,20 @@ impl DraftStore {
                 drafts.sort_by_key(|d| std::cmp::Reverse(d.updated_at));
                 Ok(drafts)
             }
-            DraftStoreInner::Db(pool) => {
+            DraftStoreInner::Db(pool, mirror) => {
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows = sqlx::query(
                     "SELECT project, kind, name, workspace, manifest, verdict, touched_by, touched_kind, version, updated_at \
                      FROM drafts WHERE project = $1 AND workspace = $2 ORDER BY updated_at DESC",
                 )
                 .bind(project)
                 .bind(ws)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await
-                .map_err(|e| DraftError::Db(e.to_string()))?;
+                .map_err(db_err)?;
+                tx.commit().await.map_err(db_err)?;
 
                 rows.into_iter().map(row_to_draft).collect()
             }
@@ -685,7 +738,10 @@ impl DraftStore {
                     (false, None)
                 }
             }
-            DraftStoreInner::Db(pool) => {
+            DraftStoreInner::Db(pool, mirror) => {
+                let Some(mut tx) = tenant(pool, mirror, project).await? else {
+                    return Ok(false);
+                };
                 let row = sqlx::query(
                     "DELETE FROM drafts WHERE project = $1 AND kind = $2 AND name = $3 AND workspace = $4 \
                      RETURNING project, kind, name, version, touched_by, touched_kind, updated_at, \
@@ -695,9 +751,10 @@ impl DraftStore {
                 .bind(kind)
                 .bind(name)
                 .bind(ws)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
-                .map_err(|e| DraftError::Db(e.to_string()))?;
+                .map_err(db_err)?;
+                tx.commit().await.map_err(db_err)?;
 
                 if let Some(r) = row {
                     let version: i64 = r.get("version");
@@ -740,14 +797,23 @@ impl DraftStore {
                 w.retain(|_, d| d.updated_at >= cutoff);
                 Ok(())
             }
-            DraftStoreInner::Db(pool) => {
+            DraftStoreInner::Db(pool, mirror) => {
                 let cutoff_odt = chrono_to_odt(cutoff);
-                sqlx::query("DELETE FROM drafts WHERE updated_at < $1")
-                    .bind(cutoff_odt)
-                    .execute(pool)
+                // Project by project, each in its own key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror)
                     .await
-                    .map(|_| ())
-                    .map_err(|e| DraftError::Db(e.to_string()))
+                    .map_err(db_err)?
+                {
+                    let mut tx = crate::db::tenant_tx(pool, key).await.map_err(db_err)?;
+                    sqlx::query("DELETE FROM drafts WHERE project = $1 AND updated_at < $2")
+                        .bind(&project)
+                        .bind(cutoff_odt)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db_err)?;
+                    tx.commit().await.map_err(db_err)?;
+                }
+                Ok(())
             }
         }
     }
@@ -862,6 +928,9 @@ pub(crate) fn draft_error(err: DraftError) -> OpError {
             "draft '{kind}/{name}' not found in project '{project}'"
         ))),
         DraftError::Db(msg) => OpError::Api(ApiError::Internal(msg)),
+        unplaced @ DraftError::Unplaced(_) => {
+            OpError::Api(ApiError::NotFound(unplaced.to_string()))
+        }
     }
 }
 
@@ -1196,7 +1265,7 @@ mod tests {
 
     #[tokio::test]
     async fn memory_store_lifecycle() {
-        let store = DraftStore::new(None);
+        let store = DraftStore::new(None, Arc::default());
         let manifest = json!({ "kind": "DataSource", "metadata": { "name": "feed-1" } });
 
         // 1. Initial put creates version 1
@@ -1333,7 +1402,7 @@ mod tests {
     async fn draft_hub_broadcasts_events() {
         let hub = DraftHub::new();
         let mut sub = hub.subscribe("helsinki").await;
-        let store = DraftStore::new(None).with_hub(hub);
+        let store = DraftStore::new(None, Arc::default()).with_hub(hub);
 
         let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "ep-1" } });
         let _ = store

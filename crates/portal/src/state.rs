@@ -279,7 +279,7 @@ impl AppState {
             config.organization_addresses.clone(),
         );
         let draft_events = DraftHub::new();
-        let drafts = DraftStore::new(None).with_hub(draft_events.clone());
+        let drafts = DraftStore::new(None, Arc::default()).with_hub(draft_events.clone());
         let space_usage = Arc::new(
             crate::space_usage::Counter::new(
                 config.broker_url.clone(),
@@ -291,7 +291,8 @@ impl AppState {
             config.gateway_url.clone(),
         ));
         let activity_events = crate::activity::ActivityHub::new();
-        let activity = crate::activity::ActivityStore::new(None).with_hub(activity_events.clone());
+        let activity = crate::activity::ActivityStore::new(None, Arc::default())
+            .with_hub(activity_events.clone());
         let model_schemas = Arc::new(crate::pipeline_validation::ModelSchemas::with_linkml_stage(
             config.pipeline_linkml_stage,
         ));
@@ -312,13 +313,16 @@ impl AppState {
             sync: None,
             db: None,
             txt_records: None,
-            agents: Arc::new(AgentStore::new(None)),
+            agents: Arc::new(AgentStore::new(None, Arc::default())),
             agent_events: Arc::new(AgentEventHub::new()),
             drafts,
             draft_events,
-            workspaces: crate::ops::workspaces::WorkspaceStore::new(None),
-            data_views: crate::ops::data_views::DataViewStore::new(None),
-            pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(None),
+            workspaces: crate::ops::workspaces::WorkspaceStore::new(None, Arc::default()),
+            data_views: crate::ops::data_views::DataViewStore::new(None, Arc::default()),
+            pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(
+                None,
+                Arc::default(),
+            ),
             previews: Arc::default(),
             activity,
             activity_events,
@@ -330,23 +334,35 @@ impl AppState {
             space_usage,
             space_moves: Arc::default(),
             model_schemas,
-            rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
-            trash: Arc::new(crate::entity_trash::TrashStore::new(None)),
-            comments: Arc::new(crate::entity_comments::CommentStore::new(None)),
+            rejected: Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                None,
+                Default::default(),
+            )),
+            trash: Arc::new(crate::entity_trash::TrashStore::new(None, Arc::default())),
+            comments: Arc::new(crate::entity_comments::CommentStore::new(
+                None,
+                Arc::default(),
+            )),
             feedback: Arc::new(crate::feedback::FeedbackStore::new(None)),
             org_backups: Arc::new(crate::org_backup::BackupStore::new(None)),
             org_backup_egress: Arc::new(crate::org_backup::Egress::default()),
             connectors: Arc::new(crate::connectors::ConnectorStore::new(None)),
             paired_tabs: Arc::default(),
             plans: Arc::default(),
-            alerts: Arc::new(crate::alerts::AlertStore::new(None)),
-            health_log: Arc::new(crate::health_log::HealthStore::new(None)),
-            link_check: Arc::new(crate::link_check::LinkStore::new(None)),
-            endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None)),
-            mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None)),
+            alerts: Arc::new(crate::alerts::AlertStore::new(None, Arc::default())),
+            health_log: Arc::new(crate::health_log::HealthStore::new(
+                None,
+                Default::default(),
+            )),
+            link_check: Arc::new(crate::link_check::LinkStore::new(None, Arc::default())),
+            endpoint_usage: Arc::new(crate::endpoint_usage::UsageStore::new(None, Arc::default())),
+            mqtt_capture: Arc::new(crate::mqtt_capture::CaptureStore::new(None, Arc::default())),
             live: Arc::new(crate::live::LiveHub::new(&public_base, None)),
-            pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None)),
-            source_ledger: Arc::new(crate::pipeline_source_deletes::Ledger::new(None)),
+            pipeline_log: Arc::new(crate::pipeline_log::LogStore::new(None, Default::default())),
+            source_ledger: Arc::new(crate::pipeline_source_deletes::Ledger::new(
+                None,
+                Arc::default(),
+            )),
             pipeline_samples: Arc::default(),
             pipeline_stats: Arc::default(),
             drift_watch: None,
@@ -381,6 +397,11 @@ impl AppState {
 
     pub fn with_mirror(mut self, mirror: Arc<Mirror>) -> Self {
         self.mirror = mirror;
+        // The keyed stores place a project by the mirror (T-7197): they read this one.
+        let db = self.db.clone();
+        if db.is_some() {
+            self.attach_stores(&db);
+        }
         self
     }
 
@@ -463,9 +484,6 @@ impl AppState {
         };
         let mut state = Self::new(config, oidc);
         state.attach_stores(&db);
-        if let Err(err) = state.quality.load().await {
-            tracing::warn!(error = %err, "the kept data-quality reports were not read");
-        }
         // The live updates write their subscriptions as the reconciler writes declared ones: through
         // the space surface, as this Portal's own ServiceAccount (API/01 §32).
         if let (Some(base), Some(oidc), Some((id, secret)), Some(domain)) = (
@@ -729,7 +747,10 @@ impl AppState {
         if let Some(pool) = self.db.as_ref() {
             syncer = syncer
                 .with_leadership(Arc::new(Leadership::reconciler(pool.clone())))
-                .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(pool.clone())));
+                .with_pipeline_status(Arc::new(crate::pipeline_status::Store::new(
+                    pool.clone(),
+                    self.mirror.clone(),
+                )));
             // PF-41: the challenge lives in the database, so the check runs only with one.
             let host = self.config.public_base_url.host_str().map(str::to_owned);
             match (crate::domain_verification::NetLookup::new(), host) {
@@ -1253,35 +1274,69 @@ impl AppState {
 
     /// The stores that keep their rows in the database when there is one.
     fn attach_stores(&mut self, db: &Option<sqlx::PgPool>) {
-        self.agents = Arc::new(AgentStore::new(db.clone()));
+        self.agents = Arc::new(AgentStore::new(db.clone(), self.mirror.clone()));
         if !self.agents.is_durable() {
             tracing::info!(
                 "no database: a builder run and its stream live only until this process ends"
             );
         }
-        self.drafts = DraftStore::new(db.clone()).with_hub(self.draft_events.clone());
+        self.drafts =
+            DraftStore::new(db.clone(), self.mirror.clone()).with_hub(self.draft_events.clone());
         if let Some(db) = &db {
             self.draft_events.connect(db.clone());
         }
-        self.workspaces = crate::ops::workspaces::WorkspaceStore::new(db.clone());
-        self.data_views = crate::ops::data_views::DataViewStore::new(db.clone());
-        self.pipeline_templates = crate::ops::pipeline_templates::TemplateStore::new(db.clone());
-        self.activity =
-            crate::activity::ActivityStore::new(db.clone()).with_hub(self.activity_events.clone());
-        self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(db.clone()));
-        self.trash = Arc::new(crate::entity_trash::TrashStore::new(db.clone()));
-        self.comments = Arc::new(crate::entity_comments::CommentStore::new(db.clone()));
+        self.workspaces =
+            crate::ops::workspaces::WorkspaceStore::new(db.clone(), self.mirror.clone());
+        self.data_views =
+            crate::ops::data_views::DataViewStore::new(db.clone(), self.mirror.clone());
+        self.pipeline_templates =
+            crate::ops::pipeline_templates::TemplateStore::new(db.clone(), self.mirror.clone());
+        self.activity = crate::activity::ActivityStore::new(db.clone(), self.mirror.clone())
+            .with_hub(self.activity_events.clone());
+        self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.trash = Arc::new(crate::entity_trash::TrashStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.comments = Arc::new(crate::entity_comments::CommentStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
         self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
         self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
-        self.alerts = Arc::new(crate::alerts::AlertStore::new(db.clone()));
-        self.health_log = Arc::new(crate::health_log::HealthStore::new(db.clone()));
-        self.link_check = Arc::new(crate::link_check::LinkStore::new(db.clone()));
-        self.endpoint_usage = Arc::new(crate::endpoint_usage::UsageStore::new(db.clone()));
-        self.mqtt_capture = Arc::new(crate::mqtt_capture::CaptureStore::new(db.clone()));
-        self.quality = Arc::new(crate::quality::Store::new(db.clone()));
-        self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(db.clone()));
-        self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(db.clone()));
+        self.alerts = Arc::new(crate::alerts::AlertStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.health_log = Arc::new(crate::health_log::HealthStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.link_check = Arc::new(crate::link_check::LinkStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.endpoint_usage = Arc::new(crate::endpoint_usage::UsageStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.mqtt_capture = Arc::new(crate::mqtt_capture::CaptureStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.quality = Arc::new(crate::quality::Store::new(db.clone(), self.mirror.clone()));
+        self.pipeline_log = Arc::new(crate::pipeline_log::LogStore::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
+        self.source_ledger = Arc::new(crate::pipeline_source_deletes::Ledger::new(
+            db.clone(),
+            self.mirror.clone(),
+        ));
     }
 
     /// The cluster clients a builder run and its test sandbox are scheduled with.

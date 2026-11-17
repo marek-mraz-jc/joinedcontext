@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ApiError, reasonOf } from "../../api/client";
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageFailed, PageLoading, Select } from "../../components/ui";
-import { operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
+import { operatorChanges, operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
 import type { SmtpServer } from "./operatorApi";
 import { OperatorBranding } from "./OperatorBranding";
 
@@ -67,7 +67,12 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
     return line ? [sentence(line.slice(name.length).trim())] : undefined;
   };
   const fields = ["host", "port", "tls", "from", "user", "password"];
-  const elsewhere = propose.isError && !fields.some((field) => fieldOf(field));
+  const refused = fields.find((field) => fieldOf(field));
+  const elsewhere = propose.isError && !refused;
+  // A refused field takes the focus, so a keyboard or screen-reader user lands on what to fix.
+  useEffect(() => {
+    if (refused) document.getElementById(`smtp-${refused}`)?.focus();
+  }, [refused, propose.error]);
   const changed =
     !smtp ||
     password !== "" ||
@@ -99,6 +104,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   return (
     <Card>
       <CardHeader
+        as="h3"
         title={t("operator.installation.email.title")}
         description={t("operator.installation.email.lead")}
         actions={
@@ -111,22 +117,21 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           )
         }
       />
-      {open ? (
-        <Alert tone="info" className="mt-4">
-          {t("operator.installation.email.waiting")}{" "}
-          <Link to="/organization/$tab" params={{ tab: "operator-changes" }} className="underline">
-            {t("operator.installation.email.toChanges")}
-          </Link>
-        </Alert>
-      ) : null}
       {!smtp && !open ? (
         <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.empty")}</p>
       ) : null}
-      <form className="mt-4 grid max-w-3xl gap-4 sm:grid-cols-2" onSubmit={onSave} aria-label={t("operator.installation.email.title")}>
-        {/* Read-only while a change waits: it is decided first, then the next one is asked for. */}
+      {open ? (
+        // While a change waits it is decided first; the page shows what is in force meanwhile,
+        // in plain text rather than greyed fields.
+        <InForce smtp={smtp} open={open} />
+      ) : null}
+      <form className="mt-4 grid gap-4 sm:grid-cols-2" id="smtp-form" onSubmit={onSave} aria-label={t("operator.installation.email.title")} hidden={Boolean(open)}>
         <fieldset className="contents" disabled={Boolean(open)}>
         <Field id="smtp-host" label={t("operator.installation.email.host")} help={t("operator.installation.email.hint.host")} errors={fieldOf("host")} required>
           <Input id="smtp-host" value={host} onChange={(e) => setHost(e.target.value)} autoComplete="off" spellCheck={false} required />
+        </Field>
+        <Field id="smtp-from" label={t("operator.installation.email.from")} help={t("operator.installation.email.hint.from")} errors={fieldOf("from")} required>
+          <Input id="smtp-from" type="email" value={from} onChange={(e) => setFrom(e.target.value)} autoComplete="off" spellCheck={false} required />
         </Field>
         <Field id="smtp-tls" label={t("operator.installation.email.tls")} help={t("operator.installation.email.hint.tls")} errors={fieldOf("tls")}>
           <Select id="smtp-tls" value={tls} onChange={(e) => onTls(e.target.value as Tls)}>
@@ -136,9 +141,6 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         </Field>
         <Field id="smtp-port" label={t("operator.installation.email.port")} help={t("operator.installation.email.hint.port")} errors={fieldOf("port")} required>
           <Input id="smtp-port" type="number" inputMode="numeric" min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} required />
-        </Field>
-        <Field id="smtp-from" label={t("operator.installation.email.from")} help={t("operator.installation.email.hint.from")} errors={fieldOf("from")} required>
-          <Input id="smtp-from" type="email" value={from} onChange={(e) => setFrom(e.target.value)} autoComplete="off" spellCheck={false} required />
         </Field>
         <Field id="smtp-user" label={t("operator.installation.email.user")} help={t("operator.installation.email.hint.user")} errors={fieldOf("user")}>
           <Input id="smtp-user" value={user} onChange={(e) => setUser(e.target.value)} autoComplete="off" spellCheck={false} />
@@ -159,9 +161,21 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           />
         </Field>
         </fieldset>
-        <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+      </form>
+      {open ? (
+        // A waiting change is followed or withdrawn on the Changes page: no buttons that wait here.
+        <p className="mt-4 text-body text-fg-muted">
+          {t("operator.installation.email.waitingOwn")}{" "}
+          <Link to="/organization/$tab" params={{ tab: "operator-changes" }} className="font-medium underline">
+            {t("operator.installation.email.toChanges")}
+          </Link>
+        </p>
+      ) : null}
+      <div className="mt-4 flex flex-wrap items-center gap-3" hidden={Boolean(open)}>
           <Button
             type="submit"
+            form="smtp-form"
+            variant="primary"
             loading={propose.isPending}
             disabled={Boolean(open) || !changed}
             disabledReason={open ? t("operator.installation.email.waitingShort") : t("operator.installation.email.unchanged")}
@@ -173,14 +187,22 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
             variant="secondary"
             loading={test.isPending}
             disabled={!smtp}
-            disabledReason={t("operator.installation.email.testFirst")}
+            disabledReason={t(open ? "operator.installation.email.testWaiting" : "operator.installation.email.testFirst")}
             onClick={() => test.mutate()}
           >
             {t("operator.installation.email.test")}
           </Button>
-          {!smtp && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p> : null}
-        </div>
-      </form>
+          {open ? null : !smtp ? (
+            <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p>
+          ) : !changed ? (
+            <p className="text-caption text-fg-muted">{t("operator.installation.email.unchanged")}</p>
+          ) : null}
+      </div>
+      {refused ? (
+        <Alert tone="danger" className="mt-4" title={t("operator.installation.email.notAsked")}>
+          {t("operator.installation.email.fixField", { field: t(`operator.installation.email.${refused}`) })}
+        </Alert>
+      ) : null}
       {elsewhere ? (
         <Alert tone="danger" className="mt-4">
           {sentence(said(propose.error))}
@@ -205,5 +227,53 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         </Alert>
       ) : null}
     </Card>
+  );
+}
+
+/**
+ * While a change of the e-mail server waits: what it asks for (from the open Change, never a
+ * password) beside the server in force, both as plain text rather than greyed fields.
+ */
+function InForce({ smtp, open }: { smtp?: SmtpServer; open: string }): JSX.Element {
+  const { t } = useTranslation();
+  const changes = useQuery({ queryKey: operatorKeys.changes, queryFn: operatorChanges });
+  const asked = changes.data?.find((change) => change.id === open)?.payload.smtp ?? undefined;
+  const E = "operator.installation.email";
+  const rows = (server: { host: string; tls: string; port: number; from: string; user?: string | null }, password: string) =>
+    [
+      [t(`${E}.host`), server.host],
+      [t(`${E}.tls`), t(server.tls === "ssl" ? `${E}.tlsSsl` : `${E}.tlsStarttls`)],
+      [t(`${E}.port`), String(server.port)],
+      [t(`${E}.from`), server.from],
+      [t(`${E}.user`), server.user || "–"],
+      [t(`${E}.password`), password],
+    ] as const;
+  const list = (title: string, items: ReturnType<typeof rows>) => (
+    <div className="min-w-0 space-y-2">
+      <h4 className="text-body font-semibold text-fg">{title}</h4>
+      <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
+        {items.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-fg-muted">{label}</dt>
+            <dd className="text-fg [overflow-wrap:anywhere]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+  return (
+    <div className="mt-4 grid gap-6 sm:grid-cols-2">
+      {asked
+        ? list(t(`${E}.askedFor`), rows(asked, asked.newPassword ? t(`${E}.passwordNew`) : t(`${E}.hint.passwordKept`)))
+        : null}
+      {smtp ? (
+        list(t(`${E}.inForce`), rows(smtp, smtp.passwordSet ? t(`${E}.passwordStored`) : "–"))
+      ) : (
+        <div className="min-w-0 space-y-2">
+          <h4 className="text-body font-semibold text-fg">{t(`${E}.inForceNow`)}</h4>
+          <p className="text-body text-fg-muted">{t(`${E}.noneInForce`)}</p>
+        </div>
+      )}
+    </div>
   );
 }

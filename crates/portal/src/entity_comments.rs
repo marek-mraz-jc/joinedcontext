@@ -124,7 +124,9 @@ pub struct CommentStore {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// The comments run in a `db::tenant_tx` of their project's key (T-7200 PK-1h); the
+    /// notifications, which also hold an installation's connector events, are not keyed yet.
+    Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<Memory>),
 }
 
@@ -198,17 +200,18 @@ fn notification_of(
 }
 
 impl CommentStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new(Memory::default())),
             },
         }
     }
 
     /// Stores one comment and one notification per mentioned person, in one transaction;
-    /// `None` when the entity already holds [`MAX_PER_ENTITY`] comments.
+    /// `None` when the entity already holds [`MAX_PER_ENTITY`] comments. A project with no
+    /// tenancy key keeps none: the handler refuses it first, a race here is `RowNotFound`.
     pub async fn add(
         &self,
         author: Author<'_>,
@@ -216,8 +219,11 @@ impl CommentStore {
     ) -> Result<Option<Comment>, sqlx::Error> {
         let short = excerpt(new.text);
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let mut tx = pool.begin().await?;
+            Inner::Postgres(pool, mirror) => {
+                let key = crate::project_ids::key_of(pool, mirror, new.project)
+                    .await?
+                    .ok_or(sqlx::Error::RowNotFound)?;
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let (held,): (i64,) = sqlx::query_as(
                     "SELECT count(*) FROM entity_comments WHERE project = $1 AND space = $2 AND urn = $3",
                 )
@@ -321,7 +327,11 @@ impl CommentStore {
         urn: &str,
     ) -> Result<Vec<Comment>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
                 let rows: Vec<CommentRow> = sqlx::query_as(
                     "SELECT id, urn, author, author_name, author_subject, body, mentions, created_at FROM entity_comments \
                      WHERE project = $1 AND space = $2 AND urn = $3 ORDER BY id LIMIT $4",
@@ -330,8 +340,9 @@ impl CommentStore {
                 .bind(space)
                 .bind(urn)
                 .bind(MAX_PER_ENTITY)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 Ok(rows.into_iter().map(comment_of).collect())
             }
             Inner::Memory(lock) => {
@@ -357,31 +368,38 @@ impl CommentStore {
     ) -> Result<bool, sqlx::Error> {
         match &self.inner {
             // The notifications go with it: `ON DELETE CASCADE` (migration 0025).
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "DELETE FROM entity_comments WHERE project = $1 AND space = $2 AND author_subject = $3 AND id = $4",
-            )
-            .bind(project)
-            .bind(space)
-            .bind(subject)
-            .bind(id)
-            .execute(pool)
-            .await?
-            .rows_affected()
-                > 0),
+            Inner::Postgres(pool, mirror) => {
+                let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
+                    return Ok(false);
+                };
+                let mut tx = crate::db::tenant_tx(pool, key).await?;
+                let gone = sqlx::query(
+                    "DELETE FROM entity_comments WHERE project = $1 AND space = $2 AND author_subject = $3 AND id = $4",
+                )
+                .bind(project)
+                .bind(space)
+                .bind(subject)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+                tx.commit().await?;
+                Ok(gone > 0)
+            }
             Inner::Memory(lock) => {
                 let mut memory = lock.write().unwrap_or_else(|e| e.into_inner());
                 let before = memory.comments.len();
-                memory
-                    .comments
-                    .retain(|(p, s, c)| {
-                        !(p == project
-                            && s == space
-                            && c.author_subject.as_deref() == Some(subject)
-                            && c.id == id)
-                    });
+                memory.comments.retain(|(p, s, c)| {
+                    !(p == project
+                        && s == space
+                        && c.author_subject.as_deref() == Some(subject)
+                        && c.id == id)
+                });
                 let removed = memory.comments.len() < before;
                 if removed {
-                    memory.notifications.retain(|(_, n)| n.comment_id != Some(id));
+                    memory
+                        .notifications
+                        .retain(|(_, n)| n.comment_id != Some(id));
                 }
                 Ok(removed)
             }
@@ -394,7 +412,7 @@ impl CommentStore {
     /// ([`approvers_of`], [`CONNECTOR_ADMINS`]); `false` when its key was there already.
     pub async fn notify(&self, recipient: &str, notice: Notice<'_>) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
+            Inner::Postgres(pool, _) => Ok(sqlx::query(
                 "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, link, event_key) \
                  VALUES ($1, $2, $3, '', $4, $5, $6, $7, $8, $9) ON CONFLICT (recipient, event_key) DO NOTHING",
             )
@@ -460,7 +478,7 @@ impl CommentStore {
             return Ok(());
         }
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, _) => {
                 sqlx::query(
                     "INSERT INTO notifications (recipient, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at) \
                      SELECT $1, kind, project, space, urn, author, author_name, excerpt, link, event_key, created_at \
@@ -511,7 +529,7 @@ impl CommentStore {
         recipients: &[String],
     ) -> Result<(Vec<Notification>, i64), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, _) => {
                 let rows: Vec<NotificationRow> = sqlx::query_as(
                     "SELECT id, kind, project, space, urn, comment_id, author, author_name, excerpt, link, created_at, read_at \
                      FROM notifications WHERE recipient = ANY($1) ORDER BY id DESC LIMIT $2",
@@ -552,7 +570,7 @@ impl CommentStore {
     /// Marks one of the person's notifications read; `false` when none of theirs has that id.
     pub async fn mark_read(&self, recipients: &[String], id: i64) -> Result<bool, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
+            Inner::Postgres(pool, _) => Ok(sqlx::query(
                 "UPDATE notifications SET read_at = coalesce(read_at, now()) WHERE id = $1 AND recipient = ANY($2)",
             )
             .bind(id)

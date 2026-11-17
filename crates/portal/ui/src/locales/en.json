@@ -8451,8 +8451,12 @@
       "operatorTitle": "What the installation provides",
       "operatorLead": "You are one of the installation's operators: you set these once for every Organization.",
       "operatorLeadMember": "The installation's operators set these once for every Organization.",
-      "setIt": "Set it",
-      "operatorSets": "Your operator sets this",
+      "setIt": "Open Installation",
+      "operatorSets": "Your installation's operators set this.",
+      "notYet": "Not set yet",
+      "whomToAsk": "Whom to ask",
+      "whomToAskLead": "The installation's operators set the e-mail server; ask them for it.",
+      "deploymentSets": "Deployment sets this",
       "step": {
         "organization": {
           "title": "Name the organization",
@@ -8498,12 +8502,12 @@
         },
         "smtp": {
           "title": "E-mail",
-          "hint": "An SMTP server, so the sign-in service sends invitations and password resets. Set it on the Installation page.",
+          "hint": "An SMTP server, so the sign-in service sends invitations and password resets.",
           "about": "An SMTP server, so invitations and password resets reach people."
         },
         "backups": {
           "title": "Backups",
-          "hint": "Scheduled backups of the whole database to object storage. Set today by the deployment's database backup.",
+          "hint": "Scheduled backups of the whole database to object storage. Your deployment's database backup runs them.",
           "about": "Scheduled backups of the installation's database."
         }
       }
@@ -13591,7 +13595,7 @@
     }
   },
   "operator": {
-    "only": "These sections belong to the installation's operators. Ask one of them for a new Organization, domain or host, or for the e-mail server.",
+    "only": "This section belongs to the installation's operators. Ask one of them for a new Organization, domain or host, or for the e-mail server.",
     "tryAgain": "The request did not go through. Try again in a moment.",
     "organizations": {
       "title": "Organizations",
@@ -13751,9 +13755,17 @@
         "unset": "Not set",
         "waitingBadge": "Waiting for approval",
         "unchanged": "Change a field first; nothing differs from the saved server.",
-        "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and save it.",
-        "waiting": "A change of the e-mail server waits for a second operator.",
+        "empty": "No e-mail server yet, so invitations and password resets are not sent.",
         "waitingShort": "A change already waits for a second operator: approve or reject it first.",
+        "notAsked": "The Portal refused the change: no Change was created",
+        "fixField": "{field} was refused: fix it as said under the field, then ask for the change again.",
+        "testWaiting": "The test uses the server in force; send it once the waiting change is decided, or now for the one in force.",
+        "noneInForce": "No e-mail server is in force yet: the waiting change sets the first one.",
+        "inForce": "In force until the change is approved",
+        "inForceNow": "In force now",
+        "waitingOwn": "A change already waits for a second operator. Follow it, or withdraw it to ask for another, on the Changes page.",
+        "askedFor": "Asked for",
+        "passwordNew": "A new one, sealed until the change is decided",
         "toChanges": "Open the Changes",
         "host": "SMTP host",
         "tls": "Protection",
@@ -13776,7 +13788,7 @@
         "propose": "Ask for this change",
         "proposed": "Asked for. A second operator approves it in the Changes.",
         "test": "Send a test e-mail",
-        "testFirst": "Save an e-mail server first; the test uses the saved one.",
+        "testFirst": "Once a second operator approves the server, test it here.",
         "testSent": "The server took the test e-mail. It goes to your own address; check your inbox.",
         "testFailed": "The test e-mail was not sent. Fix what the line below names, then send the test again."
       },
@@ -13845,6 +13857,7 @@
         "test": "Sent a test e-mail"
       }
     },
-    "refusedTitle": "{section} is for the installation's operators"
+    "refusedLead": "{section} holds what the installation's operators keep for every Organization.",
+    "refusedTitle": "Only the installation's operators open this section"
   }
 }

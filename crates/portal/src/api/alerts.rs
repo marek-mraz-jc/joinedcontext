@@ -147,7 +147,7 @@ pub async fn list_alerts(
         (status = 400, description = "An unknown scope, event or delivery, or e-mail", body = crate::error::ProblemDetails),
         (status = 401, description = "Not signed in", body = crate::error::ProblemDetails),
         (status = 403, description = "An agent profile in a project the caller does not approve in", body = crate::error::ProblemDetails),
-        (status = 404, description = "A target the caller may not read", body = crate::error::ProblemDetails),
+        (status = 404, description = "A target the caller may not read, or a project of no active Organization of the registry", body = crate::error::ProblemDetails),
         (status = 422, description = "An unknown key", body = crate::error::ProblemDetails),
         (status = 503, description = "The alerts are not reachable", body = crate::error::ProblemDetails),
     )
@@ -176,8 +176,15 @@ pub async fn subscribe(
             delivery,
         )
         .await
+        .map_err(stored)?
         .map(Json)
-        .map_err(stored)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the project {} belongs to no active Organization of this installation's registry, \
+                 so it keeps no alert; an operator adds its Organization on the Organizations page first",
+                new.project
+            ))
+        })
 }
 
 #[utoipa::path(

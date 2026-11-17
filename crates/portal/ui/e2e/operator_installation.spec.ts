@@ -11,7 +11,7 @@ test.beforeEach(({ page }) => {
   doorsAsRest(page);
 });
 
-// Administration → Setup and → Installation (T-7152): an operator follows "Set it" from the setup
+// Administration → Setup and → Installation (T-7152): an operator follows "Open Installation" from the setup
 // checklist to the Installation page, asks for the e-mail server (a refused host first), a second
 // operator approves it, and the test e-mail goes out; an Organization administrator reads that
 // their operator sets it and meets no Installation page, at 1440 and 400 px. `vite preview` has no
@@ -30,6 +30,7 @@ interface World {
   tested: number;
   branding?: Record<string, unknown> | null;
   brandingChange?: string | null;
+  changes?: unknown[];
 }
 
 function json(body: unknown, status = 200) {
@@ -79,8 +80,10 @@ async function stubApi(page: Page, world: World, operator = true): Promise<void>
       world.smtpChange = "7d1e2f30-4a5b-4c6d-8e9f-a0b1c2d3e4f5";
       const { password, ...settings } = input.smtp;
       const change = { id: world.smtpChange, kind: "SmtpSet", payload: { smtp: { ...settings, newPassword: password !== undefined } }, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T10:00:00Z", decidedBy: null, decidedAt: null };
+      world.changes = [change];
       return route.fulfill(json(change, 201));
     }
+    if (path === "/api/v1/operator/changes") return route.fulfill(json({ items: world.changes ?? [] }));
     if (path === "/api/v1/operator/installation/test-email") {
       world.tested += 1;
       return route.fulfill(json({ sent: true }));
@@ -111,8 +114,10 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("You are one of the installation's operators", { exact: false })).toBeVisible();
       await expect(page.getByText(/keycloak/i)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
+      // Backups are not set on the Installation page yet: no red to-do the operator cannot act on.
+      await expect(page.getByRole("listitem").filter({ hasText: "Backups" }).getByText("Deployment sets this", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-operator-${width}`);
-      await page.getByRole("listitem").filter({ hasText: "An SMTP server" }).getByRole("link", { name: "Set it" }).click();
+      await page.getByRole("listitem").filter({ hasText: "An SMTP server" }).getByRole("link", { name: "Open Installation" }).click();
 
       await expect(page.getByRole("heading", { name: "Installation", level: 2 })).toBeVisible();
       await expect(page.getByText("No e-mail server yet", { exact: false })).toBeVisible();
@@ -125,13 +130,21 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.getByLabel("Password", { exact: true }).fill("app-password");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText(/is no public host name of an SMTP server/)).toBeVisible();
+      await expect(page.getByText("The Portal refused the change: no Change was created", { exact: true })).toBeVisible();
+      await expect(page.getByLabel("SMTP host", { exact: false })).toBeFocused();
       await shot(page, `installation-error-${width}`);
 
       await page.getByLabel("SMTP host", { exact: false }).fill("smtp.bbsk.sk");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText("Waiting for approval", { exact: true })).toBeVisible();
-      await expect(page.getByLabel("SMTP host", { exact: false })).toBeDisabled();
-      await expect(page.getByText("A change of the e-mail server waits for a second operator.", { exact: false })).toBeVisible();
+      await expect(page.getByLabel("SMTP host", { exact: false })).toBeHidden();
+      await expect(page.getByText("No e-mail server is in force yet", { exact: false })).toBeVisible();
+      await expect(page.getByText("withdraw it to ask for another, on the Changes page", { exact: false })).toBeVisible();
+      // What the waiting change asks for, read from the Change; its password only as "a new one".
+      await expect(page.getByText("Asked for", { exact: true })).toBeVisible();
+      await expect(page.getByText("smtp.bbsk.sk", { exact: true })).toBeVisible();
+      await expect(page.getByText("A new one, sealed until the change is decided", { exact: true })).toBeVisible();
+      await expect(page.getByText("A change already waits for a second operator.", { exact: false })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-waiting-${width}`);
 
@@ -155,7 +168,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       const world: World = { smtp: null, smtpChange: null, tested: 0, branding: null, brandingChange: null };
       await stubApi(page, world);
       await page.goto("/organization/setup?lang=en");
-      await page.getByRole("listitem").filter({ hasText: "How the sign-in pages look" }).getByRole("link", { name: "Set it" }).click();
+      await page.getByRole("listitem").filter({ hasText: "How the sign-in pages look" }).getByRole("link", { name: "Open Installation" }).click();
       await expect(page.getByText("Nothing set here yet", { exact: false })).toBeVisible();
       await expect(page.getByRole("img", { name: "Sign-in page preview, Phone width" })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
@@ -196,14 +209,19 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, { smtp: null, smtpChange: null, tested: 0 }, false);
       await page.goto("/organization/setup?lang=en");
-      await expect(page.getByText("Your operator sets this").first()).toBeVisible();
-      await expect(page.getByRole("link", { name: "Set it" })).toHaveCount(0);
+      await expect(page.getByText("Your installation's operators set this").first()).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open Installation" })).toHaveCount(0);
       await expect(page.getByText(/keycloak|branding_file|JC_BRANDING/i)).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Installation" })).toHaveCount(0);
+      await expect(page.getByText("Whom to ask", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-member-${width}`);
       await page.goto("/organization/operator-installation?lang=en");
-      await expect(page.getByText("These sections belong to the installation's operators.", { exact: false })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Only the installation's operators open this section", level: 2 })).toBeVisible();
+      await expect(page.getByText("This section belongs to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toHaveCount(0);
+      // One word for the role: the refusal names the operators, never "administrators".
+      await expect(page.getByText("Installation holds what the installation's operators keep for every Organization.", { exact: true })).toBeVisible();
+      await expect(page.getByText(/administrators/)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-refused-${width}`);
     });

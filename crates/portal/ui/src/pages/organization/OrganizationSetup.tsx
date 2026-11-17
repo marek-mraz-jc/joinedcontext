@@ -4,7 +4,15 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { organizationReading } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
-import { Alert, Badge, buttonClass, PageFailed, PageLoading } from "../../components/ui";
+import {
+  Alert,
+  Badge,
+  buttonClass,
+  Card,
+  PageFailed,
+  PageLoading,
+} from "../../components/ui";
+import { AskAdmins } from "./AskAdmins";
 
 /**
  * Organization → Setup (T-2748, PF-90, UI-82, API/01 §25): what a new organization still lacks,
@@ -14,21 +22,33 @@ import { Alert, Badge, buttonClass, PageFailed, PageLoading } from "../../compon
 
 const SETUP_KEY = ["organizationSetup"] as const;
 
-type Step = "organization" | "domain" | "people" | "project" | "publishers" | "policies";
+type Step =
+  "organization" | "domain" | "people" | "project" | "publishers" | "policies";
 
 /** Where each step is done: the organization's own tab, or a project's page for the catalogue. */
-function StepLink({ step, anchor }: { step: Step; anchor: string }): JSX.Element {
+function StepLink({
+  step,
+  anchor,
+}: {
+  step: Step;
+  anchor: string;
+}): JSX.Element {
   const { t } = useTranslation();
   const label = t(`organization.setup.step.${step}.action`);
   const className = buttonClass("secondary", "sm");
   if (step === "publishers") {
     return (
-      <Link to="/projects/$project/ckan" params={{ project: anchor }} className={className}>
+      <Link
+        to="/projects/$project/ckan"
+        params={{ project: anchor }}
+        className={className}
+      >
         {label}
       </Link>
     );
   }
-  const tab = step === "people" ? "people" : step === "project" ? "projects" : "settings";
+  const tab =
+    step === "people" ? "people" : step === "project" ? "projects" : "settings";
   return (
     <Link to="/organization/$tab" params={{ tab }} className={className}>
       {label}
@@ -44,11 +64,28 @@ function useSetup(enabled = true) {
   });
 }
 
-function State({ done }: { done: boolean }): JSX.Element {
+/** The operator items an operator sets on the Installation page. */
+const ON_INSTALLATION_PAGE = ["branding", "loginTheme", "smtp"];
+
+function State({
+  done,
+  theirs,
+}: {
+  done: boolean;
+  theirs?: "member" | "deployment";
+}): JSX.Element {
   const { t } = useTranslation();
+  // An item somebody else sets is no alarm for the person reading it (T-7152): a member's
+  // operators set it, and the deployment still sets what the Installation page does not yet.
+  const open =
+    theirs === "deployment"
+      ? "organization.setup.deploymentSets"
+      : theirs
+        ? "organization.setup.notYet"
+        : "organization.setup.todo";
   return (
-    <Badge tone={done ? "success" : "warning"}>
-      {done ? t("organization.setup.done") : t("organization.setup.todo")}
+    <Badge tone={done ? "success" : theirs ? "neutral" : "warning"}>
+      {done ? t("organization.setup.done") : t(open)}
     </Badge>
   );
 }
@@ -57,14 +94,23 @@ function State({ done }: { done: boolean }): JSX.Element {
  * What an operator item offers: an operator opens the Installation page where it is set (the
  * branding and the sign-in look, T-7188, and the e-mail server, T-7152); anybody else reads that their operator sets it.
  */
-function OperatorAction({ item, operates }: { item: string; operates: boolean }): JSX.Element | null {
+function OperatorAction({
+  item,
+  operates,
+}: {
+  item: string;
+  operates: boolean;
+}): JSX.Element | null {
   const { t } = useTranslation();
-  if (!operates) {
-    return <span className="text-caption text-fg-muted">{t("organization.setup.operatorSets")}</span>;
-  }
-  if (!["branding", "loginTheme", "smtp"].includes(item)) return null;
+  // The branding, the sign-in look (T-7188) and the e-mail server (T-7152) are set on the
+  // Installation page; the deployment still sets the rest. Anybody else reads who sets it in the row's badge.
+  if (!ON_INSTALLATION_PAGE.includes(item) || !operates) return null;
   return (
-    <Link to="/organization/$tab" params={{ tab: "operator-installation" }} className={buttonClass("secondary", "sm")}>
+    <Link
+      to="/organization/$tab"
+      params={{ tab: "operator-installation" }}
+      className={buttonClass("secondary", "sm")}
+    >
       {t("organization.setup.setIt")}
     </Link>
   );
@@ -79,39 +125,55 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
   if (!administers) {
     return (
       <section className="space-y-4" aria-labelledby="setup-steps-heading">
-        <h2 id="setup-steps-heading" className="text-title font-semibold text-fg">
+        <h2
+          id="setup-steps-heading"
+          className="text-title font-semibold text-fg"
+        >
           {t("organization.setup.title")}
         </h2>
         <Alert tone="info">{t("organization.setup.hidden")}</Alert>
       </section>
     );
   }
-  if (setup.isPending) return <PageLoading label={t("organization.setup.loading")} />;
-  if (setup.isError) return <PageFailed error={setup.error} onRetry={() => void setup.refetch()} />;
+  if (setup.isPending)
+    return <PageLoading label={t("organization.setup.loading")} />;
+  if (setup.isError)
+    return (
+      <PageFailed error={setup.error} onRetry={() => void setup.refetch()} />
+    );
 
   const { complete, steps, operator, operates } = setup.data;
   return (
     <div className="space-y-8">
       <section className="space-y-4" aria-labelledby="setup-steps-heading">
         <div>
-          <h2 id="setup-steps-heading" className="text-title font-semibold text-fg">
+          <h2
+            id="setup-steps-heading"
+            className="text-title font-semibold text-fg"
+          >
             {t("organization.setup.title")}
           </h2>
-          <p className="text-body text-fg-muted">{t("organization.setup.lead")}</p>
+          <p className="text-body text-fg-muted">
+            {t("organization.setup.lead")}
+          </p>
         </div>
-        {complete ? <Alert tone="success">{t("organization.setup.complete")}</Alert> : null}
+        {complete ? (
+          <Alert tone="success">{t("organization.setup.complete")}</Alert>
+        ) : null}
         <ol className="space-y-3">
           {steps.map((step, index) => (
             <li
               key={step.id}
-              className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border p-4"
+              className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
             >
               <div className="min-w-0 space-y-1">
                 <h3 className="text-body font-semibold text-fg">
                   {t("organization.setup.stepNumber", { number: index + 1 })}{" "}
                   {t(`organization.setup.step.${step.id}.title`)}
                 </h3>
-                <p className="text-body text-fg-muted">{t(`organization.setup.step.${step.id}.hint`)}</p>
+                <p className="text-body text-fg-muted">
+                  {t(`organization.setup.step.${step.id}.hint`)}
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 <State done={step.done} />
@@ -123,32 +185,67 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
       </section>
       <section className="space-y-4" aria-labelledby="setup-operator-heading">
         <div>
-          <h2 id="setup-operator-heading" className="text-title font-semibold text-fg">
+          <h2
+            id="setup-operator-heading"
+            className="text-title font-semibold text-fg"
+          >
             {t("organization.setup.operatorTitle")}
           </h2>
           <p className="text-body text-fg-muted">
-            {t(operates ? "organization.setup.operatorLead" : "organization.setup.operatorLeadMember")}
+            {t(
+              operates
+                ? "organization.setup.operatorLead"
+                : "organization.setup.operatorLeadMember",
+            )}
           </p>
         </div>
-        <ul className="space-y-3">
+        {/* One compact list card: each item is a line and a badge, not a card of its own. */}
+        <Card as="ul" flush className="divide-y divide-border">
           {operator.map((item) => (
             <li
               key={item.id}
-              className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border p-4"
+              className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
             >
-              <div className="min-w-0 space-y-1">
-                <h3 className="text-body font-semibold text-fg">{t(`organization.setup.operator.${item.id}.title`)}</h3>
+              <div className="min-w-0">
+                <h3 className="text-body font-semibold text-fg">
+                  {t(`organization.setup.operator.${item.id}.title`)}
+                </h3>
                 <p className="text-body text-fg-muted">
-                  {t(`organization.setup.operator.${item.id}.${operates ? "hint" : "about"}`)}
+                  {t(
+                    `organization.setup.operator.${item.id}.${operates ? "hint" : "about"}`,
+                  )}
+                  {/* The badge says its state; the line says who sets it, each once. */}
+                  {ON_INSTALLATION_PAGE.includes(item.id) && !operates
+                    ? ` ${t("organization.setup.operatorSets")}`
+                    : null}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
-                <State done={item.done} />
+              <div className="flex shrink-0 flex-wrap items-center gap-3">
+                {/* Only what the Installation page sets is a red to-do: the rest is no alarm for
+                    anybody yet (backups T-7189). */}
+                <State
+                  done={item.done}
+                  theirs={
+                    !ON_INSTALLATION_PAGE.includes(item.id)
+                      ? "deployment"
+                      : operates
+                        ? undefined
+                        : "member"
+                  }
+                />
                 <OperatorAction item={item.id} operates={operates} />
               </div>
             </li>
           ))}
-        </ul>
+        </Card>
+        {/* Whoever cannot set these reads whom to ask (the installation's contacts, T-7152). */}
+        {operates ? null : (
+          <AskAdmins
+            title={t("organization.setup.whomToAsk")}
+            message={t("organization.setup.whomToAskLead")}
+            installation
+          />
+        )}
       </section>
     </div>
   );
@@ -163,12 +260,23 @@ export function SetupReminder(): JSX.Element | null {
   const { administers } = useAdministers();
   const setup = useSetup(administers);
   if (!administers || setup.data?.complete !== false) return null;
-  const left = [...setup.data.steps, ...setup.data.operator].filter((item) => !item.done).length;
+  // The count is what the checklist shows as "To do" for this person: the deployment's items and
+  // the Installation page items only operators set are nobody else's to-do (T-7152, T-7188).
+  const { steps, operator, operates } = setup.data;
+  const left = [
+    ...steps,
+    ...operator.filter((item) => ON_INSTALLATION_PAGE.includes(item.id) && operates),
+  ].filter((item) => !item.done).length;
+  if (left === 0) return null;
   return (
     <Alert
       tone="info"
       actions={
-        <Link to="/organization/$tab" params={{ tab: "setup" }} className={buttonClass("secondary", "sm")}>
+        <Link
+          to="/organization/$tab"
+          params={{ tab: "setup" }}
+          className={buttonClass("secondary", "sm")}
+        >
           {t("organization.setup.continue")}
         </Link>
       }

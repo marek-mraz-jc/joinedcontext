@@ -48,6 +48,11 @@ pub const NOT_RESTORED: &[(&str, &str)] = &[
         "an invitation lets a person in: it is sent again, never restored",
     ),
     (
+        "project_ids",
+        "the installation mints a project's id and never reuses it: a restored id could take \
+         one minted since, so restoring a project folder under its id is its own step",
+    ),
+    (
         "erasures",
         "the erasure log only grows; its erasures are applied again after the restore",
     ),
@@ -535,7 +540,10 @@ pub async fn run(
         .get("portal")
         .is_some_and(|p| p.exported);
 
-    let mut tx = pool.begin().await.map_err(failed)?;
+    // Keyed on the Organization's reserved project (T-7191): its restore requests answer only so.
+    let mut tx = super::keyed(&pool, organization)
+        .await?
+        .ok_or_else(|| super::unregistered(organization))?;
     if let Some(approval) = approval {
         // Held until the commit: a second approval waits here, then finds it taken.
         let pending: Option<i64> = sqlx::query_scalar(
@@ -593,15 +601,30 @@ pub async fn run(
     }
     if let Some(approval) = approval {
         let projects = keys.get("projects").cloned().unwrap_or_default();
-        for erasure in crate::erasure::approved_in(&mut tx, &projects)
+        // Each project's erasures and copies in its own key (T-7202), then the Organization's
+        // reserved key again for the restore request's own row.
+        for project in &projects {
+            if let Some(key) = crate::project_ids::recorded(&pool, project)
+                .await
+                .map_err(failed)?
+            {
+                crate::db::enter(&mut tx, key).await.map_err(failed)?;
+            }
+            for erasure in crate::erasure::approved_in(&mut tx, std::slice::from_ref(project))
+                .await
+                .map_err(failed)?
+            {
+                crate::erasure::erase_portal_copies(&mut tx, &erasure)
+                    .await
+                    .map_err(ApiError::Unavailable)?;
+                plan.erasures_replayed += 1;
+            }
+        }
+        let reserved = crate::project_ids::reserved(&pool, organization)
             .await
             .map_err(failed)?
-        {
-            crate::erasure::erase_portal_copies(&mut tx, &erasure)
-                .await
-                .map_err(ApiError::Unavailable)?;
-            plan.erasures_replayed += 1;
-        }
+            .ok_or_else(|| super::unregistered(organization))?;
+        crate::db::enter(&mut tx, reserved).await.map_err(failed)?;
         sqlx::query(
             "UPDATE organization_data_restores SET state = 'applied', decided_by = $2, \
              decided_at = now(), plan = $3, message = $4 WHERE id = $1",
@@ -724,6 +747,7 @@ pub async fn request(
     plan: &DataPlan,
     sha256: &str,
 ) -> Result<DataRestoreRequest, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: RequestRow = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "INSERT INTO organization_data_restores (organization, version_id, requested_by, plan, \
          requested_subject, sha256) VALUES ($1, $2, $3, $4, $5, $6) RETURNING {REQUEST_COLUMNS}"
@@ -734,9 +758,10 @@ pub async fn request(
     .bind(sqlx::types::Json(plan))
     .bind(&actor.subject)
     .bind(sha256)
-    .fetch_one(&pool_of(state)?)
+    .fetch_one(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(request_of(row))
 }
 
@@ -748,14 +773,18 @@ pub async fn requests(
     let Some(pool) = state.db.clone() else {
         return Ok(Vec::new());
     };
+    let Some(mut tx) = super::keyed(&pool, organization).await? else {
+        return Ok(Vec::new());
+    };
     let rows: Vec<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQUEST_COLUMNS} FROM organization_data_restores WHERE organization = $1 \
          ORDER BY id DESC LIMIT 20"
     )))
     .bind(organization)
-    .fetch_all(&pool)
+    .fetch_all(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(rows.into_iter().map(request_of).collect())
 }
 
@@ -769,6 +798,7 @@ pub async fn decide(
     outcome: &str,
     message: &str,
 ) -> Result<Option<DataRestoreRequest>, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: Option<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "UPDATE organization_data_restores SET state = $4, decided_by = $3, decided_at = now(), \
          message = $5 WHERE id = $1 AND organization = $2 AND state = 'pending' \
@@ -779,9 +809,10 @@ pub async fn decide(
     .bind(decider)
     .bind(outcome)
     .bind(message)
-    .fetch_optional(&pool_of(state)?)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(row.map(request_of))
 }
 
@@ -791,15 +822,17 @@ pub async fn pending(
     organization: &str,
     id: i64,
 ) -> Result<Option<DataRestoreRequest>, ApiError> {
+    let mut tx = keyed_of(state, organization).await?;
     let row: Option<RequestRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {REQUEST_COLUMNS} FROM organization_data_restores \
          WHERE id = $1 AND organization = $2 AND state = 'pending'"
     )))
     .bind(id)
     .bind(organization)
-    .fetch_optional(&pool_of(state)?)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
     Ok(row.map(request_of))
 }
 
@@ -809,14 +842,29 @@ pub async fn any_pending(state: &AppState, organization: &str) -> Result<bool, A
     let Some(pool) = state.db.clone() else {
         return Ok(false);
     };
-    sqlx::query_scalar(
+    let Some(mut tx) = super::keyed(&pool, organization).await? else {
+        return Ok(false);
+    };
+    let pending = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM organization_data_restores \
          WHERE organization = $1 AND state = 'pending')",
     )
     .bind(organization)
-    .fetch_one(&pool)
+    .fetch_one(&mut *tx)
     .await
-    .map_err(failed)
+    .map_err(failed)?;
+    tx.commit().await.map_err(failed)?;
+    Ok(pending)
+}
+
+/// A transaction keyed on the Organization's reserved project, or why there is none.
+async fn keyed_of(
+    state: &AppState,
+    organization: &str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ApiError> {
+    super::keyed(&pool_of(state)?, organization)
+        .await?
+        .ok_or_else(|| super::unregistered(organization))
 }
 
 #[cfg(test)]

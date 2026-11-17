@@ -220,7 +220,7 @@
             }
           },
           "404": {
-            "description": "A target the caller may not read",
+            "description": "A target the caller may not read, or a project of no active Organization of the registry",
             "content": {
               "application/json": {
                 "schema": {
@@ -62655,6 +62655,14 @@
           "sample"
         ],
         "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The project's id (ARCH/TEN-01, T-7190): 26 characters of lower-case base32, minted once and\nnever reused, the `{projectId}` segment of `/{org}/{projectId}/api/...` (TEN-13). Absent\nwhen the Portal runs without its database.",
+            "example": "aerf3ql7mk5r4o2dvsxbq6ntcy"
+          },
           "name": {
             "type": "string",
             "description": "The project slug, the `{project}` segment of every other path."

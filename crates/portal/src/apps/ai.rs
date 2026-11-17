@@ -340,8 +340,13 @@ pub(super) async fn complete(
         }
     };
 
+    // The day's counters are the project's rows, read and written in its key (T-7200).
+    let key = match crate::project_ids::required(db, &state.mirror, &project, "App ai use").await {
+        Ok(key) => key,
+        Err(refused) => return refused.into_response(),
+    };
     let limit = services::quota(&state.mirror, &project, &spec, Quota::AiTokensPerDay);
-    let used = match services::used_today(db, (&project, &name), SERVICE, "").await {
+    let used = match services::used_today(db, key, (&project, &name), SERVICE, "").await {
         Ok(used) => used,
         Err(err) => return ApiError::Internal(err.to_string()).into_response(),
     };
@@ -363,7 +368,7 @@ pub(super) async fn complete(
     // The prompt and the answer's ceiling are held before the call, in the statement that checks
     // the day, so calls in flight together cannot pass it together (T-3661).
     let held = prompt.saturating_add(max_tokens);
-    match services::take(db, (&project, &name), SERVICE, "", held, limit).await {
+    match services::take(db, key, (&project, &name), SERVICE, "", held, limit).await {
         Ok(true) => {}
         Ok(false) => return spent(),
         Err(err) => return ApiError::Internal(err.to_string()).into_response(),
@@ -374,6 +379,7 @@ pub(super) async fn complete(
     });
     if let Err(err) = services::settle(
         db,
+        key,
         (&project, &name),
         SERVICE,
         "",

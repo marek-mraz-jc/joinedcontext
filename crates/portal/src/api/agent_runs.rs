@@ -668,7 +668,7 @@ pub async fn create_run(
         state.oidc.as_deref(),
         &settings.proxy_base,
         &id,
-        crate::agents::identity::persons_token(&headers, state.config.trust_edge_token),
+        crate::agents::identity::run_token(&state, &headers).as_deref(),
     )
     .await;
     publish_event(
@@ -1042,9 +1042,7 @@ pub async fn answer_question(
 /// (ADR-N-038 §3.1, T-6483). No token, no agent runner: nothing to hand over, and the run keeps
 /// the grant it holds.
 async fn hand_over_on_turn(state: &AppState, headers: &HeaderMap, id: &str) {
-    let Some(token) =
-        crate::agents::identity::persons_token(headers, state.config.trust_edge_token)
-    else {
+    let Some(token) = crate::agents::identity::run_token(state, headers) else {
         return;
     };
     let Ok(settings) = agent_settings(state) else {
@@ -1054,7 +1052,7 @@ async fn hand_over_on_turn(state: &AppState, headers: &HeaderMap, id: &str) {
         state.oidc.as_deref(),
         &settings.proxy_base,
         id,
-        Some(token),
+        Some(&token),
     )
     .await;
 }
@@ -2646,7 +2644,10 @@ pub(crate) fn expiry(ttl_secs: i64) -> String {
 }
 
 pub(crate) fn unavailable(err: StoreError) -> ApiError {
-    ApiError::Unavailable(err.to_string())
+    match err {
+        StoreError::Unplaced(_) => ApiError::NotFound(err.to_string()),
+        StoreError::Db(_) => ApiError::Unavailable(err.to_string()),
+    }
 }
 
 pub(crate) fn status_error(err: StatusChangeError) -> ApiError {

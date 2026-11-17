@@ -5799,7 +5799,7 @@ output_error{stream="kpi"} 6
         files.push(bikes);
         let (_forge, shako, shared) = changing_forge(&files).await;
         let (gateway, catalog) = slow_catalogue(Duration::from_secs(4)).await;
-        let activity = crate::activity::ActivityStore::new(None);
+        let activity = crate::activity::ActivityStore::new(None, Default::default());
         let syncer = Syncer::new(Arc::new(shako), Arc::new(Mirror::new()))
             .with_catalog(Arc::new(catalog))
             .with_ckan(Arc::new(super::super::ckan::CkanSync::new(
@@ -5944,7 +5944,7 @@ output_error{stream="kpi"} 6
         let client =
             Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
-        let activity = crate::activity::ActivityStore::new(None);
+        let activity = crate::activity::ActivityStore::new(None, Default::default());
         let syncer = Arc::new(
             Syncer::new(Arc::clone(&client), Arc::clone(&mirror)).with_activity(activity.clone()),
         );
@@ -6015,12 +6015,15 @@ output_error{stream="kpi"} 6
             )
         };
         mirror.upsert(grant("2099-01-01T00:00:00Z"));
-        let log = Arc::new(crate::pipeline_log::LogStore::new(None));
-        let activity = crate::activity::ActivityStore::new(None);
+        let log = Arc::new(crate::pipeline_log::LogStore::new(None, Default::default()));
+        let activity = crate::activity::ActivityStore::new(None, Default::default());
         let syncer = Syncer::new(Arc::clone(&client), Arc::clone(&mirror))
             .with_activity(activity.clone())
             .with_pipeline_outcomes(
-                Arc::new(crate::pipeline_outcomes::RejectedStore::new(None)),
+                Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+                    None,
+                    Default::default(),
+                )),
                 Arc::clone(&log),
             );
         let refused = "access revoked by anna@helsinki.example on 2026-10-21; the gateway \
@@ -6084,7 +6087,7 @@ output_error{stream="kpi"} 6
         let client =
             Arc::new(ShakoClient::new(base_url, "test-owner", "test-repo", "token-xyz").unwrap());
         let mirror = Arc::new(Mirror::new());
-        let activity = crate::activity::ActivityStore::new(None);
+        let activity = crate::activity::ActivityStore::new(None, Default::default());
         let syncer = Arc::new(
             Syncer::new(Arc::clone(&client), Arc::clone(&mirror)).with_activity(activity.clone()),
         );
