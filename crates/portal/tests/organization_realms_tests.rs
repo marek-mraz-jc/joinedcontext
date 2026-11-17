@@ -302,6 +302,67 @@ async fn a_realm_the_registry_drops_is_refused_and_one_it_serves_again_signs_in(
     assert_eq!(bearer(&w.state, BA, &again).await, StatusCode::OK);
 }
 
+/// T-7183: jc hands the Portal the working hosts of its Organization registry: an Organization
+/// left out is pinned nowhere and its realm goes with it (no realm stands without its host), a
+/// list the start-time check refuses changes nothing, and an Organization added at run time is
+/// pinned on its host and its realm signs in there, without a restart.
+#[tokio::test]
+async fn an_organization_host_the_registry_drops_is_refused_and_one_it_adds_signs_in() {
+    let w = world();
+    let own = token(&w.ba, "ba", BA_REALM, "ba-only", &[]);
+    assert_eq!(bearer(&w.state, BA, &own).await, StatusCode::OK);
+    let hel = format!("hel=https://{HEL}");
+    assert_eq!(w.state.replace_organization_hosts(&hel), Ok(1));
+    assert!(
+        w.state.organization_realms.get("ba").is_none(),
+        "its realm went with its host"
+    );
+    assert_eq!(
+        bearer(&w.state, BA, &own).await,
+        StatusCode::UNAUTHORIZED,
+        "ba's host is no Organization's now"
+    );
+    let ba_realm = json!([{ "organization": "ba", "issuer": BA_REALM,
+        "jwks_url": "http://127.0.0.1:9/realms/ba/protocol/openid-connect/certs" }])
+    .to_string();
+    assert!(
+        w.state
+            .replace_organization_realms(&ba_realm, None)
+            .is_err(),
+        "a realm needs its Organization's host"
+    );
+    for refused in [
+        format!("{hel},ba=ftp://{BA}"),
+        format!("{hel},ba=https://{HEL}"),
+    ] {
+        assert!(
+            w.state.replace_organization_hosts(&refused).is_err(),
+            "{refused}"
+        );
+    }
+    assert_eq!(w.state.organization_hosts.current().len(), 1, "unchanged");
+    assert_eq!(
+        w.state
+            .replace_organization_hosts(&format!("{hel},ba=https://{BA}")),
+        Ok(2)
+    );
+    assert_eq!(w.state.replace_organization_realms(&ba_realm, None), Ok(1));
+    let (key, set) = keypair("ba-added");
+    w.state
+        .organization_realms
+        .get("ba")
+        .expect("served")
+        .bearer
+        .install(&set);
+    let added = token(&key, "ba-added", BA_REALM, "ba-only", &[]);
+    assert_eq!(bearer(&w.state, BA, &added).await, StatusCode::OK);
+    assert_eq!(
+        bearer(&w.state, HEL, &added).await,
+        StatusCode::UNAUTHORIZED,
+        "still on its own host alone"
+    );
+}
+
 /// An access token of App `app`'s own client, issued by `issuer`.
 fn app_token(key: &EncodingKey, kid: &str, issuer: &str, app: &str) -> String {
     let now = session::now_unix();

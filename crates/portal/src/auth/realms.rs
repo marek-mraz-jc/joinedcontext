@@ -153,6 +153,17 @@ impl OrganizationRealms {
         self.current().keys().cloned().collect()
     }
 
+    /// Drops every realm of an Organization not in `organizations`.
+    pub(crate) fn retain(&self, organizations: &[String]) {
+        let next: RealmMap = self
+            .current()
+            .iter()
+            .filter(|(name, _)| organizations.contains(name))
+            .map(|(name, realm)| (name.clone(), Arc::clone(realm)))
+            .collect();
+        self.store(next);
+    }
+
     fn store(&self, next: RealmMap) {
         let next = Arc::new(next);
         match self.0.write() {
@@ -176,7 +187,7 @@ impl AppState {
         let settings = parse(
             raw,
             self.config.oidc.as_ref(),
-            &self.config.organization_hosts,
+            &self.organization_hosts.current(),
         )?;
         if let Some(addr) = reach {
             for s in &settings {
@@ -192,7 +203,11 @@ impl AppState {
                 Some(realm) if realm.setting == *s => {
                     Some((s.organization.clone(), Arc::clone(realm)))
                 }
-                _ => crate::state::organization_realm(&self.config, s),
+                _ => crate::state::organization_realm(
+                    &self.config,
+                    &self.organization_hosts.current(),
+                    s,
+                ),
             })
             .collect();
         let count = next.len();

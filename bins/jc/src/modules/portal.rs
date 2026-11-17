@@ -15,7 +15,7 @@ use crate::modules::BuildCtx;
 use axum::Router;
 use jc_router::Mount;
 use joinedcontext_portal::config::Config;
-use joinedcontext_portal::host_registry::SeedHost;
+use joinedcontext_portal::host_registry::{SeedHost, SeedOrganization};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use std::collections::BTreeMap;
@@ -67,6 +67,8 @@ pub async fn build(
     } else {
         BTreeMap::new()
     };
+    let follow_hosts = env("JC_PORTAL_ORGANIZATION_HOSTS").is_none()
+        && organizations.contains_key("JC_PORTAL_ORGANIZATION_HOSTS");
     siblings.extend(organizations);
     let follow_realms = organization_realm_vars(
         &super::sign_in::from_config(orgs),
@@ -106,6 +108,19 @@ pub async fn build(
     let _ = joinedcontext_portal::health_probe::MARK.set(crate::access::probe_mark().to_owned());
     let state = AppState::from_config(config).await.map_err(err)?;
     if let Some(pool) = &state.db {
+        let added =
+            joinedcontext_portal::host_registry::seed_organizations(pool, &registry.organizations)
+                .await
+                .map_err(|e| {
+                    err(format!(
+                        "Organization registry: the jc.toml Organizations could not be seeded: {e}"
+                    ))
+                })?;
+        tracing::info!(
+            added,
+            of = registry.organizations.len(),
+            "Organization registry: jc.toml Organizations seeded"
+        );
         let added = joinedcontext_portal::host_registry::seed(pool, &registry.seed)
             .await
             .map_err(|e| {
@@ -137,8 +152,15 @@ pub async fn build(
         });
     }
     if let (Some(pool), Some(hosts)) = (&state.db, registry.hosts) {
-        let known = orgs.iter().map(|o| o.name.clone()).collect();
-        tokio::spawn(watch_registry(pool.clone(), hosts, known, shutdown.clone()));
+        // The Portal's Organization hosts follow the registry where jc filled them (T-7183).
+        let run = Run {
+            hosts,
+            roles: registry.roles,
+            named: registry.organizations.into_iter().map(|o| o.name).collect(),
+            scheme: mount.scheme.clone(),
+            portal: follow_hosts.then(|| state.clone()),
+        };
+        tokio::spawn(watch_registry(pool.clone(), run, shutdown.clone()));
     }
     let token = shutdown.clone();
     let internal = listener
@@ -152,10 +174,13 @@ pub async fn build(
     Ok((server::app(state), internal))
 }
 
-/// The host registry as the Portal's build gets it (T-7129 §1): the jc.toml hosts it seeds, and
-/// the router's host table it then keeps on the registry's served rows.
+/// The host registry as the Portal's build gets it (T-7129 §1): the jc.toml Organizations and
+/// hosts it seeds, and the router's host table it then keeps on the registry's served rows.
 pub struct HostRegistry {
+    pub organizations: Vec<SeedOrganization>,
     pub seed: Vec<SeedHost>,
+    /// The modules jc runs: each takes its entries on the hosts the registry adds (T-7184).
+    pub roles: Vec<Module>,
     /// `None` where no router swaps its table (no Organizations, or a Portal built in line).
     pub hosts: Option<jc_router::HostSwap>,
 }
@@ -166,20 +191,14 @@ const REGISTRY_REBUILD: std::time::Duration = std::time::Duration::from_secs(60)
 /// Keeps the router's host table on the registry's `served` rows (T-7129 §1, T-7136): a rebuild
 /// at once, on every `NOTIFY organization_hosts` and every [`REGISTRY_REBUILD`]. A rebuild that
 /// fails keeps the table that answers and sets `jc_host_registry_stale` to 1 until one succeeds.
-/// After each rebuild the served sign-in hosts of the Organizations jc runs (`known`) go to every
-/// module with an issuer table (T-7180, `sign_in`).
-async fn watch_registry(
-    pool: sqlx::PgPool,
-    hosts: jc_router::HostSwap,
-    known: Vec<String>,
-    shutdown: CancellationToken,
-) {
+/// Each rebuild is [`apply`]; a write to `organizations` wakes it too (migration 0063, T-7181).
+async fn watch_registry(pool: sqlx::PgPool, run: Run, shutdown: CancellationToken) {
     let mut listener: Option<sqlx::postgres::PgListener> = None;
     loop {
         if listener.is_none() {
             listener = listen_registry(&pool).await;
         }
-        let stale = match rebuild_hosts(&pool, &hosts, &known).await {
+        let stale = match rebuild_hosts(&pool, &run).await {
             Ok(served) => {
                 tracing::debug!(served, "host registry: host table rebuilt");
                 0.0
@@ -227,27 +246,17 @@ async fn listen_registry(pool: &sqlx::PgPool) -> Option<sqlx::postgres::PgListen
     }
 }
 
-/// Rebuilds the host table from every registry row, then hands its served sign-in hosts on; the
-/// number of `served` rows.
-async fn rebuild_hosts(
-    pool: &sqlx::PgPool,
-    hosts: &jc_router::HostSwap,
-    known: &[String],
-) -> Result<usize, String> {
+/// Reads both registries, [`apply`]s them, and last hands the served sign-in hosts of the active
+/// Organizations to every module with an issuer table (T-7180, `sign_in`), so a realm is always
+/// taken beside its Organization's host.
+async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> {
     let rows = joinedcontext_portal::host_registry::rows(pool)
         .await
         .map_err(|e| format!("the registry could not be read: {e}"))?;
-    let registry: Vec<jc_router::RegistryHost<'_>> = rows
-        .iter()
-        .map(|r| jc_router::RegistryHost {
-            host: &r.host,
-            organization: &r.organization,
-            organization_id: r.organization_id.as_deref(),
-            role: &r.role,
-            served: r.state == "served",
-        })
-        .collect();
-    hosts.rebuild(&registry).map_err(|e| e.to_string())?;
+    let organizations = joinedcontext_portal::host_registry::organizations(pool)
+        .await
+        .map_err(|e| format!("the Organization registry could not be read: {e}"))?;
+    let served = apply(run, &rows, &organizations)?;
     super::sign_in::publish(super::sign_in::from_registry(
         rows.iter().map(|r| {
             (
@@ -257,9 +266,124 @@ async fn rebuild_hosts(
                 r.state.as_str(),
             )
         }),
-        known,
+        &active(&organizations),
     ));
+    Ok(served)
+}
+
+/// What the registry's watcher keeps on the rows: the router's host table and the entries of
+/// the hosts it adds, the gateway's links of the Organizations jc.toml does not name (`named`
+/// are those it does), and the Portal's Organization hosts where jc filled them.
+struct Run {
+    hosts: jc_router::HostSwap,
+    roles: Vec<Module>,
+    named: Vec<String>,
+    scheme: String,
+    portal: Option<AppState>,
+}
+
+/// Applies the registry's rows; the number of hosts served. The Portal takes the working hosts
+/// (T-7183), the gateway links the Organizations jc.toml does not name and the router mounts each
+/// module of jc on the hosts jc.toml did not mount (T-7184); last the host table takes only the
+/// `served` hosts of `active` Organizations (T-7181), and a removed Organization leaves it whole,
+/// its shared paths too. A step that fails stops the rest: the table that answers stays.
+fn apply(
+    run: &Run,
+    rows: &[joinedcontext_portal::host_registry::HostRow],
+    organizations: &[joinedcontext_portal::host_registry::OrganizationRow],
+) -> Result<usize, String> {
+    let known = active(organizations);
+    let registry: Vec<jc_router::RegistryHost<'_>> = rows
+        .iter()
+        .map(|r| jc_router::RegistryHost {
+            host: &r.host,
+            organization: &r.organization,
+            organization_id: r.organization_id.as_deref(),
+            role: &r.role,
+            served: r.state == "served" && known.contains(&r.organization),
+        })
+        .collect();
+    let orgs = crate::app::registry_hosts(
+        registry
+            .iter()
+            .filter(|r| r.served)
+            .map(|r| (r.host, r.organization, r.role)),
+    );
+    // The Organization of a host is in place where it is read before the host answers: an
+    // added host is pinned in the Portal and linked at the gateway first; a removed one is
+    // unknown to the gateway (refused there) until the table drops it.
+    if let Some(state) = &run.portal {
+        state
+            .replace_organization_hosts(&portal_hosts(organizations, &orgs, &run.scheme))
+            .map_err(|e| format!("the Portal kept its Organization hosts: {e}"))?;
+    }
+    #[cfg(feature = "gateway")]
+    super::gateway::replace_registry_links(
+        &orgs
+            .iter()
+            .filter(|(name, _)| !run.named.contains(name))
+            .map(|(name, hosts)| (name.clone(), hosts.clone()))
+            .collect(),
+        &run.scheme,
+    );
+    run.hosts
+        .mount_hosts(&crate::app::registry_specs(&orgs, &run.roles))
+        .map_err(|e| format!("the hosts the registry added kept their entries: {e}"))?;
+    let removed: Vec<&str> = organizations
+        .iter()
+        .filter(|o| o.state != "active")
+        .map(|o| o.name.as_str())
+        .collect();
+    run.hosts
+        .rebuild_without(&registry, &removed)
+        .map_err(|e| e.to_string())?;
     Ok(registry.iter().filter(|r| r.served).count())
+}
+
+/// `JC_PORTAL_ORGANIZATION_HOSTS` from the registry (T-7183): each `active` Organization at its
+/// working host while the host registry serves it for that Organization (`served`,
+/// `app::registry_hosts`), else at the first working host it serves (jc.toml moved it).
+fn portal_hosts(
+    organizations: &[joinedcontext_portal::host_registry::OrganizationRow],
+    served: &BTreeMap<String, crate::config::OrganizationHosts>,
+    scheme: &str,
+) -> String {
+    organizations
+        .iter()
+        .filter(|o| o.state == "active")
+        .filter_map(|o| {
+            let working = served.get(&o.name).map(|h| h.portal.as_str())?;
+            let host = if jc_router::registry::bare(&o.host) == working {
+                o.host.as_str()
+            } else {
+                working
+            };
+            (!host.is_empty()).then(|| format!("{}={scheme}://{host}", o.name))
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The names of the `active` Organization rows: the Organizations jc runs now.
+fn active(rows: &[joinedcontext_portal::host_registry::OrganizationRow]) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.state == "active")
+        .map(|r| r.name.clone())
+        .collect()
+}
+
+/// The Organization registry's seed (T-7181): each `[[organizations]]` entry's name, the id it
+/// sets and its working host, lowercase, with the port jc.toml gives it (the Portal's public base
+/// keeps it).
+pub(crate) fn organization_seed(cfg: &crate::config::Config) -> Vec<SeedOrganization> {
+    cfg.organizations
+        .iter()
+        .map(|o| SeedOrganization {
+            name: o.name.clone(),
+            organization_id: o.id.as_ref().map(|id| id.as_str().to_owned()),
+            host: o.hosts.portal.to_ascii_lowercase(),
+        })
+        .collect()
 }
 
 /// The host registry's seed (T-7129 §1): every host of its own each `[[organizations]]` entry
@@ -1025,6 +1149,159 @@ mod tests {
                 ("zilina.city.example", "zilina", None, "working"),
                 ("data.bbsk.sk", "bbsk", Some("sk_bbsk"), "host"),
             ]
+        );
+    }
+
+    /// T-7184 (and T-7181's removal): the registry's rows mount each module on a host jc.toml
+    /// did not mount, so a run-time Organization's working and API hosts answer its Portal and
+    /// gateway, and the gateway links its own API host; once the Organization is removed its hosts
+    /// answer 421 and the gateway links it no more. jc.toml's host keeps its own entry.
+    #[tokio::test]
+    async fn a_run_time_organizations_hosts_answer_its_modules_and_a_removed_one_421() {
+        use axum::body::Body;
+        use http_body_util::BodyExt;
+        use joinedcontext_portal::host_registry::{HostRow, OrganizationRow};
+        let answer = |name: &'static str| {
+            Router::new().fallback(
+                move |org: Option<axum::Extension<jc_router::Organization>>| async move {
+                    format!("{name}|{}", org.map_or_else(String::new, |o| o.0.0))
+                },
+            )
+        };
+        let table = jc_router::HostTable::new()
+            .organization("bbsk")
+            .unwrap()
+            .bound("smartcity.bbsk.sk", "bbsk", "/")
+            .unwrap();
+        let spec = |module: &str, host: &str| jc_router::MountSpec {
+            module: module.into(),
+            host: Some(host.into()),
+            path_prefix: None,
+        };
+        let jc = jc_router::JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .module_router("portal", answer("portal"))
+            .module_router("gateway", answer("gateway"))
+            .mount(spec("portal", "smartcity.bbsk.sk"), answer("bbsk-portal"))
+            .build()
+            .unwrap();
+        let run = Run {
+            hosts: jc.host_swap().expect("a host table"),
+            roles: vec![Module::Portal, Module::Gateway],
+            named: vec!["bbsk".into()],
+            scheme: "https".into(),
+            portal: None,
+        };
+        let host = |host: &str, organization: &str, role: &str| HostRow {
+            host: host.into(),
+            organization: organization.into(),
+            organization_id: None,
+            role: role.into(),
+            state: "served".into(),
+        };
+        let rows = [
+            host("smartcity.bbsk.sk", "bbsk", "working"),
+            host("smartcity.rt7184.sk", "rt7184", "working"),
+            host("api.rt7184.sk", "rt7184", "api"),
+        ];
+        let org = |name: &str, state: &str| OrganizationRow {
+            name: name.into(),
+            organization_id: None,
+            host: format!("smartcity.{name}.sk"),
+            state: state.into(),
+        };
+        let get = |host: &'static str, path: &'static str| {
+            let jc = jc.clone();
+            async move {
+                let req = axum::http::Request::builder()
+                    .uri(path)
+                    .header("host", host)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = jc.dispatch(req, Some("127.0.0.1".parse().unwrap())).await;
+                let status = resp.status();
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let ok = |body: &str| (axum::http::StatusCode::OK, body.to_owned());
+        assert_eq!(
+            get("smartcity.rt7184.sk", "/").await.0,
+            axum::http::StatusCode::MISDIRECTED_REQUEST
+        );
+        let served = apply(
+            &run,
+            &rows,
+            &[org("bbsk", "active"), org("rt7184", "active")],
+        );
+        assert_eq!(served, Ok(3));
+        assert_eq!(get("smartcity.rt7184.sk", "/").await, ok("portal|rt7184"));
+        assert_eq!(
+            get("smartcity.rt7184.sk", "/api/endpoint/x").await,
+            ok("gateway|rt7184"),
+            "the gateway's paths on the working host"
+        );
+        assert_eq!(get("api.rt7184.sk", "/x").await, ok("gateway|rt7184"));
+        assert_eq!(get("smartcity.bbsk.sk", "/").await, ok("bbsk-portal|bbsk"));
+        let links = super::super::gateway::registry_links();
+        assert_eq!(
+            links
+                .get("rt7184")
+                .map(|(api, own)| (api.as_str(), own.len())),
+            Some(("https://api.rt7184.sk", 1))
+        );
+        assert!(!links.contains_key("bbsk"), "jc.toml links its own");
+        let served = apply(
+            &run,
+            &rows,
+            &[org("bbsk", "active"), org("rt7184", "removed")],
+        );
+        assert_eq!(served, Ok(1));
+        for at in ["smartcity.rt7184.sk", "api.rt7184.sk"] {
+            assert_eq!(
+                get(at, "/").await.0,
+                axum::http::StatusCode::MISDIRECTED_REQUEST,
+                "{at}"
+            );
+        }
+        assert!(!super::super::gateway::registry_links().contains_key("rt7184"));
+    }
+
+    /// T-7181: the Organization registry's seed is each Organization's name, id and working
+    /// host; the sign-in set follows the registry's active rows, never jc.toml's names.
+    #[test]
+    fn the_organization_seed_is_name_id_and_working_host_and_only_active_rows_run() {
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\nid = \"sk_bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"Smartcity.bbsk.sk:8443\" }\n\
+            [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\nhost = \"auto\"\n";
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).expect("cfg");
+        assert_eq!(
+            organization_seed(&cfg),
+            [
+                SeedOrganization {
+                    name: "bbsk".into(),
+                    organization_id: Some("sk_bbsk".into()),
+                    host: "smartcity.bbsk.sk:8443".into(),
+                },
+                SeedOrganization {
+                    name: "zilina".into(),
+                    organization_id: None,
+                    host: "zilina.city.example".into(),
+                },
+            ]
+        );
+        let row = |name: &str, state: &str| joinedcontext_portal::host_registry::OrganizationRow {
+            name: name.into(),
+            organization_id: None,
+            host: format!("smartcity.{name}.sk"),
+            state: state.into(),
+        };
+        assert_eq!(
+            active(&[row("bbsk", "removed"), row("run-time", "active")]),
+            ["run-time"]
         );
     }
 
