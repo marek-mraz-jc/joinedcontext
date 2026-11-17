@@ -614,12 +614,6 @@ pub async fn verdict_for_import(
     project: &str,
     subject: &Value,
 ) -> Result<bool, OpError> {
-    // A project with no key keeps no check (T-7204): say why, not "check it" again and again.
-    if let Some(pool) = &state.db {
-        crate::project_ids::required(pool, &state.mirror, project, "import check")
-            .await
-            .map_err(OpError::Api)?;
-    }
     let recorded = state
         .drafts
         .get(project, IMPORT_CHECK_KIND, &identity.username)

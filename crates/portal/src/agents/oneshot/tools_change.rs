@@ -1507,7 +1507,6 @@ impl Driver {
             DraftError::Conflict { .. } => {
                 format!("the draft of {kind} '{name}' changed meanwhile; open it again")
             }
-            DraftError::Unplaced(_) => err.to_string(),
             DraftError::Db(_) | DraftError::NotFound { .. } => {
                 format!("the draft of {kind} '{name}' could not be saved; try again in a moment")
             }
