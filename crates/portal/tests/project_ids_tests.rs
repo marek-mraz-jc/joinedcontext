@@ -377,10 +377,33 @@ async fn every_keyed_table_has_forced_row_level_security_on_the_key_alone() {
     .fetch_all(&pool)
     .await
     .expect("catalog");
+    // Phase one of T-7196 keys these by name first; the forcing migration takes them off the list.
+    let unforced: Vec<String> = unforced
+        .into_iter()
+        .filter(|t| !project_ids::KEYED_BY_NAME.contains(&t.as_str()))
+        .collect();
     assert!(
         unforced.is_empty(),
         "a table with org_id and no forced RLS (STO-03): {unforced:?}"
     );
+    for table in project_ids::KEYED_BY_NAME {
+        let ready: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' \
+                     AND tablename = $1 AND policyname = 'tenant'), \
+                    (SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' \
+                     AND table_name = $1 AND column_name IN ('org_id', 'project_id') \
+                     AND column_default LIKE '%current_setting(''jc.%')",
+        )
+        .bind(table)
+        .fetch_one(&pool)
+        .await
+        .expect("catalog");
+        assert_eq!(
+            ready,
+            (1, 2),
+            "{table}: the tenant policy and both key columns defaulting to the transaction's key"
+        );
+    }
     let keyed: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' AND c.relforcerowsecurity ORDER BY 1",
@@ -527,4 +550,144 @@ async fn a_backup_row_answers_only_under_its_organizations_key() {
     .execute(&mut *tx)
     .await
     .expect_err("the key unset writes no row");
+}
+
+/// A grafana_visualizations row of `project` written as before T-7196: no key.
+async fn unkeyed_visualization(pool: &sqlx::PgPool, project: &str) -> String {
+    let id = run_name("viz");
+    sqlx::query(
+        "INSERT INTO grafana_visualizations (id, project, title, endpoint, entity_type, attribute, kind) \
+         VALUES ($1, $2, 'Free bikes', 'bikes', 'BikeHireDockingStation', 'availableBikeNumber', 'stat')",
+    )
+    .bind(&id)
+    .bind(project)
+    .execute(pool)
+    .await
+    .expect("a row of today");
+    id
+}
+
+async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT org_id::text, project_id::text FROM grafana_visualizations WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .expect("the row")
+}
+
+/// T-7196 phase one: a row written before the key is keyed by the backfill once the mirror places
+/// its project; a project the mirror lacks, or whose Organization is not of the registry, keeps
+/// no key and is named; a row written through the store carries the key by the column default;
+/// and the policy the forcing migration turns on lets each key read only its own rows.
+#[tokio::test]
+async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_key() {
+    use joinedcontext_portal::grafana::{self, Kind, Visualization};
+    let pool = pool().await;
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    let org = organization(&pool, "bforg").await;
+    let placed = run_name("bfplaced");
+    let orphan = run_name("bforphan");
+    let gone = run_name("bfgone");
+    for (project, organization) in [(&placed, org.clone()), (&orphan, run_name("bfnoorg"))] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    let old = unkeyed_visualization(&pool, &placed).await;
+    let unplaced = unkeyed_visualization(&pool, &orphan).await;
+    let removed = unkeyed_visualization(&pool, &gone).await;
+
+    let waiting = project_ids::backfill(&pool, &state.mirror)
+        .await
+        .expect("backfill");
+    let key = project_ids::key_of(&pool, &state.mirror, &placed)
+        .await
+        .expect("key")
+        .expect("a placed project has a key");
+    assert_eq!(
+        key_columns(&pool, &old).await,
+        (Some(key.org.to_string()), Some(key.project.to_string()))
+    );
+    for (project, id) in [(&orphan, &unplaced), (&gone, &removed)] {
+        assert!(waiting.contains(project), "{project} waits: {waiting:?}");
+        assert_eq!(key_columns(&pool, id).await, (None, None), "{project}");
+    }
+    assert!(!waiting.contains(&placed), "{waiting:?}");
+    assert_eq!(
+        project_ids::key_of(&pool, &state.mirror, &gone)
+            .await
+            .expect("key"),
+        None,
+        "a name the mirror holds no Project of gets no key, and no id minted"
+    );
+
+    let new = Visualization {
+        id: run_name("viznew"),
+        project: placed.clone(),
+        title: "Free bikes over time".into(),
+        endpoint: "bikes".into(),
+        entity_type: "BikeHireDockingStation".into(),
+        attribute: "availableBikeNumber".into(),
+        kind: Kind::Timeseries,
+        created_at: String::new(),
+    };
+    grafana::insert(&pool, key, &new).await.expect("insert");
+    assert_eq!(
+        key_columns(&pool, &new.id).await,
+        (Some(key.org.to_string()), Some(key.project.to_string())),
+        "a row written in the tenant transaction carries its key"
+    );
+    let listed = grafana::list(&pool, key, &placed).await.expect("list");
+    assert_eq!(listed.len(), 2, "{listed:?}");
+
+    // What the forcing migration turns on, rolled back here: the key alone decides what is read.
+    let other = project_ids::reserved(&pool, &org)
+        .await
+        .expect("reserved")
+        .expect("a key");
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT ON grafana_visualizations TO pk_rls_reader",
+    )
+    .execute(&pool)
+    .await
+    .expect("the reader role");
+    for (key, expected) in [(Some(key), 2_i64), (Some(other), 0), (None, 0)] {
+        let mut tx = pool.begin().await.expect("begin");
+        sqlx::raw_sql(
+            "ALTER TABLE grafana_visualizations ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE grafana_visualizations FORCE ROW LEVEL SECURITY",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("forced in this transaction");
+        if let Some(key) = key {
+            sqlx::query(
+                "SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)",
+            )
+            .bind(key.org.to_string())
+            .bind(key.project.to_string())
+            .execute(&mut *tx)
+            .await
+            .expect("keyed");
+        }
+        sqlx::query("SET LOCAL ROLE pk_rls_reader")
+            .execute(&mut *tx)
+            .await
+            .expect("role");
+        let n: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM grafana_visualizations WHERE project = $1")
+                .bind(&placed)
+                .fetch_one(&mut *tx)
+                .await
+                .expect("count");
+        assert_eq!(n, expected, "{key:?}");
+        tx.rollback().await.expect("rollback");
+    }
 }

@@ -8,6 +8,15 @@ use std::collections::HashMap;
 use jc_types::{OrgId, ProjectId, ProjectKey};
 use sqlx::PgPool;
 
+use crate::permissions::{organization_of, ORG_NAMESPACE};
+use crate::store::Mirror;
+
+/// The project tables keyed by name until a project's Organization is known (T-7196 PK-1d, phase
+/// one): `org_id` and `project_id` are nullable and default to the transaction's key, every
+/// statement runs in a `db::tenant_tx`, and [`backfill`] keys the rows written before. A later
+/// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security.
+pub const KEYED_BY_NAME: &[&str] = &["grafana_visualizations"];
+
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
 /// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
 /// Organization's reserved project never answers for a project spelled like it (TEN-11).
@@ -88,6 +97,81 @@ pub async fn reserved(
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
+}
+
+/// The key of `project` as the mirror places it: its Organization from the Project's
+/// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
+/// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.
+pub async fn key_of(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    if mirror.get(ORG_NAMESPACE, "Project", project).is_none() {
+        return Ok(None);
+    }
+    match organization_of(mirror, project) {
+        Some(organization) => key(pool, &organization, project).await,
+        None => Ok(None),
+    }
+}
+
+/// Keys every row of [`KEYED_BY_NAME`] that has none yet with its project's key; answers the
+/// project names it could not key (no Project in the mirror, or no active Organization of the
+/// registry), sorted, so the caller says which ones wait.
+pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sqlx::Error> {
+    let mut waiting = std::collections::BTreeSet::new();
+    for table in KEYED_BY_NAME {
+        let names: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT DISTINCT project FROM {table} WHERE project_id IS NULL OR org_id IS NULL"
+        ))
+        .fetch_all(pool)
+        .await?;
+        for name in names {
+            let Some(key) = key_of(pool, mirror, &name).await? else {
+                waiting.insert(name);
+                continue;
+            };
+            sqlx::query(&format!(
+                "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid                  WHERE project = $3 AND (project_id IS NULL OR org_id IS NULL)"
+            ))
+            .bind(key.org.to_string())
+            .bind(key.project.to_string())
+            .bind(&name)
+            .execute(pool)
+            .await?;
+        }
+    }
+    Ok(waiting.into_iter().collect())
+}
+
+/// Runs [`backfill`] each minute once the mirror holds a sync (a project's Organization lives
+/// only in Git), on the replica that leads; says each change of the projects that wait.
+pub(crate) fn spawn_backfill(state: crate::state::AppState) {
+    let (Some(pool), Some(syncer)) = (state.db.clone(), state.syncer.clone()) else {
+        return;
+    };
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut said: Vec<String> = Vec::new();
+        loop {
+            tick.tick().await;
+            if syncer.status().revision.is_none() || !state.leads() {
+                continue;
+            }
+            match backfill(&pool, &state.mirror).await {
+                Ok(waiting) if waiting != said => {
+                    if !waiting.is_empty() {
+                        tracing::warn!(projects = ?waiting, "project rows keep no key: their project is not in the mirror or its Organization is not an active one of the registry; an operator adds the Organization on the Organizations page");
+                    }
+                    said = waiting;
+                }
+                Ok(_) => {}
+                Err(err) => tracing::warn!(error = %err, "project rows were not keyed this minute"),
+            }
+        }
+    });
 }
 
 fn parsed(org: &str, project: &str) -> Option<ProjectKey> {

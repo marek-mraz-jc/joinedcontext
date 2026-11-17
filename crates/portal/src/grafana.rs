@@ -10,6 +10,7 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
+use jc_types::ProjectKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -160,33 +161,49 @@ macro_rules! columns {
     };
 }
 
-/// The project's visualizations, newest first; every project's for `None`.
-pub async fn list(pool: &PgPool, project: Option<&str>) -> Result<Vec<Visualization>, sqlx::Error> {
+/// The project's visualizations, newest first. Every statement runs in a `db::tenant_tx` of the
+/// project's key (T-7196), whose row-level security the forcing migration turns on.
+pub async fn list(
+    pool: &PgPool,
+    key: ProjectKey,
+    project: &str,
+) -> Result<Vec<Visualization>, sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
     let rows: Vec<Row> = sqlx::query_as(concat!(
         columns!(),
-        "WHERE $1::text IS NULL OR project = $1 ORDER BY created_at DESC"
+        "WHERE project = $1 ORDER BY created_at DESC"
     ))
     .bind(project)
-    .fetch_all(pool)
+    .fetch_all(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(rows.into_iter().filter_map(of_row).collect())
 }
 
 /// One visualization of the project.
 pub async fn find(
     pool: &PgPool,
+    key: ProjectKey,
     project: &str,
     id: &str,
 ) -> Result<Option<Visualization>, sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
     let row: Option<Row> = sqlx::query_as(concat!(columns!(), "WHERE project = $1 AND id = $2"))
         .bind(project)
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(row.and_then(of_row))
 }
 
-pub async fn insert(pool: &PgPool, row: &Visualization) -> Result<(), sqlx::Error> {
+/// Keeps `row`, keyed with `key` by the columns' default.
+pub async fn insert(
+    pool: &PgPool,
+    key: ProjectKey,
+    row: &Visualization,
+) -> Result<(), sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
     sqlx::query(
         "INSERT INTO grafana_visualizations \
          (id, project, title, endpoint, entity_type, attribute, kind) \
@@ -199,17 +216,24 @@ pub async fn insert(pool: &PgPool, row: &Visualization) -> Result<(), sqlx::Erro
     .bind(&row.entity_type)
     .bind(&row.attribute)
     .bind(row.kind.as_str())
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    tx.commit().await
 }
 
-pub async fn delete(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("DELETE FROM grafana_visualizations WHERE id = $1")
+pub async fn delete(
+    pool: &PgPool,
+    key: ProjectKey,
+    project: &str,
+    id: &str,
+) -> Result<(), sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
+    sqlx::query("DELETE FROM grafana_visualizations WHERE project = $1 AND id = $2")
+        .bind(project)
         .bind(id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(())
+    tx.commit().await
 }
 
 /// An Endpoint as the page may draw from it.
@@ -928,17 +952,32 @@ async fn restore(
 
 /// One pass over every row. A Grafana that is away fails each row alike, so the pass stops there
 /// and the next one tries again.
+/// Read project by project, each in its own key (STO-07): a project the mirror no longer holds,
+/// or whose Organization has no key, has nothing put back.
 pub async fn sweep(state: &AppState, pool: &PgPool, client: &Client<'_>) {
-    let rows = match list(pool, None).await {
-        Ok(rows) => rows,
-        Err(err) => {
-            tracing::warn!(error = %err, "the visualizations could not be read");
-            return;
-        }
-    };
-    for row in &rows {
-        if restore(state, client, row).await.is_err() {
-            return;
+    let projects = state.mirror.list(
+        crate::permissions::ORG_NAMESPACE,
+        "Project",
+        &crate::store::ListOptions::default(),
+    );
+    for project in &projects.items {
+        let project = project.metadata.name.as_str();
+        let rows = match crate::project_ids::key_of(pool, &state.mirror, project).await {
+            Ok(Some(key)) => list(pool, key, project).await,
+            Ok(None) => continue,
+            Err(err) => Err(err),
+        };
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(err) => {
+                tracing::warn!(%project, error = %err, "the visualizations could not be read");
+                return;
+            }
+        };
+        for row in &rows {
+            if restore(state, client, row).await.is_err() {
+                return;
+            }
         }
     }
 }
