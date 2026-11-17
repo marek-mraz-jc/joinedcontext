@@ -7211,6 +7211,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "jc-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "jcctl"
 version = "0.1.0"
 dependencies = [

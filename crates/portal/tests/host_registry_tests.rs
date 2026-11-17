@@ -74,6 +74,7 @@ async fn register(pool: &PgPool, names: &[&str]) {
             name: (*name).to_owned(),
             organization_id: None,
             host: format!("smartcity.{name}.jcdev.example"),
+            catalogue_id: None,
         })
         .collect();
     seed_organizations(pool, &seeded).await.expect("seeded");
@@ -272,11 +273,13 @@ async fn a_seeded_organization_reads_back_unchanged_and_a_removed_one_stays_remo
             name: kept.clone(),
             organization_id: None,
             host: format!("smartcity.s{r}.sk"),
+            catalogue_id: None,
         },
         SeedOrganization {
             name: gone.clone(),
             organization_id: None,
             host: format!("{gone}.jcdev.example"),
+            catalogue_id: None,
         },
     ];
     assert_eq!(
@@ -348,12 +351,98 @@ async fn a_seeded_organization_reads_back_unchanged_and_a_removed_one_stays_remo
             name: twin.clone(),
             organization_id: Some(id.clone()),
             host: format!("{twin}.jcdev.example"),
+            catalogue_id: None,
         }],
     )
     .await
     .expect("seeded");
     let all = organizations(&pool).await.expect("rows");
     assert_eq!(read(&all, &twin).and_then(|o| o.0), None);
+}
+
+/// T-7186: jc.toml's catalogue id lands on the row once, never one another row holds, a row
+/// written without one mints it, and no write moves a set one (its datasets live under it).
+#[tokio::test]
+async fn the_catalogue_id_is_seeded_once_and_never_moves() {
+    let pool = pool().await;
+    let r = run("c");
+    let uuid = |n: u128| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        format!(
+            "00000000-0000-7000-8{:03x}-{:012x}",
+            n,
+            nanos & 0xffff_ffff_ffff
+        )
+    };
+    let (first, second) = (uuid(1), uuid(2));
+    let (org, twin) = (format!("c{r}"), format!("ct{r}"));
+    let mut seeded = SeedOrganization {
+        name: org.clone(),
+        organization_id: None,
+        host: format!("smartcity.c{r}.sk"),
+        catalogue_id: None,
+    };
+    seed_organizations(&pool, std::slice::from_ref(&seeded))
+        .await
+        .expect("first start, no catalogue yet");
+    let catalogue = |all: &[joinedcontext_portal::host_registry::OrganizationRow], name: &str| {
+        all.iter()
+            .find(|o| o.name == name)
+            .and_then(|o| o.catalogue_id.clone())
+    };
+    assert_eq!(
+        catalogue(&organizations(&pool).await.expect("rows"), &org),
+        None
+    );
+    seeded.catalogue_id = Some(first.clone());
+    seed_organizations(&pool, std::slice::from_ref(&seeded))
+        .await
+        .expect("jc.toml names it");
+    seeded.catalogue_id = Some(second.clone());
+    seed_organizations(
+        &pool,
+        &[
+            seeded,
+            SeedOrganization {
+                name: twin.clone(),
+                organization_id: None,
+                host: format!("{twin}.jcdev.example"),
+                catalogue_id: Some(first.clone()),
+            },
+        ],
+    )
+    .await
+    .expect("jc.toml moved it; a twin names the same one");
+    let all = organizations(&pool).await.expect("rows");
+    assert_eq!(catalogue(&all, &org), Some(first.clone()), "set once");
+    assert_eq!(catalogue(&all, &twin), None, "never another row's");
+    // A row an operator's Change writes names none and gets one minted.
+    let made = format!("cm{r}");
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $2, 'active', 'op')",
+    )
+    .bind(&made)
+    .bind(format!("{made}.jcdev.example"))
+    .execute(&pool)
+    .await
+    .expect("a run-time row");
+    let minted = catalogue(&organizations(&pool).await.expect("rows"), &made);
+    assert!(
+        minted.is_some_and(|c| uuid::Uuid::parse_str(&c).is_ok()),
+        "a run-time row gets a catalogue id"
+    );
+    for set in ["NULL", "gen_random_uuid()"] {
+        let sql = format!("UPDATE organizations SET catalogue_id = {set} WHERE name = $1");
+        let err = sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+            .bind(&org)
+            .execute(&pool)
+            .await
+            .expect_err("a set catalogue never moves");
+        assert!(err.to_string().contains("catalogue"), "{sql}: {err}");
+    }
 }
 
 /// T-7181: an Organization created at run time (a row, as an operator Change writes it) takes

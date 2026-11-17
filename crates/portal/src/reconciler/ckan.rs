@@ -142,7 +142,7 @@ pub struct CkanSync {
     installation: Option<CkanInstanceSpec>,
     /// Each Organization's own catalogue (`organization_host::OrganizationCatalogue`): an
     /// Endpoint of a project it owns publishes there alone, under its name, with its token.
-    organizations: Vec<crate::organization_host::OrganizationCatalogue>,
+    organizations: crate::organization_host::OrganizationCatalogues,
     /// Each `(catalogue, dataset)` a dataset left for its Organization's own catalogue, once its
     /// copy there was published (T-7020): asked again only after the Portal restarts.
     /// ponytail: one `package_show` per moved dataset per start; persist it if that grows.
@@ -162,16 +162,17 @@ impl CkanSync {
             api_route: None,
             api_reach: None,
             installation: None,
-            organizations: Vec::new(),
+            organizations: crate::organization_host::OrganizationCatalogues::default(),
             moved_out: Arc::default(),
         }
     }
 
     /// Publishes every Endpoint of an Organization's projects into that Organization's own
-    /// catalogue (jc `[[organizations]]`). The operator configures them, never a manifest.
+    /// catalogue (jc `[[organizations]]` and the run-time ones, read per run). The operator
+    /// configures them, never a manifest.
     pub fn for_organizations(
         mut self,
-        catalogues: Vec<crate::organization_host::OrganizationCatalogue>,
+        catalogues: crate::organization_host::OrganizationCatalogues,
     ) -> Self {
         self.organizations = catalogues;
         self
@@ -189,7 +190,8 @@ impl CkanSync {
         let Some(org) = organization_in(repo, &project) else {
             return target;
         };
-        let Some(catalogue) = self.organizations.iter().find(|c| c.organization == org) else {
+        let organizations = self.organizations.current();
+        let Some(catalogue) = organizations.iter().find(|c| c.organization == org) else {
             if organization_count(repo) > 1 {
                 target.instance.organization_default = Some(org.clone());
                 target.publication.organization = Some(org);
@@ -206,10 +208,12 @@ impl CkanSync {
     fn organization_catalogue(
         &self,
         instance: &CkanInstanceSpec,
-    ) -> Option<&crate::organization_host::OrganizationCatalogue> {
+    ) -> Option<crate::organization_host::OrganizationCatalogue> {
         self.organizations
+            .current()
             .iter()
             .find(|c| c.url.as_str().trim_end_matches('/') == instance.base_url())
+            .cloned()
     }
 
     /// The client of `target`'s catalogue: its Organization's (that catalogue's API address,
@@ -239,13 +243,22 @@ impl CkanSync {
             .as_str()
             .trim_end_matches('/')
             .to_owned();
-        let token =
-            jcctl::secrets::SecretValue::from_file(&catalogue.token_file).ok_or_else(|| {
-                format!(
-                    "the token file of {}'s catalogue is unreadable or empty",
+        let token = match (&catalogue.token, &catalogue.token_file) {
+            (Some(held), _) => Some(held.0.duplicate()),
+            (None, Some(file)) => jcctl::secrets::SecretValue::from_file(file),
+            (None, None) => {
+                return Err(format!(
+                    "{} was removed: nothing is published into its catalogue",
                     catalogue.organization
-                )
-            })?;
+                ));
+            }
+        }
+        .ok_or_else(|| {
+            format!(
+                "the token file of {}'s catalogue is unreadable or empty",
+                catalogue.organization
+            )
+        })?;
         let api =
             HttpCkan::reaching(&api_url, token, catalogue.reach).map_err(|err| err.to_string())?;
         if let Some(host) = &catalogue.data_host {
@@ -1805,11 +1818,16 @@ mod tests {
                 api: Some(format!("http://opendata.{org}.localhost").parse().unwrap()),
                 reach: Some("127.0.0.1:42301".parse().unwrap()),
                 data_host: Some(format!("http://api.{org}.localhost:42301")),
-                token_file,
+                token_file: Some(token_file),
+                token: None,
             }
         };
-        let sync = CkanSync::new("portal.example")
-            .for_organizations(vec![catalogue("hel"), catalogue("ba")]);
+        let sync = CkanSync::new("portal.example").for_organizations(
+            crate::organization_host::OrganizationCatalogues::new(vec![
+                catalogue("hel"),
+                catalogue("ba"),
+            ]),
+        );
         let source = publisher::TokenSource {
             env: None,
             age_key_file: None,

@@ -8,9 +8,6 @@
 //! gateway's and the proxy's realms, the Portal's sign-in realms) replaces it from the set it is
 //! handed, so a served sign-in host answers and a removed one is refused without a restart.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
-
 /// One Organization's own sign-in host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignIn {
@@ -56,55 +53,24 @@ pub fn from_registry<'a>(rows: impl IntoIterator<Item = Row<'a>>, known: &[Strin
     out
 }
 
-type Follower = Arc<dyn Fn(&[SignIn]) + Send + Sync>;
-
-#[derive(Default)]
-struct Followers {
-    /// The set the registry served last; `None` before its first rebuild.
-    last: Option<Vec<SignIn>>,
-    /// Keyed by module, so a module built again replaces its follower.
-    by_module: BTreeMap<&'static str, Follower>,
-}
-
-static FOLLOWERS: std::sync::LazyLock<Mutex<Followers>> =
-    std::sync::LazyLock::new(|| Mutex::new(Followers::default()));
-
-fn followers() -> std::sync::MutexGuard<'static, Followers> {
-    FOLLOWERS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
+static SIGN_IN: super::follow::Published<Vec<SignIn>> = super::follow::Published::new();
 
 /// Calls `follow` with every set the registry serves from now on, and at once with the last one
-/// when the registry was read before this module was built. Followers are called under the
-/// lock, so a set published meanwhile never reaches a follower before an older one. A follower
-/// only swaps a table or spawns work; it never calls [`follow`] or [`publish`].
+/// (`follow::Published::follow`).
 pub fn follow(module: &'static str, follow: impl Fn(&[SignIn]) + Send + Sync + 'static) {
-    let follow: Follower = Arc::new(follow);
-    let mut held = followers();
-    if let Some(last) = &held.last {
-        follow(last);
-    }
-    held.by_module.insert(module, follow);
+    SIGN_IN.follow(module, move |set: &Vec<SignIn>| follow(set));
 }
 
 /// Hands `set` to every follower when it differs from the last one; `true` when it did.
 pub fn publish(set: Vec<SignIn>) -> bool {
-    let mut held = followers();
-    if held.last.as_ref() == Some(&set) {
-        return false;
-    }
-    for follow in held.by_module.values() {
-        follow(&set);
-    }
-    held.last = Some(set);
-    true
+    SIGN_IN.publish(set)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};
+    use std::sync::{Arc, Mutex};
 
     fn orgs() -> Vec<crate::config::OrganizationSection> {
         let text = "base_host = \"city.example\"\n\

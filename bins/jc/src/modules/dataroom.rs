@@ -361,6 +361,8 @@ pub async fn build_with_writer(
         bases.insert(id, format!("{}://{}", mount.scheme, org.opendata_base()));
     }
     #[cfg(feature = "portal")]
+    let by_configured = by_organization.clone();
+    #[cfg(feature = "portal")]
     let followed = portal_orgs(
         cfg,
         organizations,
@@ -373,7 +375,7 @@ pub async fn build_with_writer(
         .with_organization_catalogues(by_organization)
         .with_catalogue_bases(bases)
         .with_tokens(bindings)
-        .with_installation_branding(installation_branding(&own, &live, assistant_widget))
+        .with_installation_branding(installation_branding(&own, &live, assistant_widget.clone()))
         .with_catalogue_branding(by_catalogue)
         // Several catalogues by host: a loopback name names none of them.
         .with_loopback_default(organizations.is_empty())
@@ -389,6 +391,23 @@ pub async fn build_with_writer(
     let writer = dataroom_server::CatalogueWriter::new(state.clone(), authorizer, harvested);
     #[cfg(feature = "portal")]
     super::portals::follow(writer.clone(), followed, shutdown, tasks);
+    #[cfg(feature = "portal")]
+    follow_organizations(
+        RunTime {
+            writer: writer.clone(),
+            branding: state.catalogue_branding.clone(),
+            installation: org_id,
+            default_catalogue: catalogue_id,
+            configured: by_configured,
+            own,
+            live,
+            scheme: mount.scheme.clone(),
+            assistant_widget,
+            applied: BTreeMap::new(),
+        },
+        shutdown,
+        tasks,
+    );
     Ok((
         dataroom_api::with_dataset_aliases(dataroom_api::router(state), cfg.aliases.clone()),
         writer,
@@ -535,6 +554,154 @@ fn bare_host(host: &str) -> &str {
     }
 }
 
+/// What dataroom keeps on the registry's run-time Organizations (T-7186).
+#[cfg(feature = "portal")]
+struct RunTime {
+    writer: dataroom_server::CatalogueWriter,
+    branding: Arc<std::sync::RwLock<BTreeMap<CatalogueId, BrandingBlock>>>,
+    installation: OrgId,
+    default_catalogue: CatalogueId,
+    /// jc.toml's Organizations and their catalogues, set up at start; one the registry removes
+    /// leaves here.
+    configured: BTreeMap<String, (OrgId, CatalogueId)>,
+    own: BrandingBlock,
+    live: crate::siblings::LiveAddresses,
+    scheme: String,
+    assistant_widget: Option<String>,
+    /// The run-time Organizations served now, as they were set up.
+    applied: BTreeMap<String, (OrgId, CatalogueId, OrganizationSection)>,
+}
+
+/// Follows `follow::ORGANIZATIONS`: one task applies the newest set ([`RunTime::apply`]), so
+/// a set published while a catalogue is written waits and never interleaves with it.
+#[cfg(feature = "portal")]
+fn follow_organizations(
+    mut run: RunTime,
+    shutdown: &tokio_util::sync::CancellationToken,
+    tasks: &tokio_util::task::TaskTracker,
+) {
+    let (tx, mut rx) = tokio::sync::watch::channel(None);
+    super::follow::ORGANIZATIONS.follow("dataroom", move |set| {
+        tx.send_replace(Some(set.clone()));
+    });
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        loop {
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                changed = rx.changed() => if changed.is_err() { return },
+            }
+            let set = rx.borrow_and_update().clone();
+            if let Some(set) = set {
+                run.apply(&set).await;
+            }
+        }
+    });
+}
+
+#[cfg(feature = "portal")]
+impl RunTime {
+    /// Serves each run-time Organization's catalogue under its own OrgId (ODP-12) at its open
+    /// data host, its Portal granted in process ([`super::follow::catalogue_token`]), and stops
+    /// serving the catalogue of a removed Organization or of one that left the set; the store
+    /// keeps its datasets. A row whose catalogue is missing, not a UUID, the default catalogue
+    /// or another Organization's gets none (logged), as jc.toml's check refuses it at start.
+    async fn apply(&mut self, set: &super::follow::Organizations) {
+        let kept: Vec<&str> = set.run_time.iter().map(|o| o.name.as_str()).collect();
+        let gone: Vec<String> = self
+            .applied
+            .keys()
+            .filter(|name| !kept.contains(&name.as_str()))
+            .cloned()
+            .collect();
+        for name in gone.iter().chain(&set.removed) {
+            let held = match self.applied.remove(name) {
+                Some((org, id, _)) => Some((org, id)),
+                None => self.configured.remove(name),
+            };
+            if let Some((org, id)) = held {
+                self.writer.withdraw(org, id).await;
+                self.write_branding().remove(&id);
+                tracing::info!(organization = %name, "dataroom: catalogue no longer served");
+            }
+        }
+        for org in &set.run_time {
+            if self
+                .applied
+                .get(&org.name)
+                .is_some_and(|(_, _, held)| held == org)
+            {
+                continue;
+            }
+            match self.serve(org).await {
+                Ok((tenant, id)) => {
+                    self.applied
+                        .insert(org.name.clone(), (tenant, id, org.clone()));
+                    tracing::info!(organization = %org.name, catalogue = %id, "dataroom: run-time catalogue served");
+                }
+                Err(e) => {
+                    tracing::warn!(organization = %org.name, error = %e, "dataroom: no catalogue for this Organization");
+                }
+            }
+        }
+    }
+
+    async fn serve(&self, org: &OrganizationSection) -> Result<(OrgId, CatalogueId), String> {
+        let id = CatalogueId::parse_verified(&org.catalogue_id)
+            .map_err(|_| "its row names no catalogue id (a UUID) yet".to_owned())?;
+        let taken = id == self.default_catalogue
+            || self
+                .configured
+                .values()
+                .map(|&(_, c)| c)
+                .chain(
+                    self.applied
+                        .iter()
+                        .filter(|(name, _)| **name != org.name)
+                        .map(|(_, &(_, c, _))| c),
+                )
+                .any(|c| c == id);
+        if taken {
+            return Err(format!(
+                "catalogue {id} is the default catalogue or another Organization's"
+            ));
+        }
+        let tenant = OrgId::of_organization(self.installation, &org.name);
+        let token = super::follow::catalogue_token(&org.name)?;
+        self.writer
+            .upsert(dataroom_server::CatalogueSpec {
+                org_id: tenant,
+                id,
+                name: org.name.clone(),
+                host: bare_host(org.hosts.opendata_host()).to_owned(),
+                base: Some(format!("{}://{}", self.scheme, org.opendata_base())),
+                organization: Some(org.name.clone()),
+                publisher: publisher_of(tenant, id, org, &self.scheme),
+                publish_token: Some(token.expose().to_owned()),
+                portal: None,
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let block = organization_branding(
+            &self.own,
+            &self.live,
+            org,
+            &self.scheme,
+            self.assistant_widget.clone(),
+        );
+        self.write_branding().insert(id, block);
+        Ok((tenant, id))
+    }
+
+    fn write_branding(
+        &self,
+    ) -> std::sync::RwLockWriteGuard<'_, BTreeMap<CatalogueId, BrandingBlock>> {
+        self.branding
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// Keeps each Organization's catalogue branding its `Organization.spec.appearance` over jc's
 /// config (UIX-16, T-6777): a member the Organization leaves out, or a removed appearance,
 /// shows `configured` again.
@@ -675,36 +842,43 @@ async fn ensure_publisher(
     if store.get_publisher(&ctx, &org.name).await?.is_some() {
         return Ok(());
     }
-    let now = chrono::Utc::now();
     store
-        .upsert_publisher(
-            &ctx,
-            Publisher {
-                org_id,
-                catalogue_id,
-                id: String::new(),
-                name: org.name.clone(),
-                title: BTreeMap::from([("en".to_owned(), org.name.clone())]),
-                description: BTreeMap::new(),
-                uri: format!("{scheme}://{}/publisher/{}", org.opendata_base(), org.name),
-                publisher_type: None,
-                identifier: None,
-                email: None,
-                homepage: None,
-                logo_url: None,
-                contact_point: None,
-                state: RecordState::Active,
-                merged_into: None,
-                editor_grants: Vec::new(),
-                badge_initials: None,
-                badge_colour: None,
-                declared_by_instance: None,
-                created: now,
-                modified: now,
-            },
-        )
+        .upsert_publisher(&ctx, publisher_of(org_id, catalogue_id, org, scheme))
         .await?;
     Ok(())
+}
+
+/// The CKAN organisation of `org` in its catalogue, as [`ensure_publisher`] makes it.
+fn publisher_of(
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    org: &OrganizationSection,
+    scheme: &str,
+) -> Publisher {
+    let now = chrono::Utc::now();
+    Publisher {
+        org_id,
+        catalogue_id,
+        id: String::new(),
+        name: org.name.clone(),
+        title: BTreeMap::from([("en".to_owned(), org.name.clone())]),
+        description: BTreeMap::new(),
+        uri: format!("{scheme}://{}/publisher/{}", org.opendata_base(), org.name),
+        publisher_type: None,
+        identifier: None,
+        email: None,
+        homepage: None,
+        logo_url: None,
+        contact_point: None,
+        state: RecordState::Active,
+        merged_into: None,
+        editor_grants: Vec::new(),
+        badge_initials: None,
+        badge_colour: None,
+        declared_by_instance: None,
+        created: now,
+        modified: now,
+    }
 }
 
 /// Writes `hidden` over the publish gate's list of catalogue `catalogue_id` (prod's `hidden`
@@ -1218,6 +1392,138 @@ mod tests {
             .upsert(spec)
             .await
             .expect("an update of the same catalogue");
+    }
+
+    /// T-7186: a run-time Organization (a row jc.toml does not name) gets its catalogue under its
+    /// own OrgId at its open data host without a restart, with the Portal's in-process grant; once
+    /// the registry removes it the catalogue answers nothing, its datasets kept in the store.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_run_time_organizations_catalogue_answers_and_a_removed_one_refuses() {
+        use tower::ServiceExt;
+        let (router, writer) = runtime_dataroom().await;
+        let installation = OrgId::parse_verified(&DataroomSection::default().org_id).unwrap();
+        let mut run = RunTime {
+            writer,
+            branding: Arc::default(),
+            installation,
+            default_catalogue: CatalogueId::parse_verified(
+                &DataroomSection::default().catalogue_id,
+            )
+            .unwrap(),
+            configured: BTreeMap::new(),
+            own: BrandingBlock::default(),
+            live: crate::siblings::LiveAddresses::default(),
+            scheme: "https".into(),
+            assistant_widget: None,
+            applied: BTreeMap::new(),
+        };
+        let org = OrganizationSection {
+            name: "rt7186".into(),
+            id: None,
+            hosts: crate::config::OrganizationHosts {
+                portal: "smartcity.rt7186.sk".into(),
+                opendata: Some("data.rt7186.sk".into()),
+                ..Default::default()
+            },
+            host: None,
+            same_site_apps: false,
+            catalogue_id: "00000000-0000-7000-8000-000000007186".into(),
+            portal_token_file: None,
+        };
+        let decided = |name: &str, call: &str, token: Option<&str>| {
+            let mut request = axum::http::Request::builder()
+                .uri(format!("/api/3/action/{call}"))
+                .header("host", "data.rt7186.sk");
+            if let Some(token) = token {
+                request = request
+                    .method("POST")
+                    .header("authorization", token)
+                    .header("content-type", "application/json");
+            }
+            let body = match token {
+                Some(_) => {
+                    let mut air = package("air");
+                    air["owner_org"] = "rt7186".into();
+                    axum::body::Body::from(air.to_string())
+                }
+                None => axum::body::Body::empty(),
+            };
+            let mut request = request.body(body).unwrap();
+            request.extensions_mut().insert(Mount {
+                module: "dataroom".into(),
+                scheme: "https".into(),
+                host: "data.rt7186.sk".into(),
+                path_prefix: String::new(),
+            });
+            request
+                .extensions_mut()
+                .insert(jc_router::Organization(name.into()));
+            let router = router.clone();
+            async move { router.oneshot(request).await.unwrap().status() }
+        };
+        let not_found = axum::http::StatusCode::NOT_FOUND;
+        assert_eq!(
+            decided("rt7186", "package_list", None).await,
+            not_found,
+            "no catalogue yet"
+        );
+        let set = |run_time: Vec<OrganizationSection>, removed: Vec<String>| {
+            super::super::follow::Organizations { run_time, removed }
+        };
+        run.apply(&set(vec![org.clone()], Vec::new())).await;
+        assert_eq!(
+            decided("rt7186", "package_list", None).await,
+            axum::http::StatusCode::OK
+        );
+        let token = super::super::follow::catalogue_token("rt7186").unwrap();
+        let token = token.expose().to_owned();
+        assert_eq!(
+            decided("rt7186", "package_create", Some(&token)).await,
+            axum::http::StatusCode::OK,
+            "the Portal publishes with its in-process token"
+        );
+        let stranger = decided(
+            "rt7186",
+            "package_create",
+            Some("not-the-token-0123456789abcdef"),
+        )
+        .await;
+        assert!(
+            matches!(
+                stranger,
+                axum::http::StatusCode::UNAUTHORIZED | axum::http::StatusCode::FORBIDDEN
+            ),
+            "another token publishes nothing: {stranger}"
+        );
+        // A row naming the default catalogue or none gets nothing.
+        let mut twin = org.clone();
+        twin.name = "twin".into();
+        twin.catalogue_id = DataroomSection::default().catalogue_id;
+        let mut bare = org.clone();
+        bare.name = "bare".into();
+        bare.catalogue_id = String::new();
+        run.apply(&set(vec![org.clone(), twin, bare], Vec::new()))
+            .await;
+        assert_eq!(decided("twin", "package_list", None).await, not_found);
+        assert_eq!(decided("bare", "package_list", None).await, not_found);
+        run.apply(&set(Vec::new(), vec!["rt7186".into()])).await;
+        assert_eq!(
+            decided("rt7186", "package_list", None).await,
+            not_found,
+            "removed"
+        );
+        assert_eq!(
+            decided("rt7186", "package_create", Some(&token)).await,
+            not_found,
+            "its grant went with it"
+        );
+        // The store kept it: served again (an import), the dataset is there.
+        run.apply(&set(vec![org], Vec::new())).await;
+        assert_eq!(
+            decided("rt7186", "package_show?id=air", None).await,
+            axum::http::StatusCode::OK
+        );
     }
 
     /// A package as the Portal's publisher sends it for the Endpoint `slug` (`published`), or
