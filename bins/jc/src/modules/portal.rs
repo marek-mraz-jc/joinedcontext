@@ -283,18 +283,26 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
         let projects = joinedcontext_portal::project_ids::every_recorded_owned(pool)
             .await
             .map_err(|e| format!("the project registry could not be read: {e}"))?;
-        let ids: Vec<String> = projects
-            .iter()
-            .map(|(_, _, key)| key.project.path_segment())
+        let branches = joinedcontext_portal::project_ids::every_branch_owned(pool)
+            .await
+            .map_err(|e| format!("the branch registry could not be read: {e}"))?;
+        let projects: Vec<(String, String, String, Option<i64>)> = projects
+            .into_iter()
+            .map(|(organization, name, key)| (organization, name, key.project.path_segment(), None))
+            .chain(branches.into_iter().map(|(organization, name, key, at)| {
+                (organization, name, key.project.path_segment(), Some(at))
+            }))
             .collect();
         let rows: Vec<jc_router::RegistryProject<'_>> = projects
             .iter()
-            .zip(&ids)
-            .map(|((organization, name, _), id)| jc_router::RegistryProject {
-                organization,
-                id,
-                name,
-            })
+            .map(
+                |(organization, name, id, expires_at)| jc_router::RegistryProject {
+                    organization,
+                    id,
+                    name,
+                    expires_at: *expires_at,
+                },
+            )
             .collect();
         run.hosts.replace_projects(&rows);
     }

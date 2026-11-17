@@ -239,6 +239,28 @@ pub async fn every_recorded_owned(
         .collect())
 }
 
+/// Every branch project (TEN-12, CHG-15) with its Organization, its name `b-{ProjectId}` and when
+/// it expires in Unix seconds: what the router's project table places on id addresses beside
+/// [`every_recorded_owned`]. An expired branch stays listed; the router refuses it by the time.
+pub async fn every_branch_owned(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, ProjectKey, i64)>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String, i64)> = sqlx::query_as(
+        "SELECT p.organization, p.name, o.key::text, p.id::text, \
+         extract(epoch FROM b.expires_at)::bigint FROM project_branches b \
+         JOIN project_ids p ON p.id = b.id JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NOT NULL ORDER BY p.organization, p.name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(organization, name, org, project, expires_at)| {
+            parsed(&org, &project).map(|key| (organization, name, key, expires_at))
+        })
+        .collect())
+}
+
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: it
 /// reads no row of a forced table, and the NOT NULL key (0079, T-7201) refuses its writes, so a
 /// handler answers [`required`]'s 404 before it writes.
