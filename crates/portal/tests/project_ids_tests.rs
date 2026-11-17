@@ -172,7 +172,7 @@ async fn every_organization_gets_a_key_and_one_reserved_project() {
     assert!(
         refused
             .to_string()
-            .contains("keeps its name, its key and its id"),
+            .contains("keeps its name, its key, its id and its catalogue"),
         "{refused}"
     );
 }

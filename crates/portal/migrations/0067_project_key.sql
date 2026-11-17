@@ -27,8 +27,9 @@ BEGIN
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     IF NEW.name <> OLD.name OR NEW.key <> OLD.key
-        OR (OLD.organization_id IS NOT NULL AND NEW.organization_id IS DISTINCT FROM OLD.organization_id) THEN
-        RAISE EXCEPTION 'Organization % keeps its name, its key and its id', OLD.name
+        OR (OLD.organization_id IS NOT NULL AND NEW.organization_id IS DISTINCT FROM OLD.organization_id)
+        OR (OLD.catalogue_id IS NOT NULL AND NEW.catalogue_id IS DISTINCT FROM OLD.catalogue_id) THEN
+        RAISE EXCEPTION 'Organization % keeps its name, its key, its id and its catalogue', OLD.name
             USING ERRCODE = 'integrity_constraint_violation';
     END IF;
     RETURN NEW;
