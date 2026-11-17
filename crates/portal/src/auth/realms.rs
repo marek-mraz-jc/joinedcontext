@@ -399,6 +399,7 @@ mod tests {
         };
         confine(&mut identity, "portal-approver");
         assert_eq!(identity.groups, vec!["hel-editors".to_owned()]);
+        // A realm role of that name counts as the group in every bootstrap-admin check.
         assert_eq!(identity.roles, vec!["hel-reader".to_owned()]);
         assert!(!crate::permissions::in_group(&identity, "portal-approver"));
     }

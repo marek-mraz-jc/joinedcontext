@@ -336,6 +336,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_endpoint_ical_preview: ["POST", "/projects/{project}/endpoints/{name}/ical-preview"],
   portal_endpoint_list_all: ["GET", "/endpoints"],
   portal_permissions_me: ["GET", "/projects/{project}/permissions/me"],
+  portal_org_permissions_me: ["GET", "/projects/org/permissions/me"],
   portal_operation_run: ["POST", "/projects/{project}/ops/{name}"],
   portal_model_source: ["GET", "/projects/{project}/datamodels/{name}/source"],
   // A kind's paged list and a manifest inside a workspace's copy, a space's count, a model's

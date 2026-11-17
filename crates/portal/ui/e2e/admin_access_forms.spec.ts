@@ -6,7 +6,7 @@ import { axeViolations } from "./axe";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_project_list"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_org_permissions_me", "portal_project_list"]));
 
 // Administration access forms in plain words (T-4832): a new Role and a new service account start
 // from a preset (Reader, Writer, Steward, Pipeline writer) and show the raw kinds, verbs and CIM 009
