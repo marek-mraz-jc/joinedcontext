@@ -8453,6 +8453,7 @@
       "operatorLeadMember": "Operátoři instalace nastavují tyto položky jednou pro každou organizaci.",
       "setIt": "Nastavit",
       "operatorSets": "Nastavuje to váš operátor",
+      "notYet": "Zatím nenastaveno",
       "step": {
         "organization": {
           "title": "Pojmenujte organizaci",
@@ -13754,8 +13755,11 @@
         "empty": "Zatím žádný e-mailový server, takže se pozvánky a obnovení hesla neposílají. Vyplňte server od vašeho poskytovatele pošty a uložte ho.",
         "waiting": "Změna e-mailového serveru čeká na druhého operátora.",
         "waitingShort": "Změna už čeká na druhého operátora: nejprve ji schvalte nebo zamítněte.",
-        "notAsked": "Změna nebyla vyžádána",
-        "fixField": "Opravte pole {field} podle textu pod ním a požádejte o změnu znovu.",
+        "notAsked": "Server změnu odmítl",
+        "fixField": "Pole {field} bylo odmítnuto: opravte ho podle textu pod ním a požádejte o změnu znovu.",
+        "testWaiting": "Test používá platný server; pošlete ho po rozhodnutí čekající změny, nebo hned pro ten platný.",
+        "noneInForce": "Zatím neplatí žádný e-mailový server: čekající změna nastaví první.",
+        "inForce": "Platí, dokud změna není schválena",
         "toChanges": "Otevřít Změny",
         "host": "Hostitel SMTP",
         "tls": "Ochrana",

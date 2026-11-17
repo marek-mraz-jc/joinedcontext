@@ -112,14 +112,15 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.getByLabel("Password", { exact: true }).fill("app-password");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText(/is no public host name of an SMTP server/)).toBeVisible();
-      await expect(page.getByText("The change was not asked for", { exact: true })).toBeVisible();
+      await expect(page.getByText("The server refused the change", { exact: true })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toBeFocused();
       await shot(page, `installation-error-${width}`);
 
       await page.getByLabel("SMTP host", { exact: false }).fill("smtp.bbsk.sk");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText("Waiting for approval", { exact: true })).toBeVisible();
-      await expect(page.getByLabel("SMTP host", { exact: false })).toBeDisabled();
+      await expect(page.getByLabel("SMTP host", { exact: false })).toBeHidden();
+      await expect(page.getByText("No e-mail server is in force yet", { exact: false })).toBeVisible();
       await expect(page.getByText("A change of the e-mail server waits for a second operator.", { exact: false })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-waiting-${width}`);

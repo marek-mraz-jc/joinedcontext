@@ -8453,6 +8453,7 @@
       "operatorLeadMember": "Die Operatoren der Installation legen dies einmal für jede Organisation fest.",
       "setIt": "Festlegen",
       "operatorSets": "Ihr Operator legt dies fest",
+      "notYet": "Noch nicht gesetzt",
       "step": {
         "organization": {
           "title": "Organisation benennen",
@@ -13754,8 +13755,11 @@
         "empty": "Noch kein E-Mail-Server, daher werden keine Einladungen und Passwort-Zurücksetzungen gesendet. Tragen Sie den Server Ihres Mail-Anbieters ein und speichern Sie ihn.",
         "waiting": "Eine Änderung des E-Mail-Servers wartet auf einen zweiten Operator.",
         "waitingShort": "Eine Änderung wartet bereits auf einen zweiten Operator: genehmigen oder ablehnen Sie sie zuerst.",
-        "notAsked": "Die Änderung wurde nicht beantragt",
-        "fixField": "Korrigieren Sie {field} wie darunter beschrieben und beantragen Sie die Änderung erneut.",
+        "notAsked": "Der Server hat die Änderung abgelehnt",
+        "fixField": "{field} wurde abgelehnt: korrigieren Sie es wie darunter beschrieben und beantragen Sie die Änderung erneut.",
+        "testWaiting": "Der Test nutzt den geltenden Server; senden Sie ihn, sobald die wartende Änderung entschieden ist, oder jetzt für den geltenden.",
+        "noneInForce": "Noch gilt kein E-Mail-Server: die wartende Änderung setzt den ersten.",
+        "inForce": "Gilt, bis die Änderung genehmigt ist",
         "toChanges": "Änderungen öffnen",
         "host": "SMTP-Host",
         "tls": "Schutz",

@@ -44,11 +44,12 @@ function useSetup(enabled = true) {
   });
 }
 
-function State({ done }: { done: boolean }): JSX.Element {
+function State({ done, theirs = false }: { done: boolean; theirs?: boolean }): JSX.Element {
   const { t } = useTranslation();
+  // An item only the operators set is no alarm for the person reading it (T-7152).
   return (
-    <Badge tone={done ? "success" : "warning"}>
-      {done ? t("organization.setup.done") : t("organization.setup.todo")}
+    <Badge tone={done ? "success" : theirs ? "neutral" : "warning"}>
+      {done ? t("organization.setup.done") : t(theirs ? "organization.setup.notYet" : "organization.setup.todo")}
     </Badge>
   );
 }
@@ -143,7 +144,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <State done={item.done} />
+                <State done={item.done} theirs={!operates} />
                 <OperatorAction item={item.id} operates={operates} />
               </div>
             </li>

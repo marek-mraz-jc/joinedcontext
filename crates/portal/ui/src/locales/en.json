@@ -8453,6 +8453,7 @@
       "operatorLeadMember": "The installation's operators set these once for every Organization.",
       "setIt": "Set it",
       "operatorSets": "Your operator sets this",
+      "notYet": "Not set yet",
       "step": {
         "organization": {
           "title": "Name the organization",
@@ -13754,8 +13755,11 @@
         "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and save it.",
         "waiting": "A change of the e-mail server waits for a second operator.",
         "waitingShort": "A change already waits for a second operator: approve or reject it first.",
-        "notAsked": "The change was not asked for",
-        "fixField": "Fix {field} as said under it, then ask for the change again.",
+        "notAsked": "The server refused the change",
+        "fixField": "{field} was refused: fix it as said under the field, then ask for the change again.",
+        "testWaiting": "The test uses the server in force; send it once the waiting change is decided, or now for the one in force.",
+        "noneInForce": "No e-mail server is in force yet: the waiting change sets the first one.",
+        "inForce": "In force until the change is approved",
         "toChanges": "Open the Changes",
         "host": "SMTP host",
         "tls": "Protection",

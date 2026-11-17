@@ -120,8 +120,12 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
       {!smtp && !open ? (
         <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.empty")}</p>
       ) : null}
-      <form className="mt-4 grid max-w-3xl gap-4 sm:grid-cols-2" onSubmit={onSave} aria-label={t("operator.installation.email.title")}>
-        {/* Read-only while a change waits: it is decided first, then the next one is asked for. */}
+      {open ? (
+        // While a change waits it is decided first; the page shows what is in force meanwhile,
+        // in plain text rather than greyed fields.
+        <InForce smtp={smtp} />
+      ) : null}
+      <form className="mt-4 grid gap-4 sm:grid-cols-2" id="smtp-form" onSubmit={onSave} aria-label={t("operator.installation.email.title")} hidden={Boolean(open)}>
         <fieldset className="contents" disabled={Boolean(open)}>
         <Field id="smtp-host" label={t("operator.installation.email.host")} help={t("operator.installation.email.hint.host")} errors={fieldOf("host")} required>
           <Input id="smtp-host" value={host} onChange={(e) => setHost(e.target.value)} autoComplete="off" spellCheck={false} required />
@@ -157,9 +161,11 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           />
         </Field>
         </fieldset>
-        <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
+      </form>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
             type="submit"
+            form="smtp-form"
             loading={propose.isPending}
             disabled={Boolean(open) || !changed}
             disabledReason={open ? t("operator.installation.email.waitingShort") : t("operator.installation.email.unchanged")}
@@ -171,14 +177,13 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
             variant="secondary"
             loading={test.isPending}
             disabled={!smtp}
-            disabledReason={t("operator.installation.email.testFirst")}
+            disabledReason={t(open ? "operator.installation.email.testWaiting" : "operator.installation.email.testFirst")}
             onClick={() => test.mutate()}
           >
             {t("operator.installation.email.test")}
           </Button>
           {!smtp && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p> : null}
-        </div>
-      </form>
+      </div>
       {refused ? (
         <Alert tone="danger" className="mt-4" title={t("operator.installation.email.notAsked")}>
           {t("operator.installation.email.fixField", { field: t(`operator.installation.email.${refused}`) })}
@@ -208,5 +213,33 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         </Alert>
       ) : null}
     </Card>
+  );
+}
+
+/** The e-mail server in force while a change of it waits; the password only as stored or not. */
+function InForce({ smtp }: { smtp?: SmtpServer }): JSX.Element {
+  const { t } = useTranslation();
+  if (!smtp) return <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.noneInForce")}</p>;
+  const E = "operator.installation.email";
+  const rows: [string, string][] = [
+    [t(`${E}.host`), smtp.host],
+    [t(`${E}.tls`), t(smtp.tls === "ssl" ? `${E}.tlsSsl` : `${E}.tlsStarttls`)],
+    [t(`${E}.port`), String(smtp.port)],
+    [t(`${E}.from`), smtp.from],
+    [t(`${E}.user`), smtp.user || "–"],
+    [t(`${E}.password`), smtp.passwordSet ? t(`${E}.passwordStored`) : "–"],
+  ];
+  return (
+    <div className="mt-4 space-y-2">
+      <h4 className="text-body font-semibold text-fg">{t(`${E}.inForce`)}</h4>
+      <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
+        {rows.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-fg-muted">{label}</dt>
+            <dd className="text-fg [overflow-wrap:anywhere]">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
