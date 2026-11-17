@@ -319,9 +319,14 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         />
         {known ? (
           operatorTab ? (
-            <div className="space-y-3">
-              <h2 className="text-title font-semibold text-fg">{t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}</h2>
-              <AskAdmins message={t("operator.only")} back={anchor} installation />
+            // One block, one word for the role: the section, that its operators open it, whom to ask.
+            <div className="max-w-3xl">
+              <AskAdmins
+                title={t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}
+                message={t("operator.only")}
+                back={anchor}
+                installation
+              />
             </div>
           ) : own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own

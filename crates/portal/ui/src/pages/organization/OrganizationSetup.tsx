@@ -104,7 +104,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
           {steps.map((step, index) => (
             <li
               key={step.id}
-              className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border p-4"
+              className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
             >
               <div className="min-w-0 space-y-1">
                 <h3 className="text-body font-semibold text-fg">
@@ -134,7 +134,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
           {operator.map((item) => (
             <li
               key={item.id}
-              className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border p-4"
+              className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-start sm:justify-between"
             >
               <div className="min-w-0 space-y-1">
                 <h3 className="text-body font-semibold text-fg">{t(`organization.setup.operator.${item.id}.title`)}</h3>

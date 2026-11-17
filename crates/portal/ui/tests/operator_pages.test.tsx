@@ -325,6 +325,10 @@ describe("installation", () => {
     fireEvent.click(screen.getByRole("button", { name: E.propose }));
     expect(await screen.findByText(/is no public host name of an SMTP server/)).toBeTruthy();
     expect(screen.getByLabelText(E.host, { exact: false })).toHaveAttribute("aria-invalid", "true");
+    // The summary names the field to fix and the focus lands on it.
+    expect(screen.getByText(E.notAsked)).toBeTruthy();
+    expect(screen.getByText(E.fixField.replace("{field}", E.host))).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText(E.host, { exact: false }));
     cleanup();
     render(<OperatorInstallation />, (path) =>
       path === "/api/v1/operator/installation" ? json({ smtp: SMTP, smtpChange: "c3" }) : undefined,

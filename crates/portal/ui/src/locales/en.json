@@ -13754,6 +13754,8 @@
         "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and save it.",
         "waiting": "A change of the e-mail server waits for a second operator.",
         "waitingShort": "A change already waits for a second operator: approve or reject it first.",
+        "notAsked": "The change was not asked for",
+        "fixField": "Fix {field} as said under it, then ask for the change again.",
         "toChanges": "Open the Changes",
         "host": "SMTP host",
         "tls": "Protection",

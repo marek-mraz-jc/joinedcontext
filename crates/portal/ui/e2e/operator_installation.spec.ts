@@ -112,6 +112,8 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.getByLabel("Password", { exact: true }).fill("app-password");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText(/is no public host name of an SMTP server/)).toBeVisible();
+      await expect(page.getByText("The change was not asked for", { exact: true })).toBeVisible();
+      await expect(page.getByLabel("SMTP host", { exact: false })).toBeFocused();
       await shot(page, `installation-error-${width}`);
 
       await page.getByLabel("SMTP host", { exact: false }).fill("smtp.bbsk.sk");
@@ -149,6 +151,9 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.goto("/organization/operator-installation?lang=en");
       await expect(page.getByText("These sections belong to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toHaveCount(0);
+      // One word for the role: the refusal names the operators, never "administrators".
+      await expect(page.getByText("Installation is for the installation's operators", { exact: true })).toBeVisible();
+      await expect(page.getByText(/administrators/)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `installation-refused-${width}`);
     });

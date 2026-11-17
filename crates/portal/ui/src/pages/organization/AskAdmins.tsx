@@ -24,11 +24,14 @@ export function AskAdmins({
   message,
   back,
   installation = false,
+  title,
 }: {
   message: string;
   back?: string;
   /** The section is the installation's: its administrators are whom to ask, never the person's own Organization's. */
   installation?: boolean;
+  /** A heading that names the refused section, in place of the generic "ask" title. */
+  title?: string;
 }): JSX.Element {
   const { t } = useTranslation();
   const { own } = useAdministers();
@@ -47,7 +50,7 @@ export function AskAdmins({
     (contact) => contact.name || contact.email,
   );
   return (
-    <Alert tone="info" title={t(installation ? "askAdmins.installationTitle" : "askAdmins.title")}>
+    <Alert tone="info" title={title ?? t(installation ? "askAdmins.installationTitle" : "askAdmins.title")}>
       <div className="flex flex-col gap-2">
         <p>{message}</p>
         {contacts.length > 0 ? (

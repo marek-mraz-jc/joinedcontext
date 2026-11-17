@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent, JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -60,7 +60,12 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
     return line ? [sentence(line.slice(name.length).trim())] : undefined;
   };
   const fields = ["host", "port", "tls", "from", "user", "password"];
-  const elsewhere = propose.isError && !fields.some((field) => fieldOf(field));
+  const refused = fields.find((field) => fieldOf(field));
+  const elsewhere = propose.isError && !refused;
+  // A refused field takes the focus, so a keyboard or screen-reader user lands on what to fix.
+  useEffect(() => {
+    if (refused) document.getElementById(`smtp-${refused}`)?.focus();
+  }, [refused, propose.error]);
   const changed =
     !smtp ||
     password !== "" ||
@@ -174,6 +179,11 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           {!smtp && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p> : null}
         </div>
       </form>
+      {refused ? (
+        <Alert tone="danger" className="mt-4" title={t("operator.installation.email.notAsked")}>
+          {t("operator.installation.email.fixField", { field: t(`operator.installation.email.${refused}`) })}
+        </Alert>
+      ) : null}
       {elsewhere ? (
         <Alert tone="danger" className="mt-4">
           {sentence(said(propose.error))}

@@ -13754,6 +13754,8 @@
         "empty": "Zatiaľ žiadny e-mailový server, takže pozvánky a obnovenia hesla sa neposielajú. Vyplňte server od vášho poskytovateľa pošty a uložte ho.",
         "waiting": "Zmena e-mailového servera čaká na druhého operátora.",
         "waitingShort": "Zmena už čaká na druhého operátora: najprv ju schváľte alebo zamietnite.",
+        "notAsked": "Zmena nebola vyžiadaná",
+        "fixField": "Opravte pole {field} podľa textu pod ním a požiadajte o zmenu znova.",
         "toChanges": "Otvoriť Zmeny",
         "host": "Hostiteľ SMTP",
         "tls": "Ochrana",
