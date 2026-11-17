@@ -39,8 +39,15 @@ fn role(state: &AppState, name: &str, user: &str, project: &str, kinds: &[&str],
 }
 
 /// `jana` stewards the KPI pipeline; `olli` owns Helsinki's air space; `eve` reads Helsinki only.
+/// Both projects belong to an Organization of the registry, so their requests are keyed (T-7202).
 async fn state(pool: sqlx::PgPool, pipeline: &str, pipeline_identity: bool) -> AppState {
-    world(pipeline, pipeline_identity).await.with_db(pool)
+    let state = world(pipeline, pipeline_identity)
+        .await
+        .with_db(pool.clone());
+    for project in [KPIS, HELSINKI] {
+        common::keyed_project(&state, &pool, project, &format!("{project}-org")).await;
+    }
+    state
 }
 
 /// The same world without a database: the request form's list and the request door's refusals
@@ -334,7 +341,9 @@ async fn a_request_is_approved_in_the_owning_project_and_revoked_there() {
         .expect("a revoked grant refuses");
     assert_eq!(reason, format!("access revoked by olli on {}", now.date()));
     let key = (KPIS.to_owned(), pipeline.clone());
-    let log = joinedcontext_portal::pipeline_log::LogStore::new(Some(pool.clone()));
+    common::keyed_project(&state, pool, KPIS, "helsinki").await;
+    let log =
+        joinedcontext_portal::pipeline_log::LogStore::new(Some(pool.clone()), state.mirror.clone());
     let line = || joinedcontext_portal::pipeline_log::NewLine {
         record_id: String::new(),
         step: None,

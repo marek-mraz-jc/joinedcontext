@@ -94,16 +94,17 @@ pub struct RejectedStore {
 }
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
+    Postgres(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>),
     Memory(RwLock<HashMap<Key, (i64, Vec<Rejected>)>>),
 }
 
 impl RejectedStore {
     /// Durable with a database, in memory without one.
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: std::sync::Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some(pool) => Inner::Postgres(pool, mirror),
                 None => Inner::Memory(RwLock::new(HashMap::new())),
             },
         }
@@ -127,8 +128,10 @@ impl RejectedStore {
         let step = *step;
         let record = mask(record);
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let mut tx = pool.begin().await?;
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(());
+                };
                 sqlx::query(
                     "INSERT INTO pipeline_rejected (project, pipeline, record, rule, path, message, step, run) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -189,7 +192,10 @@ impl RejectedStore {
     ) -> Result<Vec<Rejected>, sqlx::Error> {
         let limit = limit.clamp(1, KEPT);
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<Row> = sqlx::query_as(
                     "SELECT id, at, record, rule, path, message, step, run FROM pipeline_rejected \
                          WHERE project = $1 AND pipeline = $2 AND ($3::bigint IS NULL OR id < $3) \
@@ -199,7 +205,7 @@ impl RejectedStore {
                 .bind(pipeline)
                 .bind(before)
                 .bind(limit as i64)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 Ok(rows.into_iter().map(from_row).collect())
             }
@@ -228,7 +234,10 @@ impl RejectedStore {
         pipeline: &str,
     ) -> Result<Vec<RejectedGroup>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let counted: Vec<(String, String, i64, Vec<i64>)> = sqlx::query_as(
                     "SELECT rule, path, count(*), (array_agg(id ORDER BY id DESC))[1:$3] \
                      FROM pipeline_rejected WHERE project = $1 AND pipeline = $2 \
@@ -238,7 +247,7 @@ impl RejectedStore {
                 .bind(pipeline)
                 .bind(EXAMPLES as i32)
                 .bind(GROUPS as i64)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 let ids: Vec<i64> = counted.iter().flat_map(|(.., ids)| ids.clone()).collect();
                 let rows: Vec<Row> = sqlx::query_as(
@@ -248,7 +257,7 @@ impl RejectedStore {
                 .bind(project)
                 .bind(pipeline)
                 .bind(&ids)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
                 let examples: Vec<Rejected> = rows.into_iter().map(from_row).collect();
                 Ok(counted
@@ -304,13 +313,16 @@ impl RejectedStore {
     /// How many records the pipeline holds refused.
     pub async fn count(&self, project: &str, pipeline: &str) -> Result<u64, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(0);
+                };
                 let (count,): (i64,) = sqlx::query_as(
                     "SELECT count(*) FROM pipeline_rejected WHERE project = $1 AND pipeline = $2",
                 )
                 .bind(project)
                 .bind(pipeline)
-                .fetch_one(pool)
+                .fetch_one(&mut *tx)
                 .await?;
                 Ok(u64::try_from(count).unwrap_or_default())
             }
@@ -331,24 +343,23 @@ impl RejectedStore {
         loaded: &BTreeMap<String, HashSet<String>>,
     ) -> Result<(), sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let scope: Vec<&str> = loaded.keys().map(String::as_str).collect();
-                let (projects, pipelines): (Vec<&str>, Vec<&str>) = loaded
-                    .iter()
-                    .flat_map(|(project, names)| {
-                        names.iter().map(move |n| (project.as_str(), n.as_str()))
-                    })
-                    .unzip();
-                sqlx::query(
-                    "DELETE FROM pipeline_rejected r WHERE r.project = ANY($1::text[]) AND NOT EXISTS (SELECT 1 FROM \
-                     UNNEST($2::text[], $3::text[]) AS k(project, pipeline) \
-                     WHERE k.project = r.project AND k.pipeline = r.pipeline)",
-                )
-                .bind(&scope)
-                .bind(&projects)
-                .bind(&pipelines)
-                .execute(pool)
-                .await?;
+            Inner::Postgres(pool, mirror) => {
+                // Project by project, each in its own key (STO-07).
+                for (project, names) in loaded {
+                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await?
+                    else {
+                        continue;
+                    };
+                    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                    sqlx::query(
+                        "DELETE FROM pipeline_rejected WHERE project = $1 AND NOT (pipeline = ANY($2))",
+                    )
+                    .bind(project)
+                    .bind(&names)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                }
                 Ok(())
             }
             Inner::Memory(map) => {
@@ -373,7 +384,10 @@ impl RejectedStore {
         ids: &[i64],
     ) -> Result<Vec<Rejected>, sqlx::Error> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(pool, mirror) => {
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project).await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<(i64, Value)> = sqlx::query_as(
                     "DELETE FROM pipeline_rejected WHERE project = $1 AND pipeline = $2 AND id = ANY($3) \
                      RETURNING id, record",
@@ -381,8 +395,9 @@ impl RejectedStore {
                 .bind(project)
                 .bind(pipeline)
                 .bind(ids)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await?;
+                tx.commit().await?;
                 Ok(rows
                     .into_iter()
                     .map(|(id, record)| Rejected {
@@ -728,7 +743,7 @@ mod tests {
     /// its newest examples, and another pipeline's records stay out.
     #[tokio::test]
     async fn the_groups_count_every_kept_record_by_rule_and_path() {
-        let store = RejectedStore::new(None);
+        let store = RejectedStore::new(None, Default::default());
         for n in 0..60 {
             let why = if n % 3 == 0 {
                 reason("sh:in", "window", None)
@@ -764,7 +779,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_list_is_per_pipeline_newest_first_bounded_and_paged() {
-        let store = RejectedStore::new(None);
+        let store = RejectedStore::new(None, Default::default());
         for n in 0..(KEPT + 5) {
             store
                 .reject(

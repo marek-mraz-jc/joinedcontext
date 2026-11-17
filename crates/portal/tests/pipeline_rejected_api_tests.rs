@@ -828,8 +828,11 @@ async fn postgres_answers_the_newest_run_of_each_pipeline_asked() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let log = LogStore::new(Some(pool));
     let project = format!("t5818-{}", std::process::id());
+    let log = LogStore::new(
+        Some(pool.clone()),
+        common::keyed_mirror(&pool, &[&project, "t5818-other"]).await,
+    );
     let sent = [NewLine {
         record_id: "urn:s-1".into(),
         step: None,

@@ -1008,3 +1008,217 @@ async fn app_capture_trash_comment_and_view_rows_are_keyed_and_read_only_under_t
         "the backfilled row reads in its key"
     );
 }
+
+/// A row of each table T-7202 keys for `project`, written as before the key. `$1` is the
+/// project; the access request asks for an Endpoint of the same project, its key column.
+const PROJECT_ROWS_0073: &[(&str, &str)] = &[
+    (
+        "erasures",
+        "INSERT INTO erasures (id, project, space, subject, reason, actor, groups, stores, approval) \
+         VALUES ('er-' || md5($1), $1, 'air', md5('jana'), 'asked', 'user:anna', '[]', \
+                 '{\"broker\": {\"state\": \"pending\"}}', 'approved')",
+    ),
+    (
+        "access_requests",
+        "INSERT INTO access_requests (id, project, pipeline, endpoint_project, endpoint, space, \
+           operations, types, reason, state, requested_by) \
+         VALUES ('ar-' || substr(md5($1), 1, 12), $1, 'air-index', $1, 'air', 'air', 'read', '[]', \
+                 'kpis', 'pending', 'anna')",
+    ),
+];
+
+/// T-7202 PK-1i: the erasure log and the access requests of today are keyed by the backfill and
+/// read only under their key; an access request takes the key of the Endpoint's project; an
+/// erasure of a project that left the mirror still answers the minute's pass, so it finishes.
+#[tokio::test]
+async fn erasure_and_access_request_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PROJECT_ROWS_0073, "pi").await;
+    let pool = state.db.clone().expect("a database");
+    assert_eq!(
+        project_ids::key_column("access_requests"),
+        "endpoint_project"
+    );
+    assert!(project_ids::LEFT_UNKEYED
+        .iter()
+        .all(|(t, _)| !project_ids::KEYED_BY_NAME.contains(t)));
+
+    // A request a pipeline of another project files is keyed by the Endpoint's project and still
+    // lists for the asking pipeline.
+    let asking = run_name("piasking");
+    let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+        .await
+        .expect("tx");
+    sqlx::query(
+        "INSERT INTO access_requests (id, project, pipeline, endpoint_project, endpoint, space, \
+           operations, types, reason, state, requested_by) \
+         VALUES ('ar-' || substr(md5($1), 1, 12), $1, 'air-index', $2, 'air', 'air', 'read', '[]', \
+                 'kpis', 'pending', 'anna')",
+    )
+    .bind(&asking)
+    .bind(&placed)
+    .execute(&mut *tx)
+    .await
+    .expect("a request into the placed project");
+    tx.commit().await.expect("commit");
+    let stamped: Option<String> =
+        sqlx::query_scalar("SELECT project_id::text FROM access_requests WHERE project = $1")
+            .bind(&asking)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stamped, Some(key.project.to_string()));
+    let outgoing = joinedcontext_portal::access_requests::outgoing(&pool, &asking, "air-index")
+        .await
+        .expect("outgoing");
+    assert_eq!(outgoing.len(), 1, "{outgoing:?}");
+    assert_eq!(outgoing[0].endpoint_project, placed);
+    assert_eq!(
+        joinedcontext_portal::access_requests::incoming(&pool, &orphan)
+            .await
+            .expect("incoming")
+            .len(),
+        1,
+        "an unkeyed request still reads while the forcing migration waits"
+    );
+
+    // The placed project leaves the mirror: its approved erasure with a pending store is still
+    // open, in the key the registry recorded.
+    state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: joinedcontext_portal::permissions::ORG_NAMESPACE.to_owned(),
+            kind: "Project".to_owned(),
+            name: placed.clone(),
+        });
+    assert_eq!(
+        project_ids::key_of(&pool, &state.mirror, &placed)
+            .await
+            .expect("key_of"),
+        None
+    );
+    assert_eq!(
+        project_ids::recorded(&pool, &placed)
+            .await
+            .expect("recorded"),
+        Some(key)
+    );
+    let open = joinedcontext_portal::erasure::open(&pool)
+        .await
+        .expect("open");
+    for project in [&placed, &orphan] {
+        assert_eq!(
+            open.iter().filter(|e| &e.project == project).count(),
+            1,
+            "{project}: one open erasure, read once: {open:?}"
+        );
+    }
+}
+
+const PIPELINE_ROWS_0072: &[(&str, &str)] = &[
+    (
+        "pipeline_log",
+        "INSERT INTO pipeline_log (project, pipeline, run, outcome) VALUES ($1, 'trees', 'r1', 'sent')",
+    ),
+    (
+        "pipeline_runs",
+        "INSERT INTO pipeline_runs (project, pipeline, run, sent) VALUES ($1, 'trees', 'r1', 1)",
+    ),
+    (
+        "pipeline_rejected",
+        "INSERT INTO pipeline_rejected (project, pipeline, record, rule, message) \
+         VALUES ($1, 'trees', '{}', 'required', 'height is missing')",
+    ),
+    (
+        "pipeline_status",
+        "INSERT INTO pipeline_status (project, pipeline, status) VALUES ($1, 'trees', '{}')",
+    ),
+    (
+        "pipeline_templates",
+        "INSERT INTO pipeline_templates (id, project, title, spec, created_by) \
+         VALUES ('tpl-' || md5($1), $1, 'Trees', '{}', 'anna')",
+    ),
+    (
+        "pipeline_record_hashes",
+        "INSERT INTO pipeline_record_hashes (project, pipeline, record, hash) VALUES ($1, 'trees', 'r', 'h')",
+    ),
+    (
+        "pipeline_source_ledger",
+        "INSERT INTO pipeline_source_ledger (project, pipeline, entity_id, last_run) \
+         VALUES ($1, 'trees', 'urn:ngsi-ld:Tree:1', 'r1')",
+    ),
+    (
+        "pipeline_source_holds",
+        "INSERT INTO pipeline_source_holds (project, pipeline, run, reason, would, ledger) \
+         VALUES ($1, 'trees', 'r1', 'empty', 0, 1)",
+    ),
+    (
+        "pipeline_source_complete",
+        "INSERT INTO pipeline_source_complete (project, pipeline, run) VALUES ($1, 'trees', 'r1')",
+    ),
+    (
+        "pipeline_source_removed",
+        "INSERT INTO pipeline_source_removed (project, space, entity_id, pipeline, run) \
+         VALUES ($1, 'air', 'urn:ngsi-ld:Tree:1', 'trees', 'r1')",
+    ),
+];
+
+/// T-7198 PK-1f: the run log, rejects, status, templates, record hashes and source ledger of
+/// today are keyed by the backfill and read only under their key; the log writes new lines in the
+/// key and keeps none for a project without one.
+#[tokio::test]
+async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
+    let (state, placed, orphan, key) =
+        rows_keyed_and_read_only_under_their_key(PIPELINE_ROWS_0072, "pl").await;
+    let pool = state.db.clone().expect("a database");
+    for (table, _) in PIPELINE_ROWS_0072 {
+        assert!(
+            project_ids::KEYED_BY_NAME.contains(table),
+            "{table} is backfilled"
+        );
+    }
+    let line = joinedcontext_portal::pipeline_log::NewLine {
+        record_id: "urn:ngsi-ld:Tree:2".into(),
+        step: None,
+        outcome: joinedcontext_portal::pipeline_log::Outcome::Sent,
+        message: String::new(),
+    };
+    for project in [&placed, &orphan] {
+        state
+            .pipeline_log
+            .append(project, "trees", "r2", std::slice::from_ref(&line))
+            .await
+            .expect("append");
+    }
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(
+        stamped,
+        [(placed.clone(), Some(key.project.to_string()))],
+        "a placed project's line lands in its key and an orphan's line is not kept"
+    );
+    assert_eq!(
+        state
+            .pipeline_log
+            .runs(&orphan, "trees", 10)
+            .await
+            .expect("runs")
+            .len(),
+        0
+    );
+    assert_eq!(
+        state
+            .pipeline_log
+            .runs(&placed, "trees", 10)
+            .await
+            .expect("runs")
+            .len(),
+        2,
+        "the backfilled run and the new one read in their key"
+    );
+}
