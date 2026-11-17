@@ -649,11 +649,11 @@ impl AppState {
     /// brokers, the credential Secrets and the pipelines' secret resolver.
     fn wire_cluster_writers(&self, mut syncer: Syncer) -> Syncer {
         // The root credential of the artifact store reaches this one object and no other,
-        // and no workload gets it: every organization is served a derived, scoped pair
+        // and no workload gets it: every project is served a derived, scoped pair
         // instead (PF-32, ADR-N-015).
         if let Some(settings) = self.config.artifact_store.clone() {
             match crate::artifact_store::Client::new(settings) {
-                Ok(store) => syncer = syncer.with_artifact_store(Arc::new(store)),
+                Ok(store) => syncer = syncer.with_artifact_store(Arc::new(store), self.db.clone()),
                 Err(err) => {
                     tracing::warn!(error = %err, "the artifact store endpoint is unusable, so no organization credential is issued")
                 }
