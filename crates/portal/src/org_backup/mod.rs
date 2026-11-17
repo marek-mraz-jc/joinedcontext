@@ -16,6 +16,7 @@
 //! Every run, delete and restore is written to `organization_backup_log` with who and when: that
 //! table is the audit, kept as long as the Organization's target exists.
 
+pub mod copy;
 pub mod data;
 pub mod modules;
 pub mod restore;

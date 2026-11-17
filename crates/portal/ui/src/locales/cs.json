@@ -13473,7 +13473,9 @@
         "plan": "Kontrola obnovy",
         "restore": "Obnova",
         "restore-request": "Obnova vyžádána",
-        "restore-decline": "Obnova zamítnuta"
+        "restore-decline": "Obnova zamítnuta",
+        "copy-plan": "Kontrola kopie projektu",
+        "copy": "Projekt zkopírován"
       }
     },
     "versions": {
@@ -13592,6 +13594,25 @@
         "declined": "Zamítnuto",
         "failed": "Neobnoveno: důvod je pod tím"
       }
+    },
+    "copy": {
+      "action": "Obnovit projekt",
+      "title": "Obnovit jeden projekt do nového projektu",
+      "lead": "Vyberte jeden projekt této zálohy a nový název. Jeho záznamy se zkopírují do nového projektu s vlastním id; projekt, ze kterého pocházejí, se nezmění.",
+      "list": "Zobrazit projekty",
+      "project": "Projekt této zálohy",
+      "projectHint": "Projekty této zálohy, které smíte číst, např. air-quality. Projekt smazaný od zálohy se nezobrazí a nikdy se neobnoví.",
+      "pick": "Vyberte projekt",
+      "none": "Tato záloha nemá projekt, který smíte obnovit. Vyberte jinou verzi nebo požádejte správce projektu o přístup ke čtení.",
+      "deleted": "Smazané od této zálohy, nikdy se neobnoví: {names}",
+      "name": "Název nového projektu",
+      "nameHint": "Malá písmena, číslice a '-', název, který nepoužívá žádný projekt, např. air-quality-restored.",
+      "check": "Zkontrolovat",
+      "apply": "Obnovit do nového projektu",
+      "summary": "{rows} záznamů ke kopírování do {name}, {refused} odmítnutých, {erasures} výmazů použitých znovu",
+      "done": "Obnoveno do {name} (id projektu {id}). {source} se nezměnil.",
+      "first": "Nejprve vyberte projekt a napište název",
+      "caption": "Záznamy podle tabulek, které kopie zapíše"
     }
   },
   "operator": {

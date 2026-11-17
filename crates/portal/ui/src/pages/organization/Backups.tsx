@@ -20,6 +20,7 @@ import {
   EmptyState,
   Field,
   Input,
+  Select,
   Switch,
   Textarea,
 } from "../../components/ui";
@@ -31,6 +32,8 @@ type RestorePlan = components["schemas"]["RestorePlan"];
 type DataRestoreAnswer = components["schemas"]["DataRestoreAnswer"];
 type RestoreRequest = components["schemas"]["DataRestoreRequest"];
 type DataPlan = components["schemas"]["DataPlan"];
+type ArchivedProjects = components["schemas"]["ArchivedProjects"];
+type CopyPlan = components["schemas"]["CopyPlan"];
 
 /** The configuration backup (manifests, T-7154) and the data backup (database rows, encrypted, T-7168). */
 type Kind = "configuration" | "data";
@@ -251,6 +254,7 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
   const client = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [restoring, setRestoring] = useState<string | null>(null);
+  const [copying, setCopying] = useState<string | null>(null);
   const versions = useQuery({ queryKey: versionsKey(kind), queryFn: () => readVersions(kind) });
   const remove = useMutation({
     mutationFn: () => softDelete(kind),
@@ -321,6 +325,11 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
                   <Button size="sm" variant="secondary" onClick={() => setRestoring(version.versionId)}>
                     {t("backups.versions.restore")}
                   </Button>
+                  {kind === "data" ? (
+                    <Button size="sm" variant="secondary" onClick={() => setCopying(version.versionId)}>
+                      {t("backups.copy.action")}
+                    </Button>
+                  ) : null}
                 </div>
               )}
             </li>
@@ -338,6 +347,7 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
       />
       {restoring && kind === "configuration" ? <Restore version={restoring} onClose={() => setRestoring(null)} /> : null}
       {restoring && kind === "data" ? <DataRestore version={restoring} onClose={() => setRestoring(null)} /> : null}
+      {copying && kind === "data" ? <ProjectCopy version={copying} onClose={() => setCopying(null)} /> : null}
     </Card>
   );
 }
@@ -562,6 +572,153 @@ function DataRestore({ version, onClose }: { version: string; onClose: () => voi
           {answer && !answer.request && answer.plan.modules.portal ? (
             <Button variant="primary" type="button" onClick={() => call.mutate(true)} disabled={call.isPending || identity.trim() === ""} disabledReason={t("app.busyReason")}>
               {t("backups.data.request")}
+            </Button>
+          ) : null}
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** The reason a 422 gives for `field`, without the field's name. */
+function fieldReason(error: unknown, field: string): string | undefined {
+  if (!(error instanceof ApiError) || error.status !== 422) return undefined;
+  const line = (error.problem?.errors ?? []).find((l) => l.startsWith(`${field}:`));
+  return line ? line.slice(field.length + 1).trim() : undefined;
+}
+
+/**
+ * One project of a data backup restored into a new project (T-7208): the identity opens the
+ * archive and lists the projects the server lets this administrator read, then a check, then
+ * the copy. The project it came from is never written.
+ */
+function ProjectCopy({ version, onClose }: { version: string; onClose: () => void }): JSX.Element {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "en";
+  const client = useQueryClient();
+  const [identity, setIdentity] = useState("");
+  const [project, setProject] = useState("");
+  const [name, setName] = useState("");
+  const list = useMutation({
+    mutationFn: async (): Promise<ArchivedProjects> =>
+      (await doorAction("portal_backup_data_projects", { version, body: { identity: identity.trim() } })) as ArchivedProjects,
+    onSuccess: (answer) => setProject(answer.projects.length === 1 ? answer.projects[0].id : ""),
+  });
+  const copy = useMutation({
+    mutationFn: async (apply: boolean): Promise<CopyPlan> =>
+      (await doorAction("portal_backup_data_copy", {
+        version,
+        body: { identity: identity.trim(), project, name: name.trim(), apply },
+      })) as CopyPlan,
+    onSuccess: async (plan) => {
+      if (plan.projectId) {
+        setIdentity("");
+        await client.invalidateQueries({ queryKey: overviewKey("data") });
+      }
+    },
+  });
+  const projects = list.data;
+  const plan = copy.data;
+  const done = Boolean(plan?.projectId);
+  const keyError = identityError(list.error) ?? identityError(copy.error);
+  const projectError = fieldReason(copy.error, "project");
+  const nameError = fieldReason(copy.error, "name");
+  const otherError = [list, copy].find((m) => m.isError && !identityError(m.error) && !fieldReason(m.error, "project") && !fieldReason(m.error, "name"));
+  const ready = identity.trim() !== "" && project !== "" && name.trim() !== "";
+  const rows = plan ? Object.entries(plan.tables).filter(([, c]) => c.create + c.refused > 0) : [];
+  const total = (key: "create" | "refused") => rows.reduce((sum, [, c]) => sum + c[key], 0);
+  return (
+    <Dialog
+      open
+      size="lg"
+      onOpenChange={(open) => (open ? undefined : onClose())}
+      title={t("backups.copy.title")}
+      closeLabel={t("backups.restore.close")}
+      description={plan ? t("backups.restore.taken", { at: when(plan.takenAt, locale) }) : t("backups.copy.lead")}
+    >
+      <form
+        className="flex flex-col gap-3"
+        data-testid="backup-project-copy"
+        noValidate
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (projects) copy.mutate(false);
+          else list.mutate();
+        }}
+      >
+        {done ? null : <IdentityField id="backup-copy-identity" value={identity} onChange={setIdentity} error={keyError} />}
+        {projects && !done ? (
+          projects.projects.length === 0 ? (
+            <EmptyState bare title={t("backups.copy.none")} />
+          ) : (
+            <>
+              <Field id="backup-copy-project" label={t("backups.copy.project")} help={t("backups.copy.projectHint")} errors={projectError ? [projectError] : undefined}>
+                <Select id="backup-copy-project" value={project} onChange={(e) => {
+                    setProject(e.target.value);
+                    copy.reset();
+                  }}>
+                  <option value="">{t("backups.copy.pick")}</option>
+                  {projects.projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field id="backup-copy-name" label={t("backups.copy.name")} help={t("backups.copy.nameHint")} errors={nameError ? [nameError] : undefined}>
+                <Input id="backup-copy-name" autoComplete="off" spellCheck={false} value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    copy.reset();
+                  }} />
+              </Field>
+            </>
+          )
+        ) : null}
+        {projects && projects.deleted.length > 0 && !done ? (
+          <p className="text-caption text-fg-muted">{t("backups.copy.deleted", { names: projects.deleted.join(", ") })}</p>
+        ) : null}
+        {otherError ? <Alert tone="danger">{reasonOf(otherError.error, t("backups.unreadable"))}</Alert> : null}
+        {plan && !done ? (
+          <>
+            <p className="text-body font-medium">
+              {t("backups.copy.summary", { rows: total("create"), name: plan.name, refused: total("refused"), erasures: plan.erasuresReplayed })}
+            </p>
+            {rows.length > 0 ? (
+              <AdminGrid
+                caption={t("backups.copy.caption")}
+                rows={rows}
+                rowKey={([table]) => table}
+                storageKey="organization.backups.data.copy"
+                empty={t("backups.data.planSame")}
+                noSearch
+                stack
+                columns={[
+                  { key: "table", label: t("backups.data.table"), text: ([table]) => table, cell: ([table]) => <span className="whitespace-nowrap font-mono">{table}</span> },
+                  { key: "create", label: t("backups.data.create"), kind: "number", align: "right", text: ([, c]) => String(c.create) },
+                  { key: "refused", label: t("backups.data.refused"), kind: "number", align: "right", text: ([, c]) => String(c.refused) },
+                ]}
+              />
+            ) : null}
+          </>
+        ) : null}
+        {done && plan ? <Alert tone="success">{t("backups.copy.done", { name: plan.name, id: plan.projectId, source: plan.sourceName })}</Alert> : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose}>
+            {t("backups.restore.close")}
+          </Button>
+          {done ? null : projects ? (
+            <Button variant={plan ? "secondary" : "primary"} type="submit" disabled={copy.isPending || !ready} disabledReason={ready ? t("app.busyReason") : t("backups.copy.first")}>
+              {t("backups.copy.check")}
+            </Button>
+          ) : (
+            <Button variant="primary" type="submit" disabled={list.isPending || identity.trim() === ""} disabledReason={identity.trim() === "" ? t("backups.data.identityFirst") : t("app.busyReason")}>
+              {t("backups.copy.list")}
+            </Button>
+          )}
+          {plan && !done ? (
+            <Button variant="primary" type="button" onClick={() => copy.mutate(true)} disabled={copy.isPending || !ready} disabledReason={t("app.busyReason")}>
+              {t("backups.copy.apply")}
             </Button>
           ) : null}
         </div>

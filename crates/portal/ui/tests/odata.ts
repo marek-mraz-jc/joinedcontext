@@ -550,6 +550,8 @@ const DOORS: Record<string, Door> = {
   portal_backup_data_download: ["GET", "/organization/backups/data/versions/{version}"],
   portal_backup_data_restore: ["POST", "/organization/backups/data/versions/{version}/restore"],
   portal_backup_data_delete: ["DELETE", "/organization/backups/data/archive"],
+  portal_backup_data_projects: ["POST", "/organization/backups/data/versions/{version}/projects"],
+  portal_backup_data_copy: ["POST", "/organization/backups/data/versions/{version}/copy"],
   portal_backup_data_restores: ["GET", "/organization/backups/data/restores"],
   portal_backup_data_restore_approve: ["POST", "/organization/backups/data/restores/{id}/approve"],
   portal_backup_data_restore_decline: ["POST", "/organization/backups/data/restores/{id}/decline"],

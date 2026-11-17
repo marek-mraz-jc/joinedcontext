@@ -13473,7 +13473,9 @@
         "plan": "Wiederherstellungsprüfung",
         "restore": "Wiederherstellung",
         "restore-request": "Wiederherstellung angefragt",
-        "restore-decline": "Wiederherstellung abgelehnt"
+        "restore-decline": "Wiederherstellung abgelehnt",
+        "copy-plan": "Projektkopie geprüft",
+        "copy": "Projekt kopiert"
       }
     },
     "versions": {
@@ -13592,6 +13594,25 @@
         "declined": "Abgelehnt",
         "failed": "Nicht wiederhergestellt: der Grund steht darunter"
       }
+    },
+    "copy": {
+      "action": "Projekt wiederherstellen",
+      "title": "Ein Projekt in ein neues Projekt wiederherstellen",
+      "lead": "Wählen Sie ein Projekt dieser Sicherung und einen neuen Namen. Seine Zeilen werden in ein neues Projekt mit eigener ID kopiert; das Ursprungsprojekt bleibt unverändert.",
+      "list": "Projekte anzeigen",
+      "project": "Projekt dieser Sicherung",
+      "projectHint": "Die Projekte dieser Sicherung, die Sie lesen dürfen, z. B. air-quality. Ein seit der Sicherung gelöschtes Projekt wird nicht angezeigt und nie wiederhergestellt.",
+      "pick": "Projekt wählen",
+      "none": "Diese Sicherung enthält kein Projekt, das Sie wiederherstellen dürfen. Wählen Sie eine andere Version oder bitten Sie die Projektverwaltung um Lesezugriff.",
+      "deleted": "Seit dieser Sicherung gelöscht, nie wiederhergestellt: {names}",
+      "name": "Name des neuen Projekts",
+      "nameHint": "Kleinbuchstaben, Ziffern und '-', ein Name, den kein Projekt nutzt, z. B. air-quality-restored.",
+      "check": "Prüfen",
+      "apply": "In das neue Projekt wiederherstellen",
+      "summary": "{rows} Zeilen zum Kopieren nach {name}, {refused} abgelehnt, {erasures} Löschungen erneut angewendet",
+      "done": "In {name} wiederhergestellt (Projekt-ID {id}). {source} wurde nicht verändert.",
+      "first": "Wählen Sie zuerst ein Projekt und geben Sie einen Namen ein",
+      "caption": "Zeilen je Tabelle, die die Kopie schreibt"
     }
   },
   "operator": {
