@@ -57,6 +57,7 @@ kyverno.io/v1/ClusterPolicy -/disallow-host-namespaces
 kyverno.io/v1/ClusterPolicy -/disallow-host-path
 kyverno.io/v1/ClusterPolicy -/disallow-privileged-containers
 kyverno.io/v1/ClusterPolicy -/drop-all-capabilities
+kyverno.io/v1/ClusterPolicy -/edge-file-composer-objects
 kyverno.io/v1/ClusterPolicy -/exclude-acme-solver-from-mesh
 kyverno.io/v1/ClusterPolicy -/explain-linkerd-cni-opt-out
 kyverno.io/v1/ClusterPolicy -/justify-api-token-access
