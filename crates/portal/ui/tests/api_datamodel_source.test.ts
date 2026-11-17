@@ -69,12 +69,13 @@ describe("the model source (UI-07)", () => {
   });
 
   it("hands back the refusal and its reasons", async () => {
-    answer(400, JSON.stringify({ title: "Bad Request", status: 400, errors: ["slot 'x' has no range"] }));
+    answer(400, JSON.stringify({ title: "Bad Request", status: 400, errors: ["slots.x: has no range"] }));
     const refused = await writeModelSource({ project: "helsinki", name: "air", source: YAML, dryRun: true });
-    expect(refused).toEqual({
+    // Through the model source door (T-7177): its refusal keeps the status and each reason.
+    expect(refused).toMatchObject({
       kind: "refused",
       status: 400,
-      problem: { title: "Bad Request", status: 400, errors: ["slot 'x' has no range"] },
+      problem: { status: 400, errors: ["slots.x: has no range"] },
     });
   });
 

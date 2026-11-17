@@ -10,8 +10,9 @@ export interface ODataCall {
   params: Record<string, unknown>;
 }
 
+/** A call bound to a project, or to the `Organization` singleton (its `project` is ""). */
 const BOUND =
-  /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/JoinedContext\.Portal\.(\w+)(?:\(([^)]*)\))?$/;
+  /^\/api\/v1\/(?:Organization|projects\('((?:[^']|'')*)'\))\/JoinedContext\.Portal\.(\w+)(?:\(([^)]*)\))?$/;
 
 /** A literal of an alias: text in quotes, a number, a boolean, `null` or JSON. */
 function literal(text: string): unknown {
@@ -38,7 +39,7 @@ export function odataCall(
     if (value !== null) params[name] = literal(value);
   }
   if (typeof body === "object" && body !== null) Object.assign(params, body);
-  return { project: bound[1].replaceAll("''", "'"), name: bound[2], params };
+  return { project: (bound[1] ?? "").replaceAll("''", "'"), name: bound[2], params };
 }
 
 /** The body of the service's answer to a function or action: the operation's value under `value`. */
@@ -85,9 +86,12 @@ export function odataError(
  */
 export async function asOData(rest: Response, shape?: (body: unknown) => unknown): Promise<Response> {
   const answer = await asODataBody(rest, shape);
-  // The edge's reference of the answer, which a failure page shows (T-2747).
-  const id = rest.headers.get("x-request-id");
-  if (id) answer.headers.set("x-request-id", id);
+  // The edge's reference of the answer, which a failure page shows (T-2747), and a manifest
+  // read's ETag, the If-Match of the write after it (odata_org.rs door_answer).
+  for (const name of ["x-request-id", "etag"]) {
+    const value = rest.headers.get(name);
+    if (value) answer.headers.set(name, value);
+  }
   return answer;
 }
 
@@ -286,6 +290,7 @@ const OPERATIONS: Record<string, Door> = {
   portal_person_get: ["GET", "/organization/people/{person}"],
   portal_person_edit: ["PATCH", "/organization/people/{person}"],
   portal_portal_host_list: ["GET", "/organization/portal-hosts"],
+  portal_organization_address_list: ["GET", "/organization/addresses"],
   portal_widget_list: ["GET", "/organization/widgets"],
   portal_organization_model_list: ["GET", "/organization/datamodels"],
   portal_health_check_list: ["GET", "/projects/{project}/health-checks"],
@@ -331,8 +336,25 @@ const OPERATIONS: Record<string, Door> = {
   portal_endpoint_ical_preview: ["POST", "/projects/{project}/endpoints/{name}/ical-preview"],
   portal_endpoint_list_all: ["GET", "/endpoints"],
   portal_permissions_me: ["GET", "/projects/{project}/permissions/me"],
+  portal_org_permissions_me: ["GET", "/projects/org/permissions/me"],
   portal_operation_run: ["POST", "/projects/{project}/ops/{name}"],
   portal_model_source: ["GET", "/projects/{project}/datamodels/{name}/source"],
+  // A kind's paged list and a manifest inside a workspace's copy, a space's count, a model's
+  // source written, the Organization's own models and writes, the projects list (T-7177).
+  portal_manifest_list: ["GET", "/projects/{project}/{plural}"],
+  portal_manifest_get: ["GET", "/projects/{project}/{plural}/{name}"],
+  portal_manifest_create: ["POST", "/projects/{project}/{plural}"],
+  portal_manifest_replace: ["PUT", "/projects/{project}/{plural}/{name}"],
+  portal_manifest_delete: ["DELETE", "/projects/{project}/{plural}/{name}"],
+  portal_space_usage: ["GET", "/projects/{project}/spaces/{space}/usage"],
+  portal_model_source_set: ["PUT", "/projects/{project}/datamodels/{name}/source"],
+  portal_org_model_source: ["GET", "/projects/org/datamodels/{name}/source"],
+  portal_org_model_source_set: ["PUT", "/projects/org/datamodels/{name}/source"],
+  portal_org_manifest_create: ["POST", "/projects/org/{plural}"],
+  portal_org_manifest_replace: ["PUT", "/projects/org/{plural}/{name}"],
+  portal_project_list: ["GET", "/projects"],
+  portal_project_create: ["POST", "/projects"],
+  portal_organization_list: ["GET", "/projects/org/organizations"],
   portal_preview_error_report: ["POST", "/projects/{project}/agent-runs/{id}/preview-errors"],
   portal_preview_observation_report: ["POST", "/projects/{project}/agent-runs/{id}/preview-observations"],
   portal_app_templates: ["GET", "/app-templates"],
@@ -601,11 +623,16 @@ export async function doorAsRest(
   let path = door[1].replace("{project}", encodeURIComponent(project));
   const rest = new URL("/api/v1", at.origin);
   let body: string | undefined;
+  let text = false;
+  let ifMatch: string | undefined;
   const members: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(params)) {
     if (path.includes(`{${name}}`))
       path = path.replace(`{${name}}`, encodeURIComponent(String(value)));
     else if (name === "body") body = JSON.stringify(value);
+    // A model's source is the REST door's text/yaml body; `ifMatch` its If-Match (Place::Text, Place::IfMatch).
+    else if (name === "source" && path.endsWith("/source")) [body, text] = [String(value), true];
+    else if (name === "ifMatch") ifMatch = String(value);
     else if (name === "vars")
       // A dashboard's variables, each value one `var-{name}` member (odata_portal.rs Place::Vars).
       for (const [variable, picked] of Object.entries(value as Record<string, string | string[]>))
@@ -622,8 +649,10 @@ export async function doorAsRest(
   const headers = new Headers(request.headers);
   for (const name of ["content-type", "content-length", "accept", "if-match"]) headers.delete(name);
   for (const name of [...headers.keys()]) if (name.startsWith("odata-")) headers.delete(name);
-  if (body) headers.set("Content-Type", "application/json");
-  return new Request(rest, { method: door[0], body, headers });
+  if (body) headers.set("Content-Type", text ? "text/yaml; charset=utf-8" : "application/json");
+  if (ifMatch) headers.set("If-Match", ifMatch);
+  // A cancelled call cancels the REST request the stub meets, as it cancels the service's.
+  return new Request(rest, { method: door[0], body, headers, signal: request.signal });
 }
 
 const CHANGE_KEY = /^\/api\/v1\/changes\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\)$/;
@@ -642,6 +671,7 @@ const WORKSPACES =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/workspaces|workspaces\(project='((?:[^']|'')*)',name='((?:[^']|'')*)'\))$/;
 const RUNS =
   /^\/api\/v1\/(?:projects\('((?:[^']|'')*)'\)\/runs|runs\(project='((?:[^']|'')*)',id='((?:[^']|'')*)'\))$/;
+const REVISIONS = /^\/api\/v1\/projects\('((?:[^']|'')*)'\)\/revisions$/;
 /** The REST list's query parameter of each member a runs `$filter` narrows by (api/odata.ts listRuns). */
 const RUN_FILTERS: Record<string, string> = { appName: "app", kind: "kind", createdBy: "mine", origin: "origin" };
 const KEYED =
@@ -695,6 +725,15 @@ export function manifestAsRest(
       if (name === "origin" && unquote(value) === "person") rest.searchParams.delete("origin");
       else if (name) rest.searchParams.set(name, name === "mine" ? "true" : unquote(value));
     }
+    const top = at.searchParams.get("$top");
+    if (top !== null) rest.searchParams.set("limit", top);
+    return { rest, one: false, row: true };
+  }
+  // A project's newest revisions (api/odata.ts listRevisions): the rows are the REST list's items
+  // (jc_project_revisions runs the REST door's read, T-7177).
+  const revisions = REVISIONS.exec(path);
+  if (revisions) {
+    const rest = new URL(`/api/v1/projects/${encodeURIComponent(unquote(revisions[1]))}/revisions`, at.origin);
     const top = at.searchParams.get("$top");
     if (top !== null) rest.searchParams.set("limit", top);
     return { rest, one: false, row: true };

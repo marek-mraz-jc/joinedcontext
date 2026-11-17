@@ -720,8 +720,18 @@ PROXY_CLIENT_REP = {
     "secret": "$(env:KC_AGENT_PROXY_SECRET)",
     "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
     "serviceAccountsEnabled": True, "fullScopeAllowed": False, "redirectUris": [], "webOrigins": [],
-    "defaultClientScopes": ["basic"], "optionalClientScopes": [], "protocolMappers": [],
+    "defaultClientScopes": ["basic"], "optionalClientScopes": [],
+    "protocolMappers": [{
+        "name": "portal-internal-audience", "protocol": "openid-connect",
+        "protocolMapper": "oidc-audience-mapper", "consentRequired": False,
+        "config": {"included.custom.audience": "portal-internal", "access.token.claim": "true",
+                   "id.token.claim": "false"},
+    }],
 }
+# The proxy reads a run's context on the Portal's internal listener, which admits only a token for
+# `portal-internal` (bins/jc/src/setup.rs assistant_realm_file): without it every conversation
+# answered "the model service did not answer in time" (the Portal's 401, jc-dev 2026-11-16, T-7149).
+PORTAL_INTERNAL_MAPPER = PROXY_CLIENT_REP["protocolMappers"][0]
 # Named apart from prod's `agent-proxy-audience` mapper on jc-assistant, which names helsinki-agent-proxy.
 PROXY_AUDIENCE_MAPPER = {
     "name": "jc-proxy-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
@@ -754,10 +764,11 @@ def unsafe_proxy_client(realm: dict, c: dict) -> list[str]:
 def add_agent_proxy(realm: dict) -> tuple[dict, list[str]]:
     """jc's proxy client `agent-proxy` (introspection only: service account, no flow, no role, no
     redirect, a fresh secret `$(env:KC_AGENT_PROXY_SECRET)` that up.sh, or the deployment's realm
-    secrets, hands to jc's proxy-client-secret state file) and one audience mapper naming it on
-    `jc-assistant`, in a realm with the assistant: jc writes nothing into an imported realm, and
+    secrets, hands to jc's proxy-client-secret state file, audience `portal-internal`) and one
+    audience mapper naming it on `jc-assistant`, in a realm with the assistant: jc writes nothing into an imported realm, and
     without both every model call answers 503 (introspection 401, jc-prod 2026-11-11). An
-    existing `agent-proxy` is kept as it is, its secret never rewritten, unless it is more than an
+    existing `agent-proxy` is kept, its secret never rewritten, and gains only a missing
+    `portal-internal` audience, unless it is more than an
     introspection client: then this stops. Answers the realm and what it added."""
     clients = realm.get("clients") or []
     if not any(c.get("clientId") == "jc-assistant" for c in clients):
@@ -773,6 +784,14 @@ def add_agent_proxy(realm: dict) -> tuple[dict, list[str]]:
                              f"an introspection client: {unsafe}")
     new_clients = []
     for c in clients:
+        if c.get("clientId") == PROXY_CLIENT:
+            mappers = list(c.get("protocolMappers") or [])
+            if not any((m.get("config") or {}).get("included.custom.audience") == "portal-internal" for m in mappers):
+                if any(m.get("name") == PORTAL_INTERNAL_MAPPER["name"] for m in mappers):
+                    raise SystemExit(f"realm {realm.get('realm')}: {PROXY_CLIENT} has a mapper "
+                                     f"{PORTAL_INTERNAL_MAPPER['name']} that names another audience")
+                c = dict(c, protocolMappers=mappers + [json.loads(json.dumps(PORTAL_INTERNAL_MAPPER))])
+                added.append(f"{PROXY_CLIENT} audience portal-internal")
         if c.get("clientId") == "jc-assistant":
             mappers = list(c.get("protocolMappers") or [])
             if not any((m.get("config") or {}).get("included.custom.audience") == PROXY_CLIENT for m in mappers):

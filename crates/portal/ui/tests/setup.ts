@@ -136,7 +136,8 @@ function listingThePage(stubbed: typeof fetch): typeof fetch {
       // its answer wrapped as the service wraps it (doorAsRest).
       if (input instanceof Request && callsOperation(input)) {
         return doorAsRest(input).then(async (door) =>
-          door ? asOData(await Reflect.apply(target, self, [door]), answerShape(input)) : Reflect.apply(target, self, args),
+          // The projects list door (portal_project_list) lists the page's project as its REST door does here.
+          door ? asOData(await listing(Reflect.apply(target, self, [door]), door), answerShape(input)) : Reflect.apply(target, self, args),
         );
       }
       const read = manifestAsRest(new URL(input instanceof Request ? input.url : String(input), window.location.href));

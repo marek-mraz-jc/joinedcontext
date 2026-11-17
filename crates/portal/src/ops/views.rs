@@ -333,7 +333,8 @@ fn revisions_output_schema() -> Value {
                     "properties": {
                         "sha": { "type": "string" },
                         "message": { "type": "string" },
-                        "author": { "type": "string" }
+                        "author": { "type": "string" },
+                        "date": { "type": "string", "description": "When it was committed, e.g. 2026-11-16T09:30:00Z" }
                     },
                     "required": ["sha"]
                 }

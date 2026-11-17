@@ -4,7 +4,7 @@ import { axeViolations } from "./axe";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_org_permissions_me", "portal_project_list"]));
 
 // T-2474, UI-27: a bigger form is a page with an address of its own. `vite preview` has no
 // Portal API behind it, so the API is answered in the browser; the router, the reload and the

@@ -6,7 +6,7 @@ import { odataBody } from "../tests/odata";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_org_permissions_me", "portal_project_list"]));
 
 // T-7099: the Administration pages read the Organization's readings through the OData service,
 // `Organization/JoinedContext.Portal.jc_organization_read(aspect=…)`. Each journey runs the real

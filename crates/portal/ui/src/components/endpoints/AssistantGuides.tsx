@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { organizationReading } from "../../api/odata";
+import { door, type RestAnswer } from "../../api/odata";
 import type { components } from "../../api/schema";
 import { ExternalLink } from "../ui";
 
@@ -41,13 +41,16 @@ export function guideUrl(opendata: string, id: GuideId): string | undefined {
 }
 
 /**
- * The open data host of the person's Organizations, from `GET /organization/addresses`. A stranger
- * gets a 401 and so no host; the caller then shows the address alone.
+ * The open data host of the person's Organizations, from the `portal_organization_address_list`
+ * door, which answers every signed-in person their own Organizations' addresses (a project's
+ * viewer too, whom `jc_organization_read` answers 404). A stranger gets a 401 and so no host;
+ * the caller then shows the address alone.
  */
 export function useOpendataHost(): string | undefined {
   const addresses = useQuery({
     queryKey: ["organizationAddresses"],
-    queryFn: () => organizationReading("addresses"),
+    queryFn: async () =>
+      (await door("portal_organization_address_list", {})) as RestAnswer<"list_addresses">,
     retry: false,
     staleTime: 5 * 60_000,
   });

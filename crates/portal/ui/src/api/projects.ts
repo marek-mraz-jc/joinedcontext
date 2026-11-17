@@ -1,16 +1,20 @@
 import { useMemo } from "react";
 import { queryOptions, useQuery } from "@tanstack/react-query";
-import { api, queryKeys, unwrap } from "./client";
+import { queryKeys } from "./client";
 import { door, listOrganizations, type RestAnswer } from "./odata";
 import { asManifests, localized, ORG_NAMESPACE } from "./manifest";
 import type { Manifest } from "./manifest";
 import { useTranslation } from "react-i18next";
 import { offeredLocales, useBranding } from "../branding";
 
-/** The one projects list query every project picker reads, each through its own `select`. */
+/**
+ * The one projects list query every project picker reads, each through its own `select`: the
+ * `portal_project_list` door, which answers on any Organization's host the projects the person
+ * reads (T-7177, the T-7130 class).
+ */
 export const projectsQuery = queryOptions({
   queryKey: queryKeys.projects(),
-  queryFn: async () => unwrap(await api.GET("/api/v1/projects")),
+  queryFn: async () => (await door("portal_project_list", {})) as RestAnswer<"list_projects">,
 });
 
 /**

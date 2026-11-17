@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
-import { manifestReadsAsRest } from "./manifestReads";
+import { manifestReadsAsRest, restOrDoor } from "./manifestReads";
 
 // The pages read their manifests through the OData service; this file stubs the REST reads (T-7073).
 test.beforeEach(({ page }) => manifestReadsAsRest(page));
@@ -117,7 +117,7 @@ test.describe("the inbox", () => {
 
   test("a project whose changes did not load says so, and the inbox still lists the other projects' (T-4966)", async ({ page }, testInfo) => {
     await stubApi(page, "praha");
-    await page.route("**/api/v1/projects", (route) =>
+    await page.route(restOrDoor("/api/v1/projects", "portal_project_list"), (route) =>
       route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...PROJECTS, items: [{ name: "helsinki" }, { name: "praha" }] }) }),
     );
     for (const width of [1440, 400]) {

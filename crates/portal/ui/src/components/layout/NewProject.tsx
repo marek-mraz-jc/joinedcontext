@@ -3,7 +3,8 @@ import type { JSX } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, queryKeys, unwrap } from "../../api/client";
+import { ApiError, queryKeys } from "../../api/client";
+import { doorAction, type RestAnswer } from "../../api/odata";
 import type { Change } from "../../api/manifest";
 import { usePermissions } from "../../api/permissions";
 import { ChangeNotice } from "../ChangeNotice";
@@ -51,15 +52,13 @@ export function NewProjectDialog({
 
   const openProject = useMutation({
     mutationFn: async () =>
-      unwrap(
-        await api.POST("/api/v1/projects", {
-          body: {
-            name,
-            displayName: displayName.trim() === "" ? undefined : displayName,
-            description: description.trim() === "" ? undefined : description,
-          },
-        }),
-      ),
+      (await doorAction("portal_project_create", {
+        body: {
+          name,
+          displayName: displayName.trim() === "" ? undefined : displayName,
+          description: description.trim() === "" ? undefined : description,
+        },
+      })) as RestAnswer<"open_project">,
     onSuccess: (result) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.projects() });
       // Nobody is waiting: the project is open, so the sidebar moves to it (PF-66).

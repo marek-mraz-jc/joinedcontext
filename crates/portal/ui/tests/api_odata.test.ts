@@ -16,10 +16,14 @@ import {
   readRun,
   rejectChange,
   listRuns,
+  pageManifests,
+  writeManifestDoor,
 } from "../src/api/odata";
 import { importBody } from "../src/api/proposal";
 import { callOperation } from "../src/api/operations";
-import { readModelSource } from "../src/api/datamodelSource";
+import { readModelSource, writeModelSource } from "../src/api/datamodelSource";
+import { readPermissions } from "../src/api/permissions";
+import { activeWorkspace } from "../src/components/layout/WorkspaceContext";
 import { announceSessionEnded } from "../src/api/sessionEnded";
 import { announceStepUp, stepUpUrl } from "../src/api/stepUp";
 import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
@@ -27,6 +31,10 @@ import { manifestAsRest, odataCall, odataError, odataValue } from "./odata";
 vi.mock("../src/api/sessionEnded", async (actual) => ({
   ...(await actual<object>()),
   announceSessionEnded: vi.fn(),
+}));
+vi.mock("../src/components/layout/WorkspaceContext", async (actual) => ({
+  ...(await actual<object>()),
+  activeWorkspace: vi.fn(() => null),
 }));
 vi.mock("../src/api/stepUp", async (actual) => ({
   ...(await actual<object>()),
@@ -190,7 +198,7 @@ describe("the Portal's OData client (T-6812)", () => {
       sent.push(request);
       return odataValue(request.url.includes("portal_model_source") ? "id: air\n" : { ok: true });
     });
-    await door("portal_permissions_me", {}, "air");
+    await readPermissions("air");
     const pipeline = { kind: "Pipeline", spec: { input: { stdin: {} } } };
     await expect(callOperation("air", "jc_pipeline_validate", { pipeline, records: [] })).resolves.toEqual({ ok: true, status: 200, output: { ok: true } });
     await expect(readModelSource("air", "weather")).resolves.toBe("id: air\n");
@@ -205,6 +213,81 @@ describe("the Portal's OData client (T-6812)", () => {
     expect(new URL(sent[2].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_model_source(name=@name)");
     expect(new URL(sent[3].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_preview_error_report");
     await expect(sent[3].json()).resolves.toEqual({ id: "r1", body: { message: "boom" } });
+    // The Organization's own rules: no project door serves `org` (train smoke 43982518651).
+    await readPermissions("org");
+    expect(new URL(sent.at(-1)!.url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_org_permissions_me()");
+  });
+
+  it("reads and writes a workspace's copy, a kind's page, a space's count and the projects through their doors (T-7177)", async () => {
+    const sent: Request[] = [];
+    // Not vi.stubGlobal: tests/setup.ts would answer these doors from their REST stubs.
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      const answer = odataValue(request.url.includes("portal_manifest_get") ? { kind: "Space", metadata: { name: "pm" } } : { items: [] });
+      if (request.url.includes("portal_manifest_get")) answer.headers.set("ETag", '"3f2a"');
+      return answer;
+    });
+    const at = (n: number) => decodeURIComponent(new URL(sent[n].url).pathname + new URL(sent[n].url).search);
+    vi.mocked(activeWorkspace).mockReturnValue("draft");
+    const manifest = await readManifest("air", "spaces", "pm");
+    expect(manifestEtag(manifest)).toBe('"3f2a"');
+    expect(at(0)).toBe(
+      "/api/v1/projects('air')/JoinedContext.Portal.portal_manifest_get(plural=@plural,name=@name,workspace=@workspace)?@plural='spaces'&@name='pm'&@workspace='draft'",
+    );
+    await proposeManifest("air", "spaces", { kind: "Space", metadata: { name: "pm" } } as { metadata: { name: string } }, { create: false, dryRun: true, ifMatch: '"3f2a"' });
+    expect(at(1)).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_manifest_replace");
+    await expect(sent[1].json()).resolves.toEqual({
+      plural: "spaces",
+      name: "pm",
+      workspace: "draft",
+      dryRun: "All",
+      ifMatch: '"3f2a"',
+      body: { kind: "Space", metadata: { name: "pm" } },
+    });
+    await listManifests("air", "spaces");
+    expect(at(2)).toContain("portal_manifest_list(plural=@plural,workspace=@workspace)");
+    vi.mocked(activeWorkspace).mockReturnValue(null);
+    await pageManifests("air", "pipelines", { limit: 50, q: "ozon", cursor: "c1" });
+    expect(at(3)).toBe(
+      "/api/v1/projects('air')/JoinedContext.Portal.portal_manifest_list(plural=@plural,limit=@limit,count=@count,q=@q,cursor=@cursor)?@plural='pipelines'&@limit=50&@count=true&@q='ozon'&@cursor='c1'",
+    );
+    const timeout = new AbortController();
+    await door("portal_space_usage", { space: "pm" }, "air", timeout.signal);
+    expect(sent[4].signal.aborted).toBe(false);
+    timeout.abort();
+    expect(sent[4].signal.aborted).toBe(true);
+    await door("portal_project_list", {});
+    expect(at(5)).toBe("/api/v1/Organization/JoinedContext.Portal.portal_project_list()");
+  });
+
+  it("proposes an Organization's own manifest and a model's YAML through their doors (T-7177)", async () => {
+    const sent: Request[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const request = input as Request;
+      sent.push(request);
+      return request.url.includes("portal_org_model_source(")
+        ? odataValue("id: org-model\n")
+        : odataValue({ valid: true, metadata: { name: "c1" } });
+    });
+    await writeManifestDoor("org", "organizations", { metadata: { name: "hel" } }, { create: true, dryRun: false });
+    expect(new URL(sent[0].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_org_manifest_create");
+    await expect(sent[0].json()).resolves.toEqual({ plural: "organizations", body: { metadata: { name: "hel" } } });
+    await expect(readModelSource("org", "org-model")).resolves.toBe("id: org-model\n");
+    expect(new URL(sent[1].url).pathname).toBe("/api/v1/Organization/JoinedContext.Portal.portal_org_model_source(name=@name)");
+    const answer = await writeModelSource({ project: "air", name: "weather", source: "id: weather\n", dryRun: true });
+    expect(answer.kind).toBe("checked");
+    expect(new URL(sent[2].url).pathname).toBe("/api/v1/projects('air')/JoinedContext.Portal.portal_model_source_set");
+    // The YAML travels as the text it is, never re-encoded as a document.
+    await expect(sent[2].json()).resolves.toEqual({ name: "weather", source: "id: weather\n", dryRun: "All" });
+  });
+
+  it("says why a model's source was refused in the server's words (T-7177)", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      odataError(403, "forbidden", "Your roles do not let you change the models of air."),
+    );
+    const answer = await writeModelSource({ project: "air", name: "weather", source: "id: weather\n", dryRun: false });
+    expect(answer).toMatchObject({ kind: "refused", status: 403, problem: { detail: "Your roles do not let you change the models of air." } });
   });
 
   it("imports manifests through the project's jc_project_import with its If-Match, a check as dryRun (T-7143)", async () => {
@@ -485,20 +568,18 @@ describe("the Portal's OData client (T-6812)", () => {
     vi.restoreAllMocks();
   });
 
-  it("reads the Organizations from the REST list on an address that serves several (T-7104)", async () => {
+  it("reads the Organizations through the person's own door on an address that serves several (T-7104, T-7177)", async () => {
     const sent: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = new URL((input as Request).url);
       sent.push(url.pathname);
       return url.pathname === "/api/v1/Organization"
         ? odataError(404, "several-organizations", "this address serves several Organizations")
-        : new Response(JSON.stringify({ items: [{ kind: "Organization", metadata: { name: "zilina" } }, { kind: "Organization", metadata: { name: "hel" } }] }), {
-            headers: { "Content-Type": "application/json" },
-          });
+        : odataValue({ items: [{ kind: "Organization", metadata: { name: "zilina" } }, { kind: "Organization", metadata: { name: "hel" } }] });
     });
     const { items } = await listOrganizations();
     expect(items.map((o) => o.metadata.name)).toEqual(["zilina", "hel"]);
-    expect(sent).toEqual(["/api/v1/Organization", "/api/v1/projects/org/organizations"]);
+    expect(sent).toEqual(["/api/v1/Organization", "/api/v1/Organization/JoinedContext.Portal.portal_organization_list()"]);
     vi.restoreAllMocks();
   });
 
