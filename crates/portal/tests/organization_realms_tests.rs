@@ -469,6 +469,17 @@ async fn a_session_of_an_organizations_realm_opens_on_its_own_host_alone() {
         get(&w.state, BA, ("cookie", &installation)).await,
         StatusCode::OK
     );
+    // T-7180: once the registry drops ba's sign-in host, ba's realm session is over at once.
+    assert_eq!(w.state.replace_organization_realms("[]", None), Ok(0));
+    assert_eq!(
+        get(&w.state, BA, ("cookie", &own)).await,
+        StatusCode::UNAUTHORIZED,
+        "a session of a dropped realm"
+    );
+    assert_eq!(
+        get(&w.state, BA, ("cookie", &installation)).await,
+        StatusCode::OK
+    );
 }
 
 async fn mcp(state: &AppState, at: &str, token: &str) -> StatusCode {

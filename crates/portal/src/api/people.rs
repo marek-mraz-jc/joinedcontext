@@ -726,8 +726,8 @@ pub(super) fn refuse_bearer(identity: &Identity) -> Result<(), ApiError> {
 
 /// The person `id`, after the verb and the takeover guard: a write on a person holding a grant
 /// the caller does not cover is refused (403 naming the grant).
-pub(crate) async fn target<'a>(
-    state: &'a AppState,
+pub(crate) async fn target(
+    state: &AppState,
     identity: &Identity,
     verb: Verb,
     id: &str,
@@ -741,8 +741,8 @@ pub(crate) async fn target<'a>(
 
 /// [`target`] for the two actions PF-93 leaves open on a person holding a grant the caller does
 /// not cover (a reset by e-mail, a second-factor removal with an e-mail): that grant, if any.
-async fn target_held<'a>(
-    state: &'a AppState,
+async fn target_held(
+    state: &AppState,
     identity: &Identity,
     verb: Verb,
     id: &str,

@@ -76,32 +76,28 @@ fn followers() -> std::sync::MutexGuard<'static, Followers> {
 }
 
 /// Calls `follow` with every set the registry serves from now on, and at once with the last one
-/// when the registry was read before this module was built.
+/// when the registry was read before this module was built. Followers are called under the
+/// lock, so a set published meanwhile never reaches a follower before an older one. A follower
+/// only swaps a table or spawns work; it never calls [`follow`] or [`publish`].
 pub fn follow(module: &'static str, follow: impl Fn(&[SignIn]) + Send + Sync + 'static) {
     let follow: Follower = Arc::new(follow);
-    let last = {
-        let mut held = followers();
-        held.by_module.insert(module, Arc::clone(&follow));
-        held.last.clone()
-    };
-    if let Some(last) = last {
-        follow(&last);
+    let mut held = followers();
+    if let Some(last) = &held.last {
+        follow(last);
     }
+    held.by_module.insert(module, follow);
 }
 
 /// Hands `set` to every follower when it differs from the last one; `true` when it did.
 pub fn publish(set: Vec<SignIn>) -> bool {
-    let to_call: Vec<Follower> = {
-        let mut held = followers();
-        if held.last.as_ref() == Some(&set) {
-            return false;
-        }
-        held.last = Some(set.clone());
-        held.by_module.values().cloned().collect()
-    };
-    for follow in to_call {
+    let mut held = followers();
+    if held.last.as_ref() == Some(&set) {
+        return false;
+    }
+    for follow in held.by_module.values() {
         follow(&set);
     }
+    held.last = Some(set);
     true
 }
 

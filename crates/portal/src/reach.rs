@@ -25,8 +25,12 @@ pub fn install(hosts: &[(String, SocketAddr)]) {
 /// registry serves after start). A host reached already keeps its address; an address but
 /// loopback is refused as [`from_env`] refuses it.
 pub fn add(host: &str, addr: SocketAddr) {
-    if !addr.ip().is_loopback() {
-        tracing::warn!(%host, %addr, "a reached host is dialed on loopback alone; left out");
+    let plain = !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+    if !addr.ip().is_loopback() || !plain {
+        tracing::warn!(%host, %addr, "a reached host is a plain name dialed on loopback; left out");
         return;
     }
     let host = host.to_ascii_lowercase();

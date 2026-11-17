@@ -124,15 +124,17 @@ pub struct OrganizationRealm {
 /// registry serves another set of sign-in hosts ([`AppState::replace_organization_realms`]).
 /// Every clone holds the same set; a request reads the set current when it asks.
 #[derive(Clone, Default)]
-pub struct OrganizationRealms(Arc<RwLock<Arc<BTreeMap<String, Arc<OrganizationRealm>>>>>);
+pub struct OrganizationRealms(Arc<RwLock<Arc<RealmMap>>>);
+
+type RealmMap = BTreeMap<String, Arc<OrganizationRealm>>;
 
 impl OrganizationRealms {
-    pub fn new(realms: BTreeMap<String, Arc<OrganizationRealm>>) -> Self {
+    pub fn new(realms: RealmMap) -> Self {
         Self(Arc::new(RwLock::new(Arc::new(realms))))
     }
 
     /// The set held now.
-    pub fn current(&self) -> Arc<BTreeMap<String, Arc<OrganizationRealm>>> {
+    pub fn current(&self) -> Arc<RealmMap> {
         match self.0.read() {
             Ok(held) => Arc::clone(&held),
             Err(poisoned) => Arc::clone(&poisoned.into_inner()),
@@ -151,7 +153,7 @@ impl OrganizationRealms {
         self.current().keys().cloned().collect()
     }
 
-    fn store(&self, next: BTreeMap<String, Arc<OrganizationRealm>>) {
+    fn store(&self, next: RealmMap) {
         let next = Arc::new(next);
         match self.0.write() {
             Ok(mut held) => *held = next,
@@ -184,7 +186,7 @@ impl AppState {
             }
         }
         let held = self.organization_realms.current();
-        let next: BTreeMap<String, Arc<OrganizationRealm>> = settings
+        let next: RealmMap = settings
             .iter()
             .filter_map(|s| match held.get(&s.organization) {
                 Some(realm) if realm.setting == *s => {

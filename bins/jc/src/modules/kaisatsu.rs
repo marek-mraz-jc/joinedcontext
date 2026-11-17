@@ -410,14 +410,29 @@ fn follow_sign_ins(
     store: Arc<dyn Store>,
     files: Option<OrganizationRealmFiles>,
     pins: kaisatsu_server::RealmHostsSwap,
+    start: &[super::sign_in::SignIn],
     scheme: String,
     tasks: &TaskTracker,
 ) {
     let tasks = tasks.clone();
+    // Every realm pinned in this process: one the registry drops stays refused (`close`).
+    let pinned = std::sync::Mutex::new(
+        start
+            .iter()
+            .map(|own| own.organization.clone())
+            .collect::<std::collections::BTreeSet<String>>(),
+    );
     super::sign_in::follow("kaisatsu", move |set| {
+        let mut ever = pinned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ever.extend(set.iter().map(|own| own.organization.clone()));
         match realm_hosts(set, &scheme) {
-            Ok(hosts) => pins.replace(hosts),
-            Err(e) => tracing::error!(error = %e, "kaisatsu: sign-in hosts kept"),
+            Ok(hosts) => pins.replace(ever.iter().fold(hosts, |hosts, r| hosts.close(r))),
+            Err(e) => {
+                tracing::error!(error = %e, "kaisatsu: sign-in hosts kept");
+                return;
+            }
         }
         let Some(files) = files.clone() else {
             return;
@@ -849,6 +864,7 @@ pub async fn build(
         state.store().clone(),
         realm_files,
         state.realm_hosts(),
+        &sign_ins,
         mount.scheme.clone(),
         tasks,
     );
@@ -1136,11 +1152,20 @@ mod tests {
             StatusCode::NOT_FOUND,
             "a pinned realm answers on its own host alone"
         );
-        pins.replace(realm_hosts(&[own("b", "idm.a.test")], "https").unwrap());
+        pins.replace(
+            realm_hosts(&[own("b", "idm.a.test")], "https")
+                .unwrap()
+                .close("a"),
+        );
         assert_eq!(
             discover("idm.a.test").await.unwrap().status(),
             StatusCode::NOT_FOUND,
             "the host serves another realm now"
+        );
+        assert_eq!(
+            discover("login.city.test").await.unwrap().status(),
+            StatusCode::NOT_FOUND,
+            "a realm whose host was removed never falls back to the installation's host"
         );
     }
 

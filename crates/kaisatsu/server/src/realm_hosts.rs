@@ -20,6 +20,9 @@ pub struct RealmHosts {
     /// The hosts sibling modules call kaisatsu on (loopback): a pinned realm answers there its
     /// back channel alone ([`BACK_CHANNEL`]), under the registry's issuer.
     internal: Vec<String>,
+    /// Realms whose sign-in host the registry no longer serves (T-7180): refused on every host,
+    /// so a realm once pinned never falls back to answering on the installation's sign-in host.
+    closed: std::collections::BTreeSet<String>,
 }
 
 /// The pins a running kaisatsu answers by (T-7180): jc replaces them whenever the host registry
@@ -118,6 +121,15 @@ impl RealmHosts {
         self
     }
 
+    /// Refuses `realm` on every host unless it is pinned: a realm whose sign-in host was removed.
+    #[must_use]
+    pub fn close(mut self, realm: &str) -> Self {
+        if !self.by_realm.contains_key(realm) {
+            self.closed.insert(realm.to_ascii_lowercase());
+        }
+        self
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.by_realm.is_empty()
@@ -128,7 +140,7 @@ impl RealmHosts {
         let realm = named.map(|(r, _)| r);
         // Realm names hold no `%`: an encoded segment could name a pinned realm past the
         // comparison, so it is refused wherever a realm is pinned.
-        if realm.is_some_and(|r| r.contains('%')) {
+        if realm.is_some_and(|r| r.contains('%') || self.closed.contains(&r.to_ascii_lowercase())) {
             return Pin::Refused;
         }
         match self.by_host.get(&bare(host)) {

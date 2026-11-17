@@ -120,8 +120,8 @@ impl AuthorRights {
 
     /// The reason `placed` is paused, or `None` when both authors reach it or the realm did
     /// not say who one of them is.
-    async fn judge<'a>(
-        &'a self,
+    async fn judge(
+        &self,
         realm: &mut Realm,
         mirror: &Mirror,
         placed: &Placed<'_>,
