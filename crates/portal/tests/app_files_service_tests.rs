@@ -64,6 +64,7 @@ fn state(store: &MockServer, services: Value) -> AppState {
             .expect("store client"),
         ),
         bucket: "apps".into(),
+        keys: None,
     }));
     state.mirror.upsert(envelope(
         "Organization",
