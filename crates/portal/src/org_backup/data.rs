@@ -577,6 +577,14 @@ pub const PORTAL_TABLES: &[Table] = &[
         keys: "organization",
         filter: "organization = ANY($1)",
     },
+    // A project's id is never reused (ARCH/TEN-16), so the archive keeps it beside the rows it
+    // will key; a branch row carries its parent's name and comes with it.
+    Table {
+        name: "project_ids",
+        columns: &["id", "name", "parent", "minted_at"],
+        keys: "projects",
+        filter: "name = ANY($1)",
+    },
 ];
 
 /// The Portal tables left out of the data backup on purpose, with the reason. Every table of
