@@ -28,7 +28,9 @@ pub use kaisatsu_oidc::brute_force::BruteForceProtector;
 pub use machine::{
     FactorRequirement, LoginInput, LoginPolicyContext, LoginState, TransitionError, transition,
 };
-pub use outbox::{MailSender, OutboxDispatcher, RealmSmtpSender, RecordedMail, RecordingSender};
+pub use outbox::{
+    MailSender, OutboxDispatcher, RealmSmtpSender, RecordedMail, RecordingSender, StoredSmtpSender,
+};
 pub use passkey::{
     allowed_origins_for_realm, build_creation_options, complete_passkey_authentication,
     complete_passkey_registration, effective_rp_id, ensure_user_handle,

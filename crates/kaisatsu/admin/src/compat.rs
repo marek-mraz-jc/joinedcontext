@@ -56,6 +56,14 @@ pub fn admin_router(state: AdminState) -> Router {
             get(compat_get_realm).put(compat_put_realm),
         )
         .route(
+            "/admin/realms/{realm}/smtp-server",
+            get(crate::smtp::get_smtp).put(crate::smtp::put_smtp),
+        )
+        .route(
+            "/admin/realms/{realm}/smtp-server/test",
+            post(crate::smtp::test_smtp),
+        )
+        .route(
             "/admin/realms/{realm}/partialImport",
             post(compat_partial_import),
         )

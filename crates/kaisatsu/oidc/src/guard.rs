@@ -523,37 +523,14 @@ impl OutboundGuard {
 
         let host = url.host_str().unwrap_or_default().to_owned();
         let port = url.port_or_known_default().unwrap_or(443);
-        let exempt = self.exemption(&url);
-
-        let addrs: Vec<SocketAddr> = tokio::time::timeout(
-            OUTBOUND_TIMEOUT,
-            tokio::net::lookup_host((host.as_str(), port)),
-        )
-        .await
-        .map_err(|_| KaisatsuError::OutboundRefused("DNS resolution timed out".into()))?
-        .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
-        .collect();
-
-        if addrs.is_empty() {
-            return Err(KaisatsuError::OutboundRefused(
-                "DNS returned no addresses".into(),
-            ));
-        }
-        for addr in &addrs {
-            if Self::refuses_resolved(exempt, addr.ip()) {
-                return Err(KaisatsuError::OutboundRefused(format!(
-                    "resolved address {} is private/loopback/metadata",
-                    addr.ip()
-                )));
-            }
-        }
+        let addr = Self::resolve_judged(&host, port, self.exemption(&url)).await?;
 
         // Pin the resolved address so DNS rebinding cannot switch the target on connect (W12),
         // and take no proxy from the environment: a proxy would resolve and dial the name itself.
         let mut builder = reqwest::Client::builder()
             .timeout(OUTBOUND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
-            .resolve(&host, addrs[0])
+            .resolve(&host, addr)
             .no_proxy();
         if let Some(pem) = ca_pem {
             let roots = reqwest::Certificate::from_pem_bundle(pem)
@@ -586,6 +563,41 @@ impl OutboundGuard {
             .map_err(|_| KaisatsuError::OutboundRefused("invalid JSON from upstream".into()))
     }
 
+    /// The first address `host` resolves to, once every address it resolves to passed the W12
+    /// rule under `exempt`.
+    async fn resolve_judged(host: &str, port: u16, exempt: Exempt) -> Result<SocketAddr> {
+        let addrs: Vec<SocketAddr> =
+            tokio::time::timeout(OUTBOUND_TIMEOUT, tokio::net::lookup_host((host, port)))
+                .await
+                .map_err(|_| KaisatsuError::OutboundRefused("DNS resolution timed out".into()))?
+                .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
+                .collect();
+        for addr in &addrs {
+            if Self::refuses_resolved(exempt, addr.ip()) {
+                return Err(KaisatsuError::OutboundRefused(format!(
+                    "resolved address {} is private/loopback/metadata",
+                    addr.ip()
+                )));
+            }
+        }
+        addrs
+            .first()
+            .copied()
+            .ok_or_else(|| KaisatsuError::OutboundRefused("DNS returned no addresses".into()))
+    }
+
+    /// The address a socket that is no URL (SMTP) dials for `host:port`, judged as a fetch is
+    /// (W12): every resolved address checked, a listed private host exempt as for `https`. The
+    /// caller connects to this address, never the name again, so DNS rebinding cannot move it.
+    pub async fn resolve_socket(&self, host: &str, port: u16) -> Result<SocketAddr> {
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        let url = Url::parse(&format!("socket://{host}:{port}"))
+            .ok()
+            .filter(|u| u.host_str().is_some() && u.username().is_empty())
+            .ok_or_else(|| KaisatsuError::OutboundRefused("invalid outbound host".into()))?;
+        Self::resolve_judged(host.trim_matches(['[', ']']), port, self.exemption(&url)).await
+    }
+
     /// Sends a form POST (used for back-channel logout and upstream OIDC token exchange) through
     /// the W12 outbound guard.
     pub async fn post_form(&self, raw_url: &str, form: &[(&str, &str)]) -> Result<(u16, Vec<u8>)> {
@@ -604,35 +616,12 @@ impl OutboundGuard {
         }
         let host = url.host_str().unwrap_or_default().to_owned();
         let port = url.port_or_known_default().unwrap_or(443);
-        let exempt = self.exemption(&url);
-
-        let addrs: Vec<SocketAddr> = tokio::time::timeout(
-            OUTBOUND_TIMEOUT,
-            tokio::net::lookup_host((host.as_str(), port)),
-        )
-        .await
-        .map_err(|_| KaisatsuError::OutboundRefused("DNS resolution timed out".into()))?
-        .map_err(|e| KaisatsuError::OutboundRefused(format!("DNS resolution failed: {e}")))?
-        .collect();
-
-        if addrs.is_empty() {
-            return Err(KaisatsuError::OutboundRefused(
-                "DNS returned no addresses".into(),
-            ));
-        }
-        for addr in &addrs {
-            if Self::refuses_resolved(exempt, addr.ip()) {
-                return Err(KaisatsuError::OutboundRefused(format!(
-                    "resolved address {} is private/loopback/metadata",
-                    addr.ip()
-                )));
-            }
-        }
+        let addr = Self::resolve_judged(&host, port, self.exemption(&url)).await?;
 
         let client = reqwest::Client::builder()
             .timeout(OUTBOUND_TIMEOUT)
             .redirect(reqwest::redirect::Policy::none())
-            .resolve(&host, addrs[0])
+            .resolve(&host, addr)
             .no_proxy()
             .build()
             .map_err(|e| KaisatsuError::OutboundRefused(e.to_string()))?;
@@ -836,6 +825,43 @@ mod tests {
         assert!(
             guard
                 .validate_url("https://evil.example/x", Some(&allow))
+                .is_err()
+        );
+    }
+
+    /// An SMTP host the Portal's operators type is judged as a fetch is: a cluster or metadata
+    /// address is refused before any connect, a public address passes and is the one dialled.
+    #[tokio::test]
+    async fn a_socket_host_is_judged_like_a_fetch() {
+        let guard = OutboundGuard::default();
+        for host in [
+            "10.43.0.10",
+            "127.0.0.1",
+            "169.254.169.254",
+            "[::1]",
+            "[fd00::1]",
+        ] {
+            let refused = guard.resolve_socket(host, 587).await;
+            assert!(
+                matches!(refused, Err(KaisatsuError::OutboundRefused(_))),
+                "{host}: {refused:?}"
+            );
+        }
+        let public = guard.resolve_socket("192.0.2.1", 465).await;
+        assert!(public.is_err(), "documentation range: {public:?}");
+        let addr = guard.resolve_socket("1.1.1.1", 465).await.unwrap();
+        assert_eq!(addr, "1.1.1.1:465".parse().unwrap());
+        assert!(
+            guard
+                .resolve_socket("user@mail.example.org", 25)
+                .await
+                .is_err()
+        );
+        // A listed private host still never reaches loopback.
+        assert!(
+            listing(&["localhost"])
+                .resolve_socket("localhost", 25)
+                .await
                 .is_err()
         );
     }
