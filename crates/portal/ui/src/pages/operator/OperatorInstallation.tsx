@@ -163,7 +163,16 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
         </Field>
         </fieldset>
       </form>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      {open ? (
+        // A waiting change is followed or withdrawn on the Changes page: no buttons that wait here.
+        <p className="mt-4 text-body text-fg-muted">
+          {t("operator.installation.email.waitingOwn")}{" "}
+          <Link to="/organization/$tab" params={{ tab: "operator-changes" }} className="font-medium underline">
+            {t("operator.installation.email.toChanges")}
+          </Link>
+        </p>
+      ) : null}
+      <div className="mt-4 flex flex-wrap items-center gap-3" hidden={Boolean(open)}>
           <Button
             type="submit"
             form="smtp-form"
@@ -183,9 +192,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           >
             {t("operator.installation.email.test")}
           </Button>
-          {open ? (
-            <p className="text-caption text-fg-muted">{t("operator.installation.email.waitingOwn")}</p>
-          ) : !smtp ? (
+          {open ? null : !smtp ? (
             <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p>
           ) : !changed ? (
             <p className="text-caption text-fg-muted">{t("operator.installation.email.unchanged")}</p>

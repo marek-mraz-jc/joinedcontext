@@ -107,7 +107,9 @@ describe("Organization → Setup", () => {
     cleanup();
     renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: false }));
     await screen.findByText(en.organization.setup.operatorLeadMember);
-    expect(screen.getAllByText(en.organization.setup.operatorSets)).toHaveLength(OPERATOR.length);
+    // Only the e-mail server is the operators' on the Installation page; the deployment sets the rest.
+    expect(screen.getAllByText(en.organization.setup.operatorSets)).toHaveLength(1);
+    expect(screen.getAllByText(en.organization.setup.deploymentSets).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: en.organization.setup.setIt })).toBeNull();
     expect(document.body.textContent).not.toMatch(/keycloak|branding_file|JC_|postgres\./i);
   });

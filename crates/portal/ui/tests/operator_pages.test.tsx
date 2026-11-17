@@ -339,7 +339,7 @@ describe("installation", () => {
           : undefined,
     );
     expect(await screen.findByText(E.waiting, { exact: false })).toBeTruthy();
-    expect(screen.getByRole("button", { name: E.propose })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: E.propose })).toBeNull();
     // The waiting change and the server in force, side by side as text; no field to type in.
     expect(await screen.findByText("smtp.next.example.org")).toBeTruthy();
     expect(screen.getByText(E.askedFor)).toBeTruthy();
