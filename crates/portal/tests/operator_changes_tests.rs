@@ -504,19 +504,27 @@ async fn the_serving_role_cannot_alter_the_audit_or_drop_its_triggers() {
     .expect("a serving role");
     let mut serving_url = url::Url::parse(&owner_url).expect("the test URL");
     serving_url.set_username(&role).expect("a user");
-    serving_url.set_password(Some("serving-pw")).expect("a password");
+    serving_url
+        .set_password(Some("serving-pw"))
+        .expect("a password");
 
     let same = joinedcontext_portal::db::connect_as(&owner_url, Some(&owner_url))
         .await
         .expect_err("one role named twice");
-    assert!(same.to_string().contains("JC_PORTAL_MIGRATION_DATABASE_URL"), "{same}");
+    assert!(
+        same.to_string()
+            .contains("JC_PORTAL_MIGRATION_DATABASE_URL"),
+        "{same}"
+    );
 
     let config = Config {
         database_url: Some(serving_url.to_string()),
         migration_database_url: Some(owner_url.clone()),
         ..Config::for_tests()
     };
-    let state = AppState::from_config(config).await.expect("the Portal boots");
+    let state = AppState::from_config(config)
+        .await
+        .expect("the Portal boots");
     let pool = state.db.clone().expect("db");
     let me: String = sqlx::query_scalar("SELECT current_user::text")
         .fetch_one(&pool)
