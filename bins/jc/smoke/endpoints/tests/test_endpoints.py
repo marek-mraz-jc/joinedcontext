@@ -214,6 +214,9 @@ class Fake:
         if rest == "ngsi-ld/v1/types":
             types = ["AirQualityObserved"] + (["Road"] if self.broken == "extra-type" else []) \
                 + (["WaterQualityObserved"] if self.broken.startswith("grown") else [])
+            if self.broken == "cut-once" and not self.busy_seen:  # one read past the deadline
+                self.busy_seen = True
+                return 200, {"NGSILD-Warning": '199 antares "entity scan ceiling reached"'}, {"typeList": []}
             if self.broken == "cut-types":  # T-6800: the broker cut every probe at its deadline
                 return 200, {"NGSILD-Warning": '199 antares "entity scan ceiling reached"'}, {"typeList": []}
             return 200, {}, {"typeList": types}
@@ -389,11 +392,22 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     assert code == 1 and check in red, red
 
 
-def test_a_cut_types_listing_names_the_brokers_warning(tmp_path, serve):
+def test_a_cut_types_listing_names_the_brokers_warning(tmp_path, serve, monkeypatch):
     # smoke 43135784935: the restore copy listed no type of 4aw6...; the row showed no 199.
+    monkeypatch.setattr(suite, "CUT_WAIT", 0.0)
     code, res = run(tmp_path, serve(Fake("cut-types")), now_iso())
     row = next(r for r in res["checks"] if r["id"] == "anon.types.match")
     assert code == 1 and row["result"] == "fail" and "; warning 199 antares" in row["actual"], row
+    assert f"after {suite.CUT_TRIES - 1} cut answers" in row["actual"], row
+
+
+def test_a_listing_cut_once_at_the_deadline_is_asked_again(tmp_path, serve, monkeypatch):
+    # smoke 44177875379: the loaded restore copy answered si6epq's /types in 7 s, cut, and
+    # 19 types.written rows went absent; the same listing answered whole before and after.
+    monkeypatch.setattr(suite, "CUT_WAIT", 0.0)
+    code, res = run(tmp_path, serve(Fake("cut-once")), now_iso())
+    row = next(r for r in res["checks"] if r["id"] == "anon.types.match")
+    assert code == 0 and row["result"] == "pass" and row["actual"].endswith("after 1 cut answers"), row
 
 
 def test_a_synthetic_bundle_grown_by_its_pipelines_counts_the_seeded_rows(tmp_path, serve):

@@ -56,6 +56,11 @@ BUSY_TRIES, BUSY_WAIT = 3, 5.0  # the gateway's busy 503 (Suite.get)
 # counts (13723 rows) 503 after 10.4..11.8 s each and the fourth read 16 s later in 1 s. A count is
 # asked again for up to COUNT_WAIT seconds (Suite.count_read).
 COUNT_WAIT = 120.0
+# A /types listing the broker cut at its 6 s discovery deadline (antares bounds.rs DISCOVERY_WAIT)
+# answers 200 with a 199 warning. A loaded copy crossed it in one read and answered whole before
+# and after (smoke 44177875379: 7 s on the restore copy, `settle` green 60 s earlier): a cut
+# listing is read up to CUT_TRIES times, CUT_WAIT s apart. A ceiling cut stays cut and fails.
+CUT_TRIES, CUT_WAIT = 3, 10.0
 # A file's cell holds a whole geometry: a NoiseZone polygon passes csv's default 128 KiB field.
 csv.field_size_limit(64 * 1024 * 1024)
 # One iCal feed reads at most RESIDUAL_SCAN entities (antares-ops/src/scan.rs, 10_000 in jc and in
@@ -175,8 +180,19 @@ class Suite:
             time.sleep(min(float(h["retry-after"]), BUSY_WAIT))
         return self.http.call("GET", path, token=token, headers={"Accept": accept})
 
-    def ok_json(self, id, target, path, token=None, accept=LD, expect=200, headers: dict | None = None):
-        st, h, raw = self.get(path, token, accept)
+    def uncut(self, path, token=None) -> tuple[tuple, int]:
+        """GET a discovery listing, and again while the broker answers it cut (200 with a 199
+        warning), CUT_TRIES tries CUT_WAIT s apart: the last answer and how many came cut before it."""
+        for n in range(CUT_TRIES - 1):
+            st, h, raw = self.get(path, token)
+            if st != 200 or not (h.get("ngsild-warning") or h.get("warning")):
+                return (st, h, raw), n
+            time.sleep(CUT_WAIT)
+        return self.get(path, token), CUT_TRIES - 1
+
+    def ok_json(self, id, target, path, token=None, accept=LD, expect=200, headers: dict | None = None,
+                answer: tuple | None = None):
+        st, h, raw = answer or self.get(path, token, accept)
         if headers is not None:
             headers.update(h)
         body = as_json(raw)
@@ -366,7 +382,9 @@ class Suite:
         else:
             self.born(e, token, who, want, tenant, grants)
         h: dict = {}
-        body = self.ok_json(f"{who}.types", e.slug, f"{base}/ngsi-ld/v1/types", token, headers=h)
+        path = f"{base}/ngsi-ld/v1/types"
+        answer, cut = self.uncut(path, token)
+        body = self.ok_json(f"{who}.types", e.slug, path, token, headers=h, answer=answer)
         if body is not None:
             got = set(listed_types(body) or [])
             # A type whose entities all expire (expiresAt) may be gone by now: not missing.
@@ -377,7 +395,7 @@ class Suite:
             # A 199 warning marks a listing the broker cut at its fold ceiling or deadline; the
             # broker sends it as NGSILD-Warning (CIM 009 6.3.17), so `warning` alone never saw it.
             warn = h.get("ngsild-warning") or h.get("warning")
-            partial = f"; warning {warn}" if warn else ""
+            partial = (f"; warning {warn}" if warn else "") + (f" after {cut} cut answers" if cut else "")
             self.r.check(f"{who}.types.match", e.slug, f"GET {base}/ngsi-ld/v1/types",
                          f"exactly {sorted(want)}", f"missing {missing}, extra {extra}{partial}",
                          not missing and not extra,
