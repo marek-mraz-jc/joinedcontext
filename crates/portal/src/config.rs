@@ -335,6 +335,9 @@ pub struct Config {
     /// UI-09). A secret: it carries a password, so it is redacted in `Debug`. `None` runs the Portal without preferences: those routes answer
     /// 503, everything else works.
     pub database_url: Option<String>,
+    /// The module databases a data backup reads and jc's tenant of each module
+    /// ([`crate::org_backup::modules::BackupModules::from_lookup`] names the variables).
+    pub backup_modules: crate::org_backup::modules::BackupModules,
     /// The group (or realm role) whose members may do everything everywhere, so the first
     /// `RoleBinding` can be written into an empty repository (`JC_PORTAL_BOOTSTRAP_ADMINS`,
     /// default `platform-admins`; T-0526, PF-50).
@@ -535,6 +538,7 @@ impl std::fmt::Debug for Config {
                 "database_url",
                 &self.database_url.as_ref().map(|_| "[redacted]"),
             )
+            .field("backup_modules", &self.backup_modules)
             .field("app_settings", &self.app_settings)
             .field("build_pods", &self.build_pods)
             .field("agent_settings", &self.agent_settings)
@@ -2252,6 +2256,11 @@ impl Config {
         let reach = crate::reach::from_env(&lookup)?;
         let health_dir = lookup("JC_HEALTH_DIR").filter(|path| !path.trim().is_empty());
         let database_url = lookup("JC_PORTAL_DATABASE_URL").filter(|url| !url.trim().is_empty());
+        let backup_modules = crate::org_backup::modules::BackupModules::from_lookup(&lookup)
+            .map_err(|reason| ConfigError::Invalid {
+                var: "JC_PORTAL_BACKUP_TENANTS",
+                reason,
+            })?;
         let bootstrap_admins = lookup("JC_PORTAL_BOOTSTRAP_ADMINS")
             .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty())
@@ -2351,6 +2360,7 @@ impl Config {
             reach,
             health_dir,
             database_url,
+            backup_modules,
             bootstrap_admins,
             decisions_need_second_factor,
             second_factor_floor,
@@ -2450,6 +2460,7 @@ impl Config {
             reach: Vec::new(),
             health_dir: None,
             database_url: None,
+            backup_modules: Default::default(),
             // The dev realm's approver role: a test session that carries it may do everything,
             // one that does not is bound by whatever Role/RoleBinding the test puts in the mirror.
             bootstrap_admins: "portal-approver".to_owned(),

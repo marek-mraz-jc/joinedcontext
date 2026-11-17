@@ -49,6 +49,11 @@ pub struct Source {
     pub schema: &'static str,
     pub keys: BTreeMap<&'static str, Vec<String>>,
     pub tables: &'static [Table],
+    /// The session settings the module's row-level security reads, one list per tenant of the
+    /// Organization: every table is read once per tenant, `set_config(name, value, true)`
+    /// inside the one snapshot. Empty: each table is read once with nothing set (the Portal's
+    /// own database has no row-level security).
+    pub scopes: Vec<Vec<(&'static str, String)>>,
 }
 
 /// One module's part of the index.
@@ -84,32 +89,10 @@ pub struct DataIndex {
 
 /// The modules whose data is not in this archive yet, and why. Each slice that adds an
 /// exporter takes its line out.
-pub const NOT_EXPORTED_YET: &[(&str, &str)] = &[
-    (
-        "antares",
-        "entities and temporal history: the exporter is T-7170, not in this build",
-    ),
-    (
-        "kaisatsu",
-        "the Organization's people and groups: the exporter is T-7169, not in this build",
-    ),
-    (
-        "shako",
-        "repositories: the exporter is T-7169, not in this build",
-    ),
-    (
-        "daiya",
-        "folders and dashboards: the exporter is T-7169, not in this build",
-    ),
-    (
-        "dataroom",
-        "catalogue publishers and datasets: the exporter is T-7169, not in this build",
-    ),
-    (
-        "assistant",
-        "jc_assistant has no Organization key yet; the assistant's runs are in portal/agent_runs",
-    ),
-];
+pub const NOT_EXPORTED_YET: &[(&str, &str)] = &[(
+    "assistant",
+    "jc_assistant has no Organization key yet; the assistant's runs are in portal/agent_runs",
+)];
 
 macro_rules! by_project {
     ($name:literal, [$($column:literal),+ $(,)?]) => {
@@ -646,12 +629,18 @@ fn portal_source(state: &AppState, organization: &str) -> Result<Source, String>
         schema: "",
         keys,
         tables: PORTAL_TABLES,
+        scopes: Vec::new(),
     })
 }
 
 /// Every module's source for `organization`, or why it is not exported.
-fn sources(state: &AppState, organization: &str) -> Vec<(&'static str, Result<Source, String>)> {
-    vec![("portal", portal_source(state, organization))]
+async fn sources(
+    state: &AppState,
+    organization: &str,
+) -> Vec<(&'static str, Result<Source, String>)> {
+    let mut all = vec![("portal", portal_source(state, organization))];
+    all.extend(super::modules::sources(state, organization).await);
+    all
 }
 
 fn archive_error(err: impl std::fmt::Display) -> ApiError {
@@ -720,7 +709,21 @@ async fn export_module(
         zip.start_file(format!("module/{module}/{}.jsonl", table.name), options)
             .map_err(archive_error)?;
         let mut rows = 0u64;
-        if !keys.is_empty() {
+        let unscoped = [Vec::new()];
+        let scopes = if source.scopes.is_empty() {
+            &unscoped[..]
+        } else {
+            &source.scopes[..]
+        };
+        for scope in scopes.iter().filter(|_| !keys.is_empty()) {
+            for (setting, value) in scope {
+                sqlx::query("SELECT set_config($1, $2, true)")
+                    .bind(setting)
+                    .bind(value)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(failed)?;
+            }
             let sql = select_of(source.schema, table);
             let mut stream = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql))
                 .bind(&keys)
@@ -875,7 +878,7 @@ async fn build_archive(
     let (scratch, file) = Scratch::new(".zip")?;
     let mut zip = zip::ZipWriter::new(BufWriter::new(file));
     let mut modules = BTreeMap::new();
-    for (module, source) in sources(state, organization) {
+    for (module, source) in sources(state, organization).await {
         let part = match source {
             Ok(source) => export_module(&mut zip, module, &source).await?,
             Err(reason) => ModuleIndex {
@@ -921,12 +924,14 @@ async fn build_archive(
     Ok((scratch, index))
 }
 
-/// The run's archive, encrypted to the target's recipients, as the bytes to upload.
-pub async fn encrypted_archive(
+/// The run's archive, encrypted to the target's recipients, in a scratch file: the file, its
+/// size and the SHA-256 the run log binds the version by. An archive past one PutObject goes up
+/// in parts ([`super::s3::Bucket::put_file`]).
+pub(super) async fn encrypted_archive(
     state: &AppState,
     target: &Target,
     actor: &str,
-) -> Result<Vec<u8>, ApiError> {
+) -> Result<(Scratch, u64, String), ApiError> {
     let recipients = parse_recipients(&target.recipients)
         .ok()
         .filter(|r| r.len() == 2)
@@ -941,24 +946,22 @@ pub async fn encrypted_archive(
     let (sealed, file) = Scratch::new(".zip.age")?;
     let plain_path = plain.0.clone();
     let sealed_path = sealed.0.clone();
-    tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+    let (size, sha256) = tokio::task::spawn_blocking(move || -> Result<(u64, String), String> {
         encrypt(&recipients, &plain_path, file)?;
-        let size = std::fs::metadata(&sealed_path)
-            .map_err(|e| e.to_string())?
-            .len();
-        // ponytail: one PutObject up to the S3 cap; multipart upload comes with the Antares
-        // exporter (T-7170), whose history is what outgrows it.
-        if size > super::s3::MAX_OBJECT_BYTES as u64 {
-            return Err(format!(
-                "the encrypted archive is {size} bytes, above the {} bytes one upload takes",
-                super::s3::MAX_OBJECT_BYTES
-            ));
-        }
-        std::fs::read(&sealed_path).map_err(|e| e.to_string())
+        let mut sealed = std::fs::File::open(&sealed_path).map_err(|e| e.to_string())?;
+        let mut digest = Sha256::new();
+        let size = std::io::copy(&mut sealed, &mut digest).map_err(|e| e.to_string())?;
+        let sha256 = digest
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        Ok((size, sha256))
     })
     .await
     .map_err(archive_error)?
-    .map_err(archive_error)
+    .map_err(archive_error)?;
+    Ok((sealed, size, sha256))
 }
 
 #[cfg(test)]

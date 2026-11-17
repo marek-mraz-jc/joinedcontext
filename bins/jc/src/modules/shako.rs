@@ -42,7 +42,9 @@ fn repo_root(configured: Option<&Path>, state_dir: &Path) -> Result<PathBuf, Sta
     Ok(dir)
 }
 
-const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
+pub(crate) const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from_u128(1);
+/// The one shako organization jc's forge runs under.
+pub(crate) const ORG: OrgId = OrgId::from_u128(1);
 
 /// The configured store: Postgres (migrated first when a migration role is set, boot RLS
 /// check, log replayed for `(INSTANCE, org_id)`), or memory without a database section.
@@ -72,7 +74,7 @@ pub async fn build_state(
     secrets: &crate::config::Secrets,
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
-    let org_id = OrgId::from_u128(1);
+    let org_id = ORG;
     let store = open_store(cfg, org_id).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,

@@ -32,7 +32,7 @@ databases:
   #   user: 'apicurio'
   #   additionalRoles:
   #     - name: 'apicurio-readonly'
-  #       type: 'readonly'  # Can be 'readonly' or 'readwrite'
+  #       type: 'readonly'  # 'readonly', 'readwrite', 'login' or 'backup' (with grants: [{schema, table, columns}])
   #       credentialsSecret:
   #         name: 'apicurio-readonly-credentials'
   #         passwordKey: 'password'  # Optional, defaults to 'password'

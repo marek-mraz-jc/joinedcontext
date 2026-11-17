@@ -28,6 +28,23 @@ jc_antares:
       ensure: present
     - name: 'btree_gin'
       ensure: present
+  # The Portal's data backup reader (T-7170): as the module readers below, under Antares' own
+  # row-level security per tenant.
+  additionalRoles:
+    - name: 'antares_backup'
+      type: 'backup'
+      credentialsSecret:
+        name: 'db-jc-antares-backup'
+        passwordKey: 'password'
+      grants:
+        - { schema: 'public', table: 'entities', columns: [tenant_id, id, entity, version, types, scopes, location, location_ambiguous, created_at, modified_at, expires_at, attrs_expire_at] }
+        - { schema: 'public', table: 'temporal_entities', columns: [tenant_id, id, types, scopes, meta, created_at, modified_at, deleted_at, dataset_attrs, offset_until, bare] }
+        - { schema: 'public', table: 'iri_ids', columns: [tenant_id, id, iri] }
+        - { schema: 'public', table: 'attr_rows', columns: [tenant_id, entity_no, attr_no, instance_no, dataset_id, observed_at, created_at, modified_at, deleted_at, data, geo_value, version, provenance, short] }
+        - { schema: 'public', table: 'attr_instances', columns: [tenant_id, entity_id, attr_id, instance_id, dataset_id, observed_at, created_at, modified_at, deleted_at, data, geo_value, version, provenance] }
+        - { schema: 'public', table: 'attr_versions', columns: [tenant_id, entity_id, attr_id, instance_id, dataset_id, observed_at, version, data, provenance, superseded_at] }
+        - { schema: 'public', table: 'entity_id_remap', columns: [tenant_id, old_id, new_id, remapped_at] }
+        - { schema: 'public', table: 'jsonld_contexts', columns: [id, body, kind, created_at, tenant_id] }
 # kaisatsu's migrations grant to the role named kaisatsu_app (crates/kaisatsu/store-pg/migrations),
 # so the names are fixed. kaisatsu_app gets CONNECT here; its table rights come from the migrations.
 jc_kaisatsu:
@@ -46,6 +63,30 @@ jc_kaisatsu:
       credentialsSecret:
         name: 'db-jc-kaisatsu-app'
         passwordKey: 'password'
+    # The Portal's data backup reader (T-7169): SELECT on the columns
+    # crates/portal/src/org_backup/modules.rs exports and nothing else, NOBYPASSRLS, so the
+    # module's row-level security still decides what it sees. A Portal test holds these lists
+    # equal to the Portal's.
+    - name: 'kaisatsu_backup'
+      type: 'backup'
+      credentialsSecret:
+        name: 'db-jc-kaisatsu-backup'
+        passwordKey: 'password'
+      grants:
+        - { schema: 'kaisatsu', table: 'organizations', columns: [realm_id, org_id, alias, doc] }
+        - { schema: 'kaisatsu', table: 'organization_domains', columns: [realm_id, org_id, domain_lower, verified] }
+        - { schema: 'kaisatsu', table: 'memberships', columns: [realm_id, org_id, person_id, doc] }
+        - { schema: 'kaisatsu', table: 'groups', columns: [realm_id, id, org_id, path, doc] }
+        - { schema: 'kaisatsu', table: 'group_members', columns: [realm_id, group_id, user_id, org_id, doc] }
+        - { schema: 'kaisatsu', table: 'people', columns: [realm_id, id, org_id, username_lower, email_lower, transient, doc] }
+        - { schema: 'kaisatsu', table: 'roles', columns: [realm_id, id, container_id, client_role, name, doc] }
+        - { schema: 'kaisatsu', table: 'role_mappings', columns: [realm_id, id, principal_kind, principal_id, client_uuid, role_name, doc] }
+        - { schema: 'kaisatsu', table: 'applications', columns: [realm_id, id, org_id, client_id, doc] }
+        - { schema: 'kaisatsu', table: 'client_scopes', columns: [realm_id, id, name, doc] }
+        - { schema: 'kaisatsu', table: 'required_actions', columns: [realm_id, alias, doc] }
+        - { schema: 'kaisatsu', table: 'branding_blocks', columns: [realm_id, org_key, org_id, doc] }
+        - { schema: 'kaisatsu', table: 'events', columns: [realm_id, id, org_id, doc] }
+        - { schema: 'kaisatsu', table: 'admin_events', columns: [realm_id, id, org_id, doc] }
 # shako, daiya, dataroom and ekiben: the same split as kaisatsu. The owner <m>_migrate runs the
 # migrations, which create and grant the request role <m>_app (shako, daiya by name; dataroom and
 # ekiben grant the role jc's url names at each start). `login` keeps the role job from revoking
@@ -66,6 +107,21 @@ jc_shako:
       credentialsSecret:
         name: 'db-jc-shako-app'
         passwordKey: 'password'
+    # The Portal's data backup reader (T-7169): SELECT on the columns
+    # crates/portal/src/org_backup/modules.rs exports and nothing else, NOBYPASSRLS, so the
+    # module's row-level security still decides what it sees. A Portal test holds these lists
+    # equal to the Portal's.
+    - name: 'shako_backup'
+      type: 'backup'
+      credentialsSecret:
+        name: 'db-jc-shako-backup'
+        passwordKey: 'password'
+      grants:
+        - { schema: 'shako', table: 'repo', columns: [id, instance_id, org_id, project_id, owner, name, description, default_branch, private, archived, size_bytes, next_pr_number, created_at, updated_at] }
+        - { schema: 'shako', table: 'protection_rule', columns: [id, instance_id, org_id, repo_id, kind, rule_name, doc, created_at, updated_at] }
+        - { schema: 'shako', table: 'pull_request', columns: [id, instance_id, org_id, repo_id, number, state, title, body, head_ref, head_sha, base_ref, base_sha, merge_base, mergeable, merged, merge_commit_sha, author_login, author_name, author_email, created_at, updated_at, closed_at] }
+        - { schema: 'shako', table: 'review', columns: [id, instance_id, org_id, repo_id, pr_number, verdict, body, author_login, commit_id, dismissed, created_at] }
+        - { schema: 'shako', table: 'commit_status', columns: [id, instance_id, org_id, repo_id, sha, context, state, description, target_url, updated_at] }
 jc_daiya:
   name: 'jc_daiya'
   embedded: true
@@ -82,6 +138,23 @@ jc_daiya:
       credentialsSecret:
         name: 'db-jc-daiya-app'
         passwordKey: 'password'
+    # The Portal's data backup reader (T-7169): SELECT on the columns
+    # crates/portal/src/org_backup/modules.rs exports and nothing else, NOBYPASSRLS, so the
+    # module's row-level security still decides what it sees. A Portal test holds these lists
+    # equal to the Portal's.
+    - name: 'daiya_backup'
+      type: 'backup'
+      credentialsSecret:
+        name: 'db-jc-daiya-backup'
+        passwordKey: 'password'
+      grants:
+        - { schema: 'public', table: 'cr_folder', columns: [installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at] }
+        - { schema: 'public', table: 'cr_dashboard', columns: [installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by, created_at, updated_at] }
+        - { schema: 'public', table: 'cr_dashboard_version', columns: [installation_id, org_id, instance_id, dashboard_uid, version, parent_version, restored_from, message, model, created_by, created_at] }
+        - { schema: 'public', table: 'cr_datasource', columns: [installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, allow_hosts, wasm_digest, version, created_at, updated_at] }
+        - { schema: 'public', table: 'cr_library_panel', columns: [installation_id, org_id, instance_id, folder_uid, uid, name, panel_type, description, model, version, created_at, updated_at] }
+        - { schema: 'public', table: 'cr_alert_rule', columns: [installation_id, org_id, instance_id, uid, folder_uid, title, spec, updated_at] }
+        - { schema: 'public', table: 'cr_alert_state', columns: [installation_id, org_id, instance_id, rule_uid, state, updated_at] }
 jc_dataroom:
   name: 'jc_dataroom'
   embedded: true
@@ -98,6 +171,28 @@ jc_dataroom:
       credentialsSecret:
         name: 'db-jc-dataroom-app'
         passwordKey: 'password'
+    # The Portal's data backup reader (T-7169): SELECT on the columns
+    # crates/portal/src/org_backup/modules.rs exports and nothing else, NOBYPASSRLS, so the
+    # module's row-level security still decides what it sees. A Portal test holds these lists
+    # equal to the Portal's.
+    - name: 'dataroom_backup'
+      type: 'backup'
+      credentialsSecret:
+        name: 'db-jc-dataroom-backup'
+        passwordKey: 'password'
+      grants:
+        - { schema: 'dataroom', table: 'cat_catalogue', columns: [org_id, id, name, host, title, description, default_language, main_profile, modified, doc] }
+        - { schema: 'dataroom', table: 'cat_publisher', columns: [org_id, catalogue_id, id, name, title, uri, state, merged_into, modified, doc] }
+        - { schema: 'dataroom', table: 'cat_dataset', columns: [org_id, catalogue_id, id, name, title, notes, publisher_id, visibility, state, licence_id, frequency, endpoint_url, issued, modified, doc] }
+        - { schema: 'dataroom', table: 'cat_distribution', columns: [org_id, catalogue_id, dataset_id, id, name, access_url, download_url, format, media_type, byte_size, doc] }
+        - { schema: 'dataroom', table: 'cat_view', columns: [org_id, catalogue_id, distribution_id, id, view_type, title, view_order, doc] }
+        - { schema: 'dataroom', table: 'cat_harvest_source', columns: [org_id, catalogue_id, id, name, kind, url, publisher_id, enabled, modified] }
+        - { schema: 'dataroom', table: 'cat_harvest_run', columns: [org_id, catalogue_id, id, source_id, state, started_at, finished_at, created_count, updated_count, unchanged_count, withdrawn_count, doc] }
+        - { schema: 'dataroom', table: 'cat_activity', columns: [org_id, catalogue_id, id, at, actor, operation, object_type, object_id, summary, doc] }
+        - { schema: 'dataroom', table: 'cat_shacl_result', columns: [org_id, catalogue_id, id, dataset_id, profile_id, profile_version, conforms, violation_count, warning_count, checked_at, doc] }
+        - { schema: 'dataroom', table: 'cat_profile', columns: [org_id, catalogue_id, id, version, doc] }
+        - { schema: 'dataroom', table: 'cat_page', columns: [org_id, catalogue_id, slug, lang, modified, doc] }
+        - { schema: 'dataroom', table: 'cat_plugin', columns: [org_id, catalogue_id, name, modified, doc] }
 jc_ekiben:
   name: 'jc_ekiben'
   embedded: true

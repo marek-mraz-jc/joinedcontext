@@ -658,8 +658,9 @@ jobs:
       matrix: { part: [1, 2, 3, 4] }
     defaults: { run: { working-directory: crates/portal } }
     services:
+      # PostGIS: org_backup_tests applies Antares' own migrations (CREATE EXTENSION postgis).
       postgres:
-        image: postgres:17@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+        image: postgis/postgis:17-3.5@sha256:01a6a70e41e6c4467c8f55f6063555ed72db2d6662cd0d571040d42eadaeb6f6
         env: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres }
         ports: ["5432:5432"]
         options: >-
