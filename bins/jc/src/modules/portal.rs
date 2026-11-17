@@ -293,7 +293,11 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
         projects
             .iter()
             .map(|(_, name, key)| (name.clone(), *key))
-            .chain(branches.iter().map(|(_, name, key, _)| (name.clone(), *key)))
+            .chain(
+                branches
+                    .iter()
+                    .map(|(_, name, key, _)| (name.clone(), *key)),
+            )
             .collect(),
     );
     if run.projects {
