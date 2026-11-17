@@ -689,7 +689,7 @@ async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<S
     .expect("the row")
 }
 
-/// T-7196 phase one and T-7201 phase two, on a database of the release before 0079: a row written
+/// T-7196 phase one and T-7201 phase two, on a database of the release before 0080: a row written
 /// before the key is keyed by the backfill once the mirror places its project; a project the
 /// mirror lacks, or whose Organization is not of the registry, keeps no key and is named; a row
 /// written through the store carries the key by the column default; the forcing migration refuses
@@ -698,7 +698,7 @@ async fn key_columns(pool: &sqlx::PgPool, id: &str) -> (Option<String>, Option<S
 #[tokio::test]
 async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_key() {
     use joinedcontext_portal::grafana::{self, Kind, Visualization};
-    let pool = migrated_before(79, "pkbf").await;
+    let pool = migrated_before(80, "pkbf").await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, "bforg").await;
     let placed = run_name("bfplaced");
@@ -939,7 +939,7 @@ async fn migrated_before(before: i64, test: &str) -> sqlx::PgPool {
     pool
 }
 
-/// Applies every migration this release ships, the forcing migration 0079 (T-7201) included.
+/// Applies every migration this release ships, the forcing migration 0080 (T-7201) included.
 /// Without the migrator's advisory lock: a refused run returns its connection to the pool still
 /// holding it, and the test's next run would wait for it forever.
 async fn migrate_on(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {
@@ -956,7 +956,7 @@ async fn rows_keyed_and_read_only_under_their_key(
     rows: &'static [(&'static str, &'static str)],
     test: &str,
 ) -> (AppState, String, String, jc_types::ProjectKey) {
-    let pool = migrated_before(79, &format!("pk{test}")).await;
+    let pool = migrated_before(80, &format!("pk{test}")).await;
     let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
     let org = organization(&pool, &format!("{test}org")).await;
     let placed = run_name(&format!("{test}placed"));
@@ -985,7 +985,7 @@ async fn rows_keyed_and_read_only_under_their_key(
     for table in &tables {
         assert!(
             !project_ids::KEYED_BY_NAME.contains(table),
-            "{table} is forced by 0079 and off the list"
+            "{table} is forced by 0080 and off the list"
         );
     }
 
@@ -1138,10 +1138,12 @@ const DRAFT_ROWS_0076: &[(&str, &str)] = &[(
 )];
 
 /// T-7204 PK-1g: the drafts of today are keyed by the backfill and read only under their key; the
-/// store writes a new draft in the key, and a project without a key yet (one made before the
-/// registry knew its Organization) keeps working unkeyed until the backfill keys it.
+/// store writes a new draft in the key. T-7201: once 0080 forced the key, a project with no key
+/// (its Organization not an active one of the registry) keeps no draft: the put is refused with
+/// the step that fixes it and writes no row, and once the Organization is added it keeps drafts.
 #[tokio::test]
 async fn drafts_are_keyed_and_read_only_under_their_key() {
+    use joinedcontext_portal::ops::drafts::DraftError;
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(DRAFT_ROWS_0076, "dr").await;
     let pool = state.db.clone().expect("a database");
@@ -1159,44 +1161,66 @@ async fn drafts_are_keyed_and_read_only_under_their_key() {
         )
         .await
         .expect("a placed project keeps a draft");
+    let refused = state
+        .drafts
+        .put(
+            &orphan,
+            "Endpoint",
+            "water",
+            manifest.clone(),
+            None,
+            "anna",
+            "human",
+        )
+        .await
+        .expect_err("a project with no key keeps no draft once 0080 forced the key");
+    assert!(
+        matches!(refused, DraftError::Unplaced(ref p) if p == &orphan),
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("Organizations page first"),
+        "{refused}"
+    );
+    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT project, project_id::text FROM drafts WHERE name = 'water' AND project = ANY($1)",
+    )
+    .bind(vec![placed.clone(), orphan.clone()])
+    .fetch_all(&pool)
+    .await
+    .expect("rows");
+    assert_eq!(
+        stamped,
+        [(placed.clone(), Some(key.project.to_string()))],
+        "no row for the refused project"
+    );
+    assert!(state.drafts.list(&orphan).await.expect("list").is_empty());
+    assert!(state
+        .drafts
+        .get(&orphan, "Endpoint", "water")
+        .await
+        .expect("get")
+        .is_none());
+    assert!(!state
+        .drafts
+        .drop(&orphan, "Endpoint", "water")
+        .await
+        .expect("drop"));
+    let later = placed_later(&state, &orphan, "drlate").await;
     state
         .drafts
         .put(
             &orphan, "Endpoint", "water", manifest, None, "anna", "human",
         )
         .await
-        .expect("a project with no key yet keeps its draft unkeyed (phase one)");
-    let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT project, project_id::text FROM drafts WHERE name = 'water' AND project = ANY($1) \
-         ORDER BY project = $2",
-    )
-    .bind(vec![placed.clone(), orphan.clone()])
-    .bind(&orphan)
-    .fetch_all(&pool)
-    .await
-    .expect("rows");
-    assert_eq!(
-        stamped,
-        [
-            (placed.clone(), Some(key.project.to_string())),
-            (orphan.clone(), None)
-        ]
-    );
-    assert_eq!(state.drafts.list(&orphan).await.expect("list").len(), 2);
-    assert!(state
-        .drafts
-        .get(&orphan, "Endpoint", "air")
-        .await
-        .expect("get")
-        .is_some());
-    let later = placed_later(&state, &orphan, "drlate").await;
+        .expect("kept once its Organization is added");
     let keyed: Vec<Option<String>> =
         sqlx::query_scalar("SELECT project_id::text FROM drafts WHERE project = $1")
             .bind(&orphan)
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string())]);
     let names: Vec<String> = state
         .drafts
         .list(&placed)
@@ -1225,11 +1249,12 @@ const ACTIVITY_ROWS_0077: &[(&str, &str)] = &[(
 )];
 
 /// T-7205 PK-1g: the activity of today is keyed by the backfill and read only under its key; a
-/// new event lands in its project's key, and a project without a key yet keeps and reads its
-/// events unkeyed until the backfill keys them.
+/// new event lands in its project's key. T-7201: once 0080 forced the key, a project with no key
+/// keeps no event: the batch stores every other project's events, names the refused project, and
+/// the tail hears nothing of it; once its Organization is added its events are kept in its key.
 #[tokio::test]
 async fn activity_rows_are_keyed_and_read_only_under_their_key() {
-    use joinedcontext_portal::activity::{ActivityEvent, ActivityFilter};
+    use joinedcontext_portal::activity::{ActivityError, ActivityEvent, ActivityFilter};
     let (state, placed, orphan, key) =
         rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0077, "ac").await;
     let pool = state.db.clone().expect("a database");
@@ -1245,51 +1270,51 @@ async fn activity_rows_are_keyed_and_read_only_under_their_key() {
         details: Value::Null,
     };
     let mut tail = state.activity_events.subscribe(&orphan).await;
-    state
+    let refused = state
         .activity
-        .append(&[event(&placed), event(&orphan)])
+        .append(&[event(&orphan), event(&placed)])
         .await
-        .expect("append");
+        .expect_err("a project with no key keeps no event");
     assert!(
-        tail.try_recv().is_ok(),
-        "the tail hears the event kept unkeyed"
+        matches!(refused, ActivityError::Unplaced(ref p) if p == &orphan),
+        "{refused}"
     );
+    assert!(tail.try_recv().is_err(), "the tail hears no refused event");
     let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
         "SELECT project, project_id::text FROM activity WHERE summary = 'Applied again.' \
-         AND project = ANY($1) ORDER BY project = $2",
+         AND project = ANY($1)",
     )
     .bind(vec![placed.clone(), orphan.clone()])
-    .bind(&orphan)
     .fetch_all(&pool)
     .await
     .expect("rows");
     assert_eq!(
         stamped,
-        [
-            (placed.clone(), Some(key.project.to_string())),
-            (orphan.clone(), None)
-        ]
+        [(placed.clone(), Some(key.project.to_string()))],
+        "the placed project's event is kept, the refused one's is not"
     );
     let filter = ActivityFilter {
         limit: 10,
         ..ActivityFilter::default()
     };
     let unkeyed = state.activity.list(&orphan, &filter).await.expect("list");
-    assert_eq!(
-        unkeyed.items.len(),
-        2,
-        "a project with no key yet reads its events"
-    );
+    assert!(unkeyed.items.is_empty(), "a project with no key reads none");
     let page = state.activity.list(&placed, &filter).await.expect("list");
     assert_eq!(page.items.len(), 2, "the backfilled event and the new one");
     let later = placed_later(&state, &orphan, "aclate").await;
+    state
+        .activity
+        .append(&[event(&orphan)])
+        .await
+        .expect("kept once its Organization is added");
+    assert!(tail.try_recv().is_ok(), "the tail hears the kept event");
     let keyed: Vec<Option<String>> =
         sqlx::query_scalar("SELECT project_id::text FROM activity WHERE project = $1")
             .bind(&orphan)
             .fetch_all(&pool)
             .await
             .expect("rows");
-    assert_eq!(keyed, vec![Some(later.project.to_string()); 2]);
+    assert_eq!(keyed, vec![Some(later.project.to_string())]);
 
     // The Organization's own events (people, roles) take its reserved project's key (TEN-11).
     let org = joinedcontext_portal::permissions::organization_of(&state.mirror, &placed)
@@ -1704,8 +1729,7 @@ const PIPELINE_ROWS_0072: &[(&str, &str)] = &[
 
 /// T-7198 PK-1f: the run log, rejects, status, templates, record hashes and source ledger of
 /// today are keyed by the backfill and read only under their key; the log writes new lines in the
-/// key, and a project with no key yet keeps and reads its runs unkeyed in phase one, the passes
-/// over every project included, until the backfill keys them.
+/// key and keeps none for a project without one.
 #[tokio::test]
 async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
     let (state, placed, orphan, key) =
@@ -1725,21 +1749,16 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             .expect("append");
     }
     let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1) \
-         ORDER BY project = $2",
+        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1)",
     )
     .bind(vec![placed.clone(), orphan.clone()])
-    .bind(&orphan)
     .fetch_all(&pool)
     .await
     .expect("rows");
     assert_eq!(
         stamped,
-        [
-            (placed.clone(), Some(key.project.to_string())),
-            (orphan.clone(), None)
-        ],
-        "a placed project's line lands in its key and a project with no key yet keeps it unkeyed"
+        [(placed.clone(), Some(key.project.to_string()))],
+        "a placed project's line lands in its key and an orphan's line is not kept"
     );
     assert_eq!(
         state
@@ -1748,16 +1767,8 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             .await
             .expect("runs")
             .len(),
-        2,
-        "a project with no key yet reads its runs (the train smoke's run history)"
+        0
     );
-    let ran = state.pipeline_log.ran().await.expect("ran");
-    for project in [&placed, &orphan] {
-        assert!(
-            ran.contains_key(&(project.clone(), "trees".to_owned())),
-            "the pass over every project reads {project}"
-        );
-    }
     assert_eq!(
         state
             .pipeline_log
@@ -1767,5 +1778,27 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             .len(),
         2,
         "the backfilled run and the new one read in their key"
+    );
+    let ran = state.pipeline_log.ran().await.expect("ran");
+    assert!(ran.contains_key(&(placed.clone(), "trees".to_owned())));
+    assert!(
+        !ran.contains_key(&(orphan.clone(), "trees".to_owned())),
+        "the pass over every project leaves a project with no key out (0080 forces the key)"
+    );
+    let refused = state
+        .pipeline_templates
+        .create(
+            &orphan,
+            "alice",
+            joinedcontext_portal::ops::pipeline_templates::CreateTemplate {
+                title: "Trees".into(),
+                manifest: serde_json::json!({"kind": "Pipeline", "spec": {"class": "batch"}}),
+            },
+        )
+        .await
+        .expect_err("a project with no key keeps no template");
+    assert!(
+        refused.to_string().contains(&orphan) && refused.to_string().contains("Organizations page"),
+        "the refusal names the project and the operator's next step: {refused}"
     );
 }
