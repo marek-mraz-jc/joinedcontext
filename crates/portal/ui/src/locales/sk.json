@@ -8456,6 +8456,7 @@
       "notYet": "Zatiaľ nenastavené",
       "whomToAsk": "Koho sa opýtať",
       "whomToAskLead": "O ktorúkoľvek z týchto položiek ich požiadajte cez kontakty inštalácie.",
+      "deploymentSets": "Nastavuje nasadenie",
       "step": {
         "organization": {
           "title": "Pomenujte organizáciu",

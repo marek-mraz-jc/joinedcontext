@@ -45,12 +45,14 @@ function useSetup(enabled = true) {
   });
 }
 
-function State({ done, theirs = false }: { done: boolean; theirs?: boolean }): JSX.Element {
+function State({ done, theirs }: { done: boolean; theirs?: "member" | "deployment" }): JSX.Element {
   const { t } = useTranslation();
-  // An item only the operators set is no alarm for the person reading it (T-7152).
+  // An item somebody else sets is no alarm for the person reading it (T-7152): a member's
+  // operators set it, and the deployment still sets what the Installation page does not yet.
+  const open = theirs === "deployment" ? "organization.setup.deploymentSets" : theirs ? "organization.setup.notYet" : "organization.setup.todo";
   return (
     <Badge tone={done ? "success" : theirs ? "neutral" : "warning"}>
-      {done ? t("organization.setup.done") : t(theirs ? "organization.setup.notYet" : "organization.setup.todo")}
+      {done ? t("organization.setup.done") : t(open)}
     </Badge>
   );
 }
@@ -147,7 +149,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
               <div className="flex items-center gap-3">
                 {/* Only the e-mail server is set on the Installation page today: the other items are no
                     red to-do for anybody yet (branding T-7188, backups T-7189). */}
-                <State done={item.done} theirs={!operates || item.id !== "smtp"} />
+                <State done={item.done} theirs={!operates ? "member" : item.id !== "smtp" ? "deployment" : undefined} />
                 <OperatorAction item={item.id} operates={operates} />
               </div>
             </li>

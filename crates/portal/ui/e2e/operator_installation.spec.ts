@@ -102,7 +102,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText(/keycloak/i)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       // Backups are not set on the Installation page yet: no red to-do the operator cannot act on.
-      await expect(page.getByRole("listitem").filter({ hasText: "Backups" }).getByText("Not set yet", { exact: true })).toBeVisible();
+      await expect(page.getByRole("listitem").filter({ hasText: "Backups" }).getByText("Deployment sets this", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-operator-${width}`);
       await page.getByRole("link", { name: "Open Installation" }).click();
 

@@ -8456,6 +8456,7 @@
       "notYet": "Noch nicht gesetzt",
       "whomToAsk": "Wen fragen",
       "whomToAskLead": "Bitten Sie sie über die Kontakte der Installation um einen dieser Punkte.",
+      "deploymentSets": "Bereitstellung legt dies fest",
       "step": {
         "organization": {
           "title": "Organisation benennen",
