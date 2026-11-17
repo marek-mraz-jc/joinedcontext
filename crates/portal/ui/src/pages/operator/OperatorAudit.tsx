@@ -1,6 +1,7 @@
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useIdentity } from "../../auth/AuthProvider";
 import { AdminGrid } from "../../components/grid/AdminGrid";
 import { operatorAudit, operatorKeys, when } from "./operatorApi";
@@ -21,6 +22,19 @@ function subjectOf(row: OperatorAuditEntry): string {
     }
   }
   return "";
+}
+
+/** An audit action in words: "proposed HostAdd" -> "Asked for: Add a host", "host.served" -> "Host now Served". */
+function actionText(action: string, t: TFunction): string {
+  const [verb, kind] = action.split(" ");
+  if (kind && ["proposed", "applied", "rejected"].includes(verb)) {
+    return t(`operator.action.${verb}`, { kind: t(`operator.kind.${kind}`, { defaultValue: kind }) });
+  }
+  if (action.startsWith("host.")) {
+    const state = action.slice("host.".length);
+    return t("operator.action.host", { state: t(`operator.state.${state}`, { defaultValue: state }) });
+  }
+  return t(`operator.action.${action}`, { defaultValue: action });
 }
 
 /**
@@ -56,7 +70,7 @@ export function OperatorAudit(): JSX.Element {
             text: (row) =>
               row.actor === "reconciler" ? t("operator.audit.reconciler") : row.actor === me ? t("operator.changes.you") : row.actor,
           },
-          { key: "action", label: t("operator.audit.action"), text: (row) => row.action, cell: (row) => <span className="font-mono">{row.action}</span> },
+          { key: "action", label: t("operator.audit.action"), text: (row) => actionText(row.action, t) },
           { key: "subject", label: t("operator.audit.subject"), text: subjectOf, cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{subjectOf(row)}</span> },
           { key: "source", label: t("operator.audit.source"), text: (row) => row.sourceIp ?? "", hidden: true },
         ]}

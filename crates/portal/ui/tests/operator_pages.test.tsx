@@ -150,7 +150,8 @@ describe("audit", () => {
           })
         : undefined,
     );
-    expect((await screen.findAllByText("certificate.created")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(en.operator.action.certificate.created)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Asked for: Add a host").length).toBeGreaterThan(0);
     expect(screen.getAllByText(en.operator.audit.reconciler).length).toBeGreaterThan(0);
     expect(screen.getAllByText("api.bbsk.sk").length).toBeGreaterThan(0);
   });

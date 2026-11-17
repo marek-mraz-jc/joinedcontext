@@ -316,7 +316,10 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         />
         {known ? (
           operatorTab ? (
-            <AskAdmins message={t("operator.only")} back={anchor} installation />
+            <div className="space-y-3">
+              <h2 className="text-title font-semibold text-fg">{t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}</h2>
+              <AskAdmins message={t("operator.only")} back={anchor} installation />
+            </div>
           ) : own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own
             // sections are beside it in the menu, and the installation's administrators decide this one.

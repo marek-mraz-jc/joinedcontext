@@ -13592,7 +13592,7 @@
       "empty": "No Organization yet. Create one in Settings, then prove its domain and ask for its first host below.",
       "name": "Organization",
       "domain": "Domain",
-      "noDomain": "No domain",
+      "noDomain": "No domain yet: its first approved host links one",
       "hosts": "Hosts",
       "hostCount": "{served} served, {waiting} on their way"
     },
@@ -13635,7 +13635,8 @@
       "roleHint": "e.g. Working Portal for smartcity.bbsk.sk, Open data for opendata.bbsk.sk.",
       "propose": "Ask for the host",
       "proposed": "The host is asked for. A second operator approves it.",
-      "toChanges": "Open Operator Changes"
+      "toChanges": "Open Operator Changes",
+      "copy": "Copy the record"
     },
     "role": {
       "working": "Working Portal",
@@ -13681,7 +13682,8 @@
       "removeTitle": "Remove {host}?",
       "removeLead": "This asks for a removal. Once a second operator approves it, the host answers no request, and its certificate and route are deleted.",
       "removeConfirm": "Ask for the removal",
-      "removalProposed": "The removal is asked for. A second operator approves it."
+      "removalProposed": "The removal is asked for. A second operator approves it.",
+      "full": "No certificate slot is free"
     },
     "kind": {
       "HostAdd": "Add a host",
@@ -13725,6 +13727,23 @@
       "action": "What",
       "subject": "Host or person",
       "source": "From address"
-    }
+    },
+    "action": {
+      "proposed": "Asked for: {kind}",
+      "applied": "Applied: {kind}",
+      "rejected": "Rejected: {kind}",
+      "host": "Host now {state}",
+      "certificate": {
+        "created": "Certificate requested",
+        "issued": "Certificate issued",
+        "deleted": "Certificate deleted"
+      },
+      "ingress": {
+        "created": "Route for the certificate check created",
+        "widened": "Route opened to the host",
+        "deleted": "Route deleted"
+      }
+    },
+    "refusedTitle": "{section} is for the installation's operators"
   }
 }

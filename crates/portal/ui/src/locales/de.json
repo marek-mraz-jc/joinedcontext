@@ -13592,7 +13592,7 @@
       "empty": "Noch keine Organisation. Legen Sie eine unter Einstellungen an, weisen Sie dann unten ihre Domain nach und beantragen Sie ihren ersten Host.",
       "name": "Organisation",
       "domain": "Domäne",
-      "noDomain": "Keine Domäne",
+      "noDomain": "Noch keine Domain: ihr erster genehmigter Host verknüpft eine",
       "hosts": "Hosts",
       "hostCount": "{served} in Betrieb, {waiting} unterwegs"
     },
@@ -13635,7 +13635,8 @@
       "roleHint": "Z. B. Arbeitsportal für smartcity.bbsk.sk, offene Daten für opendata.bbsk.sk.",
       "propose": "Host anfordern",
       "proposed": "Der Host ist angefordert. Ein zweiter Betreiber genehmigt ihn.",
-      "toChanges": "Operator-Änderungen öffnen"
+      "toChanges": "Operator-Änderungen öffnen",
+      "copy": "Eintrag kopieren"
     },
     "role": {
       "working": "Arbeitsportal",
@@ -13681,7 +13682,8 @@
       "removeTitle": "{host} entfernen?",
       "removeLead": "Dies fordert eine Entfernung an. Sobald ein zweiter Betreiber sie genehmigt, beantwortet der Host keine Anfrage mehr, und Zertifikat und Route werden gelöscht.",
       "removeConfirm": "Entfernung anfordern",
-      "removalProposed": "Die Entfernung ist angefordert. Ein zweiter Betreiber genehmigt sie."
+      "removalProposed": "Die Entfernung ist angefordert. Ein zweiter Betreiber genehmigt sie.",
+      "full": "Kein Zertifikatsplatz frei"
     },
     "kind": {
       "HostAdd": "Host hinzufügen",
@@ -13725,6 +13727,23 @@
       "action": "Was",
       "subject": "Host oder Person",
       "source": "Von Adresse"
-    }
+    },
+    "action": {
+      "proposed": "Beantragt: {kind}",
+      "applied": "Angewendet: {kind}",
+      "rejected": "Abgelehnt: {kind}",
+      "host": "Host jetzt {state}",
+      "certificate": {
+        "created": "Zertifikat angefordert",
+        "issued": "Zertifikat ausgestellt",
+        "deleted": "Zertifikat gelöscht"
+      },
+      "ingress": {
+        "created": "Route für die Zertifikatsprüfung angelegt",
+        "widened": "Route zum Host geöffnet",
+        "deleted": "Route gelöscht"
+      }
+    },
+    "refusedTitle": "{section} ist den Betreibern der Installation vorbehalten"
   }
 }

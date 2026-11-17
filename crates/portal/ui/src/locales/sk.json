@@ -13592,7 +13592,7 @@
       "empty": "Zatiaľ žiadna organizácia. Vytvorte ju v Nastaveniach, potom nižšie preukážte jej doménu a požiadajte o jej prvý hostiteľ.",
       "name": "Organizácia",
       "domain": "Doména",
-      "noDomain": "Bez domény",
+      "noDomain": "Zatiaľ bez domény: prepojí ju jej prvý schválený hostiteľ",
       "hosts": "Hostitelia",
       "hostCount": "{served} v prevádzke, {waiting} na ceste"
     },
@@ -13635,7 +13635,8 @@
       "roleHint": "Napríklad pracovný portál pre smartcity.bbsk.sk, otvorené dáta pre opendata.bbsk.sk.",
       "propose": "Požiadať o hostiteľa",
       "proposed": "O hostiteľa je požiadané. Schváli ho druhý operátor.",
-      "toChanges": "Otvoriť zmeny operátorov"
+      "toChanges": "Otvoriť zmeny operátorov",
+      "copy": "Kopírovať záznam"
     },
     "role": {
       "working": "Pracovný portál",
@@ -13681,7 +13682,8 @@
       "removeTitle": "Odstrániť {host}?",
       "removeLead": "Toto žiada o odstránenie. Keď ho druhý operátor schváli, hostiteľ prestane odpovedať a jeho certifikát a smerovanie sa zmažú.",
       "removeConfirm": "Požiadať o odstránenie",
-      "removalProposed": "O odstránenie je požiadané. Schváli ho druhý operátor."
+      "removalProposed": "O odstránenie je požiadané. Schváli ho druhý operátor.",
+      "full": "Žiadny voľný slot pre certifikát"
     },
     "kind": {
       "HostAdd": "Pridať hostiteľa",
@@ -13725,6 +13727,23 @@
       "action": "Čo",
       "subject": "Hostiteľ alebo osoba",
       "source": "Z adresy"
-    }
+    },
+    "action": {
+      "proposed": "Požiadané: {kind}",
+      "applied": "Použité: {kind}",
+      "rejected": "Zamietnuté: {kind}",
+      "host": "Hostiteľ je teraz {state}",
+      "certificate": {
+        "created": "Certifikát vyžiadaný",
+        "issued": "Certifikát vydaný",
+        "deleted": "Certifikát zmazaný"
+      },
+      "ingress": {
+        "created": "Trasa na overenie certifikátu vytvorená",
+        "widened": "Trasa k hostiteľovi otvorená",
+        "deleted": "Trasa zmazaná"
+      }
+    },
+    "refusedTitle": "{section} je len pre operátorov inštalácie"
   }
 }

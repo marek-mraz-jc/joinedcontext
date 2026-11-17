@@ -13592,7 +13592,7 @@
       "empty": "Zatím žádná organizace. Vytvořte ji v Nastavení, pak níže prokažte její doménu a požádejte o jejího prvního hostitele.",
       "name": "Organizace",
       "domain": "Doména",
-      "noDomain": "Bez domény",
+      "noDomain": "Zatím bez domény: propojí ji její první schválený hostitel",
       "hosts": "Hostitelé",
       "hostCount": "{served} v provozu, {waiting} na cestě"
     },
@@ -13635,7 +13635,8 @@
       "roleHint": "Například pracovní portál pro smartcity.bbsk.sk, otevřená data pro opendata.bbsk.sk.",
       "propose": "Požádat o hostitele",
       "proposed": "O hostitele je požádáno. Schválí ho druhý operátor.",
-      "toChanges": "Otevřít změny operátorů"
+      "toChanges": "Otevřít změny operátorů",
+      "copy": "Kopírovat záznam"
     },
     "role": {
       "working": "Pracovní portál",
@@ -13681,7 +13682,8 @@
       "removeTitle": "Odstranit {host}?",
       "removeLead": "Tímto žádáte o odstranění. Jakmile ho druhý operátor schválí, hostitel přestane odpovídat a jeho certifikát a směrování se smažou.",
       "removeConfirm": "Požádat o odstranění",
-      "removalProposed": "O odstranění je požádáno. Schválí ho druhý operátor."
+      "removalProposed": "O odstranění je požádáno. Schválí ho druhý operátor.",
+      "full": "Žádný volný slot pro certifikát"
     },
     "kind": {
       "HostAdd": "Přidat hostitele",
@@ -13725,6 +13727,23 @@
       "action": "Co",
       "subject": "Hostitel nebo osoba",
       "source": "Z adresy"
-    }
+    },
+    "action": {
+      "proposed": "Požádáno: {kind}",
+      "applied": "Použito: {kind}",
+      "rejected": "Zamítnuto: {kind}",
+      "host": "Hostitel je nyní {state}",
+      "certificate": {
+        "created": "Certifikát vyžádán",
+        "issued": "Certifikát vydán",
+        "deleted": "Certifikát smazán"
+      },
+      "ingress": {
+        "created": "Trasa pro ověření certifikátu vytvořena",
+        "widened": "Trasa k hostiteli otevřena",
+        "deleted": "Trasa smazána"
+      }
+    },
+    "refusedTitle": "{section} je jen pro operátory instalace"
   }
 }

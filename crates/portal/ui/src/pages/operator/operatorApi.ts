@@ -77,8 +77,16 @@ export function stateTone(state: string): "success" | "neutral" | "info" {
   return "info";
 }
 
-/** A server timestamp in the reader's language, e.g. `17 Nov 2026, 09:00`; the audit keeps the seconds. */
+/** A server timestamp in the reader's language, e.g. `17 Nov 2026, 09:00 UTC`; the audit keeps the seconds. */
 export function when(at: string, locale: string, seconds = false): string {
   const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? at : date.toLocaleString(locale, { dateStyle: "medium", timeStyle: seconds ? "medium" : "short" });
+  return Number.isNaN(date.getTime()) ? at : date.toLocaleString(locale, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: seconds ? "2-digit" : undefined,
+        timeZoneName: "short",
+      });
 }

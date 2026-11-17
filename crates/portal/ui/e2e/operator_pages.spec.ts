@@ -132,6 +132,7 @@ async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.JC_EVIDENCE_DIR;
   if (!dir) return;
   mkdirSync(dir, { recursive: true });
+  await page.mouse.move(0, 0);
   const height = await page.evaluate(() => document.documentElement.scrollHeight);
   await page.setViewportSize({ width: page.viewportSize()?.width ?? 1440, height });
   await page.screenshot({ path: join(dir, `${name}.png`) });
@@ -189,7 +190,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await expect(page.getByText("The removal is asked for. A second operator approves it.")).toBeVisible();
 
       await page.goto("/organization/operator-audit?lang=en");
-      await expect(page.getByText("proposed HostRemove").filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText("Asked for: Remove a host").filter({ visible: true }).first()).toBeVisible();
       await expect(page.getByText("The Portal (reconciler)").filter({ visible: true }).first()).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-audit-${width}`);

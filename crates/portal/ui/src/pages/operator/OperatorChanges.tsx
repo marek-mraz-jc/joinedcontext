@@ -52,7 +52,6 @@ export function OperatorChanges(): JSX.Element {
         columns={[
           { key: "kind", label: t("operator.changes.kind"), text: (row) => t(`operator.kind.${row.kind}`) },
           { key: "target", label: t("operator.changes.target"), text: target, cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{target(row)}</span> },
-          { key: "proposedAt", label: t("operator.changes.proposedAt"), text: (row) => when(row.proposedAt, i18n.language) },
           {
             key: "state",
             label: t("operator.changes.state"),
@@ -63,12 +62,13 @@ export function OperatorChanges(): JSX.Element {
               </Badge>
             ),
           },
+          { key: "proposedBy", label: t("operator.changes.proposedBy"), text: (row) => (row.proposedBy === me ? t("operator.changes.you") : row.proposedBy) },
+          { key: "proposedAt", label: t("operator.changes.proposedAt"), text: (row) => when(row.proposedAt, i18n.language) },
           {
             key: "organization",
             label: t("operator.changes.organization"),
             text: (row) => row.payload.organization ?? "",
           },
-          { key: "proposedBy", label: t("operator.changes.proposedBy"), text: (row) => (row.proposedBy === me ? t("operator.changes.you") : row.proposedBy) },
           {
             key: "actions",
             label: t("operator.changes.actions"),

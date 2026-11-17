@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { reasonOf } from "../../api/client";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { CopyUrlButton } from "../../components/endpoints/links";
 import { Alert, Badge, Button, Card, CardHeader, CodeBlock, Field, Input, Select } from "../../components/ui";
 import {
   HOST_ROLES,
@@ -101,7 +102,6 @@ function IdList({ ids }: { ids: OperatorOrganizationId[] }): JSX.Element {
         rowKey={(row) => row.id}
         storageKey="operator.ids"
         empty={t("operator.ids.empty")}
-        noSearch
         stack
         columns={[
           { key: "domain", label: t("operator.ids.domain"), text: (row) => row.domain, cell: (row) => <span className="font-mono">{row.domain}</span> },
@@ -184,11 +184,11 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
   return (
     <Card>
       <CardHeader title={t("operator.add.title")} description={t("operator.add.lead")} />
-      <ol className="space-y-6">
-        <li className="space-y-3">
+      <ol className="mt-4 divide-y divide-border">
+        <li className="space-y-3 py-5 first:pt-0 last:pb-0">
           <h3 className="text-body font-semibold text-fg">{t("operator.add.step1")}</h3>
-          <form className="flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={onAsk}>
-            <Field id="operator-domain" label={t("operator.add.domain")} help={t("operator.add.domainHint")} errors={fieldOf(ask.error, "domain")} className="grow">
+          <form className="flex flex-col items-start gap-3" onSubmit={onAsk}>
+            <Field id="operator-domain" label={t("operator.add.domain")} help={t("operator.add.domainHint")} errors={fieldOf(ask.error, "domain")} className="w-full max-w-md">
               <Input id="operator-domain" value={domain} onChange={(e) => setDomain(e.target.value)} autoComplete="off" spellCheck={false} required />
             </Field>
             <Button type="submit" loading={ask.isPending}>
@@ -200,10 +200,11 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
             <div className="space-y-2">
               <p className="text-body text-fg">{t("operator.add.publish", { domain: challenge.domain })}</p>
               <CodeBlock label={t("operator.add.record")}>{challenge.record}</CodeBlock>
+              <CopyUrlButton url={challenge.record} label={t("operator.add.copy")} />
             </div>
           ) : null}
         </li>
-        <li className="space-y-3">
+        <li className="space-y-3 py-5 first:pt-0 last:pb-0">
           <h3 className="text-body font-semibold text-fg">{t("operator.add.step2")}</h3>
           <p className="text-body text-fg-muted">{t("operator.add.step2Lead")}</p>
           <Button variant="secondary" disabled={!challenge} disabledReason={t("operator.add.mintFirst")} loading={mint.isPending} onClick={() => challenge && mint.mutate(challenge.domain)}>
@@ -212,7 +213,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
           {mint.isError ? <Alert tone="danger">{reasonOf(mint.error, t("operator.tryAgain"))}</Alert> : null}
           {mint.isSuccess ? <Alert tone="success">{t("operator.add.minted", { id: orgId })}</Alert> : null}
         </li>
-        <li className="space-y-3">
+        <li className="space-y-3 py-5 first:pt-0 last:pb-0">
           <h3 className="text-body font-semibold text-fg">{t("operator.add.step3")}</h3>
           {organizations.length === 0 ? (
             <p className="text-body text-fg-muted">{t("operator.add.noOrganization")}</p>
@@ -240,7 +241,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
                   ))}
                 </Select>
               </Field>
-              <div className="flex items-end">
+              <div className="sm:col-span-2">
                 <Button type="submit" loading={propose.isPending}>
                   {t("operator.add.propose")}
                 </Button>

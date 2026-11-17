@@ -35,9 +35,15 @@ export function OperatorHosts(): JSX.Element {
       {slots ? (
         <Card>
           <CardHeader title={t("operator.hosts.slots")} description={t("operator.hosts.slotsLead", { week: slots.perDomainWeek })} />
-          <p className="text-body text-fg">
-            {t("operator.hosts.used", { used: slots.usedToday, limit: slots.perDay })}
-          </p>
+          {slots.usedToday >= slots.perDay ? (
+            <Alert tone="warning" title={t("operator.hosts.full")}>
+              {t("operator.hosts.used", { used: slots.usedToday, limit: slots.perDay })}
+            </Alert>
+          ) : (
+            <p className="text-body text-fg">
+              {t("operator.hosts.used", { used: slots.usedToday, limit: slots.perDay })}
+            </p>
+          )}
           {slots.nextFreeAt ? (
             <p className="text-body text-fg-muted">
               {t("operator.hosts.nextFree", { at: when(slots.nextFreeAt, i18n.language) })}
@@ -68,8 +74,8 @@ export function OperatorHosts(): JSX.Element {
             text: (row) => row.detail ?? "",
             cell: (row) => <span className="text-fg-muted">{row.detail ?? t(`operator.stateHint.${row.state}`, { defaultValue: "" })}</span>,
           },
-          { key: "organization", label: t("operator.hosts.organization"), text: (row) => row.organization },
           { key: "role", label: t("operator.hosts.role"), text: (row) => t(`operator.role.${row.role}`, { defaultValue: row.role }) },
+          { key: "organization", label: t("operator.hosts.organization"), text: (row) => row.organization },
           {
             key: "actions",
             label: t("operator.hosts.actions"),
