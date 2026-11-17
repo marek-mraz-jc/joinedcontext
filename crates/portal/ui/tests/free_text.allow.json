@@ -248,6 +248,10 @@
     "src/pages/organization/Backups.tsx :: (no label)": {
       "class": "FREE",
       "reason": "the S3 address, region, bucket, folder and key of the Organization's own bucket outside the platform: nothing of the platform to pick from; the server checks each field's form (T-7154)"
+    },
+    "src/pages/operator/OperatorInstallation.tsx :: User": {
+      "class": "FREE",
+      "reason": "the SMTP server's own account name, which the mail provider issues; no person of the realm"
     }
   }
 }

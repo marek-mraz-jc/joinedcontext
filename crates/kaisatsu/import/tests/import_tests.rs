@@ -479,6 +479,15 @@ async fn unset_secret_variables_never_become_guessable_secrets() {
         .await
         .expect("an existing SMTP password is kept");
     assert_eq!(smtp_password().await, "the-real-secret");
+    // T-7152: files that name no SMTP server leave the one the Portal's operators saved.
+    let silent = json!({ "realm": "unset", "displayName": "silent" });
+    apply_realm_files(&store, &[("s.json".into(), silent)], &opts)
+        .await
+        .expect("a file without smtpServer applies");
+    assert_eq!(smtp_password().await, "the-real-secret");
+    let kept = store.get_realm("unset").await.unwrap().unwrap();
+    assert_eq!(kept.display_name, "silent");
+    assert_eq!(kept.smtp_server.unwrap().host, "mail");
 }
 
 /// Inside `jc` the importer reads only the values it is handed: a realm file naming another

@@ -1904,6 +1904,14 @@
         "operator_pages.test.tsx"
       ]
     },
+    "src/pages/operator/OperatorInstallation.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "operator_pages.test.tsx"
+      ]
+    },
     "src/pages/operator/OperatorOrganizations.tsx": {
       "controls": {
         "Button": 4

@@ -39,12 +39,15 @@ fn role(state: &AppState, name: &str, user: &str, project: &str, kinds: &[&str],
 }
 
 /// `jana` stewards the KPI pipeline; `olli` owns Helsinki's air space; `eve` reads Helsinki only.
+/// Both projects belong to an Organization of the registry, so their requests are keyed (T-7202).
 async fn state(pool: sqlx::PgPool, pipeline: &str, pipeline_identity: bool) -> AppState {
     let state = world(pipeline, pipeline_identity)
         .await
         .with_db(pool.clone());
     // An approval proposes into Helsinki through its import check, a draft kept in its key.
-    common::keyed_project(&state, &pool, HELSINKI, "helsinki").await;
+    for project in [KPIS, HELSINKI] {
+        common::keyed_project(&state, &pool, project, &format!("{project}-org")).await;
+    }
     state
 }
 

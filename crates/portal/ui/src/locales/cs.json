@@ -8176,6 +8176,7 @@
       "backups": "Zálohy",
       "operator-organizations": "Organizace",
       "operator-hosts": "Hostitelé a certifikáty",
+      "operator-installation": "Instalace",
       "operator-changes": "Změny operátorů",
       "operator-audit": "Audit operátorů"
     },
@@ -8448,7 +8449,14 @@
       "continue": "Pokračovat v nastavení",
       "reminder": "{count, plural, one {# položka nastavení je ještě otevřená.} few {# položky nastavení jsou ještě otevřené.} other {# položek nastavení je ještě otevřených.}}",
       "operatorTitle": "Co poskytuje instalace",
-      "operatorLead": "Tyto položky pocházejí z nasazení, ne z této stránky. Požádejte provozovatele instalace, aby nastavil hodnotu uvedenou u každé z nich.",
+      "operatorLead": "Jste jedním z operátorů instalace: tyto položky nastavujete jednou pro každou organizaci.",
+      "operatorLeadMember": "Operátoři instalace nastavují tyto položky jednou pro každou organizaci.",
+      "setIt": "Otevřít instalaci",
+      "operatorSets": "Nastavují to operátoři vaší instalace.",
+      "notYet": "Zatím nenastaveno",
+      "whomToAsk": "Koho se zeptat",
+      "whomToAskLead": "E-mailový server nastavují operátoři instalace; požádejte o něj je.",
+      "deploymentSets": "Nastavuje nasazení",
       "step": {
         "organization": {
           "title": "Pojmenujte organizaci",
@@ -8484,19 +8492,23 @@
       "operator": {
         "branding": {
           "title": "Značka",
-          "hint": "Název a logo instalace, nastavené v bloku branding nasazení."
+          "hint": "Název, logo a barvy instalace. Zatím se nastavují v souboru značky instalace, který dodává vaše nasazení.",
+          "about": "Název, logo a barvy instalace."
         },
         "loginTheme": {
           "title": "Přihlašovací stránky",
-          "hint": "Vlastní přihlašovací téma platformy v Keycloaku místo výchozího (keycloak.theme)."
+          "hint": "Jak vypadají přihlašovací stránky. Zatím se nastavují v přihlašovací části souboru značky instalace.",
+          "about": "Jak vypadají přihlašovací stránky."
         },
         "smtp": {
           "title": "E-mail",
-          "hint": "SMTP server, aby Keycloak mohl posílat pozvánky a obnovu hesla (keycloak.smtp)."
+          "hint": "Server SMTP, aby přihlašovací služba posílala pozvánky a obnovení hesla. Nastavte ho na stránce Instalace.",
+          "about": "Server SMTP, aby pozvánky a obnovení hesla dorazily k lidem."
         },
         "backups": {
           "title": "Zálohy",
-          "hint": "Plánované zálohy databáze do objektového úložiště (postgres.backups)."
+          "hint": "Plánované zálohy celé databáze do objektového úložiště. Zatím je nastavuje záloha databáze v nasazení.",
+          "about": "Plánované zálohy databáze instalace."
         }
       }
     },
@@ -13583,7 +13595,7 @@
     }
   },
   "operator": {
-    "only": "Tyto sekce patří správcům instalace, jejím operátorům. Požádejte některého z nich o novou organizaci, doménu nebo hostitele.",
+    "only": "Tato sekce patří operátorům instalace. Požádejte některého z nich o novou organizaci, doménu nebo hostitele, nebo o e-mailový server.",
     "tryAgain": "Požadavek neprošel. Zkuste to za chvíli znovu.",
     "organizations": {
       "title": "Organizace",
@@ -13693,7 +13705,8 @@
       "HostAdd": "Přidat hostitele",
       "HostRemove": "Odstranit hostitele",
       "OperatorAdd": "Přidat operátora",
-      "OperatorRemove": "Odstranit operátora"
+      "OperatorRemove": "Odstranit operátora",
+      "SmtpSet": "Nastavit e-mailový server"
     },
     "changeState": {
       "proposed": "Čeká na schválení",
@@ -13731,6 +13744,55 @@
       "subject": "Hostitel nebo osoba",
       "source": "Z adresy"
     },
+    "installation": {
+      "loading": "Načítají se nastavení instalace",
+      "title": "Instalace",
+      "lead": "Co instalace poskytuje každé organizaci. Každé uložení je změna operátora: před použitím ji schválí druhý operátor.",
+      "email": {
+        "title": "E-mailový server",
+        "lead": "Server SMTP, přes který přihlašovací služba posílá pozvánky a obnovení hesla. Po schválení platí pro další e-mail, bez restartu.",
+        "set": "Nastaven",
+        "unset": "Nenastaven",
+        "waitingBadge": "Čeká na schválení",
+        "unchanged": "Nejprve změňte některé pole; nic se neliší od uloženého serveru.",
+        "empty": "Zatím žádný e-mailový server, takže se pozvánky a obnovení hesla neposílají. Vyplňte server od vašeho poskytovatele pošty a uložte ho.",
+        "waitingShort": "Změna už čeká na druhého operátora: nejprve ji schvalte nebo zamítněte.",
+        "notAsked": "Portál změnu odmítl: žádná změna nevznikla",
+        "fixField": "Pole {field} bylo odmítnuto: opravte ho podle textu pod ním a požádejte o změnu znovu.",
+        "testWaiting": "Test používá platný server; pošlete ho po rozhodnutí čekající změny, nebo hned pro ten platný.",
+        "noneInForce": "Zatím neplatí žádný e-mailový server: čekající změna nastaví první.",
+        "inForce": "Platí, dokud změna není schválena",
+        "inForceNow": "Platí nyní",
+        "waitingOwn": "Změna už čeká na druhého operátora. Sledujte ji, nebo ji stáhněte a požádejte o jinou, na stránce Změny.",
+        "askedFor": "Vyžádáno",
+        "passwordNew": "Nové, zapečetěné do rozhodnutí o změně",
+        "toChanges": "Otevřít Změny",
+        "host": "Hostitel SMTP",
+        "tls": "Ochrana",
+        "port": "Port",
+        "from": "Adresa odesílatele",
+        "user": "Uživatel",
+        "password": "Heslo",
+        "tlsStarttls": "STARTTLS (obvykle port 587)",
+        "tlsSsl": "TLS od začátku (obvykle port 465)",
+        "passwordStored": "Uloženo; zadejte nové, chcete-li ho nahradit",
+        "hint": {
+          "host": "Název hostitele serveru, např. smtp.example.org. Žádná interní adresa ani adresa clusteru.",
+          "tls": "Nešifrované SMTP se nenabízí; váš poskytovatel uvádí, který ze dvou způsobů používá.",
+          "port": "např. 587 pro STARTTLS, 465 pro TLS od začátku.",
+          "from": "Odesílatel, kterého lidé vidí, např. noreply@example.org.",
+          "user": "Uživatel SMTP, např. mailer@example.org; prázdné, pokud server nevyžaduje přihlášení.",
+          "password": "Jen pro zápis: po uložení se už nikdy nezobrazí.",
+          "passwordKept": "Heslo je uloženo a nikdy se nezobrazí. Nechte pole prázdné, chcete-li ho ponechat, např. když měníte jen port."
+        },
+        "propose": "Požádat o tuto změnu",
+        "proposed": "Požádáno. Druhý operátor ji schválí ve Změnách.",
+        "test": "Odeslat testovací e-mail",
+        "testFirst": "Jakmile druhý operátor server schválí, otestujte ho zde.",
+        "testSent": "Server přijal testovací e-mail. Jde na vaši vlastní adresu; zkontrolujte schránku.",
+        "testFailed": "Testovací e-mail se neodeslal. Opravte, co uvádí řádek níže, a pošlete test znovu."
+      }
+    },
     "action": {
       "proposed": "Požádáno: {kind}",
       "applied": "Použito: {kind}",
@@ -13745,8 +13807,12 @@
         "created": "Trasa pro ověření certifikátu vytvořena",
         "widened": "Trasa k hostiteli otevřena",
         "deleted": "Trasa smazána"
+      },
+      "smtp": {
+        "test": "Odeslán testovací e-mail"
       }
     },
+    "refusedLead": "{section} obsahuje to, co operátoři instalace spravují pro každou organizaci.",
     "refusedTitle": "{section} je jen pro operátory instalace"
   }
 }

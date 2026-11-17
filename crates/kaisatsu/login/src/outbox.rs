@@ -358,6 +358,49 @@ impl MailSender for RealmSmtpSender {
     }
 }
 
+/// Production [`MailSender`] where the realm keeps its own SMTP password: `smtpServer` with the
+/// password kaisatsu holds sealed under its KEK, read at each send, so a setting the Portal's
+/// operators save goes out on the next e-mail without a restart (T-7152). The host is judged by
+/// the outbound guard and its judged address is the one dialled (W12): no SMTP host of a realm
+/// reaches a cluster, loopback or metadata address.
+pub struct StoredSmtpSender {
+    store: Arc<dyn Store>,
+    guard: kaisatsu_oidc::OutboundGuard,
+}
+
+impl StoredSmtpSender {
+    #[must_use]
+    pub fn new(store: Arc<dyn Store>, guard: kaisatsu_oidc::OutboundGuard) -> Self {
+        Self { store, guard }
+    }
+}
+
+impl MailSender for StoredSmtpSender {
+    fn send_mail<'a>(
+        &'a self,
+        realm_id: &'a str,
+        to_address: &'a str,
+        subject: &'a str,
+        body: &'a str,
+        _action_link: &'a str,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let smtp = self
+                .store
+                .get_realm(realm_id)
+                .await?
+                .and_then(|r| r.smtp_server)
+                .filter(|s| !s.host.trim().is_empty())
+                .ok_or_else(|| KaisatsuError::BadRequest("realm has no smtpServer".into()))?;
+            let host = smtp.host.clone();
+            let sender = EmailSender::from_stored(smtp)?;
+            let addr = self.guard.resolve_socket(&host, sender.port()?).await?;
+            let message = sender.build_message(to_address, subject, body.to_owned())?;
+            sender.send_via(message, Some(addr)).await
+        })
+    }
+}
+
 /// The `(subject, body)` of an action e-mail as Keycloak's e-mail theme words it
 /// (emailVerification, passwordReset or executeActions): `{0}` the link, `{1}` its lifetime in
 /// minutes, `{2}` the realm's name, then the actions (executeActions) and the lifetime in words.

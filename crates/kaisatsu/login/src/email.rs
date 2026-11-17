@@ -44,12 +44,28 @@ impl EmailSender {
             ))
         })?;
         config.password = pw.trim().to_owned();
+        Self::from_stored(config)
+    }
+
+    /// The realm's SMTP settings with the password kaisatsu keeps sealed under its KEK
+    /// (`realms.smtp_password_enc`), as the Portal's operators save them (T-7152). TLS required.
+    pub fn from_stored(config: SmtpServerConfig) -> Result<Self> {
         if config.ssl != "true" && config.starttls != "true" {
             return Err(KaisatsuError::BadRequest(
                 "SMTP requires TLS (starttls or ssl must be true, W7)".into(),
             ));
         }
         Ok(Self { smtp: Some(config) })
+    }
+
+    /// The SMTP port the settings name.
+    pub fn port(&self) -> Result<u16> {
+        self.smtp
+            .as_ref()
+            .ok_or_else(|| KaisatsuError::BadRequest("SMTP is not configured".into()))?
+            .port
+            .parse()
+            .map_err(|_| KaisatsuError::BadRequest("invalid SMTP port".into()))
     }
 
     /// Mints a signed, single-use 15-minute action token (W7).
@@ -157,21 +173,37 @@ impl EmailSender {
     /// Sends `message` over SMTP with TLS (implicit TLS when `ssl`, otherwise STARTTLS) (W7).
     /// The error never carries the SMTP password or the server's reply text.
     pub async fn send(&self, message: lettre::Message) -> Result<()> {
+        self.send_via(message, None).await
+    }
+
+    /// [`Self::send`] to the address `pinned` (one the outbound guard judged, W12) instead of
+    /// the host's name: the TLS certificate is still checked against the host's name.
+    pub async fn send_via(
+        &self,
+        message: lettre::Message,
+        pinned: Option<std::net::SocketAddr>,
+    ) -> Result<()> {
         use lettre::AsyncTransport as _;
+        use lettre::transport::smtp::client::{Tls, TlsParameters};
+        type Transport = lettre::AsyncSmtpTransport<lettre::Tokio1Executor>;
         let smtp = self
             .smtp
             .as_ref()
             .ok_or_else(|| KaisatsuError::BadRequest("SMTP is not configured".into()))?;
-        let port: u16 = smtp
-            .port
-            .parse()
-            .map_err(|_| KaisatsuError::BadRequest("invalid SMTP port".into()))?;
-        let builder = if smtp.ssl == "true" {
-            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::relay(&smtp.host)
-        } else {
-            lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::starttls_relay(&smtp.host)
+        let port = self.port()?;
+        let invalid_host = |_| KaisatsuError::BadRequest("invalid SMTP host".into());
+        let builder = match pinned {
+            Some(addr) => {
+                let tls = TlsParameters::new(smtp.host.trim().to_owned()).map_err(invalid_host)?;
+                Transport::builder_dangerous(addr.ip().to_string()).tls(if smtp.ssl == "true" {
+                    Tls::Wrapper(tls)
+                } else {
+                    Tls::Required(tls)
+                })
+            }
+            None if smtp.ssl == "true" => Transport::relay(&smtp.host).map_err(invalid_host)?,
+            None => Transport::starttls_relay(&smtp.host).map_err(invalid_host)?,
         }
-        .map_err(|_| KaisatsuError::BadRequest("invalid SMTP host".into()))?
         .port(port)
         .timeout(Some(std::time::Duration::from_secs(10)));
         let builder = if smtp.auth == "true" {

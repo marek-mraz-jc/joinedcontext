@@ -539,6 +539,8 @@ const DOORS: Record<string, Door> = {
   portal_operator_organizations: ["GET", "/operator/organizations"],
   portal_operator_hosts: ["GET", "/operator/hosts"],
   portal_operator_audit: ["GET", "/operator/audit"],
+  portal_operator_installation: ["GET", "/operator/installation"],
+  portal_operator_installation_test_email: ["POST", "/operator/installation/test-email"],
   portal_operator_change_list: ["GET", "/operator/changes"],
   portal_operator_change_propose: ["POST", "/operator/changes"],
   portal_operator_change_approve: ["POST", "/operator/changes/{id}/approve"],
