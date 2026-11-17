@@ -201,6 +201,15 @@ pub struct HostSwap {
     current: Arc<RwLock<Arc<HostTable>>>,
     /// `(first path segment, module)` of each mount: no Organization may take one.
     segments: Arc<Vec<(String, String)>>,
+    /// The router each module answers with ([`JcRouterBuilder::module_router`]), for the hosts
+    /// the registry adds.
+    routers: Arc<std::collections::BTreeMap<String, Router>>,
+    /// Every host an entry of the configuration names, without its port: the registry mounts
+    /// nothing there.
+    fixed: Arc<std::collections::BTreeSet<String>>,
+    /// The entries of the hosts the registry added ([`HostSwap::mount_hosts`]), longest prefix
+    /// first.
+    added: Arc<RwLock<Arc<Vec<MountedEntry>>>>,
 }
 
 impl HostSwap {
@@ -215,10 +224,75 @@ impl HostSwap {
     /// Builds the table of the configuration with `rows` applied and swaps it in. On an error
     /// the table that answers now stays, and the error says which row broke the build.
     pub fn rebuild(&self, rows: &[RegistryHost<'_>]) -> Result<(), RouterError> {
-        let table = self.base.with_registry(rows)?;
+        self.rebuild_without(rows, &[])
+    }
+
+    /// [`HostSwap::rebuild`] with the Organizations `removed` taken out of the configuration's
+    /// table first (`HostTable::without`): none of their hosts or paths answers.
+    pub fn rebuild_without(
+        &self,
+        rows: &[RegistryHost<'_>],
+        removed: &[&str],
+    ) -> Result<(), RouterError> {
+        let table = self.base.without(removed).with_registry(rows)?;
         shadow_check(&table, &self.segments)?;
         *self.current.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(table);
         Ok(())
+    }
+
+    /// Mounts each module of `specs` on its host, with the router that module answers with
+    /// elsewhere (T-7184): the entries of the hosts the registry serves beyond the
+    /// configuration's, replacing the last set. A spec on a host the configuration mounts, on a
+    /// wildcard host or of a module with no router here is left out; two specs on one host and
+    /// prefix refuse the whole set, and the entries that answer now stay. The entries placed.
+    pub fn mount_hosts(&self, specs: &[MountSpec]) -> Result<usize, RouterError> {
+        let mut entries: Vec<MountedEntry> = Vec::new();
+        for spec in specs {
+            let Some(host) = spec
+                .host
+                .as_deref()
+                .map(|h| h.trim().to_ascii_lowercase())
+                .filter(|h| !h.is_empty() && wildcard_suffix(h).is_none())
+            else {
+                continue;
+            };
+            let Some(router) = self.routers.get(&spec.module) else {
+                continue;
+            };
+            if self.fixed.contains(hosts::without_port(&host)) {
+                continue;
+            }
+            let prefix = normalize_prefix(spec.path_prefix.as_deref().unwrap_or(""))?;
+            if let Some(first) = entries
+                .iter()
+                .find(|e| e.host.as_deref() == Some(host.as_str()) && e.prefix == prefix)
+            {
+                return Err(RouterError::OverlappingMounts {
+                    first: first.module.clone(),
+                    second: spec.module.clone(),
+                    host,
+                    prefix: if prefix.is_empty() {
+                        "/".into()
+                    } else {
+                        prefix
+                    },
+                });
+            }
+            entries.push(MountedEntry {
+                module: spec.module.clone(),
+                host: Some(host),
+                prefix,
+                router: router.clone(),
+            });
+        }
+        entries.sort_by_key(|e| std::cmp::Reverse(e.prefix.len()));
+        let placed = entries.len();
+        *self.added.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(entries);
+        Ok(placed)
+    }
+
+    fn added(&self) -> Arc<Vec<MountedEntry>> {
+        Arc::clone(&self.added.read().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
@@ -242,6 +316,7 @@ pub struct JcRouterBuilder {
     trusted_proxies: Vec<IpNet>,
     trusted_identities: Vec<String>,
     hosts: Option<HostTable>,
+    routers: std::collections::BTreeMap<String, Router>,
 }
 
 impl Default for JcRouterBuilder {
@@ -260,6 +335,7 @@ impl JcRouterBuilder {
             trusted_proxies: Vec::new(),
             trusted_identities: Vec::new(),
             hosts: None,
+            routers: std::collections::BTreeMap::new(),
         }
     }
 
@@ -284,6 +360,14 @@ impl JcRouterBuilder {
     #[must_use]
     pub fn trust_identity(mut self, identity: impl Into<String>) -> Self {
         self.trusted_identities.push(identity.into());
+        self
+    }
+
+    /// The router `module` answers with on a host the registry adds at run time
+    /// ([`HostSwap::mount_hosts`]); the first one named for a module stays.
+    #[must_use]
+    pub fn module_router(mut self, module: &str, router: Router) -> Self {
+        self.routers.entry(module.to_owned()).or_insert(router);
         self
     }
 
@@ -347,6 +431,11 @@ impl JcRouterBuilder {
         if let Some(table) = &self.hosts {
             shadow_check(table, &segments)?;
         }
+        let fixed: std::collections::BTreeSet<String> = entries
+            .iter()
+            .filter_map(|e| e.host.as_deref())
+            .map(|h| hosts::without_port(h).to_owned())
+            .collect();
         entries.sort_by(|a, b| {
             rank(&b.host)
                 .cmp(&rank(&a.host))
@@ -364,10 +453,42 @@ impl JcRouterBuilder {
                     current: Arc::new(RwLock::new(Arc::clone(&base))),
                     base,
                     segments: Arc::new(segments),
+                    routers: Arc::new(self.routers),
+                    fixed: Arc::new(fixed),
+                    added: Arc::default(),
                 }
             }),
         })
     }
+}
+
+/// The first of `entries` a request on `host_with_port` (`host_only` without its port) for
+/// `path` goes to.
+fn find_in<'a>(
+    entries: &'a [MountedEntry],
+    host_with_port: &str,
+    host_only: &str,
+    path: &str,
+) -> Option<&'a MountedEntry> {
+    entries.iter().find(|entry| {
+        let host_ok = match &entry.host {
+            Some(h) => match wildcard_suffix(h) {
+                Some(suffix) => {
+                    one_label_under(host_with_port, suffix) || one_label_under(host_only, suffix)
+                }
+                None => h == host_with_port || h == host_only,
+            },
+            None => true,
+        };
+        if !host_ok {
+            return false;
+        }
+        // `path` is the prefix or continues it with a whole segment (no allocation per entry).
+        entry.prefix.is_empty()
+            || path
+                .strip_prefix(entry.prefix.as_str())
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
 }
 
 /// Whether a browser asked for a page: a `GET` or `HEAD` that accepts HTML. An API client asks
@@ -493,26 +614,7 @@ impl JcRouter {
     /// The entry a request on `host_with_port` (`host_only` without its port) for `path` goes to:
     /// a linear scan, most specific host and longest prefix first.
     fn find(&self, host_with_port: &str, host_only: &str, path: &str) -> Option<&MountedEntry> {
-        self.entries.iter().find(|entry| {
-            let host_ok = match &entry.host {
-                Some(h) => match wildcard_suffix(h) {
-                    Some(suffix) => {
-                        one_label_under(host_with_port, suffix)
-                            || one_label_under(host_only, suffix)
-                    }
-                    None => h == host_with_port || h == host_only,
-                },
-                None => true,
-            };
-            if !host_ok {
-                return false;
-            }
-            // `path` is the prefix or continues it with a whole segment (no allocation per entry).
-            entry.prefix.is_empty()
-                || path
-                    .strip_prefix(entry.prefix.as_str())
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
+        find_in(&self.entries, host_with_port, host_only, path)
     }
 
     pub async fn dispatch(&self, mut req: Request<Body>, peer: Option<IpAddr>) -> Response<Body> {
@@ -601,7 +703,13 @@ impl JcRouter {
             }
         };
 
-        let entry = self.find(&host_with_port, host_only, &path);
+        // A host the registry added answers its own entries, exact hosts all, so they come first
+        // as the configuration's exact hosts do (T-7184).
+        let added = self.hosts.as_ref().map(HostSwap::added);
+        let entry = added
+            .as_deref()
+            .and_then(|added| find_in(added, &host_with_port, host_only, &path))
+            .or_else(|| self.find(&host_with_port, host_only, &path));
         // A page asked on another group's host moves to the configured host that serves it:
         // the Location names a host of the table, never the request's (T-6991 §7).
         if let Some(table) = table.as_deref()
@@ -1094,6 +1202,118 @@ mod tests {
                 .await
                 .contains("issuer=https://jc.city.example/login/realms/dev")
         );
+    }
+
+    /// T-7184: a host the registry adds answers the modules its role names, with the routers they
+    /// answer elsewhere, instead of falling to the host-less entries; a host the configuration
+    /// mounts keeps its own entries; a removed host answers `421`; a set with two specs on one
+    /// place changes nothing.
+    #[tokio::test]
+    async fn a_host_the_registry_adds_answers_its_modules_and_a_removed_one_421() {
+        let answer = |name: &'static str| {
+            Router::new().fallback(move |org: Option<Extension<Organization>>| async move {
+                format!("{name}|{}", org.map_or_else(String::new, |o| o.0.0))
+            })
+        };
+        let table = HostTable::new()
+            .organization("bbsk")
+            .unwrap()
+            .bound("smartcity.bbsk.sk", "bbsk", "/")
+            .unwrap()
+            .shared("city.example")
+            .unwrap();
+        let spec = |module: &str, host: Option<&str>, prefix: Option<&str>| MountSpec {
+            module: module.into(),
+            host: host.map(str::to_owned),
+            path_prefix: prefix.map(str::to_owned),
+        };
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .module_router("portal", answer("portal"))
+            .module_router("portal", answer("second"))
+            .module_router("gateway", answer("gateway"))
+            .mount(
+                spec("portal", Some("smartcity.bbsk.sk"), None),
+                answer("bbsk"),
+            )
+            .mount(spec("shared", None, None), answer("shared"))
+            .build()
+            .unwrap();
+        let swap = jc.host_swap().expect("a host table");
+        let get = |host: &'static str, path: &'static str| {
+            let jc = jc.clone();
+            async move {
+                let req = Request::builder()
+                    .uri(path)
+                    .header("host", host)
+                    .body(Body::empty())
+                    .unwrap();
+                let resp = jc.dispatch(req, Some("127.0.0.1".parse().unwrap())).await;
+                let status = resp.status();
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let served = |served| {
+            [
+                RegistryHost {
+                    host: "smartcity.bbsk.sk",
+                    organization: "bbsk",
+                    organization_id: None,
+                    role: "working",
+                    served: true,
+                },
+                RegistryHost {
+                    host: "smartcity.zilina.sk",
+                    organization: "zilina",
+                    organization_id: None,
+                    role: "working",
+                    served,
+                },
+            ]
+        };
+        swap.rebuild(&served(true)).unwrap();
+        let ok = |body: &str| (StatusCode::OK, body.to_owned());
+        assert_eq!(
+            get("smartcity.zilina.sk", "/").await,
+            ok("shared|zilina"),
+            "without its mounts the host falls to the host-less entries"
+        );
+        let specs = [
+            spec("portal", Some("Smartcity.Zilina.sk"), None),
+            spec("gateway", Some("smartcity.zilina.sk"), Some("/api")),
+            spec("portal", Some("smartcity.bbsk.sk:443"), Some("/x")),
+            spec("kaisatsu", Some("idm.zilina.sk"), None),
+            spec("portal", Some("*.apps.zilina.sk"), None),
+        ];
+        assert_eq!(swap.mount_hosts(&specs).unwrap(), 2);
+        assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
+        assert_eq!(
+            get("smartcity.zilina.sk", "/api/v1").await,
+            ok("gateway|zilina")
+        );
+        assert_eq!(get("smartcity.bbsk.sk", "/x").await, ok("bbsk|bbsk"));
+        assert_eq!(get("city.example", "/").await, ok("shared|"));
+        let twice = [
+            spec("portal", Some("smartcity.zilina.sk"), None),
+            spec("gateway", Some("smartcity.zilina.sk"), Some("/")),
+        ];
+        assert!(swap.mount_hosts(&twice).is_err());
+        assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
+        swap.rebuild(&served(false)).unwrap();
+        assert_eq!(
+            get("smartcity.zilina.sk", "/").await.0,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        // A removed Organization of the configuration: no host and no shared path answers it.
+        assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|bbsk"));
+        swap.rebuild_without(&served(true)[1..], &["bbsk"]).unwrap();
+        assert_eq!(
+            get("smartcity.bbsk.sk", "/").await.0,
+            StatusCode::MISDIRECTED_REQUEST
+        );
+        assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|"));
+        assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
     }
 
     /// T-7136 (T-7129 §7, O1b): a swap from the host registry takes a host out (`421`) and puts

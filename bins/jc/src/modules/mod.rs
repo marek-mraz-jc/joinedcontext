@@ -183,7 +183,9 @@ pub async fn build(
                 // build_router builds the Portal in its late slot, which keeps the host table on
                 // the registry; a Portal built here has no router to swap.
                 portal::HostRegistry {
+                    organizations: portal::organization_seed(cfg),
                     seed: portal::registry_seed(cfg),
+                    roles: cfg.roles.clone(),
                     hosts: None,
                 },
                 mount,
