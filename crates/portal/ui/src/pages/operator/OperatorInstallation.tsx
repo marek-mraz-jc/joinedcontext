@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ApiError, reasonOf } from "../../api/client";
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageFailed, PageLoading, Select } from "../../components/ui";
-import { operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
+import { operatorChanges, operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
 import type { SmtpServer } from "./operatorApi";
 
 /**
@@ -97,6 +97,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   return (
     <Card>
       <CardHeader
+        as="h3"
         title={t("operator.installation.email.title")}
         description={t("operator.installation.email.lead")}
         actions={
@@ -123,7 +124,7 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
       {open ? (
         // While a change waits it is decided first; the page shows what is in force meanwhile,
         // in plain text rather than greyed fields.
-        <InForce smtp={smtp} />
+        <InForce smtp={smtp} open={open} />
       ) : null}
       <form className="mt-4 grid gap-4 sm:grid-cols-2" id="smtp-form" onSubmit={onSave} aria-label={t("operator.installation.email.title")} hidden={Boolean(open)}>
         <fieldset className="contents" disabled={Boolean(open)}>
@@ -216,30 +217,47 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   );
 }
 
-/** The e-mail server in force while a change of it waits; the password only as stored or not. */
-function InForce({ smtp }: { smtp?: SmtpServer }): JSX.Element {
+/**
+ * While a change of the e-mail server waits: what it asks for (from the open Change, never a
+ * password) beside the server in force, both as plain text rather than greyed fields.
+ */
+function InForce({ smtp, open }: { smtp?: SmtpServer; open: string }): JSX.Element {
   const { t } = useTranslation();
-  if (!smtp) return <p className="mt-4 text-body text-fg-muted">{t("operator.installation.email.noneInForce")}</p>;
+  const changes = useQuery({ queryKey: operatorKeys.changes, queryFn: operatorChanges });
+  const asked = changes.data?.find((change) => change.id === open)?.payload.smtp ?? undefined;
   const E = "operator.installation.email";
-  const rows: [string, string][] = [
-    [t(`${E}.host`), smtp.host],
-    [t(`${E}.tls`), t(smtp.tls === "ssl" ? `${E}.tlsSsl` : `${E}.tlsStarttls`)],
-    [t(`${E}.port`), String(smtp.port)],
-    [t(`${E}.from`), smtp.from],
-    [t(`${E}.user`), smtp.user || "–"],
-    [t(`${E}.password`), smtp.passwordSet ? t(`${E}.passwordStored`) : "–"],
-  ];
-  return (
-    <div className="mt-4 space-y-2">
-      <h4 className="text-body font-semibold text-fg">{t(`${E}.inForce`)}</h4>
+  const rows = (server: { host: string; tls: string; port: number; from: string; user?: string | null }, password: string) =>
+    [
+      [t(`${E}.host`), server.host],
+      [t(`${E}.tls`), t(server.tls === "ssl" ? `${E}.tlsSsl` : `${E}.tlsStarttls`)],
+      [t(`${E}.port`), String(server.port)],
+      [t(`${E}.from`), server.from],
+      [t(`${E}.user`), server.user || "–"],
+      [t(`${E}.password`), password],
+    ] as const;
+  const list = (title: string, items: ReturnType<typeof rows>) => (
+    <div className="min-w-0 space-y-2">
+      <h4 className="text-body font-semibold text-fg">{title}</h4>
       <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
-        {rows.map(([label, value]) => (
+        {items.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-fg-muted">{label}</dt>
             <dd className="text-fg [overflow-wrap:anywhere]">{value}</dd>
           </div>
         ))}
       </dl>
+    </div>
+  );
+  return (
+    <div className="mt-4 grid gap-6 sm:grid-cols-2">
+      {asked
+        ? list(t(`${E}.askedFor`), rows(asked, asked.newPassword ? t(`${E}.passwordNew`) : t(`${E}.hint.passwordKept`)))
+        : null}
+      {smtp ? (
+        list(t(`${E}.inForce`), rows(smtp, smtp.passwordSet ? t(`${E}.passwordStored`) : "–"))
+      ) : (
+        <p className="text-body text-fg-muted">{t(`${E}.noneInForce`)}</p>
+      )}
     </div>
   );
 }

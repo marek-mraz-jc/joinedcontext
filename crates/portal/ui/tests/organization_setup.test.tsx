@@ -88,6 +88,8 @@ describe("Organization → Setup", () => {
       [en.organization.setup.step.project.action, "/organization/projects"],
       [en.organization.setup.step.publishers.action, "/projects/helsinki/ckan"],
       [en.organization.setup.step.policies.action, "/organization/settings"],
+      // An Organization administrator reads whom to ask for the installation's items.
+      [en.askAdmins.ownSections, "/organization/members"],
     ]);
     expect(screen.queryByText(en.organization.setup.complete)).not.toBeInTheDocument();
     await expectNoAxeViolations(container);

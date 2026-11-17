@@ -8451,9 +8451,11 @@
       "operatorTitle": "Co poskytuje instalace",
       "operatorLead": "Jste jedním z operátorů instalace: tyto položky nastavujete jednou pro každou organizaci.",
       "operatorLeadMember": "Operátoři instalace nastavují tyto položky jednou pro každou organizaci.",
-      "setIt": "Nastavit",
+      "setIt": "Otevřít instalaci",
       "operatorSets": "Nastavuje to váš operátor",
       "notYet": "Zatím nenastaveno",
+      "whomToAsk": "Koho se zeptat",
+      "whomToAskLead": "Tyto položky nastavují operátoři vaší instalace.",
       "step": {
         "organization": {
           "title": "Pojmenujte organizaci",
@@ -8489,12 +8491,12 @@
       "operator": {
         "branding": {
           "title": "Značka",
-          "hint": "Název, logo a barvy instalace. Dnes se nastavují v souboru značky instalace, který dodává vaše nasazení.",
+          "hint": "Název, logo a barvy instalace. Zatím se nastavují v souboru značky instalace, který dodává vaše nasazení.",
           "about": "Název, logo a barvy instalace."
         },
         "loginTheme": {
           "title": "Přihlašovací stránky",
-          "hint": "Jak vypadají přihlašovací stránky. Dnes se nastavují v přihlašovací části souboru značky instalace.",
+          "hint": "Jak vypadají přihlašovací stránky. Zatím se nastavují v přihlašovací části souboru značky instalace.",
           "about": "Jak vypadají přihlašovací stránky."
         },
         "smtp": {
@@ -8504,7 +8506,7 @@
         },
         "backups": {
           "title": "Zálohy",
-          "hint": "Plánované zálohy celé databáze do objektového úložiště. Dnes je nastavuje záloha databáze v nasazení.",
+          "hint": "Plánované zálohy celé databáze do objektového úložiště. Zatím je nastavuje záloha databáze v nasazení.",
           "about": "Plánované zálohy databáze instalace."
         }
       }
@@ -13592,7 +13594,7 @@
     }
   },
   "operator": {
-    "only": "Tyto sekce patří operátorům instalace. Požádejte některého z nich o novou organizaci, doménu nebo hostitele, nebo o e-mailový server.",
+    "only": "Tato sekce patří operátorům instalace. Požádejte některého z nich o novou organizaci, doménu nebo hostitele, nebo o e-mailový server.",
     "tryAgain": "Požadavek neprošel. Zkuste to za chvíli znovu.",
     "organizations": {
       "title": "Organizace",
@@ -13760,6 +13762,8 @@
         "testWaiting": "Test používá platný server; pošlete ho po rozhodnutí čekající změny, nebo hned pro ten platný.",
         "noneInForce": "Zatím neplatí žádný e-mailový server: čekající změna nastaví první.",
         "inForce": "Platí, dokud změna není schválena",
+        "askedFor": "Vyžádáno",
+        "passwordNew": "Nové, zapečetěné do rozhodnutí o změně",
         "toChanges": "Otevřít Změny",
         "host": "Hostitel SMTP",
         "tls": "Ochrana",

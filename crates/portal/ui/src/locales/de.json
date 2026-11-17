@@ -8451,9 +8451,11 @@
       "operatorTitle": "Was die Installation bereitstellt",
       "operatorLead": "Sie sind einer der Operatoren der Installation: Sie legen dies einmal für jede Organisation fest.",
       "operatorLeadMember": "Die Operatoren der Installation legen dies einmal für jede Organisation fest.",
-      "setIt": "Festlegen",
+      "setIt": "Installation öffnen",
       "operatorSets": "Ihr Operator legt dies fest",
       "notYet": "Noch nicht gesetzt",
+      "whomToAsk": "Wen fragen",
+      "whomToAskLead": "Diese Punkte legen die Betreiber Ihrer Installation fest.",
       "step": {
         "organization": {
           "title": "Organisation benennen",
@@ -8489,12 +8491,12 @@
       "operator": {
         "branding": {
           "title": "Markenauftritt",
-          "hint": "Name, Logo und Farben der Installation. Heute in der Branding-Datei der Installation festgelegt, die Ihre Bereitstellung mitbringt.",
+          "hint": "Name, Logo und Farben der Installation. Vorerst in der Branding-Datei der Installation festgelegt, die Ihre Bereitstellung mitbringt.",
           "about": "Name, Logo und Farben der Installation."
         },
         "loginTheme": {
           "title": "Anmeldeseiten",
-          "hint": "Wie die Anmeldeseiten aussehen. Heute im Anmeldeteil der Branding-Datei der Installation festgelegt.",
+          "hint": "Wie die Anmeldeseiten aussehen. Vorerst im Anmeldeteil der Branding-Datei der Installation festgelegt.",
           "about": "Wie die Anmeldeseiten aussehen."
         },
         "smtp": {
@@ -8504,7 +8506,7 @@
         },
         "backups": {
           "title": "Sicherungen",
-          "hint": "Geplante Sicherungen der ganzen Datenbank in einen Objektspeicher. Heute durch die Datenbanksicherung der Bereitstellung festgelegt.",
+          "hint": "Geplante Sicherungen der ganzen Datenbank in einen Objektspeicher. Vorerst durch die Datenbanksicherung der Bereitstellung festgelegt.",
           "about": "Geplante Sicherungen der Datenbank der Installation."
         }
       }
@@ -13592,7 +13594,7 @@
     }
   },
   "operator": {
-    "only": "Diese Bereiche gehören den Betreibern der Installation. Bitten Sie einen von ihnen um eine neue Organisation, Domain oder einen Host oder um den E-Mail-Server.",
+    "only": "Dieser Bereich gehört den Betreibern der Installation. Bitten Sie einen von ihnen um eine neue Organisation, Domain oder einen Host oder um den E-Mail-Server.",
     "tryAgain": "Die Anfrage ist nicht durchgegangen. Versuchen Sie es gleich noch einmal.",
     "organizations": {
       "title": "Organisationen",
@@ -13760,6 +13762,8 @@
         "testWaiting": "Der Test nutzt den geltenden Server; senden Sie ihn, sobald die wartende Änderung entschieden ist, oder jetzt für den geltenden.",
         "noneInForce": "Noch gilt kein E-Mail-Server: die wartende Änderung setzt den ersten.",
         "inForce": "Gilt, bis die Änderung genehmigt ist",
+        "askedFor": "Beantragt",
+        "passwordNew": "Ein neues, versiegelt bis die Änderung entschieden ist",
         "toChanges": "Änderungen öffnen",
         "host": "SMTP-Host",
         "tls": "Schutz",

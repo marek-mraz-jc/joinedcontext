@@ -330,11 +330,22 @@ describe("installation", () => {
     expect(screen.getByText(E.fixField.replace("{field}", E.host))).toBeTruthy();
     expect(document.activeElement).toBe(screen.getByLabelText(E.host, { exact: false }));
     cleanup();
+    const asked = { id: "c3", kind: "SmtpSet", payload: { smtp: { host: "smtp.next.example.org", port: 465, tls: "ssl", from: "noreply@example.org", user: "", newPassword: false } }, state: "proposed", proposedBy: "s1", proposedAt: "2026-11-17T10:00:00Z" };
     render(<OperatorInstallation />, (path) =>
-      path === "/api/v1/operator/installation" ? json({ smtp: SMTP, smtpChange: "c3" }) : undefined,
+      path === "/api/v1/operator/installation"
+        ? json({ smtp: SMTP, smtpChange: "c3" })
+        : path === "/api/v1/operator/changes"
+          ? json({ items: [asked] })
+          : undefined,
     );
     expect(await screen.findByText(E.waiting, { exact: false })).toBeTruthy();
     expect(screen.getByRole("button", { name: E.propose })).toHaveAttribute("aria-disabled", "true");
+    // The waiting change and the server in force, side by side as text; no field to type in.
+    expect(await screen.findByText("smtp.next.example.org")).toBeTruthy();
+    expect(screen.getByText(E.askedFor)).toBeTruthy();
+    expect(screen.getByText(E.inForce)).toBeTruthy();
+    expect(within(screen.getByText(E.askedFor).parentElement as HTMLElement).getByText(E.hint.passwordKept)).toBeTruthy();
+    expect(screen.queryByRole("textbox", { name: new RegExp(E.host) })).toBeNull();
   });
 
   it("shows an Organization administrator the server's refusal", async () => {

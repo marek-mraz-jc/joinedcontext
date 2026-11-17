@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { organizationReading } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
 import { Alert, Badge, buttonClass, PageFailed, PageLoading } from "../../components/ui";
+import { AskAdmins } from "./AskAdmins";
 
 /**
  * Organization → Setup (T-2748, PF-90, UI-82, API/01 §25): what a new organization still lacks,
@@ -150,6 +151,10 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
             </li>
           ))}
         </ul>
+        {/* Whoever cannot set these reads whom to ask (the installation's contacts, T-7152). */}
+        {operates ? null : (
+          <AskAdmins title={t("organization.setup.whomToAsk")} message={t("organization.setup.whomToAskLead")} installation />
+        )}
       </section>
     </div>
   );

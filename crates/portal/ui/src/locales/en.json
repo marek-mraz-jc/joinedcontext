@@ -8451,9 +8451,11 @@
       "operatorTitle": "What the installation provides",
       "operatorLead": "You are one of the installation's operators: you set these once for every Organization.",
       "operatorLeadMember": "The installation's operators set these once for every Organization.",
-      "setIt": "Set it",
+      "setIt": "Open Installation",
       "operatorSets": "Your operator sets this",
       "notYet": "Not set yet",
+      "whomToAsk": "Whom to ask",
+      "whomToAskLead": "Your installation's operators set these items.",
       "step": {
         "organization": {
           "title": "Name the organization",
@@ -8489,12 +8491,12 @@
       "operator": {
         "branding": {
           "title": "Branding",
-          "hint": "The installation's name, logo and colours. Set today in the installation's branding file, which your deployment provides.",
+          "hint": "The installation's name, logo and colours. For now your deployment's branding file sets them; the Installation page takes them over next.",
           "about": "The installation's name, logo and colours."
         },
         "loginTheme": {
           "title": "Sign-in pages",
-          "hint": "How the sign-in pages look. Set today in the sign-in part of the installation's branding file.",
+          "hint": "How the sign-in pages look. For now the sign-in part of your deployment's branding file sets it; the Installation page takes it over next.",
           "about": "How the sign-in pages look."
         },
         "smtp": {
@@ -8504,7 +8506,7 @@
         },
         "backups": {
           "title": "Backups",
-          "hint": "Scheduled backups of the whole database to object storage. Set today by the deployment's database backup.",
+          "hint": "Scheduled backups of the whole database to object storage. For now your deployment's database backup runs them; the Installation page takes them over next.",
           "about": "Scheduled backups of the installation's database."
         }
       }
@@ -13592,7 +13594,7 @@
     }
   },
   "operator": {
-    "only": "These sections belong to the installation's operators. Ask one of them for a new Organization, domain or host, or for the e-mail server.",
+    "only": "This section belongs to the installation's operators. Ask one of them for a new Organization, domain or host, or for the e-mail server.",
     "tryAgain": "The request did not go through. Try again in a moment.",
     "organizations": {
       "title": "Organizations",
@@ -13760,6 +13762,8 @@
         "testWaiting": "The test uses the server in force; send it once the waiting change is decided, or now for the one in force.",
         "noneInForce": "No e-mail server is in force yet: the waiting change sets the first one.",
         "inForce": "In force until the change is approved",
+        "askedFor": "Asked for",
+        "passwordNew": "A new one, sealed until the change is decided",
         "toChanges": "Open the Changes",
         "host": "SMTP host",
         "tls": "Protection",

@@ -224,7 +224,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, fresh(), false);
       await page.goto("/organization/operator-hosts?lang=en");
-      await expect(page.getByText("These sections belong to the installation's operators.", { exact: false })).toBeVisible();
+      await expect(page.getByText("This section belongs to the installation's operators.", { exact: false })).toBeVisible();
       await expect(page.getByRole("link", { name: "Hosts and certificates" })).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-refused-${width}`);
