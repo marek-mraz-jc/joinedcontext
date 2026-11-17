@@ -30,6 +30,7 @@ kaisatsu = [
   "dep:kaisatsu-store-memory",
   "dep:kaisatsu-store-pg",
   "dep:kaisatsu-import",
+  "dep:kaisatsu-login",
 ]
 dataroom = [
   "dep:dataroom-server",
@@ -98,6 +99,7 @@ kaisatsu-oidc = { path = "../../crates/kaisatsu/oidc", optional = true }
 kaisatsu-store-memory = { path = "../../crates/kaisatsu/store-memory", optional = true }
 kaisatsu-store-pg = { path = "../../crates/kaisatsu/store-pg", optional = true }
 kaisatsu-import = { path = "../../crates/kaisatsu/import", optional = true }
+kaisatsu-login = { path = "../../crates/kaisatsu/login", optional = true }
 
 dataroom-server = { path = "../../crates/dataroom/server", optional = true }
 dataroom-api = { path = "../../crates/dataroom/api", optional = true }

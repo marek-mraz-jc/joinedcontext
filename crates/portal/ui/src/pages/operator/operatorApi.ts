@@ -14,6 +14,9 @@ export type OperatorOrganization = components["schemas"]["OperatorOrganization"]
 export type OperatorOrganizationId = components["schemas"]["OperatorOrganizationId"];
 export type OperatorChange = components["schemas"]["OperatorChange"];
 export type ChangeRequest = components["schemas"]["ChangeRequest"];
+export type Installation = components["schemas"]["Installation"];
+export type SmtpServer = components["schemas"]["SmtpServer"];
+export type SmtpTest = components["schemas"]["SmtpTest"];
 
 /** The roles a host takes, as the server's `HOST_ROLES` names them. */
 export const HOST_ROLES = ["working", "opendata", "api", "signin", "apps", "portal-site", "host"] as const;
@@ -26,6 +29,7 @@ export const operatorKeys = {
   hosts: ["operator", "hosts"] as const,
   changes: ["operator", "changes"] as const,
   audit: ["operator", "audit"] as const,
+  installation: ["operator", "installation"] as const,
 };
 
 /** Each Organization's title by its name, so a list shows "Banskobystrický kraj", not "bbsk". */
@@ -59,6 +63,15 @@ export async function operatorAudit(): Promise<OperatorAuditEntry[]> {
 
 export async function operatorChanges(): Promise<OperatorChange[]> {
   return ((await door("portal_operator_change_list", {})) as { items: OperatorChange[] }).items;
+}
+
+export async function operatorInstallation(): Promise<Installation> {
+  return (await door("portal_operator_installation", {})) as Installation;
+}
+
+/** One test e-mail to the operator's own address through the saved e-mail server. */
+export async function sendTestEmail(): Promise<SmtpTest> {
+  return (await doorAction("portal_operator_installation_test_email", {})) as SmtpTest;
 }
 
 export async function proposeChange(change: ChangeRequest): Promise<OperatorChange> {

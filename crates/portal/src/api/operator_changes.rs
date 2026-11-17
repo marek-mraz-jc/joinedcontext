@@ -64,6 +64,9 @@ pub enum OperatorKind {
     OperatorAdd,
     /// A person leaves the operators' group.
     OperatorRemove,
+    /// The installation's e-mail (SMTP) server, which the sign-in service sends invitations and
+    /// password resets through (T-7152).
+    SmtpSet,
 }
 
 impl OperatorKind {
@@ -73,6 +76,7 @@ impl OperatorKind {
             Self::HostRemove => "HostRemove",
             Self::OperatorAdd => "OperatorAdd",
             Self::OperatorRemove => "OperatorRemove",
+            Self::SmtpSet => "SmtpSet",
         }
     }
 
@@ -82,6 +86,7 @@ impl OperatorKind {
             Self::HostRemove,
             Self::OperatorAdd,
             Self::OperatorRemove,
+            Self::SmtpSet,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -107,6 +112,42 @@ pub struct ChangeRequest {
     /// `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
     /// `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
     pub subject: Option<String>,
+    /// `SmtpSet`: the installation's e-mail server.
+    pub smtp: Option<SmtpRequest>,
+}
+
+/// `SmtpSet`: the e-mail server as an operator types it.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[schema(example = json!({ "host": "smtp.example.org", "port": 587, "tls": "starttls", "from": "noreply@example.org", "user": "mailer", "password": "app-password" }))]
+pub struct SmtpRequest {
+    /// The server's host name, e.g. `smtp.example.org`.
+    pub host: String,
+    /// e.g. `587` for `starttls`, `465` for `ssl`.
+    pub port: u16,
+    /// `starttls` or `ssl`; plain SMTP is never offered.
+    pub tls: String,
+    /// The address e-mails come from, e.g. `noreply@example.org`.
+    pub from: String,
+    /// The SMTP user; empty when the server takes mail without a sign-in.
+    #[serde(default)]
+    pub user: String,
+    /// Write-only: sealed until the approval, then kept by the sign-in service under its key;
+    /// never read back. Absent keeps the stored password.
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// `SmtpSet` as it is kept and listed: the settings, and whether a new password came with them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtpSettings {
+    pub host: String,
+    pub port: u16,
+    pub tls: String,
+    pub from: String,
+    pub user: String,
+    pub new_password: bool,
 }
 
 /// The rows a Change writes, as it was asked for and checked.
@@ -123,6 +164,8 @@ pub struct ChangePayload {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smtp: Option<SmtpSettings>,
 }
 
 /// One operator Change.
@@ -228,9 +271,15 @@ fn absent(kind: OperatorKind, fields: &[(&str, &Option<String>)]) -> Result<(), 
     }
 }
 
-/// The request checked field by field: the payload and the Change's target (its host or person).
-fn payload(request: ChangeRequest) -> Result<(OperatorKind, ChangePayload, String), ApiError> {
+/// The request checked field by field: the payload, the Change's target (its host, person or
+/// `smtp`) and the secret it carries, which is never part of the payload.
+fn payload(
+    request: ChangeRequest,
+) -> Result<(OperatorKind, ChangePayload, String, Option<String>), ApiError> {
     let kind = request.kind;
+    if kind != OperatorKind::SmtpSet && request.smtp.is_some() {
+        return Err(invalid("smtp", format!("{} takes no smtp", kind.as_str())));
+    }
     match kind {
         OperatorKind::HostAdd => {
             absent(kind, &[("subject", &request.subject)])?;
@@ -258,8 +307,10 @@ fn payload(request: ChangeRequest) -> Result<(OperatorKind, ChangePayload, Strin
                     organization_id,
                     role: Some(role),
                     subject: None,
+                    smtp: None,
                 },
                 host,
+                None,
             ))
         }
         OperatorKind::HostRemove => {
@@ -280,6 +331,7 @@ fn payload(request: ChangeRequest) -> Result<(OperatorKind, ChangePayload, Strin
                     ..ChangePayload::default()
                 },
                 host,
+                None,
             ))
         }
         OperatorKind::OperatorAdd | OperatorKind::OperatorRemove => {
@@ -311,9 +363,134 @@ fn payload(request: ChangeRequest) -> Result<(OperatorKind, ChangePayload, Strin
                     ..ChangePayload::default()
                 },
                 subject,
+                None,
+            ))
+        }
+        OperatorKind::SmtpSet => {
+            absent(
+                kind,
+                &[
+                    ("host", &request.host),
+                    ("organization", &request.organization),
+                    ("organizationId", &request.organization_id),
+                    ("role", &request.role),
+                    ("subject", &request.subject),
+                ],
+            )?;
+            let smtp = request.smtp.ok_or_else(|| {
+                invalid("smtp", "SmtpSet needs smtp: host, port, tls, from".into())
+            })?;
+            let (settings, password) = smtp_settings(smtp)?;
+            Ok((
+                kind,
+                ChangePayload {
+                    smtp: Some(settings),
+                    ..ChangePayload::default()
+                },
+                "smtp".into(),
+                password,
             ))
         }
     }
+}
+
+/// A host name an SMTP server answers on (`smtp.example.org`): letters, digits and `-` in
+/// labels, a top-level label with a letter, no address literal and no cluster-internal name.
+/// kaisatsu checks the addresses it resolves to again at each send (W12).
+fn smtp_host(host: &str) -> bool {
+    const INTERNAL: &[&str] = &[
+        ".svc",
+        ".cluster.local",
+        ".local",
+        ".internal",
+        ".localhost",
+    ];
+    let labels: Vec<&str> = host.split('.').collect();
+    host.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|l| {
+            (1..=63).contains(&l.len())
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+        })
+        && labels
+            .last()
+            .is_some_and(|tld| tld.bytes().any(|b| b.is_ascii_alphabetic()))
+        && !INTERNAL.iter().any(|suffix| host.ends_with(suffix))
+}
+
+/// An address `local@domain.tld` without spaces or angle brackets.
+fn mail_address(address: &str) -> bool {
+    address.len() <= 254
+        && address.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.ends_with('.')
+        })
+        && !address
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "<>(),;:\\\"[]".contains(c))
+        && address.matches('@').count() == 1
+}
+
+fn smtp_settings(smtp: SmtpRequest) -> Result<(SmtpSettings, Option<String>), ApiError> {
+    let host = smtp.host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if !smtp_host(&host) {
+        return Err(invalid(
+            "smtp.host",
+            format!("'{host}' is no public host name of an SMTP server; give one, e.g. smtp.example.org"),
+        ));
+    }
+    if smtp.port == 0 {
+        return Err(invalid(
+            "smtp.port",
+            "give a port from 1 to 65535, e.g. 587".into(),
+        ));
+    }
+    if smtp.tls != "starttls" && smtp.tls != "ssl" {
+        return Err(invalid(
+            "smtp.tls",
+            "give starttls (usually port 587) or ssl (usually port 465); plain SMTP is not offered"
+                .into(),
+        ));
+    }
+    let from = smtp.from.trim().to_owned();
+    if !mail_address(&from) {
+        return Err(invalid(
+            "smtp.from",
+            "give the address e-mails come from, e.g. noreply@example.org".into(),
+        ));
+    }
+    let user = smtp.user.trim().to_owned();
+    if user.len() > 256 || user.chars().any(char::is_control) {
+        return Err(invalid(
+            "smtp.user",
+            "the user is at most 256 characters on one line".into(),
+        ));
+    }
+    let password = smtp.password.filter(|p| !p.is_empty());
+    if password
+        .as_ref()
+        .is_some_and(|p| p.len() > 1024 || p.chars().any(char::is_control))
+    {
+        return Err(invalid(
+            "smtp.password",
+            "the password is at most 1024 characters on one line".into(),
+        ));
+    }
+    Ok((
+        SmtpSettings {
+            host,
+            port: smtp.port,
+            tls: smtp.tls,
+            from,
+            user,
+            new_password: password.is_some(),
+        },
+        password,
+    ))
 }
 
 fn proposal<'a>(payload: &'a ChangePayload, by: &'a str) -> Proposal<'a> {
@@ -382,6 +559,44 @@ async fn holds(
             }
             Ok(())
         }
+        // A user without a new password needs one stored already.
+        OperatorKind::SmtpSet => {
+            let smtp = payload
+                .smtp
+                .as_ref()
+                .ok_or_else(|| ApiError::Internal("an SmtpSet Change without smtp".into()))?;
+            let stored = people(state)?
+                .admin()
+                .await?
+                .smtp_server()
+                .await
+                .map_err(no_smtp_door)?;
+            if !smtp.user.is_empty()
+                && !smtp.new_password
+                && !stored.is_some_and(|s| s.password_set)
+            {
+                return Err(invalid(
+                    "smtp.password",
+                    "the user needs its password, and none is stored yet".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+/// A realm whose sign-in service has no `smtp-server` door (a Keycloak) or does not let the
+/// Portal use it.
+fn no_smtp_door(err: crate::people::PeopleError) -> ApiError {
+    match err {
+        crate::people::PeopleError::NotFound | crate::people::PeopleError::Refused(403, _) => {
+            ApiError::Unavailable(
+                "the installation's sign-in service does not let the Portal set its e-mail \
+                 server; with kaisatsu the Portal's reconciler needs manage-smtp"
+                    .into(),
+            )
+        }
+        other => other.into(),
     }
 }
 
@@ -656,20 +871,24 @@ pub async fn propose(
     let identity = &user.0.identity;
     operator(&state, identity)?;
     let Json(body) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
-    let (kind, payload, target) = payload(body)?;
+    let (kind, payload, target, secret) = payload(body)?;
     let pool = database(&state)?;
     holds(&state, pool, kind, &payload, &identity.subject).await?;
     let stored = serde_json::to_value(&payload)
         .map_err(|e| ApiError::Internal(format!("operator change: {e}")))?;
+    let sealed = secret
+        .map(|secret| crate::org_backup::seal(&state, &secret))
+        .transpose()?;
     let mut tx = pool.begin().await.map_err(db)?;
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO operator_changes (kind, target, payload, proposed_by) \
-         VALUES ($1, $2, $3, $4) RETURNING {COLUMNS}"
+        "INSERT INTO operator_changes (kind, target, payload, proposed_by, sealed_secret) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING {COLUMNS}"
     )))
     .bind(kind.as_str())
     .bind(&target)
     .bind(&stored)
     .bind(&identity.subject)
+    .bind(sealed)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| match &e {
@@ -773,8 +992,8 @@ async fn decide(
     by: &str,
 ) -> Result<OperatorChange, ApiError> {
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "UPDATE operator_changes SET state = $2, decided_by = $3, decided_at = now() \
-         WHERE id = $1::uuid RETURNING {COLUMNS}"
+        "UPDATE operator_changes SET state = $2, decided_by = $3, decided_at = now(), \
+         sealed_secret = NULL WHERE id = $1::uuid RETURNING {COLUMNS}"
     )))
     .bind(id)
     .bind(state)
@@ -824,8 +1043,10 @@ pub async fn approve(
     holds(&state, pool, found.kind, &found.payload, &found.proposed_by).await?;
     // A host Change re-reads its proposer where the realm can be asked; an operator Change
     // always does, under its lock (`operators_hold`).
-    if let (Some(people), OperatorKind::HostAdd | OperatorKind::HostRemove) =
-        (state.people.as_deref(), found.kind)
+    if let (
+        Some(people),
+        OperatorKind::HostAdd | OperatorKind::HostRemove | OperatorKind::SmtpSet,
+    ) = (state.people.as_deref(), found.kind)
     {
         proposer_holds(
             &people.admin().await?,
@@ -868,6 +1089,9 @@ pub async fn approve(
         }
         OperatorKind::OperatorAdd | OperatorKind::OperatorRemove => {
             return apply_operator(&state, tx, &found, &identity.subject, source(client)).await;
+        }
+        OperatorKind::SmtpSet => {
+            return apply_smtp(&state, tx, &found, &identity.subject, source(client)).await;
         }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
@@ -940,6 +1164,75 @@ async fn apply_operator(
     Ok(Json(decided))
 }
 
+/// Applies an approved `SmtpSet`: the sealed password is opened for this one write, the decision
+/// and its audit row (the settings, never the password) are written, the realm's SMTP server is
+/// set, and the transaction commits only once the realm answered. The seal is cleared with the
+/// decision, so a decided Change holds no secret.
+async fn apply_smtp(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    found: &OperatorChange,
+    by: &str,
+    ip: Option<String>,
+) -> Result<Json<OperatorChange>, ApiError> {
+    let smtp = found
+        .payload
+        .smtp
+        .clone()
+        .ok_or_else(|| ApiError::Internal("an SmtpSet Change without smtp".into()))?;
+    let sealed: Option<String> =
+        sqlx::query_scalar("SELECT sealed_secret FROM operator_changes WHERE id = $1::uuid")
+            .bind(&found.id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+    if smtp.new_password && sealed.is_none() {
+        return Err(ApiError::Conflict(
+            "the Change's password is no longer sealed; reject it and ask again".into(),
+        ));
+    }
+    let password = sealed
+        .map(|sealed| crate::org_backup::unseal(state, &sealed))
+        .transpose()?;
+    let admin = people(state)?.admin().await?;
+    let before = admin.smtp_server().await.map_err(no_smtp_door)?;
+    let decided = decide(&mut tx, &found.id, "applied", by).await?;
+    let after = crate::people::SmtpServer {
+        host: smtp.host,
+        port: smtp.port,
+        tls: smtp.tls,
+        from: smtp.from,
+        user: smtp.user,
+        password_set: smtp.new_password || before.as_ref().is_some_and(|b| b.password_set),
+    };
+    let shown_before = before.as_ref().map(|b| json!(b));
+    audit(
+        &mut tx,
+        by,
+        &found.id,
+        "applied SmtpSet",
+        shown_before.as_ref(),
+        Some(&json!(after)),
+        ip.as_deref(),
+    )
+    .await?;
+    admin
+        .set_smtp_server(&after, password.as_ref().map(|p| p.as_str()))
+        .await
+        .map_err(|err| match err {
+            crate::people::PeopleError::Refused(422, message) => invalid("smtp", message),
+            other => no_smtp_door(other),
+        })?;
+    if let Err(err) = tx.commit().await {
+        tracing::error!(
+            change = %found.id,
+            "operator change: the commit failed after the realm's SMTP server changed: {err}"
+        );
+        return Err(db(err));
+    }
+    Ok(Json(decided))
+}
+
 #[utoipa::path(
     post,
     path = "/api/v1/operator/changes/{id}/reject",
@@ -983,6 +1276,108 @@ pub async fn reject(
     .await?;
     tx.commit().await.map_err(db)?;
     Ok(Json(decided))
+}
+
+/// What the installation provides, as its operators set it from the Installation page (T-7152).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Installation {
+    /// The e-mail server the sign-in service sends invitations and password resets through;
+    /// absent while none is set.
+    pub smtp: Option<crate::people::SmtpServer>,
+    /// The open `SmtpSet` Change waiting for a second operator, if any.
+    pub smtp_change: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/operator/installation",
+    operation_id = "operator_installation",
+    summary = "Get The Installation's Settings",
+    description = "The installation's e-mail server as the sign-in service holds it, never its password, and the open Change for it (T-7152). For a person of the operators' group with a second factor.",
+    tag = "system",
+    responses(
+        (status = 200, description = "The settings", body = Installation),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 503, description = "No database, or the sign-in service does not answer", body = ProblemDetails)
+    )
+)]
+pub async fn installation(
+    user: CurrentUser,
+    State(state): State<AppState>,
+) -> Result<Json<Installation>, ApiError> {
+    operator(&state, &user.0.identity)?;
+    let pool = database(&state)?;
+    let smtp = people(&state)?
+        .admin()
+        .await?
+        .smtp_server()
+        .await
+        .map_err(no_smtp_door)?;
+    let smtp_change: Option<String> = sqlx::query_scalar(
+        "SELECT id::text FROM operator_changes WHERE kind = 'SmtpSet' AND state = 'proposed'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(db)?;
+    Ok(Json(Installation { smtp, smtp_change }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/operator/installation/test-email",
+    operation_id = "operator_installation_test_email",
+    summary = "Send A Test E-mail",
+    description = "Sends one test e-mail to the operator's own address through the saved e-mail server and says whether the server took it (T-7152). Changes nothing; the operators' audit records it.",
+    tag = "system",
+    responses(
+        (status = 200, description = "Whether the server took it, and why not", body = crate::people::SmtpTest),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 422, description = "The operator's account has no e-mail address", body = ProblemDetails),
+        (status = 503, description = "No database, or the sign-in service does not answer", body = ProblemDetails)
+    )
+)]
+pub async fn test_email(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    client: Option<Extension<jc_router::ClientAddr>>,
+) -> Result<Json<crate::people::SmtpTest>, ApiError> {
+    let identity = &user.0.identity;
+    operator(&state, identity)?;
+    let pool = database(&state)?;
+    let to = identity
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| mail_address(e))
+        .ok_or_else(|| {
+            invalid(
+                "to",
+                "your account has no e-mail address, so the test has nowhere to go; add one to your account first".into(),
+            )
+        })?;
+    let result = people(&state)?
+        .admin()
+        .await?
+        .test_smtp(to)
+        .await
+        .map_err(no_smtp_door)?;
+    let mut conn = pool.acquire().await.map_err(db)?;
+    let ip = source(client);
+    sqlx::query(
+        "INSERT INTO operator_audit (actor, action, after, source_ip) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(&identity.subject)
+    .bind("smtp.test")
+    .bind(json!({ "sent": result.sent }))
+    .bind(ip.as_deref())
+    .execute(&mut *conn)
+    .await
+    .map_err(db)?;
+    tracing::info!(target: "operator_audit", actor = %identity.subject, sent = result.sent, "operator audit: test e-mail");
+    Ok(Json(result))
 }
 
 /// One host of the registry as the operators' pages show it (T-7129 §3, T-7140).
@@ -1341,6 +1736,8 @@ pub fn router() -> Router<AppState> {
         .route("/operator/hosts", get(hosts))
         .route("/operator/audit", get(audit_list))
         .route("/operator/organizations", get(organizations))
+        .route("/operator/installation", get(installation))
+        .route("/operator/installation/test-email", post(test_email))
 }
 
 #[cfg(test)]

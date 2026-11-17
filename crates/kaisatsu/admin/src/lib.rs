@@ -14,6 +14,7 @@ pub mod domain;
 pub mod odata;
 pub mod operations;
 pub mod scim;
+pub mod smtp;
 
 pub use compat::{AdminState, admin_router, extract_admin_ctx};
 pub use domain::{DnsResolver, HickoryDnsResolver};

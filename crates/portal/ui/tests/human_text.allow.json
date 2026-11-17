@@ -399,6 +399,24 @@
         "kind"
       ],
       "reason": "FeatureServer is the word in the ArcGIS address the person copies (T-7094)"
+    },
+    "operator.installation.email.hint.port": {
+      "rules": [
+        "http"
+      ],
+      "reason": "587 and 465 are the SMTP ports a mail provider names, not HTTP status codes"
+    },
+    "operator.installation.email.tlsSsl": {
+      "rules": [
+        "http"
+      ],
+      "reason": "465 is the SMTP port a mail provider names for TLS from the start, not an HTTP status code"
+    },
+    "operator.installation.email.tlsStarttls": {
+      "rules": [
+        "http"
+      ],
+      "reason": "587 is the SMTP port a mail provider names for STARTTLS, not an HTTP status code"
     }
   },
   "disabled": {

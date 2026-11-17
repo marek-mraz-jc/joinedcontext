@@ -371,6 +371,22 @@ pub static DOORS: &[Door] = &[
         Who::Administrator,
     ),
     door(
+        "portal_operator_installation",
+        Org,
+        Method::GET,
+        "/operator/installation",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_operator_installation_test_email",
+        Org,
+        Method::POST,
+        "/operator/installation/test-email",
+        &[],
+        Who::Administrator,
+    ),
+    door(
         "portal_organization_id_challenge",
         Org,
         Method::POST,

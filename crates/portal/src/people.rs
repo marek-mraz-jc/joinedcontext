@@ -48,6 +48,34 @@ impl From<PeopleError> for ApiError {
     }
 }
 
+/// The realm's SMTP server as the Portal reads and writes it (kaisatsu's `smtp-server` door,
+/// T-7152). The password is never part of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SmtpServer {
+    /// e.g. `smtp.example.org`
+    pub host: String,
+    /// e.g. `587`
+    pub port: u16,
+    /// `starttls` or `ssl`
+    pub tls: String,
+    /// e.g. `noreply@example.org`
+    pub from: String,
+    /// Empty when the server takes mail without a sign-in.
+    pub user: String,
+    /// Whether a password is stored; the password itself is never read back.
+    #[serde(default)]
+    pub password_set: bool,
+}
+
+/// Whether the SMTP server took a test e-mail, and why not when it did not.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct SmtpTest {
+    pub sent: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// A user as the admin API represents one; unknown members are ignored, since this is the realm's
 /// shape and not ours.
 #[derive(Debug, Clone, Deserialize)]
@@ -575,6 +603,47 @@ impl Admin {
         self.send(self.request(verb, &format!("/users/{id}/groups/{group}")))
             .await
             .map(|_| true)
+    }
+
+    /// The realm's SMTP server as kaisatsu's `smtp-server` door reads it (T-7152): never the
+    /// password, only whether one is stored; `None` while the realm has none.
+    pub async fn smtp_server(&self) -> Result<Option<SmtpServer>, PeopleError> {
+        match self.json("/smtp-server").await {
+            Ok(smtp) => Ok(Some(smtp)),
+            Err(PeopleError::NotFound) => Ok(None),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Replaces the realm's SMTP server; `password` `None` keeps the stored one. kaisatsu seals
+    /// the password under its KEK and checks each field again.
+    pub async fn set_smtp_server(
+        &self,
+        smtp: &SmtpServer,
+        password: Option<&str>,
+    ) -> Result<(), PeopleError> {
+        let mut body = json!({
+            "host": smtp.host, "port": smtp.port, "tls": smtp.tls,
+            "from": smtp.from, "user": smtp.user,
+        });
+        if let Some(password) = password {
+            body["password"] = json!(password);
+        }
+        self.send(self.request(Method::PUT, "/smtp-server").json(&body))
+            .await
+            .map(|_| ())
+    }
+
+    /// Sends one test e-mail to `to` through the realm's stored SMTP server.
+    pub async fn test_smtp(&self, to: &str) -> Result<SmtpTest, PeopleError> {
+        self.send(
+            self.request(Method::POST, "/smtp-server/test")
+                .json(&json!({ "to": to })),
+        )
+        .await?
+        .json()
+        .await
+        .map_err(|err| PeopleError::Unreachable(err.to_string()))
     }
 
     /// The people of the realm's top-level group `name`; `None` when the realm has no such

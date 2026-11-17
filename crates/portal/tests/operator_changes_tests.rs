@@ -839,6 +839,201 @@ async fn the_realm_changes_only_after_the_audit_and_a_refusal_keeps_the_change_o
     kc.verify().await;
 }
 
+/// The Portal's own age key, which seals a Change's SMTP password until its approval.
+fn with_age_key(state: &mut AppState) {
+    use age::secrecy::ExposeSecret;
+    let identity = age::x25519::Identity::generate();
+    let dir = std::env::temp_dir().join(format!("operator-smtp-{}", run("k")));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let key_file = dir.join("keys.txt");
+    std::fs::write(
+        &key_file,
+        format!("{}\n", identity.to_string().expose_secret()),
+    )
+    .expect("key");
+    let mut config = (*state.config).clone();
+    config.pipeline_secrets = Some(joinedcontext_portal::pipeline_secrets::Backend::Sops {
+        age_key_file: key_file,
+    });
+    state.config = Arc::new(config);
+}
+
+/// T-7152: the installation's e-mail server is an operator Change like any other. An
+/// Organization's administrator reads and asks for nothing; the proposer never approves; the
+/// password is sealed until a second operator approves, written to the sign-in service then,
+/// and never in a read, the payload, the audit or a decided row.
+#[tokio::test]
+async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never_read_back() {
+    let (mut state, _) = world().await;
+    with_age_key(&mut state);
+    let kc = realm(&mut state, "sub-ops-b", "ops-b", true, &[]).await;
+    let smtp_door = "/admin/realms/ops/smtp-server";
+    Mock::given(method("GET"))
+        .and(path(smtp_door))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&kc)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(smtp_door))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&kc)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{smtp_door}/test")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "sent": true })))
+        .mount(&kc)
+        .await;
+    let secret = format!("smtp-pw-{}", run("p"));
+    let change = |host: &str, tls: &str| {
+        json!({ "kind": "SmtpSet", "smtp": {
+            "host": host, "port": 587, "tls": tls, "from": "noreply@example.org",
+            "user": "mailer", "password": secret,
+        }})
+    };
+
+    // An Organization's administrator and a password-only operator get 403 on every door (a
+    // bearer token in the group: `a_bearer_in_the_operators_group_is_no_operator`).
+    let org_admin = common::organization_admin(&state.mirror, "org-admin");
+    let mut password_only = operator(&state, "ops-c");
+    password_only.second_factor = false;
+    for who in [org_admin, password_only] {
+        for (verb, uri, body) in [
+            ("GET", "/api/v1/operator/installation", None),
+            ("POST", "/api/v1/operator/installation/test-email", None),
+            (
+                "POST",
+                CHANGES,
+                Some(change("smtp.example.org", "starttls")),
+            ),
+        ] {
+            let answer = send(&state, who.clone(), verb, uri, body).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::FORBIDDEN,
+                "{verb} {uri}: {}",
+                answer.text
+            );
+        }
+    }
+
+    // Each field is checked and named.
+    for (host, tls, field) in [
+        ("10.43.0.10", "starttls", "smtp.host"),
+        ("mail.default.svc.cluster.local", "starttls", "smtp.host"),
+        ("smtp.example.org", "none", "smtp.tls"),
+    ] {
+        let (status, problem) = propose(&state, operator(&state, "ops-a"), change(host, tls)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{host}: {problem}"
+        );
+        assert!(problem.to_string().contains(field), "{field}: {problem}");
+    }
+
+    let (status, made) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        change("smtp.example.org", "starttls"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["payload"]["smtp"]["newPassword"], json!(true));
+    let id = made["id"].as_str().expect("id").to_owned();
+    let pool = state.db.clone().expect("db");
+    let (payload, sealed): (Value, Option<String>) =
+        sqlx::query_as("SELECT payload, sealed_secret FROM operator_changes WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    let sealed = sealed.expect("the password is sealed while the Change is open");
+    assert!(
+        !payload.to_string().contains(&secret) && !sealed.contains(&secret),
+        "{payload}"
+    );
+
+    let (status, _) = decide(&state, operator(&state, "ops-a"), &id, "approve").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "the proposer never approves");
+    let (status, applied) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["state"], json!("applied"));
+
+    // The sign-in service got the password once; nothing the Portal keeps or answers holds it.
+    let puts: Vec<Value> = kc
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "PUT" && r.url.path() == smtp_door)
+        .map(|r| serde_json::from_slice(&r.body).unwrap_or_default())
+        .collect();
+    assert_eq!(puts.len(), 1, "{puts:?}");
+    assert_eq!(puts[0]["password"], json!(secret));
+    assert_eq!(puts[0]["host"], json!("smtp.example.org"));
+    let sealed: Option<String> =
+        sqlx::query_scalar("SELECT sealed_secret FROM operator_changes WHERE id = $1::uuid")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(sealed, None, "a decided Change holds no secret");
+    let audit: Vec<(Option<Value>, Option<Value>)> =
+        sqlx::query_as("SELECT before, after FROM operator_audit WHERE change_id = $1::uuid")
+            .bind(&id)
+            .fetch_all(&pool)
+            .await
+            .expect("audit");
+    assert_eq!(audit.len(), 2, "proposed and applied: {audit:?}");
+    let list = send(&state, operator(&state, "ops-a"), "GET", CHANGES, None).await;
+    for text in [format!("{audit:?}"), list.text.clone()] {
+        assert!(!text.contains(&secret), "{text}");
+    }
+
+    // The Installation page reads the settings back without the password, and the test e-mail
+    // goes to the operator's own address.
+    Mock::given(method("GET"))
+        .and(path(smtp_door))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "host": "smtp.example.org", "port": 587, "tls": "starttls",
+            "from": "noreply@example.org", "user": "mailer", "passwordSet": true
+        })))
+        .with_priority(1)
+        .mount(&kc)
+        .await;
+    let read = send(
+        &state,
+        operator(&state, "ops-a"),
+        "GET",
+        "/api/v1/operator/installation",
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let read = body(&read.text);
+    assert_eq!(read["smtp"]["passwordSet"], json!(true));
+    assert_eq!(read["smtpChange"], Value::Null);
+    let tested = send(
+        &state,
+        operator(&state, "ops-a"),
+        "POST",
+        "/api/v1/operator/installation/test-email",
+        None,
+    )
+    .await;
+    assert_eq!(tested.status, StatusCode::OK, "{}", tested.text);
+    assert_eq!(body(&tested.text)["sent"], json!(true));
+    let to: Vec<Value> = kc
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.url.path().ends_with("/smtp-server/test"))
+        .map(|r| serde_json::from_slice(&r.body).unwrap_or_default())
+        .collect();
+    assert_eq!(to, vec![json!({ "to": "ops-a@hel.fi" })]);
+}
+
 /// The running Portal serves as a role apart from the one that migrates (T-7179): that role
 /// appends to the audit and reads it, and changes, deletes, truncates or drops the triggers of
 /// none of it. The Portal boots and serves with both URLs; one role named in both is refused.

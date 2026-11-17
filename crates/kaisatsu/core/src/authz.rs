@@ -76,6 +76,13 @@ impl Principal {
                 .is_some_and(|roles| roles.iter().any(|r| r == "manage-realm"))
     }
 
+    /// Whether the caller sets the realm's SMTP server (T-7152): a realm applier, or a holder of
+    /// `realm-management` `manage-smtp`, the one right the Portal's reconciler gets for it
+    /// instead of `manage-realm`.
+    pub fn may_set_smtp(&self) -> bool {
+        self.is_realm_applier() || self.has_realm_mgmt_role("manage-smtp")
+    }
+
     pub fn has_realm_mgmt_role(&self, role: &str) -> bool {
         self.is_realm_admin()
             || self.realm_roles.iter().any(|r| r == role)

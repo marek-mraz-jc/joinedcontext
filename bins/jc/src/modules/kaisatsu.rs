@@ -15,6 +15,7 @@ use kaisatsu_core::{
 };
 use kaisatsu_crypto::Kek;
 use kaisatsu_import::{ApplyOptions, apply_realm_files};
+use kaisatsu_login::{OutboxDispatcher, StoredSmtpSender};
 use kaisatsu_oidc::{OutboundGuard, OutboundPolicy, PrivateHost};
 use kaisatsu_server::{KaisatsuState, RealmHosts, load_realm_files_from_path, router};
 use kaisatsu_store_memory::MemoryStore;
@@ -656,6 +657,41 @@ fn sweep_expired_rows(
     });
 }
 
+/// How soon a queued invitation or password-reset e-mail goes out (K9).
+const OUTBOX_EVERY: Duration = Duration::from_secs(5);
+
+/// Sends the queued e-mails of every realm every `every` until `shutdown` (K9), through each
+/// realm's own stored SMTP server ([`StoredSmtpSender`]: read at each send, so the settings the
+/// Portal's operators save apply without a restart, T-7152). A realm without one keeps its rows
+/// pending.
+fn send_queued_mail(
+    store: Arc<dyn Store>,
+    kek: Kek,
+    guard: OutboundGuard,
+    mount: Mount,
+    every: Duration,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let dispatcher = OutboxDispatcher::new(
+        store.clone(),
+        kek,
+        Arc::new(StoredSmtpSender::new(store, guard)),
+    );
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        loop {
+            if let Err(e) = dispatcher.dispatch_all_realms(&mount).await {
+                tracing::warn!(error = %e.public_detail(), "kaisatsu: outbox pass");
+            }
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(every) => {}
+            }
+        }
+    });
+}
+
 /// Keeps each Organization's sign-in pages its `Organization.spec.appearance` over the realm's
 /// block (UIX-16, T-6777): one block per Organization, keyed by its Portal host, which the
 /// sign-in finds by the redirect URI the Portal there sends. A member the Organization leaves
@@ -852,6 +888,15 @@ pub async fn build(
     check_edge_client(&store, realm).await?;
     follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
     sweep_expired_rows(store.clone(), SWEEP_EVERY, shutdown, tasks);
+    send_queued_mail(
+        store.clone(),
+        kek.clone(),
+        outbound_guard(cfg),
+        mount.clone(),
+        OUTBOX_EVERY,
+        shutdown,
+        tasks,
+    );
     #[cfg(feature = "portal")]
     follow_appearances(&store, realm, organizations, shutdown, tasks);
     let state = KaisatsuState::new(store, kek, outbound_guard(cfg), Arc::new(LocalAuthorizer))

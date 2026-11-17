@@ -1051,6 +1051,7 @@ export interface Functions {
   portal_operator_audit: Record<string, never>;
   portal_operator_change_list: Record<string, never>;
   portal_operator_hosts: Record<string, never>;
+  portal_operator_installation: Record<string, never>;
   portal_operator_organizations: Record<string, never>;
   portal_org_model_source: { name: string };
   portal_org_permissions_me: Record<string, never>;
@@ -1233,6 +1234,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_operator_audit: ["Organization"],
   portal_operator_change_list: ["Organization"],
   portal_operator_hosts: ["Organization"],
+  portal_operator_installation: ["Organization"],
   portal_operator_organizations: ["Organization"],
   portal_org_model_source: ["Organization"],
   portal_org_permissions_me: ["Organization"],
@@ -1412,6 +1414,7 @@ export interface Actions {
   portal_operator_change_approve: { id: string };
   portal_operator_change_propose: { body?: unknown };
   portal_operator_change_reject: { id: string };
+  portal_operator_installation_test_email: Record<string, never>;
   portal_org_manifest_create: { plural: string; dryRun?: string; body?: unknown };
   portal_org_manifest_replace: { plural: string; name: string; dryRun?: string; ifMatch?: string; body?: unknown };
   portal_org_model_source_set: { name: string; dryRun?: string; space?: string; source?: string };
@@ -1594,6 +1597,7 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_operator_change_approve: ["Organization"],
   portal_operator_change_propose: ["Organization"],
   portal_operator_change_reject: ["Organization"],
+  portal_operator_installation_test_email: ["Organization"],
   portal_org_manifest_create: ["Organization"],
   portal_org_manifest_replace: ["Organization"],
   portal_org_model_source_set: ["Organization"],

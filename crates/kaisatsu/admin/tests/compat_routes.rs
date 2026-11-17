@@ -478,6 +478,19 @@ fn collection_routes() -> Vec<(Method, String, Option<Value>)> {
     vec![
         (Method::GET, R.to_owned(), None),
         (Method::PUT, R.to_owned(), Some(json!({ "realm": "dev" }))),
+        (Method::GET, format!("{R}/smtp-server"), None),
+        (
+            Method::PUT,
+            format!("{R}/smtp-server"),
+            Some(
+                json!({ "host": "smtp.example.org", "port": 587, "tls": "starttls", "from": "a@example.org" }),
+            ),
+        ),
+        (
+            Method::POST,
+            format!("{R}/smtp-server/test"),
+            Some(json!({ "to": "a@example.org" })),
+        ),
         (
             Method::POST,
             "/admin/realms".to_owned(),
