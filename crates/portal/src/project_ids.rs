@@ -17,7 +17,13 @@ use crate::store::Mirror;
 /// migration refuses to run while one is unkeyed, then sets NOT NULL and forces row-level security,
 /// and takes its tables off this list: migration 0080 (T-7201) forced the 31 tables of PK-1d to
 /// PK-1h, from grafana_visualizations to agent_runs.
-pub const KEYED_BY_NAME: &[&str] = &[];
+pub const KEYED_BY_NAME: &[&str] = &[
+    // T-7203 PK-1j, migration 0074: an installation's connector event (project '') takes the
+    // installation Organization's reserved project key, see [`installation`]. Phase one until
+    // their own forcing migration.
+    "notifications",
+    "app_builds",
+];
 
 /// The column naming the project whose key a row of `table` takes: the project of the Endpoint
 /// an access request asks for, whose owners decide it (T-7202); `project` everywhere else.
@@ -116,6 +122,19 @@ pub async fn reserved(
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
+}
+
+/// The key of the installation Organization's reserved project (TEN-11): what an installation's
+/// own rows take, a connector event with project '' (T-7203). `None` while the mirror names no
+/// installation Organization or the registry holds no active one by that name.
+pub async fn installation(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    match crate::permissions::installation_organization(mirror) {
+        Some(organization) => reserved(pool, &organization).await,
+        None => Ok(None),
+    }
 }
 
 /// The key of `project` as the mirror places it: its Organization from the Project's
@@ -724,7 +743,12 @@ pub async fn backfill_tables(
         .fetch_all(pool)
         .await?;
         for name in names {
-            let Some(key) = key_of(pool, mirror, &name).await? else {
+            let key = if name.is_empty() && *table == "notifications" {
+                installation(pool, mirror).await?
+            } else {
+                key_of(pool, mirror, &name).await?
+            };
+            let Some(key) = key else {
                 waiting.insert(name);
                 continue;
             };
