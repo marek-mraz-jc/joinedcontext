@@ -139,8 +139,13 @@ pub struct OperatorChange {
     pub proposed_by: String,
     #[schema(value_type = String, format = DateTime)]
     pub proposed_at: DateTime<Utc>,
+    /// The name of the operator who asked for it, when the realm answers it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposed_by_name: Option<String>,
     /// The operator who approved or rejected it.
     pub decided_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decided_by_name: Option<String>,
     #[schema(value_type = Option<String>, format = DateTime)]
     pub decided_at: Option<DateTime<Utc>>,
 }
@@ -390,6 +395,44 @@ async fn holds(
     }
 }
 
+/// The names behind the user ids an operator read shows, at most `LAST_SEEN_AT_ONCE` realm reads
+/// in flight. Best effort: a read still answers with the ids when the realm does not, and an id it
+/// does not know (or `reconciler`) keeps no name.
+async fn names_of(
+    state: &AppState,
+    ids: std::collections::BTreeSet<String>,
+) -> std::collections::BTreeMap<String, String> {
+    let ids: Vec<String> = ids
+        .into_iter()
+        .filter(|id| crate::permissions::is_person_id(id))
+        .collect();
+    if ids.is_empty() {
+        return Default::default();
+    }
+    let Ok(people) = people(state) else {
+        return Default::default();
+    };
+    let Ok(admin) = people.admin().await else {
+        return Default::default();
+    };
+    let lookups = ids.into_iter().map(|id| {
+        let admin = &admin;
+        async move {
+            let found = admin.get(&id).await;
+            (id, found)
+        }
+    });
+    let answers: Vec<_> = futures_util::StreamExt::collect(futures_util::StreamExt::buffered(
+        futures_util::stream::iter(lookups),
+        super::people::LAST_SEEN_AT_ONCE,
+    ))
+    .await;
+    answers
+        .into_iter()
+        .filter_map(|(id, found)| Some((id, super::people_ids::name_of(&found.ok()?))))
+        .collect()
+}
+
 fn people(state: &AppState) -> Result<&crate::people::People, ApiError> {
     state.people.as_deref().ok_or_else(|| {
         ApiError::Unavailable(
@@ -493,8 +536,10 @@ fn change(row: Row) -> Result<OperatorChange, ApiError> {
         payload,
         state,
         proposed_by,
+        proposed_by_name: None,
         proposed_at: at(proposed_at),
         decided_by,
+        decided_by_name: None,
         decided_at: decided_at.map(at),
     })
 }
@@ -577,7 +622,20 @@ pub async fn list(
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    let items = rows.into_iter().map(change).collect::<Result<_, _>>()?;
+    let mut items: Vec<OperatorChange> = rows.into_iter().map(change).collect::<Result<_, _>>()?;
+    let ids = items
+        .iter()
+        .flat_map(|c| std::iter::once(&c.proposed_by).chain(c.decided_by.as_ref()))
+        .cloned()
+        .collect();
+    let names = names_of(&state, ids).await;
+    for item in &mut items {
+        item.proposed_by_name = names.get(&item.proposed_by).cloned();
+        item.decided_by_name = item
+            .decided_by
+            .as_ref()
+            .and_then(|id| names.get(id).cloned());
+    }
     Ok(Json(OperatorChangeList { items }))
 }
 
@@ -1065,6 +1123,9 @@ pub struct OperatorAuditEntry {
     pub at: DateTime<Utc>,
     /// The operator's user id, or `reconciler` for a step on a host's objects.
     pub actor: String,
+    /// The operator's name, when the realm answers it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_name: Option<String>,
     pub change_id: Option<String>,
     /// e.g. `proposed HostAdd`, `certificate.created`, `host.served`.
     pub action: String,
@@ -1117,12 +1178,14 @@ pub async fn audit_list(
     .fetch_all(pool)
     .await
     .map_err(db)?;
+    let names = names_of(&state, rows.iter().map(|row| row.2.clone()).collect()).await;
     let items = rows
         .into_iter()
         .map(
             |(id, when, actor, change_id, action, before, after, source_ip)| OperatorAuditEntry {
                 id,
                 at: at(when),
+                actor_name: names.get(&actor).cloned(),
                 actor,
                 change_id,
                 action,

@@ -13592,9 +13592,10 @@
       "empty": "No Organization yet. Create one in Settings, then prove its domain and ask for its first host below.",
       "name": "Organization",
       "domain": "Domain",
-      "noDomain": "No domain yet: its first approved host links one",
+      "noDomain": "Not set yet",
       "hosts": "Hosts",
-      "hostCount": "{served} served, {waiting} on their way"
+      "hostCount": "{served} served, {waiting} on their way",
+      "setDomain": "Write its proved domain in Settings"
     },
     "ids": {
       "title": "Domains and their TXT records",
@@ -13615,7 +13616,6 @@
       "lead": "Three steps. The host waits for a second operator's approval, then for its DNS and its certificate.",
       "step1": "1. The domain and its TXT record",
       "domain": "Domain",
-      "domainHint": "The Organization's own domain, lowercase, e.g. bbsk.sk.",
       "ask": "Get the TXT record",
       "publish": "Publish this record at the DNS of {domain}, then check it in step 2.",
       "record": "The TXT record to publish",
@@ -13627,16 +13627,20 @@
       "step3": "3. Ask for a host",
       "noOrganization": "No Organization exists yet: create one in Settings first, then ask for its host here.",
       "host": "Host",
-      "hostHint": "Lowercase, without a port, under the proved domain or the installation's, e.g. smartcity.bbsk.sk.",
       "organization": "Organization",
-      "organizationHint": "The Organization the host answers for, e.g. bbsk.",
       "organizationPick": "Choose an Organization",
       "role": "What answers on the host",
-      "roleHint": "e.g. Working Portal for smartcity.bbsk.sk, Open data for opendata.bbsk.sk.",
       "propose": "Ask for the host",
       "proposed": "The host is asked for. A second operator approves it.",
       "toChanges": "Open Operator Changes",
-      "copy": "Copy the record"
+      "copy": "Copy the record",
+      "hint": {
+        "domain": "The Organization's own domain, lowercase, e.g. bbsk.sk.",
+        "host": "Lowercase, without a port, under the proved domain or the installation's, e.g. smartcity.bbsk.sk.",
+        "organization": "The Organization the host answers for, e.g. bbsk.",
+        "role": "e.g. Working Portal for smartcity.bbsk.sk, Open data for opendata.bbsk.sk."
+      },
+      "orgNoDomain": "{organization} has no domain yet, so the host goes in under the installation's domain. For a host under {domain}, write {domain} in its Settings first."
     },
     "role": {
       "working": "Working Portal",
@@ -13667,7 +13671,7 @@
       "title": "Hosts and certificates",
       "lead": "Every host of every Organization on its way to served: its DNS, its certificate, then the edge route. A host answers only once it is served.",
       "slots": "Certificate slots",
-      "slotsLead": "Let's Encrypt limits new certificates, so the installation requests at most 10 a day and {week} a week per registered domain.",
+      "slotsLead": "The certificate authority limits new certificates, so the installation requests at most 10 a day and {week} a week per registered domain.",
       "used": "{used} of {limit} new certificates requested in the last 24 hours.",
       "nextFree": "The next slot frees at {at}.",
       "caption": "Hosts",
@@ -13705,7 +13709,6 @@
       "target": "Host or person",
       "organization": "Organization",
       "proposedBy": "Asked by",
-      "proposedAt": "Asked at",
       "state": "State",
       "actions": "Actions",
       "you": "You",

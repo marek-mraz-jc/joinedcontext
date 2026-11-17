@@ -13592,9 +13592,10 @@
       "empty": "Noch keine Organisation. Legen Sie eine unter Einstellungen an, weisen Sie dann unten ihre Domain nach und beantragen Sie ihren ersten Host.",
       "name": "Organisation",
       "domain": "Domäne",
-      "noDomain": "Noch keine Domain: ihr erster genehmigter Host verknüpft eine",
+      "noDomain": "Noch nicht gesetzt",
       "hosts": "Hosts",
-      "hostCount": "{served} in Betrieb, {waiting} unterwegs"
+      "hostCount": "{served} in Betrieb, {waiting} unterwegs",
+      "setDomain": "Tragen Sie die nachgewiesene Domain in den Einstellungen ein"
     },
     "ids": {
       "title": "Domänen und ihre TXT-Einträge",
@@ -13615,7 +13616,6 @@
       "lead": "Drei Schritte. Der Host wartet auf die Genehmigung eines zweiten Betreibers, dann auf sein DNS und sein Zertifikat.",
       "step1": "1. Die Domäne und ihr TXT-Eintrag",
       "domain": "Domäne",
-      "domainHint": "Die eigene Domäne der Organisation, kleingeschrieben, z. B. bbsk.sk.",
       "ask": "TXT-Eintrag abrufen",
       "publish": "Veröffentlichen Sie diesen Eintrag im DNS von {domain} und prüfen Sie ihn dann in Schritt 2.",
       "record": "Der zu veröffentlichende TXT-Eintrag",
@@ -13627,16 +13627,20 @@
       "step3": "3. Einen Host anfordern",
       "noOrganization": "Es gibt noch keine Organisation: Legen Sie zuerst eine in den Einstellungen an und fordern Sie dann hier ihren Host an.",
       "host": "Host",
-      "hostHint": "Kleingeschrieben, ohne Port, unter der nachgewiesenen Domäne oder der der Installation, z. B. smartcity.bbsk.sk.",
       "organization": "Organisation",
-      "organizationHint": "Die Organisation, für die der Host antwortet, z. B. bbsk.",
       "organizationPick": "Organisation wählen",
       "role": "Was auf dem Host antwortet",
-      "roleHint": "Z. B. Arbeitsportal für smartcity.bbsk.sk, offene Daten für opendata.bbsk.sk.",
       "propose": "Host anfordern",
       "proposed": "Der Host ist angefordert. Ein zweiter Betreiber genehmigt ihn.",
       "toChanges": "Operator-Änderungen öffnen",
-      "copy": "Eintrag kopieren"
+      "copy": "Eintrag kopieren",
+      "hint": {
+        "domain": "Die eigene Domäne der Organisation, kleingeschrieben, z. B. bbsk.sk.",
+        "host": "Kleingeschrieben, ohne Port, unter der nachgewiesenen Domäne oder der der Installation, z. B. smartcity.bbsk.sk.",
+        "organization": "Die Organisation, für die der Host antwortet, z. B. bbsk.",
+        "role": "Z. B. Arbeitsportal für smartcity.bbsk.sk, offene Daten für opendata.bbsk.sk."
+      },
+      "orgNoDomain": "{organization} hat noch keine Domain, daher kommt der Host unter die Domain der Installation. Für einen Host unter {domain} tragen Sie zuerst {domain} in ihren Einstellungen ein."
     },
     "role": {
       "working": "Arbeitsportal",
@@ -13705,7 +13709,6 @@
       "target": "Host oder Person",
       "organization": "Organisation",
       "proposedBy": "Angefordert von",
-      "proposedAt": "Angefordert am",
       "state": "Status",
       "actions": "Aktionen",
       "you": "Sie",

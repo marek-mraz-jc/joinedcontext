@@ -611,6 +611,54 @@ async fn realm(
     kc
 }
 
+/// The reads name the operator behind a user id when the realm answers it, and keep the id
+/// alone when it does not (the reconciler, an id the realm lacks).
+#[tokio::test]
+async fn the_changes_and_the_audit_name_the_operator_who_asked() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let _kc = realm(&mut state, &subject, "jana@ops.example", true, &[]).await;
+    let mut jana = operator(&state, "jana");
+    jana.subject = subject.clone();
+    let r = run("n");
+    organization(&state, &r, &format!("{r}.sk"));
+    let host = format!("named.{r}.{BASE}");
+    let (status, made) = propose(
+        &state,
+        jana,
+        json!({ "kind": "HostAdd", "host": host, "organization": r, "role": "working" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let ops = operator(&state, "ops-b");
+    let changes = body(&send(&state, ops.clone(), "GET", CHANGES, None).await.text);
+    let mine = changes["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|c| c["id"] == made["id"])
+        .expect("the Change");
+    assert_eq!(mine["proposedBy"], subject.as_str());
+    assert_eq!(mine["proposedByName"], "jana@ops.example");
+    let audit = body(
+        &send(&state, ops, "GET", "/api/v1/operator/audit", None)
+            .await
+            .text,
+    );
+    let rows = audit["items"].as_array().expect("items");
+    let row = rows
+        .iter()
+        .find(|row| row["actor"] == subject.as_str())
+        .expect("the proposal's audit row");
+    assert_eq!(row["actorName"], "jana@ops.example");
+    assert!(
+        rows.iter()
+            .filter(|row| row["actor"] == "reconciler")
+            .all(|row| row.get("actorName").is_none()),
+        "the reconciler keeps no name"
+    );
+}
+
 /// The membership write of an approval, expected `times` times.
 async fn expect_write(kc: &MockServer, verb: &str, subject: &str, status: u16, times: u64) {
     Mock::given(method(verb))

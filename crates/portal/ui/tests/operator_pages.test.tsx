@@ -53,7 +53,7 @@ const HOSTS = {
 const CHANGES = {
   items: [
     { id: "0b9d2f4e-1a2b-4c3d-8e9f-001122334455", kind: "HostAdd", payload: { host: "api.bbsk.sk", organization: "bbsk", role: "api" }, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T08:00:00Z", decidedBy: null, decidedAt: null },
-    { id: "1c0e3a5f-2b3c-4d4e-9fa0-112233445566", kind: "HostRemove", payload: { host: "old.bbsk.sk" }, state: "proposed", proposedBy: "a1b2c3", proposedAt: "2026-11-17T08:30:00Z", decidedBy: null, decidedAt: null },
+    { id: "1c0e3a5f-2b3c-4d4e-9fa0-112233445566", kind: "HostRemove", payload: { host: "old.bbsk.sk" }, state: "proposed", proposedBy: "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23", proposedByName: "Jana Nováková", proposedAt: "2026-11-17T08:30:00Z", decidedBy: null, decidedAt: null },
   ],
 };
 
@@ -124,6 +124,10 @@ describe("changes", () => {
       return undefined;
     });
     expect((await screen.findAllByText(en.operator.changes.ownHint)).length).toBeGreaterThan(0);
+    // The asker by name, never the raw id; the Organization rides in the host's cell.
+    expect(screen.getAllByText("Jana Nováková").length).toBeGreaterThan(0);
+    expect(screen.queryByText("5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23")).toBeNull();
+    expect(screen.getAllByText(`${en.operator.changes.organization}: bbsk`).length).toBeGreaterThan(0);
     const approve = screen.getAllByRole("button", { name: en.operator.changes.approve });
     expect(approve).toHaveLength(1);
     fireEvent.click(approve[0]);
@@ -145,6 +149,7 @@ describe("audit", () => {
         ? json({
             items: [
               { id: 2, at: "2026-11-17T09:00:00Z", actor: "reconciler", changeId: null, action: "certificate.created", before: null, after: { host: "opendata.bbsk.sk" }, sourceIp: null },
+              { id: 3, at: "2026-11-17T09:30:00Z", actor: "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23", actorName: "Jana Nováková", changeId: null, action: "rejected HostRemove", before: null, after: null, sourceIp: null },
               { id: 1, at: "2026-11-17T08:00:00Z", actor: ME, changeId: CHANGES.items[0].id, action: "proposed HostAdd", before: null, after: { kind: "HostAdd", payload: { host: "api.bbsk.sk" } }, sourceIp: "10.0.0.7" },
             ],
           })
@@ -154,12 +159,17 @@ describe("audit", () => {
     expect(screen.getAllByText("Asked for: Add a host").length).toBeGreaterThan(0);
     expect(screen.getAllByText(en.operator.audit.reconciler).length).toBeGreaterThan(0);
     expect(screen.getAllByText("api.bbsk.sk").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Jana Nováková").length).toBeGreaterThan(0);
+    expect(screen.queryByText("5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23")).toBeNull();
   });
 });
 
 describe("organizations", () => {
   const ORGS = {
-    items: [{ name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 } }],
+    items: [
+      { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 } },
+      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {} },
+    ],
     ids: [
       { id: "sk_bbsk", domain: "bbsk.sk", recordName: "_joinedcontext.bbsk.sk", recordValue: "jc-verify=c0ffee", requestedAt: "2026-11-16T09:00:00Z", mintedAt: "2026-11-16T09:10:00Z", organizations: ["bbsk"] },
       { id: "sk_zilina", domain: "zilina.sk", recordName: "_joinedcontext.zilina.sk", recordValue: "jc-verify=beef", requestedAt: "2026-11-17T09:00:00Z", mintedAt: null, organizations: [] },
@@ -179,6 +189,9 @@ describe("organizations", () => {
     expect(screen.getAllByText("1 served, 1 on their way").length).toBeGreaterThan(0);
     expect(screen.getAllByText('_joinedcontext.zilina.sk TXT "jc-verify=beef"').length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: en.operator.ids.check })).toHaveLength(1);
+    // An Organization without a domain says where it is set.
+    expect(screen.getAllByText(en.operator.organizations.noDomain).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: en.operator.organizations.setDomain })[0]).toHaveAttribute("href", "/organization/settings");
 
     fireEvent.change(screen.getByLabelText(en.operator.add.domain), { target: { value: "Presov.sk" } });
     fireEvent.click(screen.getByRole("button", { name: en.operator.add.ask }));
@@ -187,7 +200,9 @@ describe("organizations", () => {
     expect(await screen.findByText("The domain is proved. Its Organization id is sk_presov.")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText(en.operator.add.host), { target: { value: "smartcity.presov.sk" } });
-    fireEvent.change(screen.getByLabelText(en.operator.add.organization), { target: { value: "bbsk" } });
+    fireEvent.change(screen.getByLabelText(en.operator.add.organization), { target: { value: "presov" } });
+    // presov has no domain yet: the id stays home and the step says how to use it.
+    expect(screen.getByText("Prešovský kraj has no domain yet", { exact: false })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: en.operator.add.propose }));
     expect(await screen.findByText(en.operator.add.proposed, { exact: false })).toBeTruthy();
 
@@ -197,11 +212,31 @@ describe("organizations", () => {
     expect(JSON.parse(change?.body ?? "{}")).toEqual({
       kind: "HostAdd",
       host: "smartcity.presov.sk",
-      organization: "bbsk",
-      organizationId: "sk_presov",
+      organization: "presov",
       role: "working",
     });
     await expectNoAxeViolations(document.body);
+  });
+
+  it("sends the minted id with a host of the Organization whose domain it proves", async () => {
+    const seen = render(<OperatorOrganizations />, (path, method) => {
+      if (path === "/api/v1/operator/organizations") return json(ORGS);
+      if (path === "/api/v1/organization-ids/challenge")
+        return json({ domain: "bbsk.sk", organizationId: "sk_bbsk", name: "_joinedcontext.bbsk.sk", value: "jc-verify=c0ffee", record: '_joinedcontext.bbsk.sk TXT "jc-verify=c0ffee"' });
+      if (path === "/api/v1/organization-ids" && method === "POST") return json({ organizationId: "sk_bbsk", domain: "bbsk.sk", mintedAt: "2026-11-17T10:00:00Z" }, 201);
+      if (path === "/api/v1/operator/changes" && method === "POST") return json(CHANGES.items[0], 201);
+      return undefined;
+    });
+    fireEvent.change(await screen.findByLabelText(en.operator.add.domain), { target: { value: "bbsk.sk" } });
+    fireEvent.click(screen.getByRole("button", { name: en.operator.add.ask }));
+    fireEvent.click(await screen.findByRole("button", { name: en.operator.add.mint }));
+    expect(await screen.findByText("The domain is proved. Its Organization id is sk_bbsk.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(en.operator.add.host), { target: { value: "portal.bbsk.sk" } });
+    fireEvent.change(screen.getByLabelText(en.operator.add.organization), { target: { value: "bbsk" } });
+    fireEvent.click(screen.getByRole("button", { name: en.operator.add.propose }));
+    expect(await screen.findByText(en.operator.add.proposed, { exact: false })).toBeTruthy();
+    const change = seen.find((s) => s.method === "POST" && s.path === "/api/v1/operator/changes");
+    expect(JSON.parse(change?.body ?? "{}")).toMatchObject({ organization: "bbsk", organizationId: "sk_bbsk" });
   });
 
   it("names the field a refused host breaks", async () => {

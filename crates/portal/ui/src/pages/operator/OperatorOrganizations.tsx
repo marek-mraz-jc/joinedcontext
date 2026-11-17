@@ -61,7 +61,16 @@ export function OperatorOrganizations(): JSX.Element {
             label: t("operator.organizations.domain"),
             text: (row) => row.domain ?? "",
             cell: (row) =>
-              row.domain ? <span className="font-mono">{row.domain}</span> : <span className="text-fg-muted">{t("operator.organizations.noDomain")}</span>,
+              row.domain ? (
+                <span className="font-mono">{row.domain}</span>
+              ) : (
+                <span className="block">
+                  <span className="block text-fg-muted">{t("operator.organizations.noDomain")}</span>
+                  <Link to="/organization/$tab" params={{ tab: "settings" }} className="text-caption underline">
+                    {t("operator.organizations.setDomain")}
+                  </Link>
+                </span>
+              ),
           },
           { key: "hosts", label: t("operator.organizations.hosts"), text: (row) => hostSummary(row, t) },
         ]}
@@ -157,6 +166,10 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
   const mint = useMutation({ mutationFn: mintId, onSettled: refresh });
   const propose = useMutation({ mutationFn: proposeChange, onSettled: refresh });
   const orgId = challenge?.organizationId;
+  // The id goes with the host only for the Organization whose domain it proves; the server
+  // refuses it for any other (organizationId names another Organization).
+  const chosen = organizations.find((org) => org.name === organization);
+  const proved = mint.isSuccess && challenge !== null && chosen?.domain === challenge.domain;
   // The server names the field it refuses first ("host: …"): show that under the field itself.
   const said = (error: unknown) => (error ? reasonOf(error, t("operator.tryAgain")) : "");
   const fieldOf = (error: unknown, field: string): string[] | undefined => {
@@ -176,7 +189,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
       kind: "HostAdd",
       host: host.trim().toLowerCase(),
       organization,
-      organizationId: mint.isSuccess ? orgId : undefined,
+      organizationId: proved ? orgId : undefined,
       role,
     });
   };
@@ -188,7 +201,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
         <li className="space-y-3 py-5 first:pt-0 last:pb-0">
           <h3 className="text-body font-semibold text-fg">{t("operator.add.step1")}</h3>
           <form className="flex flex-col items-start gap-3" onSubmit={onAsk}>
-            <Field id="operator-domain" label={t("operator.add.domain")} help={t("operator.add.domainHint")} errors={fieldOf(ask.error, "domain")} className="w-full max-w-md">
+            <Field id="operator-domain" label={t("operator.add.domain")} help={t("operator.add.hint.domain")} errors={fieldOf(ask.error, "domain")} className="w-full max-w-md">
               <Input id="operator-domain" value={domain} onChange={(e) => setDomain(e.target.value)} autoComplete="off" spellCheck={false} required />
             </Field>
             <Button type="submit" loading={ask.isPending}>
@@ -219,10 +232,10 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
             <p className="text-body text-fg-muted">{t("operator.add.noOrganization")}</p>
           ) : (
             <form className="grid gap-3 sm:grid-cols-2" onSubmit={onPropose}>
-              <Field id="operator-host" label={t("operator.add.host")} help={t("operator.add.hostHint")} errors={fieldOf(propose.error, "host") ?? fieldOf(propose.error, "organizationId")}>
+              <Field id="operator-host" label={t("operator.add.host")} help={t("operator.add.hint.host")} errors={fieldOf(propose.error, "host") ?? fieldOf(propose.error, "organizationId")}>
                 <Input id="operator-host" value={host} onChange={(e) => setHost(e.target.value)} autoComplete="off" spellCheck={false} required />
               </Field>
-              <Field id="operator-organization" label={t("operator.add.organization")} help={t("operator.add.organizationHint")} errors={fieldOf(propose.error, "organization")}>
+              <Field id="operator-organization" label={t("operator.add.organization")} help={t("operator.add.hint.organization")} errors={fieldOf(propose.error, "organization")}>
                 <Select id="operator-organization" value={organization} onChange={(e) => setOrganization(e.target.value)} required>
                   <option value="">{t("operator.add.organizationPick")}</option>
                   {organizations.map((org) => (
@@ -232,7 +245,7 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
                   ))}
                 </Select>
               </Field>
-              <Field id="operator-role" label={t("operator.add.role")} help={t("operator.add.roleHint")} errors={fieldOf(propose.error, "role")}>
+              <Field id="operator-role" label={t("operator.add.role")} help={t("operator.add.hint.role")} errors={fieldOf(propose.error, "role")}>
                 <Select id="operator-role" value={role} onChange={(e) => setRole(e.target.value)}>
                   {HOST_ROLES.map((r) => (
                     <option key={r} value={r}>
@@ -241,6 +254,11 @@ function AddDomain({ organizations }: { organizations: OperatorOrganization[] })
                   ))}
                 </Select>
               </Field>
+              {mint.isSuccess && challenge && chosen && !chosen.domain ? (
+                <p className="text-body text-fg-muted sm:col-span-2">
+                  {t("operator.add.orgNoDomain", { organization: chosen.title ?? chosen.name, domain: challenge.domain })}
+                </p>
+              ) : null}
               <div className="sm:col-span-2">
                 <Button type="submit" loading={propose.isPending}>
                   {t("operator.add.propose")}

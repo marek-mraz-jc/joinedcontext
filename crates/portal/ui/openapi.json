@@ -59269,6 +59269,13 @@
             "type": "string",
             "description": "The operator's user id, or `reconciler` for a step on a host's objects."
           },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operator's name, when the realm answers it."
+          },
           "after": {},
           "at": {
             "type": "string",
@@ -59334,6 +59341,12 @@
             ],
             "description": "The operator who approved or rejected it."
           },
+          "decidedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -59350,6 +59363,13 @@
           "proposedBy": {
             "type": "string",
             "description": "The user id of the operator who asked for it."
+          },
+          "proposedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name of the operator who asked for it, when the realm answers it."
           },
           "state": {
             "type": "string",

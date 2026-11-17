@@ -277,6 +277,15 @@ routes:
   - route: GET /operator/changes
     rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
     expect: [401, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /operator/organizations
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
+    expect: [401, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /operator/hosts
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
+    expect: [401, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /operator/audit
+    rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
+    expect: [401, 403, 403, 403, 403, 403, 403, 403]
   - route: POST /operator/changes
     rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
     expect: [403, 403, 403, 403, 403, 403, 403, 403]

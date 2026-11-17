@@ -68,7 +68,7 @@ export function OperatorAudit(): JSX.Element {
             key: "actor",
             label: t("operator.audit.actor"),
             text: (row) =>
-              row.actor === "reconciler" ? t("operator.audit.reconciler") : row.actor === me ? t("operator.changes.you") : row.actor,
+              row.actor === "reconciler" ? t("operator.audit.reconciler") : row.actor === me ? t("operator.changes.you") : (row.actorName ?? row.actor),
           },
           { key: "action", label: t("operator.audit.action"), text: (row) => actionText(row.action, t) },
           { key: "subject", label: t("operator.audit.subject"), text: subjectOf, cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{subjectOf(row)}</span> },

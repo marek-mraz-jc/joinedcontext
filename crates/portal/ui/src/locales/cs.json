@@ -13592,9 +13592,10 @@
       "empty": "Zatím žádná organizace. Vytvořte ji v Nastavení, pak níže prokažte její doménu a požádejte o jejího prvního hostitele.",
       "name": "Organizace",
       "domain": "Doména",
-      "noDomain": "Zatím bez domény: propojí ji její první schválený hostitel",
+      "noDomain": "Zatím nenastavená",
       "hosts": "Hostitelé",
-      "hostCount": "{served} v provozu, {waiting} na cestě"
+      "hostCount": "{served} v provozu, {waiting} na cestě",
+      "setDomain": "Zapište její prokázanou doménu v Nastavení"
     },
     "ids": {
       "title": "Domény a jejich TXT záznamy",
@@ -13615,7 +13616,6 @@
       "lead": "Tři kroky. Hostitel čeká na schválení druhým operátorem, potom na DNS a certifikát.",
       "step1": "1. Doména a její TXT záznam",
       "domain": "Doména",
-      "domainHint": "Vlastní doména organizace, malými písmeny, například bbsk.sk.",
       "ask": "Získat TXT záznam",
       "publish": "Zveřejněte tento záznam v DNS domény {domain} a pak ho ověřte v kroku 2.",
       "record": "TXT záznam ke zveřejnění",
@@ -13627,16 +13627,20 @@
       "step3": "3. Požádat o hostitele",
       "noOrganization": "Zatím neexistuje žádná organizace: nejprve ji vytvořte v Nastavení, pak zde požádejte o jejího hostitele.",
       "host": "Hostitel",
-      "hostHint": "Malými písmeny, bez portu, pod prokázanou doménou nebo doménou instalace, například smartcity.bbsk.sk.",
       "organization": "Organizace",
-      "organizationHint": "Organizace, za kterou hostitel odpovídá, například bbsk.",
       "organizationPick": "Vyberte organizaci",
       "role": "Co na hostiteli odpovídá",
-      "roleHint": "Například pracovní portál pro smartcity.bbsk.sk, otevřená data pro opendata.bbsk.sk.",
       "propose": "Požádat o hostitele",
       "proposed": "O hostitele je požádáno. Schválí ho druhý operátor.",
       "toChanges": "Otevřít změny operátorů",
-      "copy": "Kopírovat záznam"
+      "copy": "Kopírovat záznam",
+      "hint": {
+        "domain": "Vlastní doména organizace, malými písmeny, například bbsk.sk.",
+        "host": "Malými písmeny, bez portu, pod prokázanou doménou nebo doménou instalace, například smartcity.bbsk.sk.",
+        "organization": "Organizace, za kterou hostitel odpovídá, například bbsk.",
+        "role": "Například pracovní portál pro smartcity.bbsk.sk, otevřená data pro opendata.bbsk.sk."
+      },
+      "orgNoDomain": "{organization} zatím nemá doménu, proto hostitel půjde pod doménu instalace. Pro hostitele pod {domain} nejprve zapište {domain} v jejím Nastavení."
     },
     "role": {
       "working": "Pracovní portál",
@@ -13705,7 +13709,6 @@
       "target": "Hostitel nebo osoba",
       "organization": "Organizace",
       "proposedBy": "Požádal",
-      "proposedAt": "Kdy",
       "state": "Stav",
       "actions": "Akce",
       "you": "Vy",

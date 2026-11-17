@@ -23,6 +23,7 @@ export function OperatorChanges(): JSX.Element {
     onSettled: () => client.invalidateQueries({ queryKey: ["operator"] }),
   });
   const target = (row: OperatorChange) => row.payload.host ?? row.payload.subject ?? "";
+  const asker = (row: OperatorChange) => (row.proposedBy === me ? t("operator.changes.you") : (row.proposedByName ?? row.proposedBy));
   return (
     <section className="space-y-6" aria-labelledby="operator-changes-heading">
       <div>
@@ -51,7 +52,23 @@ export function OperatorChanges(): JSX.Element {
         stack
         columns={[
           { key: "kind", label: t("operator.changes.kind"), text: (row) => t(`operator.kind.${row.kind}`) },
-          { key: "target", label: t("operator.changes.target"), text: target, cell: (row) => <span className="font-mono [overflow-wrap:anywhere]">{target(row)}</span> },
+          // The Organization sits under the host and the time under the asker, so a phone card shows
+          // all of them before its More details (three fields).
+          {
+            key: "target",
+            label: t("operator.changes.target"),
+            text: (row) => [target(row), row.payload.organization].filter(Boolean).join(" "),
+            cell: (row) => (
+              <span className="block min-w-0">
+                <span className="block font-mono [overflow-wrap:anywhere]">{target(row)}</span>
+                {row.payload.organization ? (
+                  <span className="block text-caption text-fg-muted">
+                    {t("operator.changes.organization")}: {row.payload.organization}
+                  </span>
+                ) : null}
+              </span>
+            ),
+          },
           {
             key: "state",
             label: t("operator.changes.state"),
@@ -62,12 +79,18 @@ export function OperatorChanges(): JSX.Element {
               </Badge>
             ),
           },
-          { key: "proposedBy", label: t("operator.changes.proposedBy"), text: (row) => (row.proposedBy === me ? t("operator.changes.you") : row.proposedBy) },
-          { key: "proposedAt", label: t("operator.changes.proposedAt"), text: (row) => when(row.proposedAt, i18n.language) },
           {
-            key: "organization",
-            label: t("operator.changes.organization"),
-            text: (row) => row.payload.organization ?? "",
+            key: "proposedBy",
+            label: t("operator.changes.proposedBy"),
+            text: (row) => `${asker(row)} ${when(row.proposedAt, i18n.language)}`,
+            cell: (row) => (
+              <span className="block">
+                <span className="block">{asker(row)}</span>
+                <span className="block text-caption text-fg-muted">
+                  <time dateTime={row.proposedAt}>{when(row.proposedAt, i18n.language)}</time>
+                </span>
+              </span>
+            ),
           },
           {
             key: "actions",

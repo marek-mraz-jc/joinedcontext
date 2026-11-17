@@ -12601,6 +12601,8 @@ export interface components {
             action: string;
             /** @description The operator's user id, or `reconciler` for a step on a host's objects. */
             actor: string;
+            /** @description The operator's name, when the realm answers it. */
+            actorName?: string | null;
             after?: unknown;
             /** Format: date-time */
             at: string;
@@ -12620,6 +12622,7 @@ export interface components {
             decidedAt?: string | null;
             /** @description The operator who approved or rejected it. */
             decidedBy?: string | null;
+            decidedByName?: string | null;
             id: string;
             kind: components["schemas"]["OperatorKind"];
             payload: components["schemas"]["ChangePayload"];
@@ -12627,6 +12630,8 @@ export interface components {
             proposedAt: string;
             /** @description The user id of the operator who asked for it. */
             proposedBy: string;
+            /** @description The name of the operator who asked for it, when the realm answers it. */
+            proposedByName?: string | null;
             /** @description `proposed`, `applied` or `rejected`. */
             state: string;
         };
