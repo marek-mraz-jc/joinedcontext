@@ -501,13 +501,14 @@ impl Egress {
     }
 }
 
-/// The Portal's own age identity file, which seals the bucket's secret key at rest.
+/// The Portal's own age identity file, which seals a bucket's secret key (and an operator
+/// Change's SMTP password, T-7152) at rest.
 fn age_key_file(state: &AppState) -> Result<&std::path::Path, ApiError> {
     match &state.config.pipeline_secrets {
         Some(crate::pipeline_secrets::Backend::Sops { age_key_file }) => Ok(age_key_file),
         _ => Err(ApiError::Unavailable(
-            "this Portal has no age key (JC_PORTAL_SOPS_AGE_KEY_FILE) to keep a bucket's secret \
-             key sealed, so no backup target can be saved; the operator sets it"
+            "this Portal has no age key (JC_PORTAL_SOPS_AGE_KEY_FILE) to keep a secret sealed, \
+             so no backup target or e-mail password can be saved; the operator sets it"
                 .into(),
         )),
     }
@@ -522,11 +523,10 @@ pub fn seal(state: &AppState, secret: &str) -> Result<String, ApiError> {
     crate::secret_files::wrap(secret.as_bytes(), &recipient).map_err(ApiError::Internal)
 }
 
-/// The secret access key back from its seal, for one run.
-fn unseal(state: &AppState, sealed: &str) -> Result<Zeroizing<String>, ApiError> {
-    let unreadable = || {
-        ApiError::Unavailable("the bucket's secret key cannot be unsealed; save it again".into())
-    };
+/// A secret back from its seal ([`seal`]), for one use.
+pub(crate) fn unseal(state: &AppState, sealed: &str) -> Result<Zeroizing<String>, ApiError> {
+    let unreadable =
+        || ApiError::Unavailable("the sealed secret cannot be unsealed; save it again".into());
     let identities =
         jcctl::secrets::identities_from_file(age_key_file(state)?).map_err(|_| unreadable())?;
     let decryptor = age::Decryptor::new(age::armor::ArmoredReader::new(sealed.as_bytes()))

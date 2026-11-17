@@ -33,6 +33,9 @@ pub struct SetupState {
     pub complete: bool,
     pub steps: Vec<SetupItem>,
     pub operator: Vec<SetupItem>,
+    /// Whether the caller is one of the installation's operators, who set the operator items
+    /// (T-7152): the page links them there, and tells anybody else their operator sets them.
+    pub operates: bool,
 }
 
 /// The themes Keycloak ships: a realm on one of them has not been given the platform's pages.
@@ -100,8 +103,9 @@ pub fn steps(state: &AppState, people: bool) -> Vec<SetupItem> {
     ]
 }
 
-/// What the installation provides: the branding block and the deployment's statements.
-pub fn operator(branding: &Branding, said: &SetupStatements) -> Vec<SetupItem> {
+/// What the installation provides: the branding block, the deployment's statements and whether
+/// the sign-in service holds an e-mail server (`smtp_set`, which the operators set, T-7152).
+pub fn operator(branding: &Branding, said: &SetupStatements, smtp_set: bool) -> Vec<SetupItem> {
     let named = branding.instance_name.trim() != Branding::default().instance_name
         || !branding.logo.trim().is_empty();
     let themed = said
@@ -111,9 +115,21 @@ pub fn operator(branding: &Branding, said: &SetupStatements) -> Vec<SetupItem> {
     vec![
         item("branding", named),
         item("loginTheme", themed),
-        item("smtp", said.smtp),
+        item("smtp", said.smtp || smtp_set),
         item("backups", said.backups),
     ]
+}
+
+/// Whether the installation realm's sign-in service holds an e-mail server. Without an admin
+/// client, or when the realm does not answer, it is not done.
+async fn smtp_set(state: &AppState) -> bool {
+    let Some(people) = state.people.as_deref() else {
+        return false;
+    };
+    let Ok(admin) = people.admin().await else {
+        return false;
+    };
+    admin.smtp_server().await.is_ok_and(|smtp| smtp.is_some())
 }
 
 /// Whether the realm holds a person besides the one asking. Without an admin client, or when the
@@ -155,12 +171,17 @@ pub async fn get_setup(
     let operator = operator(
         &Branding::load(state.config.branding_file.as_deref()),
         &state.config.setup,
+        smtp_set(&state).await,
     );
     let complete = steps.iter().chain(&operator).all(|item| item.done);
+    let identity = &user.0.identity;
+    let operates = identity.client.is_none()
+        && crate::permissions::in_group(identity, &state.config.bootstrap_admins);
     Ok(Json(SetupState {
         complete,
         steps,
         operator,
+        operates,
     }))
 }
 
@@ -174,7 +195,7 @@ mod tests {
 
     #[test]
     fn the_operator_part_is_done_only_where_it_was_said() {
-        let stock = operator(&Branding::default(), &SetupStatements::default());
+        let stock = operator(&Branding::default(), &SetupStatements::default(), false);
         assert!(stock.iter().all(|item| !item.done), "{stock:?}");
 
         let branding = Branding {
@@ -187,7 +208,7 @@ mod tests {
             backups: false,
         };
         assert_eq!(
-            operator(&branding, &said),
+            operator(&branding, &said, false),
             vec![
                 item("branding", true),
                 item("loginTheme", true),
@@ -199,6 +220,8 @@ mod tests {
             login_theme: Some("keycloak.v2".into()),
             ..SetupStatements::default()
         };
-        assert!(!operator(&branding, &stock_theme)[1].done);
+        assert!(!operator(&branding, &stock_theme, false)[1].done);
+        // The e-mail server the operators saved counts without the deployment's statement.
+        assert!(operator(&branding, &SetupStatements::default(), true)[2].done);
     }
 }

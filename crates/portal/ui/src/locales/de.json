@@ -8176,6 +8176,7 @@
       "backups": "Sicherungen",
       "operator-organizations": "Organisationen",
       "operator-hosts": "Hosts und Zertifikate",
+      "operator-installation": "Installation",
       "operator-changes": "Operator-Änderungen",
       "operator-audit": "Operator-Protokoll"
     },
@@ -8448,7 +8449,10 @@
       "continue": "Einrichtung fortsetzen",
       "reminder": "{count, plural, one {# Punkt der Einrichtung ist noch offen.} other {# Punkte der Einrichtung sind noch offen.}}",
       "operatorTitle": "Was die Installation bereitstellt",
-      "operatorLead": "Diese Punkte kommen aus der Bereitstellung, nicht von dieser Seite. Bitten Sie den Betrieb der Installation, den bei jedem Punkt genannten Wert zu setzen.",
+      "operatorLead": "Sie sind einer der Operatoren der Installation: Sie legen dies einmal für jede Organisation fest.",
+      "operatorLeadMember": "Die Operatoren der Installation legen dies einmal für jede Organisation fest.",
+      "setIt": "Festlegen",
+      "operatorSets": "Ihr Operator legt dies fest",
       "step": {
         "organization": {
           "title": "Organisation benennen",
@@ -8484,19 +8488,23 @@
       "operator": {
         "branding": {
           "title": "Markenauftritt",
-          "hint": "Name und Logo der Installation, gesetzt im Branding-Block der Bereitstellung."
+          "hint": "Name, Logo und Farben der Installation. Heute in der Konfiguration von jc festgelegt: die Branding-Datei ([kaisatsu] branding_file, JC_BRANDING_FILE).",
+          "about": "Name, Logo und Farben der Installation."
         },
         "loginTheme": {
           "title": "Anmeldeseiten",
-          "hint": "Das eigene Anmelde-Theme der Plattform in Keycloak statt des Standards (keycloak.theme)."
+          "hint": "Wie die Anmeldeseiten aussehen. Heute in der Konfiguration von jc festgelegt: der Anmeldeblock der Branding-Datei ([kaisatsu] branding_file).",
+          "about": "Wie die Anmeldeseiten aussehen."
         },
         "smtp": {
           "title": "E-Mail",
-          "hint": "Ein SMTP-Server, damit Keycloak Einladungen und Passwort-Rücksetzungen senden kann (keycloak.smtp)."
+          "hint": "Ein SMTP-Server, damit der Anmeldedienst Einladungen und Passwort-Zurücksetzungen sendet. Legen Sie ihn auf der Seite Installation fest.",
+          "about": "Ein SMTP-Server, damit Einladungen und Passwort-Zurücksetzungen ankommen."
         },
         "backups": {
           "title": "Sicherungen",
-          "hint": "Geplante Datenbanksicherungen in einen Objektspeicher (postgres.backups)."
+          "hint": "Geplante Sicherungen der ganzen Datenbank in einen Objektspeicher. Heute durch die Datenbanksicherung der Bereitstellung festgelegt.",
+          "about": "Geplante Sicherungen der Datenbank der Installation."
         }
       }
     },
@@ -13693,7 +13701,8 @@
       "HostAdd": "Host hinzufügen",
       "HostRemove": "Host entfernen",
       "OperatorAdd": "Betreiber hinzufügen",
-      "OperatorRemove": "Betreiber entfernen"
+      "OperatorRemove": "Betreiber entfernen",
+      "SmtpSet": "E-Mail-Server festlegen"
     },
     "changeState": {
       "proposed": "Wartet auf Genehmigung",
@@ -13731,6 +13740,45 @@
       "subject": "Host oder Person",
       "source": "Von Adresse"
     },
+    "installation": {
+      "loading": "Die Einstellungen der Installation werden gelesen",
+      "title": "Installation",
+      "lead": "Was die Installation jeder Organisation bereitstellt. Jedes Speichern ist eine Operator-Änderung: Ein zweiter Operator genehmigt sie, bevor sie gilt.",
+      "email": {
+        "title": "E-Mail-Server",
+        "lead": "Der SMTP-Server, über den der Anmeldedienst Einladungen und Passwort-Zurücksetzungen sendet. Nach der Genehmigung gilt er für die nächste E-Mail, ohne Neustart.",
+        "set": "Festgelegt",
+        "unset": "Nicht festgelegt",
+        "empty": "Noch kein E-Mail-Server, daher werden keine Einladungen und Passwort-Zurücksetzungen gesendet. Tragen Sie den Server Ihres Mail-Anbieters ein und speichern Sie ihn.",
+        "waiting": "Eine Änderung des E-Mail-Servers wartet auf einen zweiten Operator.",
+        "waitingShort": "Eine Änderung wartet bereits auf einen zweiten Operator: genehmigen oder ablehnen Sie sie zuerst.",
+        "toChanges": "Änderungen öffnen",
+        "host": "SMTP-Host",
+        "tls": "Schutz",
+        "port": "Port",
+        "from": "Absenderadresse",
+        "user": "Benutzer",
+        "password": "Passwort",
+        "tlsStarttls": "STARTTLS (meist Port 587)",
+        "tlsSsl": "TLS von Anfang an (meist Port 465)",
+        "passwordStored": "Gespeichert; geben Sie ein neues ein, um es zu ersetzen",
+        "hint": {
+          "host": "Der Hostname des Servers, z. B. smtp.example.org. Keine Adresse des Clusters.",
+          "tls": "Unverschlüsseltes SMTP wird nicht angeboten; Ihr Anbieter sagt, welche der beiden Varianten er nutzt.",
+          "port": "z. B. 587 für STARTTLS, 465 für TLS von Anfang an.",
+          "from": "Der Absender, den Empfänger sehen, z. B. noreply@example.org.",
+          "user": "Der SMTP-Benutzer, z. B. mailer@example.org; leer, wenn der Server keine Anmeldung braucht.",
+          "password": "Nur schreibbar: nach dem Speichern nie wieder angezeigt.",
+          "passwordKept": "Ein Passwort ist gespeichert und wird nie angezeigt. Leer lassen, um es zu behalten, z. B. wenn Sie nur den Port ändern."
+        },
+        "propose": "Diese Änderung beantragen",
+        "proposed": "Beantragt. Ein zweiter Operator genehmigt sie unter Änderungen.",
+        "test": "Test-E-Mail senden",
+        "testFirst": "Speichern Sie zuerst einen E-Mail-Server; der Test nutzt den gespeicherten.",
+        "testSent": "Der Server hat die Test-E-Mail angenommen. Sie geht an Ihre eigene Adresse; prüfen Sie Ihren Posteingang.",
+        "testFailed": "Die Test-E-Mail wurde nicht gesendet"
+      }
+    },
     "action": {
       "proposed": "Beantragt: {kind}",
       "applied": "Angewendet: {kind}",
@@ -13745,6 +13793,9 @@
         "created": "Route für die Zertifikatsprüfung angelegt",
         "widened": "Route zum Host geöffnet",
         "deleted": "Route gelöscht"
+      },
+      "smtp": {
+        "test": "Test-E-Mail gesendet"
       }
     },
     "refusedTitle": "{section} ist den Betreibern der Installation vorbehalten"

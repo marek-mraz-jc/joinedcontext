@@ -20,13 +20,14 @@ export const ORGANIZATION_GROUPS = [
   { id: "platform", tabs: ["brokers", "environments", "dataspaceparticipants", "health", "costs"] },
   { id: "settings", tabs: ["settings", "opendata-pages", "backups", "setup"] },
   // The installation's operators alone (T-7129, T-7140): Organizations, hosts, their Changes, the audit.
-  { id: "operators", tabs: ["operator-organizations", "operator-hosts", "operator-changes", "operator-audit"] },
+  { id: "operators", tabs: ["operator-organizations", "operator-hosts", "operator-installation", "operator-changes", "operator-audit"] },
 ] as const;
 
 /** The operators' sections: shown to an operator alone, every door checked on the server. */
 export const OPERATOR_TABS: readonly OrganizationTab[] = [
   "operator-organizations",
   "operator-hosts",
+  "operator-installation",
   "operator-changes",
   "operator-audit",
 ];

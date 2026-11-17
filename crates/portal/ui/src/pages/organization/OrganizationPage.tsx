@@ -57,6 +57,9 @@ const OperatorOrganizations = lazy(() =>
 );
 const OperatorHosts = lazy(() => import("../operator/OperatorHosts").then((module) => ({ default: module.OperatorHosts })));
 const OperatorChanges = lazy(() => import("../operator/OperatorChanges").then((module) => ({ default: module.OperatorChanges })));
+const OperatorInstallation = lazy(() =>
+  import("../operator/OperatorInstallation").then((module) => ({ default: module.OperatorInstallation })),
+);
 const OperatorAudit = lazy(() => import("../operator/OperatorAudit").then((module) => ({ default: module.OperatorAudit })));
 import type { OrganizationTab } from "./AdminNav";
 import { listManifests } from "../../api/odata";
@@ -364,6 +367,7 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
           <Suspense fallback={<p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>}>
             {tab === "operator-organizations" ? <OperatorOrganizations /> : null}
             {tab === "operator-hosts" ? <OperatorHosts /> : null}
+            {tab === "operator-installation" ? <OperatorInstallation /> : null}
             {tab === "operator-changes" ? <OperatorChanges /> : null}
             {tab === "operator-audit" ? <OperatorAudit /> : null}
           </Suspense>

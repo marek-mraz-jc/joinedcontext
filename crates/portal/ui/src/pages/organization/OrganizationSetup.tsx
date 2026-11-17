@@ -53,6 +53,23 @@ function State({ done }: { done: boolean }): JSX.Element {
   );
 }
 
+/**
+ * What an operator item offers: an operator opens the Installation page where it is set (the
+ * e-mail server today, T-7152); anybody else reads that their operator sets it.
+ */
+function OperatorAction({ item, operates }: { item: string; operates: boolean }): JSX.Element | null {
+  const { t } = useTranslation();
+  if (!operates) {
+    return <span className="text-caption text-fg-muted">{t("organization.setup.operatorSets")}</span>;
+  }
+  if (item !== "smtp") return null;
+  return (
+    <Link to="/organization/$tab" params={{ tab: "operator-installation" }} className={buttonClass("secondary", "sm")}>
+      {t("organization.setup.setIt")}
+    </Link>
+  );
+}
+
 export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
   const { t } = useTranslation();
   const { known, administers } = useAdministers();
@@ -72,7 +89,7 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
   if (setup.isPending) return <PageLoading label={t("organization.setup.loading")} />;
   if (setup.isError) return <PageFailed error={setup.error} onRetry={() => void setup.refetch()} />;
 
-  const { complete, steps, operator } = setup.data;
+  const { complete, steps, operator, operates } = setup.data;
   return (
     <div className="space-y-8">
       <section className="space-y-4" aria-labelledby="setup-steps-heading">
@@ -109,7 +126,9 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
           <h2 id="setup-operator-heading" className="text-title font-semibold text-fg">
             {t("organization.setup.operatorTitle")}
           </h2>
-          <p className="text-body text-fg-muted">{t("organization.setup.operatorLead")}</p>
+          <p className="text-body text-fg-muted">
+            {t(operates ? "organization.setup.operatorLead" : "organization.setup.operatorLeadMember")}
+          </p>
         </div>
         <ul className="space-y-3">
           {operator.map((item) => (
@@ -119,9 +138,14 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
             >
               <div className="min-w-0 space-y-1">
                 <h3 className="text-body font-semibold text-fg">{t(`organization.setup.operator.${item.id}.title`)}</h3>
-                <p className="text-body text-fg-muted">{t(`organization.setup.operator.${item.id}.hint`)}</p>
+                <p className="text-body text-fg-muted">
+                  {t(`organization.setup.operator.${item.id}.${operates ? "hint" : "about"}`)}
+                </p>
               </div>
-              <State done={item.done} />
+              <div className="flex items-center gap-3">
+                <State done={item.done} />
+                <OperatorAction item={item.id} operates={operates} />
+              </div>
             </li>
           ))}
         </ul>

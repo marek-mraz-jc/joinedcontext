@@ -8176,6 +8176,7 @@
       "backups": "Backups",
       "operator-organizations": "Organizations",
       "operator-hosts": "Hosts and certificates",
+      "operator-installation": "Installation",
       "operator-changes": "Operator Changes",
       "operator-audit": "Operator audit"
     },
@@ -8448,7 +8449,10 @@
       "continue": "Continue setup",
       "reminder": "{count, plural, one {# setup item is still open.} other {# setup items are still open.}}",
       "operatorTitle": "What the installation provides",
-      "operatorLead": "These come from the deployment, not from this page. Ask whoever runs the installation to set the value named in each item.",
+      "operatorLead": "You are one of the installation's operators: you set these once for every Organization.",
+      "operatorLeadMember": "The installation's operators set these once for every Organization.",
+      "setIt": "Set it",
+      "operatorSets": "Your operator sets this",
       "step": {
         "organization": {
           "title": "Name the organization",
@@ -8484,19 +8488,23 @@
       "operator": {
         "branding": {
           "title": "Branding",
-          "hint": "The installation's name and logo, set in the branding block of the deployment."
+          "hint": "The installation's name, logo and colours. Set today in jc's configuration: the branding file ([kaisatsu] branding_file, JC_BRANDING_FILE).",
+          "about": "The installation's name, logo and colours."
         },
         "loginTheme": {
           "title": "Sign-in pages",
-          "hint": "The platform's own sign-in theme in Keycloak instead of the stock one (keycloak.theme)."
+          "hint": "How the sign-in pages look. Set today in jc's configuration: the sign-in block of the branding file ([kaisatsu] branding_file).",
+          "about": "How the sign-in pages look."
         },
         "smtp": {
           "title": "E-mail",
-          "hint": "An SMTP server, so Keycloak can send invitations and password resets (keycloak.smtp)."
+          "hint": "An SMTP server, so the sign-in service sends invitations and password resets. Set it on the Installation page.",
+          "about": "An SMTP server, so invitations and password resets reach people."
         },
         "backups": {
           "title": "Backups",
-          "hint": "Scheduled database backups to object storage (postgres.backups)."
+          "hint": "Scheduled backups of the whole database to object storage. Set today by the deployment's database backup.",
+          "about": "Scheduled backups of the installation's database."
         }
       }
     },
@@ -13693,7 +13701,8 @@
       "HostAdd": "Add a host",
       "HostRemove": "Remove a host",
       "OperatorAdd": "Add an operator",
-      "OperatorRemove": "Remove an operator"
+      "OperatorRemove": "Remove an operator",
+      "SmtpSet": "Set the e-mail server"
     },
     "changeState": {
       "proposed": "Waits for approval",
@@ -13731,6 +13740,45 @@
       "subject": "Host or person",
       "source": "From address"
     },
+    "installation": {
+      "loading": "Reading the installation's settings",
+      "title": "Installation",
+      "lead": "What the installation provides every Organization. Each save is an operator Change: a second operator approves it before it applies.",
+      "email": {
+        "title": "E-mail server",
+        "lead": "The SMTP server the sign-in service sends invitations and password resets through. It applies to the next e-mail once approved, without a restart.",
+        "set": "Set",
+        "unset": "Not set",
+        "empty": "No e-mail server yet, so invitations and password resets are not sent. Fill in the server your mail provider gives you and save it.",
+        "waiting": "A change of the e-mail server waits for a second operator.",
+        "waitingShort": "A change already waits for a second operator: approve or reject it first.",
+        "toChanges": "Open the Changes",
+        "host": "SMTP host",
+        "tls": "Protection",
+        "port": "Port",
+        "from": "From address",
+        "user": "User",
+        "password": "Password",
+        "tlsStarttls": "STARTTLS (usually port 587)",
+        "tlsSsl": "TLS from the start (usually port 465)",
+        "passwordStored": "Stored; type a new one to replace it",
+        "hint": {
+          "host": "The server's host name, e.g. smtp.example.org. No address of the cluster.",
+          "tls": "Plain SMTP is not offered; your provider says which of the two it uses.",
+          "port": "e.g. 587 for STARTTLS, 465 for TLS from the start.",
+          "from": "The sender people see, e.g. noreply@example.org.",
+          "user": "The SMTP user, e.g. mailer@example.org; empty when the server needs no sign-in.",
+          "password": "Write-only: never shown again after you save it.",
+          "passwordKept": "A password is stored and never shown. Leave this empty to keep it, e.g. when you change only the port."
+        },
+        "propose": "Ask for this change",
+        "proposed": "Asked for. A second operator approves it in the Changes.",
+        "test": "Send a test e-mail",
+        "testFirst": "Save an e-mail server first; the test uses the saved one.",
+        "testSent": "The server took the test e-mail. It goes to your own address; check your inbox.",
+        "testFailed": "The test e-mail was not sent"
+      }
+    },
     "action": {
       "proposed": "Asked for: {kind}",
       "applied": "Applied: {kind}",
@@ -13745,6 +13793,9 @@
         "created": "Route for the certificate check created",
         "widened": "Route opened to the host",
         "deleted": "Route deleted"
+      },
+      "smtp": {
+        "test": "Sent a test e-mail"
       }
     },
     "refusedTitle": "{section} is for the installation's operators"

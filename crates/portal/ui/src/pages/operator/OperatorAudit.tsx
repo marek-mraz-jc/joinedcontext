@@ -12,7 +12,7 @@ function subjectOf(row: OperatorAuditEntry): string {
   for (const side of [row.after, row.before]) {
     if (side && typeof side === "object" && !Array.isArray(side)) {
       const fields = side as Record<string, unknown>;
-      const named = fields.host ?? fields.subject ?? fields.payload;
+      const named = fields.host ?? fields.subject ?? fields.payload ?? fields.smtp;
       if (typeof named === "string") return named;
       if (named && typeof named === "object") {
         const inner = named as Record<string, unknown>;

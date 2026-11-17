@@ -14,6 +14,7 @@ import type { Effective } from "../src/api/permissions";
 import { OperatorAudit } from "../src/pages/operator/OperatorAudit";
 import { OperatorChanges } from "../src/pages/operator/OperatorChanges";
 import { OperatorHosts } from "../src/pages/operator/OperatorHosts";
+import { OperatorInstallation } from "../src/pages/operator/OperatorInstallation";
 import { OperatorOrganizations } from "../src/pages/operator/OperatorOrganizations";
 import { HOST_STATES, stateTone, when } from "../src/pages/operator/operatorApi";
 import { AdminNav } from "../src/pages/organization/AdminNav";
@@ -257,6 +258,88 @@ describe("organizations", () => {
   });
 });
 
+describe("installation", () => {
+  const E = en.operator.installation.email;
+  const SMTP = { host: "smtp.example.org", port: 587, tls: "starttls", from: "noreply@example.org", user: "mailer", passwordSet: true };
+
+  it("says what to do without an e-mail server and asks for one as an SmtpSet Change", async () => {
+    const seen = render(<OperatorInstallation />, (path, method) => {
+      if (path === "/api/v1/operator/installation") return json({ smtp: null, smtpChange: null });
+      if (path === "/api/v1/operator/changes" && method === "POST")
+        return json({ id: "c1", kind: "SmtpSet", payload: { smtp: { ...SMTP, newPassword: true } }, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T08:00:00Z", decidedBy: null, decidedAt: null }, 201);
+      return undefined;
+    });
+    expect(await screen.findByText(E.empty)).toBeTruthy();
+    expect(screen.getByText(E.unset)).toBeTruthy();
+    expect(screen.getByRole("button", { name: E.test })).toBeDisabled();
+    for (const field of ["host", "tls", "port", "from", "user", "password"] as const) {
+      expect(screen.getByText(E.hint[field])).toBeTruthy();
+    }
+    fireEvent.change(screen.getByLabelText(E.host, { exact: false }), { target: { value: "SMTP.Example.org" } });
+    fireEvent.change(screen.getByLabelText(E.tls), { target: { value: "ssl" } });
+    expect(screen.getByLabelText(E.port, { exact: false })).toHaveValue(465);
+    fireEvent.change(screen.getByLabelText(E.from, { exact: false }), { target: { value: "noreply@example.org" } });
+    fireEvent.change(screen.getByLabelText(E.user), { target: { value: "mailer" } });
+    fireEvent.change(screen.getByLabelText(E.password), { target: { value: "app-pass" } });
+    fireEvent.click(screen.getByRole("button", { name: E.propose }));
+    expect(await screen.findByText(E.proposed, { exact: false })).toBeTruthy();
+    const posted = seen.find((r) => r.method === "POST" && r.path === "/api/v1/operator/changes");
+    expect(JSON.parse(posted?.body ?? "{}")).toEqual({
+      kind: "SmtpSet",
+      smtp: { host: "smtp.example.org", port: 465, tls: "ssl", from: "noreply@example.org", user: "mailer", password: "app-pass" },
+    });
+    expect(screen.getByLabelText(E.password)).toHaveValue("");
+  });
+
+  it("keeps the stored password unless a new one is typed, and sends a test e-mail", async () => {
+    const seen = render(<OperatorInstallation />, (path, method) => {
+      if (path === "/api/v1/operator/installation") return json({ smtp: SMTP, smtpChange: null });
+      if (path === "/api/v1/operator/changes" && method === "POST") return json({ id: "c2", kind: "SmtpSet", payload: { smtp: { ...SMTP, newPassword: false } }, state: "proposed", proposedBy: ME, proposedAt: "2026-11-17T08:00:00Z", decidedBy: null, decidedAt: null }, 201);
+      if (path === "/api/v1/operator/installation/test-email") return json({ sent: false, reason: "the SMTP server did not take the e-mail: check the host, port, TLS, user and password" });
+      return undefined;
+    });
+    expect(await screen.findByText(E.set)).toBeTruthy();
+    expect(screen.getByText(E.hint.passwordKept)).toBeTruthy();
+    expect(screen.getByLabelText(E.password)).toHaveAttribute("placeholder", E.passwordStored);
+    expect(screen.getByLabelText(E.host, { exact: false })).toHaveValue("smtp.example.org");
+    fireEvent.change(screen.getByLabelText(E.port, { exact: false }), { target: { value: "2525" } });
+    fireEvent.click(screen.getByRole("button", { name: E.propose }));
+    await screen.findByText(E.proposed, { exact: false });
+    const posted = JSON.parse(seen.find((r) => r.method === "POST" && r.path === "/api/v1/operator/changes")?.body ?? "{}");
+    expect(posted.smtp.port).toBe(2525);
+    expect("password" in posted.smtp).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: E.test }));
+    expect(await screen.findByText(E.testFailed)).toBeTruthy();
+    expect(screen.getByText(/The SMTP server did not take the e-mail/)).toBeTruthy();
+  });
+
+  it("names the field a refused setting breaks, and holds the form while a Change waits", async () => {
+    render(<OperatorInstallation />, (path, method) => {
+      if (path === "/api/v1/operator/installation") return json({ smtp: null, smtpChange: null });
+      if (path === "/api/v1/operator/changes" && method === "POST")
+        return json({ title: "Unprocessable Content", status: 422, detail: "the Change cannot be taken: '10.0.0.1' is no public host name", errors: ["smtp.host: '10.0.0.1' is no public host name of an SMTP server; give one, e.g. smtp.example.org"] }, 422);
+      return undefined;
+    });
+    fireEvent.change(await screen.findByLabelText(E.host, { exact: false }), { target: { value: "10.0.0.1" } });
+    fireEvent.change(screen.getByLabelText(E.from, { exact: false }), { target: { value: "noreply@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: E.propose }));
+    expect(await screen.findByText(/is no public host name of an SMTP server/)).toBeTruthy();
+    expect(screen.getByLabelText(E.host, { exact: false })).toHaveAttribute("aria-invalid", "true");
+    cleanup();
+    render(<OperatorInstallation />, (path) =>
+      path === "/api/v1/operator/installation" ? json({ smtp: SMTP, smtpChange: "c3" }) : undefined,
+    );
+    expect(await screen.findByText(E.waiting, { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: E.propose })).toBeDisabled();
+  });
+
+  it("shows an Organization administrator the server's refusal", async () => {
+    render(<OperatorInstallation />, (path) => (path === "/api/v1/operator/installation" ? json(REFUSED, 403) : undefined), ADMIN);
+    expect(await screen.findByText(/operators' group/)).toBeTruthy();
+    expect(screen.queryByLabelText(E.host, { exact: false })).toBeNull();
+  });
+});
+
 describe("the state badge and the time", () => {
   it("draws served as success, a waiting host as warning, and keeps an unreadable time as sent", () => {
     expect(HOST_STATES.map(stateTone)).toEqual(["info", "info", "info", "info", "success", "neutral"]);
@@ -274,6 +357,7 @@ describe("menu", () => {
     const nav = await screen.findByRole("heading", { name: en.organization.group.operators });
     expect(nav).toBeTruthy();
     expect(within(document.body).getByRole("link", { name: en.organization.tab["operator-hosts"] })).toBeTruthy();
+    expect(within(document.body).getByRole("link", { name: en.organization.tab["operator-installation"] })).toBeTruthy();
     cleanup();
     render(<AdminNav project="org" onNavigate={() => undefined} />, () => undefined, ADMIN);
     await screen.findByRole("heading", { name: en.organization.group.settings });

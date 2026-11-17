@@ -93,6 +93,23 @@ describe("Organization → Setup", () => {
     await expectNoAxeViolations(container);
   });
 
+  it("links an operator to the Installation page and tells anybody else their operator sets it", async () => {
+    // T-7152: no Keycloak value names; the e-mail server is set on the Installation page.
+    renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: true }));
+    await screen.findByText(en.organization.setup.operatorLead);
+    const smtp = screen.getByRole("heading", { name: en.organization.setup.operator.smtp.title }).closest("li") as HTMLElement;
+    expect(within(smtp).getByRole("link", { name: en.organization.setup.setIt })).toHaveAttribute("href", "/organization/operator-installation");
+    const branding = screen.getByRole("heading", { name: en.organization.setup.operator.branding.title }).closest("li") as HTMLElement;
+    expect(within(branding).queryByRole("link")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/keycloak/i);
+    cleanup();
+    renderAt("setup", ADMIN, () => json({ ...setup(() => false), operates: false }));
+    await screen.findByText(en.organization.setup.operatorLeadMember);
+    expect(screen.getAllByText(en.organization.setup.operatorSets)).toHaveLength(OPERATOR.length);
+    expect(screen.queryByRole("link", { name: en.organization.setup.setIt })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/keycloak|branding_file|JC_|postgres\./i);
+  });
+
   it("says the organization is set up once every step and operator item is done", async () => {
     renderAt("setup", ADMIN, () => json(setup(() => true)));
     expect(await screen.findByText(en.organization.setup.complete)).toBeInTheDocument();
