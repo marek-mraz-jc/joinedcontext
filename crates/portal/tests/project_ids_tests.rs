@@ -1680,7 +1680,7 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             "alice",
             joinedcontext_portal::ops::pipeline_templates::CreateTemplate {
                 title: "Trees".into(),
-                manifest: serde_json::json!({"spec": {}}),
+                manifest: serde_json::json!({"kind": "Pipeline", "spec": {"class": "batch"}}),
             },
         )
         .await
