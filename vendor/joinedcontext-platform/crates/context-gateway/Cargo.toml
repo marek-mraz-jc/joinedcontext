@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 # The project key a broker tenant is built from (ARCH/TEN-10, T-7038).
-jc-types = { path = "../../../../crates/shared/jc-types" }
+jc-types = { version = "0.1.0", path = "../../../../crates/shared/jc-types" }
 jc-core = { path = "../jc-core", version = "0.1.0", features = ["auth", "axum", "logs", "outbound"] }
 jc-dcat = { path = "../jc-dcat", version = "0.1.0", features = ["dcat-ap-sk", "dcat-ap-cz"] }
 jc-manifest = { path = "../jc-manifest", version = "0.1.0" }
