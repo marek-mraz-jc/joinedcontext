@@ -43,8 +43,10 @@ DROP TRIGGER IF EXISTS operator_changes_decided_once ON operator_changes;
 CREATE TRIGGER operator_changes_decided_once BEFORE UPDATE OR DELETE ON operator_changes
     FOR EACH ROW EXECUTE FUNCTION operator_changes_decided_once();
 
--- The operators' audit: one row per proposal, approval, rejection and applied write, append-only.
--- Rows are never changed, deleted or truncated; the Portal writes each also as a log line.
+-- The operators' audit: one row per proposal, approval, rejection and applied write. The triggers
+-- below refuse UPDATE, DELETE and TRUNCATE; the Portal writes each row also as a log line.
+-- Ceiling: the Portal migrates and serves with one role, which owns this table and so could drop
+-- the triggers; an INSERT + SELECT serving role apart from the migrating one is T-7179.
 CREATE TABLE IF NOT EXISTS operator_audit (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     at timestamptz NOT NULL DEFAULT now(),

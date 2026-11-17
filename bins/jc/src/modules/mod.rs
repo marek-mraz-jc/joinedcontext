@@ -173,6 +173,7 @@ pub async fn build(
             organizations.extend(portal::apps_vars(cfg));
             organizations.extend(portal::ingest_vars(cfg));
             organizations.extend(portal::limits_vars(cfg));
+            organizations.extend(portal::backup_vars(cfg));
             portal::build(
                 ctx,
                 cfg.portal_siblings,

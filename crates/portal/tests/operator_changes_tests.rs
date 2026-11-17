@@ -412,14 +412,32 @@ async fn a_removal_waits_for_a_second_operator_and_any_operator_rejects() {
     assert!(!served);
 }
 
-/// The operators' group changes only through an approved `OperatorAdd`: the realm's group of
-/// that name, found by an exact search, gets the person once a second operator approves.
-#[tokio::test]
-async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
-    let (mut state, _) = world().await;
+/// A person id of the installation realm no other run of these tests uses.
+fn fresh_subject() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        "{:08x}-0000-4000-8000-{:012x}",
+        std::process::id(),
+        nanos & 0xffff_ffff_ffff
+    )
+}
+
+/// The installation realm as a mock: `subject` is the person a Change names (as `username`),
+/// the operators' group has `members`, and the proposer `ops-a` is in it when `proposer_in`.
+/// Each test mounts the membership write it expects on the returned server.
+async fn realm(
+    state: &mut AppState,
+    subject: &str,
+    username: &str,
+    proposer_in: bool,
+    members: &[&str],
+) -> MockServer {
     let kc = MockServer::start().await;
     let admin = "/admin/realms/ops";
-    let subject = "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23";
+    let group = state.config.bootstrap_admins.clone();
+    let user = |id: &str, username: &str| json!({ "id": id, "username": username, "enabled": true, "emailVerified": true });
     Mock::given(method("POST"))
         .and(path("/realms/ops/protocol/openid-connect/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
@@ -427,13 +445,9 @@ async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{admin}/users/{subject}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": subject, "username": "eva@ops.example", "email": "eva@ops.example",
-            "enabled": true, "emailVerified": true, "createdTimestamp": 1_758_700_000_000_i64,
-        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user(subject, username)))
         .mount(&kc)
         .await;
-    let group = state.config.bootstrap_admins.clone();
     Mock::given(method("GET"))
         .and(path(format!("{admin}/groups")))
         .and(query_param("search", group.as_str()))
@@ -442,10 +456,27 @@ async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
         ])))
         .mount(&kc)
         .await;
-    Mock::given(method("PUT"))
-        .and(path(format!("{admin}/users/{subject}/groups/g-ops")))
-        .respond_with(ResponseTemplate::new(204))
-        .expect(1)
+    let proposer_groups = if proposer_in {
+        json!([{ "path": format!("/{group}") }])
+    } else {
+        json!([])
+    };
+    Mock::given(method("GET"))
+        .and(path(format!("{admin}/users/sub-ops-a/groups")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(proposer_groups))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{admin}/users/sub-ops-a/role-mappings/realm/composite"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&kc)
+        .await;
+    let listed: Vec<Value> = members.iter().map(|id| user(id, id)).collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{admin}/groups/g-ops/members")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(listed))
         .mount(&kc)
         .await;
     state.people = People::new(
@@ -454,26 +485,49 @@ async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
         ClientAuth::Secret("secret".into()),
     )
     .map(Arc::new);
-    // A Change open for this person from another run of the test is rejected first.
-    let pool = state.db.clone().expect("db");
-    let open: Option<String> = sqlx::query_scalar(
-        "SELECT id::text FROM operator_changes WHERE target = $1 AND state = 'proposed'",
-    )
-    .bind(subject)
-    .fetch_optional(&pool)
-    .await
-    .expect("open");
-    if let Some(open) = open {
-        decide(&state, operator(&state, "ops-a"), &open, "reject").await;
-    }
+    kc
+}
+
+/// The membership write of an approval, expected `times` times.
+async fn expect_write(kc: &MockServer, verb: &str, subject: &str, status: u16, times: u64) {
+    Mock::given(method(verb))
+        .and(path(format!(
+            "/admin/realms/ops/users/{subject}/groups/g-ops"
+        )))
+        .respond_with(ResponseTemplate::new(status))
+        .expect(times)
+        .mount(kc)
+        .await;
+}
+
+async fn change_state(state: &AppState, id: &str) -> String {
+    sqlx::query_scalar("SELECT state FROM operator_changes WHERE id = $1::uuid")
+        .bind(id)
+        .fetch_one(state.db.as_ref().expect("db"))
+        .await
+        .expect("change")
+}
+
+async fn propose_operator(state: &AppState, kind: &str, subject: &str) -> String {
     let (status, made) = propose(
-        &state,
-        operator(&state, "ops-a"),
-        json!({ "kind": "OperatorAdd", "subject": subject }),
+        state,
+        operator(state, "ops-a"),
+        json!({ "kind": kind, "subject": subject }),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
-    let id = made["id"].as_str().expect("an id").to_owned();
+    made["id"].as_str().expect("an id").to_owned()
+}
+
+/// The operators' group changes only through an approved `OperatorAdd`: the realm's group of
+/// that name, found by an exact search, gets the person once a second operator approves.
+#[tokio::test]
+async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let kc = realm(&mut state, &subject, "eva@ops.example", true, &[]).await;
+    expect_write(&kc, "PUT", &subject, 204, 1).await;
+    let id = propose_operator(&state, "OperatorAdd", &subject).await;
     assert_eq!(
         decide(&state, operator(&state, "ops-a"), &id, "approve")
             .await
@@ -482,6 +536,122 @@ async fn an_approved_operator_add_puts_the_person_into_the_operators_group() {
     );
     let (status, applied) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
     assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(change_state(&state, &id).await, "applied");
+    kc.verify().await;
+}
+
+/// A client's service account is never proposed as an operator (T-7139 bounce row 4).
+#[tokio::test]
+async fn a_service_account_is_never_an_operator() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let _kc = realm(&mut state, &subject, "service-account-ci", true, &[]).await;
+    let (status, refused) = propose(
+        &state,
+        operator(&state, "ops-a"),
+        json!({ "kind": "OperatorAdd", "subject": subject }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("service account"), "{refused}");
+}
+
+/// A removal that would leave one operator is refused at approval, so nobody needs the cluster
+/// to approve a Change again; with a third operator it applies (bounce row 2).
+#[tokio::test]
+async fn the_last_two_operators_are_never_removed() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let kc = realm(
+        &mut state,
+        &subject,
+        "b@ops.example",
+        true,
+        &[&subject, "sub-ops-a"],
+    )
+    .await;
+    expect_write(&kc, "DELETE", &subject, 204, 0).await;
+    let id = propose_operator(&state, "OperatorRemove", &subject).await;
+    let (status, refused) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(refused.to_string().contains("at least 2"), "{refused}");
+    assert_eq!(change_state(&state, &id).await, "proposed");
+    kc.verify().await;
+
+    let kc = realm(
+        &mut state,
+        &subject,
+        "b@ops.example",
+        true,
+        &[&subject, "sub-ops-a", "sub-ops-c"],
+    )
+    .await;
+    expect_write(&kc, "DELETE", &subject, 204, 1).await;
+    let (status, applied) = decide(&state, operator(&state, "ops-c"), &id, "approve").await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    kc.verify().await;
+}
+
+/// The proposer is read again at approval: two operators who each propose the other's removal
+/// cannot approve both, since the first approval takes the second proposer out (bounce row 2).
+#[tokio::test]
+async fn a_proposer_who_left_the_group_has_no_change_approved() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let kc = realm(&mut state, &subject, "c@ops.example", true, &[]).await;
+    let id = propose_operator(&state, "OperatorAdd", &subject).await;
+    drop(kc);
+    let kc = realm(&mut state, &subject, "c@ops.example", false, &[]).await;
+    expect_write(&kc, "PUT", &subject, 204, 0).await;
+    let (status, refused) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert!(
+        refused.to_string().contains("no operator any more"),
+        "{refused}"
+    );
+    assert_eq!(change_state(&state, &id).await, "proposed");
+    kc.verify().await;
+}
+
+/// The realm changes only after the decision and its audit row are written: an audit that
+/// cannot be written leaves the realm untouched, and a realm that refuses leaves the Change open
+/// with no `applied` audit row (bounce row 3).
+#[tokio::test]
+async fn the_realm_changes_only_after_the_audit_and_a_refusal_keeps_the_change_open() {
+    let (mut state, _) = world().await;
+    let pool = state.db.clone().expect("db");
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION test_audit_fails() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.actor = 'sub-audit-fails' THEN RAISE EXCEPTION 'audit store down'; END IF; \
+         RETURN NEW; END $$; \
+         DROP TRIGGER IF EXISTS test_audit_fails ON operator_audit; \
+         CREATE TRIGGER test_audit_fails BEFORE INSERT ON operator_audit \
+         FOR EACH ROW EXECUTE FUNCTION test_audit_fails();",
+    )
+    .execute(&pool)
+    .await
+    .expect("a failing audit for one actor");
+    let subject = fresh_subject();
+    let kc = realm(&mut state, &subject, "d@ops.example", true, &[]).await;
+    expect_write(&kc, "PUT", &subject, 204, 0).await;
+    let id = propose_operator(&state, "OperatorAdd", &subject).await;
+    let (status, _) = decide(&state, operator(&state, "audit-fails"), &id, "approve").await;
+    assert!(status.is_server_error(), "{status}");
+    assert_eq!(change_state(&state, &id).await, "proposed");
+    kc.verify().await;
+
+    let kc = realm(&mut state, &subject, "d@ops.example", true, &[]).await;
+    expect_write(&kc, "PUT", &subject, 500, 1).await;
+    let (status, _) = decide(&state, operator(&state, "ops-b"), &id, "approve").await;
+    assert_ne!(status, StatusCode::OK);
+    assert_eq!(change_state(&state, &id).await, "proposed");
+    assert!(
+        !audit_of(&state, &id)
+            .await
+            .iter()
+            .any(|(_, action)| action.starts_with("applied")),
+        "no applied row"
+    );
     kc.verify().await;
 }
 

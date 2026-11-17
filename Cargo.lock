@@ -7436,6 +7436,7 @@ dependencies = [
  "unicode-normalization",
  "url",
  "utoipa",
+ "uuid",
  "zeroize",
  "zip",
 ]

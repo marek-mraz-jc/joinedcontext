@@ -14,7 +14,7 @@ use crate::state::AppState;
     get,
     path = "/api/v1/projects/{project}/permissions/me",
     summary = "Read My Permissions",
-    description = "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project.",
+    description = "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project; the Organization namespace `org` answers an empty grant list instead.",
     tag = "permissions",
     params(("project" = String, Path, description = "Project slug")),
     responses(
@@ -30,8 +30,10 @@ pub async fn permissions_me(
 ) -> Result<Json<Effective>, ApiError> {
     let mut effective = permissions::for_request(&state, &user.0.identity, &project);
     // A project no binding of the caller covers reads like a project that is not there, here
-    // as on every other read (PF-59, R20); the UI then renders the controls disabled.
-    if !effective.may_read_project() {
+    // as on every other read (PF-59, R20); the UI then renders the controls disabled. The
+    // Organization's own namespace exists for everyone and every page asks it, so there "none"
+    // is the document with no grant (T-7176).
+    if !effective.may_read_project() && project != permissions::ORG_NAMESPACE {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
     // Opening a project is the organization's own setting, not a binding, so the rules alone

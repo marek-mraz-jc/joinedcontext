@@ -573,6 +573,24 @@ async fn the_viewer_role_reads_every_kind_and_a_stranger_reads_none() {
     }
 }
 
+#[tokio::test]
+async fn a_stranger_reads_their_empty_rules_in_the_organization_namespace() {
+    // `org` is no project a 404 could hide: every page asks it, so a person with no grant there
+    // hears "nothing" as a 200 with no grant (T-7176), not a 404 the train smoke counts.
+    let config = Config::for_tests();
+    let (status, body) = get(
+        app_with(&config, Vec::new()),
+        &config,
+        identity("stranger@hel.fi", &[]),
+        "/api/v1/projects/org/permissions/me",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let effective: Value = serde_json::from_str(&body).expect("a permissions document");
+    assert_eq!(effective["grants"], json!([]), "{body}");
+    assert_eq!(effective["bootstrap"], json!(false), "{body}");
+}
+
 /// One Endpoint of `ovzdusie`, in the named context space.
 fn endpoint_in(project: &str, name: &str, space: &str) -> ResourceEnvelope {
     ResourceEnvelope {

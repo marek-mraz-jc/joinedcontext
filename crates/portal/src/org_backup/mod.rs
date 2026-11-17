@@ -17,6 +17,7 @@
 //! table is the audit, kept as long as the Organization's target exists.
 
 pub mod data;
+pub mod modules;
 pub mod restore;
 pub mod s3;
 
@@ -938,19 +939,20 @@ async fn upload(
     let http = &state.org_backup_egress.http;
     let bucket = bucket(state, target)?;
     require_versioning(http, &bucket).await?;
-    let bytes = if target.kind == DATA {
-        data::encrypted_archive(state, target, actor).await?
-    } else {
-        build_bundle(state, &target.organization, actor).await?.0
-    };
-    let size = bytes.len();
-    let sha256 = sha256_hex(&bytes);
     // One key: every run is a new version of it, which is what "the versions" of the page lists.
     let key = target.object_key();
-    let version = bucket
-        .put(http, &key, bytes)
-        .await
-        .map_err(|e| ApiError::Unavailable(e.to_string()))?;
+    let (size, sha256, put) = if target.kind == DATA {
+        let (sealed, size, sha256) = data::encrypted_archive(state, target, actor).await?;
+        let put = bucket
+            .put_file(http, &key, sealed.path(), size, s3::PART_BYTES)
+            .await;
+        (usize::try_from(size).unwrap_or(usize::MAX), sha256, put)
+    } else {
+        let bytes = build_bundle(state, &target.organization, actor).await?.0;
+        let (size, sha256) = (bytes.len(), sha256_hex(&bytes));
+        (size, sha256, bucket.put(http, &key, bytes).await)
+    };
+    let version = put.map_err(|e| ApiError::Unavailable(e.to_string()))?;
     let pruned = prune(http, &bucket, target).await.unwrap_or_else(|err| {
         tracing::warn!(organization = %target.organization, error = %err, "old backup versions not removed");
         0

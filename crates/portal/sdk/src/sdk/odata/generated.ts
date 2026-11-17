@@ -1049,6 +1049,7 @@ export interface Functions {
   portal_notification_list: Record<string, never>;
   portal_opendata_pages: Record<string, never>;
   portal_org_model_source: { name: string };
+  portal_org_permissions_me: Record<string, never>;
   portal_organization_address_list: Record<string, never>;
   portal_organization_change_get: { id: string };
   portal_organization_change_history: { page?: number; kind?: string; name?: string };
@@ -1226,6 +1227,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_notification_list: ["Organization"],
   portal_opendata_pages: ["Organization"],
   portal_org_model_source: ["Organization"],
+  portal_org_permissions_me: ["Organization"],
   portal_organization_address_list: ["Organization"],
   portal_organization_change_get: ["Organization"],
   portal_organization_change_history: ["Organization"],

@@ -2786,6 +2786,324 @@
         }
       }
     },
+    "/api/v1/operator/changes": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Operator Changes",
+        "description": "Every operator Change of the installation, newest first (T-7129 §4). For a person of the operators' group with a second factor.",
+        "operationId": "operator_change_list",
+        "responses": {
+          "200": {
+            "description": "The Changes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorChangeList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Propose An Operator Change",
+        "description": "Asks for a host added to or removed from an Organization, or a person added to or removed from the operators' group (T-7129 §4). Nothing is written until a second operator approves. 409 when the host or person already has an open Change, or the host is taken.",
+        "operationId": "operator_change_propose",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The Change waits for a second operator",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorChange"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body does not parse",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An open Change for the same host or person, or the host is taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field breaks a rule; the error names it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database, the installation's hosts are unknown, or no realm admin client for an operator Change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operator/changes/{id}/approve": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Approve An Operator Change",
+        "description": "Applies the Change, checked again against the registry and DNS, in one transaction with its audit row (T-7129 §4). Only an operator other than the proposer approves, whatever the kind.",
+        "operationId": "operator_change_approve",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The Change's id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorChange"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, no second factor, or the proposer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Decided already, the host was taken since, the proposer is no operator any more, or a removal would leave fewer than two operators",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A rule no longer holds, e.g. the TXT record lapsed; the error names the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database or no realm admin client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operator/changes/{id}/reject": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Reject An Operator Change",
+        "description": "Closes the Change without writing anything it asked for (T-7129 §4). Any operator may, the proposer included.",
+        "operationId": "operator_change_reject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The Change's id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorChange"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Decided already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization-ids": {
       "post": {
         "tags": [
@@ -39883,7 +40201,7 @@
           "permissions"
         ],
         "summary": "Read My Permissions",
-        "description": "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project.",
+        "description": "The caller's effective rules in the project: which verbs on which kinds, from which bindings. 404 when no binding covers the project; the Organization namespace `org` answers an empty grant list instead.",
         "operationId": "permissions_me",
         "parameters": [
           {
@@ -52065,6 +52383,42 @@
           }
         }
       },
+      "ChangePayload": {
+        "type": "object",
+        "description": "The rows a Change writes, as it was asked for and checked.",
+        "properties": {
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "organizationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "ChangePhase": {
         "type": "string",
         "description": "Lifecycle phase of a change.",
@@ -52169,6 +52523,61 @@
             ],
             "description": "The workspace this Change brings back, so the approver reads that it was worked on as a\ncopy first, and whose (UI-63, CC-79)."
           }
+        }
+      },
+      "ChangeRequest": {
+        "type": "object",
+        "description": "An operator Change as it is asked for. Each kind takes its own fields and no other.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "host": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperatorKind"
+          },
+          "organization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`HostAdd`: the Organization's name, e.g. `bbsk`."
+          },
+          "organizationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a\nhost outside the installation's domain."
+          },
+          "role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`HostAdd`: what answers on the host: `working`, `opendata`, `api`, `signin`, `apps`,\n`portal-site` or `host`."
+          },
+          "subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.\n`5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "host": "smartcity.bbsk.sk",
+          "kind": "HostAdd",
+          "organization": "bbsk",
+          "organizationId": "sk_bbsk",
+          "role": "working"
         }
       },
       "ChangeStatus": {
@@ -58650,6 +59059,80 @@
           "read",
           "write",
           "history"
+        ]
+      },
+      "OperatorChange": {
+        "type": "object",
+        "description": "One operator Change.",
+        "required": [
+          "id",
+          "kind",
+          "payload",
+          "state",
+          "proposedBy",
+          "proposedAt"
+        ],
+        "properties": {
+          "decidedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "decidedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operator who approved or rejected it."
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperatorKind"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ChangePayload"
+          },
+          "proposedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "proposedBy": {
+            "type": "string",
+            "description": "The user id of the operator who asked for it."
+          },
+          "state": {
+            "type": "string",
+            "description": "`proposed`, `applied` or `rejected`."
+          }
+        }
+      },
+      "OperatorChangeList": {
+        "type": "object",
+        "description": "The operator Changes, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatorChange"
+            }
+          }
+        }
+      },
+      "OperatorKind": {
+        "type": "string",
+        "description": "What an operator Change does.",
+        "enum": [
+          "HostAdd",
+          "HostRemove",
+          "OperatorAdd",
+          "OperatorRemove"
         ]
       },
       "OrganizationAddress": {
