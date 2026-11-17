@@ -635,7 +635,7 @@ pub async fn build_log(
         .await
         .map_err(store)?
         .ok_or_else(|| ApiError::NotFound(format!("build {id} of App '{name}' not found")))?;
-    let log = build_records::log(db, id).await.map_err(store)?;
+    let log = build_records::log(db, &project, id).await.map_err(store)?;
     let text = format!(
         "{}\n--- build {id} of {name} at {}: {}{}\n",
         log.unwrap_or_default(),

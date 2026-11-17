@@ -47,6 +47,10 @@ pub const KEYED_BY_NAME: &[&str] = &[
     // T-7202 PK-1i, migration 0073: an access request is keyed by its Endpoint's project.
     "erasures",
     "access_requests",
+    // T-7203 PK-1j, migration 0074: an installation's connector event (project '') takes the
+    // installation Organization's reserved project key, see [`installation`].
+    "notifications",
+    "app_builds",
     // T-7204 PK-1g, migration 0076.
     "drafts",
     // T-7205 PK-1g, migration 0077.
@@ -153,6 +157,19 @@ pub async fn reserved(
     .fetch_optional(pool)
     .await?;
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
+}
+
+/// The key of the installation Organization's reserved project (TEN-11): what an installation's
+/// own rows take, a connector event with project '' (T-7203). `None` while the mirror names no
+/// installation Organization or the registry holds no active one by that name.
+pub async fn installation(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    match crate::permissions::installation_organization(mirror) {
+        Some(organization) => reserved(pool, &organization).await,
+        None => Ok(None),
+    }
 }
 
 /// The key of `project` as the mirror places it: its Organization from the Project's
@@ -354,7 +371,12 @@ pub async fn backfill(pool: &PgPool, mirror: &Mirror) -> Result<Vec<String>, sql
         .fetch_all(pool)
         .await?;
         for name in names {
-            let Some(key) = key_of(pool, mirror, &name).await? else {
+            let key = if name.is_empty() && *table == "notifications" {
+                installation(pool, mirror).await?
+            } else {
+                key_of(pool, mirror, &name).await?
+            };
+            let Some(key) = key else {
                 waiting.insert(name);
                 continue;
             };
