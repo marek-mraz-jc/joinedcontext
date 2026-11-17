@@ -770,6 +770,76 @@ async fn last_seen_of(admin: &Admin, users: &[KcUser]) -> Vec<Option<i64>> {
         .await
 }
 
+/// Whom the caller lists: `None` for the realm's list (Person read at the installation, or at the
+/// Organization whose own realm this host serves); on a shared realm otherwise, the Organizations
+/// where a binding grants them Person read, whose people alone they list (T-7220). Nobody else
+/// lists anyone.
+fn listed_organizations(
+    state: &AppState,
+    identity: &Identity,
+) -> Result<Option<Vec<String>>, ApiError> {
+    let Err(refused) = allow(state, identity, Verb::Read) else {
+        return Ok(None);
+    };
+    if crate::auth::realms::here(state).is_some() {
+        return Err(refused);
+    }
+    let held: Vec<String> = crate::permissions::organizations(&state.mirror)
+        .into_iter()
+        .map(|(name, _)| name)
+        .filter(|organization| {
+            crate::permissions::holds_at_organization(
+                state,
+                identity,
+                organization,
+                PERSON,
+                Verb::Read,
+                None,
+            )
+        })
+        .collect();
+    if held.is_empty() {
+        Err(refused)
+    } else {
+        Ok(Some(held))
+    }
+}
+
+/// One page of the people of `organizations` on a shared realm, each once, by username, matched
+/// as the realm's own search does: a substring of the username, e-mail or a name, any case.
+async fn organization_page(
+    admin: &Admin,
+    organizations: &[String],
+    search: &str,
+    first: u32,
+    max: u32,
+) -> Result<Vec<KcUser>, ApiError> {
+    let needle = search.to_lowercase();
+    let mut found = BTreeMap::new();
+    for organization in organizations {
+        for user in admin.people_of(organization).await? {
+            let fields = [
+                Some(&user.username),
+                user.email.as_ref(),
+                user.first_name.as_ref(),
+                user.last_name.as_ref(),
+            ];
+            let matches = fields
+                .into_iter()
+                .flatten()
+                .any(|field| field.to_lowercase().contains(&needle));
+            if matches && !user.is_service_account() {
+                found.insert((user.username.clone(), user.id.clone()), user);
+            }
+        }
+    }
+    Ok(found
+        .into_values()
+        .skip(first as usize)
+        .take(max as usize)
+        .collect())
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/organization/people",
@@ -794,7 +864,7 @@ pub async fn list_people(
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Json<PersonPage>, ApiError> {
     let identity = &user.0.identity;
-    allow(&state, identity, Verb::Read)?;
+    let organizations = listed_organizations(&state, identity)?;
     if let Some(unknown) = query
         .keys()
         .find(|key| !matches!(key.as_str(), "search" | "first" | "max"))
@@ -822,7 +892,12 @@ pub async fn list_people(
     }
     let people = people(&state)?;
     let admin = people.admin().await?;
-    let mut users = admin.list(search, first, max + 1).await?;
+    let mut users = match organizations {
+        None => admin.list(search, first, max + 1).await?,
+        Some(organizations) => {
+            organization_page(&admin, &organizations, search, first, max + 1).await?
+        }
+    };
     let next = (users.len() > max as usize).then(|| first + max);
     users.truncate(max as usize);
     let seen = last_seen_of(&admin, &users).await;
