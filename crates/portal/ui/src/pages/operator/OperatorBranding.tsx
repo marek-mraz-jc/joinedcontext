@@ -378,6 +378,8 @@ function SignInPreview({
   colours: Partial<Record<Colour, string>>;
 }): JSX.Element {
   const { t } = useTranslation();
+  // The fallbacks are kaisatsu's own defaults (crates/kaisatsu/core/src/branding.rs), what the
+  // sign-in page paints for a colour nobody set.
   const paint = (colour: Colour, fallback: string) =>
     HEX.test(colours[colour]?.trim() ?? "")
       ? (colours[colour]?.trim() as string)
@@ -393,15 +395,15 @@ function SignInPreview({
       viewBox={`0 0 ${width} ${height}`}
       className={`${size === "desktop" ? "w-full" : "w-56"} h-auto rounded-md border border-border`}
     >
-      <rect width={width} height={height} fill={paint("background", "#f5f7fa")} />
+      <rect width={width} height={height} fill={paint("background", "#ffffff")} />
       <rect x={x} y={height / 2 - 200} width={360} height={400} rx={12} fill="#ffffff" />
       {logoUrl ? <image href={logoUrl} x={x + 100} y={height / 2 - 176} width={160} height={56} /> : null}
-      <text x={width / 2} y={height / 2 - 80} textAnchor="middle" fontSize={22} fontWeight={600} fill={paint("text", "#1f2933")}>
+      <text x={width / 2} y={height / 2 - 80} textAnchor="middle" fontSize={22} fontWeight={600} fill={paint("text", "#0f172a")}>
         {name.length > 28 ? `${name.slice(0, 27)}…` : name}
       </text>
       <rect x={x + 30} y={height / 2 - 40} width={300} height={44} rx={6} fill="none" stroke="#c4cdd5" />
       <rect x={x + 30} y={height / 2 + 20} width={300} height={44} rx={6} fill="none" stroke="#c4cdd5" />
-      <rect x={x + 30} y={height / 2 + 100} width={300} height={48} rx={6} fill={paint("primary", "#0b5394")} />
+      <rect x={x + 30} y={height / 2 + 100} width={300} height={48} rx={6} fill={paint("primary", "#1d4ed8")} />
     </svg>
   );
 }

@@ -25,8 +25,9 @@
   "colour_is_a_token": {
     "_max": 5,
     "src/api/schema.d.ts": {
-      "lines": 15,
-      "group": "ui-parts"
+      "lines": 21,
+      "group": "ui-parts",
+      "reason": "generated from the OpenAPI document: the examples in the API's own doc text (branding defaults, jc-core's OrganizationAppearance colour examples such as #0b5394) are data the API describes, not colours a page paints"
     },
     "src/branding.tsx": {
       "lines": 8,
@@ -42,6 +43,11 @@
       "lines": 33,
       "group": "ui-parts",
       "reason": "Grafana's named colours (green, red, semi-dark-blue ...) as the hex values Grafana gives them: a dashboard's thresholds, mappings and fixedColor name these words, so they are data the dashboard JSON carries, not colours chosen here. The chart colours come from jc-chart's theme.json (T-6886)."
+    },
+    "src/pages/operator/OperatorBranding.tsx": {
+      "lines": 6,
+      "group": "ui-parts",
+      "reason": "the preview draws kaisatsu's sign-in page, not a Portal page: its fallbacks are kaisatsu's default branding colours (crates/kaisatsu/core/src/branding.rs) and its white card and grey field borders, so they must not follow the Portal theme"
     }
   },
   "focus_is_not_stolen": {
