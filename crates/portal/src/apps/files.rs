@@ -91,119 +91,28 @@ pub fn legacy_prefix(shard: u32, id: &str) -> String {
     format!("apps/{shard}/{id}/")
 }
 
-/// What one [`move_legacy`] did with the old prefix.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Moved {
-    /// Objects copied under the keyed prefix and verified there.
-    pub copied: usize,
-    /// Old objects whose key the keyed prefix already held from a newer write: dropped.
-    pub superseded: usize,
-    /// The old prefix holds nothing any more: reads stop looking there.
-    pub done: bool,
-}
+pub use crate::artifact_store::Moved;
 
-/// Moves an App's files from `legacy` to `keyed` (TEN-15): each object copied only where the keyed
-/// prefix has no object of its key (`If-None-Match`, so a write the App made meanwhile wins and is
-/// never lost), its bytes read back and compared by SHA-256, then the rollback entry
-/// `apps/moved/{id}/{at}.json` written (both prefixes, each key with its size, hash and outcome),
-/// and only then the old objects deleted. A copy that does not read back the same stops the move
-/// with the old prefix untouched, still read. The App's writes need no fence: they go under the
-/// keyed prefix the whole time, and its deletes reach both.
-/// ponytail: each object is read whole to hash it, which `MAX_OBJECT_BYTES` bounds for every write
-/// but an unsized presigned PUT; stream the hash when such objects appear.
+/// Moves an App's files from `legacy` to `keyed` (TEN-15) with [`crate::artifact_store::move_prefix`];
+/// the rollback entry is `apps/moved/{id}/{at}.json`. The App's writes go under the keyed prefix the
+/// whole time, and its deletes reach both.
 pub async fn move_legacy(
     store: &Store,
     bucket: &str,
     (id, legacy, keyed): (&str, &str, &str),
     at: &str,
 ) -> Result<Moved, String> {
-    use sha2::{Digest, Sha256};
-    let old = store
-        .list(bucket, legacy)
-        .await
-        .map_err(|err| format!("the old prefix could not be listed: {err}"))?;
-    if old.is_empty() {
-        return Ok(Moved {
-            done: true,
-            ..Moved::default()
-        });
-    }
-    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
-    let read = |key: String| async move {
-        match store
-            .object(
-                reqwest::Method::GET,
-                bucket,
-                &key,
-                Vec::new(),
-                &[],
-                "read an object",
-            )
-            .await
-        {
-            Ok((200, _, body)) => Ok(Some(body)),
-            Ok((404, _, _)) => Ok(None),
-            Ok((status, _, _)) => Err(format!("the store answered {status} to a read")),
-            Err(err) => Err(err.to_string()),
-        }
-    };
-    let mut moved = Moved::default();
-    let mut entries = Vec::with_capacity(old.len());
-    for object in &old {
-        let Some(relative) = object.key.strip_prefix(legacy) else {
-            continue;
-        };
-        let target = format!("{keyed}{relative}");
-        // Gone since the listing: the App deleted it, and nothing is left to move.
-        let Some(before) = read(object.key.clone()).await? else {
-            continue;
-        };
-        let sha256 = hash(&before);
-        let outcome = if store
-            .copy_if_absent(bucket, &object.key, &target)
-            .await
-            .map_err(|err| format!("an object could not be copied: {err}"))?
-        {
-            let after = read(target.clone()).await?;
-            if after.as_deref().map(hash).as_deref() != Some(sha256.as_str()) {
-                return Err(format!(
-                    "the copy of {relative} did not read back the same bytes; the old prefix stays"
-                ));
-            }
-            moved.copied += 1;
-            "copied"
-        } else {
-            moved.superseded += 1;
-            "superseded"
-        };
-        entries.push(serde_json::json!({
-            "key": relative, "size": before.len(), "sha256": sha256, "outcome": outcome,
-        }));
-    }
-    let rollback = serde_json::json!({
-        "app": id, "from": legacy, "to": keyed, "at": at, "objects": entries,
-    });
-    store
-        .put_object(
-            bucket,
-            &format!("apps/moved/{id}/{at}.json"),
-            rollback.to_string().into_bytes(),
-            "write a move's rollback entry",
-        )
-        .await
-        .map_err(|err| format!("the rollback entry could not be written: {err}"))?;
-    for object in &old {
-        store
-            .delete_object(bucket, &object.key)
-            .await
-            .map_err(|err| format!("an old object could not be deleted: {err}"))?;
-    }
-    moved.done = store
-        .list(bucket, legacy)
-        .await
-        .map_err(|err| format!("the old prefix could not be listed: {err}"))?
-        .is_empty();
-    Ok(moved)
+    let mut record = serde_json::Map::new();
+    record.insert("app".into(), id.into());
+    record.insert("at".into(), at.into());
+    crate::artifact_store::move_prefix(
+        store,
+        bucket,
+        (legacy, keyed),
+        &format!("apps/moved/{id}/{at}.json"),
+        record,
+    )
+    .await
 }
 
 /// The App's place in the store, once the gate let the call through.

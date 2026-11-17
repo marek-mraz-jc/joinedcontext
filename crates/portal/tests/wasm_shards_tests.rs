@@ -429,6 +429,86 @@ async fn an_apps_old_files_move_under_its_project_key_and_a_write_made_meanwhile
     assert_eq!(prefixes(2, &done), [keyed]);
 }
 
+/// TEN-15, T-7210: a project's published artifacts move from `{area}/{org}/{project}/` under its
+/// project key. A newer write under the key is kept, the rollback entry sits outside every
+/// project's prefix with hashes and no payload, a sibling project's old artifacts are untouched,
+/// and once the old layout is empty the reader's policy stops naming it.
+#[tokio::test]
+async fn a_projects_old_artifacts_move_under_its_key_and_the_old_layout_is_then_refused() {
+    use jc_types::{OrgId, ProjectId, ProjectKey};
+    use joinedcontext_portal::artifact_store::{move_artifacts, policy_document, Legacy, Role};
+    let server = MockServer::start().await;
+    let bucket = Bucket::default();
+    Mock::given(wiremock::matchers::any())
+        .respond_with(bucket.clone())
+        .mount(&server)
+        .await;
+    let store = Client::new(Settings {
+        bucket: "apps".to_owned(),
+        ..store_settings(server.uri())
+    })
+    .expect("a store client");
+    let key = ProjectKey::new(OrgId::mint(), ProjectId::mint());
+    let keyed = key.object_prefix();
+    let legacy = Legacy::new("hel", "air").expect("labels");
+    bucket.put("schemas/hel/air/aq/v1/aq.linkml.yaml", b"old model");
+    bucket.put("mappings/hel/air/m/m.bloblang", b"old mapping");
+    bucket.put(&format!("{keyed}mappings/m/m.bloblang"), b"newer mapping");
+    bucket.put(
+        "schemas/hel/airx/aq/v1/aq.linkml.yaml",
+        b"a sibling's model",
+    );
+
+    let moved = move_artifacts(&store, &key, &legacy, "20261117T130000Z")
+        .await
+        .expect("the move runs");
+    assert_eq!((moved.copied, moved.superseded, moved.done), (1, 1, true));
+    assert_eq!(
+        bucket
+            .get(&format!("{keyed}schemas/aq/v1/aq.linkml.yaml"))
+            .as_deref(),
+        Some(&b"old model"[..])
+    );
+    assert_eq!(
+        bucket
+            .get(&format!("{keyed}mappings/m/m.bloblang"))
+            .as_deref(),
+        Some(&b"newer mapping"[..]),
+        "the old copy overwrote a newer write"
+    );
+    let keys = bucket.keys();
+    assert!(!keys
+        .iter()
+        .any(|k| k.starts_with("schemas/hel/air/") || k.starts_with("mappings/hel/air/")));
+    assert!(
+        keys.contains(&"schemas/hel/airx/aq/v1/aq.linkml.yaml".to_owned()),
+        "{keys:?}"
+    );
+    let rollback = bucket
+        .get("moved/schemas/hel/air/20261117T130000Z.json")
+        .expect("a rollback entry per area");
+    let rollback: Value = serde_json::from_slice(&rollback).expect("JSON");
+    assert_eq!(rollback["from"], "schemas/hel/air/");
+    assert_eq!(rollback["to"], format!("{keyed}schemas/"));
+    assert_eq!(rollback["objects"][0]["outcome"], "copied");
+    assert!(
+        !rollback.to_string().contains("old model"),
+        "a payload in the rollback entry"
+    );
+
+    let again = move_artifacts(&store, &key, &legacy, "20261117T130100Z")
+        .await
+        .expect("a second run");
+    assert_eq!((again.copied, again.superseded, again.done), (0, 0, true));
+    // Moved: the converge passes no legacy, and the reader reads the key alone.
+    let reader = policy_document("apps", &key, Role::Reader, None).to_string();
+    assert!(!reader.contains("/hel/air/"), "{reader}");
+    assert!(
+        reader.contains(&format!("apps/{keyed}schemas/*")),
+        "{reader}"
+    );
+}
+
 #[test]
 fn a_shards_key_reaches_its_apps_own_prefixes_and_the_components_and_is_its_own() {
     // Two projects' Apps: A's on shard 3, keyed and not yet moved; B's elsewhere.
