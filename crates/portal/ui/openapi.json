@@ -2786,6 +2786,58 @@
         }
       }
     },
+    "/api/v1/operator/audit": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Operators' Audit",
+        "description": "The newest 500 rows of the operators' append-only audit: every proposal, approval, rejection and applied write, and every reconciler step on a registry host (T-7129 §4). For a person of the operators' group with a second factor.",
+        "operationId": "operator_audit_list",
+        "responses": {
+          "200": {
+            "description": "The audit rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorAuditList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/operator/changes": {
       "get": {
         "tags": [
@@ -3083,6 +3135,110 @@
           },
           "409": {
             "description": "Decided already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operator/hosts": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List The Host Registry",
+        "description": "Every host of every Organization with its state on the way to served and what it waits for, and the instance's new-certificate slots (T-7129 §3). For a person of the operators' group with a second factor.",
+        "operationId": "operator_host_list",
+        "responses": {
+          "200": {
+            "description": "The hosts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorHostList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operator/organizations": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Organizations For Operators",
+        "description": "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.",
+        "operationId": "operator_organization_list",
+        "responses": {
+          "200": {
+            "description": "The Organizations and ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperatorOrganizationList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
             "content": {
               "application/json": {
                 "schema": {
@@ -52181,6 +52337,40 @@
           }
         }
       },
+      "CertificateSlots": {
+        "type": "object",
+        "description": "The new-certificate slots of the instance (T-7129 §3 pacing).",
+        "required": [
+          "usedToday",
+          "perDay",
+          "perDomainWeek"
+        ],
+        "properties": {
+          "nextFreeAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the next slot frees, while every slot of the day is taken."
+          },
+          "perDay": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most a rolling 24 hours allows."
+          },
+          "perDomainWeek": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The most a rolling 7 days allows per registered domain (eTLD+1)."
+          },
+          "usedToday": {
+            "type": "integer",
+            "format": "int64",
+            "description": "New certificates requested in the last 24 hours."
+          }
+        }
+      },
       "Challenge": {
         "type": "object",
         "description": "The record that proves the domain, to publish before the mint.",
@@ -59061,6 +59251,70 @@
           "history"
         ]
       },
+      "OperatorAuditEntry": {
+        "type": "object",
+        "description": "One row of the operators' audit.",
+        "required": [
+          "id",
+          "at",
+          "actor",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "e.g. `proposed HostAdd`, `certificate.created`, `host.served`."
+          },
+          "actor": {
+            "type": "string",
+            "description": "The operator's user id, or `reconciler` for a step on a host's objects."
+          },
+          "actorName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The operator's name, when the realm answers it."
+          },
+          "after": {},
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "before": {},
+          "changeId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sourceIp": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OperatorAuditList": {
+        "type": "object",
+        "description": "The newest rows of the operators' audit, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatorAuditEntry"
+            }
+          }
+        }
+      },
       "OperatorChange": {
         "type": "object",
         "description": "One operator Change.",
@@ -59087,6 +59341,12 @@
             ],
             "description": "The operator who approved or rejected it."
           },
+          "decidedByName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "id": {
             "type": "string"
           },
@@ -59103,6 +59363,13 @@
           "proposedBy": {
             "type": "string",
             "description": "The user id of the operator who asked for it."
+          },
+          "proposedByName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name of the operator who asked for it, when the realm answers it."
           },
           "state": {
             "type": "string",
@@ -59125,6 +59392,75 @@
           }
         }
       },
+      "OperatorHost": {
+        "type": "object",
+        "description": "One host of the registry as the operators' pages show it (T-7129 §3, T-7140).",
+        "required": [
+          "host",
+          "organization",
+          "role",
+          "state",
+          "updatedAt"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the host waits for on its way to `served`, e.g. `waiting for DNS: ...` or\n`waiting for a certificate slot until 2026-11-18 09:00 UTC`; none once served."
+          },
+          "detailAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "host": {
+            "type": "string"
+          },
+          "organization": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`proposed`, `approved`, `dns-ok`, `cert-issued`, `served` or `removed`."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OperatorHostList": {
+        "type": "object",
+        "description": "Every host of the registry and the certificate slots.",
+        "required": [
+          "items",
+          "certificates"
+        ],
+        "properties": {
+          "certificates": {
+            "$ref": "#/components/schemas/CertificateSlots"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatorHost"
+            }
+          }
+        }
+      },
       "OperatorKind": {
         "type": "string",
         "description": "What an operator Change does.",
@@ -59134,6 +59470,113 @@
           "OperatorAdd",
           "OperatorRemove"
         ]
+      },
+      "OperatorOrganization": {
+        "type": "object",
+        "description": "One Organization of the installation as the operators' list shows it.",
+        "required": [
+          "name",
+          "hosts"
+        ],
+        "properties": {
+          "domain": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hosts": {
+            "type": "object",
+            "description": "Its hosts per registry state, e.g. `{\"served\": 3, \"dns-ok\": 1}`.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OperatorOrganizationId": {
+        "type": "object",
+        "description": "One Organization id, minted or waiting for its TXT record (T-7012, T-7140).",
+        "required": [
+          "id",
+          "domain",
+          "recordName",
+          "recordValue",
+          "requestedAt",
+          "organizations"
+        ],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "e.g. `bbsk.sk`."
+          },
+          "id": {
+            "type": "string",
+            "description": "e.g. `sk_bbsk`."
+          },
+          "mintedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the id was minted; none while the record is not checked yet."
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The active Organizations this id belongs to, or whose domain it is."
+          },
+          "recordName": {
+            "type": "string",
+            "description": "The TXT record's name, `_joinedcontext.{domain}`."
+          },
+          "recordValue": {
+            "type": "string",
+            "description": "The TXT record's value, `jc-verify={challenge}`: public, it is published in DNS."
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "OperatorOrganizationList": {
+        "type": "object",
+        "description": "The Organizations and the Organization ids.",
+        "required": [
+          "items",
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatorOrganizationId"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperatorOrganization"
+            }
+          }
+        }
       },
       "OrganizationAddress": {
         "type": "object",

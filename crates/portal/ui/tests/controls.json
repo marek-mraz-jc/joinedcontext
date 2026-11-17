@@ -1888,6 +1888,30 @@
         "mqtt_broker_topics.test.tsx"
       ]
     },
+    "src/pages/operator/OperatorChanges.tsx": {
+      "controls": {
+        "Button": 2
+      },
+      "tests": [
+        "operator_pages.test.tsx"
+      ]
+    },
+    "src/pages/operator/OperatorHosts.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "operator_pages.test.tsx"
+      ]
+    },
+    "src/pages/operator/OperatorOrganizations.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "operator_pages.test.tsx"
+      ]
+    },
     "src/pages/organization/AgentActivity.tsx": {
       "controls": {
         "Button": 5

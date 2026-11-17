@@ -263,6 +263,9 @@ pub struct Syncer {
     /// The certificate and edge Ingress of every published App's host (ADR-N-037, AP-133).
     /// `None` outside a cluster.
     app_hosts: Option<Arc<super::app_hosts::AppHosts>>,
+    /// The certificate and Ingress of every registry host on its way to `served` (T-7129 §3).
+    /// `None` outside a cluster or without a database.
+    org_hosts: Option<Arc<super::org_hosts::OrgHosts>>,
     wasm_shards: Option<Arc<super::wasm_shards::WasmShards>>,
     /// Every `MqttBroker`'s release and its Keycloak client (ADR-N-048, T-3994).
     mqtt_brokers: Option<Arc<super::mqtt_brokers::MqttBrokers>>,
@@ -419,6 +422,7 @@ impl Syncer {
             mcp_clients: None,
             edge_file: None,
             app_hosts: None,
+            org_hosts: None,
             wasm_shards: None,
             mqtt_brokers: None,
             mqtt_clients: None,
@@ -729,6 +733,12 @@ impl Syncer {
     /// Makes each run give every published App's host its certificate and Ingress (AP-133).
     pub fn with_app_hosts(mut self, hosts: Arc<super::app_hosts::AppHosts>) -> Self {
         self.app_hosts = Some(hosts);
+        self
+    }
+
+    /// Makes each run move the registry's hosts toward `served` (T-7129 §3, T-7138).
+    pub fn with_org_hosts(mut self, hosts: Arc<super::org_hosts::OrgHosts>) -> Self {
+        self.org_hosts = Some(hosts);
         self
     }
 
@@ -1667,7 +1677,7 @@ impl Syncer {
         // 5e. The file the edge serves: helm's base with the routes of every App whose client
         //     the step above has in place (ADR-N-030, AP-112). A failure leaves APISIX serving
         //     the last file it read.
-        self.converge_edge_file(&fresh_mirror).await;
+        let edge_current = self.converge_edge_file(&fresh_mirror).await;
         steps.mark("edge_file");
 
         // Until the stream wave below has answered, a stream pipeline says what the leader last
@@ -1732,6 +1742,14 @@ impl Syncer {
         //     issued yet says so, and reads published only once it is.
         self.converge_app_hosts(&scratch, &transitions).await;
         steps.mark("app_hosts");
+
+        // 6a1. The registry's hosts: DNS, then an ACME-only Ingress and a paced Certificate,
+        //      widened and served once issued; a removed host's objects go once the edge file
+        //      written above no longer routes it (T-7129 §3).
+        if let Some(hosts) = self.org_hosts.as_ref() {
+            hosts.converge(edge_current).await;
+        }
+        steps.mark("org_hosts");
 
         // 6a2. Each WASM shard's placement of the published `wasm` Apps placed on it, and its
         //      store key (AP-157, AP-158): after 6, so an App retired this run has left it.
@@ -2657,33 +2675,33 @@ impl Syncer {
         }
     }
 
-    async fn converge_edge_file(&self, fresh_mirror: &Mirror) {
-        if let Some((edge_file, settings)) = self.edge_file.as_ref() {
-            let secrets = self
-                .app_client_secrets
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            let (apps, mut skipped) = super::edge_file::edge_apps(
-                fresh_mirror,
-                &secrets,
-                settings,
-                edge_file.wasm_host(),
-            );
-            let limits = crate::api::organization_limits::limits_in(fresh_mirror);
-            let (outcome, refused) = edge_file.converge(&apps, limits.as_ref()).await;
-            skipped.extend(refused);
-            for (app, reason) in &skipped {
-                tracing::warn!(%app, %reason, "published App has no route at the edge");
+    /// Whether the edge serves a file composed from this pass's registry: written or unchanged.
+    async fn converge_edge_file(&self, fresh_mirror: &Mirror) -> bool {
+        let Some((edge_file, settings)) = self.edge_file.as_ref() else {
+            return false;
+        };
+        let secrets = self
+            .app_client_secrets
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let (apps, mut skipped) =
+            super::edge_file::edge_apps(fresh_mirror, &secrets, settings, edge_file.wasm_host());
+        let limits = crate::api::organization_limits::limits_in(fresh_mirror);
+        let (outcome, refused) = edge_file.converge(&apps, limits.as_ref()).await;
+        skipped.extend(refused);
+        for (app, reason) in &skipped {
+            tracing::warn!(%app, %reason, "published App has no route at the edge");
+        }
+        match outcome {
+            super::edge_file::EdgeOutcome::Written { apps } => {
+                tracing::info!(apps, "edge file written");
+                true
             }
-            match outcome {
-                super::edge_file::EdgeOutcome::Written { apps } => {
-                    tracing::info!(apps, "edge file written")
-                }
-                super::edge_file::EdgeOutcome::Unchanged { .. } => {}
-                super::edge_file::EdgeOutcome::Failed(reason) => {
-                    tracing::warn!(%reason, "edge file not written")
-                }
+            super::edge_file::EdgeOutcome::Unchanged { .. } => true,
+            super::edge_file::EdgeOutcome::Failed(reason) => {
+                tracing::warn!(%reason, "edge file not written");
+                false
             }
         }
     }

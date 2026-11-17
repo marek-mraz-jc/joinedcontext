@@ -22,6 +22,7 @@ pub mod hub_scopes;
 pub mod leader;
 pub mod mcp_clients;
 pub mod mqtt_brokers;
+pub mod org_hosts;
 pub mod pipeline_authors;
 pub mod realm;
 pub mod registrations;

@@ -155,10 +155,17 @@ async fn only_an_operator_with_a_second_factor_proposes_or_approves() {
     password_only.second_factor = false;
     let (status, refused) = propose(&state, password_only.clone(), change.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    let administrator = common::organization_admin(&state.mirror, "org-admin");
+    let (status, refused) = propose(&state, administrator.clone(), change.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "an Organization administrator: {refused}"
+    );
     let (status, made) = propose(&state, operator(&state, "ops-a"), change).await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().expect("an id");
-    for who in [nobody, password_only] {
+    for who in [nobody, password_only, administrator] {
         assert_eq!(
             decide(&state, who, id, "approve").await.0,
             StatusCode::FORBIDDEN
@@ -170,6 +177,122 @@ async fn only_an_operator_with_a_second_factor_proposes_or_approves() {
             .status,
         StatusCode::FORBIDDEN
     );
+}
+
+/// The operators' pages read the registry, the audit and the Organization ids (T-7140): an
+/// operator with a second factor reads each, with what a host waits for and the certificate
+/// slots; anybody else is `403` on every one of them, a password-only operator too.
+#[tokio::test]
+async fn only_an_operator_reads_the_hosts_the_audit_and_the_organizations() {
+    let (state, _) = world().await;
+    let r = run("read");
+    let domain = format!("{r}.sk");
+    organization(&state, &r, &domain).await;
+    let host = format!("smartcity.{r}.{BASE}");
+    let pool = state.db.as_ref().expect("db");
+    sqlx::query(
+        "INSERT INTO organization_hosts (host, organization, role, state, created_by, detail, detail_at) \
+         VALUES ($1, $2, 'working', 'dns-ok', 'ops-a', 'waiting for a certificate slot until 2026-11-18 09:00 UTC', now())",
+    )
+    .bind(&host)
+    .bind(&r)
+    .execute(pool)
+    .await
+    .expect("a host");
+    sqlx::query(
+        "INSERT INTO organization_ids (id, domain, challenge, requested_by) VALUES ($1, $2, 'c0ffee', 'ops-a')",
+    )
+    .bind(format!("sk_{r}"))
+    .bind(&domain)
+    .execute(pool)
+    .await
+    .expect("an id");
+    let reads = [
+        "/api/v1/operator/hosts",
+        "/api/v1/operator/audit",
+        "/api/v1/operator/organizations",
+    ];
+    let mut password_only = operator(&state, "ops-a");
+    password_only.second_factor = false;
+    // An Organization's own administrator is no installation operator (T-7138 bounce row 5).
+    let administrator = common::organization_admin(&state.mirror, "org-admin");
+    for path in reads {
+        for who in [
+            person("nobody"),
+            password_only.clone(),
+            administrator.clone(),
+        ] {
+            let answer = send(&state, who, "GET", path, None).await;
+            assert_eq!(
+                answer.status,
+                StatusCode::FORBIDDEN,
+                "{path}: {}",
+                answer.text
+            );
+        }
+    }
+    let ops = operator(&state, "ops-a");
+    let answer = send(&state, ops.clone(), "GET", reads[0], None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let listed = body(&answer.text);
+    let row = listed["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["host"] == host.as_str())
+        .expect("the host");
+    assert_eq!(row["state"], "dns-ok");
+    assert_eq!(
+        row["detail"],
+        "waiting for a certificate slot until 2026-11-18 09:00 UTC"
+    );
+    assert_eq!(listed["certificates"]["perDay"], 10);
+    assert_eq!(listed["certificates"]["perDomainWeek"], 20);
+
+    let (status, made) = propose(
+        &state,
+        ops.clone(),
+        json!({ "kind": "HostRemove", "host": host }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let answer = send(&state, ops.clone(), "GET", reads[1], None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let audit = body(&answer.text);
+    let newest = audit["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["changeId"] == made["id"])
+        .expect("the proposal's row");
+    assert_eq!(newest["action"], "proposed HostRemove");
+    assert_eq!(newest["actor"], ops.subject.as_str());
+
+    let answer = send(&state, ops, "GET", reads[2], None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let orgs = body(&answer.text);
+    let org = orgs["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["name"] == r.as_str())
+        .expect("the Organization");
+    assert_eq!(org["domain"], domain.as_str());
+    assert_eq!(org["hosts"]["dns-ok"], 1);
+    let id = orgs["ids"]
+        .as_array()
+        .expect("ids")
+        .iter()
+        .find(|item| item["domain"] == domain.as_str())
+        .expect("the id");
+    assert_eq!(id["recordName"], format!("_joinedcontext.{domain}"));
+    assert_eq!(id["recordValue"], "jc-verify=c0ffee");
+    assert_eq!(id["mintedAt"], Value::Null);
+    assert_eq!(id["organizations"], json!([r]));
+    // Out of every other test's certificate wave: the shared database keeps no dns-ok row behind.
+    joinedcontext_portal::host_registry::remove(pool, &host)
+        .await
+        .expect("removed");
 }
 
 #[tokio::test]
@@ -499,6 +622,54 @@ async fn realm(
     )
     .map(Arc::new);
     kc
+}
+
+/// The reads name the operator behind a user id when the realm answers it, and keep the id
+/// alone when it does not (the reconciler, an id the realm lacks).
+#[tokio::test]
+async fn the_changes_and_the_audit_name_the_operator_who_asked() {
+    let (mut state, _) = world().await;
+    let subject = fresh_subject();
+    let _kc = realm(&mut state, &subject, "jana@ops.example", true, &[]).await;
+    let mut jana = operator(&state, "jana");
+    jana.subject = subject.clone();
+    let r = run("n");
+    organization(&state, &r, &format!("{r}.sk")).await;
+    let host = format!("named.{r}.{BASE}");
+    let (status, made) = propose(
+        &state,
+        jana,
+        json!({ "kind": "HostAdd", "host": host, "organization": r, "role": "working" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let ops = operator(&state, "ops-b");
+    let changes = body(&send(&state, ops.clone(), "GET", CHANGES, None).await.text);
+    let mine = changes["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|c| c["id"] == made["id"])
+        .expect("the Change");
+    assert_eq!(mine["proposedBy"], subject.as_str());
+    assert_eq!(mine["proposedByName"], "jana@ops.example");
+    let audit = body(
+        &send(&state, ops, "GET", "/api/v1/operator/audit", None)
+            .await
+            .text,
+    );
+    let rows = audit["items"].as_array().expect("items");
+    let row = rows
+        .iter()
+        .find(|row| row["actor"] == subject.as_str())
+        .expect("the proposal's audit row");
+    assert_eq!(row["actorName"], "jana@ops.example");
+    assert!(
+        rows.iter()
+            .filter(|row| row["actor"] == "reconciler")
+            .all(|row| row.get("actorName").is_none()),
+        "the reconciler keeps no name"
+    );
 }
 
 /// The membership write of an approval, expected `times` times.

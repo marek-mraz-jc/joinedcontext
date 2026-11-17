@@ -304,20 +304,39 @@ async fn only_an_operator_with_a_second_factor_mints() {
     dns.publish(&format!("_joinedcontext.{domain}"), &value);
     let ask = Some(json!({ "domain": domain }));
 
+    // An Organization administrator who is no operator is a stranger here (T-7138 bounce row 5).
+    let administrator = common::organization_admin(&state.mirror, "org-admin");
     for uri in [CHALLENGE, MINT] {
-        let stranger = send(&state, person("jana"), "POST", uri, ask.clone()).await;
-        assert_eq!(
-            stranger.status,
-            StatusCode::FORBIDDEN,
-            "{uri}: {}",
-            stranger.text
-        );
+        for who in [person("jana"), administrator.clone()] {
+            let stranger = send(&state, who, "POST", uri, ask.clone()).await;
+            assert_eq!(
+                stranger.status,
+                StatusCode::FORBIDDEN,
+                "{uri}: {}",
+                stranger.text
+            );
+        }
     }
+    // Both doors are the operators' (T-7138 bounce row 4): a password-only operator is refused
+    // at the challenge too, not only at the mint. Both call operator_changes::operator, whose
+    // unit test a_bearer_in_the_operators_group_is_no_operator refuses a client's token (a
+    // cookie session carries no client, so this suite cannot send one).
     let mut no_factor = operator(&state.config);
     no_factor.second_factor = false;
-    let refused = send(&state, no_factor, "POST", MINT, ask.clone()).await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
-    assert!(refused.text.contains("second-factor"), "{}", refused.text);
+    for uri in [CHALLENGE, MINT] {
+        let refused = send(&state, no_factor.clone(), "POST", uri, ask.clone()).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{uri}: {}",
+            refused.text
+        );
+        assert!(
+            refused.text.contains("second-factor"),
+            "{uri}: {}",
+            refused.text
+        );
+    }
 
     let minted = send(&state, operator(&state.config), "POST", MINT, ask).await;
     assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.text);

@@ -11,7 +11,7 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
 import userEvent from "@testing-library/user-event";
-import { ORGANIZATION_GROUPS } from "../src/pages/organization/AdminNav";
+import { OPERATOR_TABS, ORGANIZATION_GROUPS } from "../src/pages/organization/AdminNav";
 import { ORGANIZATION_TABS } from "../src/pages/organization/OrganizationPage";
 
 const IDENTITY = { subject: "b7c1e0f4", username: "jana.kovacova", roles: ["portal-viewer"] };
@@ -70,7 +70,9 @@ describe("the Organization page's addresses (T-2605)", () => {
   it("lists every section in the side navigation's four groups, with no project switcher", async () => {
     renderAt("/organization/members");
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-    for (const group of ORGANIZATION_GROUPS) {
+    // T-7140: the operators' group is for an installation operator alone (operator_pages.test.tsx).
+    expect(within(nav).queryByRole("list", { name: en.organization.group.operators })).toBeNull();
+    for (const group of ORGANIZATION_GROUPS.filter((g) => g.id !== "operators")) {
       const list = await within(nav).findByRole("list", { name: en.organization.group[group.id] });
       expect(within(list).getAllByRole("link").map((link) => link.textContent)).toEqual(
         group.tabs.map((tab) => en.organization.tab[tab]),
@@ -137,7 +139,7 @@ describe("the Organization page's addresses (T-2605)", () => {
     const user = userEvent.setup();
     renderAt("/organization/settings");
     const nav = await screen.findByRole("navigation", { name: "Main navigation" });
-    for (const tab of ORGANIZATION_TABS) {
+    for (const tab of ORGANIZATION_TABS.filter((tab) => !OPERATOR_TABS.includes(tab))) {
       await user.click(await within(nav).findByRole("link", { name: en.organization.tab[tab] }));
       await waitFor(() => expect(window.location.pathname).toBe(`/organization/${tab}`));
       expect(within(nav).getByRole("link", { name: en.organization.tab[tab] })).toHaveAttribute("aria-current", "page");

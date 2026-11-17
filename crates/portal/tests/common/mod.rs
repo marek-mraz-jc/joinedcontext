@@ -51,6 +51,27 @@ pub fn person(name: &str) -> Identity {
     }
 }
 
+/// An Organization administrator who is no installation operator: every verb on every kind of
+/// the organization, a second factor proved, and not in the operators' group.
+pub fn organization_admin(mirror: &Mirror, name: &str) -> Identity {
+    mirror.upsert(envelope(
+        "Role",
+        &format!("{name}-admin"),
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["*"], "verbs": ["*"] }] }),
+    ));
+    mirror.upsert(envelope(
+        "RoleBinding",
+        &format!("{name}-admin"),
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": format!("{name}@hel.fi") }], "role": format!("{name}-admin") }),
+    ));
+    let mut who = person(name);
+    who.username = format!("{name}@hel.fi");
+    who.second_factor = true;
+    who
+}
+
 pub fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
     ResourceEnvelope {
         api_version: API_VERSION.to_owned(),

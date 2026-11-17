@@ -889,6 +889,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Operators' Audit
+         * @description The newest 500 rows of the operators' append-only audit: every proposal, approval, rejection and applied write, and every reconciler step on a registry host (T-7129 §4). For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_audit_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/changes": {
         parameters: {
             query?: never;
@@ -947,6 +967,46 @@ export interface paths {
          * @description Closes the Change without writing anything it asked for (T-7129 §4). Any operator may, the proposer included.
          */
         post: operations["operator_change_reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List The Host Registry
+         * @description Every host of every Organization with its state on the way to served and what it waits for, and the instance's new-certificate slots (T-7129 §3). For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_host_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/organizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Organizations For Operators
+         * @description Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_organization_list"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9875,6 +9935,29 @@ export interface components {
             /** @description Whether a connector of the caller may hold a write item. */
             writes: boolean;
         };
+        /** @description The new-certificate slots of the instance (T-7129 §3 pacing). */
+        CertificateSlots: {
+            /**
+             * Format: date-time
+             * @description When the next slot frees, while every slot of the day is taken.
+             */
+            nextFreeAt?: string | null;
+            /**
+             * Format: int64
+             * @description The most a rolling 24 hours allows.
+             */
+            perDay: number;
+            /**
+             * Format: int64
+             * @description The most a rolling 7 days allows per registered domain (eTLD+1).
+             */
+            perDomainWeek: number;
+            /**
+             * Format: int64
+             * @description New certificates requested in the last 24 hours.
+             */
+            usedToday: number;
+        };
         /** @description The record that proves the domain, to publish before the mint. */
         Challenge: {
             /** @description The domain, e.g. `bbsk.sk`. */
@@ -12512,12 +12595,34 @@ export interface components {
          * @enum {string}
          */
         Operations: "read" | "write" | "history";
+        /** @description One row of the operators' audit. */
+        OperatorAuditEntry: {
+            /** @description e.g. `proposed HostAdd`, `certificate.created`, `host.served`. */
+            action: string;
+            /** @description The operator's user id, or `reconciler` for a step on a host's objects. */
+            actor: string;
+            /** @description The operator's name, when the realm answers it. */
+            actorName?: string | null;
+            after?: unknown;
+            /** Format: date-time */
+            at: string;
+            before?: unknown;
+            changeId?: string | null;
+            /** Format: int64 */
+            id: number;
+            sourceIp?: string | null;
+        };
+        /** @description The newest rows of the operators' audit, newest first. */
+        OperatorAuditList: {
+            items: components["schemas"]["OperatorAuditEntry"][];
+        };
         /** @description One operator Change. */
         OperatorChange: {
             /** Format: date-time */
             decidedAt?: string | null;
             /** @description The operator who approved or rejected it. */
             decidedBy?: string | null;
+            decidedByName?: string | null;
             id: string;
             kind: components["schemas"]["OperatorKind"];
             payload: components["schemas"]["ChangePayload"];
@@ -12525,6 +12630,8 @@ export interface components {
             proposedAt: string;
             /** @description The user id of the operator who asked for it. */
             proposedBy: string;
+            /** @description The name of the operator who asked for it, when the realm answers it. */
+            proposedByName?: string | null;
             /** @description `proposed`, `applied` or `rejected`. */
             state: string;
         };
@@ -12532,11 +12639,69 @@ export interface components {
         OperatorChangeList: {
             items: components["schemas"]["OperatorChange"][];
         };
+        /** @description One host of the registry as the operators' pages show it (T-7129 §3, T-7140). */
+        OperatorHost: {
+            /**
+             * @description What the host waits for on its way to `served`, e.g. `waiting for DNS: ...` or
+             *     `waiting for a certificate slot until 2026-11-18 09:00 UTC`; none once served.
+             */
+            detail?: string | null;
+            /** Format: date-time */
+            detailAt?: string | null;
+            host: string;
+            organization: string;
+            organizationId?: string | null;
+            role: string;
+            /** @description `proposed`, `approved`, `dns-ok`, `cert-issued`, `served` or `removed`. */
+            state: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description Every host of the registry and the certificate slots. */
+        OperatorHostList: {
+            certificates: components["schemas"]["CertificateSlots"];
+            items: components["schemas"]["OperatorHost"][];
+        };
         /**
          * @description What an operator Change does.
          * @enum {string}
          */
         OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove";
+        /** @description One Organization of the installation as the operators' list shows it. */
+        OperatorOrganization: {
+            domain?: string | null;
+            /** @description Its hosts per registry state, e.g. `{"served": 3, "dns-ok": 1}`. */
+            hosts: {
+                [key: string]: number;
+            };
+            name: string;
+            title?: string | null;
+        };
+        /** @description One Organization id, minted or waiting for its TXT record (T-7012, T-7140). */
+        OperatorOrganizationId: {
+            /** @description e.g. `bbsk.sk`. */
+            domain: string;
+            /** @description e.g. `sk_bbsk`. */
+            id: string;
+            /**
+             * Format: date-time
+             * @description When the id was minted; none while the record is not checked yet.
+             */
+            mintedAt?: string | null;
+            /** @description The active Organizations this id belongs to, or whose domain it is. */
+            organizations: string[];
+            /** @description The TXT record's name, `_joinedcontext.{domain}`. */
+            recordName: string;
+            /** @description The TXT record's value, `jc-verify={challenge}`: public, it is published in DNS. */
+            recordValue: string;
+            /** Format: date-time */
+            requestedAt: string;
+        };
+        /** @description The Organizations and the Organization ids. */
+        OperatorOrganizationList: {
+            ids: components["schemas"]["OperatorOrganizationId"][];
+            items: components["schemas"]["OperatorOrganization"][];
+        };
         /** @description One address: what answers and where. */
         OrganizationAddress: {
             kind: components["schemas"]["AddressKind"];
@@ -17473,6 +17638,53 @@ export interface operations {
             };
         };
     };
+    operator_audit_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The audit rows */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorAuditList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     operator_change_list: {
         parameters: {
             query?: never;
@@ -17725,6 +17937,100 @@ export interface operations {
             };
             /** @description Decided already */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_host_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The hosts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorHostList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_organization_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Organizations and ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperatorOrganizationList"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

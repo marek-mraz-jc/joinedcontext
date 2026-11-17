@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { queryKeys } from "../../api/client";
 import { PageFailed } from "../../components/ui/PageState";
 import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
-import { mayRead, useAdministers, usePermissions } from "../../api/permissions";
+import { mayRead, useAdministers, useOperator, usePermissions } from "../../api/permissions";
 import { kindPlural } from "../../kindWords";
 import { useProjects } from "../../api/projects";
 import { DeleteProjectAction } from "../../components/DeleteProjectDialog";
@@ -47,10 +47,17 @@ import { HealthLog } from "../health/HealthLog";
 import { Brokers } from "./Brokers";
 import { Costs } from "./Costs";
 import { McpServersPage } from "../mcp/McpServersPage";
-import { ORGANIZATION_GROUPS, OWN_ORGANIZATION_TABS } from "./AdminNav";
+import { OPERATOR_TABS, ORGANIZATION_GROUPS, OWN_ORGANIZATION_TABS } from "./AdminNav";
 
 /** Only an administrator opens Agents, so its code loads with the tab (bundle budget, T-4849). */
 const Agents = lazy(() => import("./Agents").then((module) => ({ default: module.Agents })));
+/** The operators' sections load with their tab too: nobody else opens them (T-7140). */
+const OperatorOrganizations = lazy(() =>
+  import("../operator/OperatorOrganizations").then((module) => ({ default: module.OperatorOrganizations })),
+);
+const OperatorHosts = lazy(() => import("../operator/OperatorHosts").then((module) => ({ default: module.OperatorHosts })));
+const OperatorChanges = lazy(() => import("../operator/OperatorChanges").then((module) => ({ default: module.OperatorChanges })));
+const OperatorAudit = lazy(() => import("../operator/OperatorAudit").then((module) => ({ default: module.OperatorAudit })));
 import type { OrganizationTab } from "./AdminNav";
 import { listManifests } from "../../api/odata";
 
@@ -292,7 +299,12 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
   const { known, administers, own } = useAdministers();
   // An administrator of one Organization other than the installation's opens its own sections
   // alone (ADR-N-058 section 2.4); the server answers every other one 404 anyway.
-  const opens = administers || (own !== undefined && OWN_ORGANIZATION_TABS.includes(tab));
+  // The operators' sections are the installation operators' alone (T-7140); the server answers
+  // anybody else 403 on every door they read.
+  const operator = useOperator();
+  const operatorTab = OPERATOR_TABS.includes(tab);
+  const opens =
+    (administers && (!operatorTab || operator)) || (own !== undefined && OWN_ORGANIZATION_TABS.includes(tab));
   if (!known || !opens) {
     return (
       <div className="space-y-6">
@@ -303,7 +315,12 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
           description={known && own !== undefined ? t(`organization.groupLead.${groupOf(tab)}`) : t("organization.lead")}
         />
         {known ? (
-          own !== undefined ? (
+          operatorTab ? (
+            <div className="space-y-3">
+              <h2 className="text-title font-semibold text-fg">{t("operator.refusedTitle", { section: t(`organization.tab.${tab}`) })}</h2>
+              <AskAdmins message={t("operator.only")} back={anchor} installation />
+            </div>
+          ) : own !== undefined ? (
             // An Organization's own administrator asked for an installation section: their own
             // sections are beside it in the menu, and the installation's administrators decide this one.
             <AskAdmins message={t("organization.installationOnly")} back={anchor} installation />
@@ -343,6 +360,14 @@ export function OrganizationPage({ tab, anchor }: { tab: OrganizationTab; anchor
         {tab === "connectors" ? <OrganizationConnectors /> : null}
         {tab === "opendata-pages" ? <OpendataPages /> : null}
         {tab === "backups" ? <Backups /> : null}
+        {operatorTab ? (
+          <Suspense fallback={<p role="status" className="text-body text-fg-muted">{t("app.loading")}</p>}>
+            {tab === "operator-organizations" ? <OperatorOrganizations /> : null}
+            {tab === "operator-hosts" ? <OperatorHosts /> : null}
+            {tab === "operator-changes" ? <OperatorChanges /> : null}
+            {tab === "operator-audit" ? <OperatorAudit /> : null}
+          </Suspense>
+        ) : null}
         {tab === "blueprints" ? <OrganizationKind plural="blueprints" kind="Blueprint" /> : null}
         {tab === "agentprofiles" ? <OrganizationKind plural="agentprofiles" kind="AgentProfile" /> : null}
         {tab === "dataspaceparticipants" ? <OrganizationKind plural="dataspaceparticipants" kind="DataSpaceParticipant" /> : null}
