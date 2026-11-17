@@ -148,19 +148,16 @@ impl Mirror {
             );
             return;
         }
-        // A branch's manifests (TEN-12, CHG-15): an expired branch keeps none, so the reconciler
-        // revokes its clients and removes its objects; a live one renders nothing that reaches
-        // beyond its Organization or the public, which stays refused, shown to its readers.
+        // A branch's manifests (TEN-12, CHG-15): see project_ids::branch_manifest.
         if jc_router::branch_name(&key.namespace) {
-            match crate::project_ids::branch_state(&key.namespace) {
-                crate::project_ids::BranchState::Gone => return,
-                crate::project_ids::BranchState::Live(_)
-                    if crate::project_ids::shares_beyond_branch(&env) =>
-                {
+            let state = crate::project_ids::branch_state(&key.namespace);
+            match crate::project_ids::branch_manifest(&state, &env) {
+                crate::project_ids::BranchManifest::Dropped => return,
+                crate::project_ids::BranchManifest::Refused => {
                     self.refuse(env);
                     return;
                 }
-                _ => {}
+                crate::project_ids::BranchManifest::Kept => {}
             }
         }
         let mut lock = self.resources.write().unwrap_or_else(|p| p.into_inner());

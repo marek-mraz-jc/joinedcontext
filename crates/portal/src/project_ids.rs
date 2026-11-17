@@ -598,6 +598,32 @@ pub async fn watch_branches(pool: PgPool) {
     });
 }
 
+/// What the mirror does with a manifest of a branch's namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchManifest {
+    /// Taken as any project's.
+    Kept,
+    /// Kept in the refused set (CHG-05): shown to the branch's readers, rendered nowhere.
+    Refused,
+    /// Not taken at all: the reconciler then revokes the branch's clients and removes its objects.
+    Dropped,
+}
+
+/// The mirror's rule for `env` in a branch whose state is `state` (TEN-12, CHG-15): an expired or
+/// unknown branch keeps nothing; anything that would reach beyond its Organization or the public
+/// is refused whether the branch lives or the table is not read yet (unknown means refused, so
+/// sharing never fails open); the rest is kept while the branch lives or the table is unread.
+pub fn branch_manifest(
+    state: &BranchState,
+    env: &crate::resource::ResourceEnvelope,
+) -> BranchManifest {
+    match state {
+        BranchState::Gone => BranchManifest::Dropped,
+        _ if shares_beyond_branch(env) => BranchManifest::Refused,
+        _ => BranchManifest::Kept,
+    }
+}
+
 /// Whether `env`, a manifest of a branch, would reach beyond its Organization or the public
 /// (TEN-12): a public Endpoint, an Endpoint with a catalogue record, a shared space, a context
 /// source registration or a data space object. A branch renders none of them; turning one on is
@@ -808,4 +834,61 @@ pub(crate) async fn placed(pool: &PgPool, mirror: &Mirror, project: &str, organi
     .execute(pool)
     .await
     .expect("an Organization of the registry");
+}
+
+#[cfg(test)]
+mod branch_manifest_tests {
+    use super::*;
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    fn manifest(kind: &str, spec: serde_json::Value) -> ResourceEnvelope {
+        let namespace = format!("b-{}", ProjectId::mint().path_segment());
+        ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new("x", &namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    /// T-7215 bounce: before the branch table is read, a branch's public Endpoint is refused as
+    /// while it lives, never rendered; its other manifests wait as they are.
+    #[test]
+    fn an_unread_branch_table_refuses_what_a_live_branch_refuses() {
+        let public = manifest("Endpoint", serde_json::json!({ "audience": "public" }));
+        let inside = manifest(
+            "Endpoint",
+            serde_json::json!({ "audience": "organization" }),
+        );
+        let live = BranchState::Live(BranchEntry {
+            parent: "p".into(),
+            created_by: "s".into(),
+            expires_at: i64::MAX,
+        });
+        for state in [BranchState::Unread, live] {
+            assert_eq!(
+                branch_manifest(&state, &public),
+                BranchManifest::Refused,
+                "{state:?}"
+            );
+            assert_eq!(
+                branch_manifest(&state, &inside),
+                BranchManifest::Kept,
+                "{state:?}"
+            );
+        }
+        assert_eq!(
+            branch_manifest(&BranchState::Gone, &inside),
+            BranchManifest::Dropped
+        );
+
+        // Through the mirror, before any read of the table in this process.
+        let mirror = Mirror::new();
+        let namespace = public.metadata.namespace.clone().unwrap_or_default();
+        assert_eq!(branch_state(&namespace), BranchState::Unread);
+        mirror.upsert(public);
+        assert!(mirror.get(&namespace, "Endpoint", "x").is_none());
+        assert!(mirror.refused(&namespace, "Endpoint", "x").is_some());
+    }
 }
