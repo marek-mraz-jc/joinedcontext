@@ -45,8 +45,44 @@ pub(crate) fn in_mirror(mirror: &Mirror, name: &str) -> Option<OrganizationAppea
     }
 }
 
-/// Calls `apply` with each of `names` and its appearance at the first look and whenever it
-/// changes, until `shutdown`.
+/// The installation's own look its operators approved in the Portal of this process (T-7188),
+/// which every Organization's look goes over.
+pub(crate) fn installation() -> Option<OrganizationAppearance> {
+    super::PORTAL_STATE
+        .get()
+        .and_then(|state| state.installation_look())
+        .map(|look| (*look).clone())
+}
+
+/// Calls `apply` with the installation's look at the first look and whenever it changes, until
+/// `shutdown`.
+pub(crate) fn follow_installation<F, Fut>(
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+    mut apply: F,
+) where
+    F: FnMut(Option<OrganizationAppearance>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        let mut seen = None;
+        loop {
+            let now = installation();
+            if seen.as_ref() != Some(&now) {
+                apply(now.clone()).await;
+                seen = Some(now);
+            }
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(FOLLOW_EVERY) => {}
+            }
+        }
+    });
+}
+
+/// Calls `apply` with each of `names` and its appearance at the first look and whenever it or
+/// the installation's look it goes over changes, until `shutdown`.
 pub(crate) fn follow<F, Fut>(
     names: Vec<String>,
     shutdown: &CancellationToken,
@@ -61,15 +97,21 @@ pub(crate) fn follow<F, Fut>(
     }
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
-        let mut seen: BTreeMap<String, Option<OrganizationAppearance>> = BTreeMap::new();
+        type Seen = (
+            Option<OrganizationAppearance>,
+            Option<OrganizationAppearance>,
+        );
+        let mut seen: BTreeMap<String, Seen> = BTreeMap::new();
         loop {
+            let under = installation();
             for name in &names {
                 let now = super::PORTAL_STATE
                     .get()
                     .and_then(|state| in_mirror(&state.mirror, name));
-                if seen.get(name) != Some(&now) {
-                    apply(name.clone(), now.clone()).await;
-                    seen.insert(name.clone(), now);
+                let both = (under.clone(), now.clone());
+                if seen.get(name) != Some(&both) {
+                    apply(name.clone(), now).await;
+                    seen.insert(name.clone(), both);
                 }
             }
             tokio::select! {

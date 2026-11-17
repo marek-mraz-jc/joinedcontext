@@ -13814,7 +13814,8 @@
           "script": "SVG obsahuje skript nebo obsluhu události. Exportujte jej znovu bez nich."
         },
         "propose": "Požádat o tuto změnu vzhledu",
-        "chooseFile": "Vybrat soubor SVG"
+        "chooseFile": "Vybrat soubor SVG",
+        "fixFile": "Nejprve vyberte jiný soubor SVG."
       },
       "signIn": {
         "title": "Přihlašovací stránky",

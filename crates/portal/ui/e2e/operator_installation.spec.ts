@@ -164,14 +164,17 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.getByLabel("Logo", { exact: true }).setInputFiles({ name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>') });
       await expect(page.getByText("The SVG holds script or an event handler.", { exact: false })).toBeVisible();
       await page.getByLabel("Full name", { exact: true }).fill("Smart City Banská Bystrica");
-      await page.getByLabel("Primary colour", { exact: true }).fill("#0b539");
-      await page.getByRole("button", { name: "Ask for this branding change" }).click();
-      await expect(page.getByText("Must be a hex colour such as #0b5394")).toBeVisible();
-      await shot(page, `branding-error-${width}`);
+      await expect(page.getByText("Choose another SVG file first.").first()).toBeVisible();
+      await expect(page.getByRole("button", { name: "Ask for this branding change" })).toHaveAttribute("aria-disabled", "true");
+      await shot(page, `branding-refused-file-${width}`);
 
       const logo = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 32"><rect width="32" height="32" rx="6" fill="#0b5394"/><text x="40" y="22" font-size="16" fill="#0b5394">Smart BB</text></svg>';
       await page.getByLabel("Logo", { exact: true }).setInputFiles({ name: "logo.svg", mimeType: "image/svg+xml", buffer: Buffer.from(logo) });
       await expect(page.getByRole("img", { name: "Logo", exact: true })).toBeVisible();
+      await page.getByLabel("Primary colour", { exact: true }).fill("#0b539");
+      await page.getByRole("button", { name: "Ask for this branding change" }).click();
+      await expect(page.getByText("Must be a hex colour such as #0b5394")).toBeVisible();
+      await shot(page, `branding-error-${width}`);
       await page.getByLabel("Primary colour", { exact: true }).fill("#0b5394");
       await page.getByRole("button", { name: "Ask for this branding change" }).click();
       await expect(page.getByText("A branding change waits for a second operator.", { exact: false })).toBeVisible();

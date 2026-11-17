@@ -13814,7 +13814,8 @@
           "script": "The SVG holds script or an event handler. Export it again without them."
         },
         "propose": "Ask for this branding change",
-        "chooseFile": "Choose an SVG file"
+        "chooseFile": "Choose an SVG file",
+        "fixFile": "Choose another SVG file first."
       },
       "signIn": {
         "title": "Sign-in pages",

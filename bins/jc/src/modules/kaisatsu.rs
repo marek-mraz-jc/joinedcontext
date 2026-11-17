@@ -699,7 +699,7 @@ fn send_queued_mail(
 #[cfg(feature = "portal")]
 fn follow_appearances(
     store: &Arc<dyn Store>,
-    realm: &setup::Realm,
+    base: &kaisatsu_core::BrandingBlock,
     organizations: &[crate::config::OrganizationSection],
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
@@ -711,24 +711,17 @@ fn follow_appearances(
             (org.name.clone(), (org.hosts.portal.clone(), own_realm))
         })
         .collect();
-    let (store, realm) = (store.clone(), realm.as_str().to_owned());
+    let (store, base) = (store.clone(), base.clone());
     super::appearance::follow(
         hosts.keys().cloned().collect(),
         shutdown,
         tasks,
         move |name, look| {
-            let (store, realm, host) = (store.clone(), realm.clone(), hosts.get(&name).cloned());
+            let (store, host) = (store.clone(), hosts.get(&name).cloned());
+            let base = with_look(base.clone(), super::appearance::installation().as_ref());
             async move {
                 let Some((host, own_realm)) = host else {
                     return;
-                };
-                let base = match realm_branding(&store, &realm).await {
-                    Ok(Some(base)) => base,
-                    Ok(None) => return,
-                    Err(e) => {
-                        tracing::warn!(organization = %name, error = %e, "kaisatsu: realm branding unreadable");
-                        return;
-                    }
                 };
                 let block = organization_block(base, &host, look.as_ref());
                 if own_realm {
@@ -747,21 +740,61 @@ fn follow_appearances(
     );
 }
 
-/// The block of the realm named `realm`, its platform defaults when none is stored; `None`
-/// without the realm.
+/// Keeps the installation realm's sign-in pages the look its operators approved in the Portal
+/// over `base`, the block the branding file gave the realm (T-7188); no look shows `base`.
+#[cfg(feature = "portal")]
+fn follow_installation_look(
+    store: &Arc<dyn Store>,
+    base: &kaisatsu_core::BrandingBlock,
+    shutdown: &CancellationToken,
+    tasks: &TaskTracker,
+) {
+    let (store, base) = (store.clone(), base.clone());
+    super::appearance::follow_installation(shutdown, tasks, move |look| {
+        let (store, block) = (store.clone(), with_look(base.clone(), look.as_ref()));
+        async move {
+            match store.upsert_branding(block).await {
+                Ok(()) => {
+                    tracing::info!(
+                        look = look.is_some(),
+                        "kaisatsu: sign-in pages follow the installation's look"
+                    )
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "kaisatsu: the installation's look not stored")
+                }
+            }
+        }
+    });
+}
+
+/// The block of the realm named `realm` as the branding file left it: the stored one when a file
+/// was applied (`from_file`), else the platform defaults, since a stored block then holds the
+/// look the operators approved before; `None` without the realm.
 #[cfg(feature = "portal")]
 async fn realm_branding(
     store: &Arc<dyn Store>,
     realm: &str,
+    from_file: bool,
 ) -> kaisatsu_core::Result<Option<kaisatsu_core::BrandingBlock>> {
     let Some(realm) = store.get_realm(realm).await? else {
         return Ok(None);
     };
-    let base = store.get_branding(&realm.id, None).await?;
+    let base = if from_file {
+        store.get_branding(&realm.id, None).await?
+    } else {
+        None
+    };
+    let base = base.unwrap_or_default();
     Ok(Some(kaisatsu_core::BrandingBlock {
+        id: if base.id.is_empty() {
+            format!("{}:installation", realm.id)
+        } else {
+            base.id.clone()
+        },
         realm_id: realm.id,
         org_id: None,
-        ..base.unwrap_or_default()
+        ..base
     }))
 }
 
@@ -802,6 +835,15 @@ fn organization_block(
 ) -> kaisatsu_core::BrandingBlock {
     base.id = format!("{}:{host}", base.realm_id);
     base.org_id = Some(host.to_owned());
+    with_look(base, look)
+}
+
+/// `base` with `look` over it, member by member.
+#[cfg(feature = "portal")]
+fn with_look(
+    mut base: kaisatsu_core::BrandingBlock,
+    look: Option<&jc_core::kinds::OrganizationAppearance>,
+) -> kaisatsu_core::BrandingBlock {
     if let Some(look) = look {
         let over = |target: &mut String, value: Option<&String>| {
             if let Some(value) = value {
@@ -898,7 +940,18 @@ pub async fn build(
         tasks,
     );
     #[cfg(feature = "portal")]
-    follow_appearances(&store, realm, organizations, shutdown, tasks);
+    match realm_branding(&store, realm.as_str(), cfg.branding_file.is_some()).await {
+        Ok(Some(base)) => {
+            follow_installation_look(&store, &base, shutdown, tasks);
+            follow_appearances(&store, &base, organizations, shutdown, tasks);
+        }
+        Ok(None) => {
+            tracing::warn!("kaisatsu: no installation realm; the sign-in pages keep their look")
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "kaisatsu: realm branding unreadable; the sign-in pages keep their look")
+        }
+    }
     let state = KaisatsuState::new(store, kek, outbound_guard(cfg), Arc::new(LocalAuthorizer))
         .with_second_factor(match cfg.second_factor {
             crate::config::SecondFactorFloor::Optional => kaisatsu_server::SecondFactor::Optional,
@@ -997,6 +1050,50 @@ mod tests {
         assert_eq!(own.colours.primary, "#0b5394");
         assert_eq!(own.colours.secondary, "#222222", "left out: the realm's");
         assert_eq!(own.city, "Slovakia");
+    }
+
+    /// T-7188: the installation's look goes over the realm's block, an Organization's over that,
+    /// and an empty look leaves the block the file gave.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn the_installation_look_goes_under_each_organizations_and_over_the_realms() {
+        let mut realm = kaisatsu_core::BrandingBlock {
+            id: "r1:installation".into(),
+            realm_id: "r1".into(),
+            city: "Slovakia".into(),
+            ..kaisatsu_core::BrandingBlock::default()
+        };
+        realm.colours.secondary = "#222222".into();
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8"/></svg>"##;
+        let installation: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "instanceName": "Smart City", "colours": { "primary": "#0b5394" }, "logoSvg": svg,
+            }))
+            .expect("a look");
+        assert_eq!(
+            with_look(realm.clone(), None),
+            realm.clone().sanitised(),
+            "no look: the file's block"
+        );
+        let shown = with_look(realm.clone(), Some(&installation));
+        assert_eq!(
+            (shown.id.as_str(), shown.org_id.as_deref()),
+            ("r1:installation", None)
+        );
+        assert_eq!(shown.instance_name, "Smart City");
+        assert_eq!(shown.colours.primary, "#0b5394");
+        assert_eq!(shown.colours.secondary, "#222222");
+        assert_eq!(shown.logo_svg, svg, "the sign-in pages draw the logo");
+        let org: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({ "colours": { "primary": "#aa0000" } }))
+                .expect("an appearance");
+        let own = organization_block(shown, "portal.bbsk.example", Some(&org));
+        assert_eq!(own.colours.primary, "#aa0000", "the Organization's own");
+        assert_eq!(
+            own.instance_name, "Smart City",
+            "left out: the installation's"
+        );
+        assert_eq!(own.logo_svg, svg);
     }
 
     #[test]

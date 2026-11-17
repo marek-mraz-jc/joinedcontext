@@ -13814,7 +13814,8 @@
           "script": "Das SVG enthält Skript oder einen Event-Handler. Exportieren Sie es ohne beides erneut."
         },
         "propose": "Diese Änderung des Erscheinungsbilds beantragen",
-        "chooseFile": "SVG-Datei wählen"
+        "chooseFile": "SVG-Datei wählen",
+        "fixFile": "Wählen Sie zuerst eine andere SVG-Datei."
       },
       "signIn": {
         "title": "Anmeldeseiten",

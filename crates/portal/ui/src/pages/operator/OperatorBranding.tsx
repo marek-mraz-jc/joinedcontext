@@ -116,6 +116,8 @@ export function OperatorBranding({
     ...(look?.logoSvg ? { logoSvg: look.logoSvg } : {}),
     ...(look?.faviconSvg ? { faviconSvg: look.faviconSvg } : {}),
   };
+  // A file refused here was never taken; the operator chooses another first.
+  const refusedFile = Object.values(fileErrors).some(Boolean);
   const changed = JSON.stringify(wanted()) !== JSON.stringify(saved);
 
   const onFile =
@@ -209,33 +211,6 @@ export function OperatorBranding({
                 autoComplete="off"
               />
             </Field>
-            {COLOURS.map((name) => (
-              <Field
-                key={name}
-                id={`brand-colour-${name}`}
-                label={t(`operator.installation.branding.colour.${name}`)}
-                help={t("operator.installation.branding.hint.colour")}
-                errors={fieldOf(`colours.${name}`)}
-                aside={
-                  <Swatch
-                    colour={colours[name]}
-                    className="h-control-xs w-control-xs"
-                  />
-                }
-              >
-                <Input
-                  id={`brand-colour-${name}`}
-                  value={colours[name] ?? ""}
-                  onChange={(e) =>
-                    setColours((c) => ({ ...c, [name]: e.target.value }))
-                  }
-                  placeholder="#rrggbb"
-                  maxLength={7}
-                  spellCheck={false}
-                  autoComplete="off"
-                />
-              </Field>
-            ))}
             {(
               [
                 ["logoSvg", logoUrl, setLogoSvg],
@@ -266,7 +241,10 @@ export function OperatorBranding({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => set("")}
+                        onClick={() => {
+                          set("");
+                          setFileErrors((errors) => ({ ...errors, [field]: undefined }));
+                        }}
                       >
                         {t("operator.installation.branding.removeFile")}
                       </Button>
@@ -279,10 +257,41 @@ export function OperatorBranding({
                   label={t(`operator.installation.branding.${field}`)}
                   accept=".svg,image/svg+xml"
                   onFile={(file) => void onFile(field, set)(file)}
-                  className={buttonClass("secondary", "sm", open ? "pointer-events-none opacity-50" : undefined)}
+                  className={buttonClass(
+                    "secondary",
+                    "sm",
+                    open ? "pointer-events-none opacity-50" : fieldOf(field) ? "border-danger" : undefined,
+                  )}
                 >
                   {t("operator.installation.branding.chooseFile")}
                 </FilePicker>
+              </Field>
+            ))}
+            {COLOURS.map((name) => (
+              <Field
+                key={name}
+                id={`brand-colour-${name}`}
+                label={t(`operator.installation.branding.colour.${name}`)}
+                help={t("operator.installation.branding.hint.colour")}
+                errors={fieldOf(`colours.${name}`)}
+                aside={
+                  <Swatch
+                    colour={colours[name]}
+                    className="h-control-xs w-control-xs"
+                  />
+                }
+              >
+                <Input
+                  id={`brand-colour-${name}`}
+                  value={colours[name] ?? ""}
+                  onChange={(e) =>
+                    setColours((c) => ({ ...c, [name]: e.target.value }))
+                  }
+                  placeholder="#rrggbb"
+                  maxLength={7}
+                  spellCheck={false}
+                  autoComplete="off"
+                />
               </Field>
             ))}
           </fieldset>
@@ -290,16 +299,22 @@ export function OperatorBranding({
             <Button
               type="submit"
               loading={propose.isPending}
-              disabled={Boolean(open) || !changed}
+              disabled={Boolean(open) || !changed || refusedFile}
               disabledReason={
                 open
                   ? t("operator.installation.email.waitingShort")
-                  : t("operator.installation.branding.unchanged")
+                  : refusedFile
+                    ? t("operator.installation.branding.fixFile")
+                    : t("operator.installation.branding.unchanged")
               }
             >
               {t("operator.installation.branding.propose")}
             </Button>
-            {!changed && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.branding.unchanged")}</p> : null}
+            {!open && (refusedFile || !changed) ? (
+              <p className="text-caption text-fg-muted">
+                {t(refusedFile ? "operator.installation.branding.fixFile" : "operator.installation.branding.unchanged")}
+              </p>
+            ) : null}
           </div>
         </form>
         {elsewhere ? (
