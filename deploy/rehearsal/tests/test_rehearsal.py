@@ -1969,7 +1969,11 @@ def test_the_assistants_proxy_client_comes_into_an_imported_realm_and_nothing_el
         "publicClient": False, "clientAuthenticatorType": "client-secret", "secret": "$(env:KC_AGENT_PROXY_SECRET)",
         "standardFlowEnabled": False, "implicitFlowEnabled": False, "directAccessGrantsEnabled": False,
         "serviceAccountsEnabled": True, "fullScopeAllowed": False, "redirectUris": [], "webOrigins": [],
-        "defaultClientScopes": ["basic"], "optionalClientScopes": [], "protocolMappers": []}
+        "defaultClientScopes": ["basic"], "optionalClientScopes": [],
+        "protocolMappers": [{"name": "portal-internal-audience", "protocol": "openid-connect",
+                             "protocolMapper": "oidc-audience-mapper", "consentRequired": False,
+                             "config": {"included.custom.audience": "portal-internal",
+                                        "access.token.claim": "true", "id.token.claim": "false"}}]}
     assert rh.unsafe_proxy_client(out, by["agent-proxy"]) == []
     # One mapper more on jc-assistant itself: the old audiences stay, agent-proxy joins them.
     auds = lambda c: sorted(m["config"]["included.custom.audience"] for m in c["protocolMappers"])
@@ -1994,6 +1998,18 @@ def test_an_existing_proxy_client_is_kept_with_its_secret_or_refused_when_it_is_
     out, added = rh.add_agent_proxy(realm)
     assert added == ["jc-assistant audience agent-proxy"]
     assert [c for c in out["clients"] if c["clientId"] == "agent-proxy"] == [safe], "its secret is never rewritten"
+    # jc-dev's realm (2026-11-16) has the proxy without `portal-internal`: the Portal answered its
+    # run lookups 401. The client gains that one mapper, its secret and the rest unchanged.
+    older = prod_shaped_assistant_realm()
+    older["clients"].append({**safe, "protocolMappers": []})
+    out, added = rh.add_agent_proxy(older)
+    assert added == ["jc-assistant audience agent-proxy", "agent-proxy audience portal-internal"]
+    assert [c for c in out["clients"] if c["clientId"] == "agent-proxy"] == [safe]
+    clash = prod_shaped_assistant_realm()
+    clash["clients"].append({**safe, "protocolMappers": [{**rh.PORTAL_INTERNAL_MAPPER, "config": {
+        "included.custom.audience": "elsewhere"}}]})
+    with pytest.raises(SystemExit, match="names another audience"):
+        rh.add_agent_proxy(clash)
     for field, value in [("standardFlowEnabled", True), ("implicitFlowEnabled", True), ("directAccessGrantsEnabled", True),
                          ("fullScopeAllowed", True), ("publicClient", True), ("redirectUris", ["https://x/*"]),
                          ("webOrigins", ["+"]), ("clientAuthenticatorType", "federated-jwt"),

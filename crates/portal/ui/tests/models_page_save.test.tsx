@@ -405,7 +405,8 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     await user.click(await screen.findByRole("button", { name: PROPOSE }));
     expect(
       await screen.findByText(
-        "the model breaks 1 relationship rule; nothing was saved (DM-68): slots.station: inverse-missing: station (Reading → Station) names no inverse",
+        // A page reads a refusal without its requirement references (client.ts forPeople).
+        "the model breaks 1 relationship rule; nothing was saved: slots.station: inverse-missing: station (Reading → Station) names no inverse",
       ),
     ).toBeInTheDocument();
   });

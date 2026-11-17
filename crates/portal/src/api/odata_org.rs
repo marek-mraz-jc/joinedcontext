@@ -2539,7 +2539,17 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
     };
     // Front's rejection is Infallible.
     let Ok(front) = Front::from_request_parts(&mut parts, &state).await;
-    let Some(org) = organization(&state, &user, &rel) else {
+    // A person's own doors (the projects they read, their notifications) answer on any address,
+    // as their REST doors do: they need no one Organization (T-7177).
+    let own_door = called
+        .as_ref()
+        .or(action.as_ref())
+        .and_then(|(entity, name)| {
+            let name = name.split('(').next().unwrap_or_default();
+            (entity == ORGANIZATION).then(|| odata_portal::find(name))?
+        })
+        .is_some_and(|door| door.who == odata_portal::Who::Own);
+    let Some(org) = organization(&state, &user, &rel).or_else(|| own_door.then(String::new)) else {
         // Its own code: the UI reads such an address's Organizations through the REST list.
         return error(
             StatusCode::NOT_FOUND,
@@ -3219,7 +3229,10 @@ async fn portal_door(
         }
         request = request.header(header::ACCEPT, "application/json");
         if rest.body.is_some() {
-            request = request.header(header::CONTENT_TYPE, "application/json");
+            request = request.header(header::CONTENT_TYPE, rest.content_type);
+        }
+        if let Some(tag) = &rest.if_match {
+            request = request.header(header::IF_MATCH, tag);
         }
         let request = request
             .body(Body::from(rest.body.unwrap_or_default()))
@@ -3289,6 +3302,8 @@ async fn door_answer(state: &AppState, response: Response) -> Response {
         status => status,
     };
     let cache = response.headers().get(header::CACHE_CONTROL).cloned();
+    // A manifest read's `ETag` is the `ifMatch` of the write after it (portal_manifest_get).
+    let etag = response.headers().get(header::ETAG).cloned();
     let content_type = response.headers().get(header::CONTENT_TYPE).cloned();
     let bytes = axum::body::to_bytes(response.into_body(), MAX_ANSWER)
         .await
@@ -3301,6 +3316,9 @@ async fn door_answer(state: &AppState, response: Response) -> Response {
     let mut answer = (status, headers(JSON), body.to_string()).into_response();
     if let Some(cache) = cache {
         answer.headers_mut().insert(header::CACHE_CONTROL, cache);
+    }
+    if let Some(etag) = etag {
+        answer.headers_mut().insert(header::ETAG, etag);
     }
     answer
 }

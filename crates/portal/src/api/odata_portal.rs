@@ -36,7 +36,8 @@ pub enum Who {
     Person,
     /// Any person, on any Organization they reach: what belongs to no Organization, their own
     /// notifications, preferences and alerts, and the installation's App and chart templates
-    /// (T-7130).
+    /// (T-7130); the projects they read and opening one, whose REST handler picks the
+    /// Organization (T-7177).
     Own,
     /// A holder of `Person` with this verb at the Organization (a people administrator).
     People(jc_core::kinds::Verb),
@@ -55,6 +56,10 @@ pub enum Place {
     Query(&'static str),
     /// The REST door's JSON body.
     Body,
+    /// The REST door's `text/yaml` body, sent as a JSON string, e.g. a model's LinkML source.
+    Text,
+    /// The REST door's `If-Match` header: the `ETag` its read answered, e.g. `"3f2a…"`.
+    IfMatch,
     /// A dashboard's picked variables, a JSON object of each name and its values, e.g.
     /// `{"region":["north","south"]}`: each value one `var-{name}` query member.
     Vars,
@@ -96,6 +101,11 @@ const VIEW: (&str, Place) = ("id", Place::Path);
 const CONNECTOR: (&str, Place) = ("id", Place::Path);
 const DAYS: (&str, Place) = ("days", Place::Query("Edm.Int32"));
 const VERSION: (&str, Place) = ("version", Place::Path);
+const PLURAL: (&str, Place) = ("plural", Place::Path);
+const WORKSPACE: (&str, Place) = ("workspace", Place::Query("Edm.String"));
+const DRY_RUN: (&str, Place) = ("dryRun", Place::Query("Edm.String"));
+const IF_MATCH: (&str, Place) = ("ifMatch", Place::IfMatch);
+const SOURCE_TEXT: (&str, Place) = ("source", Place::Text);
 const PEOPLE_WRITE: Who = Who::People(jc_core::kinds::Verb::Update);
 
 const fn door(
@@ -223,9 +233,18 @@ pub static DOORS: &[Door] = &[
         PEOPLE_WRITE,
     ),
     // The Organization reads of any page: the open data portals' hosts, the home page's widgets,
-    // the Organization's data models. Each handler answers only what the person may read, a
-    // person of another Organization included (the home page asks on every visit), so they are
-    // `Own` (T-7130, T-7167).
+    // the Organization's data models and addresses. Each handler answers only what the person
+    // may read, a person of another Organization included (the home page asks on every visit,
+    // an Endpoint page's viewer asks for the open data host), so they are `Own` (T-7130,
+    // T-7167).
+    door(
+        "portal_organization_address_list",
+        Org,
+        Method::GET,
+        "/organization/addresses",
+        &[],
+        Who::Own,
+    ),
     door(
         "portal_portal_host_list",
         Org,
@@ -1074,6 +1093,139 @@ pub static DOORS: &[Door] = &[
         "/projects/{project}/datamodels/{name}/source",
         &[NAME],
         Who::ProjectReader,
+    ),
+    // A kind's paged and searched list, and a manifest read and written inside a workspace's copy
+    // (`workspace`, API/01 §22), which the service's sets do not bind; a space's entity count; a
+    // model's LinkML source proposed as the YAML it is; the Organization's own models and the
+    // writes the `org` namespace's sets do not take (a create, a kind with no set); the projects
+    // a person reads, on any Organization's host (T-7177). Each REST handler keeps its own check.
+    door(
+        "portal_manifest_list",
+        Project,
+        Method::GET,
+        "/projects/{project}/{plural}",
+        &[
+            PLURAL,
+            WORKSPACE,
+            ("q", Place::Query("Edm.String")),
+            ("count", Place::Query("Edm.Boolean")),
+            ("cursor", Place::Query("Edm.String")),
+            ("limit", Place::Query("Edm.Int32")),
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_manifest_get",
+        Project,
+        Method::GET,
+        "/projects/{project}/{plural}/{name}",
+        &[PLURAL, NAME, WORKSPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_manifest_create",
+        Project,
+        Method::POST,
+        "/projects/{project}/{plural}",
+        &[PLURAL, WORKSPACE, DRY_RUN, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_manifest_replace",
+        Project,
+        Method::PUT,
+        "/projects/{project}/{plural}/{name}",
+        &[PLURAL, NAME, WORKSPACE, DRY_RUN, IF_MATCH, BODY],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_manifest_delete",
+        Project,
+        Method::DELETE,
+        "/projects/{project}/{plural}/{name}",
+        &[
+            PLURAL,
+            NAME,
+            WORKSPACE,
+            DRY_RUN,
+            ("confirm", Place::Query("Edm.String")),
+            IF_MATCH,
+        ],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_space_usage",
+        Project,
+        Method::GET,
+        "/projects/{project}/spaces/{space}/usage",
+        &[SPACE],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_model_source_set",
+        Project,
+        Method::PUT,
+        "/projects/{project}/datamodels/{name}/source",
+        &[NAME, DRY_RUN, SPACE_FILTER, SOURCE_TEXT],
+        Who::ProjectReader,
+    ),
+    door(
+        "portal_org_model_source",
+        Org,
+        Method::GET,
+        "/projects/org/datamodels/{name}/source",
+        &[NAME],
+        Who::Person,
+    ),
+    door(
+        "portal_org_model_source_set",
+        Org,
+        Method::PUT,
+        "/projects/org/datamodels/{name}/source",
+        &[NAME, DRY_RUN, SPACE_FILTER, SOURCE_TEXT],
+        Who::Person,
+    ),
+    door(
+        "portal_org_manifest_create",
+        Org,
+        Method::POST,
+        "/projects/org/{plural}",
+        &[PLURAL, DRY_RUN, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_org_manifest_replace",
+        Org,
+        Method::PUT,
+        "/projects/org/{plural}/{name}",
+        &[PLURAL, NAME, DRY_RUN, IF_MATCH, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_project_list",
+        Org,
+        Method::GET,
+        "/projects",
+        &[],
+        Who::Own,
+    ),
+    // The Organizations a person reads, on an address that serves several and names none of
+    // theirs, where the `Organization` singleton answers several-organizations (T-7104).
+    door(
+        "portal_organization_list",
+        Org,
+        Method::GET,
+        "/projects/org/organizations",
+        &[],
+        Who::Own,
+    ),
+    door(
+        "portal_project_create",
+        Org,
+        Method::POST,
+        "/projects",
+        &[BODY],
+        Who::Own,
     ),
     door(
         "portal_preview_error_report",
@@ -2163,6 +2315,7 @@ impl Door {
         match place {
             Place::Path => "Edm.String",
             Place::Query(ty) => ty,
+            Place::Text | Place::IfMatch => "Edm.String",
             Place::Body | Place::Vars => "Edm.Untyped",
         }
     }
@@ -2285,6 +2438,9 @@ pub(crate) fn json(doors: &[&'static Door]) -> Vec<(&'static str, Value)> {
 pub struct Rest {
     pub path_and_query: String,
     pub body: Option<Vec<u8>>,
+    /// The body's media type: JSON, or `text/yaml` for a [`Place::Text`] body.
+    pub content_type: &'static str,
+    pub if_match: Option<String>,
 }
 
 fn bad(message: String) -> Refusal {
@@ -2354,10 +2510,21 @@ pub fn rest(
         .replace("{project}", &encoded(project.unwrap_or_default()));
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     let mut body = None;
+    let mut content_type = "application/json";
+    let mut if_match = None;
     for (member, place) in door.parameters {
         let value = params.get(*member).filter(|v| !v.is_null());
         match (place, value) {
             (Place::Path, Some(value)) => {
+                // A manifest door reaches a kind's routes alone, never another route one segment
+                // below the project (its secrets, its export).
+                if *member == "plural"
+                    && crate::resource::by_plural(&text(member, value)?).is_none()
+                {
+                    return Err(bad(format!(
+                        "{member} is the plural of a kind, e.g. spaces or endpoints"
+                    )));
+                }
                 path = path.replace(&format!("{{{member}}}"), &encoded(&text(member, value)?));
             }
             (Place::Path, None) => return Err(bad(format!("{member} is required"))),
@@ -2366,6 +2533,16 @@ pub fn rest(
             }
             (Place::Body, Some(value)) => {
                 body = Some(serde_json::to_vec(value).unwrap_or_default());
+            }
+            (Place::Text, Some(value)) => {
+                let Value::String(text) = value else {
+                    return Err(bad(format!("{member} is a text, e.g. \"id: model\"")));
+                };
+                body = Some(text.clone().into_bytes());
+                content_type = "text/yaml; charset=utf-8";
+            }
+            (Place::IfMatch, Some(value)) => {
+                if_match = Some(text(member, value)?);
             }
             (Place::Vars, Some(value)) => {
                 for (name, picked) in vars(member, value)? {
@@ -2384,6 +2561,8 @@ pub fn rest(
     Ok(Rest {
         path_and_query,
         body,
+        content_type,
+        if_match,
     })
 }
 
@@ -2499,6 +2678,32 @@ mod tests {
             "/projects/air/serviceaccounts/bot/revoke"
         );
         assert_eq!(rest.body.as_deref(), Some(br#"{"index":0}"#.as_slice()));
+
+        let door = find("portal_model_source_set").expect("door");
+        let params = json!({ "name": "pm", "dryRun": "All", "source": "id: pm\n" });
+        let rest =
+            super::rest(door, Some("air"), params.as_object().expect("object")).expect("rest");
+        assert_eq!(
+            rest.path_and_query,
+            "/projects/air/datamodels/pm/source?dryRun=All"
+        );
+        assert_eq!(rest.body.as_deref(), Some(b"id: pm\n".as_slice()));
+        assert!(rest.content_type.starts_with("text/yaml"));
+        let params = json!({ "name": "pm", "source": { "id": "pm" } });
+        let refused = super::rest(door, Some("air"), params.as_object().expect("object"));
+        assert_eq!(refused.expect_err("not text").0, StatusCode::BAD_REQUEST);
+
+        let door = find("portal_manifest_replace").expect("door");
+        let params = json!({ "plural": "spaces", "name": "pm", "workspace": "ws",
+                             "ifMatch": "\"3f2a\"", "body": { "kind": "Space" } });
+        let rest =
+            super::rest(door, Some("air"), params.as_object().expect("object")).expect("rest");
+        assert_eq!(rest.path_and_query, "/projects/air/spaces/pm?workspace=ws");
+        assert_eq!(rest.if_match.as_deref(), Some("\"3f2a\""));
+        assert_eq!(rest.content_type, "application/json");
+        let params = json!({ "plural": "secrets", "name": "pm" });
+        let refused = super::rest(door, Some("air"), params.as_object().expect("object"));
+        assert_eq!(refused.expect_err("no kind").0, StatusCode::BAD_REQUEST);
 
         let door = find("portal_secret_list").expect("door");
         let rest = super::rest(door, Some("air"), &Map::new()).expect("rest");

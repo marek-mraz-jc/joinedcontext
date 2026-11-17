@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { api, ApiError, unwrap } from "../../api/client";
+import { api, ApiError } from "../../api/client";
+import { listRevisions } from "../../api/odata";
 import { projectDetailQuery } from "../../api/projects";
 import { Button, Dialog, DialogClose, Field, InlineError, RadioGroup, Select } from "../ui";
 
@@ -121,12 +122,7 @@ export function ExportModal({
     queryKey: ["revisions", project],
     enabled: open,
     retry: false,
-    queryFn: async () =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/revisions", {
-          params: { path: { project }, query: { limit: 20 } },
-        }),
-      ),
+    queryFn: async () => listRevisions(project, 20),
   });
 
   const whole = !target.name && !target.plural;

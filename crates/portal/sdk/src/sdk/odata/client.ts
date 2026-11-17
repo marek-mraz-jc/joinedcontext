@@ -171,6 +171,12 @@ export class Query<T> {
   }
 }
 
+/** What one function call may carry beside its parameters. */
+export interface CallOptions {
+  /** Cancels the call, e.g. a query's own signal or a timeout's. */
+  signal?: AbortSignal;
+}
+
 export interface ODataOptions {
   /** How requests go out; the browser's same-origin fetch with the CSRF token by default. */
   transport?: Transport;
@@ -236,25 +242,52 @@ export class ODataClient {
    * A bound function of a project, its parameters sent as aliases so a value holding `/` or a
    * JSON object passes: `call("jc_schema_get", "air", { kind: "Endpoint" })`.
    */
-  async call<F extends keyof Functions & string>(name: F, project: string, params: Functions[F]): Promise<unknown> {
-    return this.invoke(`projects${keyPredicate(project)}`, name, params);
+  async call<F extends keyof Functions & string>(
+    name: F,
+    project: string,
+    params: Functions[F],
+    options?: CallOptions,
+  ): Promise<unknown> {
+    return (await this.invoke(`projects${keyPredicate(project)}`, name, params, options)).value;
+  }
+
+  /**
+   * {@link call}, with the answer's `ETag` beside its value: the `If-Match` of the write after a
+   * read, e.g. a manifest read inside a workspace.
+   */
+  async callWithEtag<F extends keyof Functions & string>(
+    name: F,
+    project: string,
+    params: Functions[F],
+    options?: CallOptions,
+  ): Promise<{ value: unknown; etag?: string }> {
+    return this.invoke(`projects${keyPredicate(project)}`, name, params, options);
   }
 
   /**
    * A function bound to the `Organization` singleton, the people's:
    * `organizationCall("jc_person_list", { search: "ana" })`.
    */
-  async organizationCall<F extends keyof Functions & string>(name: F, params: Functions[F]): Promise<unknown> {
-    return this.invoke("Organization", name, params);
+  async organizationCall<F extends keyof Functions & string>(
+    name: F,
+    params: Functions[F],
+    options?: CallOptions,
+  ): Promise<unknown> {
+    return (await this.invoke("Organization", name, params, options)).value;
   }
 
-  private async invoke(bound: string, name: string, params: unknown): Promise<unknown> {
+  private async invoke(
+    bound: string,
+    name: string,
+    params: unknown,
+    options?: CallOptions,
+  ): Promise<{ value: unknown; etag?: string }> {
     const entries = Object.entries(params as Record<string, unknown>).filter(([, v]) => v !== undefined);
     const args = entries.map(([n]) => `${n}=@${n}`).join(",");
     const aliases = entries.map(([n, v]) => `@${n}=${encodeURIComponent(literal(v))}`).join("&");
     const address = `${bound}/${NAMESPACE}.${name}(${args})${aliases ? `?${aliases}` : ""}`;
-    const { body } = await this.send("GET", address);
-    return (body as { value?: unknown })?.value;
+    const { body, headers } = await this.send("GET", address, undefined, undefined, options?.signal);
+    return { value: (body as { value?: unknown })?.value, etag: headers?.etag };
   }
 
   /**
@@ -272,11 +305,11 @@ export class ODataClient {
     return (body as { value?: unknown })?.value ?? body;
   }
 
-  private async send(method: "GET" | "POST", address: string, body?: unknown, ifMatch?: string) {
+  private async send(method: "GET" | "POST", address: string, body?: unknown, ifMatch?: string, signal?: AbortSignal) {
     const path = this.resolve(address);
     const headers: Record<string, string> = { "OData-Version": "4.01" };
     if (ifMatch) headers["If-Match"] = ifMatch;
-    const response = await this.transport({ method, path, body: method === "POST" ? (body ?? {}) : undefined, headers });
+    const response = await this.transport({ method, path, body: method === "POST" ? (body ?? {}) : undefined, headers, signal });
     if (response.status < 200 || response.status >= 300) {
       throw new ODataError(response.status, response.body, response.headers?.etag, response.headers?.["x-request-id"]);
     }

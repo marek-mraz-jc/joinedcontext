@@ -44,7 +44,7 @@ test.describe("an endpoint's public documentation", () => {
     await expect(page.getByRole("region", { name: "GET /ngsi-ld/v1/entities" }).getByText(/curl .*type=BikeHireDockingStation/)).toBeVisible();
     await expect(page.getByRole("region", { name: "BikeHireDockingStation" })).toContainText("availableBikeNumber");
     expect(await axeViolations(page)).toEqual([]);
-    expect(asked.filter((path) => path.startsWith("/api/v1/projects"))).toEqual([]);
+    expect(asked.filter((path) => path.startsWith("/api/v1/projects") || path.includes("portal_project_list"))).toEqual([]);
 
     await page.goto("/d/gone?lang=en");
     await expect(page.getByText("This endpoint's documentation cannot be read: it does not exist, or you may not read it.")).toBeVisible();

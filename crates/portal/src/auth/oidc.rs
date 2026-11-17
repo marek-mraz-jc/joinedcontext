@@ -66,6 +66,12 @@ type PortalClient = CoreClient<
 
 /// How long a login may stay in flight before the PKCE verifier cookie expires.
 const FLOW_TTL_SECS: i64 = 600;
+/// How many logins one browser keeps in flight: each tab that starts a sign-in parks its own, so a
+/// second tab no longer spends the first one's (T-7147).
+const FLOWS_IN_FLIGHT: usize = 8;
+/// Most bytes the parked flows take before sealing; sealed and base64-encoded they stay under the
+/// 4 KB a browser keeps per cookie. The oldest flows go first.
+const FLOWS_MAX_BYTES: usize = 2800;
 /// Session lifetime when the refresh token carries no `exp` of its own (an opaque one).
 const DEFAULT_SESSION_TTL_SECS: i64 = 3600;
 /// Access-token lifetime when the token response does not state one.
@@ -612,6 +618,44 @@ struct FlowState {
     /// the one the code is redeemed with. Empty in a flow started before it was kept.
     #[serde(default)]
     redirect_uri: String,
+    /// When the login started (Unix seconds): a flow older than [`FLOW_TTL_SECS`] is dropped, even
+    /// while a newer start keeps the cookie alive.
+    started_at: i64,
+}
+
+/// The logins this browser has in flight, newest first, the expired ones dropped. A cookie that
+/// does not open as a list of flows is refused rather than read as none.
+fn parked_flows(jar: &PrivateCookieJar) -> Result<Vec<FlowState>, ApiError> {
+    let Some(cookie) = jar.get(FLOW_COOKIE) else {
+        return Ok(Vec::new());
+    };
+    let flows: Vec<FlowState> = serde_json::from_str(cookie.value())
+        .map_err(|_| ApiError::BadRequest("the login cookie is unreadable".into()))?;
+    let now = session::now_unix();
+    Ok(flows
+        .into_iter()
+        .filter(|flow| now - flow.started_at < FLOW_TTL_SECS)
+        .collect())
+}
+
+/// Parks `flows` (newest first) in the flow cookie, at most [`FLOWS_IN_FLIGHT`] of them and no
+/// more than fit in [`FLOWS_MAX_BYTES`]; none left removes the cookie.
+fn park_flows(
+    jar: PrivateCookieJar,
+    mut flows: Vec<FlowState>,
+) -> Result<PrivateCookieJar, ApiError> {
+    flows.truncate(FLOWS_IN_FLIGHT);
+    loop {
+        if flows.is_empty() {
+            return Ok(jar.remove(session::removal(FLOW_COOKIE)));
+        }
+        let value = serde_json::to_string(&flows)
+            .map_err(|e| ApiError::Internal(format!("serialize oidc flow: {e}")))?;
+        if value.len() <= FLOWS_MAX_BYTES || flows.len() == 1 {
+            return Ok(jar.add(secure_cookie(FLOW_COOKIE, value, FLOW_TTL_SECS)));
+        }
+        flows.pop();
+    }
 }
 
 /// The redirect URI of the host the running request reached.
@@ -794,10 +838,12 @@ pub async fn login(
         nonce: nonce.secret().clone(),
         redirect_to: safe_redirect(query.redirect_to),
         redirect_uri,
+        started_at: session::now_unix(),
     };
-    let value = serde_json::to_string(&flow)
-        .map_err(|e| ApiError::Internal(format!("serialize oidc flow: {e}")))?;
-    let jar = jar.add(secure_cookie(FLOW_COOKIE, value, FLOW_TTL_SECS));
+    // A cookie that no longer opens (an older format, another key) holds no flow worth keeping.
+    let mut flows = parked_flows(&jar).unwrap_or_default();
+    flows.insert(0, flow);
+    let jar = park_flows(jar, flows)?;
 
     Ok((jar, Redirect::to(auth_url.as_str())).into_response())
 }
@@ -888,10 +934,12 @@ pub async fn callback(
         // The provider's text is echoed only to the login it answers: the state of the flow
         // this browser started. Anyone else's link would make the Portal's origin say what the
         // link's author wrote (F-R2POR3-014).
-        let ours = jar
-            .get(FLOW_COOKIE)
-            .and_then(|cookie| serde_json::from_str::<FlowState>(cookie.value()).ok())
-            .is_some_and(|flow| query.state.as_deref() == Some(flow.csrf_state.as_str()));
+        let ours = query.state.as_deref().is_some_and(|presented| {
+            parked_flows(&jar)
+                .unwrap_or_default()
+                .iter()
+                .any(|flow| csrf::constant_time_eq(presented, &flow.csrf_state))
+        });
         if !ours {
             return Err(ApiError::BadRequest(
                 "the identity provider refused a login this browser did not start; sign in again"
@@ -912,21 +960,24 @@ pub async fn callback(
                 .into_response(),
         );
     }
-    let flow_cookie = jar
-        .get(FLOW_COOKIE)
-        .ok_or_else(|| ApiError::BadRequest("no login is in flight".into()))?;
-    let flow: FlowState = serde_json::from_str(flow_cookie.value())
-        .map_err(|_| ApiError::BadRequest("the login cookie is unreadable".into()))?;
-    let jar = jar.remove(session::removal(FLOW_COOKIE));
-
+    let mut flows = parked_flows(&jar)?;
+    if flows.is_empty() {
+        return Err(ApiError::BadRequest("no login is in flight".into()));
+    }
     let presented_state = query
         .state
         .ok_or_else(|| ApiError::BadRequest("missing state".into()))?;
-    if presented_state != flow.csrf_state {
+    // The login this tab started, among the ones this browser has in flight (T-7147).
+    let Some(at) = flows
+        .iter()
+        .position(|flow| csrf::constant_time_eq(&presented_state, &flow.csrf_state))
+    else {
         return Err(ApiError::BadRequest(
             "state does not match the login that was started".into(),
         ));
-    }
+    };
+    let flow = flows.remove(at);
+    let jar = park_flows(jar, flows)?;
     let code = query
         .code
         .ok_or_else(|| ApiError::BadRequest("missing code".into()))?;

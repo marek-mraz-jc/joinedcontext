@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { api, queryKeys, unwrap, whilePending } from "../api/client";
+import { queryKeys, whilePending } from "../api/client";
 import { asManifests } from "../api/manifest";
+import { pageManifests } from "../api/odata";
 
 /** How many rows one read of a kind's list asks for. */
 export const GRID_PAGE = 50;
@@ -21,11 +22,7 @@ export function useKindPages(project: string, plural: string) {
   const list = useInfiniteQuery({
     queryKey: [...queryKeys.list(project, plural), "pages", q],
     queryFn: async ({ pageParam }: { pageParam: string | undefined }) =>
-      unwrap(
-        await api.GET("/api/v1/projects/{project}/{plural}", {
-          params: { path: { project, plural }, query: { limit: GRID_PAGE, count: true, q: q || undefined, cursor: pageParam } },
-        }),
-      ),
+      pageManifests(project, plural, { limit: GRID_PAGE, q, cursor: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) => last.nextCursor ?? undefined,
     // A change on its way polls until it lands (T-1392).

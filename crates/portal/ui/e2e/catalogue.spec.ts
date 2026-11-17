@@ -381,7 +381,7 @@ test.describe("the public catalogue", () => {
     await expect(page.getByRole("heading", { name: "From a shell (NGSI-LD)" })).toBeVisible();
     expect(await axeViolations(page)).toEqual([]);
     // Nothing on either page asked for a project: the catalogue needs no session.
-    expect(asked.filter((a) => a.startsWith("/api/v1/projects"))).toEqual([]);
+    expect(asked.filter((a) => a.startsWith("/api/v1/projects") || a.includes("portal_project_list"))).toEqual([]);
   });
 
   // T-4265 (photo audit T-4160 #15, #40): a curl line, a URL or a NUTS URI is one long word; it ran
