@@ -168,7 +168,24 @@ pub fn quota(mirror: &Mirror, project_name: &str, spec: &AppSpec, quota: Quota) 
 /// calls at once never both pass the last unit.
 // ponytail: past days' rows stay; a nightly `DELETE … WHERE day < current_date` when they matter.
 pub async fn take(
-    db: impl sqlx::PgExecutor<'_>,
+    pool: &sqlx::PgPool,
+    key: jc_types::ProjectKey,
+    app: (&str, &str),
+    service: &str,
+    subject: &str,
+    count: u32,
+    limit: u32,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
+    let taken = take_in(&mut tx, app, service, subject, count, limit).await?;
+    tx.commit().await?;
+    Ok(taken)
+}
+
+/// [`take`] inside a transaction the caller opened with `db::tenant_tx` of the App's project,
+/// so several counters move all or nothing.
+pub async fn take_in(
+    db: &mut sqlx::PgConnection,
     (project, app): (&str, &str),
     service: &str,
     subject: &str,
@@ -192,7 +209,7 @@ pub async fn take(
     .bind(subject)
     .bind(i64::from(count))
     .bind(i64::from(limit))
-    .fetch_optional(db)
+    .fetch_optional(&mut *db)
     .await?;
     Ok(row.is_some())
 }
@@ -200,12 +217,14 @@ pub async fn take(
 /// Moves today's counter by `delta`, never below `0`: a reservation [`take`] made, settled to
 /// what was spent (T-3661). A counter of another day is left alone.
 pub async fn settle(
-    db: impl sqlx::PgExecutor<'_>,
+    pool: &sqlx::PgPool,
+    key: jc_types::ProjectKey,
     (project, app): (&str, &str),
     service: &str,
     subject: &str,
     delta: i64,
 ) -> Result<(), sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
     sqlx::query(
         "UPDATE app_service_usage SET used = GREATEST(used + $5, 0) \
          WHERE project = $1 AND app = $2 AND service = $3 AND subject = $4 \
@@ -216,18 +235,20 @@ pub async fn settle(
     .bind(service)
     .bind(subject)
     .bind(delta)
-    .execute(db)
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    tx.commit().await
 }
 
 /// Today's use of one counter, `0` before its first.
 pub async fn used_today(
-    db: impl sqlx::PgExecutor<'_>,
+    pool: &sqlx::PgPool,
+    key: jc_types::ProjectKey,
     (project, app): (&str, &str),
     service: &str,
     subject: &str,
 ) -> Result<u32, sqlx::Error> {
+    let mut tx = crate::db::tenant_tx(pool, key).await?;
     let used: Option<i64> = sqlx::query_scalar(
         "SELECT used FROM app_service_usage \
          WHERE project = $1 AND app = $2 AND service = $3 AND subject = $4 \
@@ -237,8 +258,9 @@ pub async fn used_today(
     .bind(app)
     .bind(service)
     .bind(subject)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(used.map_or(0, |used| u32::try_from(used).unwrap_or(u32::MAX)))
 }
 

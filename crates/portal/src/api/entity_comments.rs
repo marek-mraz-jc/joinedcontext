@@ -326,6 +326,10 @@ pub async fn add_comment(
         .as_deref()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or(&identity.username);
+    // The comment is the project's row, kept in its key (T-7200).
+    if let Some(pool) = state.db.as_ref() {
+        crate::project_ids::required(pool, &state.mirror, &project, "comment").await?;
+    }
     let comment = state
         .comments
         .add(

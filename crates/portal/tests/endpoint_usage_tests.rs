@@ -323,7 +323,12 @@ async fn the_postgres_rows_add_up_and_age_out() {
         .execute(&pool)
         .await
         .expect("clean");
-    let store = UsageStore::new(Some(pool));
+    // Each project placed in an Organization of the registry: the rows are keyed (T-7197).
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    for project in ["t5118", "t5118b"] {
+        common::keyed_project(&state, &pool, project, "t5118org").await;
+    }
+    let store: &UsageStore = &state.endpoint_usage;
     let today: chrono::NaiveDate = "2026-10-22".parse().expect("a day");
     let old = today - chrono::Duration::days(KEEP_DAYS + 1);
     let key = |project: &str, day| {
