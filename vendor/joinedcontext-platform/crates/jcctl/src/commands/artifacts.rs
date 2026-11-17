@@ -6,6 +6,10 @@
 //! the client that mirrors the directory into the bucket (PF-32, T-0422) — and nothing here
 //! renders a missing artifact: an artifact the repository does not hold is named as missing, so
 //! an operator sees what `jcctl model generate` still has to produce.
+//!
+//! Every key starts with the project's key, `org/{OrgId}/project/{ProjectId}/{area}/` (STO-14,
+//! T-7210): a checkout knows names only, so the ids come in as `--project-key` from the Portal
+//! or CI, in their path form, and a project without one is refused.
 
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
@@ -24,6 +28,27 @@ pub struct Options {
     pub space: Option<String>,
     /// The commit the rebuild was taken at, recorded in every index.
     pub revision: Option<String>,
+    /// Each project's key by project name: `org/{OrgId}/project/{ProjectId}/` from
+    /// [`project_prefix`]. A project missing here is refused, never keyed by its name.
+    pub keys: BTreeMap<String, String>,
+}
+
+/// `org/{OrgId}/project/{ProjectId}/` from `<OrgId>/<ProjectId>`, each id in its one text form
+/// (TEN-01): 26 characters of lower-case base32 (`a-z`, `2-7`), the first `a` to `h`, not the nil
+/// id. `None` for anything else, so a value can never climb out of `--out-dir` or name another
+/// prefix.
+pub fn project_prefix(ids: &str) -> Option<String> {
+    fn id(text: &str) -> Option<&str> {
+        let ok = text.len() == 26
+            && (b'a'..=b'h').contains(&text.as_bytes()[0])
+            && text
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+            && text.bytes().any(|b| b != b'a');
+        ok.then_some(text)
+    }
+    let (org, project) = ids.split_once('/')?;
+    Some(format!("org/{}/project/{}/", id(org)?, id(project)?))
 }
 
 /// What a rebuild produced.
@@ -57,8 +82,19 @@ pub enum Error {
     Segment {
         /// The manifest declaring it.
         name: String,
-        /// Which name: organization, project, space or name.
+        /// Which name: space or name.
         segment: &'static str,
+    },
+    /// The project has no `--project-key`, and a key is never built from its name (T-7210).
+    #[error(
+        "{name}: project {project} has no --project-key {project}=<OrgId>/<ProjectId>; \
+         each id is 26 characters of lower-case base32"
+    )]
+    NoKey {
+        /// The manifest declaring it.
+        name: String,
+        /// The project it belongs to.
+        project: String,
     },
     /// A declared artifact path leads out of the repository, so its file is never read (PF-29,
     /// CC-08).
@@ -95,7 +131,12 @@ pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
         let (Some(space), Some(project)) = (space, id.namespace.as_deref()) else {
             continue;
         };
-        let organization = organization_of(&repository).unwrap_or_else(|| project.to_owned());
+        let Some(key) = options.keys.get(project) else {
+            return Err(Error::NoKey {
+                name: manifest.metadata.name.clone(),
+                project: project.to_owned(),
+            });
+        };
         let source_dir = repo_dir.join(&loaded.path).parent().map(Path::to_path_buf);
         let Some(source_dir) = source_dir else {
             continue;
@@ -103,12 +144,7 @@ pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
 
         // The repository is loaded, not validated: each segment of the key is checked here, or
         // a space named `../..` writes outside `--out-dir` (T-5702).
-        for (segment, value) in [
-            ("organization", organization.as_str()),
-            ("project", project),
-            ("space", space),
-            ("name", manifest.metadata.name.as_str()),
-        ] {
+        for (segment, value) in [("space", space), ("name", manifest.metadata.name.as_str())] {
             if jc_core::names::validate_dns1123_label(value).is_err() {
                 return Err(Error::Segment {
                     name: manifest.metadata.name.clone(),
@@ -119,7 +155,7 @@ pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
         let (prefix, files) = match manifest.kind.as_str() {
             "DataModel" => (
                 format!(
-                    "schemas/{organization}/{project}/{space}/{}/v{}",
+                    "{key}schemas/{space}/{}/v{}",
                     manifest.metadata.name,
                     major_of(manifest)
                 ),
@@ -130,10 +166,7 @@ pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
                 ),
             ),
             "Mapping" => (
-                format!(
-                    "mappings/{organization}/{project}/{space}/{}",
-                    manifest.metadata.name
-                ),
+                format!("{key}mappings/{space}/{}", manifest.metadata.name),
                 declared(manifest, &[], &["bloblang", "gatewayIr"]),
             ),
             _ => continue,
@@ -228,13 +261,6 @@ fn space_of(manifest: &RawManifest) -> Option<&str> {
             .as_str()
             .or_else(|| value.get("name").and_then(Value::as_str))
     })
-}
-
-/// The organization the repository declares, whose domain names every prefix.
-fn organization_of(repository: &Repository) -> Option<String> {
-    repository
-        .installation_organization()
-        .map(|(_, loaded)| loaded.manifest.metadata.name.clone())
 }
 
 /// The served major of a model's version (DM-22); `0` when the manifest names none.

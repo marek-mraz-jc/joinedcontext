@@ -76,7 +76,7 @@ Three side findings:
 | concurrency | `MAX_RUNNING = 1` per cluster; every runner `capacity: 1` | `build_pods.rs:43-45` |
 | artifact caps | bundle 64 MiB, image 128 MiB, component 64 MiB | `built.rs`, `wasm_apps.rs:15-18` |
 | Portal RBAC in the runner namespace | Jobs and PVCs: get, list, create, patch, delete. Secrets: create and patch only. No pods, exec or logs | D `charts/build-pods/templates/rbac.yaml:25-33` |
-| wasm host | memory 64 MiB, wall time 5 s per request, fuel 2e11, bodies 2 MiB in and 8 MiB out, a job 60 s; per-shard store key and DB password; data under `apps/<shard>/<id>/` and one schema per App | PL `crates/wasm-host/src/limits.rs:35-42`, `jobs.rs:18`, `blob.rs:1-4` |
+| wasm host | memory 64 MiB, wall time 5 s per request, fuel 2e11, bodies 2 MiB in and 8 MiB out, a job 60 s; per-shard store key and DB password; data under the project key's `org/<OrgId>/project/<ProjectId>/apps/<id>/` (the key reaches only the prefixes its placement names) and one schema per App | PL `crates/wasm-host/src/limits.rs:35-42`, `jobs.rs:18`, `blob.rs:1-4` |
 
 Every limit above is per deployment. None is per organization.
 

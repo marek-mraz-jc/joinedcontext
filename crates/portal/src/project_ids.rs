@@ -218,6 +218,25 @@ pub async fn recorded(pool: &PgPool, project: &str) -> Result<Option<ProjectKey>
     Ok(row.and_then(|(org, project)| parsed(&org, &project)))
 }
 
+/// [`recorded`] with the project's Organization name: what the project MCP door names its server
+/// by (`{org}.{ProjectId}.manage`, MCP-33).
+pub async fn owned(
+    pool: &PgPool,
+    project: &str,
+) -> Result<Option<(String, ProjectKey)>, sqlx::Error> {
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT p.organization, o.key::text, p.id::text FROM project_ids p \
+         JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved AND p.name = $1",
+    )
+    .bind(project)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(organization, org, project)| {
+        parsed(&org, &project).map(|key| (organization, key))
+    }))
+}
+
 /// Every project the registry recorded a key for, as [`recorded`]: what a pass over every
 /// project's rows fans out over, one `db::tenant_tx` each (STO-07).
 pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
@@ -230,6 +249,26 @@ pub async fn every_recorded(pool: &PgPool) -> Result<Vec<(String, ProjectKey)>, 
     Ok(rows
         .into_iter()
         .filter_map(|(name, org, project)| parsed(&org, &project).map(|key| (name, key)))
+        .collect())
+}
+
+/// [`every_recorded`] with each project's Organization name: what a pass that still reads an old
+/// name-built layout fans out over (TEN-15).
+pub async fn every_recorded_owned(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, ProjectKey)>, sqlx::Error> {
+    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT p.organization, p.name, o.key::text, p.id::text FROM project_ids p \
+         JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NULL AND NOT p.reserved ORDER BY p.organization, p.name",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(organization, name, org, project)| {
+            parsed(&org, &project).map(|key| (organization, name, key))
+        })
         .collect())
 }
 

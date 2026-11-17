@@ -178,6 +178,7 @@ pub async fn build(
             named: registry.organizations.into_iter().map(|o| o.name).collect(),
             scheme: mount.scheme.clone(),
             portal: follow_hosts.then(|| state.clone()),
+            projects: registry.project_addresses,
         };
         tokio::spawn(watch_registry(pool.clone(), run, shutdown.clone()));
     }
@@ -202,6 +203,8 @@ pub struct HostRegistry {
     pub roles: Vec<Module>,
     /// `None` where no router swaps its table (no Organizations, or a Portal built in line).
     pub hosts: Option<jc_router::HostSwap>,
+    /// Whether the router places id addresses (`[portal] project_addresses`, RTE-05).
+    pub project_addresses: bool,
 }
 
 /// How often jc rebuilds its host table from the registry without a notification.
@@ -276,6 +279,25 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
         .await
         .map_err(|e| format!("the Organization registry could not be read: {e}"))?;
     let (served, run_time) = apply(run, &rows, &organizations)?;
+    if run.projects {
+        let projects = joinedcontext_portal::project_ids::every_recorded_owned(pool)
+            .await
+            .map_err(|e| format!("the project registry could not be read: {e}"))?;
+        let ids: Vec<String> = projects
+            .iter()
+            .map(|(_, _, key)| key.project.path_segment())
+            .collect();
+        let rows: Vec<jc_router::RegistryProject<'_>> = projects
+            .iter()
+            .zip(&ids)
+            .map(|((organization, name, _), id)| jc_router::RegistryProject {
+                organization,
+                id,
+                name,
+            })
+            .collect();
+        run.hosts.replace_projects(&rows);
+    }
     super::follow::ORGANIZATIONS.publish(run_time);
     super::sign_in::publish(super::sign_in::from_registry(
         rows.iter().map(|r| {
@@ -300,6 +322,8 @@ struct Run {
     named: Vec<String>,
     scheme: String,
     portal: Option<AppState>,
+    /// Whether the router's project table follows the project registry (RTE-05).
+    projects: bool,
 }
 
 /// Applies the registry's rows; the number of hosts served. The Portal takes the working hosts
@@ -1316,6 +1340,7 @@ mod tests {
             named: vec!["bbsk".into()],
             scheme: "https".into(),
             portal: None,
+            projects: false,
         };
         let host = |host: &str, organization: &str, role: &str| HostRow {
             host: host.into(),

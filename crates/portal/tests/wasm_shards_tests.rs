@@ -33,6 +33,8 @@ fn app(project: &str, name: &str, shard: u32) -> PlacedApp {
         // The App's own Endpoint, the one gateway path its component may call (AP-147, AP-157).
         endpoint: Some(format!("ep{}", name.replace('-', ""))),
         jobs: Vec::new(),
+        prefix: None,
+        legacy: false,
     }
 }
 
@@ -134,9 +136,16 @@ async fn every_shard_gets_its_placement_and_its_key_and_a_retired_app_leaves_on_
         .filter(|request| request.url.path() == "/rustfs/admin/v3/add-canned-policy")
         .map(|request| serde_json::from_slice(&request.body).expect("a policy"))
         .collect();
+    // Without the Portal's database there is no project key: odpad stays under apps/1/<id>/.
     assert_eq!(
         policies[1],
-        artifact_store::shard_policy_document("apps", 1)
+        artifact_store::shard_policy_document(
+            "apps",
+            &[format!(
+                "apps/1/{}/",
+                joinedcontext_portal::apps::apps_db::app_id("praha", "odpad")
+            )]
+        )
     );
 
     // notes is retired: the next converge writes shard 0 without it.
@@ -247,15 +256,277 @@ async fn the_portal_applies_no_configmap_but_a_shards_placement() {
         .expect("a shard's placement is applied");
 }
 
+/// An in-memory S3 bucket: listing, GET, HEAD, PUT (with `x-amz-copy-source` and
+/// `If-None-Match: *`) and DELETE, enough for a move to run against.
+#[derive(Clone, Default)]
+struct Bucket(std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>>);
+
+impl Bucket {
+    fn put(&self, key: &str, body: &[u8]) {
+        self.0.lock().unwrap().insert(key.to_owned(), body.to_vec());
+    }
+    fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.0.lock().unwrap().get(key).cloned()
+    }
+    fn keys(&self) -> Vec<String> {
+        self.0.lock().unwrap().keys().cloned().collect()
+    }
+}
+
+impl wiremock::Respond for Bucket {
+    fn respond(&self, request: &Request) -> ResponseTemplate {
+        let path = request.url.path().trim_start_matches("/apps/").to_owned();
+        let mut objects = self.0.lock().unwrap();
+        match request.method.as_str() {
+            "GET" if path.is_empty() || path == "/apps" => {
+                let prefix = request
+                    .url
+                    .query_pairs()
+                    .find(|(k, _)| k == "prefix")
+                    .map(|(_, v)| v.into_owned())
+                    .unwrap_or_default();
+                let contents: String = objects
+                    .iter()
+                    .filter(|(key, _)| key.starts_with(&prefix))
+                    .map(|(key, body)| {
+                        format!(
+                            "<Contents><Key>{key}</Key><Size>{}</Size></Contents>",
+                            body.len()
+                        )
+                    })
+                    .collect();
+                ResponseTemplate::new(200).set_body_string(format!(
+                    "<ListBucketResult><IsTruncated>false</IsTruncated>{contents}</ListBucketResult>"
+                ))
+            }
+            "GET" | "HEAD" => match objects.get(&path) {
+                Some(body) => ResponseTemplate::new(200).set_body_bytes(body.clone()),
+                None => ResponseTemplate::new(404),
+            },
+            "PUT" => {
+                let body = match request.headers.get("x-amz-copy-source") {
+                    Some(source) => {
+                        let source = source.to_str().unwrap().trim_start_matches("/apps/");
+                        match objects.get(source) {
+                            Some(body) => body.clone(),
+                            None => return ResponseTemplate::new(404),
+                        }
+                    }
+                    None => request.body.clone(),
+                };
+                if request.headers.get("if-none-match").is_some() && objects.contains_key(&path) {
+                    return ResponseTemplate::new(412);
+                }
+                objects.insert(path, body);
+                ResponseTemplate::new(200)
+            }
+            "DELETE" => {
+                objects.remove(&path);
+                ResponseTemplate::new(204)
+            }
+            _ => ResponseTemplate::new(405),
+        }
+    }
+}
+
+/// TEN-15: an App's files move from `apps/<shard>/<id>/` under its project's key. An object the
+/// App wrote under the key meanwhile is kept, never overwritten by the old copy; every moved one
+/// reads back the same bytes; the rollback entry names both prefixes and each object's hash; the
+/// old prefix is empty after, and the placement and the shard's key stop naming it.
+#[tokio::test]
+async fn an_apps_old_files_move_under_its_project_key_and_a_write_made_meanwhile_is_kept() {
+    use joinedcontext_portal::apps::files::{keyed_prefix, legacy_prefix, move_legacy, Moved};
+    use joinedcontext_portal::reconciler::wasm_shards::{placement, prefixes};
+    let server = MockServer::start().await;
+    let bucket = Bucket::default();
+    Mock::given(wiremock::matchers::any())
+        .respond_with(bucket.clone())
+        .mount(&server)
+        .await;
+    let store = Client::new(Settings {
+        bucket: "apps".to_owned(),
+        ..store_settings(server.uri())
+    })
+    .expect("a store client");
+    let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+    let other = jc_types::ProjectKey::new(key.org, jc_types::ProjectId::mint());
+    let id = joinedcontext_portal::apps::apps_db::app_id("helsinki", "notes");
+    let id = id.as_str();
+    let (legacy, keyed) = (legacy_prefix(2, id), keyed_prefix(&key, id));
+    assert_eq!(keyed, format!("{}apps/{id}/", key.object_prefix()));
+    assert_ne!(
+        keyed,
+        keyed_prefix(&other, id),
+        "two projects never share a prefix"
+    );
+    bucket.put(&format!("{legacy}notes/a.txt"), b"old a");
+    bucket.put(&format!("{legacy}notes/b.txt"), b"old b");
+    // The App wrote b under its key after the placement named it: that write wins.
+    bucket.put(&format!("{keyed}notes/b.txt"), b"new b");
+    bucket.put("apps/2/someone_else/c.txt", b"not this App's");
+
+    let moved = move_legacy(&store, "apps", (id, &legacy, &keyed), "20261117T120000Z")
+        .await
+        .expect("moved");
+    assert_eq!(
+        moved,
+        Moved {
+            copied: 1,
+            superseded: 1,
+            done: true
+        }
+    );
+    assert_eq!(
+        bucket.get(&format!("{keyed}notes/a.txt")).as_deref(),
+        Some(&b"old a"[..])
+    );
+    assert_eq!(
+        bucket.get(&format!("{keyed}notes/b.txt")).as_deref(),
+        Some(&b"new b"[..])
+    );
+    assert!(
+        bucket.keys().iter().all(|k| !k.starts_with(&legacy)),
+        "the old prefix is empty"
+    );
+    assert!(
+        bucket.get("apps/2/someone_else/c.txt").is_some(),
+        "another App's files stay"
+    );
+    let rollback: Value = serde_json::from_slice(
+        &bucket
+            .get(&format!("apps/moved/{id}/20261117T120000Z.json"))
+            .expect("a rollback entry"),
+    )
+    .expect("JSON");
+    assert_eq!(rollback["from"], legacy.as_str());
+    assert_eq!(rollback["to"], keyed.as_str());
+    assert_eq!(rollback["objects"].as_array().map(Vec::len), Some(2));
+    assert!(rollback.to_string().contains("superseded"));
+    assert!(
+        !rollback.to_string().contains("old a"),
+        "no payload in the entry"
+    );
+
+    // A second move finds nothing and is done without writing.
+    let again = move_legacy(&store, "apps", (id, &legacy, &keyed), "20261117T120100Z")
+        .await
+        .expect("moved");
+    assert!(again.done && again.copied == 0);
+    assert!(bucket
+        .get(&format!("apps/moved/{id}/20261117T120100Z.json"))
+        .is_none());
+
+    // The placement names the keyed prefix; the shard's key reaches the old one only until moved.
+    let mut placed = app("helsinki", "notes", 2);
+    placed.prefix = Some(keyed.clone());
+    placed.legacy = true;
+    let (moving, _) = placement(2, std::slice::from_ref(&placed));
+    assert_eq!(moving["apps"][0]["prefix"], keyed.as_str());
+    assert_eq!(moving["apps"][0]["legacy"], true);
+    assert_eq!(prefixes(2, &moving), [keyed.clone(), legacy.clone()]);
+    placed.legacy = false;
+    let (done, _) = placement(2, &[placed]);
+    assert_eq!(prefixes(2, &done), [keyed]);
+}
+
+/// TEN-15, T-7210: a project's published artifacts move from `{area}/{org}/{project}/` under its
+/// project key. A newer write under the key is kept, the rollback entry sits outside every
+/// project's prefix with hashes and no payload, a sibling project's old artifacts are untouched,
+/// and once the old layout is empty the reader's policy stops naming it.
+#[tokio::test]
+async fn a_projects_old_artifacts_move_under_its_key_and_the_old_layout_is_then_refused() {
+    use jc_types::{OrgId, ProjectId, ProjectKey};
+    use joinedcontext_portal::artifact_store::{move_artifacts, policy_document, Legacy, Role};
+    let server = MockServer::start().await;
+    let bucket = Bucket::default();
+    Mock::given(wiremock::matchers::any())
+        .respond_with(bucket.clone())
+        .mount(&server)
+        .await;
+    let store = Client::new(Settings {
+        bucket: "apps".to_owned(),
+        ..store_settings(server.uri())
+    })
+    .expect("a store client");
+    let key = ProjectKey::new(OrgId::mint(), ProjectId::mint());
+    let keyed = key.object_prefix();
+    let legacy = Legacy::new("hel", "air").expect("labels");
+    bucket.put("schemas/hel/air/aq/v1/aq.linkml.yaml", b"old model");
+    bucket.put("mappings/hel/air/m/m.bloblang", b"old mapping");
+    bucket.put(&format!("{keyed}mappings/m/m.bloblang"), b"newer mapping");
+    bucket.put(
+        "schemas/hel/airx/aq/v1/aq.linkml.yaml",
+        b"a sibling's model",
+    );
+
+    let moved = move_artifacts(&store, &key, &legacy, "20261117T130000Z")
+        .await
+        .expect("the move runs");
+    assert_eq!((moved.copied, moved.superseded, moved.done), (1, 1, true));
+    assert_eq!(
+        bucket
+            .get(&format!("{keyed}schemas/aq/v1/aq.linkml.yaml"))
+            .as_deref(),
+        Some(&b"old model"[..])
+    );
+    assert_eq!(
+        bucket
+            .get(&format!("{keyed}mappings/m/m.bloblang"))
+            .as_deref(),
+        Some(&b"newer mapping"[..]),
+        "the old copy overwrote a newer write"
+    );
+    let keys = bucket.keys();
+    assert!(!keys
+        .iter()
+        .any(|k| k.starts_with("schemas/hel/air/") || k.starts_with("mappings/hel/air/")));
+    assert!(
+        keys.contains(&"schemas/hel/airx/aq/v1/aq.linkml.yaml".to_owned()),
+        "{keys:?}"
+    );
+    let rollback = bucket
+        .get("moved/schemas/hel/air/20261117T130000Z.json")
+        .expect("a rollback entry per area");
+    let rollback: Value = serde_json::from_slice(&rollback).expect("JSON");
+    assert_eq!(rollback["from"], "schemas/hel/air/");
+    assert_eq!(rollback["to"], format!("{keyed}schemas/"));
+    assert_eq!(rollback["objects"][0]["outcome"], "copied");
+    assert!(
+        !rollback.to_string().contains("old model"),
+        "a payload in the rollback entry"
+    );
+
+    let again = move_artifacts(&store, &key, &legacy, "20261117T130100Z")
+        .await
+        .expect("a second run");
+    assert_eq!((again.copied, again.superseded, again.done), (0, 0, true));
+    // Moved: the converge passes no legacy, and the reader reads the key alone.
+    let reader = policy_document("apps", &key, Role::Reader, None).to_string();
+    assert!(!reader.contains("/hel/air/"), "{reader}");
+    assert!(
+        reader.contains(&format!("apps/{keyed}schemas/*")),
+        "{reader}"
+    );
+}
+
 #[test]
-fn a_shards_key_reaches_its_own_prefix_and_the_components_and_is_its_own() {
-    let policy = artifact_store::shard_policy_document("apps", 3);
+fn a_shards_key_reaches_its_apps_own_prefixes_and_the_components_and_is_its_own() {
+    // Two projects' Apps: A's on shard 3, keyed and not yet moved; B's elsewhere.
+    let a = "org/0b8e7f1c-1d2e-4f30-8a41-5b6c7d8e9f00/project/1c9f8e7d-6b5a-4c3d-9e2f-0a1b2c3d4e5f/apps/x1/";
+    let b = "org/0b8e7f1c-1d2e-4f30-8a41-5b6c7d8e9f00/project/2d0a9f8e-7c6b-4d5e-8f30-1b2c3d4e5f60/apps/x2/";
+    let policy =
+        artifact_store::shard_policy_document("apps", &[a.to_owned(), "apps/3/x1/".to_owned()]);
     let text = policy.to_string();
-    assert!(text.contains("arn:aws:s3:::apps/apps/3/*"));
+    assert!(text.contains(&format!("arn:aws:s3:::apps/{a}*")));
+    assert!(text.contains("arn:aws:s3:::apps/apps/3/x1/*"));
     assert!(text.contains("arn:aws:s3:::apps/components/*"));
-    assert!(!text.contains("apps/apps/*"), "never every shard's prefix");
-    assert!(!text.contains("apps/apps/1/"), "never another shard's");
-    // Writing and deleting are on the shard's prefix alone; the components are read-only.
+    assert!(!text.contains(b), "never another project's prefix");
+    assert!(
+        !text.contains("apps/apps/3/*"),
+        "never the whole old shard prefix"
+    );
+    assert!(!text.contains("apps/org/*"), "never every Organization's");
+    // Writing and deleting are on the App's prefixes alone; the components are read-only.
     let statements = policy["Statement"].as_array().expect("statements");
     let components = statements
         .iter()
@@ -268,8 +539,11 @@ fn a_shards_key_reaches_its_own_prefix_and_the_components_and_is_its_own() {
         .expect("listing");
     assert_eq!(
         listing["Condition"]["StringLike"]["s3:prefix"],
-        serde_json::json!(["apps/3/*"])
+        serde_json::json!([format!("{a}*"), "apps/3/x1/*"])
     );
+    // A shard with no App reads the components and nothing else.
+    let empty = artifact_store::shard_policy_document("apps", &[]);
+    assert_eq!(empty["Statement"].as_array().map(Vec::len), Some(1));
 
     let a = Credential::derive_shard(ROOT_SECRET, 0);
     let b = Credential::derive_shard(ROOT_SECRET, 1);

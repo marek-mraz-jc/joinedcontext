@@ -265,7 +265,7 @@ def secret(name: str, ns: str = "dev", kind: str = "Opaque") -> dict:
 # refused, no route or limit change reaches APISIX, prod 2026-10-20 07:30Z).
 @pytest.mark.parametrize(
     "name",
-    ["pipeline-secrets", "artifact-store-reader-hel", "build-bikes-42", "apps-host-1-store", "apisix-standalone-config",
+    ["pipeline-secrets", "bbbbbbbbbbbbbbbbbbbbbbbbbb-cccccccccccccccccccccccccc-artifacts", "build-bikes-42", "apps-host-1-store", "apisix-standalone-config",
      "personal-data-keys", "agent-run-0f3a9c2e"],
 )
 @pytest.mark.parametrize("operation", ["CREATE", "UPDATE"])
@@ -282,11 +282,12 @@ def test_the_portal_may_write_the_secrets_it_hands_over(secrets_policy, tmp_path
         secret("gitea-admin"),
         secret("gitea-runner-registration"),
         secret("artifact-store-root"),
-        secret("artifact-store-reader-hel", kind="kubernetes.io/service-account-token"),
+        secret("bbbbbbbbbbbbbbbbbbbbbbbbbb-cccccccccccccccccccccccccc-artifacts", kind="kubernetes.io/service-account-token"),
         secret("build-x-1", kind="kubernetes.io/dockerconfigjson"),
+        secret("artifact-store-reader-hel"),
     ],
     ids=["database-app", "database-superuser", "keycloak-admin", "forge-admin", "runner-registration",
-         "artifact-store-root", "service-account-token-type", "dockerconfig-type"],
+         "artifact-store-root", "service-account-token-type", "dockerconfig-type", "name-built-reader"],
 )
 @pytest.mark.parametrize("operation", ["CREATE", "UPDATE"])
 def test_a_platform_secret_or_a_token_type_is_refused_to_the_portal(secrets_policy, tmp_path, resource, operation):

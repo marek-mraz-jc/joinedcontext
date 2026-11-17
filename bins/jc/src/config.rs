@@ -1023,6 +1023,10 @@ pub struct PortalSection {
     /// Project's value only narrows it. The Portal checks the paths and ranges at start.
     #[serde(default)]
     pub limits: BTreeMap<String, LimitBound>,
+    /// Whether `/{org}/{ProjectId}/api/v1/...` answers (ARCH/RTE-05, T-7194), e.g. `true`; off
+    /// when unset, so such a path is routed as any other until the deployment turns it on.
+    #[serde(default)]
+    pub project_addresses: bool,
 }
 
 /// One entry of `[portal.limits]`: the smallest and largest value a manifest may set.
@@ -1451,6 +1455,7 @@ impl Config {
             age_key_file: cli.portal_age_key_file.or(file.portal.age_key_file),
             limits: file.portal.limits,
             removal_hold_percent: file.portal.removal_hold_percent,
+            project_addresses: file.portal.project_addresses,
         };
         let realm = match cli.identity_realm.or(file.identity.realm) {
             Some(name) => crate::setup::Realm::parse(&name).map_err(ConfigError::Realm)?,

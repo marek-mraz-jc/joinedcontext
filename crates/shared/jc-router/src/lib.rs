@@ -23,8 +23,10 @@ use std::sync::{Arc, PoisonError, RwLock};
 use tower::ServiceExt;
 
 mod hosts;
+mod projects;
 pub mod registry;
 pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization, RegistryHost};
+pub use projects::{ProjectTable, RegistryProject};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key
@@ -210,9 +212,30 @@ pub struct HostSwap {
     /// The entries of the hosts the registry added ([`HostSwap::mount_hosts`]), longest prefix
     /// first.
     added: Arc<RwLock<Arc<Vec<MountedEntry>>>>,
+    /// The live projects by id once id addresses are on ([`HostSwap::replace_projects`]); while
+    /// `None` no path is read as an id address (RTE-05, `project_addresses` off).
+    projects: Arc<RwLock<Option<Arc<ProjectTable>>>>,
 }
 
 impl HostSwap {
+    /// Turns id addresses on with the live projects of `rows` (RTE-05, T-7194), replacing the
+    /// last set whole.
+    pub fn replace_projects(&self, rows: &[RegistryProject<'_>]) {
+        *self
+            .projects
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(ProjectTable::new(rows)));
+    }
+
+    /// The project table that answers now; `None` while id addresses are off.
+    #[must_use]
+    pub fn projects(&self) -> Option<Arc<ProjectTable>> {
+        self.projects
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// The table that answers now.
     #[must_use]
     pub fn current(&self) -> Arc<HostTable> {
@@ -456,6 +479,7 @@ impl JcRouterBuilder {
                     routers: Arc::new(self.routers),
                     fixed: Arc::new(fixed),
                     added: Arc::default(),
+                    projects: Arc::default(),
                 }
             }),
         })
@@ -669,6 +693,8 @@ impl JcRouter {
             );
         }
         let public_path = req.uri().path().to_owned();
+        let projects = self.hosts.as_ref().and_then(HostSwap::projects);
+        let mut project_address = false;
         let (path, organization, via) = match table.as_deref() {
             None => (req.uri().path().to_owned(), None, hosts::Via::Plain),
             Some(table) => {
@@ -677,7 +703,24 @@ impl JcRouter {
                         path,
                         organization,
                         via,
-                    } => (path, organization, via),
+                    } => {
+                        // An id address (RTE-05): placed under the project's name, or refused
+                        // with the one answer every refusal there gets.
+                        let placed = match (&organization, &via, &projects) {
+                            (Some(org), hosts::Via::Prefixed(_), Some(projects)) => {
+                                projects.place(org, &path)
+                            }
+                            _ => None,
+                        };
+                        match placed {
+                            None => (path, organization, via),
+                            Some(Err(())) => return projects::not_found(),
+                            Some(Ok(named)) => {
+                                project_address = true;
+                                (named, organization, via)
+                            }
+                        }
+                    }
                     hosts::Placed::Canonical(path) => {
                         let location = match req.uri().query() {
                             Some(q) => format!("{path}?{q}"),
@@ -713,6 +756,7 @@ impl JcRouter {
         // A page asked on another group's host moves to the configured host that serves it:
         // the Location names a host of the table, never the request's (T-6991 §7).
         if let Some(table) = table.as_deref()
+            && !project_address
             && is_page(&req)
             && let Some((to, rest)) =
                 table.page_move(&host_with_port, host_only, &public_path, entry.is_some())
@@ -728,6 +772,9 @@ impl JcRouter {
                 .into_response();
         }
         let Some(entry) = entry else {
+            if project_address {
+                return projects::not_found();
+            }
             return (StatusCode::NOT_FOUND, "unmounted path").into_response();
         };
 
@@ -792,6 +839,9 @@ impl JcRouter {
             .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
         if role.is_some_and(HostRole::drops_set_cookie) {
             resp.headers_mut().remove(axum::http::header::SET_COOKIE);
+        }
+        if project_address && projects::refused(resp.status()) {
+            return projects::not_found();
         }
         resp
     }
@@ -1314,6 +1364,124 @@ mod tests {
         );
         assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|"));
         assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
+    }
+
+    /// RTE-05 (T-7194): with id addresses on, an unknown id, another Organization's id, a
+    /// request without a session, one without a grant, an unknown object, a redirect and a
+    /// misspelt id answer the same bytes and headers; a granted call reaches the project by its
+    /// name. Off, an id path is routed as it is.
+    #[tokio::test]
+    async fn every_refusal_on_an_id_address_is_the_same_404() {
+        const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const FOREIGN: &str = "baaaaaaaaaaaaaaaaaaaaaaaaa";
+        let api = Router::new().fallback(|headers: axum::http::HeaderMap, uri: Uri| async move {
+            let auth = headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            match (auth, uri.path()) {
+                (None, _) => (
+                    StatusCode::UNAUTHORIZED,
+                    [
+                        ("www-authenticate", "Bearer resource_metadata=\"x\""),
+                        ("set-cookie", "s=1"),
+                    ],
+                    "sign in".to_owned(),
+                )
+                    .into_response(),
+                (Some("Bearer none"), _) => (StatusCode::FORBIDDEN, "no grant").into_response(),
+                (_, "/v1/projects/traffic/gone") => {
+                    (StatusCode::NOT_FOUND, "no such space").into_response()
+                }
+                (_, "/v1/projects/traffic/moved") => (
+                    StatusCode::PERMANENT_REDIRECT,
+                    [("location", "/bratislava/api/v1/projects/traffic/spaces")],
+                )
+                    .into_response(),
+                (_, path) => path.to_owned().into_response(),
+            }
+        });
+        let table = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.organization("bratislava"))
+            .and_then(|t| t.organization("kosice"))
+            .unwrap();
+        let jc = JcRouterBuilder::new("https", "city.example")
+            .hosts(table)
+            .mount(
+                MountSpec {
+                    module: "portal".into(),
+                    host: None,
+                    path_prefix: Some("/api".into()),
+                },
+                api,
+            )
+            .build()
+            .unwrap();
+        let call = |path: String, auth: Option<&'static str>| {
+            let jc = jc.clone();
+            async move {
+                let mut req = Request::builder().uri(path).header("host", "city.example");
+                if let Some(auth) = auth {
+                    req = req.header("authorization", auth);
+                }
+                let resp = jc.dispatch(req.body(Body::empty()).unwrap(), None).await;
+                let status = resp.status();
+                let headers = format!("{:?}", resp.headers());
+                let body = resp.into_body().collect().await.unwrap().to_bytes();
+                (status, headers, String::from_utf8(body.to_vec()).unwrap())
+            }
+        };
+        let spaces = format!("/bratislava/{ID}/api/v1/spaces");
+        assert_eq!(
+            call(spaces.clone(), Some("Bearer ok")).await.0,
+            StatusCode::NOT_FOUND
+        );
+
+        jc.host_swap().expect("a host table").replace_projects(&[
+            RegistryProject {
+                organization: "bratislava",
+                id: ID,
+                name: "traffic",
+            },
+            RegistryProject {
+                organization: "kosice",
+                id: FOREIGN,
+                name: "air",
+            },
+        ]);
+        let granted = call(spaces.clone(), Some("Bearer ok")).await;
+        assert_eq!(granted.0, StatusCode::OK);
+        assert_eq!(granted.2, "/v1/projects/traffic/spaces");
+        let refusal = call(spaces.clone(), None).await;
+        assert_eq!(refusal.0, StatusCode::NOT_FOUND);
+        assert!(
+            refusal.2.contains("ask the project's owner"),
+            "{}",
+            refusal.2
+        );
+        for (path, auth) in [
+            (
+                format!("/bratislava/{FOREIGN}/api/v1/spaces"),
+                Some("Bearer ok"),
+            ),
+            (
+                "/bratislava/caaaaaaaaaaaaaaaaaaaaaaaaa/api/v1/spaces".to_owned(),
+                Some("Bearer ok"),
+            ),
+            (spaces.clone(), Some("Bearer none")),
+            (format!("/bratislava/{ID}/api/v1/gone"), Some("Bearer ok")),
+            (format!("/bratislava/{ID}/api/v1/moved"), Some("Bearer ok")),
+            (format!("/bratislava/{ID}/data"), Some("Bearer ok")),
+            (
+                format!("/bratislava/{}/api/v1/spaces", ID.to_uppercase()),
+                Some("Bearer ok"),
+            ),
+        ] {
+            assert_eq!(call(path.clone(), auth).await, refusal, "{path} {auth:?}");
+        }
+        // The name address is untouched.
+        let named = call("/bratislava/api/v1/projects/traffic/spaces".into(), None).await;
+        assert_eq!(named.0, StatusCode::UNAUTHORIZED);
     }
 
     /// T-7136 (T-7129 §7, O1b): a swap from the host registry takes a host out (`421`) and puts

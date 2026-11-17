@@ -460,6 +460,17 @@ pub(crate) fn validate_relative_path(field: &'static str, path: &str) -> Result<
 mod tests {
     use super::*;
 
+    /// ARCH/TEN-03, TEN-10: `__` joins an internal name, so no user-chosen name holds it: the
+    /// Organization, project and space names are DNS-1123 labels, the orgDomain a DNS name.
+    #[test]
+    fn no_user_chosen_name_holds_the_internal_name_joiner() {
+        assert!(validate_dns1123_label("air__quality").is_err());
+        assert!(validate_namespace("air__quality").is_err());
+        assert!(validate_space_name("air__quality").is_err());
+        assert!(validate_org_domain("sk.banska__bystrica").is_err());
+        assert!(validate_dns1123_label("air-quality").is_ok());
+    }
+
     #[test]
     fn reserved_labels_are_sorted_unique_labels() {
         assert!(RESERVED_LABELS.windows(2).all(|w| w[0] < w[1]));
