@@ -118,7 +118,7 @@ async fn a_branch_is_limited_per_parent_renewed_to_30_days_and_audited() {
         project_ids::open_branch(&pool, parent_key, "sub-ana", 7, 1)
             .await
             .expect("open"),
-        None,
+        Err(project_ids::NoBranch::AtLimit),
         "one live branch per project is the limit here"
     );
     let mut expiries = vec![branch.expires_at];
@@ -169,7 +169,7 @@ async fn a_branch_is_limited_per_parent_renewed_to_30_days_and_audited() {
             project_ids::open_branch(&pool, key, "sub-ana", 7, 5)
                 .await
                 .expect("open"),
-            None
+            Err(project_ids::NoBranch::NotAParent)
         );
     }
 }

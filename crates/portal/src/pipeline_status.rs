@@ -29,7 +29,8 @@ pub struct Saved {
 pub type Key = (String, String);
 
 /// The shared record, in the Portal's database.
-/// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f).
+/// Every statement runs in a `db::tenant_tx` of its project's key (T-7198 PK-1f), unkeyed
+/// while the project has none (phase one).
 #[derive(Clone)]
 pub struct Store {
     db: sqlx::PgPool,
@@ -42,10 +43,12 @@ impl Store {
     }
 
     /// Replaces the record with `statuses`, the leader's whole answer of this run: a pipeline it
-    /// no longer holds leaves the record with it. Project by project in its key (STO-07): a
-    /// project with no key keeps no record.
+    /// no longer holds leaves the record with it. Project by project in its key (STO-07),
+    /// unkeyed while the project has none (phase one).
     pub async fn save(&self, statuses: &HashMap<Key, Saved>) -> Result<(), sqlx::Error> {
-        for (project, key) in crate::project_ids::keyed_projects(&self.db, &self.mirror).await? {
+        for (project, key) in
+            crate::project_ids::projects_or_unkeyed(&self.db, &self.mirror).await?
+        {
             let theirs: HashMap<&Key, &Saved> = statuses
                 .iter()
                 .filter(|((p, _), _)| *p == project)
@@ -57,11 +60,11 @@ impl Store {
 
     async fn save_project(
         &self,
-        key: jc_types::ProjectKey,
+        key: Option<jc_types::ProjectKey>,
         project: &str,
         statuses: &HashMap<&Key, &Saved>,
     ) -> Result<(), sqlx::Error> {
-        let mut tx = crate::db::tenant_tx(&self.db, key).await?;
+        let mut tx = crate::project_ids::key_tx(&self.db, key).await?;
         sqlx::query("DELETE FROM pipeline_status WHERE project = $1")
             .bind(project)
             .execute(&mut *tx)
@@ -85,8 +88,10 @@ impl Store {
     pub async fn load(&self, fresh: Duration) -> Result<HashMap<Key, Saved>, sqlx::Error> {
         let seconds = i64::try_from(fresh.as_secs()).unwrap_or(i64::MAX);
         let mut rows: Vec<(String, String, serde_json::Value)> = Vec::new();
-        for (project, key) in crate::project_ids::keyed_projects(&self.db, &self.mirror).await? {
-            let mut tx = crate::db::tenant_tx(&self.db, key).await?;
+        for (project, key) in
+            crate::project_ids::projects_or_unkeyed(&self.db, &self.mirror).await?
+        {
+            let mut tx = crate::project_ids::key_tx(&self.db, key).await?;
             rows.extend(
                 sqlx::query_as::<_, (String, String, serde_json::Value)>(
                     "SELECT project, pipeline, status FROM pipeline_status \

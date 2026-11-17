@@ -305,15 +305,14 @@ pub struct BranchRow {
 /// Opens a branch of the live project `parent` for `created_by`, living `lifetime_days` (TEN-12,
 /// CHG-15): its `project_ids` row (name `b-{id}`, the parent, the parent's Organization) and its
 /// `project_branches` row in one transaction, the parent's row locked so two requests count the
-/// same live branches. `None` when the parent already keeps `per_parent` live branches or is not
-/// a live project of an Organization (a reserved project, a branch, a copy).
+/// same live branches; [`NoBranch`] says why none was opened.
 pub async fn open_branch(
     pool: &PgPool,
     parent: ProjectKey,
     created_by: &str,
     lifetime_days: u32,
     per_parent: u32,
-) -> Result<Option<BranchRow>, sqlx::Error> {
+) -> Result<Result<BranchRow, NoBranch>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let organization: Option<(String, String)> = sqlx::query_as(
         "SELECT organization, name FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
@@ -323,7 +322,7 @@ pub async fn open_branch(
     .fetch_optional(&mut *tx)
     .await?;
     let Some((organization, parent_name)) = organization else {
-        return Ok(None);
+        return Ok(Err(NoBranch::NotAParent));
     };
     let (live,): (i64,) = sqlx::query_as(
         "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
@@ -333,7 +332,7 @@ pub async fn open_branch(
     .fetch_one(&mut *tx)
     .await?;
     if live >= i64::from(per_parent) {
-        return Ok(None);
+        return Ok(Err(NoBranch::AtLimit));
     }
     let id = ProjectId::mint();
     let name = format!("b-{}", id.path_segment());
@@ -365,12 +364,21 @@ pub async fn open_branch(
             expires_at,
         },
     );
-    Ok(Some(BranchRow {
+    Ok(Ok(BranchRow {
         id,
         name,
         created_by: created_by.to_owned(),
         expires_at,
     }))
+}
+
+/// Why [`open_branch`] opened no branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoBranch {
+    /// The parent is no live project of an Organization: a reserved project, a branch or a copy.
+    NotAParent,
+    /// The parent already keeps as many live branches as the deployment allows.
+    AtLimit,
 }
 
 /// The live branch `id` of `parent`; `None` once it expired or when it is another project's.
@@ -639,8 +647,16 @@ pub(crate) async fn tx_or_unkeyed(
     mirror: &Mirror,
     project: &str,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
-    match tx_of(pool, mirror, project).await? {
-        Some(tx) => Ok(tx),
+    key_tx(pool, key_of(pool, mirror, project).await?).await
+}
+
+/// A `db::tenant_tx` of `key`, or an unkeyed transaction for a project with none (phase one).
+pub(crate) async fn key_tx(
+    pool: &PgPool,
+    key: Option<ProjectKey>,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    match key {
+        Some(key) => crate::db::tenant_tx(pool, key).await,
         None => pool.begin().await,
     }
 }
@@ -652,25 +668,37 @@ pub async fn keyed_projects(
     pool: &PgPool,
     mirror: &Mirror,
 ) -> Result<Vec<(String, ProjectKey)>, sqlx::Error> {
+    Ok(projects_or_unkeyed(pool, mirror)
+        .await?
+        .into_iter()
+        .filter_map(|(name, key)| Some((name, key?)))
+        .collect())
+}
+
+/// [`keyed_projects`] with the Projects whose Organization has no key yet, as `None`: in phase
+/// one (row-level security off) their rows are unkeyed and a pass over every project still reads
+/// them, one [`key_tx`] each, until [`backfill`] keys them.
+pub(crate) async fn projects_or_unkeyed(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Vec<(String, Option<ProjectKey>)>, sqlx::Error> {
     let projects = mirror.list(
         ORG_NAMESPACE,
         "Project",
         &crate::store::ListOptions::default(),
     );
-    let mut keyed = Vec::with_capacity(projects.items.len());
+    let mut every = Vec::with_capacity(projects.items.len() + 1);
     for project in &projects.items {
         let name = project.metadata.name.as_str();
         if name == ORG_NAMESPACE {
             continue;
         }
-        if let Some(key) = key_of(pool, mirror, name).await? {
-            keyed.push((name.to_owned(), key));
-        }
+        every.push((name.to_owned(), key_of(pool, mirror, name).await?));
     }
     if let Some(key) = key_of(pool, mirror, ORG_NAMESPACE).await? {
-        keyed.push((ORG_NAMESPACE.to_owned(), key));
+        every.push((ORG_NAMESPACE.to_owned(), Some(key)));
     }
-    Ok(keyed)
+    Ok(every)
 }
 
 /// Keys every row of [`KEYED_BY_NAME`] that has none yet with its project's key; answers the

@@ -1704,7 +1704,8 @@ const PIPELINE_ROWS_0072: &[(&str, &str)] = &[
 
 /// T-7198 PK-1f: the run log, rejects, status, templates, record hashes and source ledger of
 /// today are keyed by the backfill and read only under their key; the log writes new lines in the
-/// key and keeps none for a project without one.
+/// key, and a project with no key yet keeps and reads its runs unkeyed in phase one, the passes
+/// over every project included, until the backfill keys them.
 #[tokio::test]
 async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
     let (state, placed, orphan, key) =
@@ -1724,16 +1725,21 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             .expect("append");
     }
     let stamped: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1)",
+        "SELECT project, project_id::text FROM pipeline_log WHERE run = 'r2' AND project = ANY($1) \
+         ORDER BY project = $2",
     )
     .bind(vec![placed.clone(), orphan.clone()])
+    .bind(&orphan)
     .fetch_all(&pool)
     .await
     .expect("rows");
     assert_eq!(
         stamped,
-        [(placed.clone(), Some(key.project.to_string()))],
-        "a placed project's line lands in its key and an orphan's line is not kept"
+        [
+            (placed.clone(), Some(key.project.to_string())),
+            (orphan.clone(), None)
+        ],
+        "a placed project's line lands in its key and a project with no key yet keeps it unkeyed"
     );
     assert_eq!(
         state
@@ -1742,8 +1748,16 @@ async fn pipeline_rows_are_keyed_and_read_only_under_their_key() {
             .await
             .expect("runs")
             .len(),
-        0
+        2,
+        "a project with no key yet reads its runs (the train smoke's run history)"
     );
+    let ran = state.pipeline_log.ran().await.expect("ran");
+    for project in [&placed, &orphan] {
+        assert!(
+            ran.contains_key(&(project.clone(), "trees".to_owned())),
+            "the pass over every project reads {project}"
+        );
+    }
     assert_eq!(
         state
             .pipeline_log
