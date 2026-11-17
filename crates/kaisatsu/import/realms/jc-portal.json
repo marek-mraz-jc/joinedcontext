@@ -698,6 +698,7 @@
       "clientRoles": {
         "realm-management": [
           "manage-users",
+          "manage-smtp",
           "query-groups"
         ]
       }
