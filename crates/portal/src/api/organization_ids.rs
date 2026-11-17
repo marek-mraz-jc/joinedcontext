@@ -26,7 +26,10 @@ use jc_core::names::OrganizationId;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::auth::session::{CurrentUser, Identity};
+// The operators' door check (T-7129 §4): a person of the operators' group with a second
+// factor, never a service account or a client's token; minting is a person's decision.
+use super::operator_changes::operator;
+use crate::auth::session::CurrentUser;
 use crate::domain_verification::{mint_challenge, record, txt_name, TxtRecords, Unanswered};
 use crate::error::{ApiError, ProblemDetails};
 use crate::state::AppState;
@@ -81,19 +84,6 @@ pub struct Minted {
     pub domain: String,
     #[schema(value_type = String, format = DateTime)]
     pub minted_at: DateTime<Utc>,
-}
-
-/// The caller, when it is a person of the operators' group; 403 for anybody else, a service
-/// account of that group included: minting is a person's decision.
-fn operator(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
-    if !crate::permissions::in_group(identity, &state.config.bootstrap_admins)
-        || crate::permissions::is_service_account(&state.mirror, identity)
-    {
-        return Err(ApiError::Denied(
-            "minting an Organization id is for the installation's operators (EP-186)".into(),
-        ));
-    }
-    Ok(())
 }
 
 /// The domain of the body and its id: 400 for a body that does not parse, 422 naming `domain`

@@ -32,7 +32,8 @@ requires_helm = pytest.mark.skipif(shutil.which("helm") is None, reason="helm no
 def render(*sets: str) -> list[dict]:
     args = ["helm", "template", "configuration", str(CHART), "--namespace", NS,
             "--set", "composer.enabled=true", "--set", "composer.serviceAccount=jc",
-            "--set", "composer.namespace=jc", "--set", "edge.clusterIssuer=letsencrypt-prod"]
+            "--set", "composer.namespace=jc", "--set", "edge.clusterIssuer=letsencrypt-prod",
+            "--set", "edge.ingressClass=traefik", "--set", "edge.hosts={dev.example,login.dev.example}"]
     for s in sets:
         args += ["--set", s]
     out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
@@ -178,6 +179,55 @@ def test_an_ingress_to_another_service_or_secret_is_refused(policy, tmp_path):
     default = ingress()
     default["spec"]["defaultBackend"] = {"service": {"name": "jc", "port": {"number": 8080}}}
     assert failed(policy, default, tmp_path) == {"ingress-secret-and-backend"}
+
+
+@requires_kyverno
+@requires_helm
+def test_an_ingress_with_a_shim_middleware_or_another_class_is_refused(policy, tmp_path):
+    """T-7138 bounce row 1: a cert-manager annotation would order a Certificate past the issuer
+    rule, a middleware would rewrite what the gateway receives; only the listener's pass."""
+    listener = ingress()
+    listener["metadata"]["annotations"] = {"traefik.ingress.kubernetes.io/router.tls.options": "apisix-bsi-tr-02102@kubernetescrd"}
+    assert failed(policy, listener, tmp_path) == set()
+    for key, value in (
+        ("cert-manager.io/cluster-issuer", "attacker"),
+        ("cert-manager.io/issuer", "attacker"),
+        ("traefik.ingress.kubernetes.io/router.middlewares", "jc-strip@kubernetescrd"),
+    ):
+        shim = ingress()
+        shim["metadata"]["annotations"] = {key: value}
+        assert failed(policy, shim, tmp_path) == {"ingress-secret-and-backend"}, key
+    other = ingress()
+    other["spec"]["ingressClassName"] = "nginx"
+    assert failed(policy, other, tmp_path) == {"ingress-secret-and-backend"}
+
+
+@requires_kyverno
+@requires_helm
+def test_the_edges_own_hosts_and_another_issuer_group_are_refused(policy, tmp_path):
+    """T-7138 bounce row 2: a composer object never names a host of the edge's own (the sign-in
+    host above all), a Certificate names one host, and its issuer is cert-manager's."""
+    login = ingress()
+    login["spec"]["rules"][0]["host"] = "login.dev.example"
+    assert failed(policy, login, tmp_path) == {"ingress-secret-and-backend"}
+    for spec in (
+        {"dnsNames": ["login.dev.example"]},
+        {"dnsNames": ["smartcity.bbsk.sk", "opendata.bbsk.sk"]},
+        {"issuerRef": {"name": "letsencrypt-prod", "kind": "ClusterIssuer", "group": "attacker.io"}},
+    ):
+        assert failed(policy, certificate(**spec), tmp_path) == {"certificate-secret-and-issuer"}, spec
+    grouped = certificate(issuerRef={"name": "letsencrypt-prod", "kind": "ClusterIssuer", "group": "cert-manager.io"})
+    assert failed(policy, grouped, tmp_path) == set()
+
+
+@requires_helm
+def test_jcs_composer_does_not_render_without_the_policy():
+    """T-7138 bounce row 3: jc's composer without Kyverno would hold create and delete on every
+    Ingress and Certificate of the namespace with nothing narrowing them."""
+    with pytest.raises(subprocess.CalledProcessError) as refused:
+        render("composer.admission.required=true", "composer.admission.enabled=false")
+    assert "composer.admission.enabled" in refused.value.stderr
+    assert [d for d in render("composer.admission.required=true") if d["kind"] == "ClusterPolicy"]
 
 
 @requires_kyverno

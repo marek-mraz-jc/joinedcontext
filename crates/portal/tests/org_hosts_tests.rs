@@ -497,6 +497,96 @@ async fn the_eleventh_certificate_a_day_and_the_twenty_first_a_week_wait() {
 /// Delete order: the row is `removed` first (jc answers `421`), the edge file drops its route,
 /// then the wave deletes the Ingress and after it the Certificate; never before the edge file
 /// was written this pass, and never an object it did not label.
+/// A Certificate request Kubernetes refuses gives its slot back (T-7138 bounce row 6): the
+/// ledger counts a request before it is sent, so a refusal must not keep a slot taken.
+#[tokio::test]
+async fn a_refused_certificate_request_gives_its_slot_back() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    clear_ledger(&pool).await;
+    let host = format!("{}.bbsk.sk", run("refused"));
+    row(&pool, &host, "dns-ok").await;
+    let server = api(&[]).await;
+    holds(&server, labelled("Ingress", &host)).await;
+    Mock::given(method("POST"))
+        .and(path(CERTS))
+        .and(body_string_contains(object_name(&host)))
+        .respond_with(
+            ResponseTemplate::new(403).set_body_json(json!({ "message": "denied by admission" })),
+        )
+        .mount(&server)
+        .await;
+    fallback(&server).await;
+
+    wave(&server, &pool, dns(&[])).converge(false).await;
+
+    assert_eq!(
+        posted(&server, CERTS, &[&host]).await.len(),
+        1,
+        "the request was sent"
+    );
+    let counted: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM organization_host_certificates WHERE host = $1")
+            .bind(&host)
+            .fetch_one(&pool)
+            .await
+            .expect("a count");
+    assert_eq!(counted, 0, "a refused request holds no slot");
+    let (state, detail) = state(&pool, &host).await;
+    assert_eq!(state, "dns-ok");
+    assert!(
+        detail.is_some_and(|d| d.contains("Certificate")),
+        "the refusal is named"
+    );
+    assert!(!audited(&pool, &host)
+        .await
+        .contains(&"certificate.created".to_owned()));
+    done(&pool, &[&host]).await;
+}
+
+/// The Certificate of a removed host stays while its Ingress does (T-7138 bounce row 6): an
+/// Ingress whose delete failed would otherwise serve the host from a Secret nobody renews.
+#[tokio::test]
+async fn a_certificate_waits_while_its_ingress_could_not_be_deleted() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let pool = pool().await;
+    let host = format!("{}.bbsk.sk", run("stuck"));
+    row(&pool, &host, "served").await;
+    done(&pool, &[&host]).await;
+    let name = object_name(&host);
+    let server = api(&[&host]).await;
+    let selector =
+        "app.kubernetes.io/managed-by=joinedcontext-portal,app.kubernetes.io/component=org-host";
+    for (collection, kind, answer) in [(CERTS, "Certificate", 200), (INGRESSES, "Ingress", 500)] {
+        Mock::given(method("GET"))
+            .and(path(collection))
+            .and(query_param("labelSelector", selector))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "items": [labelled(kind, &host)] })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(format!("{collection}/{name}")))
+            .respond_with(ResponseTemplate::new(answer).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+    }
+    fallback(&server).await;
+
+    wave(&server, &pool, dns(&[])).converge(true).await;
+
+    assert_eq!(
+        writes(&server, &[&host]).await,
+        [format!("DELETE {INGRESSES}/{name}")]
+    );
+    assert!(
+        audited(&pool, &host).await.is_empty(),
+        "nothing was deleted"
+    );
+}
+
 #[tokio::test]
 async fn a_removed_host_loses_its_ingress_then_its_certificate_after_the_edge_file() {
     let _one = ONE_AT_A_TIME.lock().await;

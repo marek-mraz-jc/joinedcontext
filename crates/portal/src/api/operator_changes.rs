@@ -153,7 +153,7 @@ pub struct OperatorChangeList {
 
 /// The caller, when it is a person of the operators' group with a second factor in this
 /// session; `403` for anybody else, a service account of that group included.
-fn operator(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
+pub(crate) fn operator(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
     if !crate::permissions::in_group(identity, &state.config.bootstrap_admins)
         || crate::permissions::is_service_account(&state.mirror, identity)
         || identity.client.is_some()

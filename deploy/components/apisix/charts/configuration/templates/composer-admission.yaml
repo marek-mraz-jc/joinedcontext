@@ -1,14 +1,27 @@
+{{- if and .Values.composer.enabled .Values.composer.admission.required (not .Values.composer.admission.enabled) }}
+{{- fail "composer.admission.enabled: the composer's create and delete on every Ingress and Certificate of this namespace are held by the Kyverno policy alone; install the runtime-policies component or turn the composer off (T-7138)" }}
+{{- end }}
 {{- if and .Values.composer.enabled .Values.composer.admission.enabled }}
 {{- $issuers := list .Values.edge.clusterIssuer }}
 {{- with .Values.composer.dns01Issuer }}{{ $issuers = append $issuers . }}{{ end }}
+{{- /* The only annotations a composer Ingress carries: the edge's listener and affinity ones,
+       as crates/portal/src/reconciler/app_hosts.rs ROUTER_ANNOTATIONS copies them. No
+       cert-manager.io/* (the ingress-shim would order a Certificate past the issuer rule) and no
+       router.middlewares (a middleware would rewrite what the gateway receives). */}}
+{{- $annotations := list "ingress.kubernetes.io/affinity" "traefik.ingress.kubernetes.io/router.tls" "traefik.ingress.kubernetes.io/router.tls.options" "traefik.ingress.kubernetes.io/router.entrypoints" "nginx.ingress.kubernetes.io/ssl-ciphers" "nginx.ingress.kubernetes.io/ssl-prefer-server-ciphers" "nginx.ingress.kubernetes.io/force-ssl-redirect" }}
+{{- /* The edge's own hosts are helm's Ingress and Certificate; a composer object never names one. */}}
+{{- $reserved := .Values.edge.hosts | default list }}
 {{- $subject := dict "kind" "ServiceAccount" "name" .Values.composer.serviceAccount "namespace" .Values.composer.namespace }}
 # What the edge-file composer may send in this namespace (evidence/T-7129/design.md §3, T-7138).
 # RBAC cannot narrow `create` or `delete` to labelled objects, and a Certificate whose
 # `secretName` is the edge's own TLS Secret would overwrite it. So for the composer's
 # ServiceAccount alone: a Certificate or Ingress only named `jc-org-*` or `app-*`, labelled as
 # the Portal's host objects, its Secret its own name plus `-tls`, a Certificate only from the
-# edge's issuer (or the dns01 one named), every Ingress backend the APISIX gateway; and a
-# delete only of an object carrying those labels.
+# edge's issuer (or the dns01 one named), every Ingress backend the APISIX gateway, the edge's
+# ingress class and only the listed annotations, no host of the edge's own; and a delete only
+# of an object carrying those labels. Why no tighter host rule: the registry hosts are rows in
+# jc's database, which admission cannot read; jc writes only validated registry rows and
+# jc-router serves a host only once its row is served (T-7135).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -53,7 +66,8 @@ spec:
             subjects: [{{ $subject | toJson }}]
       validate:
         message: >-
-          A composer Certificate keeps its own Secret (its name plus -tls) and is issued by
+          A composer Certificate keeps its own Secret (its name plus -tls), names one host that
+          is not one of the edge's own, and is issued by the cert-manager.io ClusterIssuer
           {{ join " or " $issuers }}.
         deny:
           conditions:
@@ -67,6 +81,15 @@ spec:
               - key: "{{`{{ request.object.spec.issuerRef.kind || '' }}`}}"
                 operator: NotEquals
                 value: ClusterIssuer
+              - key: "{{`{{ request.object.spec.issuerRef.group || 'cert-manager.io' }}`}}"
+                operator: NotEquals
+                value: cert-manager.io
+              - key: '{{ "{{ request.object.spec.dnsNames || `[]` }}" }}'
+                operator: AnyIn
+                value: {{ $reserved | toJson }}
+              - key: '{{ "{{ length(request.object.spec.dnsNames || `[]`) }}" }}'
+                operator: NotEquals
+                value: 1
     - name: ingress-secret-and-backend
       match:
         any:
@@ -77,8 +100,10 @@ spec:
             subjects: [{{ $subject | toJson }}]
       validate:
         message: >-
-          A composer Ingress names only its own TLS Secret (its name plus -tls) and routes only
-          to the Service {{ .Values.composer.gatewayService }}.
+          A composer Ingress names only its own TLS Secret (its name plus -tls), routes only to
+          the Service {{ .Values.composer.gatewayService }} through the ingress class
+          {{ .Values.edge.ingressClass }}, carries only the edge's listener annotations
+          ({{ join ", " $annotations }}) and names no host of the edge's own.
         deny:
           conditions:
             any:
@@ -94,6 +119,15 @@ spec:
               - key: "{{`{{ request.object.spec.defaultBackend || '' }}`}}"
                 operator: NotEquals
                 value: ""
+              - key: "{{`{{ request.object.spec.ingressClassName || '' }}`}}"
+                operator: NotEquals
+                value: {{ .Values.edge.ingressClass | quote }}
+              - key: '{{ "{{ keys(request.object.metadata.annotations || `{}`) }}" }}'
+                operator: AnyNotIn
+                value: {{ $annotations | toJson }}
+              - key: '{{ "{{ request.object.spec.rules[].host || `[]` }}" }}'
+                operator: AnyIn
+                value: {{ $reserved | toJson }}
     - name: delete-labelled-only
       match:
         any:

@@ -142,10 +142,17 @@ async fn only_an_operator_with_a_second_factor_proposes_or_approves() {
     password_only.second_factor = false;
     let (status, refused) = propose(&state, password_only.clone(), change.clone()).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    let administrator = common::organization_admin(&state.mirror, "org-admin");
+    let (status, refused) = propose(&state, administrator.clone(), change.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "an Organization administrator: {refused}"
+    );
     let (status, made) = propose(&state, operator(&state, "ops-a"), change).await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().expect("an id");
-    for who in [nobody, password_only] {
+    for who in [nobody, password_only, administrator] {
         assert_eq!(
             decide(&state, who, id, "approve").await.0,
             StatusCode::FORBIDDEN
@@ -194,8 +201,14 @@ async fn only_an_operator_reads_the_hosts_the_audit_and_the_organizations() {
     ];
     let mut password_only = operator(&state, "ops-a");
     password_only.second_factor = false;
+    // An Organization's own administrator is no installation operator (T-7138 bounce row 5).
+    let administrator = common::organization_admin(&state.mirror, "org-admin");
     for path in reads {
-        for who in [person("nobody"), password_only.clone()] {
+        for who in [
+            person("nobody"),
+            password_only.clone(),
+            administrator.clone(),
+        ] {
             let answer = send(&state, who, "GET", path, None).await;
             assert_eq!(
                 answer.status,

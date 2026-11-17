@@ -43,6 +43,7 @@ composer:
 {{- end }}
   admission:
     enabled: {{ has "runtime-policies" .Values.components }}
+    required: {{ $jcComposer }}
   dns01Issuer: {{ dig "jc" "server" "dns01Issuer" "" .Values | quote }}
 
 # The SAN list is the apex plus every routed subdomain, derived from the same route map the

@@ -358,18 +358,36 @@ impl OrgHosts {
             ));
         }
         let name = object_name(host);
-        if let Err(err) = self.kube.create(wanted).await {
-            return Step::Waits(said(&format!("Certificate {name}"), &err));
-        }
-        if let Err(err) = sqlx::query(
-            "INSERT INTO organization_host_certificates (host, registered_domain) VALUES ($1, $2)",
+        // Counted before it is requested: a request the ledger missed would let the pacing pass
+        // Let's Encrypt's limit. A request that fails gives its slot back; if even that fails
+        // the slot stays taken, which errs on the limit's side.
+        let counted: i64 = match sqlx::query_scalar(
+            "INSERT INTO organization_host_certificates (host, registered_domain) VALUES ($1, $2) \
+             RETURNING id",
         )
         .bind(host)
         .bind(&domain)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         {
-            tracing::error!(error = %err, %host, "a requested certificate was not counted");
+            Ok(id) => id,
+            Err(err) => {
+                tracing::error!(error = %err, %host, "the certificate ledger could not be written");
+                return Step::Waits(
+                    "the certificate ledger could not be written; tried again next pass".into(),
+                );
+            }
+        };
+        if let Err(err) = self.kube.create(wanted).await {
+            if let Err(back) =
+                sqlx::query("DELETE FROM organization_host_certificates WHERE id = $1")
+                    .bind(counted)
+                    .execute(&self.pool)
+                    .await
+            {
+                tracing::warn!(error = %back, %host, "a failed request keeps its certificate slot");
+            }
+            return Step::Waits(said(&format!("Certificate {name}"), &err));
         }
         self.step(
             host,
@@ -455,39 +473,62 @@ impl OrgHosts {
             .iter()
             .map(|row| (object_name(&row.host), row.host.as_str()))
             .collect();
+        // A Certificate goes only once its Ingress is gone: an Ingress left behind would serve
+        // the host from a Secret nobody renews. Ingresses not read this pass keep every one.
+        let Some(left) = self
+            .delete_unkept(INGRESS_API, "Ingress", &keep, &hosts)
+            .await
+        else {
+            return;
+        };
+        let keep: BTreeSet<String> = keep.union(&left).cloned().collect();
+        self.delete_unkept(CERTIFICATE_API, "Certificate", &keep, &hosts)
+            .await;
+    }
+
+    /// Deletes this wave's objects of `kind` not in `keep`, each with its audit row; the names
+    /// whose delete failed, `None` when the objects could not be listed.
+    async fn delete_unkept(
+        &self,
+        api: &str,
+        kind: &str,
+        keep: &BTreeSet<String>,
+        hosts: &std::collections::BTreeMap<String, &str>,
+    ) -> Option<BTreeSet<String>> {
         let ns = self.namespace.as_str();
         let selector = format!("{MANAGED_BY}={MANAGED_VALUE},{COMPONENT}={COMPONENT_VALUE}");
-        for (api, kind) in [(INGRESS_API, "Ingress"), (CERTIFICATE_API, "Certificate")] {
-            let held = match self.kube.list(api, kind, ns, &selector).await {
-                Ok(held) => held,
-                Err(err) => {
-                    tracing::warn!(error = %said(kind, &err), "registry hosts' objects were not listed");
-                    continue;
-                }
+        let held = match self.kube.list(api, kind, ns, &selector).await {
+            Ok(held) => held,
+            Err(err) => {
+                tracing::warn!(error = %said(kind, &err), "registry hosts' objects were not listed");
+                return None;
+            }
+        };
+        let mut failed = BTreeSet::new();
+        for object in held {
+            let Some(name) = object["metadata"]["name"].as_str() else {
+                continue;
             };
-            for object in held {
-                let Some(name) = object["metadata"]["name"].as_str() else {
-                    continue;
-                };
-                if !managed(&object) || keep.contains(name) {
-                    continue;
+            if !managed(&object) || keep.contains(name) {
+                continue;
+            }
+            match self.kube.delete(api, kind, ns, name).await {
+                Ok(()) => {
+                    let host = hosts.get(name).copied().unwrap_or(name);
+                    let action = if kind == "Ingress" {
+                        "ingress.deleted"
+                    } else {
+                        "certificate.deleted"
+                    };
+                    self.step(host, action, json!({ "object": name })).await;
                 }
-                match self.kube.delete(api, kind, ns, name).await {
-                    Ok(()) => {
-                        let host = hosts.get(name).copied().unwrap_or(name);
-                        let action = if kind == "Ingress" {
-                            "ingress.deleted"
-                        } else {
-                            "certificate.deleted"
-                        };
-                        self.step(host, action, json!({ "object": name })).await;
-                    }
-                    Err(err) => {
-                        tracing::warn!(%name, error = %said(&format!("{kind} {name}"), &err), "a removed host's object was not deleted")
-                    }
+                Err(err) => {
+                    tracing::warn!(%name, error = %said(&format!("{kind} {name}"), &err), "a removed host's object was not deleted");
+                    failed.insert(name.to_owned());
                 }
             }
         }
+        Some(failed)
     }
 
     /// Moves `host` from `from` to `to`, clearing what it waited for, with its audit row in one
