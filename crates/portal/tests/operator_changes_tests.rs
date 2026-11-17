@@ -890,11 +890,12 @@ async fn the_e_mail_server_waits_for_a_second_operator_and_its_password_is_never
         }})
     };
 
-    // An Organization's administrator, and a bearer token in the group, get 403 on every door.
+    // An Organization's administrator and a password-only operator get 403 on every door (a
+    // bearer token in the group: `a_bearer_in_the_operators_group_is_no_operator`).
     let org_admin = common::organization_admin(&state.mirror, "org-admin");
-    let mut bearer = operator(&state, "robot");
-    bearer.client = Some("ops-robot".into());
-    for who in [org_admin, bearer] {
+    let mut password_only = operator(&state, "ops-c");
+    password_only.second_factor = false;
+    for who in [org_admin, password_only] {
         for (verb, uri, body) in [
             ("GET", "/api/v1/operator/installation", None),
             ("POST", "/api/v1/operator/installation/test-email", None),

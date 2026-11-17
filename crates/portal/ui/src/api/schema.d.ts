@@ -993,6 +993,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/installation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get The Installation's Settings
+         * @description The installation's e-mail server as the sign-in service holds it, never its password, and the open Change for it (T-7152). For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_installation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operator/installation/test-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send A Test E-mail
+         * @description Sends one test e-mail to the operator's own address through the saved e-mail server and says whether the server took it (T-7152). Changes nothing; the operators' audit records it.
+         */
+        post: operations["operator_installation_test_email"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/operator/organizations": {
         parameters: {
             query?: never;
@@ -10046,6 +10086,7 @@ export interface components {
             organization?: string | null;
             organizationId?: string | null;
             role?: string | null;
+            smtp?: null | components["schemas"]["SmtpSettings"];
             subject?: string | null;
         };
         /**
@@ -10114,6 +10155,7 @@ export interface components {
              *     `portal-site` or `host`.
              */
             role?: string | null;
+            smtp?: null | components["schemas"]["SmtpRequest"];
             /**
              * @description `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
              *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
@@ -11863,6 +11905,12 @@ export interface components {
             /** @description Whether every page below the named ones, and the documents they link, change too. */
             subtree?: boolean;
         };
+        /** @description What the installation provides, as its operators set it from the Installation page (T-7152). */
+        Installation: {
+            smtp?: null | components["schemas"]["SmtpServer"];
+            /** @description The open `SmtpSet` Change waiting for a second operator, if any. */
+            smtpChange?: string | null;
+        };
         /** @description One `CkanInstance`, without anything secret about it. */
         InstanceSummary: {
             /** @description The name of the secret holding the API token. Never its value (EP-67). */
@@ -12666,7 +12714,7 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
             domain?: string | null;
@@ -14500,6 +14548,11 @@ export interface components {
         };
         SetupState: {
             complete: boolean;
+            /**
+             * @description Whether the caller is one of the installation's operators, who set the operator items
+             *     (T-7152): the page links them there, and tells anybody else their operator sets them.
+             */
+            operates: boolean;
             operator: components["schemas"]["SetupItem"][];
             steps: components["schemas"]["SetupItem"][];
         };
@@ -14549,6 +14602,73 @@ export interface components {
             /** @description `policy_grant_matched`, `prohibited`, `no_grant` or `not_admitted`. */
             reason: string;
             subject: components["schemas"]["Resolved"];
+        };
+        /**
+         * @description `SmtpSet`: the e-mail server as an operator types it.
+         * @example {
+         *       "from": "noreply@example.org",
+         *       "host": "smtp.example.org",
+         *       "password": "app-password",
+         *       "port": 587,
+         *       "tls": "starttls",
+         *       "user": "mailer"
+         *     }
+         */
+        SmtpRequest: {
+            /** @description The address e-mails come from, e.g. `noreply@example.org`. */
+            from: string;
+            /** @description The server's host name, e.g. `smtp.example.org`. */
+            host: string;
+            /**
+             * @description Write-only: sealed until the approval, then kept by the sign-in service under its key;
+             *     never read back. Absent keeps the stored password.
+             */
+            password?: string | null;
+            /**
+             * Format: int32
+             * @description e.g. `587` for `starttls`, `465` for `ssl`.
+             */
+            port: number;
+            /** @description `starttls` or `ssl`; plain SMTP is never offered. */
+            tls: string;
+            /** @description The SMTP user; empty when the server takes mail without a sign-in. */
+            user?: string;
+        };
+        /**
+         * @description The realm's SMTP server as the Portal reads and writes it (kaisatsu's `smtp-server` door,
+         *     T-7152). The password is never part of it.
+         */
+        SmtpServer: {
+            /** @description e.g. `noreply@example.org` */
+            from: string;
+            /** @description e.g. `smtp.example.org` */
+            host: string;
+            /** @description Whether a password is stored; the password itself is never read back. */
+            passwordSet?: boolean;
+            /**
+             * Format: int32
+             * @description e.g. `587`
+             */
+            port: number;
+            /** @description `starttls` or `ssl` */
+            tls: string;
+            /** @description Empty when the server takes mail without a sign-in. */
+            user: string;
+        };
+        /** @description `SmtpSet` as it is kept and listed: the settings, and whether a new password came with them. */
+        SmtpSettings: {
+            from: string;
+            host: string;
+            newPassword: boolean;
+            /** Format: int32 */
+            port: number;
+            tls: string;
+            user: string;
+        };
+        /** @description Whether the SMTP server took a test e-mail, and why not when it did not. */
+        SmtpTest: {
+            reason?: string | null;
+            sent: boolean;
         };
         SortKey: {
             attr: string;
@@ -17992,6 +18112,109 @@ export interface operations {
                 };
             };
             /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_installation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Installation"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database, or the sign-in service does not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_installation_test_email: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether the server took it, and why not */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmtpTest"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The operator's account has no e-mail address */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database, or the sign-in service does not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

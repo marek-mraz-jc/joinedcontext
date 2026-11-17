@@ -271,7 +271,7 @@ describe("installation", () => {
     });
     expect(await screen.findByText(E.empty)).toBeTruthy();
     expect(screen.getByText(E.unset)).toBeTruthy();
-    expect(screen.getByRole("button", { name: E.test })).toBeDisabled();
+    expect(screen.getByRole("button", { name: E.test })).toHaveAttribute("aria-disabled", "true");
     for (const field of ["host", "tls", "port", "from", "user", "password"] as const) {
       expect(screen.getByText(E.hint[field])).toBeTruthy();
     }
@@ -330,7 +330,7 @@ describe("installation", () => {
       path === "/api/v1/operator/installation" ? json({ smtp: SMTP, smtpChange: "c3" }) : undefined,
     );
     expect(await screen.findByText(E.waiting, { exact: false })).toBeTruthy();
-    expect(screen.getByRole("button", { name: E.propose })).toBeDisabled();
+    expect(screen.getByRole("button", { name: E.propose })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows an Organization administrator the server's refusal", async () => {

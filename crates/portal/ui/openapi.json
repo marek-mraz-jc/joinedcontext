@@ -3208,6 +3208,120 @@
         }
       }
     },
+    "/api/v1/operator/installation": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get The Installation's Settings",
+        "description": "The installation's e-mail server as the sign-in service holds it, never its password, and the open Change for it (T-7152). For a person of the operators' group with a second factor.",
+        "operationId": "operator_installation",
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Installation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database, or the sign-in service does not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operator/installation/test-email": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Send A Test E-mail",
+        "description": "Sends one test e-mail to the operator's own address through the saved e-mail server and says whether the server took it (T-7152). Changes nothing; the operators' audit records it.",
+        "operationId": "operator_installation_test_email",
+        "responses": {
+          "200": {
+            "description": "Whether the server took it, and why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SmtpTest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The operator's account has no e-mail address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database, or the sign-in service does not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/operator/organizations": {
       "get": {
         "tags": [
@@ -52601,6 +52715,16 @@
               "null"
             ]
           },
+          "smtp": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpSettings"
+              }
+            ]
+          },
           "subject": {
             "type": [
               "string",
@@ -52752,6 +52876,17 @@
               "null"
             ],
             "description": "`HostAdd`: what answers on the host: `working`, `opendata`, `api`, `signin`, `apps`,\n`portal-site` or `host`."
+          },
+          "smtp": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpRequest",
+                "description": "`SmtpSet`: the installation's e-mail server."
+              }
+            ]
           },
           "subject": {
             "type": [
@@ -57390,6 +57525,30 @@
         },
         "additionalProperties": false
       },
+      "Installation": {
+        "type": "object",
+        "description": "What the installation provides, as its operators set it from the Installation page (T-7152).",
+        "properties": {
+          "smtp": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SmtpServer",
+                "description": "The e-mail server the sign-in service sends invitations and password resets through;\nabsent while none is set."
+              }
+            ]
+          },
+          "smtpChange": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The open `SmtpSet` Change waiting for a second operator, if any."
+          }
+        }
+      },
       "InstanceSummary": {
         "type": "object",
         "description": "One `CkanInstance`, without anything secret about it.",
@@ -59468,7 +59627,8 @@
           "HostAdd",
           "HostRemove",
           "OperatorAdd",
-          "OperatorRemove"
+          "OperatorRemove",
+          "SmtpSet"
         ]
       },
       "OperatorOrganization": {
@@ -64307,11 +64467,16 @@
         "required": [
           "complete",
           "steps",
-          "operator"
+          "operator",
+          "operates"
         ],
         "properties": {
           "complete": {
             "type": "boolean"
+          },
+          "operates": {
+            "type": "boolean",
+            "description": "Whether the caller is one of the installation's operators, who set the operator items\n(T-7152): the page links them there, and tells anybody else their operator sets them."
           },
           "operator": {
             "type": "array",
@@ -64454,6 +64619,147 @@
           },
           "subject": {
             "$ref": "#/components/schemas/Resolved"
+          }
+        }
+      },
+      "SmtpRequest": {
+        "type": "object",
+        "description": "`SmtpSet`: the e-mail server as an operator types it.",
+        "required": [
+          "host",
+          "port",
+          "tls",
+          "from"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The address e-mails come from, e.g. `noreply@example.org`."
+          },
+          "host": {
+            "type": "string",
+            "description": "The server's host name, e.g. `smtp.example.org`."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Write-only: sealed until the approval, then kept by the sign-in service under its key;\nnever read back. Absent keeps the stored password."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "e.g. `587` for `starttls`, `465` for `ssl`.",
+            "minimum": 0
+          },
+          "tls": {
+            "type": "string",
+            "description": "`starttls` or `ssl`; plain SMTP is never offered."
+          },
+          "user": {
+            "type": "string",
+            "description": "The SMTP user; empty when the server takes mail without a sign-in."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "from": "noreply@example.org",
+          "host": "smtp.example.org",
+          "password": "app-password",
+          "port": 587,
+          "tls": "starttls",
+          "user": "mailer"
+        }
+      },
+      "SmtpServer": {
+        "type": "object",
+        "description": "The realm's SMTP server as the Portal reads and writes it (kaisatsu's `smtp-server` door,\nT-7152). The password is never part of it.",
+        "required": [
+          "host",
+          "port",
+          "tls",
+          "from",
+          "user"
+        ],
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "e.g. `noreply@example.org`"
+          },
+          "host": {
+            "type": "string",
+            "description": "e.g. `smtp.example.org`"
+          },
+          "passwordSet": {
+            "type": "boolean",
+            "description": "Whether a password is stored; the password itself is never read back."
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "description": "e.g. `587`",
+            "minimum": 0
+          },
+          "tls": {
+            "type": "string",
+            "description": "`starttls` or `ssl`"
+          },
+          "user": {
+            "type": "string",
+            "description": "Empty when the server takes mail without a sign-in."
+          }
+        }
+      },
+      "SmtpSettings": {
+        "type": "object",
+        "description": "`SmtpSet` as it is kept and listed: the settings, and whether a new password came with them.",
+        "required": [
+          "host",
+          "port",
+          "tls",
+          "from",
+          "user",
+          "newPassword"
+        ],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "boolean"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "tls": {
+            "type": "string"
+          },
+          "user": {
+            "type": "string"
+          }
+        }
+      },
+      "SmtpTest": {
+        "type": "object",
+        "description": "Whether the SMTP server took a test e-mail, and why not when it did not.",
+        "required": [
+          "sent"
+        ],
+        "properties": {
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sent": {
+            "type": "boolean"
           }
         }
       },

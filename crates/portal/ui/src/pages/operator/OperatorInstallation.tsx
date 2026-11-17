@@ -3,7 +3,7 @@ import type { FormEvent, JSX } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { reasonOf } from "../../api/client";
+import { ApiError, reasonOf } from "../../api/client";
 import { Alert, Badge, Button, Card, CardHeader, Field, Input, PageFailed, PageLoading, Select } from "../../components/ui";
 import { operatorInstallation, operatorKeys, proposeChange, sentence, sendTestEmail } from "./operatorApi";
 import type { SmtpServer } from "./operatorApi";
@@ -57,9 +57,10 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
   // The server names the field it refuses ("smtp.host: …"): shown under that field.
   const said = (error: unknown) => (error ? reasonOf(error, t("operator.tryAgain")) : "");
   const fieldOf = (field: string): string[] | undefined => {
-    const text = said(propose.error);
     const name = `smtp.${field}:`;
-    return text.startsWith(name) ? [sentence(text.slice(name.length).trim())] : undefined;
+    const lines = propose.error instanceof ApiError ? (propose.error.problem?.errors ?? []) : [];
+    const line = [...lines, said(propose.error)].find((text) => text.startsWith(name));
+    return line ? [sentence(line.slice(name.length).trim())] : undefined;
   };
   const fields = ["host", "port", "tls", "from", "user", "password"];
   const elsewhere = propose.isError && !fields.some((field) => fieldOf(field));
