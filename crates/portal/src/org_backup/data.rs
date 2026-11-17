@@ -35,9 +35,10 @@ pub const FORMAT_VERSION: u32 = 2;
 /// The layout before project folders (T-7168): every Portal row in `module/portal/<table>.jsonl`.
 pub const FORMAT_FLAT: u32 = 1;
 
-/// The folder of one project's Portal rows: `module/portal/project/<ProjectId>/`.
+/// The folder of one project's Portal rows: `module/portal/project/<ProjectId>/`, the id in its
+/// 26-character path form (TEN-01), never the dashed UUID.
 pub fn project_folder(project: &jc_types::ProjectId) -> String {
-    format!("module/portal/project/{project}/")
+    format!("module/portal/project/{}/", project.path_segment())
 }
 
 /// One table a module exports: the rows `filter` selects (`$1` is the key list named by `keys`,
@@ -96,7 +97,8 @@ pub struct ModuleIndex {
     /// summed over its project folders.
     #[serde(default)]
     pub tables: BTreeMap<String, u64>,
-    /// The project folders, by project id: the project's name when the backup ran (format 2).
+    /// The project folders, by project id in its path form: the project's name when the backup
+    /// ran (format 2).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub projects: BTreeMap<String, String>,
     /// The folder of the Organization's own rows, its reserved project's id (format 2).
@@ -826,9 +828,9 @@ async fn export_module(
         match &folder.project {
             Some(name) => index
                 .projects
-                .insert(folder.key.project.to_string(), name.clone()),
+                .insert(folder.key.project.path_segment(), name.clone()),
             None => {
-                index.organization_project = folder.key.project.to_string();
+                index.organization_project = folder.key.project.path_segment();
                 None
             }
         };

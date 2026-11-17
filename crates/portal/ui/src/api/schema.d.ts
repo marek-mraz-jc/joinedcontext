@@ -9266,7 +9266,7 @@ export interface components {
         };
         /** @description One project folder of an archive the person may restore. */
         ArchivedProject: {
-            /** @description The project's id, the folder's name. */
+            /** @description The project's id in its 26-character path form, the folder's name. */
             id: string;
             /** @description The project's name today. */
             name: string;
@@ -10651,9 +10651,9 @@ export interface components {
             notRestored: {
                 [key: string]: string;
             };
-            /** @description The new project's id; empty on a check, which mints none. */
+            /** @description The new project's id in its path form; empty on a check, which mints none. */
             projectId: string;
-            /** @description The source project's id and name. */
+            /** @description The source project's id (26-character path form) and name. */
             source: string;
             sourceName: string;
             /** @description Rows written per table, and rows a unique rule or a missing reference refused. */
@@ -10879,7 +10879,7 @@ export interface components {
             identity: string;
             /** @description The new project's name, a DNS label no project holds, e.g. `air-quality-restored`. */
             name: string;
-            /** @description The source project's id, one of the version's project list, e.g. `0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10`. */
+            /** @description The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`. */
             project: string;
         };
         /** @description The dry run of one version, or what its restore did. */
@@ -19414,7 +19414,7 @@ export interface operations {
                  *       "apply": false,
                  *       "identity": "AGE-SECRET-KEY-1…",
                  *       "name": "air-quality-restored",
-                 *       "project": "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10"
+                 *       "project": "bm6wyhdpioruxguvhqpu4lt2ca"
                  *     }
                  */
                 "application/json": components["schemas"]["DataCopyInput"];

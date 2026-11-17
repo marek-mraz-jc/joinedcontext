@@ -58,8 +58,8 @@ const RESTORES = [
   { id: 8, versionId: "d1", requestedBy: "jana.kovacova", requestedAt: "2026-11-16T09:40:00Z", state: "pending", plan: PLAN, decidedBy: null, decidedAt: null, message: "" },
 ];
 
-const SOURCE = "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10";
-const COPIED = "5e2a7c44-1b0d-4f6e-8a3c-9d1e2f3a4b5c";
+const SOURCE = "bm6wyhdpioruxguvhqpu4lt2ca";
+const COPIED = "lyvhyrangvhw5crmtupc6m2ewa";
 const COPY_PLAN = {
   versionId: "d1",
   takenAt: "2026-11-16T09:00:00Z",

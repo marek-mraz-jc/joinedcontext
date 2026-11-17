@@ -44,8 +44,8 @@ const PLAN = {
   erasuresReplayed: 0,
 };
 
-const SOURCE = "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10";
-const COPIED = "5e2a7c44-1b0d-4f6e-8a3c-9d1e2f3a4b5c";
+const SOURCE = "bm6wyhdpioruxguvhqpu4lt2ca";
+const COPIED = "lyvhyrangvhw5crmtupc6m2ewa";
 const COPY_PLAN = {
   versionId: "v1",
   takenAt: "2026-11-16T09:11:00Z",
@@ -127,7 +127,7 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
     return route.fulfill({ status: 204, body: "" });
   }
   if (kind === "data" && rest.endsWith("/projects")) {
-    return route.fulfill(json({ projects: [{ id: SOURCE, name: "air-quality" }, { id: "7c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f", name: "mobility" }], deleted: ["old-pilot"] }));
+    return route.fulfill(json({ projects: [{ id: SOURCE, name: "air-quality" }, { id: "pqor4p2klnggnchpafnsyprelu", name: "mobility" }], deleted: ["old-pilot"] }));
   }
   if (kind === "data" && rest.endsWith("/copy")) {
     const input = route.request().postDataJSON() as { name: string; project: string; apply?: boolean };

@@ -742,7 +742,10 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     }
     // Format 2 (T-7208): each project's rows in the folder named by its id, the Organization's
     // own in its reserved project's.
-    let folder = format!("module/portal/project/{city}/");
+    let segment = jc_types::ProjectId::parse_verified(&city)
+        .expect("an id")
+        .path_segment();
+    let folder = format!("module/portal/project/{segment}/");
     assert!(files[&format!("{folder}agent_run_events.jsonl")].contains("run-alfa-1"));
     assert!(files[&format!("{folder}entity_comments.jsonl")].contains("alfa-comment-mark"));
     assert!(
@@ -762,7 +765,15 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     );
     let index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
     assert_eq!(index["formatVersion"], 2);
-    assert_eq!(index["modules"]["portal"]["projects"][&city], "alfa-city");
+    assert_eq!(
+        index["modules"]["portal"]["projects"][&segment],
+        "alfa-city"
+    );
+    assert_eq!(
+        segment.len(),
+        26,
+        "the folder names the id in its path form"
+    );
     let own = index["modules"]["portal"]["organizationProject"]
         .as_str()
         .expect("the Organization's folder");
@@ -1673,12 +1684,13 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
         .expect("count")
     };
     let before = source_rows().await;
-    let source = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
+    let source_id = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
         .await
         .expect("registry")
         .expect("alfa-city's key")
-        .project
-        .to_string();
+        .project;
+    // Doors, folders and the log name an id in its 26-character path form (TEN-01).
+    let source = source_id.path_segment();
     let identity = secret_of(&ids[0]);
 
     let listed = send(
@@ -1727,8 +1739,11 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
     assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
     let plan = body(&applied);
     assert_eq!(plan["erasuresReplayed"], 1, "{plan}");
-    let copy = plan["projectId"].as_str().expect("the new id").to_owned();
-    assert_ne!(copy, source);
+    let copy_id =
+        jc_types::ProjectId::from_path_segment(plan["projectId"].as_str().expect("the new id"))
+            .expect("the path form");
+    assert_ne!(copy_id, source_id);
+    let copy = copy_id.to_string();
     let (parent, organization): (String, String) =
         sqlx::query_as("SELECT parent::text, organization FROM project_ids WHERE id = $1::uuid")
             .bind(&copy)
@@ -1737,7 +1752,7 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
             .expect("the copy's registry row");
     assert_eq!(
         (parent.as_str(), organization.as_str()),
-        (source.as_str(), "alfa")
+        (source_id.to_string().as_str(), "alfa")
     );
     let lineage: (String, String) =
         sqlx::query_as("SELECT source::text, version_id FROM project_copies WHERE id = $1::uuid")
@@ -1745,16 +1760,13 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
             .fetch_one(&db)
             .await
             .expect("the lineage");
-    assert_eq!(lineage, (source.clone(), version.clone()));
+    assert_eq!(lineage, (source_id.to_string(), version.clone()));
     // The copy's rows answer in its own key only, under the new name, the erased one gone.
     let key = joinedcontext_portal::project_ids::recorded(&db, "alfa-city")
         .await
         .expect("registry")
         .expect("key");
-    let copy_key = jc_types::ProjectKey::new(
-        key.org,
-        jc_types::ProjectId::parse_verified(&copy).expect("an id"),
-    );
+    let copy_key = jc_types::ProjectKey::new(key.org, copy_id);
     let mut tx = joinedcontext_portal::db::tenant_tx(&db, copy_key)
         .await
         .expect("tx");
@@ -1792,7 +1804,7 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
         again.text
     );
     assert!(again.text.contains("name:"), "{}", again.text);
-    let unknown = jc_types::ProjectId::mint().to_string();
+    let unknown = jc_types::ProjectId::mint().path_segment();
     let foreign = send(
         &world.state,
         person("ada"),

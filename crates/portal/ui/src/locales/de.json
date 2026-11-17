@@ -13612,7 +13612,8 @@
       "summary": "{rows} Zeilen zum Kopieren nach {name}, {refused} abgelehnt, {erasures} Löschungen erneut angewendet",
       "done": "In {name} wiederhergestellt (Projekt-ID {id}). {source} wurde nicht verändert.",
       "first": "Wählen Sie zuerst ein Projekt und geben Sie einen Namen ein",
-      "caption": "Zeilen je Tabelle, die die Kopie schreibt"
+      "caption": "Zeilen je Tabelle, die die Kopie schreibt",
+      "refusedNote": "Abgelehnte Zeilen verletzen eine Regel der heutigen Daten (ein Name, den eine andere Zeile hat, oder ein Verweis auf eine Zeile, die die Kopie nicht hat) und werden ausgelassen; der Rest wird kopiert."
     }
   },
   "operator": {

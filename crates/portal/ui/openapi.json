@@ -4641,7 +4641,7 @@
                 "apply": false,
                 "identity": "AGE-SECRET-KEY-1…",
                 "name": "air-quality-restored",
-                "project": "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10"
+                "project": "bm6wyhdpioruxguvhqpu4lt2ca"
               }
             }
           },
@@ -50470,7 +50470,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "The project's id, the folder's name."
+            "description": "The project's id in its 26-character path form, the folder's name."
           },
           "name": {
             "type": "string",
@@ -54229,11 +54229,11 @@
           },
           "projectId": {
             "type": "string",
-            "description": "The new project's id; empty on a check, which mints none."
+            "description": "The new project's id in its path form; empty on a check, which mints none."
           },
           "source": {
             "type": "string",
-            "description": "The source project's id and name."
+            "description": "The source project's id (26-character path form) and name."
           },
           "sourceName": {
             "type": "string"
@@ -54858,7 +54858,7 @@
           },
           "project": {
             "type": "string",
-            "description": "The source project's id, one of the version's project list, e.g. `0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10`."
+            "description": "The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`."
           }
         },
         "additionalProperties": false

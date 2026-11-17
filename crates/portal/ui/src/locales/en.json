@@ -13612,7 +13612,8 @@
       "summary": "{rows} rows to copy into {name}, {refused} refused, {erasures} erasures applied again",
       "done": "Restored into {name} (project id {id}). {source} was not changed.",
       "first": "Pick a project and type a name first",
-      "caption": "Rows per table the copy writes"
+      "caption": "Rows per table the copy writes",
+      "refusedNote": "Refused rows break a rule of today's data (a name another row holds, or a link to a row the copy does not hold) and are left out; the rest is copied."
     }
   },
   "operator": {

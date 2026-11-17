@@ -1283,7 +1283,7 @@ pub struct DataProjectsInput {
 pub struct DataCopyInput {
     /// The working or the recovery age identity, e.g. `AGE-SECRET-KEY-1… (the line in your key file)`.
     pub identity: String,
-    /// The source project's id, one of the version's project list, e.g. `0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10`.
+    /// The source project's id, one of the version's project list, e.g. `bm6wyhdpioruxguvhqpu4lt2ca`.
     pub project: String,
     /// The new project's name, a DNS label no project holds, e.g. `air-quality-restored`.
     pub name: String,
@@ -1329,7 +1329,7 @@ pub async fn data_projects(
     description = "Restores one project's folder of the Organization's data archive into a new project: a new project id whose parent is the source, the folder's rows under the new name with new row ids, the source's approved erasures applied again. The source project is never written. `apply` false checks only. A project deleted since the backup is refused (TEN-16); a project the caller may not read answers 404 like an id the archive does not hold (T-7208).",
     tag = "system",
     params(("version" = String, Path, description = "S3 version id")),
-    request_body(content = DataCopyInput, example = json!({ "identity": "AGE-SECRET-KEY-1…", "project": "0b9d6c1e-6f43-4a8e-9a51-3c1f4e2d7a10", "name": "air-quality-restored", "apply": false })),
+    request_body(content = DataCopyInput, example = json!({ "identity": "AGE-SECRET-KEY-1…", "project": "bm6wyhdpioruxguvhqpu4lt2ca", "name": "air-quality-restored", "apply": false })),
     responses(
         (status = 200, description = "What the copy writes, or wrote", body = org_backup::copy::CopyPlan),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),

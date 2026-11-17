@@ -34,7 +34,7 @@ use crate::state::AppState;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ArchivedProject {
-    /// The project's id, the folder's name.
+    /// The project's id in its 26-character path form, the folder's name.
     pub id: String,
     /// The project's name today.
     pub name: String,
@@ -56,12 +56,12 @@ pub struct CopyPlan {
     pub version_id: String,
     /// When the backup was taken, RFC 3339.
     pub taken_at: String,
-    /// The source project's id and name.
+    /// The source project's id (26-character path form) and name.
     pub source: String,
     pub source_name: String,
     /// The new project's name.
     pub name: String,
-    /// The new project's id; empty on a check, which mints none.
+    /// The new project's id in its path form; empty on a check, which mints none.
     pub project_id: String,
     /// Rows written per table, and rows a unique rule or a missing reference refused.
     pub tables: BTreeMap<String, CopyCounts>,
@@ -181,7 +181,7 @@ pub async fn projects(
         return Ok(out);
     };
     for (id, archived_name) in &part.projects {
-        let Ok(source) = ProjectId::parse_verified(id) else {
+        let Ok(source) = ProjectId::from_path_segment(id) else {
             continue;
         };
         match live_source(state, &pool, organization, &source).await? {
@@ -268,14 +268,14 @@ pub async fn copy(
                 .into(),
         ));
     }
-    let source = ProjectId::parse_verified(request.source).map_err(|_| not_found())?;
+    let source = ProjectId::from_path_segment(request.source).map_err(|_| not_found())?;
     let part = opened
         .index
         .modules
         .get("portal")
         .filter(|p| p.exported)
         .ok_or_else(not_found)?;
-    if !part.projects.contains_key(&source.to_string()) {
+    if !part.projects.contains_key(&source.path_segment()) {
         return Err(not_found());
     }
     let source_name = match live_source(state, &pool, request.organization, &source).await? {
@@ -304,7 +304,7 @@ pub async fn copy(
     let mut plan = CopyPlan {
         version_id: request.version.to_owned(),
         taken_at: opened.index.taken_at.clone(),
-        source: source.to_string(),
+        source: source.path_segment(),
         source_name: source_name.clone(),
         name: request.name.to_owned(),
         project_id: String::new(),
@@ -374,7 +374,7 @@ pub async fn copy(
     .await
     .map_err(failed)?;
     tx.commit().await.map_err(failed)?;
-    plan.project_id = new_key.project.to_string();
+    plan.project_id = new_key.project.path_segment();
     Ok(plan)
 }
 

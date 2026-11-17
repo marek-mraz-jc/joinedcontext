@@ -13612,7 +13612,8 @@
       "summary": "{rows} záznamů ke kopírování do {name}, {refused} odmítnutých, {erasures} výmazů použitých znovu",
       "done": "Obnoveno do {name} (id projektu {id}). {source} se nezměnil.",
       "first": "Nejprve vyberte projekt a napište název",
-      "caption": "Záznamy podle tabulek, které kopie zapíše"
+      "caption": "Záznamy podle tabulek, které kopie zapíše",
+      "refusedNote": "Odmítnuté záznamy porušují pravidlo dnešních dat (název, který má jiný záznam, nebo odkaz na záznam, který kopie nemá) a vynechají se; zbytek se zkopíruje."
     }
   },
   "operator": {
