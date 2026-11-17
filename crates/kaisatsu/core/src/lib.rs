@@ -17,7 +17,10 @@ pub use authz::{
     Action, Authorizer, Decision, LocalAuthorizer, ObjectTarget, Principal, RequestCtx,
 };
 pub use branding::{BrandingBlock, Colours, Fonts, Languages};
-pub use claims::{MapperContext, TokenKind, evaluate_mappers, known_mapper_kinds};
+pub use claims::{
+    CLIENT_KIND_ATTRIBUTE, CLIENT_PROJECT_ATTRIBUTE, MapperContext, TokenKind, evaluate_mappers,
+    known_mapper_kinds,
+};
 pub use error::{KaisatsuError, OAuthErrorResponse, ProblemDetails, Result};
 pub use model::*;
 pub use odata_defs::{kaisatsu_odata_service, scope_for_context};
