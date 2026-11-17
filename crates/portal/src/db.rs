@@ -110,12 +110,22 @@ pub async fn tenant_tx(
     key: jc_types::ProjectKey,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    enter(&mut tx, key).await?;
+    Ok(tx)
+}
+
+/// Keys the open transaction on `conn` as [`tenant_tx`] does, for the rest of that transaction:
+/// what a pass over several projects inside one transaction (a data restore) sets per project.
+pub async fn enter(
+    conn: &mut sqlx::PgConnection,
+    key: jc_types::ProjectKey,
+) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT set_config('jc.org', $1, true), set_config('jc.project', $2, true)")
         .bind(key.org.to_string())
         .bind(key.project.to_string())
-        .execute(&mut *tx)
+        .execute(conn)
         .await?;
-    Ok(tx)
+    Ok(())
 }
 
 /// Idle connections close after 60 s (T-6201): the run queue and sweeps touch the pool more

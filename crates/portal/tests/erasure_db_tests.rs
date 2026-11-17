@@ -152,7 +152,7 @@ async fn a_store_that_does_not_answer_keeps_the_erasure_open_until_it_does() {
     for name in ["broker"] {
         erasure::save(
             &pool,
-            &begun.id,
+            (&project, &begun.id),
             name,
             &again.stores[name].after(Ok((1, None))),
         )

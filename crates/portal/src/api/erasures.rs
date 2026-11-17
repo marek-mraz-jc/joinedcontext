@@ -375,6 +375,9 @@ pub(crate) async fn erase_subject(
     if dry {
         return Ok(Json(erasure::preview(&groups)).into_response());
     }
+    // A project with no Organization of the registry keeps no erasure log (T-7202): 404 naming
+    // the Organizations page, before anything is proposed.
+    crate::project_ids::required(pool, &state.mirror, &project, "erasure log").await?;
     let proposed = erasure::begin(
         (&project, &space),
         hash.clone(),

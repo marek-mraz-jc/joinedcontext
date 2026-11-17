@@ -601,15 +601,30 @@ pub async fn run(
     }
     if let Some(approval) = approval {
         let projects = keys.get("projects").cloned().unwrap_or_default();
-        for erasure in crate::erasure::approved_in(&mut tx, &projects)
+        // Each project's erasures and copies in its own key (T-7202), then the Organization's
+        // reserved key again for the restore request's own row.
+        for project in &projects {
+            if let Some(key) = crate::project_ids::recorded(&pool, project)
+                .await
+                .map_err(failed)?
+            {
+                crate::db::enter(&mut tx, key).await.map_err(failed)?;
+            }
+            for erasure in crate::erasure::approved_in(&mut tx, std::slice::from_ref(project))
+                .await
+                .map_err(failed)?
+            {
+                crate::erasure::erase_portal_copies(&mut tx, &erasure)
+                    .await
+                    .map_err(ApiError::Unavailable)?;
+                plan.erasures_replayed += 1;
+            }
+        }
+        let reserved = crate::project_ids::reserved(&pool, organization)
             .await
             .map_err(failed)?
-        {
-            crate::erasure::erase_portal_copies(&mut tx, &erasure)
-                .await
-                .map_err(ApiError::Unavailable)?;
-            plan.erasures_replayed += 1;
-        }
+            .ok_or_else(|| super::unregistered(organization))?;
+        crate::db::enter(&mut tx, reserved).await.map_err(failed)?;
         sqlx::query(
             "UPDATE organization_data_restores SET state = 'applied', decided_by = $2, \
              decided_at = now(), plan = $3, message = $4 WHERE id = $1",
