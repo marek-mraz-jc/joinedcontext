@@ -53,6 +53,19 @@ CREATE FUNCTION reserved_rows() RETURNS text
   AS $$ SELECT '(tenant_id IN (''distsub-index'', ''antares-views'', ''antares-policy'', '
              || '''antares-grants'', ''antares-channels'') OR (tenant_id >= ''snap-'' AND tenant_id < ''snap.''))' $$;
 
+-- Whether table `t` holds any reserved-Tenant row: an index probe that lets
+-- the document passes skip a table such as `entity_values`, where the planner
+-- would otherwise scan every row for the `::text LIKE` filter.
+CREATE FUNCTION tenant_reserved_held(t text) RETURNS boolean
+  LANGUAGE plpgsql STABLE
+  AS $$
+DECLARE
+  held boolean;
+BEGIN
+  EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE %s)', t, reserved_rows()) INTO held;
+  RETURN held;
+END $$;
+
 -- Every JSON string of `p_doc` equal to `p_from` becomes `p_to`; a string
 -- starts at a `"` no backslash escapes. Callers check both names against
 -- [A-Za-z0-9_-]+, where only the dash is special in a regex, and only inside
@@ -180,6 +193,10 @@ BEGIN
    WHERE kind <> 'Cached' AND body ->> 'owner' = p_old;
   GET DIAGNOSTICS n = ROW_COUNT;
   out := out || jsonb_build_object('jsonld_contexts', n);
+  -- the documents below are rewritten in place: their triggers run again
+  IF super THEN
+    PERFORM set_config('session_replication_role', 'origin', true);
+  END IF;
 
   -- documents naming the Tenant: the broker's own Tenants, every column
   total := 0;
@@ -187,6 +204,7 @@ BEGIN
     SELECT a.attrelid::regclass::text, a.attname::text
       FROM pg_attribute a JOIN tenant_tables() tt ON a.attrelid = tt.tbl::regclass
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype AND a.attgenerated = ''
+       AND (tt.tbl IN (SELECT tbl FROM tenant_naming_tables()) OR tenant_reserved_held(tt.tbl))
   LOOP
     EXECUTE format(
       'UPDATE %I SET %I = tenant_token(%I, $1, $2) WHERE %s AND %I::text LIKE $3', t, c, c,
@@ -199,6 +217,7 @@ BEGIN
   FOR t IN
     SELECT tt.tbl FROM tenant_tables() tt
       JOIN pg_attribute a ON a.attrelid = tt.tbl::regclass AND a.attname = 'id' AND a.atttypid = 'text'::regtype
+     WHERE tenant_reserved_held(tt.tbl)
   LOOP
     EXECUTE format('UPDATE %I SET id = $2 WHERE %s AND id = $1', t, reserved_rows())
       USING p_old, p_new;
@@ -211,9 +230,6 @@ BEGIN
 
   UPDATE tenants SET tenant_id = p_new, organization_id = tenant_organization(p_new)
    WHERE tenant_id = p_old;
-  IF super THEN
-    PERFORM set_config('session_replication_role', 'origin', true);
-  END IF;
   RETURN out;
 END $$;
 
@@ -233,6 +249,7 @@ BEGIN
     SELECT a.attrelid::regclass::text, a.attname::text
       FROM pg_attribute a JOIN tenant_tables() tt ON a.attrelid = tt.tbl::regclass
      WHERE a.attnum > 0 AND NOT a.attisdropped AND a.atttypid = 'jsonb'::regtype
+       AND (tt.tbl IN (SELECT tbl FROM tenant_naming_tables()) OR tenant_reserved_held(tt.tbl))
   LOOP
     -- the predicate is chosen here: an `OR ... IN (SELECT ...)` in the
     -- statement turns the index scan of `entities` into a full scan
@@ -329,6 +346,7 @@ BEGIN
     SELECT tt.tbl, EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = tt.tbl::regclass
                                                        AND a.attname = 'id' AND a.atttypid = 'text'::regtype)
       FROM tenant_tables() tt
+     WHERE tenant_reserved_held(tt.tbl)
   LOOP
     SELECT string_agg(
              CASE WHEN a.atttypid = 'jsonb'::regtype
@@ -357,4 +375,5 @@ REVOKE EXECUTE ON FUNCTION tenant_rename_guard(text, text),
                            tenant_rename_leftovers(text),
                            antares_tenant_rename(text, text),
                            antares_tenant_rename_rollback(text),
-                           antares_tenant_digest(text) FROM PUBLIC;
+                           antares_tenant_digest(text),
+                           tenant_reserved_held(text) FROM PUBLIC;
