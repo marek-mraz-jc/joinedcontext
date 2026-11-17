@@ -4,8 +4,13 @@
 //! with a key of its own. On every converge the reconciler writes, in the host's namespace, the
 //! ConfigMap `jc-wasm-host-<shard>-placements` (key `placements.json`) for every shard, empty or
 //! not, and the Secret `apps-host-<shard>-store` with the shard's derived key.
+//!
+//! Each placed App's objects are under its project's `org/<OrgId>/project/<ProjectId>/apps/<id>/`
+//! (ARCH/STO-14); its files from before the key are moved there from `apps/<shard>/<id>/` on the
+//! converge (TEN-15, [`crate::apps::files::move_legacy`]), and the placement says `legacy` until the
+//! old prefix is empty. The shard's key reaches exactly the prefixes its placement names.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -29,6 +34,11 @@ pub struct PlacedApp {
     pub endpoint: Option<String>,
     /// `spec.server.jobs[]` as validation took it, which the host schedules (AP-154).
     pub jobs: Vec<jc_core::kinds::app::AppJob>,
+    /// `org/<OrgId>/project/<ProjectId>/apps/<id>/` once its project's key is read; `None` keeps
+    /// the App under `apps/<shard>/<id>/`.
+    pub prefix: Option<String>,
+    /// `apps/<shard>/<id>/` still holds files not yet moved under `prefix` (TEN-15).
+    pub legacy: bool,
 }
 
 impl PlacedApp {
@@ -58,6 +68,8 @@ impl PlacedApp {
                 })
                 .map(|server| server.jobs)
                 .unwrap_or_default(),
+            prefix: None,
+            legacy: false,
         })
     }
 
@@ -124,6 +136,10 @@ pub fn placement(shard: u32, apps: &[PlacedApp]) -> (Value, Vec<PlacedApp>) {
             if !app.jobs.is_empty() {
                 placed["jobs"] = json!(app.jobs);
             }
+            if let Some(prefix) = &app.prefix {
+                placed["prefix"] = json!(prefix);
+                placed["legacy"] = json!(app.legacy);
+            }
             placed
         })
         .collect();
@@ -134,6 +150,25 @@ pub fn placement(shard: u32, apps: &[PlacedApp]) -> (Value, Vec<PlacedApp>) {
 }
 
 /// The ConfigMap a shard's pods mount its placement from.
+/// The object prefixes a shard's key reaches: each App of its `placement`, under its key and, while
+/// it is `legacy` or has no key, under `apps/<shard>/<id>/`. Nothing else, not even the whole
+/// `apps/<shard>/`: a prefix no placed App holds is no shard's.
+pub fn prefixes(shard: u32, placement: &Value) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    for app in placement["apps"].as_array().into_iter().flatten() {
+        let Some(id) = app["id"].as_str() else {
+            continue;
+        };
+        if let Some(prefix) = app["prefix"].as_str() {
+            prefixes.push(prefix.to_owned());
+        }
+        if app["prefix"].is_null() || app["legacy"] == json!(true) {
+            prefixes.push(crate::apps::files::legacy_prefix(shard, id));
+        }
+    }
+    prefixes
+}
+
 pub fn config_map(namespace: &str, shard: u32, placement: &Value) -> Value {
     json!({
         "apiVersion": "v1",
@@ -196,6 +231,11 @@ pub struct WasmShards {
     http: reqwest::Client,
     /// Each shard's last `/jobs` answer, kept for a converge in which it does not answer.
     last_runs: Mutex<BTreeMap<u32, BTreeMap<String, Vec<JobRun>>>>,
+    /// The Portal's database, whose project keys name each App's prefix (ARCH/STO-14).
+    keys: Option<sqlx::PgPool>,
+    /// Apps whose old prefix was found empty: the store is the record of a finished move, and
+    /// this only spares the listing on every converge until the Portal restarts.
+    moved: Mutex<BTreeSet<String>>,
 }
 
 impl WasmShards {
@@ -211,7 +251,81 @@ impl WasmShards {
                 .build()
                 .unwrap_or_default(),
             last_runs: Mutex::new(BTreeMap::new()),
+            keys: None,
+            moved: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// Reads each App's project key from `pool`, so its objects are under it.
+    pub fn with_keys(mut self, pool: sqlx::PgPool) -> Self {
+        self.keys = Some(pool);
+        self
+    }
+
+    /// Each App with its keyed prefix, and its old files moved there where `store` is
+    /// configured; what went wrong comes back, a sentence each. An App whose project key cannot
+    /// be read stays where it was, and one whose move stopped keeps reading its old prefix.
+    pub async fn keyed(
+        &self,
+        apps: &[PlacedApp],
+        store: Option<&artifact_store::Client>,
+    ) -> (Vec<PlacedApp>, Vec<String>) {
+        let mut problems = Vec::new();
+        let mut keyed = Vec::with_capacity(apps.len());
+        for app in apps {
+            let mut app = app.clone();
+            let key = match &self.keys {
+                Some(pool) => crate::project_ids::recorded(pool, &app.project).await,
+                None => Ok(None),
+            };
+            let key = match key {
+                Ok(key) => key,
+                Err(err) => {
+                    problems.push(format!(
+                        "App {}/{}: its project key was not read: {err}",
+                        app.project, app.name
+                    ));
+                    None
+                }
+            };
+            if let Some(key) = key {
+                let id = app_id(&app.project, &app.name);
+                let prefix = crate::apps::files::keyed_prefix(&key, &id);
+                let moved = self.moved.lock().is_ok_and(|moved| moved.contains(&id));
+                app.legacy = !moved;
+                if let (false, Some(store)) = (moved, store) {
+                    let legacy = crate::apps::files::legacy_prefix(app.shard, &id);
+                    let at = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+                    match crate::apps::files::move_legacy(
+                        store,
+                        &self.bucket,
+                        (&id, &legacy, &prefix),
+                        &at,
+                    )
+                    .await
+                    {
+                        Ok(done) => {
+                            if done.copied + done.superseded > 0 {
+                                tracing::info!(app = %id, copied = done.copied, superseded = done.superseded, "an App's files moved under its project key");
+                            }
+                            if done.done {
+                                app.legacy = false;
+                                if let Ok(mut moved) = self.moved.lock() {
+                                    moved.insert(id);
+                                }
+                            }
+                        }
+                        Err(why) => problems.push(format!(
+                            "App {}/{}: its files were not moved under its project key: {why}",
+                            app.project, app.name
+                        )),
+                    }
+                }
+                app.prefix = Some(prefix);
+            }
+            keyed.push(app);
+        }
+        (keyed, problems)
     }
 
     /// Every placed App's job runs by App id, read from each shard's `GET /jobs` (AP-154). A shard
@@ -258,9 +372,9 @@ impl WasmShards {
         apps: &[PlacedApp],
         store: Option<&artifact_store::Client>,
     ) -> Vec<String> {
-        let mut problems = Vec::new();
+        let (apps, mut problems) = self.keyed(apps, store).await;
         for shard in 0..self.shards {
-            let (placement, clashing) = placement(shard, apps);
+            let (placement, clashing) = placement(shard, &apps);
             for app in clashing {
                 problems.push(format!(
                     "shard {shard}: App {}/{} is not served, another project's App of the same name is",
@@ -279,7 +393,10 @@ impl WasmShards {
             let Some(store) = store else {
                 continue;
             };
-            match store.ensure_shard(&self.bucket, shard).await {
+            match store
+                .ensure_shard(&self.bucket, shard, &prefixes(shard, &placement))
+                .await
+            {
                 Ok(key) => {
                     let secret = artifact_store::shard_secret(&self.namespace, shard, &key);
                     if let Err(err) = self.kube.apply(&secret).await {
@@ -317,6 +434,8 @@ mod tests {
             digest: format!("sha256:{}", "a".repeat(64)),
             endpoint: None,
             jobs: Vec::new(),
+            prefix: None,
+            legacy: false,
         }
     }
 

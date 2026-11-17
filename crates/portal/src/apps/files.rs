@@ -1,5 +1,7 @@
 //! `/apps/{name}/api/services/files…`: the objects of an App that is not `wasm`, under its own
-//! prefix `apps/<shard>/<id>/` of the apps bucket, as a `wasm` App keeps them through
+//! prefix `org/<OrgId>/project/<ProjectId>/apps/<id>/` of the apps bucket (ARCH/STO-14; its files
+//! from before the project key are read under `apps/<shard>/<id>/` until moved, TEN-15), as a
+//! `wasm` App keeps them through
 //! `jc:app/blob` (AP-170, AP-145, API/06 §3, T-3584).
 //!
 //! The App names a key relative to its prefix and never sees the bucket or a credential: the
@@ -77,13 +79,171 @@ struct FileInfo {
     modified_at: String,
 }
 
+/// An App's object prefix under its project's key, `org/{OrgId}/project/{ProjectId}/apps/{id}/`
+/// (ARCH/STO-14): built from ids only, so renaming nothing moves an object.
+pub fn keyed_prefix(key: &jc_types::ProjectKey, id: &str) -> String {
+    format!("{}apps/{id}/", key.object_prefix())
+}
+
+/// Where an App's files were kept before the project key, `apps/{shard}/{id}/`: read, listed and
+/// deleted until [`move_legacy`] has moved them (TEN-15).
+pub fn legacy_prefix(shard: u32, id: &str) -> String {
+    format!("apps/{shard}/{id}/")
+}
+
+/// What one [`move_legacy`] did with the old prefix.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Moved {
+    /// Objects copied under the keyed prefix and verified there.
+    pub copied: usize,
+    /// Old objects whose key the keyed prefix already held from a newer write: dropped.
+    pub superseded: usize,
+    /// The old prefix holds nothing any more: reads stop looking there.
+    pub done: bool,
+}
+
+/// Moves an App's files from `legacy` to `keyed` (TEN-15): each object copied only where the keyed
+/// prefix has no object of its key (`If-None-Match`, so a write the App made meanwhile wins and is
+/// never lost), its bytes read back and compared by SHA-256, then the rollback entry
+/// `apps/moved/{id}/{at}.json` written (both prefixes, each key with its size, hash and outcome),
+/// and only then the old objects deleted. A copy that does not read back the same stops the move
+/// with the old prefix untouched, still read. The App's writes need no fence: they go under the
+/// keyed prefix the whole time, and its deletes reach both.
+/// ponytail: each object is read whole to hash it, which `MAX_OBJECT_BYTES` bounds for every write
+/// but an unsized presigned PUT; stream the hash when such objects appear.
+pub async fn move_legacy(
+    store: &Store,
+    bucket: &str,
+    (id, legacy, keyed): (&str, &str, &str),
+    at: &str,
+) -> Result<Moved, String> {
+    use sha2::{Digest, Sha256};
+    let old = store
+        .list(bucket, legacy)
+        .await
+        .map_err(|err| format!("the old prefix could not be listed: {err}"))?;
+    if old.is_empty() {
+        return Ok(Moved {
+            done: true,
+            ..Moved::default()
+        });
+    }
+    let hash = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    let read = |key: String| async move {
+        match store
+            .object(
+                reqwest::Method::GET,
+                bucket,
+                &key,
+                Vec::new(),
+                &[],
+                "read an object",
+            )
+            .await
+        {
+            Ok((200, _, body)) => Ok(Some(body)),
+            Ok((404, _, _)) => Ok(None),
+            Ok((status, _, _)) => Err(format!("the store answered {status} to a read")),
+            Err(err) => Err(err.to_string()),
+        }
+    };
+    let mut moved = Moved::default();
+    let mut entries = Vec::with_capacity(old.len());
+    for object in &old {
+        let Some(relative) = object.key.strip_prefix(legacy) else {
+            continue;
+        };
+        let target = format!("{keyed}{relative}");
+        // Gone since the listing: the App deleted it, and nothing is left to move.
+        let Some(before) = read(object.key.clone()).await? else {
+            continue;
+        };
+        let sha256 = hash(&before);
+        let outcome = if store
+            .copy_if_absent(bucket, &object.key, &target)
+            .await
+            .map_err(|err| format!("an object could not be copied: {err}"))?
+        {
+            let after = read(target.clone()).await?;
+            if after.as_deref().map(hash).as_deref() != Some(sha256.as_str()) {
+                return Err(format!(
+                    "the copy of {relative} did not read back the same bytes; the old prefix stays"
+                ));
+            }
+            moved.copied += 1;
+            "copied"
+        } else {
+            moved.superseded += 1;
+            "superseded"
+        };
+        entries.push(serde_json::json!({
+            "key": relative, "size": before.len(), "sha256": sha256, "outcome": outcome,
+        }));
+    }
+    let rollback = serde_json::json!({
+        "app": id, "from": legacy, "to": keyed, "at": at, "objects": entries,
+    });
+    store
+        .put_object(
+            bucket,
+            &format!("apps/moved/{id}/{at}.json"),
+            rollback.to_string().into_bytes(),
+            "write a move's rollback entry",
+        )
+        .await
+        .map_err(|err| format!("the rollback entry could not be written: {err}"))?;
+    for object in &old {
+        store
+            .delete_object(bucket, &object.key)
+            .await
+            .map_err(|err| format!("an old object could not be deleted: {err}"))?;
+    }
+    moved.done = store
+        .list(bucket, legacy)
+        .await
+        .map_err(|err| format!("the old prefix could not be listed: {err}"))?
+        .is_empty();
+    Ok(moved)
+}
+
 /// The App's place in the store, once the gate let the call through.
 struct Files {
     store: Arc<Store>,
     bucket: String,
+    /// The keyed prefix, or the old one while the project has no key.
     prefix: String,
+    /// The old prefix while the project has a key: read, listed and deleted beside `prefix`.
+    legacy: Option<String>,
     project: String,
     app: String,
+}
+
+impl Files {
+    /// The prefixes a read looks under, the keyed one first.
+    fn prefixes(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.prefix.as_str()).chain(self.legacy.as_deref())
+    }
+
+    /// Every object below `below` by its path under the App's prefix, the keyed copy first where
+    /// both prefixes hold one path.
+    async fn objects(
+        &self,
+        below: &str,
+    ) -> Result<Vec<(String, crate::artifact_store::Object)>, crate::artifact_store::Error> {
+        let mut found = std::collections::BTreeMap::new();
+        for prefix in self.prefixes() {
+            for object in self
+                .store
+                .list(&self.bucket, &format!("{prefix}{below}"))
+                .await?
+            {
+                if let Some(path) = object.key.strip_prefix(prefix) {
+                    found.entry(path.to_owned()).or_insert(object);
+                }
+            }
+        }
+        Ok(found.into_iter().collect())
+    }
 }
 
 fn bad(detail: impl Into<String>) -> Response {
@@ -110,17 +270,30 @@ async fn open(
         )
     })?;
     // A `wasm` App's shard is its placement; every other App is on shard 0, which only names
-    // the prefix, since the Portal writes with the root credential.
+    // the old prefix, since the Portal writes with the root credential.
     let shard = state
         .mirror
         .get(&project, "App", name)
         .and_then(|envelope| envelope.status)
         .and_then(|status| status.shard)
         .unwrap_or(0);
+    let id = app_id(&project, name);
+    let legacy = legacy_prefix(shard, &id);
+    let key = match state.db.as_ref() {
+        Some(pool) => crate::project_ids::recorded(pool, &project)
+            .await
+            .map_err(|err| Box::new(unavailable(err)))?,
+        None => None,
+    };
+    let (prefix, legacy) = match key {
+        Some(key) => (keyed_prefix(&key, &id), Some(legacy)),
+        None => (legacy, None),
+    };
     Ok(Files {
         store: Arc::clone(&wasm.store),
         bucket: wasm.bucket.clone(),
-        prefix: format!("apps/{shard}/{}/", app_id(&project, name)),
+        prefix,
+        legacy,
         project,
         app: name.to_owned(),
     })
@@ -156,19 +329,12 @@ pub(super) async fn list(
         Ok(prefix) => prefix,
         Err(why) => return bad(why),
     };
-    let objects = match files
-        .store
-        .list(&files.bucket, &format!("{}{prefix}", files.prefix))
-        .await
-    {
+    let objects = match files.objects(prefix).await {
         Ok(objects) => objects,
         Err(err) => return unavailable(err),
     };
     let mut infos = Vec::with_capacity(objects.len());
-    for object in objects {
-        let Some(path) = object.key.strip_prefix(&files.prefix) else {
-            continue;
-        };
+    for (path, object) in objects {
         // ponytail: one HEAD per object for its type, which a listing does not carry; keep the
         // type in the App's database when an App holds thousands of objects.
         let kind = match files
@@ -187,7 +353,7 @@ pub(super) async fn list(
             Err(err) => return unavailable(err),
         };
         infos.push(FileInfo {
-            path: path.to_owned(),
+            path,
             size: object.size,
             content_type: kind,
             modified_at: object.modified,
@@ -208,21 +374,27 @@ pub(super) async fn get(
         Err(refused) => return *refused,
     };
     let key = match checked(&path) {
-        Ok(key) => format!("{}{key}", files.prefix),
+        Ok(key) => key,
         Err(why) => return bad(why),
     };
-    match files
-        .store
-        .object(
-            reqwest::Method::GET,
-            &files.bucket,
-            &key,
-            Vec::new(),
-            &[],
-            "read an object",
-        )
-        .await
-    {
+    let mut answer = Ok((404, reqwest::header::HeaderMap::new(), Vec::new()));
+    for prefix in files.prefixes() {
+        answer = files
+            .store
+            .object(
+                reqwest::Method::GET,
+                &files.bucket,
+                &format!("{prefix}{key}"),
+                Vec::new(),
+                &[],
+                "read an object",
+            )
+            .await;
+        if !matches!(answer, Ok((404, _, _))) {
+            break;
+        }
+    }
+    match answer {
         Ok((200, stored, body)) => {
             let mut response = (StatusCode::OK, body).into_response();
             if let Ok(value) = HeaderValue::from_str(&content_type(&stored)) {
@@ -264,14 +436,14 @@ async fn room(
         Quota::FilesMiB,
     )) * MIB;
     let held = files
-        .store
-        .list(&files.bucket, &files.prefix)
+        .objects("")
         .await
         .map_err(|err| Box::new(unavailable(err)))?;
+    let replaced = key.strip_prefix(&files.prefix).unwrap_or(key);
     let used: u64 = held
         .iter()
-        .filter(|object| object.key != key)
-        .map(|object| object.size)
+        .filter(|(path, _)| path != replaced)
+        .map(|(_, object)| object.size)
         .sum();
     if used.saturating_add(size) > limit {
         return Err(Box::new(services::quota_used(
@@ -354,13 +526,20 @@ pub(super) async fn delete(
         Err(refused) => return *refused,
     };
     let key = match checked(&path) {
-        Ok(key) => format!("{}{key}", files.prefix),
+        Ok(key) => key,
         Err(why) => return bad(why),
     };
-    match files.store.delete_object(&files.bucket, &key).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(err) => unavailable(err),
+    // Under both prefixes, or the old copy would come back on the next read.
+    for prefix in files.prefixes() {
+        if let Err(err) = files
+            .store
+            .delete_object(&files.bucket, &format!("{prefix}{key}"))
+            .await
+        {
+            return unavailable(err);
+        }
     }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -423,6 +602,21 @@ pub(super) async fn url(
         return ApiError::Unavailable("this installation hands out no file URLs".into())
             .into_response();
     };
+    // A GET URL names one key: the old one while only the old prefix holds the file.
+    let mut key = key;
+    if let (None, Some(legacy)) = (size, files.legacy.as_deref()) {
+        let path = key.strip_prefix(&files.prefix).unwrap_or(&key).to_owned();
+        match files.objects(&path).await {
+            Ok(found) => {
+                if let Some((_, object)) = found.into_iter().find(|(found, _)| *found == path) {
+                    if object.key.starts_with(legacy) {
+                        key = object.key;
+                    }
+                }
+            }
+            Err(err) => return unavailable(err),
+        }
+    }
     let now = chrono::Utc::now();
     let url = files.store.presign(
         (&method, &files.bucket, &key),

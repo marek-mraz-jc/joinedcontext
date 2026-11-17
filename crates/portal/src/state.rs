@@ -658,14 +658,16 @@ impl AppState {
         if let Some(apps_db) = self.config.apps_db.clone() {
             match (apps_db.host_namespace.clone(), crate::apps::kube::KubeClient::in_cluster()) {
                 (Some(namespace), Ok(Some(kube))) => {
-                    syncer = syncer.with_wasm_shards(Arc::new(
-                        crate::reconciler::wasm_shards::WasmShards::new(
-                            kube,
-                            namespace,
-                            apps_db.shards,
-                            apps_db.bucket.clone(),
-                        ),
-                    ));
+                    let mut shards = crate::reconciler::wasm_shards::WasmShards::new(
+                        kube,
+                        namespace,
+                        apps_db.shards,
+                        apps_db.bucket.clone(),
+                    );
+                    if let Some(pool) = self.db.clone() {
+                        shards = shards.with_keys(pool);
+                    }
+                    syncer = syncer.with_wasm_shards(Arc::new(shards));
                 }
                 (None, _) => tracing::warn!(
                     "JC_PORTAL_WASM_HOST_NAMESPACE is not set: no WASM shard gets its placement or its store key"
@@ -1400,6 +1402,7 @@ impl AppState {
                         db,
                         store: Arc::new(store),
                         bucket: apps_db.bucket,
+                        keys: self.db.clone(),
                     });
                     let boot = Arc::clone(&wasm);
                     tokio::spawn(async move {
