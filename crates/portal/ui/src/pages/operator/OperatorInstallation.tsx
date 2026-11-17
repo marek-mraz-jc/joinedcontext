@@ -183,7 +183,11 @@ function EmailServer({ smtp, open }: { smtp?: SmtpServer; open?: string }): JSX.
           >
             {t("operator.installation.email.test")}
           </Button>
-          {!smtp && !open ? <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p> : null}
+          {open ? (
+            <p className="text-caption text-fg-muted">{t("operator.installation.email.waitingShort")}</p>
+          ) : !smtp ? (
+            <p className="text-caption text-fg-muted">{t("operator.installation.email.testFirst")}</p>
+          ) : null}
       </div>
       {refused ? (
         <Alert tone="danger" className="mt-4" title={t("operator.installation.email.notAsked")}>
@@ -256,7 +260,10 @@ function InForce({ smtp, open }: { smtp?: SmtpServer; open: string }): JSX.Eleme
       {smtp ? (
         list(t(`${E}.inForce`), rows(smtp, smtp.passwordSet ? t(`${E}.passwordStored`) : "–"))
       ) : (
-        <p className="text-body text-fg-muted">{t(`${E}.noneInForce`)}</p>
+        <div className="min-w-0 space-y-2">
+          <h4 className="text-body font-semibold text-fg">{t(`${E}.inForceNow`)}</h4>
+          <p className="text-body text-fg-muted">{t(`${E}.noneInForce`)}</p>
+        </div>
       )}
     </div>
   );

@@ -145,7 +145,9 @@ export function OrganizationSetup({ anchor }: { anchor: string }): JSX.Element {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <State done={item.done} theirs={!operates} />
+                {/* Only the e-mail server is set on the Installation page today: the other items are no
+                    red to-do for anybody yet (branding T-7188, backups T-7189). */}
+                <State done={item.done} theirs={!operates || item.id !== "smtp"} />
                 <OperatorAction item={item.id} operates={operates} />
               </div>
             </li>

@@ -101,6 +101,8 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await expect(page.getByText("You are one of the installation's operators", { exact: false })).toBeVisible();
       await expect(page.getByText(/keycloak/i)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
+      // Backups are not set on the Installation page yet: no red to-do the operator cannot act on.
+      await expect(page.getByRole("listitem").filter({ hasText: "Backups" }).getByText("Not set yet", { exact: true })).toBeVisible();
       await shot(page, `installation-setup-operator-${width}`);
       await page.getByRole("link", { name: "Open Installation" }).click();
 
@@ -115,7 +117,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.getByLabel("Password", { exact: true }).fill("app-password");
       await page.getByRole("button", { name: "Ask for this change" }).click();
       await expect(page.getByText(/is no public host name of an SMTP server/)).toBeVisible();
-      await expect(page.getByText("The server refused the change", { exact: true })).toBeVisible();
+      await expect(page.getByText("The Portal refused the change: no Change was created", { exact: true })).toBeVisible();
       await expect(page.getByLabel("SMTP host", { exact: false })).toBeFocused();
       await shot(page, `installation-error-${width}`);
 
@@ -151,7 +153,7 @@ test.describe("Administration → the installation's e-mail server (T-7152)", ()
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, { smtp: null, smtpChange: null, tested: 0 }, false);
       await page.goto("/organization/setup?lang=en");
-      await expect(page.getByText("Your operator sets this").first()).toBeVisible();
+      await expect(page.getByText("Your installation's operators set this").first()).toBeVisible();
       await expect(page.getByRole("link", { name: "Open Installation" })).toHaveCount(0);
       await expect(page.getByText(/keycloak|branding_file|JC_BRANDING/i)).toHaveCount(0);
       await expect(page.getByRole("link", { name: "Installation" })).toHaveCount(0);
