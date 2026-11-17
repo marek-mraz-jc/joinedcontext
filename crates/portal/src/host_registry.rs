@@ -76,7 +76,7 @@ pub struct SeedOrganization {
     /// The working host, lowercase, with the port jc.toml gives it (none on https).
     pub host: String,
     /// The dataroom catalogue jc.toml gives it (`catalogue_id`, a UUID); set once, only while no
-    /// other Organization holds it (migration 0064, T-7186).
+    /// other Organization holds it (migration 0065, T-7186).
     pub catalogue_id: Option<String>,
 }
 
@@ -88,7 +88,7 @@ pub struct OrganizationRow {
     pub host: String,
     /// `active` or `removed`.
     pub state: String,
-    /// Its dataroom catalogue, a UUID, once set (migration 0064).
+    /// Its dataroom catalogue, a UUID, once set (migration 0065).
     pub catalogue_id: Option<String>,
 }
 
