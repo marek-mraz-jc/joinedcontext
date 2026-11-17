@@ -209,6 +209,20 @@ def used_features(realm: dict, export_files: Path | None = None) -> dict:
     return used
 
 
+# The client attribute naming a ServiceAccount client's ProjectId (Portal workload_clients
+# PROJECT_ATTRIBUTE): kaisatsu writes its value into the token's `project` claim.
+PROJECT_ATTRIBUTE = "jc.project"
+
+
+def project_less(clients: list) -> list[str]:
+    """The ids of the service-account clients (Keycloak's own aside) without a jc.project
+    attribute: each one's tokens end once JC_OIDC_REQUIRE_PROJECT is on (T-7194, T-7211), so the
+    list must be empty before the switch. Ids only: nothing else of a client is printed."""
+    return sorted(c.get("clientId", "") for c in clients
+                  if c.get("serviceAccountsEnabled") and c.get("clientId") not in BUILTIN_CLIENTS
+                  and not ((c.get("attributes") or {}).get(PROJECT_ATTRIBUTE) or "").strip())
+
+
 def rel(url, issuer) -> str | None:
     if not isinstance(url, str) or not issuer:
         return None
@@ -863,6 +877,17 @@ def run(a, res: Results) -> dict:
         if name != realm and http.call("GET", f"/login/realms/{name}")[0] == 200:
             others.append(name)
     live = Live(a, res, realm, served)
+    for name in [realm, *others]:
+        call = f"GET /login/admin/realms/{name}/clients (serviceAccountsEnabled, attributes.{PROJECT_ATTRIBUTE})"
+        try:
+            st, _, raw = live.http.call("GET", f"/login/admin/realms/{name}/clients?briefRepresentation=false",
+                                        token=live.admin())
+            missing = project_less(as_json(raw) or []) if st == 200 else [f"HTTP {st}"]
+        except Exception as err:  # noqa: BLE001 - an unreadable registry is a failing row, never a pass
+            missing = [redact(str(err))[:200]]
+        res.check(f"clients.project.{name}", "kaisatsu", call,
+                  "empty: every service-account client names its ProjectId (before JC_OIDC_REQUIRE_PROJECT)",
+                  ", ".join(missing) or "empty", not missing)
     try:
         live.run(public_ngsi_endpoints(export), others[0] if others else None)
     except Exception as err:  # noqa: BLE001 - a broken fixture is a failing row, never a pass
