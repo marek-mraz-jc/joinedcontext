@@ -191,7 +191,7 @@ fn a_project_without_a_key_is_refused_and_nothing_is_keyed_by_its_name() {
 /// T-7210, TEN-01: only two ids in their path form make a key; anything else could name another
 /// prefix or climb out of `--out-dir`.
 #[test]
-fn a_project_key_is_two_uuids_and_nothing_else() {
+fn a_project_key_is_two_path_form_ids_and_nothing_else() {
     let org = "ad2z3bvobuqkfmd3f2vjyhqnqe";
     let project = "c7i5ym2kleuwxdl6t4fbwlb5ju";
     assert_eq!(
