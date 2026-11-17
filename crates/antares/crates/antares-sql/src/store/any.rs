@@ -1557,6 +1557,32 @@ impl AnyStore {
         }
     }
 
+    /// The tombstone and the stored Organization of `tenant` (EP-188): one
+    /// query on Postgres; the memory store keeps neither, so the name decides.
+    pub async fn tenant_standing(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<antares_store::TenantStanding, NgsiError> {
+        match self {
+            AnyStore::Mem(s) => Ok(s.tenant_standing(tenant)),
+            #[cfg(feature = "postgres")]
+            AnyStore::Pg(p) => {
+                let (tombstoned, organization) = sqlx::query_as::<_, (bool, Option<String>)>(
+                    "SELECT EXISTS (SELECT 1 FROM tenant_rename WHERE old = $1), \
+                            (SELECT organization_id FROM tenants WHERE tenant_id = $1)",
+                )
+                .bind(tenant.as_str())
+                .fetch_one(p.docs.pool())
+                .await
+                .map_err(db)?;
+                Ok(antares_store::TenantStanding {
+                    tombstoned,
+                    organization,
+                })
+            }
+        }
+    }
+
     /// Every tenant name the backend knows, sorted. One cheap query: at the
     /// 10 000-tenant target (ADR-0001) an inventory that counted every kind
     /// of every tenant would be 7 counts per tenant on one transaction, so
@@ -2243,6 +2269,12 @@ impl antares_store::CurrentStateDriver for AnyStore {
     }
     async fn tenant_exists(&self, tenant: &TenantId) -> Result<bool, NgsiError> {
         AnyStore::tenant_exists(self, tenant).await
+    }
+    async fn tenant_standing(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<antares_store::TenantStanding, NgsiError> {
+        AnyStore::tenant_standing(self, tenant).await
     }
     async fn subscription_tenants(&self) -> Result<Vec<String>, NgsiError> {
         AnyStore::subscription_tenants(self).await

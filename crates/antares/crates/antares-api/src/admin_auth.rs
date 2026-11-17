@@ -195,32 +195,7 @@ pub enum OrganizationRefusal {
 /// needs and never a prefix match (`sk_a` is not `sk_ab`).
 #[must_use]
 pub fn tenant_organization(tenant: &str) -> Option<&str> {
-    let (organization, rest) = tenant.split_once("__")?;
-    if let Some((project, space)) = rest.split_once("__") {
-        return (is_key_id(organization)
-            && is_key_id(project)
-            && !space.is_empty()
-            && !space.contains('_'))
-        .then_some(organization);
-    }
-    (!organization.is_empty()
-        && organization.contains('_')
-        && !rest.is_empty()
-        && !rest.contains('_'))
-    .then_some(organization)
-}
-
-/// A key id in its path form: 26 characters of `a-z` and `2-7`, the first
-/// `a`..`h` (jc-types, ARCH/TEN-01).
-fn is_key_id(text: &str) -> bool {
-    text.len() == 26
-        && text.bytes().enumerate().all(|(i, b)| {
-            if i == 0 {
-                (b'a'..=b'h').contains(&b)
-            } else {
-                b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b)
-            }
-        })
+    antares_model::TenantId::organization_of(tenant)
 }
 
 /// The one value of header `name`: `None` when absent, repeated or not text,
@@ -291,12 +266,97 @@ pub fn organization_admits(
     Err(OrganizationRefusal::Unknown)
 }
 
-/// [`organization_admits`] on the NGSI-LD API (EP-188): between
-/// [`subject_or_admin`] and the Tenant existence check, on the one
-/// `NGSILD-Tenant` value the handler reads too. A refusal answers what a
-/// malformed or an unknown Tenant gets there, before any store read or
-/// implicit creation.
+/// The answer of one door to a Tenant the Organization check refuses
+/// (EP-188), or `None` to serve it: [`organization_admits`], then the
+/// Tenant's stored facts (design 10.1, 10.5): a name the rename moved away
+/// (`tenant_rename.old`), or a row whose stored `organization_id` is not its
+/// name's, answers as an unknown Tenant, so neither is served nor created.
+/// With `must_exist`, a Tenant the store lacks answers so too: a door that
+/// serves no implicit creation (the WebSocket upgrade) then tells a refused
+/// Tenant from an absent one by nothing.
+///
+/// The answers are the API's own: 400 for a malformed Tenant, the 5.5.10
+/// NonexistentTenant body otherwise, byte for byte.
+/// ponytail: one indexed query per outer request under `enforce`; cache the
+/// standing beside `known_tenants` if it shows in the request profile.
+pub async fn tenant_door(
+    st: &AppState,
+    named: Option<&str>,
+    headers: &axum::http::HeaderMap,
+    must_exist: bool,
+) -> Option<Response> {
+    if !st.tenant_organization || crate::state::in_process_depth() > 0 {
+        return None;
+    }
+    let malformed = || {
+        crate::negotiate::ApiError::from(antares_model::NgsiError::BadRequestData(format!(
+            "invalid NGSILD-Tenant value: {:?}",
+            named.unwrap_or_default()
+        )))
+        .into_response()
+    };
+    match organization_admits(st, named, headers) {
+        Ok(()) => {}
+        Err(OrganizationRefusal::Malformed) => return Some(malformed()),
+        Err(OrganizationRefusal::Unknown) => {
+            return Some(
+                match named.and_then(|raw| antares_model::TenantId::new(raw).ok()) {
+                    Some(tenant) => crate::router::nonexistent_tenant(&tenant),
+                    None => malformed(),
+                },
+            )
+        }
+    }
+    let raw = named?;
+    let tenant = antares_model::TenantId::new(raw).ok()?;
+    let standing = match st.store.tenant_standing(&tenant).await {
+        Ok(standing) => standing,
+        Err(e) => return Some(crate::negotiate::ApiError::from(e).into_response()),
+    };
+    let reassigned = standing
+        .organization
+        .as_deref()
+        .is_some_and(|stored| Some(stored) != tenant_organization(raw));
+    if standing.tombstoned || reassigned {
+        metrics::counter!("antares_tenant_organization_refused_total").increment(1);
+        tracing::warn!(
+            tenant = raw,
+            tombstoned = standing.tombstoned,
+            stored_organization = standing.organization.as_deref().unwrap_or("<none>"),
+            "a request names a renamed Tenant or one whose stored Organization is not its name's (EP-188): refused as an unknown Tenant"
+        );
+        return Some(crate::router::nonexistent_tenant(&tenant));
+    }
+    if must_exist && !tenant.is_internal() {
+        match st.store.tenant_exists(&tenant).await {
+            Ok(true) => {}
+            Ok(false) => return Some(crate::router::nonexistent_tenant(&tenant)),
+            Err(e) => return Some(crate::negotiate::ApiError::from(e).into_response()),
+        }
+    }
+    None
+}
+
+/// [`tenant_door`] on the NGSI-LD API (EP-188): between [`subject_or_admin`]
+/// and the Tenant existence check, on the one `NGSILD-Tenant` value the
+/// handler reads too. A refusal answers what a malformed or an unknown Tenant
+/// gets there, before any store read or implicit creation.
 pub async fn organization_layer(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    door_layer(&st, req, next, false).await
+}
+
+/// [`tenant_door`] with `must_exist` on a surface that names its Tenant in
+/// `NGSILD-Tenant` and creates none (the channels, ADR-0031): under
+/// `enforce` a refused and an absent Tenant answer alike there.
+pub async fn existing_tenant_layer(
+    State(st): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Response {
+    door_layer(&st, req, next, true).await
+}
+
+async fn door_layer(st: &AppState, req: Request, next: Next, must_exist: bool) -> Response {
     if !st.tenant_organization {
         return next.run(req).await;
     }
@@ -304,28 +364,9 @@ pub async fn organization_layer(State(st): State<AppState>, req: Request, next: 
         Ok(named) => named,
         Err(e) => return e.into_response(),
     };
-    match organization_admits(&st, named.as_deref(), req.headers()) {
-        Ok(()) => next.run(req).await,
-        Err(OrganizationRefusal::Malformed) => {
-            crate::negotiate::ApiError::from(antares_model::NgsiError::BadRequestData(format!(
-                "invalid NGSILD-Tenant value: {:?}",
-                named.as_deref().unwrap_or_default()
-            )))
-            .into_response()
-        }
-        Err(OrganizationRefusal::Unknown) => match named
-            .as_deref()
-            .and_then(|raw| antares_model::TenantId::new(raw).ok())
-        {
-            Some(tenant) => crate::router::nonexistent_tenant(&tenant),
-            None => {
-                crate::negotiate::ApiError::from(antares_model::NgsiError::BadRequestData(format!(
-                    "invalid NGSILD-Tenant value: {:?}",
-                    named.as_deref().unwrap_or_default()
-                )))
-                .into_response()
-            }
-        },
+    match tenant_door(st, named.as_deref(), req.headers(), must_exist).await {
+        None => next.run(req).await,
+        Some(refused) => refused,
     }
 }
 

@@ -33,6 +33,43 @@ macro_rules! require_db {
 /// row exists. Regression: the Pg arm never bound $1, so EVERY call errored
 /// ("bind message supplies 0 parameters") and the NonexistentTenant
 /// middleware 500'd every non-default-tenant request on the Pg store.
+/// EP-188 (T-7042, migration 0036): the tenant row keeps the Organization
+/// of its name from creation, and a name the rename moved away is a
+/// tombstone; both in the one standing query.
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_standing_reads_the_stored_organization_and_the_tombstone() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis();
+    let shaped = TenantId::new(&format!("sk_b__pgst{run}")).expect("tenant");
+    let plain = TenantId::new(&format!("pgst{run}")).expect("tenant");
+    for t in [&shaped, &plain] {
+        pg::ensure_tenant(&pool, t).await.expect("tenant row");
+    }
+    let standing = store.tenant_standing(&shaped).await.expect("standing");
+    assert_eq!(standing.organization.as_deref(), Some("sk_b"));
+    assert!(!standing.tombstoned);
+    let standing = store.tenant_standing(&plain).await.expect("standing");
+    assert_eq!(standing, antares_store::TenantStanding::default());
+
+    let old = TenantId::new(&format!("sk_b__pgold{run}")).expect("tenant");
+    sqlx::query("INSERT INTO tenant_rename (old, new) VALUES ($1, $2)")
+        .bind(old.as_str())
+        .bind(shaped.as_str())
+        .execute(&pool)
+        .await
+        .expect("tombstone");
+    let standing = store.tenant_standing(&old).await.expect("standing");
+    assert!(standing.tombstoned);
+    assert_eq!(standing.organization, None, "no row for the old name");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn tenant_exists_answers_for_the_actual_tenant() {
     let url = require_db!();

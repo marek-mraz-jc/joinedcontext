@@ -514,12 +514,13 @@ pub async fn claim_tenant(
     // writes nothing for a tenant that exists; a concurrent first write
     // waits on the winner's uncommitted index entry, then does nothing.
     sqlx::query(
-        "INSERT INTO tenants (tenant_id) \
-         SELECT $1 FROM (SELECT pg_advisory_xact_lock_shared(\
+        "INSERT INTO tenants (tenant_id, organization_id) \
+         SELECT $1, $2 FROM (SELECT pg_advisory_xact_lock_shared(\
              hashtext('antares.tenant'), hashtext($1))) AS fence \
          ON CONFLICT (tenant_id) DO NOTHING",
     )
     .bind(tenant.as_str())
+    .bind(TenantId::organization_of(tenant.as_str()))
     .execute(&mut **tx)
     .await
     .map(|_| ())
@@ -528,11 +529,14 @@ pub async fn claim_tenant(
 /// The same claim outside a document transaction, for the callers that have
 /// no document to pair it with (test seeds, the maintenance paths).
 pub async fn ensure_tenant(pool: &PgPool, tenant: &TenantId) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO tenants (tenant_id) VALUES ($1) ON CONFLICT DO NOTHING")
-        .bind(tenant.as_str())
-        .execute(pool)
-        .await
-        .map(|_| ())
+    sqlx::query(
+        "INSERT INTO tenants (tenant_id, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(tenant.as_str())
+    .bind(TenantId::organization_of(tenant.as_str()))
+    .execute(pool)
+    .await
+    .map(|_| ())
 }
 
 #[cfg(test)]

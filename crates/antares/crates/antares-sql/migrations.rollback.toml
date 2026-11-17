@@ -148,3 +148,7 @@ note = "replaces the remint functions and adds antares_remint_batched; an older 
 [0035]
 rollback = "compatible"
 note = "replaces remint_apply with range-bounded statements; an older release calls no remint function"
+
+[0036]
+rollback = "compatible"
+note = "adds tenants.organization_id and tenant_rename; an older release writes no organization_id (NULL: the name alone decides) and reads neither"

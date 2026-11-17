@@ -507,6 +507,12 @@ impl Store {
     /// Tenants that hold any subscriptions (interval-firing scan).
     /// 5.5.10: a Tenant exists once any create operation implicitly created
     /// it (any resource kind was ever written under it).
+    /// The memory store renames no tenant and keeps no Organization beside
+    /// the name: the name alone decides (EP-188).
+    pub fn tenant_standing(&self, _tenant: &TenantId) -> antares_store::TenantStanding {
+        antares_store::TenantStanding::default()
+    }
+
     pub fn tenant_exists(&self, tenant: &TenantId) -> bool {
         let inner = self
             .inner
