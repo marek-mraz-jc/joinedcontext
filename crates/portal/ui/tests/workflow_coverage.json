@@ -196,7 +196,8 @@
         "routes": [
           "POST /api/v1/operator/changes",
           "POST /api/v1/operator/changes/{id}/approve",
-          "POST /api/v1/operator/changes/{id}/reject"
+          "POST /api/v1/operator/changes/{id}/reject",
+          "POST /api/v1/operator/installation/test-email"
         ]
       }
     },

@@ -13776,7 +13776,7 @@
         "test": "Send a test e-mail",
         "testFirst": "Save an e-mail server first; the test uses the saved one.",
         "testSent": "The server took the test e-mail. It goes to your own address; check your inbox.",
-        "testFailed": "The test e-mail was not sent"
+        "testFailed": "The test e-mail was not sent. Fix what the line below names, then send the test again."
       }
     },
     "action": {

@@ -13776,7 +13776,7 @@
         "test": "Test-E-Mail senden",
         "testFirst": "Speichern Sie zuerst einen E-Mail-Server; der Test nutzt den gespeicherten.",
         "testSent": "Der Server hat die Test-E-Mail angenommen. Sie geht an Ihre eigene Adresse; prüfen Sie Ihren Posteingang.",
-        "testFailed": "Die Test-E-Mail wurde nicht gesendet"
+        "testFailed": "Die Test-E-Mail wurde nicht gesendet. Beheben Sie, was die Zeile unten nennt, und senden Sie den Test erneut."
       }
     },
     "action": {

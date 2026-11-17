@@ -13776,7 +13776,7 @@
         "test": "Odeslat testovací e-mail",
         "testFirst": "Nejprve uložte e-mailový server; test používá uložený.",
         "testSent": "Server přijal testovací e-mail. Jde na vaši vlastní adresu; zkontrolujte schránku.",
-        "testFailed": "Testovací e-mail se neodeslal"
+        "testFailed": "Testovací e-mail se neodeslal. Opravte, co uvádí řádek níže, a pošlete test znovu."
       }
     },
     "action": {
