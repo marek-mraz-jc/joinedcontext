@@ -2,20 +2,22 @@
 //! AG-94).
 //!
 //! The proxy exchanges the person's access token for a grant of its own client whose subject is
-//! that person, and every data call of the run carries it. The Portal keeps no copy: the token is
-//! read from the request that starts the run, sent once, and never stored, logged or written to
-//! the run record. A run that starts without one reads no data through the proxy.
+//! that person, and every data call of the run carries it. The token is read from the request
+//! that starts the run (a cookie session's from what the sign-in kept in memory, T-6783), sent
+//! once, and never stored, logged or written to the run record. A run that starts without one
+//! reads no data through the proxy.
 
 use std::time::Duration;
 
 use axum::http::{header, HeaderMap};
 
 use crate::auth::oidc::OidcClient;
-use crate::auth::session::{Front, EDGE_TOKEN_HEADER};
+use crate::auth::session::{self, Front, EDGE_TOKEN_HEADER};
+use crate::state::AppState;
 
-/// The person's access token on the request that starts a run: the edge's `X-Access-Token`
-/// where an edge is trusted, or the caller's own bearer. A Portal cookie session holds no access
-/// token (only its refresh token, which is the Portal's and not the run's), so it hands over none.
+/// The person's access token a request carries itself: the edge's `X-Access-Token` where an
+/// edge is trusted, or the caller's own bearer. A Portal cookie session carries none in the
+/// request; [`run_token`] reads the one the Portal kept for it.
 pub fn persons_token(headers: &HeaderMap, trust_edge_token: bool) -> Option<&str> {
     match Front::of(headers, trust_edge_token) {
         Front::Edge => headers.get(&EDGE_TOKEN_HEADER)?.to_str().ok(),
@@ -28,6 +30,23 @@ pub fn persons_token(headers: &HeaderMap, trust_edge_token: bool) -> Option<&str
     }
     .map(str::trim)
     .filter(|token| !token.is_empty())
+}
+
+/// The person's access token a run started by `headers` is handed (ADR-N-038 §3.1): what
+/// [`persons_token`] reads for a bearer or the edge, and for a Portal cookie session the access
+/// token this process kept at sign-in or refresh ([`AppState::keep_access_token`]), never its
+/// refresh token. `None` for a session that is over, revoked, or whose token this process does
+/// not hold (a restart, another replica): the person's next turn hands it over again.
+pub fn run_token(state: &AppState, headers: &HeaderMap) -> Option<String> {
+    if Front::of(headers, state.config.trust_edge_token) != Front::Portal {
+        return persons_token(headers, state.config.trust_edge_token).map(str::to_owned);
+    }
+    let now = session::now_unix();
+    let session = session::load_with(headers, state)?;
+    if session.is_expired(now) || session.access_expired(now) || state.is_revoked(&session) {
+        return None;
+    }
+    state.session_access_token(&session, now)
 }
 
 /// How long one hand-over waits for the proxy, which asks the Portal and the realm in turn.
@@ -208,6 +227,29 @@ mod tests {
             persons_token(&headers(&[("cookie", "__Host-jc_session=x")]), true),
             None
         );
+    }
+
+    /// T-7158: a run started from the Portal's own cookie session, jc's only front, is handed
+    /// the access token the sign-in kept; without one, or once the session is revoked, nothing.
+    #[tokio::test]
+    async fn a_cookie_session_hands_its_kept_access_token_to_the_run() {
+        use crate::auth::endpoint_token::tests::{cookie_session, signed_in, KEPT};
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let session = signed_in();
+        let kept = cookie_session(&state, &session, Some(KEPT));
+        assert_eq!(run_token(&state, &kept).as_deref(), Some(KEPT));
+        let bearer = headers(&[("authorization", "Bearer own-token")]);
+        assert_eq!(run_token(&state, &bearer).as_deref(), Some("own-token"));
+        assert_eq!(run_token(&state, &HeaderMap::new()), None);
+
+        let restarted = AppState::new(crate::config::Config::for_tests(), None);
+        let none_kept = cookie_session(&restarted, &session, None);
+        assert_eq!(run_token(&restarted, &none_kept), None);
+
+        state
+            .revoke_subject(&session.identity.subject, session.issued_at)
+            .await;
+        assert_eq!(run_token(&state, &kept), None);
     }
 
     /// A realm the Portal can discover, whose token endpoint answers the client-credentials grant.
