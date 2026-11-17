@@ -13473,7 +13473,9 @@
         "plan": "Restore check",
         "restore": "Restore",
         "restore-request": "Restore asked",
-        "restore-decline": "Restore declined"
+        "restore-decline": "Restore declined",
+        "copy-plan": "Project copy check",
+        "copy": "Project copied"
       }
     },
     "versions": {
@@ -13547,7 +13549,9 @@
       "keepDays": "1 to 3650 days, e.g. 90",
       "enabled": "Off keeps the bucket and every version; Run now still works.",
       "workingRecipient": "The public key of the identity your administrators use, from age-keygen, e.g. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "A second public key, kept offline by another person, e.g. age1syrvza6xvtvsr9f0…. Either key opens every archive."
+      "recoveryRecipient": "A second public key, kept offline by another person, e.g. age1syrvza6xvtvsr9f0…. Either key opens every archive.",
+      "copyProject": "The projects of this backup you may read, e.g. air-quality. A project deleted since the backup is not listed and never restored.",
+      "copyName": "Lower-case letters, digits and '-', a name no project uses, e.g. air-quality-restored."
     },
     "section": {
       "jump": "Jump to a backup",
@@ -13592,6 +13596,25 @@
         "declined": "Declined",
         "failed": "Not restored: check the reason under it"
       }
+    },
+    "copy": {
+      "action": "Restore a project",
+      "title": "Restore one project into a new project",
+      "lead": "Pick one project of this backup and a new name. Its rows are copied into a new project with its own id; the project they came from is not changed.",
+      "list": "Show the projects",
+      "project": "Project of this backup",
+      "pick": "Pick a project",
+      "none": "No project of this backup you may restore",
+      "deleted": "Deleted since this backup, never restored: {names}",
+      "name": "New project name",
+      "check": "Check",
+      "apply": "Restore into the new project",
+      "summary": "Rows to copy into {name}: {rows}. Refused: {refused}. Erasures applied again: {erasures}.",
+      "done": "Restored into {name} (project id {id}). {source} was not changed.",
+      "first": "Pick a project and type a name first",
+      "caption": "Rows per table the copy writes",
+      "refusedNote": "Refused rows break a rule of today's data (a name another row holds, or a link to a row the copy does not hold) and are left out; the rest is copied.",
+      "noneHint": "Pick another version, or ask an administrator of the project for read access."
     }
   },
   "operator": {

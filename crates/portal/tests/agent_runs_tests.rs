@@ -4592,7 +4592,17 @@ mod filtered_list_edges {
     /// `(id, app, kind, status, created_by, created_at)`
     type Row<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, &'a str);
 
+    /// Writes `rows` in `project`'s key, as the run store does: the runs are forced since 0080
+    /// (T-7201), so the project is placed in an Organization of the registry first.
     async fn insert(pool: &PgPool, project: &str, rows: &[Row<'_>]) {
+        let mirror = crate::common::keyed_mirror(pool, &[project]).await;
+        let key = joinedcontext_portal::project_ids::key_of(pool, &mirror, project)
+            .await
+            .expect("the registry")
+            .expect("a placed project has a key");
+        let mut tx = joinedcontext_portal::db::tenant_tx(pool, key)
+            .await
+            .expect("tx");
         for (id, app, kind, status, created_by, created_at) in rows {
             let run: AgentRun = serde_json::from_value(json!({
                 "id": format!("{project}-{id}"), "project": project, "appName": app,
@@ -4605,8 +4615,9 @@ mod filtered_list_edges {
                 "expiresAt": "2099-01-01T00:00:00Z",
             }))
             .expect("a run");
-            db::insert_agent_run(pool, &run).await.expect("insert");
+            db::insert_agent_run(&mut *tx, &run).await.expect("insert");
         }
+        tx.commit().await.expect("inserted");
     }
 
     async fn ids(pool: &PgPool, project: &str, filter: RunFilter, limit: i64) -> Vec<String> {
@@ -4711,7 +4722,17 @@ mod filtered_list_edges {
         journey.id = format!("{project}-j");
         journey.origin = "journey".to_owned();
         journey.created_at = "2026-09-21T10:09:00Z".to_owned();
-        db::insert_agent_run(&pool, &journey).await.expect("insert");
+        let key = joinedcontext_portal::project_ids::recorded(&pool, &project)
+            .await
+            .expect("the registry")
+            .expect("a placed project has a key");
+        let mut tx = joinedcontext_portal::db::tenant_tx(&pool, key)
+            .await
+            .expect("tx");
+        db::insert_agent_run(&mut *tx, &journey)
+            .await
+            .expect("insert");
+        tx.commit().await.expect("inserted");
         let by_origin = |origin: Option<&str>| RunFilter {
             app: Some("kpi".to_owned()),
             created_by: Some("anna".to_owned()),

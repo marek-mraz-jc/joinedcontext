@@ -871,6 +871,7 @@ async fn antares(state: &AppState, organization: &str) -> Result<Source, String>
             .collect(),
         keys: one_key("tenants", tenants),
         tables: ANTARES_TABLES,
+        folders: Vec::new(),
     })
 }
 
@@ -889,6 +890,7 @@ async fn kaisatsu(state: &AppState, organization: &str) -> Result<Source, String
         ]],
         keys: one_key("realm", vec![realm]),
         tables: KAISATSU_TABLES,
+        folders: Vec::new(),
     })
 }
 
@@ -918,6 +920,7 @@ async fn shako(state: &AppState, organization: &str) -> Result<Source, String> {
         ]],
         keys: one_key("repos", repos),
         tables: SHAKO_TABLES,
+        folders: Vec::new(),
     })
 }
 
@@ -941,6 +944,7 @@ async fn daiya(state: &AppState, organization: &str) -> Result<Source, String> {
             .collect(),
         keys: one_key("daiya_orgs", orgs),
         tables: DAIYA_TABLES,
+        folders: Vec::new(),
     })
 }
 
@@ -962,6 +966,7 @@ async fn dataroom(state: &AppState, organization: &str) -> Result<Source, String
         ]],
         keys: one_key("catalogue", vec![tenant.catalogue.to_string()]),
         tables: DATAROOM_TABLES,
+        folders: Vec::new(),
     })
 }
 

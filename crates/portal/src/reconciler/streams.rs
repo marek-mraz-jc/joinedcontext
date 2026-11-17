@@ -2593,7 +2593,11 @@ output:
         sinks(&stream, &mut found);
         // The outcome sink, the pass report and at least one tap.
         assert!(found.len() >= 3, "{stream}");
-        let admitted = crate::auth::internal::pipeline_clients("zilina", "drepo");
+        let admitted = crate::auth::internal::pipeline_clients(
+            &crate::store::Mirror::new(),
+            "zilina",
+            "drepo",
+        );
         for oauth2 in &found {
             assert_eq!(oauth2, &pipeline_oauth2("zilina"), "{stream}");
             assert!(admitted.iter().any(|c| oauth2["client_key"] == c.as_str()));

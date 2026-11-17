@@ -1354,7 +1354,9 @@ export interface Actions {
   portal_backup_configuration_restore: { version: string; body?: unknown };
   portal_backup_configuration_run: Record<string, never>;
   portal_backup_configuration_set: { body?: unknown };
+  portal_backup_data_copy: { version: string; body?: unknown };
   portal_backup_data_delete: Record<string, never>;
+  portal_backup_data_projects: { version: string; body?: unknown };
   portal_backup_data_restore: { version: string; body?: unknown };
   portal_backup_data_restore_approve: { id: string; body?: unknown };
   portal_backup_data_restore_decline: { id: string };
@@ -1537,7 +1539,9 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_backup_configuration_restore: ["Organization"],
   portal_backup_configuration_run: ["Organization"],
   portal_backup_configuration_set: ["Organization"],
+  portal_backup_data_copy: ["Organization"],
   portal_backup_data_delete: ["Organization"],
+  portal_backup_data_projects: ["Organization"],
   portal_backup_data_restore: ["Organization"],
   portal_backup_data_restore_approve: ["Organization"],
   portal_backup_data_restore_decline: ["Organization"],

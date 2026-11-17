@@ -222,6 +222,31 @@ pub async fn handle_mcp(
 /// `arguments` or a `jc://` resource address, is answered as an unknown project, and the rest
 /// are answered as `/api/v1/mcp` answers them with `project` set, so `tools/list` is that
 /// project's. The handshake names the server `{org}.{ProjectId}.manage`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project}/mcp",
+    tag = "mcp",
+    params(("project" = String, Path, description = "The project every message is held to, e.g. `traffic`")),
+    request_body(
+        content = Object,
+        description = "A JSON-RPC 2.0 request object, as on `/api/v1/mcp`. A message naming another \
+                       project in `params`, its `arguments` or a `jc://` address is answered as an \
+                       unknown project (MCP-33).",
+        content_type = "application/json",
+        example = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} })
+    ),
+    responses(
+        (status = 200, description = "The JSON-RPC response object; `tools/list` lists this \
+                                      project's tools and the handshake names the server \
+                                      `{org}.{ProjectId}.manage`", body = Object),
+        (status = 401, description = "No bearer, or one this realm did not sign; the answer \
+                                      carries `WWW-Authenticate` with the metadata document", body = Object),
+        (status = 403, description = "The token is valid and its account may not use this door", body = Object),
+        (status = 405, description = "Method not allowed: the door takes POST"),
+        (status = 429, description = "Past the per-subject rate limit of this minute (AG-60)", body = Object)
+    ),
+    security(("mcp_bearer" = []))
+)]
 pub async fn handle_project_mcp(
     State(state): State<AppState>,
     Path(project): Path<String>,

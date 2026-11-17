@@ -69,6 +69,14 @@ async fn world() -> Option<(AppState, String)> {
     role(&state, "trips-owner", "anna", &project, &owner);
     role(&state, "trips-owner-2", "boris", &project, &owner);
     role(&state, "trips-reader", "eve", &project, &["read"]);
+    // The erasure log is keyed (T-7202) and forced (T-7201): the project's Organization is in the
+    // registry and its key recorded, as the proposing door's `project_ids::required` does first.
+    let pool = state.db.clone().expect("a database");
+    common::keyed_project(&state, &pool, &project, "helsinki").await;
+    joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, &project)
+        .await
+        .expect("the registry")
+        .expect("a registered project has a key");
     Some((state, project))
 }
 
