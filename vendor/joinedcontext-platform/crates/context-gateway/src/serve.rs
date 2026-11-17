@@ -34,6 +34,64 @@ pub struct Built {
     pub gateway: Arc<Gateway>,
     /// The CONNECT checks of the MQTT brokers, for `config.internal_bind` alone.
     pub internal: Option<axum::Router>,
+    /// The Organizations' own realms, which jc replaces at run time; `None` without a realm.
+    pub organization_realms: Option<OrganizationRealms>,
+}
+
+/// The Organizations' own realms of a running gateway (T-7180): jc replaces them whenever the
+/// host registry serves another set of sign-in hosts, so a realm answers or is refused without a
+/// restart.
+#[derive(Clone)]
+pub struct OrganizationRealms {
+    verifier: Arc<Verifier>,
+    installation: String,
+    reach: Option<std::net::SocketAddr>,
+}
+
+impl OrganizationRealms {
+    /// Makes `raw` (a `JC_OIDC_ORGANIZATION_REALMS` list, checked as at start) the Organizations'
+    /// own realms. A realm left out is refused from the next request on; a new one loads its keys
+    /// in the background and refuses its tokens until they are loaded. A set that fails the check
+    /// changes nothing. Returns how many realms are held.
+    pub fn replace(&self, raw: &str) -> Result<usize, String> {
+        let realms =
+            crate::config::organization_realms(Some(raw.to_owned()), Some(&self.installation))
+                .map_err(|e| e.to_string())?;
+        let pairs: Vec<(String, String)> = realms
+            .iter()
+            .map(|r| (r.organization.clone(), r.issuer.clone()))
+            .collect();
+        for (organization, own) in self.verifier.replace_organizations(&pairs) {
+            if let Some(realm) = realms.iter().find(|r| r.organization == organization) {
+                tokio::spawn(keep_current(
+                    Arc::downgrade(&own),
+                    realm.jwks_url.clone(),
+                    self.reach,
+                ));
+            }
+        }
+        Ok(realms.len())
+    }
+}
+
+/// Refreshes an Organization realm's keys while the verifier holds that realm.
+async fn keep_current(
+    own: std::sync::Weak<Verifier>,
+    url: String,
+    reach: Option<std::net::SocketAddr>,
+) {
+    while let Some(verifier) = own.upgrade() {
+        match jwks::refresh_at(&verifier, &url, reach).await {
+            Ok(count) => {
+                tracing::info!(count, url = %url, "Organization realm signing keys loaded")
+            }
+            Err(error) => {
+                tracing::error!(%error, url = %url, "cannot refresh an Organization realm's signing keys")
+            }
+        }
+        drop(verifier);
+        tokio::time::sleep(jwks::REFRESH).await;
+    }
 }
 
 /// Builds the gateway that forwards to `broker` and spawns its background work on the current
@@ -117,6 +175,7 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
     gateway.replace_brokers(brokers);
 
     // The realm's keys are refreshed in the background; a request never fetches (PF-46).
+    let mut organization_realms = None;
     let gateway = match (&config.oidc_issuer, &config.oidc_jwks_url) {
         (Some(issuer), Some(jwks_url)) => {
             let verifier = Arc::new(
@@ -139,19 +198,25 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
             ));
             // Each Organization's own realm (T-7131), loaded in the background: one not
             // answering yet keeps its Organization's tokens refused, never the installation's.
-            for own in &config.oidc_organizations {
-                let Some((_, realm)) = verifier
-                    .organizations()
-                    .find(|(name, _)| *name == own.organization)
-                else {
-                    continue;
-                };
-                tokio::spawn(jwks::keep_current_at(
-                    Arc::clone(realm),
-                    own.jwks_url.clone(),
-                    reach,
-                ));
+            // A realm dropped at run time (T-7180) stops its refresh with it.
+            for (organization, realm) in verifier.organizations() {
+                if let Some(own) = config
+                    .oidc_organizations
+                    .iter()
+                    .find(|own| own.organization == organization)
+                {
+                    tokio::spawn(keep_current(
+                        Arc::downgrade(&realm),
+                        own.jwks_url.clone(),
+                        reach,
+                    ));
+                }
             }
+            organization_realms = Some(OrganizationRealms {
+                verifier: Arc::clone(&verifier),
+                installation: issuer.clone(),
+                reach,
+            });
             gateway.authenticate(verifier, accounts, config.public_url.clone())
         }
         _ => {
@@ -317,5 +382,6 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
         app,
         gateway,
         internal,
+        organization_realms,
     })
 }

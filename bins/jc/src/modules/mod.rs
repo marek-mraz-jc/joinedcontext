@@ -56,6 +56,7 @@ pub mod portal;
 pub(crate) mod portals;
 #[cfg(feature = "shako")]
 pub mod shako;
+pub mod sign_in;
 #[cfg(feature = "viz")]
 pub mod viz;
 

@@ -1316,6 +1316,7 @@ pub async fn backchannel_logout(
     let realm = state
         .organization_realms
         .values()
+        .into_iter()
         .find(|realm| issuer.as_deref() == Some(realm.issuer()));
     let client = match realm {
         Some(realm) => realm.client().await?,

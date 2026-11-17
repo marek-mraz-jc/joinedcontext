@@ -326,7 +326,7 @@ fn label(envelope: &ResourceEnvelope) -> String {
     )
 }
 
-async fn every_user(admin: &crate::people::Admin<'_>) -> Result<Vec<KcUser>, ApiError> {
+async fn every_user(admin: &crate::people::Admin) -> Result<Vec<KcUser>, ApiError> {
     let mut users = Vec::new();
     loop {
         let page = admin.list("", users.len() as u32, PAGE).await?;

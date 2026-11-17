@@ -37,8 +37,7 @@ pub struct AppState {
     /// every bearer call answers 401. Fail closed.
     pub bearer: Option<Arc<BearerVerifier>>,
     /// The realm of each Organization that signs in on its own host, by name (`auth::realms`).
-    pub organization_realms:
-        Arc<std::collections::BTreeMap<String, Arc<crate::auth::realms::OrganizationRealm>>>,
+    pub organization_realms: crate::auth::realms::OrganizationRealms,
     pub mirror: Arc<Mirror>,
     /// `None` when no forge is configured: every write answers 503. A Portal that cannot
     /// open a merge request must not fall back to a local write (CC-03).
@@ -186,6 +185,28 @@ pub struct AppState {
 /// outlive the mark that refuses it (PF-11).
 const REVOCATION_TTL_SECS: i64 = 48 * 3600;
 
+/// The realm of `setting` with the Organization's Portal host, beside the installation realm;
+/// `None` without either.
+pub(crate) fn organization_realm(
+    config: &Config,
+    setting: &crate::auth::realms::RealmSetting,
+) -> Option<(String, Arc<crate::auth::realms::OrganizationRealm>)> {
+    let installation = config.oidc.as_ref()?;
+    let host = config
+        .organization_hosts
+        .iter()
+        .find(|h| h.organization == setting.organization)?;
+    Some((
+        setting.organization.clone(),
+        Arc::new(crate::auth::realms::OrganizationRealm::new(
+            setting,
+            installation,
+            &host.base,
+            config.keycloak_admin.as_ref(),
+        )),
+    ))
+}
+
 impl AppState {
     /// Whether this replica runs the work with side effects of a background loop (W-R2POR1-012):
     /// the reconciler's leader, or the one replica there is when nothing elects one.
@@ -207,12 +228,12 @@ impl AppState {
     /// The people of the running request's realm (T-7142): on the host of an Organization with a
     /// realm of its own, that realm's, managed as its own `portal-reconciler`; everywhere else the
     /// installation realm's. Never another Organization's.
-    pub fn people_here(&self) -> Option<&crate::people::People> {
+    pub fn people_here(&self) -> Option<Arc<crate::people::People>> {
         match crate::organization_host::organization()
             .and_then(|organization| self.organization_realms.get(&organization))
         {
-            Some(realm) => realm.people.as_ref(),
-            None => self.people.as_deref(),
+            Some(realm) => realm.people.clone(),
+            None => self.people.clone(),
         }
     }
 
@@ -230,32 +251,12 @@ impl AppState {
             .oidc
             .as_ref()
             .map(|o| Arc::new(BearerVerifier::new(&o.issuer, &o.client_id)));
-        let organization_realms = Arc::new(
+        let organization_realms = crate::auth::realms::OrganizationRealms::new(
             config
-                .oidc
-                .as_ref()
-                .map(|installation| {
-                    config
-                        .organization_realms
-                        .iter()
-                        .filter_map(|setting| {
-                            let host = config
-                                .organization_hosts
-                                .iter()
-                                .find(|h| h.organization == setting.organization)?;
-                            Some((
-                                setting.organization.clone(),
-                                Arc::new(crate::auth::realms::OrganizationRealm::new(
-                                    setting,
-                                    installation,
-                                    &host.base,
-                                    config.keycloak_admin.as_ref(),
-                                )),
-                            ))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
+                .organization_realms
+                .iter()
+                .filter_map(|setting| organization_realm(&config, setting))
+                .collect(),
         );
         let draft_events = DraftHub::new();
         let drafts = DraftStore::new(None).with_hub(draft_events.clone());
@@ -846,7 +847,7 @@ impl AppState {
                         syncer = syncer.with_app_clients(Arc::new(
                             clients
                                 .with_foreign(Arc::clone(&self.foreign_names))
-                                .without(self.organization_realms.keys().cloned()),
+                                .without(self.organization_realms.keys()),
                         ))
                     }
                     None => {

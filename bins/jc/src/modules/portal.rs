@@ -68,7 +68,13 @@ pub async fn build(
         BTreeMap::new()
     };
     siblings.extend(organizations);
-    organization_realm_vars(orgs, ctx.siblings, &mount.scheme, &mut siblings, env);
+    let follow_realms = organization_realm_vars(
+        &super::sign_in::from_config(orgs),
+        ctx.siblings,
+        &mount.scheme,
+        &mut siblings,
+        env,
+    );
     tracing::info!(
         keys = ?siblings.keys().collect::<Vec<_>>(),
         "portal: settings filled from sibling modules"
@@ -119,8 +125,20 @@ pub async fn build(
     }
     let _ = super::PORTAL_STATE.set(state.clone());
     server::spawn_background(&state);
+    if let Some(reach) = follow_realms {
+        let (portal, scheme) = (state.clone(), mount.scheme.clone());
+        super::sign_in::follow("portal", move |set| {
+            match portal
+                .replace_organization_realms(&organization_realms(set, &scheme), Some(reach))
+            {
+                Ok(held) => tracing::info!(held, "portal: Organization realms replaced"),
+                Err(e) => tracing::error!(error = %e, "portal: Organization realms kept"),
+            }
+        });
+    }
     if let (Some(pool), Some(hosts)) = (&state.db, registry.hosts) {
-        tokio::spawn(watch_registry(pool.clone(), hosts, shutdown.clone()));
+        let known = orgs.iter().map(|o| o.name.clone()).collect();
+        tokio::spawn(watch_registry(pool.clone(), hosts, known, shutdown.clone()));
     }
     let token = shutdown.clone();
     let internal = listener
@@ -148,9 +166,12 @@ const REGISTRY_REBUILD: std::time::Duration = std::time::Duration::from_secs(60)
 /// Keeps the router's host table on the registry's `served` rows (T-7129 §1, T-7136): a rebuild
 /// at once, on every `NOTIFY organization_hosts` and every [`REGISTRY_REBUILD`]. A rebuild that
 /// fails keeps the table that answers and sets `jc_host_registry_stale` to 1 until one succeeds.
+/// After each rebuild the served sign-in hosts of the Organizations jc runs (`known`) go to every
+/// module with an issuer table (T-7180, `sign_in`).
 async fn watch_registry(
     pool: sqlx::PgPool,
     hosts: jc_router::HostSwap,
+    known: Vec<String>,
     shutdown: CancellationToken,
 ) {
     let mut listener: Option<sqlx::postgres::PgListener> = None;
@@ -158,7 +179,7 @@ async fn watch_registry(
         if listener.is_none() {
             listener = listen_registry(&pool).await;
         }
-        let stale = match rebuild_hosts(&pool, &hosts).await {
+        let stale = match rebuild_hosts(&pool, &hosts, &known).await {
             Ok(served) => {
                 tracing::debug!(served, "host registry: host table rebuilt");
                 0.0
@@ -206,8 +227,13 @@ async fn listen_registry(pool: &sqlx::PgPool) -> Option<sqlx::postgres::PgListen
     }
 }
 
-/// Rebuilds the host table from every registry row; the number of `served` rows.
-async fn rebuild_hosts(pool: &sqlx::PgPool, hosts: &jc_router::HostSwap) -> Result<usize, String> {
+/// Rebuilds the host table from every registry row, then hands its served sign-in hosts on; the
+/// number of `served` rows.
+async fn rebuild_hosts(
+    pool: &sqlx::PgPool,
+    hosts: &jc_router::HostSwap,
+    known: &[String],
+) -> Result<usize, String> {
     let rows = joinedcontext_portal::host_registry::rows(pool)
         .await
         .map_err(|e| format!("the registry could not be read: {e}"))?;
@@ -222,6 +248,17 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, hosts: &jc_router::HostSwap) -> Resu
         })
         .collect();
     hosts.rebuild(&registry).map_err(|e| e.to_string())?;
+    super::sign_in::publish(super::sign_in::from_registry(
+        rows.iter().map(|r| {
+            (
+                r.host.as_str(),
+                r.organization.as_str(),
+                r.role.as_str(),
+                r.state.as_str(),
+            )
+        }),
+        known,
+    ));
     Ok(registry.iter().filter(|r| r.served).count())
 }
 
@@ -268,40 +305,65 @@ pub(crate) fn registry_seed(cfg: &crate::config::Config) -> Vec<SeedHost> {
     out
 }
 
-/// The realm of each `[[organizations]]` row with a sign-in host of its own (`hosts.idm`,
-/// T-7001), where the Portal signs that Organization's people in on its host
-/// (`JC_PORTAL_ORGANIZATION_REALMS`, T-7133): issuer `{scheme}://{idm}/realms/{name}` as kaisatsu
-/// names it there, keys and tokens at `http://{idm}` dialed at jc's listener (`JC_PORTAL_REACH`),
-/// where kaisatsu answers the realm's back channel. Only beside the installation realm jc filled
-/// into `vars`, and never over an environment that names the realms or its own reach.
+/// The realm of each Organization with a sign-in host of its own (`sign_ins`: jc.toml's
+/// `hosts.idm` at start, T-7001; the host registry's at run time, T-7180), where the Portal signs
+/// that Organization's people in on its host (`JC_PORTAL_ORGANIZATION_REALMS`, T-7133): issuer
+/// `{scheme}://{idm}/realms/{name}` as kaisatsu names it there, keys and tokens at `http://{idm}`
+/// dialed at jc's listener (`JC_PORTAL_REACH`), where kaisatsu answers the realm's back channel.
+/// Only beside the installation realm jc filled into `vars`, and never over an environment that
+/// names the realms or its own reach. The address the realms' hosts are reached at when jc
+/// fills them, so the registry's later sets go to the Portal too; `None` when it does not.
 fn organization_realm_vars(
-    orgs: &[crate::config::OrganizationSection],
+    sign_ins: &[super::sign_in::SignIn],
     siblings: &crate::siblings::Siblings,
     scheme: &str,
     vars: &mut BTreeMap<String, String>,
     env: impl Fn(&str) -> Option<String>,
-) {
-    let idm: Vec<(&str, &str)> = orgs
-        .iter()
-        .filter_map(|org| Some((org.name.as_str(), org.hosts.idm.as_deref()?)))
-        .collect();
-    if idm.is_empty()
-        || siblings.get(Module::Kaisatsu).is_none()
+) -> Option<std::net::SocketAddr> {
+    if siblings.get(Module::Kaisatsu).is_none()
         || !vars.contains_key("JC_OIDC_ISSUER")
         || env("JC_PORTAL_ORGANIZATION_REALMS").is_some()
     {
-        return;
+        return None;
     }
     if env("JC_PORTAL_REACH").is_some() || env("JC_PORTAL_REACH_HOSTS").is_some() {
-        tracing::warn!(
-            "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own realm; \
-             set JC_PORTAL_ORGANIZATION_REALMS beside it"
-        );
-        return;
+        if !sign_ins.is_empty() {
+            tracing::warn!(
+                "portal: JC_PORTAL_REACH is set, so no Organization signs in through its own \
+                 realm; set JC_PORTAL_ORGANIZATION_REALMS beside it"
+            );
+        }
+        return None;
     }
-    let realms: Vec<serde_json::Value> = idm
+    let reach = vars
+        .get("JC_PORTAL_REACH")
+        .and_then(|at| at.parse().ok())
+        .unwrap_or_else(|| crate::siblings::reach(siblings.listener));
+    if sign_ins.is_empty() {
+        return Some(reach);
+    }
+    vars.insert(
+        "JC_PORTAL_ORGANIZATION_REALMS".to_owned(),
+        organization_realms(sign_ins, scheme),
+    );
+    vars.entry("JC_PORTAL_REACH".to_owned())
+        .or_insert_with(|| reach.to_string());
+    let reached = vars.entry("JC_PORTAL_REACH_HOSTS".to_owned()).or_default();
+    for own in sign_ins {
+        if !reached.is_empty() {
+            reached.push(',');
+        }
+        reached.push_str(&own.host);
+    }
+    Some(reach)
+}
+
+/// `JC_PORTAL_ORGANIZATION_REALMS` of `sign_ins`, `[]` for none.
+fn organization_realms(sign_ins: &[super::sign_in::SignIn], scheme: &str) -> String {
+    let realms: Vec<serde_json::Value> = sign_ins
         .iter()
-        .map(|(name, host)| {
+        .map(|own| {
+            let (host, name) = (&own.host, &own.organization);
             serde_json::json!({
                 "organization": name,
                 "issuer": format!("{scheme}://{host}/realms/{name}"),
@@ -309,19 +371,7 @@ fn organization_realm_vars(
             })
         })
         .collect();
-    vars.insert(
-        "JC_PORTAL_ORGANIZATION_REALMS".to_owned(),
-        serde_json::Value::from(realms).to_string(),
-    );
-    vars.entry("JC_PORTAL_REACH".to_owned())
-        .or_insert_with(|| crate::siblings::reach(siblings.listener).to_string());
-    let reached = vars.entry("JC_PORTAL_REACH_HOSTS".to_owned()).or_default();
-    for (_, host) in &idm {
-        if !reached.is_empty() {
-            reached.push(',');
-        }
-        reached.push_str(host);
-    }
+    serde_json::Value::from(realms).to_string()
 }
 
 /// Points jc's own runner at the Portal's internal listener on `addr` (prod's deployment sets
@@ -1021,7 +1071,12 @@ mod tests {
         };
         let none = |_: &str| None;
         let mut vars = installation();
-        organization_realm_vars(&cfg.organizations, &siblings, "https", &mut vars, none);
+        let sign_ins = crate::modules::sign_in::from_config(&cfg.organizations);
+        assert_eq!(
+            organization_realm_vars(&sign_ins, &siblings, "https", &mut vars, none),
+            Some("127.0.0.1:4000".parse().unwrap()),
+            "the registry's later sets reach the Portal too"
+        );
         assert_eq!(
             vars["JC_PORTAL_REACH_HOSTS"],
             "idm.city.example,idm.bbsk.sk"
@@ -1042,18 +1097,15 @@ mod tests {
         for set in ["JC_PORTAL_ORGANIZATION_REALMS", "JC_PORTAL_REACH"] {
             let mut vars = installation();
             let env = |key: &str| (key == set).then(|| "[]".to_owned());
-            organization_realm_vars(&cfg.organizations, &siblings, "https", &mut vars, env);
+            assert_eq!(
+                organization_realm_vars(&sign_ins, &siblings, "https", &mut vars, env),
+                None
+            );
             assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
         }
         let mut operator_realm = installation();
         operator_realm.remove("JC_OIDC_ISSUER");
-        organization_realm_vars(
-            &cfg.organizations,
-            &siblings,
-            "https",
-            &mut operator_realm,
-            none,
-        );
+        organization_realm_vars(&sign_ins, &siblings, "https", &mut operator_realm, none);
         assert!(!operator_realm.contains_key("JC_PORTAL_ORGANIZATION_REALMS"));
     }
 }
