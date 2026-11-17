@@ -126,7 +126,7 @@ async fn database() -> Option<sqlx::PgPool> {
 
 /// A Portal that trusts the process's realm and mails through `relay`, holding the organization
 /// with email allowed and App `road-defects` of `project` with `app_spec`.
-fn state(relay: &str, db: sqlx::PgPool, project: &str, app_spec: Value) -> AppState {
+async fn state(relay: &str, db: sqlx::PgPool, project: &str, app_spec: Value) -> AppState {
     let config = Config::from_vars(|key| {
         match key {
             "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
@@ -149,6 +149,9 @@ fn state(relay: &str, db: sqlx::PgPool, project: &str, app_spec: Value) -> AppSt
         .upsert(organization(Some(json!(["identity", "data", "email"]))));
     state.mirror.upsert(envelope("App", APP, project, app_spec));
     common::bind(&state.mirror, "jana", project);
+    // The project in the Organization's registry row: its mail rows are keyed (T-7200).
+    let pool = state.db.clone().expect("a database");
+    common::keyed_project(&state, &pool, project, "helsinki").await;
     state
 }
 
@@ -203,7 +206,7 @@ async fn a_send_to_me_hands_the_relay_one_message_with_its_unsubscribe_link() {
     let Some(db) = database().await else { return };
     let (url, inbox) = relay().await;
     let project = project("one");
-    let state = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
 
     let (status, body, text) = send(&state, to_me("New road defect")).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{text}");
@@ -236,7 +239,7 @@ async fn a_service_off_at_any_layer_is_refused_with_that_layer() {
     let (url, inbox) = relay().await;
     let project = project("off");
 
-    let no_email = state(&url, db.clone(), &project, app(json!(["files"]), json!({})));
+    let no_email = state(&url, db.clone(), &project, app(json!(["files"]), json!({}))).await;
     let (status, body, text) = send(&no_email, to_me("x")).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{text}");
     assert_eq!(body["type"], "https://joinedcontext.com/errors/service-off");
@@ -245,7 +248,7 @@ async fn a_service_off_at_any_layer_is_refused_with_that_layer() {
         (Some("email"), Some("app"))
     );
 
-    let listed = state(&url, db.clone(), &project, app(json!(["email"]), json!({})));
+    let listed = state(&url, db.clone(), &project, app(json!(["email"]), json!({}))).await;
     listed.mirror.upsert(envelope(
         "Project",
         &project,
@@ -256,7 +259,7 @@ async fn a_service_off_at_any_layer_is_refused_with_that_layer() {
     assert_eq!(body["layer"], "project", "{text}");
 
     // Absent, the organization's list is identity, data, files and jobs: no email.
-    let default = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let default = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
     default.mirror.upsert(organization(None));
     let (_, body, text) = send(&default, to_me("x")).await;
     assert_eq!(body["layer"], "organization", "{text}");
@@ -279,7 +282,8 @@ async fn the_send_past_the_quota_is_refused_with_429() {
         db,
         &project,
         app(json!(["email"]), json!({ "emailsPerDay": 2 })),
-    );
+    )
+    .await;
 
     for n in 0..2 {
         let (status, _, text) = send(&state, to_me(&format!("defect {n}"))).await;
@@ -305,7 +309,7 @@ async fn header_injection_and_an_address_as_recipient_are_refused() {
     let Some(db) = database().await else { return };
     let (url, inbox) = relay().await;
     let project = project("inject");
-    let state = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
 
     let (status, _, text) = send(&state, to_me("Defect\r\nBcc: everyone@example.org")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
@@ -342,7 +346,7 @@ async fn people_are_named_by_id_and_an_unknown_one_is_refused() {
     let Some(db) = database().await else { return };
     let (url, inbox) = relay().await;
     let project = project("people");
-    let mut state = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let mut state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
     let realm = common::REALM.server;
     Mock::given(method("POST"))
         .and(path("/realms/banskabystrica/protocol/openid-connect/token"))
@@ -394,7 +398,7 @@ async fn a_person_of_another_organization_is_refused() {
     let Some(db) = database().await else { return };
     let (url, inbox) = relay().await;
     let project = project("orgs");
-    let mut state = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let mut state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
     let mut helsinki = organization(Some(json!(["identity", "data", "email"])));
     helsinki.spec["installation"] = json!(true);
     state.mirror.upsert(helsinki);
@@ -462,7 +466,7 @@ async fn an_unsubscribed_person_gets_nothing() {
     let Some(db) = database().await else { return };
     let (url, inbox) = relay().await;
     let project = project("unsub");
-    let state = state(&url, db, &project, app(json!(["email"]), json!({})));
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
 
     assert_eq!(send(&state, to_me("first")).await.0, StatusCode::ACCEPTED);
     let data = delivered(&inbox)[0].1.clone();
@@ -540,7 +544,8 @@ async fn no_address_subject_or_relay_reaches_a_log_line() {
         db,
         &project,
         app(json!(["email"]), json!({ "emailsPerDay": 1 })),
-    );
+    )
+    .await;
 
     assert_eq!(
         send(&state, to_me("Secret subject")).await.0,

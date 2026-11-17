@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::api::grafana::{
-    is_public, member, model_attribute, readable_endpoint, refused, slug_of, stored,
+    is_public, member, model_attribute, project_key, readable_endpoint, refused, slug_of, stored,
     title_of_endpoint,
 };
 use crate::api::grafana_dashboards::{
@@ -1397,7 +1397,8 @@ pub async fn builder_saved_charts(
     let pool = state.db.as_ref().ok_or_else(|| {
         ApiError::Unavailable("this Portal has no database that holds saved charts".into())
     })?;
-    let rows = crate::grafana::list(pool, Some(&project))
+    let key = project_key(&state, pool, &project).await?;
+    let rows = crate::grafana::list(pool, key, &project)
         .await
         .map_err(stored)?;
     let uid = saved_charts::uid_of(&project);
@@ -1460,7 +1461,7 @@ pub async fn builder_saved_charts(
         for row in rows.iter().filter(|row| gone.contains(&row.id)) {
             // The dashboard first, as a single removal does: a row left behind is removed next run.
             client.remove(org, &row.uid()).await?;
-            crate::grafana::delete(pool, &row.id)
+            crate::grafana::delete(pool, key, &project, &row.id)
                 .await
                 .map_err(stored)?;
         }

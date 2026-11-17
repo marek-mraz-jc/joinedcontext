@@ -701,12 +701,7 @@ pub async fn attempt(state: &AppState, pool: &PgPool, erasure: &Erasure, words: 
         }
         let outcome = match name.as_str() {
             "broker" => broker(state, erasure).await,
-            "portal" => match pool.acquire().await {
-                Ok(mut conn) => erase_portal_copies(&mut conn, erasure)
-                    .await
-                    .map(|n| (n, None)),
-                Err(err) => Err(format!("the Portal's copies were not reached: {err}")),
-            },
+            "portal" => portal_copies(state, pool, erasure).await.map(|n| (n, None)),
             "conversations" => conversations(state, erasure, words)
                 .await
                 .map(|n| (n, None)),
@@ -767,6 +762,28 @@ pub async fn erase_portal_copies(
             .rows_affected();
     }
     Ok(gone)
+}
+
+/// [`erase_portal_copies`] in the erasure's project key (T-7200), so the keyed trash and comments
+/// answer once row-level security is forced; a project with no key has only unkeyed rows, which
+/// a plain connection reaches while the forcing migration waits for the backfill.
+async fn portal_copies(state: &AppState, pool: &PgPool, erasure: &Erasure) -> Result<u64, String> {
+    let unreached = |err: sqlx::Error| format!("the Portal's copies were not reached: {err}");
+    match crate::project_ids::key_of(pool, &state.mirror, &erasure.project)
+        .await
+        .map_err(unreached)?
+    {
+        Some(key) => {
+            let mut tx = crate::db::tenant_tx(pool, key).await.map_err(unreached)?;
+            let gone = erase_portal_copies(&mut tx, erasure).await?;
+            tx.commit().await.map_err(unreached)?;
+            Ok(gone)
+        }
+        None => {
+            let mut conn = pool.acquire().await.map_err(unreached)?;
+            erase_portal_copies(&mut conn, erasure).await
+        }
+    }
 }
 
 /// The assistant's stored conversations that mention an Entity or the subject's words (5

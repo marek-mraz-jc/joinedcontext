@@ -578,6 +578,11 @@ async fn saved_charts_move_into_one_dashboard_and_only_what_the_merged_file_draw
         .await;
     let mut state = world(&shako, &grafana_server);
     state.db = Some(pool.clone());
+    common::keyed_project(&state, &pool, PROJECT, "grafana-tests").await;
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, PROJECT)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
     for (id, title, kind, attribute) in [
         ("t7161a", "Free bikes", Kind::Stat, "availableBikeNumber"),
         (
@@ -590,6 +595,7 @@ async fn saved_charts_move_into_one_dashboard_and_only_what_the_merged_file_draw
     ] {
         grafana::insert(
             &pool,
+            key,
             &Visualization {
                 id: id.into(),
                 project: PROJECT.into(),

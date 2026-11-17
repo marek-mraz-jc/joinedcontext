@@ -15724,7 +15724,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description A target the caller may not read */
+            /** @description A target the caller may not read, or a project of no active Organization of the registry */
             404: {
                 headers: {
                     [name: string]: unknown;

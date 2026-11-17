@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Duration, Utc};
 use joinedcontext_portal::mqtt_capture::{CaptureStore, Message, BROKER_MESSAGES};
 
-#[path = "common/unique.rs"]
-mod unique;
+mod common;
+use common::unique;
 
 fn database_url() -> Option<String> {
     std::env::var("JC_PORTAL_TEST_DATABASE_URL")
@@ -44,8 +44,15 @@ async fn the_caps_and_the_window_hold_in_postgres() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("the test database answers and migrates");
-    let store = CaptureStore::new(Some(pool));
+    // The project in an Organization of the registry: its capture is keyed (T-7200).
     let project = fresh_project();
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    )
+    .with_db(pool.clone());
+    common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
+    let store: &CaptureStore = &state.mqtt_capture;
     // Stored to the millisecond.
     let start =
         DateTime::from_timestamp_millis((Utc::now() - Duration::seconds(30)).timestamp_millis())
