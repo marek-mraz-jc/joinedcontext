@@ -118,6 +118,13 @@ const BASELINE: &[(&str, &str, usize)] = &[
         "format!(\"{project}-",
         1,
     ),
+    // jcctl links no jc-types: `project_prefix` builds the same `org/{OrgId}/project/{ProjectId}/`
+    // as ProjectKey::object_prefix from two checked 26-character path-form ids (T-7210).
+    (
+        "vendor/joinedcontext-platform/crates/jcctl/src/commands/artifacts.rs",
+        "format!(\"org/",
+        1,
+    ),
 ];
 
 fn root() -> PathBuf {
