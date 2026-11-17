@@ -44,11 +44,11 @@ pub const KEYED_BY_NAME: &[&str] = &[
     "pipeline_source_holds",
     "pipeline_source_complete",
     "pipeline_source_removed",
-    // T-7204 PK-1g, migration 0075.
+    // T-7204 PK-1g, migration 0076.
     "drafts",
-    // T-7205 PK-1g, migration 0076.
+    // T-7205 PK-1g, migration 0077.
     "activity",
-    // T-7206 PK-1g, migration 0077.
+    // T-7206 PK-1g, migration 0078.
     "workspaces",
     "agent_runs",
 ];

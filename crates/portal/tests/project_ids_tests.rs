@@ -912,7 +912,7 @@ async fn rows_keyed_and_read_only_under_their_key(
 }
 
 /// A draft of `project`, written as before the key (T-7204). `$1` is the project.
-const DRAFT_ROWS_0075: &[(&str, &str)] = &[(
+const DRAFT_ROWS_0076: &[(&str, &str)] = &[(
     "drafts",
     "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
      VALUES ($1, 'Endpoint', 'air', '{}', 'anna', 'human')",
@@ -924,7 +924,7 @@ const DRAFT_ROWS_0075: &[(&str, &str)] = &[(
 #[tokio::test]
 async fn drafts_are_keyed_and_read_only_under_their_key() {
     let (state, placed, orphan, key) =
-        rows_keyed_and_read_only_under_their_key(DRAFT_ROWS_0075, "dr").await;
+        rows_keyed_and_read_only_under_their_key(DRAFT_ROWS_0076, "dr").await;
     let pool = state.db.clone().expect("a database");
     let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "water" } });
     state
@@ -994,7 +994,7 @@ async fn drafts_are_keyed_and_read_only_under_their_key() {
 }
 
 /// An activity event of `project`, written as before the key (T-7205). `$1` is the project.
-const ACTIVITY_ROWS_0076: &[(&str, &str)] = &[(
+const ACTIVITY_ROWS_0077: &[(&str, &str)] = &[(
     "activity",
     "INSERT INTO activity (time, project, kind, source, summary, severity) \
      VALUES (now() - interval '1 minute', $1, 'config.applied', 'reconciler', 'Applied.', 'info')",
@@ -1006,7 +1006,7 @@ const ACTIVITY_ROWS_0076: &[(&str, &str)] = &[(
 async fn activity_rows_are_keyed_and_read_only_under_their_key() {
     use joinedcontext_portal::activity::{ActivityEvent, ActivityFilter};
     let (state, placed, orphan, key) =
-        rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0076, "ac").await;
+        rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0077, "ac").await;
     let pool = state.db.clone().expect("a database");
     let event = |project: &str| ActivityEvent {
         time: chrono::Utc::now(),
@@ -1072,7 +1072,7 @@ async fn activity_rows_are_keyed_and_read_only_under_their_key() {
 
 /// A workspace and a builder run of `project`, written as before the key (T-7206). `$1` is the
 /// project.
-const WORKSPACE_RUN_ROWS_0077: &[(&str, &str)] = &[
+const WORKSPACE_RUN_ROWS_0078: &[(&str, &str)] = &[
     (
         "workspaces",
         "INSERT INTO workspaces (name, project, owner, base_revision, scope, expires_at) \
@@ -1095,7 +1095,7 @@ const WORKSPACE_RUN_ROWS_0077: &[(&str, &str)] = &[
 #[tokio::test]
 async fn workspace_and_agent_run_rows_are_keyed_and_read_only_under_their_key() {
     let (state, placed, orphan, key) =
-        rows_keyed_and_read_only_under_their_key(WORKSPACE_RUN_ROWS_0077, "wr").await;
+        rows_keyed_and_read_only_under_their_key(WORKSPACE_RUN_ROWS_0078, "wr").await;
     let pool = state.db.clone().expect("a database");
     let (placed_md5, orphan_md5): (String, String) = sqlx::query_as("SELECT md5($1), md5($2)")
         .bind(&placed)

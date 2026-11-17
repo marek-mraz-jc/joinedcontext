@@ -40,7 +40,12 @@ fn role(state: &AppState, name: &str, user: &str, project: &str, kinds: &[&str],
 
 /// `jana` stewards the KPI pipeline; `olli` owns Helsinki's air space; `eve` reads Helsinki only.
 async fn state(pool: sqlx::PgPool, pipeline: &str, pipeline_identity: bool) -> AppState {
-    world(pipeline, pipeline_identity).await.with_db(pool)
+    let state = world(pipeline, pipeline_identity)
+        .await
+        .with_db(pool.clone());
+    // An approval proposes into Helsinki through its import check, a draft kept in its key.
+    common::keyed_project(&state, &pool, HELSINKI, "helsinki").await;
+    state
 }
 
 /// The same world without a database: the request form's list and the request door's refusals
