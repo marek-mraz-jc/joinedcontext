@@ -1693,6 +1693,26 @@
         "evidence/T-7140/operator-hosts-remove-400.png"
       ]
     },
+    "src/pages/operator/OperatorInstallation.tsx": {
+      "walkedBy": "worker-t7152",
+      "date": "2026-11-17",
+      "screenshots": [
+        "evidence/T-7152/installation-empty-1440.png",
+        "evidence/T-7152/installation-empty-400.png",
+        "evidence/T-7152/installation-error-1440.png",
+        "evidence/T-7152/installation-error-400.png",
+        "evidence/T-7152/installation-refused-1440.png",
+        "evidence/T-7152/installation-refused-400.png",
+        "evidence/T-7152/installation-set-1440.png",
+        "evidence/T-7152/installation-set-400.png",
+        "evidence/T-7152/installation-setup-member-1440.png",
+        "evidence/T-7152/installation-setup-member-400.png",
+        "evidence/T-7152/installation-setup-operator-1440.png",
+        "evidence/T-7152/installation-setup-operator-400.png",
+        "evidence/T-7152/installation-waiting-1440.png",
+        "evidence/T-7152/installation-waiting-400.png"
+      ]
+    },
     "src/pages/operator/OperatorOrganizations.tsx": {
       "walkedBy": "worker-t7138",
       "date": "2026-11-17",

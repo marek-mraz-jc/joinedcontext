@@ -9130,6 +9130,38 @@
         }
       }
     ],
+    "portal_operator_installation": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_operator_installation_test_email": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_operator_organizations": [
       {
         "$IsBound": true,

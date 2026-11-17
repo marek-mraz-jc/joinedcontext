@@ -334,7 +334,8 @@ pub enum ActivityError {
 }
 
 enum Inner {
-    Db(sqlx::PgPool),
+    /// Every statement runs in a `db::tenant_tx` of its project's key (T-7205 PK-1g).
+    Db(sqlx::PgPool, Arc<crate::store::Mirror>),
     /// `(id, event)`, newest last. One process, no durability: what a Portal without a database
     /// shows is what happened since it started.
     Memory(RwLock<Vec<(i64, ActivityEvent)>>),
@@ -349,10 +350,10 @@ pub struct ActivityStore {
 }
 
 impl ActivityStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<sqlx::PgPool>, mirror: Arc<crate::store::Mirror>) -> Self {
         Self {
             inner: Arc::new(match db {
-                Some(pool) => Inner::Db(pool),
+                Some(pool) => Inner::Db(pool, mirror),
                 None => Inner::Memory(RwLock::new(Vec::new())),
             }),
             hub: None,
@@ -367,8 +368,10 @@ impl ActivityStore {
 
     /// Records events that have already been validated, and hands each to the live tail. One
     /// malformed record must not cost the other four hundred, so the caller rejects those on
-    /// their own before calling this.
+    /// their own before calling this. A project with no tenancy key (its Organization is not an
+    /// active one of the registry, T-7205) keeps none of its events and the tail hears none.
     pub async fn append(&self, events: &[ActivityEvent]) -> Result<(), ActivityError> {
+        let mut stored: Vec<&ActivityEvent> = Vec::with_capacity(events.len());
         match &*self.inner {
             Inner::Memory(rows) => {
                 let mut w = rows.write().await;
@@ -376,14 +379,27 @@ impl ActivityStore {
                 for (id, event) in (first..).zip(events.iter()) {
                     w.push((id, event.clone()));
                 }
+                stored.extend(events);
             }
-            Inner::Db(pool) => {
-                // One transaction: a batch is stored whole or not at all, and the live tail
-                // hears only what was stored (F-POR1-022).
+            Inner::Db(pool, mirror) => {
+                // One transaction per project, in its key: a project's part of the batch is
+                // stored whole or not at all, and the live tail hears only what was stored
+                // (F-POR1-022).
                 let db = |err: sqlx::Error| ActivityError::Db(err.to_string());
-                let mut tx = pool.begin().await.map_err(db)?;
-                for event in events {
-                    sqlx::query(
+                let mut projects: Vec<&str> = events.iter().map(|e| e.project.as_str()).collect();
+                projects.sort_unstable();
+                projects.dedup();
+                for project in projects {
+                    let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project)
+                        .await
+                        .map_err(db)?
+                    else {
+                        continue;
+                    };
+                    let part: Vec<&ActivityEvent> =
+                        events.iter().filter(|e| e.project == project).collect();
+                    for event in &part {
+                        sqlx::query(
                         "INSERT INTO activity (time, project, space, kind, source, summary, severity, correlation_id, details) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                     )
@@ -399,12 +415,14 @@ impl ActivityStore {
                     .execute(&mut *tx)
                     .await
                     .map_err(db)?;
+                    }
+                    tx.commit().await.map_err(db)?;
+                    stored.extend(part);
                 }
-                tx.commit().await.map_err(db)?;
             }
         }
         if let Some(hub) = &self.hub {
-            for event in events {
+            for event in stored {
                 hub.publish(event).await;
             }
         }
@@ -435,7 +453,18 @@ impl ActivityStore {
                 hits.sort_by_key(|(id, event)| std::cmp::Reverse((event.time, *id)));
                 Ok(Self::page_of(hits, limit))
             }
-            Inner::Db(pool) => Self::list_db(pool, project, filter, limit).await,
+            Inner::Db(pool, mirror) => {
+                let db = |err: sqlx::Error| ActivityError::Db(err.to_string());
+                let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, project)
+                    .await
+                    .map_err(db)?
+                else {
+                    return Ok(Self::page_of(Vec::new(), limit));
+                };
+                let page = Self::list_db(&mut tx, project, filter, limit).await?;
+                tx.commit().await.map_err(db)?;
+                Ok(page)
+            }
         }
     }
 
@@ -461,7 +490,7 @@ impl ActivityStore {
 
     /// [`ActivityStore::list`] over Postgres.
     async fn list_db(
-        pool: &sqlx::PgPool,
+        tx: &mut sqlx::PgConnection,
         project: &str,
         filter: &ActivityFilter,
         limit: i64,
@@ -544,7 +573,7 @@ impl ActivityStore {
         }
         let rows = query
             .bind(limit + 1)
-            .fetch_all(pool)
+            .fetch_all(tx)
             .await
             .map_err(|err| ActivityError::Db(err.to_string()))?;
         let items: Vec<(i64, ActivityEvent)> = rows
@@ -586,30 +615,41 @@ impl ActivityStore {
                     batches: u32::from(rows > 0),
                 })
             }
-            Inner::Db(pool) => {
+            Inner::Db(pool, mirror) => {
+                let db = |err: sqlx::Error| ActivityError::Db(err.to_string());
                 let mut done = Trimmed {
                     rows: 0,
                     batches: 0,
                 };
-                loop {
-                    let deleted = sqlx::query(
-                        "DELETE FROM activity WHERE ctid IN \
-                         (SELECT ctid FROM activity WHERE time < $1 LIMIT $2)",
-                    )
-                    .bind(chrono_to_odt(floor))
-                    .bind(TRIM_BATCH)
-                    .execute(pool)
+                // Project by project, each batch in its own transaction of the key (STO-07).
+                for (project, key) in crate::project_ids::keyed_projects(pool, mirror)
                     .await
-                    .map_err(|err| ActivityError::Db(err.to_string()))?
-                    .rows_affected();
-                    if deleted > 0 {
-                        done.rows += deleted;
-                        done.batches += 1;
-                    }
-                    if deleted < TRIM_BATCH as u64 {
-                        return Ok(done);
+                    .map_err(db)?
+                {
+                    loop {
+                        let mut tx = crate::db::tenant_tx(pool, key).await.map_err(db)?;
+                        let deleted = sqlx::query(
+                            "DELETE FROM activity WHERE ctid IN \
+                             (SELECT ctid FROM activity WHERE project = $3 AND time < $1 LIMIT $2)",
+                        )
+                        .bind(chrono_to_odt(floor))
+                        .bind(TRIM_BATCH)
+                        .bind(&project)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?
+                        .rows_affected();
+                        tx.commit().await.map_err(db)?;
+                        if deleted > 0 {
+                            done.rows += deleted;
+                            done.batches += 1;
+                        }
+                        if deleted < TRIM_BATCH as u64 {
+                            break;
+                        }
                     }
                 }
+                Ok(done)
             }
         }
     }
@@ -654,7 +694,7 @@ mod tests {
     }
 
     async fn store_with(events: Vec<ActivityEvent>) -> ActivityStore {
-        let store = ActivityStore::new(None);
+        let store = ActivityStore::new(None, Arc::default());
         store.append(&events).await.expect("appended");
         store
     }

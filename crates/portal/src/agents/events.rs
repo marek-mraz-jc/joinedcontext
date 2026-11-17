@@ -162,7 +162,7 @@ mod tests {
     #[tokio::test]
     async fn a_lagging_inbox_reads_what_it_missed_from_the_store_in_order() {
         let hub = AgentEventHub::new();
-        let store = AgentStore::new(None);
+        let store = AgentStore::new(None, Default::default());
         store
             .append_event("r1", "message", json!({ "text": "before" }))
             .await

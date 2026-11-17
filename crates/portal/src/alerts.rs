@@ -1638,7 +1638,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_refusal_spike_tells_the_profile_s_subscriber_once_and_recovers_after_the_hour() {
-        let agents = Arc::new(crate::agents::store::AgentStore::new(None));
+        let agents = Arc::new(crate::agents::store::AgentStore::new(
+            None,
+            Default::default(),
+        ));
         let run = agent_run("r1", &rfc3339(Utc::now() - Duration::minutes(10)));
         agents.create_run(&run).await.unwrap();
         for _ in 0..crate::api::agent_activity::REFUSAL_SPIKE {

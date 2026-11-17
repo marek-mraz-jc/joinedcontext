@@ -1464,6 +1464,12 @@ async fn a_department_leaves_in_one_change_and_one_merge() {
         .mount(&shako)
         .await;
     let state = state_with(&kc, &shako).with_db(pool.clone());
+    // The Organization's own events are kept under its reserved project (TEN-11), so the
+    // installation's Organization is in the mirror and the registry.
+    state
+        .mirror
+        .upsert(envelope("Organization", "hel", ORG_NAMESPACE, json!({})));
+    common::registered(&state, &pool, ORG_NAMESPACE).await;
     let mut feed = state.activity_events.subscribe(ORG_NAMESPACE).await;
 
     let answer = send(

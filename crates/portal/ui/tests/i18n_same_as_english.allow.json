@@ -124,7 +124,8 @@
     "WFS 2.0",
     "OGC SensorThings",
     "Thing",
-    "Limit"
+    "Limit",
+    "Port"
   ],
   "cs": [
     "@context",
@@ -249,7 +250,8 @@
     "WFS 2.0",
     "OGC SensorThings",
     "Thing",
-    "Limit"
+    "Limit",
+    "Port"
   ],
   "de": [
     "@context",
@@ -427,6 +429,8 @@
     "WFS 2.0",
     "OGC SensorThings",
     "Thing",
-    "Limit"
+    "Limit",
+    "Port",
+    "Installation"
   ]
 }

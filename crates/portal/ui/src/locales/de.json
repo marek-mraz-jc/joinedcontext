@@ -8176,6 +8176,7 @@
       "backups": "Sicherungen",
       "operator-organizations": "Organisationen",
       "operator-hosts": "Hosts und Zertifikate",
+      "operator-installation": "Installation",
       "operator-changes": "Operator-Änderungen",
       "operator-audit": "Operator-Protokoll"
     },
@@ -8448,7 +8449,14 @@
       "continue": "Einrichtung fortsetzen",
       "reminder": "{count, plural, one {# Punkt der Einrichtung ist noch offen.} other {# Punkte der Einrichtung sind noch offen.}}",
       "operatorTitle": "Was die Installation bereitstellt",
-      "operatorLead": "Diese Punkte kommen aus der Bereitstellung, nicht von dieser Seite. Bitten Sie den Betrieb der Installation, den bei jedem Punkt genannten Wert zu setzen.",
+      "operatorLead": "Sie sind einer der Operatoren der Installation: Sie legen dies einmal für jede Organisation fest.",
+      "operatorLeadMember": "Die Operatoren der Installation legen dies einmal für jede Organisation fest.",
+      "setIt": "Installation öffnen",
+      "operatorSets": "Die Betreiber Ihrer Installation legen dies fest.",
+      "notYet": "Noch nicht gesetzt",
+      "whomToAsk": "Wen fragen",
+      "whomToAskLead": "Den E-Mail-Server legen die Betreiber der Installation fest; bitten Sie sie darum.",
+      "deploymentSets": "Bereitstellung legt dies fest",
       "step": {
         "organization": {
           "title": "Organisation benennen",
@@ -8484,19 +8492,23 @@
       "operator": {
         "branding": {
           "title": "Markenauftritt",
-          "hint": "Name und Logo der Installation, gesetzt im Branding-Block der Bereitstellung."
+          "hint": "Name, Logo und Farben der Installation. Vorerst in der Branding-Datei der Installation festgelegt, die Ihre Bereitstellung mitbringt.",
+          "about": "Name, Logo und Farben der Installation."
         },
         "loginTheme": {
           "title": "Anmeldeseiten",
-          "hint": "Das eigene Anmelde-Theme der Plattform in Keycloak statt des Standards (keycloak.theme)."
+          "hint": "Wie die Anmeldeseiten aussehen. Vorerst im Anmeldeteil der Branding-Datei der Installation festgelegt.",
+          "about": "Wie die Anmeldeseiten aussehen."
         },
         "smtp": {
           "title": "E-Mail",
-          "hint": "Ein SMTP-Server, damit Keycloak Einladungen und Passwort-Rücksetzungen senden kann (keycloak.smtp)."
+          "hint": "Ein SMTP-Server, damit der Anmeldedienst Einladungen und Passwort-Zurücksetzungen sendet. Legen Sie ihn auf der Seite Installation fest.",
+          "about": "Ein SMTP-Server, damit Einladungen und Passwort-Zurücksetzungen ankommen."
         },
         "backups": {
           "title": "Sicherungen",
-          "hint": "Geplante Datenbanksicherungen in einen Objektspeicher (postgres.backups)."
+          "hint": "Geplante Sicherungen der ganzen Datenbank in einen Objektspeicher. Vorerst durch die Datenbanksicherung der Bereitstellung festgelegt.",
+          "about": "Geplante Sicherungen der Datenbank der Installation."
         }
       }
     },
@@ -13583,7 +13595,7 @@
     }
   },
   "operator": {
-    "only": "Diese Bereiche gehören den Administratoren der Installation, ihren Betreibern. Bitten Sie einen von ihnen um eine neue Organisation, Domain oder einen Host.",
+    "only": "Dieser Bereich gehört den Betreibern der Installation. Bitten Sie einen von ihnen um eine neue Organisation, Domain oder einen Host oder um den E-Mail-Server.",
     "tryAgain": "Die Anfrage ist nicht durchgegangen. Versuchen Sie es gleich noch einmal.",
     "organizations": {
       "title": "Organisationen",
@@ -13693,7 +13705,8 @@
       "HostAdd": "Host hinzufügen",
       "HostRemove": "Host entfernen",
       "OperatorAdd": "Betreiber hinzufügen",
-      "OperatorRemove": "Betreiber entfernen"
+      "OperatorRemove": "Betreiber entfernen",
+      "SmtpSet": "E-Mail-Server festlegen"
     },
     "changeState": {
       "proposed": "Wartet auf Genehmigung",
@@ -13731,6 +13744,55 @@
       "subject": "Host oder Person",
       "source": "Von Adresse"
     },
+    "installation": {
+      "loading": "Die Einstellungen der Installation werden gelesen",
+      "title": "Installation",
+      "lead": "Was die Installation jeder Organisation bereitstellt. Jedes Speichern ist eine Operator-Änderung: Ein zweiter Operator genehmigt sie, bevor sie gilt.",
+      "email": {
+        "title": "E-Mail-Server",
+        "lead": "Der SMTP-Server, über den der Anmeldedienst Einladungen und Passwort-Zurücksetzungen sendet. Nach der Genehmigung gilt er für die nächste E-Mail, ohne Neustart.",
+        "set": "Festgelegt",
+        "unset": "Nicht festgelegt",
+        "waitingBadge": "Wartet auf Freigabe",
+        "unchanged": "Ändern Sie zuerst ein Feld; nichts weicht vom gespeicherten Server ab.",
+        "empty": "Noch kein E-Mail-Server, daher werden keine Einladungen und Passwort-Zurücksetzungen gesendet. Tragen Sie den Server Ihres Mail-Anbieters ein und speichern Sie ihn.",
+        "waitingShort": "Eine Änderung wartet bereits auf einen zweiten Operator: genehmigen oder ablehnen Sie sie zuerst.",
+        "notAsked": "Das Portal hat die Änderung abgelehnt: es wurde keine Änderung angelegt",
+        "fixField": "{field} wurde abgelehnt: korrigieren Sie es wie darunter beschrieben und beantragen Sie die Änderung erneut.",
+        "testWaiting": "Der Test nutzt den geltenden Server; senden Sie ihn, sobald die wartende Änderung entschieden ist, oder jetzt für den geltenden.",
+        "noneInForce": "Noch gilt kein E-Mail-Server: die wartende Änderung setzt den ersten.",
+        "inForce": "Gilt, bis die Änderung genehmigt ist",
+        "inForceNow": "Gilt jetzt",
+        "waitingOwn": "Eine Änderung wartet bereits auf einen zweiten Operator. Verfolgen Sie sie oder ziehen Sie sie zurück, um eine andere zu beantragen, auf der Seite Änderungen.",
+        "askedFor": "Beantragt",
+        "passwordNew": "Ein neues, versiegelt bis die Änderung entschieden ist",
+        "toChanges": "Änderungen öffnen",
+        "host": "SMTP-Host",
+        "tls": "Schutz",
+        "port": "Port",
+        "from": "Absenderadresse",
+        "user": "Benutzer",
+        "password": "Passwort",
+        "tlsStarttls": "STARTTLS (meist Port 587)",
+        "tlsSsl": "TLS von Anfang an (meist Port 465)",
+        "passwordStored": "Gespeichert; geben Sie ein neues ein, um es zu ersetzen",
+        "hint": {
+          "host": "Der Hostname des Servers, z. B. smtp.example.org. Keine interne Adresse und keine des Clusters.",
+          "tls": "Unverschlüsseltes SMTP wird nicht angeboten; Ihr Anbieter sagt, welche der beiden Varianten er nutzt.",
+          "port": "z. B. 587 für STARTTLS, 465 für TLS von Anfang an.",
+          "from": "Der Absender, den Empfänger sehen, z. B. noreply@example.org.",
+          "user": "Der SMTP-Benutzer, z. B. mailer@example.org; leer, wenn der Server keine Anmeldung braucht.",
+          "password": "Nur schreibbar: nach dem Speichern nie wieder angezeigt.",
+          "passwordKept": "Ein Passwort ist gespeichert und wird nie angezeigt. Leer lassen, um es zu behalten, z. B. wenn Sie nur den Port ändern."
+        },
+        "propose": "Diese Änderung beantragen",
+        "proposed": "Beantragt. Ein zweiter Operator genehmigt sie unter Änderungen.",
+        "test": "Test-E-Mail senden",
+        "testFirst": "Sobald ein zweiter Operator den Server genehmigt, testen Sie ihn hier.",
+        "testSent": "Der Server hat die Test-E-Mail angenommen. Sie geht an Ihre eigene Adresse; prüfen Sie Ihren Posteingang.",
+        "testFailed": "Die Test-E-Mail wurde nicht gesendet. Beheben Sie, was die Zeile unten nennt, und senden Sie den Test erneut."
+      }
+    },
     "action": {
       "proposed": "Beantragt: {kind}",
       "applied": "Angewendet: {kind}",
@@ -13745,8 +13807,12 @@
         "created": "Route für die Zertifikatsprüfung angelegt",
         "widened": "Route zum Host geöffnet",
         "deleted": "Route gelöscht"
+      },
+      "smtp": {
+        "test": "Test-E-Mail gesendet"
       }
     },
+    "refusedLead": "{section} enthält, was die Betreiber der Installation für jede Organisation pflegen.",
     "refusedTitle": "{section} ist den Betreibern der Installation vorbehalten"
   }
 }

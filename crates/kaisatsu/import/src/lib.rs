@@ -1168,7 +1168,11 @@ pub async fn apply_realm_files(
     realm_cfg.id = realm_id.clone();
     realm_cfg.realm = realm_name.clone();
     realm_cfg.apply_checksum = Some(file_checksum.clone());
-    if let Some(smtp) = realm_cfg.smtp_server.as_mut()
+    // Files that name no SMTP server leave the stored one (the Portal's operators save it at run
+    // time, T-7152), its password included.
+    if merged.get("smtpServer").is_none() {
+        realm_cfg.smtp_server = existing_realm.as_ref().and_then(|r| r.smtp_server.clone());
+    } else if let Some(smtp) = realm_cfg.smtp_server.as_mut()
         && !smtp.password.is_empty()
     {
         let raw_pw = std::mem::take(&mut smtp.password);

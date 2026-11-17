@@ -44,6 +44,7 @@ async fn state(pool: sqlx::PgPool, pipeline: &str, pipeline_identity: bool) -> A
     let state = world(pipeline, pipeline_identity)
         .await
         .with_db(pool.clone());
+    // An approval proposes into Helsinki through its import check, a draft kept in its key.
     for project in [KPIS, HELSINKI] {
         common::keyed_project(&state, &pool, project, &format!("{project}-org")).await;
     }

@@ -275,7 +275,7 @@ impl AppState {
             config.organization_addresses.clone(),
         );
         let draft_events = DraftHub::new();
-        let drafts = DraftStore::new(None).with_hub(draft_events.clone());
+        let drafts = DraftStore::new(None, Arc::default()).with_hub(draft_events.clone());
         let space_usage = Arc::new(
             crate::space_usage::Counter::new(
                 config.broker_url.clone(),
@@ -287,7 +287,8 @@ impl AppState {
             config.gateway_url.clone(),
         ));
         let activity_events = crate::activity::ActivityHub::new();
-        let activity = crate::activity::ActivityStore::new(None).with_hub(activity_events.clone());
+        let activity = crate::activity::ActivityStore::new(None, Arc::default())
+            .with_hub(activity_events.clone());
         let model_schemas = Arc::new(crate::pipeline_validation::ModelSchemas::with_linkml_stage(
             config.pipeline_linkml_stage,
         ));
@@ -308,11 +309,11 @@ impl AppState {
             sync: None,
             db: None,
             txt_records: None,
-            agents: Arc::new(AgentStore::new(None)),
+            agents: Arc::new(AgentStore::new(None, Arc::default())),
             agent_events: Arc::new(AgentEventHub::new()),
             drafts,
             draft_events,
-            workspaces: crate::ops::workspaces::WorkspaceStore::new(None),
+            workspaces: crate::ops::workspaces::WorkspaceStore::new(None, Arc::default()),
             data_views: crate::ops::data_views::DataViewStore::new(None, Arc::default()),
             pipeline_templates: crate::ops::pipeline_templates::TemplateStore::new(
                 None,
@@ -1267,23 +1268,25 @@ impl AppState {
 
     /// The stores that keep their rows in the database when there is one.
     fn attach_stores(&mut self, db: &Option<sqlx::PgPool>) {
-        self.agents = Arc::new(AgentStore::new(db.clone()));
+        self.agents = Arc::new(AgentStore::new(db.clone(), self.mirror.clone()));
         if !self.agents.is_durable() {
             tracing::info!(
                 "no database: a builder run and its stream live only until this process ends"
             );
         }
-        self.drafts = DraftStore::new(db.clone()).with_hub(self.draft_events.clone());
+        self.drafts =
+            DraftStore::new(db.clone(), self.mirror.clone()).with_hub(self.draft_events.clone());
         if let Some(db) = &db {
             self.draft_events.connect(db.clone());
         }
-        self.workspaces = crate::ops::workspaces::WorkspaceStore::new(db.clone());
+        self.workspaces =
+            crate::ops::workspaces::WorkspaceStore::new(db.clone(), self.mirror.clone());
         self.data_views =
             crate::ops::data_views::DataViewStore::new(db.clone(), self.mirror.clone());
         self.pipeline_templates =
             crate::ops::pipeline_templates::TemplateStore::new(db.clone(), self.mirror.clone());
-        self.activity =
-            crate::activity::ActivityStore::new(db.clone()).with_hub(self.activity_events.clone());
+        self.activity = crate::activity::ActivityStore::new(db.clone(), self.mirror.clone())
+            .with_hub(self.activity_events.clone());
         self.rejected = Arc::new(crate::pipeline_outcomes::RejectedStore::new(
             db.clone(),
             self.mirror.clone(),

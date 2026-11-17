@@ -503,7 +503,8 @@ const SHIPPED_HOST: &str = "https://portal.jc.localhost";
 /// The realm files the Portal signs in through: kaisatsu's shipped `jc-portal.json` with its
 /// placeholder host turned into `portal_base` (the Portal's public base with a trailing slash),
 /// and the first administrator, a member of the bootstrap group. The shipped file holds the least
-/// privilege the Portal needs: `portal-reconciler` has `manage-users` and `query-groups`,
+/// privilege the Portal needs: `portal-reconciler` has `manage-users`, `manage-smtp` (the realm's
+/// SMTP server, which the operators set, T-7152) and `query-groups`,
 /// `portal-api` `view-clients`, `query-users` and `query-groups`, no realm-admin. Both files name
 /// `realm` (the shipped file's `id` and `realm` included).
 ///
@@ -993,7 +994,7 @@ mod tests {
             .expect("the reconciler's service account");
         assert_eq!(
             reconciler["clientRoles"]["realm-management"],
-            json!(["manage-users", "query-groups"])
+            json!(["manage-users", "manage-smtp", "query-groups"])
         );
         let tmp = tempfile::tempdir().unwrap();
         let setup =

@@ -15,7 +15,7 @@ admin base `{root}/admin/realms/{realm}` (admin API). `oidc.backchannel()` deriv
 | Identity | Env | Grant | Roles in the realm file | Writes |
 |---|---|---|---|---|
 | `portal-api` | `JC_OIDC_CLIENT_ID`, `JC_OIDC_CLIENT_SECRET` (or `JC_OIDC_CLIENT_ASSERTION_FILE`, federated-jwt in the cluster) | code flow, refresh, token exchange, client credentials | `realm-management`: `view-clients`, `query-users`, `query-groups` | App, workload, account, MCP and MQTT clients marked `managed-by: joinedcontext`; their mappers, roles and secrets; Endpoint client scopes marked `managed-by: joinedcontext` without mappers |
-| `portal-reconciler` | `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID` / `_SECRET` (`config.keycloak_admin`) | client credentials | `realm-management`: `manage-users`, `query-groups` | people, groups, memberships, role mappings of managed clients |
+| `portal-reconciler` | `JC_PORTAL_KEYCLOAK_ADMIN_CLIENT_ID` / `_SECRET` (`config.keycloak_admin`) | client credentials | `realm-management`: `manage-users`, `manage-smtp`, `query-groups` | people, groups, memberships, role mappings of managed clients; the realm's SMTP server (T-7152) |
 | `portal-ui` | none (browser) | code flow, `prompt=none` | public client | nothing |
 
 Both admin identities get their token from `POST {issuer}/protocol/openid-connect/token`
@@ -67,6 +67,9 @@ or userinfo endpoint.
 | G4 | `PUT /groups/{id}`, `DELETE /groups/{id}` | name, attributes | | 204 | groups.rs:471/:288 | group test |
 | A1 | `GET /groups?briefRepresentation=true&max=1000`, `GET /users/{id}` or `/users?exact=true&{email\|username}=` | | name→id; id, username, email | 200, 404 absent | app_clients.rs:799/:825/:841 | `the_app_wave_converges_an_app_client` |
 | A2 | `POST`/`DELETE /{groups\|users}/{id}/role-mappings/clients/{uuid}` | `[{id, name}]` of an App client role | | 204 | app_clients.rs:929-952 | App test |
+| S1 | `GET /smtp-server` (kaisatsu only, `manage-smtp`) | | host, port, tls, from, user, passwordSet; never the password | 200; 404 none set | people.rs:610 | kaisatsu `smtp_routes` `only_manage_smtp_or_a_realm_applier_reads_and_sets_it`, Portal `operator_changes_tests` |
+| S2 | `PUT /smtp-server` | host, port, tls (`starttls`\|`ssl`), from, user, password (absent keeps the stored one) | | 204; 422 naming the field | people.rs:620 | same |
+| S3 | `POST /smtp-server/test` | to (the operator's own address) | sent, reason | 200 | people.rs:638 | kaisatsu `a_test_e_mail_never_reaches_a_private_address` |
 
 ## 4. Admin calls as portal-api
 
