@@ -31,31 +31,27 @@ pub struct OrganizationHost {
     pub base: Url,
 }
 
-/// The Organizations' Portal hosts (T-7183): `JC_PORTAL_ORGANIZATION_HOSTS` at start, replaced
-/// whenever jc's Organization registry runs another set
-/// ([`AppState::replace_organization_hosts`]). Every clone holds the same set; a request reads
-/// the set current when it arrives.
+/// A set jc's Organization registry replaces while the Portal serves (T-7183, T-7185): every
+/// clone holds the same set; a request reads the set current when it arrives.
 #[derive(Clone, Debug, Default)]
-pub struct OrganizationHosts(
-    std::sync::Arc<std::sync::RwLock<std::sync::Arc<Vec<OrganizationHost>>>>,
-);
+pub struct Swappable<T>(std::sync::Arc<std::sync::RwLock<std::sync::Arc<T>>>);
 
-impl OrganizationHosts {
-    pub fn new(hosts: Vec<OrganizationHost>) -> Self {
+impl<T> Swappable<T> {
+    pub fn new(set: T) -> Self {
         Self(std::sync::Arc::new(std::sync::RwLock::new(
-            std::sync::Arc::new(hosts),
+            std::sync::Arc::new(set),
         )))
     }
 
     /// The set held now.
-    pub fn current(&self) -> std::sync::Arc<Vec<OrganizationHost>> {
+    pub fn current(&self) -> std::sync::Arc<T> {
         match self.0.read() {
             Ok(held) => std::sync::Arc::clone(&held),
             Err(poisoned) => std::sync::Arc::clone(&poisoned.into_inner()),
         }
     }
 
-    fn store(&self, next: Vec<OrganizationHost>) {
+    pub(crate) fn store(&self, next: T) {
         let next = std::sync::Arc::new(next);
         match self.0.write() {
             Ok(mut held) => *held = next,
@@ -63,6 +59,11 @@ impl OrganizationHosts {
         }
     }
 }
+
+/// The Organizations' Portal hosts (T-7183): `JC_PORTAL_ORGANIZATION_HOSTS` at start, replaced
+/// whenever jc's Organization registry runs another set
+/// ([`AppState::replace_organization_hosts`]).
+pub type OrganizationHosts = Swappable<Vec<OrganizationHost>>;
 
 impl AppState {
     /// Makes `raw` (a `JC_PORTAL_ORGANIZATION_HOSTS` list, checked as at start) the
@@ -77,6 +78,53 @@ impl AppState {
         self.organization_hosts.store(next);
         self.organization_realms.retain(&kept);
         Ok(count)
+    }
+
+    /// jc's run-time Organizations (T-7185): the start-time catalogues and addresses
+    /// (`JC_PORTAL_ORGANIZATION_CATALOGUES`, `..._ADDRESSES`) with `catalogues` and `addresses`
+    /// of the Organizations those do not name; the set before is replaced whole, and a start-time
+    /// entry wins over one of the same name. A `removed` Organization lists no address and keeps
+    /// its catalogue entry without any token, so its projects publish nowhere (a run fails and
+    /// says so) instead of falling back to the catalogue a project's `CkanInstance` names.
+    pub fn replace_run_time_organizations(
+        &self,
+        catalogues: Vec<OrganizationCatalogue>,
+        addresses: Vec<OrganizationAddresses>,
+        removed: &[String],
+    ) {
+        let kept = |name: &String| !removed.contains(name);
+        let held = self.organization_catalogues.current();
+        let mut next = self.config.organization_catalogues.clone();
+        for c in catalogues {
+            if !next.iter().any(|o| o.organization == c.organization) {
+                next.push(c);
+            }
+        }
+        for c in held.iter() {
+            if !kept(&c.organization) && !next.iter().any(|o| o.organization == c.organization) {
+                next.push(c.clone());
+            }
+        }
+        for c in &mut next {
+            if !kept(&c.organization) {
+                c.token = None;
+                c.token_file = None;
+            }
+        }
+        self.organization_catalogues.store(next);
+        let mut next: Vec<OrganizationAddresses> = self
+            .config
+            .organization_addresses
+            .iter()
+            .filter(|a| kept(&a.organization))
+            .cloned()
+            .collect();
+        for a in addresses {
+            if !next.iter().any(|o| o.organization == a.organization) {
+                next.push(a);
+            }
+        }
+        self.organization_addresses.store(next);
     }
 }
 
@@ -100,9 +148,42 @@ pub struct OrganizationCatalogue {
     /// origin off https; the Portal's data host when unset.
     #[serde(default)]
     pub data_host: Option<String>,
-    /// The file holding the CKAN API token the Portal publishes with; read per run.
-    pub token_file: std::path::PathBuf,
+    /// The file holding the CKAN API token the Portal publishes with; read per run. Required in
+    /// `JC_PORTAL_ORGANIZATION_CATALOGUES`; jc's run-time entries carry [`Self::token`] instead.
+    #[serde(default)]
+    pub token_file: Option<std::path::PathBuf>,
+    /// The token jc minted in this process for a run-time Organization's catalogue (T-7185),
+    /// never read from the environment.
+    #[serde(skip)]
+    pub token: Option<CatalogueToken>,
 }
+
+/// A catalogue token held in memory (see [`OrganizationCatalogue::token`]); `Debug` prints a
+/// placeholder, two are equal only when they are the same holder.
+#[derive(Clone)]
+pub struct CatalogueToken(pub std::sync::Arc<jcctl::secrets::SecretValue>);
+
+impl PartialEq for CatalogueToken {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for CatalogueToken {}
+
+impl std::fmt::Debug for CatalogueToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CatalogueToken(redacted)")
+    }
+}
+
+/// The Organizations' own catalogues (T-7185): `JC_PORTAL_ORGANIZATION_CATALOGUES` at start,
+/// with jc's run-time Organizations added ([`AppState::replace_run_time_organizations`]).
+pub type OrganizationCatalogues = Swappable<Vec<OrganizationCatalogue>>;
+
+/// Every address of each Organization: `JC_PORTAL_ORGANIZATION_ADDRESSES` at start, with jc's
+/// run-time Organizations added.
+pub type OrganizationAddressList = Swappable<Vec<OrganizationAddresses>>;
 
 /// `JC_PORTAL_ORGANIZATION_CATALOGUES`: a JSON array of [`OrganizationCatalogue`], each
 /// Organization once.
@@ -115,6 +196,12 @@ pub fn parse_catalogues(raw: &str) -> Result<Vec<OrganizationCatalogue>, String>
     for (i, c) in all.iter().enumerate() {
         if all[..i].iter().any(|o| o.organization == c.organization) {
             return Err(format!("{}: named twice", c.organization));
+        }
+        if c.token_file.is_none() {
+            return Err(format!(
+                "{}: tokenFile names the file of its CKAN API token, e.g. /run/secrets/catalogue-token",
+                c.organization
+            ));
         }
         for url in std::iter::once(&c.url).chain(c.api.as_ref()) {
             if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -403,6 +490,7 @@ mod tests {
         assert!(parse_catalogues(" ").expect("empty").is_empty());
         for bad in [
             r#"[{"organization":"hel","url":"ftp://x.example","tokenFile":"t"}]"#,
+            r#"[{"organization":"hel","url":"https://x.example"}]"#,
             r#"[{"organization":"hel","url":"https://x.example","tokenFile":"t","token":"s"}]"#,
             r#"[{"organization":"hel","url":"https://x.example","tokenFile":"t"},
                 {"organization":"hel","url":"https://y.example","tokenFile":"t"}]"#,

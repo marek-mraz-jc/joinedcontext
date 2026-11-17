@@ -72,9 +72,8 @@ pub async fn list_addresses(
     let identity = &user.0.identity;
     let pinned = crate::organization_host::pinned().map(|host| host.organization);
     let sign_in = state.config.oidc.as_ref().map(|oidc| oidc.issuer.clone());
-    let items = state
-        .config
-        .organization_addresses
+    let addresses = state.organization_addresses.current();
+    let items = addresses
         .iter()
         .filter(|org| pinned.as_ref().is_none_or(|p| *p == org.organization))
         .filter(|org| {

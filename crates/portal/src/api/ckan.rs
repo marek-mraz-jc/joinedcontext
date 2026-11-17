@@ -130,7 +130,7 @@ pub async fn get_status(
         .collect();
 
     let catalogue = organization_catalogue(&state, &project);
-    let settings = Settings::new(data_host(&state, catalogue));
+    let settings = Settings::new(data_host(&state, catalogue.as_ref()));
     let apps = state.mirror.list(&project, "App", &opts).items;
     let endpoints = state.mirror.list(&project, "Endpoint", &opts).items;
     let publications = publications(endpoints, &apps, &project, &instances, &settings);
@@ -141,7 +141,7 @@ pub async fn get_status(
             .map(|(name, spec)| InstanceSummary {
                 name: name.clone(),
                 // Where the reconciler publishes it: its Organization's own catalogue, if any.
-                url: catalogue.map_or_else(
+                url: catalogue.as_ref().map_or_else(
                     || spec.base_url().to_owned(),
                     |c| c.url.as_str().trim_end_matches('/').to_owned(),
                 ),
@@ -155,16 +155,17 @@ pub async fn get_status(
 
 /// The Organization catalogue `project` publishes into (`reconciler::ckan`), if its
 /// Organization has one.
-fn organization_catalogue<'a>(
-    state: &'a AppState,
+fn organization_catalogue(
+    state: &AppState,
     project: &str,
-) -> Option<&'a crate::organization_host::OrganizationCatalogue> {
+) -> Option<crate::organization_host::OrganizationCatalogue> {
     let organization = crate::permissions::organization_of(&state.mirror, project)?;
     state
-        .config
         .organization_catalogues
+        .current()
         .iter()
         .find(|c| c.organization == organization)
+        .cloned()
 }
 
 /// Where the endpoints answer, as a dataset links them: the Organization's data host when its
@@ -369,13 +370,90 @@ mod tests {
         );
         let catalogue = organization_catalogue(&state, "bratislava");
         assert_eq!(
-            catalogue.map(|c| c.url.as_str()),
+            catalogue.as_ref().map(|c| c.url.as_str()),
             Some("http://opendata.ba.localhost:42141/")
         );
         assert_eq!(
-            data_host(&state, catalogue),
+            data_host(&state, catalogue.as_ref()),
             "http://api.ba.localhost:42141"
         );
         assert!(organization_catalogue(&state, "helsinki").is_none());
+    }
+
+    /// T-7185: a run-time Organization jc adds publishes into its own catalogue from the next
+    /// read on, with the token jc holds in memory; replaced without it, it has none; a
+    /// start-time entry of the same name wins; a removed one keeps its entry with no token, so
+    /// nothing of it is published anywhere else.
+    #[test]
+    fn a_run_time_organization_gets_its_catalogue_and_a_removed_one_loses_it() {
+        let config = Config {
+            organization_catalogues: crate::organization_host::parse_catalogues(
+                r#"[{"organization":"ba","url":"http://opendata.ba.localhost/","tokenFile":"/run/ba"}]"#,
+            )
+            .unwrap(),
+            ..Config::for_tests()
+        };
+        let state = AppState::new(config, None);
+        for (project, organization) in [("rt-project", "rt"), ("bratislava", "ba")] {
+            state.mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Project",
+                    "metadata": { "name": project, "namespace": crate::permissions::ORG_NAMESPACE },
+                    "spec": { "organizationRef": organization },
+                }))
+                .unwrap(),
+            );
+        }
+        assert!(organization_catalogue(&state, "rt-project").is_none());
+        let token = crate::organization_host::CatalogueToken(std::sync::Arc::new(
+            jcctl::secrets::SecretValue::generate().unwrap(),
+        ));
+        let entry =
+            |organization: &str, url: &str| crate::organization_host::OrganizationCatalogue {
+                organization: organization.into(),
+                url: url.parse().unwrap(),
+                api: None,
+                reach: None,
+                data_host: None,
+                token_file: None,
+                token: Some(token.clone()),
+            };
+        state.replace_run_time_organizations(
+            vec![
+                entry("rt", "http://data.rt.localhost/"),
+                entry("ba", "http://elsewhere.localhost/"),
+            ],
+            Vec::new(),
+            &[],
+        );
+        let held = organization_catalogue(&state, "rt-project").expect("its catalogue");
+        assert_eq!(held.url.as_str(), "http://data.rt.localhost/");
+        assert_eq!(held.token.as_ref(), Some(&token));
+        assert_eq!(
+            organization_catalogue(&state, "bratislava").map(|c| c.url.to_string()),
+            Some("http://opendata.ba.localhost/".to_owned()),
+            "the start-time entry wins"
+        );
+        state.replace_run_time_organizations(Vec::new(), Vec::new(), &[]);
+        assert!(organization_catalogue(&state, "rt-project").is_none());
+        assert!(organization_catalogue(&state, "bratislava").is_some());
+        state.replace_run_time_organizations(
+            vec![entry("rt", "http://data.rt.localhost/")],
+            Vec::new(),
+            &[],
+        );
+        state.replace_run_time_organizations(
+            Vec::new(),
+            Vec::new(),
+            &["ba".to_owned(), "rt".to_owned()],
+        );
+        for project in ["bratislava", "rt-project"] {
+            let held = organization_catalogue(&state, project).expect("kept, fail closed");
+            assert_eq!(
+                (held.token, held.token_file),
+                (None, None),
+                "a removed Organization's catalogue holds no token: {project}"
+            );
+        }
     }
 }

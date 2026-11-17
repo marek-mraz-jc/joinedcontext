@@ -1663,10 +1663,13 @@ async fn an_organizations_catalogue_keeps_the_dataset_its_endpoint_still_publish
         // Nothing listens there: each catalogue call is one failed report, never a hang.
         reach: Some("127.0.0.1:9".parse().expect("an address")),
         data_host: None,
-        token_file,
+        token_file: Some(token_file),
+        token: None,
     };
     let reports = CkanSync::new(HOST)
-        .for_organizations(vec![catalogue])
+        .for_organizations(
+            joinedcontext_portal::organization_host::OrganizationCatalogues::new(vec![catalogue]),
+        )
         .converge(&repo, &previous, &repository)
         .await;
     std::fs::remove_dir_all(&repository).expect("cleaned up");
@@ -1721,11 +1724,17 @@ async fn a_moved_projects_datasets_follow_its_organization() {
                 api: None,
                 reach: Some("127.0.0.1:9".parse().expect("an address")),
                 data_host: None,
-                token_file: repository.join(format!("{organization}.token")),
+                token_file: Some(repository.join(format!("{organization}.token"))),
+                token: None,
             };
         let repo = jcctl::loader::Repository::load(&repository).expect("the repository loads");
         let reports = CkanSync::new(HOST)
-            .for_organizations(vec![catalogue("hel"), catalogue("bbsk")])
+            .for_organizations(
+                joinedcontext_portal::organization_host::OrganizationCatalogues::new(vec![
+                    catalogue("hel"),
+                    catalogue("bbsk"),
+                ]),
+            )
             .converge(&repo, &previous, &repository)
             .await;
         std::fs::remove_dir_all(&repository).expect("cleaned up");

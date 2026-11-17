@@ -44,6 +44,7 @@ pub mod dataroom;
 mod ekiben;
 #[cfg(feature = "ekiben")]
 mod ekiben_pg;
+pub mod follow;
 #[cfg(feature = "gateway")]
 pub mod gateway;
 #[cfg(feature = "kaisatsu")]

@@ -40,6 +40,10 @@ pub struct AppState {
     pub organization_realms: crate::auth::realms::OrganizationRealms,
     /// Each Organization's Portal host, by name (`organization_host`, T-7183).
     pub organization_hosts: crate::organization_host::OrganizationHosts,
+    /// Each Organization's own catalogue, jc's run-time ones included (T-7185).
+    pub organization_catalogues: crate::organization_host::OrganizationCatalogues,
+    /// Every address of each Organization, jc's run-time ones included (T-7185).
+    pub organization_addresses: crate::organization_host::OrganizationAddressList,
     pub mirror: Arc<Mirror>,
     /// `None` when no forge is configured: every write answers 503. A Portal that cannot
     /// open a merge request must not fall back to a local write (CC-03).
@@ -264,6 +268,12 @@ impl AppState {
         );
         let organization_hosts =
             crate::organization_host::OrganizationHosts::new(config.organization_hosts.clone());
+        let organization_catalogues = crate::organization_host::OrganizationCatalogues::new(
+            config.organization_catalogues.clone(),
+        );
+        let organization_addresses = crate::organization_host::OrganizationAddressList::new(
+            config.organization_addresses.clone(),
+        );
         let draft_events = DraftHub::new();
         let drafts = DraftStore::new(None).with_hub(draft_events.clone());
         let space_usage = Arc::new(
@@ -285,6 +295,8 @@ impl AppState {
             bearer,
             organization_realms,
             organization_hosts,
+            organization_catalogues,
+            organization_addresses,
             catalogue_http: crate::api::catalogue::CKAN_HTTP.clone(),
             config: Arc::new(config),
             oidc: oidc.map(Arc::new),
@@ -1130,7 +1142,7 @@ impl AppState {
             let mut catalogue =
                 crate::reconciler::ckan::CkanSync::new(catalogue_host(&self.config))
                     .with_age_key_file(age_key_file)
-                    .for_organizations(self.config.organization_catalogues.clone());
+                    .for_organizations(self.organization_catalogues.clone());
             let branding = crate::branding::Branding::load(self.config.branding_file.as_deref());
             if !branding.organisation.trim().is_empty() {
                 catalogue = catalogue.titled(branding.organisation);
