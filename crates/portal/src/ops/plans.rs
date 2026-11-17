@@ -749,8 +749,10 @@ async fn affected(
         Err("the model names no contextSpaceRef".to_owned())
     } else {
         let broker = crate::spaces::broker(&state.mirror, home, space);
-        let tenant = crate::spaces::segment(&state.mirror, home, space);
-        match state.space_usage.usage(&broker, &tenant).await {
+        match match crate::spaces::tenant(&state.mirror, home, space) {
+            Ok(tenant) => state.space_usage.usage(&broker, &tenant).await,
+            Err(reason) => Err(reason),
+        } {
             Ok(usage) => match usage.bytes {
                 Some(bytes) => Ok(bytes.by_type),
                 None if usage.entities == 0 => Ok(BTreeMap::new()),

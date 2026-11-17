@@ -379,8 +379,10 @@ impl Probes {
             if !counter.reaches(&broker) {
                 continue;
             }
-            let tenant = crate::spaces::segment(mirror, &project, &name);
-            let usage = counter.usage(&broker, &tenant).await;
+            let usage = match crate::spaces::tenant(mirror, &project, &name) {
+                Ok(tenant) => counter.usage(&broker, &tenant).await,
+                Err(reason) => Err(reason),
+            };
             let key = (project.clone(), name.clone());
             let retention = space.spec.get("retention").is_some_and(|r| !r.is_null());
             findings.extend(judge_count(

@@ -249,19 +249,43 @@ impl<'de> Deserialize<'de> for OrganizationId {
     }
 }
 
-/// A broker tenant (PF-130, EP-22): `{organization id}__{space segment}` (`sk_bbsk__mobility`),
-/// at most 63 + 2 + 63 = 128 characters. An [`OrganizationId`] never holds `__` and a space
-/// segment holds no `_`, so the name splits back at its first `__` into exactly one pair, and
-/// two Organizations never share a tenant.
+/// A broker tenant (PF-130, EP-22, ARCH/TEN-10). Minted only as the project-key form
+/// `{OrgId}__{ProjectId}__{space}` ([`TenantName::keyed`], built by
+/// [`jc_types::internal_name`]), at most 26 + 2 + 26 + 2 + 63 = 119 characters, so two projects
+/// with the same space name never share one. [`TenantName::parse`] also reads the 2026-11-15
+/// form `{organization id}__{space segment}` (`sk_bbsk__mobility`, at most 128 characters) until
+/// the rename (T-7039) ran: an [`OrganizationId`] holds a `_` and a 26-character id none, so the
+/// two forms never read as each other, and each splits back into exactly one key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TenantName(String);
 
 impl TenantName {
-    /// The tenant of the space `segment` of Organization `org`.
+    /// The tenant of the space `segment` of Organization `org`, the 2026-11-15 form: read and
+    /// checked, never minted for a space ([`Self::keyed`] is).
     pub fn new(org: &OrganizationId, segment: &str) -> Result<Self> {
         validate_space_name(segment)?;
         Ok(Self(format!("{org}__{segment}")))
+    }
+
+    /// The tenant of a space under its project key: `internal_name(OrgId, ProjectId, space)`.
+    #[must_use]
+    pub fn keyed(name: &jc_types::InternalName) -> Self {
+        Self(name.as_str().to_owned())
+    }
+
+    /// The tenant of space `space` of the project `key`; `Err` when `space` is no label.
+    pub fn of_space(key: jc_types::ProjectKey, space: &str) -> Result<Self> {
+        let label = jc_types::Label::parse(space).map_err(|err| Error::Name {
+            field: "space",
+            value: space.to_owned(),
+            reason: if matches!(err, jc_types::KeyError::NotALabel) {
+                "must be lower-case letters, digits and hyphens, start with a letter, at most 63 characters"
+            } else {
+                "is not a space name"
+            },
+        })?;
+        Ok(Self::keyed(&jc_types::internal_name(key, &label)))
     }
 
     /// Parses a tenant as written: splits at the first `__`, then checks each half by its own
@@ -270,24 +294,36 @@ impl TenantName {
         let refused = || Error::Name {
             field: "tenant",
             value: raw.to_string(),
-            reason:
-                "must be `{organization id}__{space}` (`sk_bbsk__mobility`), at most 128 characters",
+            reason: "must be `{OrgId}__{ProjectId}__{space}` (two 26-character ids and a space name) \
+                     or `{organization id}__{space}` (`sk_bbsk__mobility`), at most 128 characters",
         };
+        if jc_types::InternalName::parse(raw).is_ok() {
+            return Ok(Self(raw.to_owned()));
+        }
         let (org, segment) = raw.split_once("__").ok_or_else(refused)?;
         let org = OrganizationId::parse(org).map_err(|_| refused())?;
         Self::new(&org, segment).map_err(|_| refused())
     }
 
-    /// The Organization id half.
+    /// The Organization half: the 26-character `OrgId` of the project-key form, the
+    /// [`OrganizationId`] of the 2026-11-15 form.
     #[must_use]
     pub fn organization(&self) -> &str {
         self.0.split_once("__").map_or("", |(org, _)| org)
     }
 
-    /// The space segment half.
+    /// What follows the Organization: the space segment of the 2026-11-15 form,
+    /// `{ProjectId}__{space}` of the project-key form.
     #[must_use]
     pub fn segment(&self) -> &str {
         self.0.split_once("__").map_or("", |(_, segment)| segment)
+    }
+
+    /// The project id (26 characters) of a project-key tenant; `None` for the 2026-11-15 form.
+    #[must_use]
+    pub fn project(&self) -> Option<&str> {
+        let (project, _) = self.segment().split_once("__")?;
+        Some(project)
     }
 
     /// The name as text, as the `NGSILD-Tenant` header carries it.
@@ -667,6 +703,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// ARCH/TEN-10, T-7038: the fixture the smoke's Python reads too: each (Organization,
+    /// project, space) mints exactly its tenant, which parses back into the same key; the
+    /// accepted names parse, every refused one does not. Both languages hold one list.
+    #[test]
+    fn the_shared_tenant_fixture_holds_in_rust() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../crates/shared/jc-types/fixtures/tenant_names.json"
+        ))
+        .expect("the fixture is JSON");
+        let text = |v: &serde_json::Value, k: &str| v[k].as_str().expect(k).to_owned();
+        let minted = fixture["minted"].as_array().expect("minted");
+        assert!(minted.len() >= 3);
+        for case in minted {
+            let key = jc_types::ProjectKey::new(
+                jc_types::OrgId::parse_verified(&text(case, "organization")).expect("org"),
+                jc_types::ProjectId::parse_verified(&text(case, "project")).expect("project"),
+            );
+            let tenant = TenantName::of_space(key, &text(case, "space")).expect("a space name");
+            assert_eq!(tenant.as_str(), text(case, "tenant"));
+            assert!(tenant.as_str().len() <= 128);
+            let parsed = TenantName::parse(tenant.as_str()).expect("parses back");
+            assert_eq!(parsed.organization(), key.org.path_segment());
+            assert_eq!(parsed.project(), Some(key.project.path_segment().as_str()));
+            assert!(antares_model::id::TenantId::new(tenant.as_str()).is_ok(), "{tenant}");
+        }
+        for good in fixture["accepted"].as_array().expect("accepted") {
+            let good = good.as_str().expect("text");
+            assert_eq!(TenantName::parse(good).expect(good).as_str(), good);
+        }
+        for bad in fixture["refused"].as_array().expect("refused") {
+            let bad = bad.as_str().expect("text");
+            assert!(TenantName::parse(bad).is_err(), "{bad}");
+        }
+        let two = &minted[..2];
+        assert_eq!(text(&two[0], "space"), text(&two[1], "space"));
+        assert_ne!(text(&two[0], "tenant"), text(&two[1], "tenant"));
+        assert!(TenantName::of_space(
+            jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint()),
+            "Mobility"
+        )
+        .is_err());
     }
 
     /// PF-130: no `__`, two `__`, a `_` in the segment, an empty half, a bad id or segment, and

@@ -346,14 +346,15 @@ async fn goes_with(
     };
     let mut found = Vec::new();
     match kind {
-        "ContextSpace" => match state
-            .space_usage
-            .usage(
-                &crate::spaces::broker(&state.mirror, project, name),
-                &crate::spaces::segment(&state.mirror, project, name),
-            )
-            .await
-        {
+        "ContextSpace" => match match crate::spaces::tenant(&state.mirror, project, name) {
+            Ok(tenant) => {
+                state
+                    .space_usage
+                    .usage(&crate::spaces::broker(&state.mirror, project, name), &tenant)
+                    .await
+            }
+            Err(reason) => Err(reason),
+        } {
             Ok(usage) if usage.entities > 0 => {
                 found.push(consequence("entities", usage.entities, Vec::new()));
             }

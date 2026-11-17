@@ -110,8 +110,11 @@ async fn row(state: &AppState, name: String, spec: Option<ContextBrokerSpec>) ->
     if health == Health::Up {
         for space in &spaces {
             let (project, space) = space.split_once('/').unwrap_or_default();
-            let tenant = crate::spaces::segment(&state.mirror, project, space);
-            match counter.usage(&name, &tenant).await {
+            let usage = match crate::spaces::tenant(&state.mirror, project, space) {
+                Ok(tenant) => counter.usage(&name, &tenant).await,
+                Err(reason) => Err(reason),
+            };
+            match usage {
                 Ok(usage) => entities += usage.entities,
                 Err(why) => reason = Some(format!("{project}/{space}: {why}")),
             }

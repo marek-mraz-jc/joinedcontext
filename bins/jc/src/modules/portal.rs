@@ -279,10 +279,19 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
         .await
         .map_err(|e| format!("the Organization registry could not be read: {e}"))?;
     let (served, run_time) = apply(run, &rows, &organizations)?;
+    let projects = joinedcontext_portal::project_ids::every_recorded_owned(pool)
+        .await
+        .map_err(|e| format!("the project registry could not be read: {e}"))?;
+    // The gateway's project-key tenants (ARCH/TEN-10, `JC_TENANT_NAMES=project-key`): a changed
+    // key reloads its tables.
+    #[cfg(feature = "gateway")]
+    context_gateway::store::publish_project_keys(
+        projects
+            .iter()
+            .map(|(_, name, key)| (name.clone(), *key))
+            .collect(),
+    );
     if run.projects {
-        let projects = joinedcontext_portal::project_ids::every_recorded_owned(pool)
-            .await
-            .map_err(|e| format!("the project registry could not be read: {e}"))?;
         let ids: Vec<String> = projects
             .iter()
             .map(|(_, _, key)| key.project.path_segment())

@@ -185,19 +185,42 @@ pub enum OrganizationRefusal {
     Unknown,
 }
 
-/// The Organization id half of a Tenant `{organization id}__{segment}`
-/// (PF-130): split at the first `__`, so the left half holds no `__`; the
-/// segment holds no `_` and neither half is empty. The full grammar of each
-/// half is the platform's (`jc_core::names::TenantName`); this is the shape
-/// the comparison needs and never a prefix match (`sk_a` is not `sk_ab`).
+/// The Organization half of a Tenant (PF-130, ARCH/TEN-10): the 26-character
+/// `OrgId` of `{OrgId}__{ProjectId}__{space}`, or the Organization id of the
+/// 2026-11-15 form `{organization id}__{segment}`, which the platform parses
+/// until the rename ran. Split at the first `__`, so the left half holds no
+/// `__`; an `OrgId` holds no `_` and an Organization id one, so the two forms
+/// never read as each other, and neither half is empty. The full grammar is the
+/// platform's (`jc_core::names::TenantName`); this is the shape the comparison
+/// needs and never a prefix match (`sk_a` is not `sk_ab`).
 #[must_use]
 pub fn tenant_organization(tenant: &str) -> Option<&str> {
-    let (organization, segment) = tenant.split_once("__")?;
+    let (organization, rest) = tenant.split_once("__")?;
+    if let Some((project, space)) = rest.split_once("__") {
+        return (is_key_id(organization)
+            && is_key_id(project)
+            && !space.is_empty()
+            && !space.contains('_'))
+        .then_some(organization);
+    }
     (!organization.is_empty()
         && organization.contains('_')
-        && !segment.is_empty()
-        && !segment.contains('_'))
+        && !rest.is_empty()
+        && !rest.contains('_'))
     .then_some(organization)
+}
+
+/// A key id in its path form: 26 characters of `a-z` and `2-7`, the first
+/// `a`..`h` (jc-types, ARCH/TEN-01).
+fn is_key_id(text: &str) -> bool {
+    text.len() == 26
+        && text.bytes().enumerate().all(|(i, b)| {
+            if i == 0 {
+                (b'a'..=b'h').contains(&b)
+            } else {
+                b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b)
+            }
+        })
 }
 
 /// The one value of header `name`: `None` when absent, repeated or not text,
@@ -377,6 +400,32 @@ fn unauthorized(detail: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PF-130, ARCH/TEN-10: both Tenant forms give their Organization half;
+    /// a half that is neither an `OrgId` nor an Organization id gives none.
+    #[test]
+    fn a_tenant_names_its_organization_in_either_form() {
+        let org = "apniwb5dkdjn5j4ik4hv7zugza";
+        let project = "d3d2ouepc7jkdlbvzor5vezejv";
+        let keyed = format!("{org}__{project}__mobility");
+        assert_eq!(tenant_organization(&keyed), Some(org));
+        assert_eq!(tenant_organization("sk_bbsk__mobility"), Some("sk_bbsk"));
+        for bad in [
+            format!("{org}__{project}"),
+            format!("{org}__{project}__"),
+            format!("{org}__{project}__mo_bility"),
+            format!("{org}__mobility"),
+            format!("{}__{project}__mobility", org.to_uppercase()),
+            format!("i{}__{project}__mobility", &org[1..]),
+            format!("{org}__{}__mobility", &project[1..]),
+            "sk_a__b__c".to_owned(),
+            "sk_a__b_c".to_owned(),
+            "bbsk__mobility".to_owned(),
+            "mobility".to_owned(),
+        ] {
+            assert_eq!(tenant_organization(&bad), None, "{bad}");
+        }
+    }
 
     const SECRET: &str = "0123456789abcdef0123456789abcdef";
 

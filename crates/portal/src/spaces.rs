@@ -45,6 +45,36 @@ pub fn segment(mirror: &Mirror, project: &str, name: &str) -> String {
     )
 }
 
+/// The broker tenant of the Context Space `name` of `project` (PF-130, ARCH/TEN-10): the one the
+/// gateway pins, through `context_gateway::store::tenant_name` (`JC_TENANT_NAMES`): its
+/// [`segment`] until the broker's rename ran, `{OrgId}__{ProjectId}__{name}` after. `Err` names
+/// what is missing (a project the registry has no id for yet); a caller never falls back to the
+/// segment, which the rename tombstoned.
+pub fn tenant(mirror: &Mirror, project: &str, name: &str) -> Result<String, String> {
+    context_gateway::store::tenant_name(
+        project,
+        name,
+        || segment(mirror, project, name),
+        context_gateway::store::TenantNames::from_env(),
+    )
+    .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
+}
+
+/// [`tenant`] of a space read from a manifest repository (the reconciler's view of the files).
+pub fn repo_tenant(
+    repo: &jcctl::loader::Repository,
+    project: &str,
+    name: &str,
+) -> Result<String, String> {
+    context_gateway::store::tenant_name(
+        project,
+        name,
+        || repo.space_segment(project, name),
+        context_gateway::store::TenantNames::from_env(),
+    )
+    .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
+}
+
 /// The broker the Context Space `name` of `project` lives on (PF-111): its `brokerRef`, else the
 /// organization's default, else the implicit `main`. Empty when its `brokerRef` names no
 /// `ContextBroker`: such a space is never served from another broker.

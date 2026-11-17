@@ -56,8 +56,60 @@ def short_type(t: str) -> str:
 
 
 def urn_segment(project: str, space: str, pin: str | None) -> str:
-    """jc-core kinds::urn_segment: the Tenant of a space."""
+    """jc-core kinds::urn_segment: the space's URN segment, its Tenant until the rename (T-7039)."""
     return pin or f"{project}-{space}"
+
+
+B32 = "abcdefghijklmnopqrstuvwxyz234567"
+LABEL = re.compile(r"[a-z][a-z0-9-]{0,62}")
+OLD_ORG = re.compile(r"[a-z0-9-]+(_[a-z0-9-]+)+")  # jc-core OrganizationId, reverse domain
+
+
+def path_segment(uuid_text: str) -> str:
+    """jc-types path form of an id: the 128 bits as 26 characters of a-z and 2-7 (ARCH/TEN-01)."""
+    n = int(uuid_text.replace("-", ""), 16)
+    if not n:
+        raise ValueError("the nil UUID is no id")
+    return "".join(B32[(n >> (i * 5)) & 31] for i in range(25, -1, -1))
+
+
+def _id_segment(text: str) -> bool:
+    return len(text) == 26 and all(c in B32 for c in text) and B32.index(text[0]) < 8 \
+        and set(text) != {"a"}
+
+
+def tenant_name(organization: str, project: str, space: str) -> str:
+    """jc-core TenantName::of_space: `{OrgId}__{ProjectId}__{space}` from the two UUIDs
+    (ARCH/TEN-10). The fixture of ci/test_tenant_names.py holds it equal to Rust's."""
+    if not LABEL.fullmatch(space):
+        raise ValueError(f"space {space!r} is no label")
+    return f"{path_segment(organization)}__{path_segment(project)}__{space}"
+
+
+def is_tenant_name(raw: str) -> bool:
+    """jc-core TenantName::parse: the project-key form, or `{organization id}__{space}` until
+    the rename ran."""
+    parts = raw.split("__", 2)
+    if len(parts) == 3 and _id_segment(parts[0]) and _id_segment(parts[1]):
+        return bool(LABEL.fullmatch(parts[2]))
+    org, sep, segment = raw.partition("__")
+    return bool(sep) and len(raw) <= 128 and len(org) <= 63 and not org.startswith("snap-") \
+        and bool(OLD_ORG.fullmatch(org)) and "__" not in org and not org.startswith(("-", "_")) \
+        and bool(re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", segment))
+
+
+def space_tenant(project: str, space: str, pin: str | None, keys: dict | None = None) -> str:
+    """The Tenant the gateway pins for a space: its project key's name once the export carries
+    the keys (antares/project-keys.json, {project: [organization uuid, project uuid]}, written
+    by the rename of T-7039), the segment before."""
+    key = (keys or {}).get(project)
+    return tenant_name(key[0], key[1], space) if key else urn_segment(project, space, pin)
+
+
+def project_keys(files: Path) -> dict:
+    """antares/project-keys.json beside the export's gitea/files, or none (a segment export)."""
+    path = files.parent.parent / "antares" / "project-keys.json"
+    return json.loads(path.read_text()) if path.exists() else {}
 
 
 @dataclass
@@ -169,7 +221,7 @@ def own_grant(spec: dict, project: str, endpoint: str) -> bool:
 
 def load_endpoints(files: Path) -> list[Endpoint]:
     """Every Endpoint under gitea/files/<owner>/<project>/spaces/<space>/endpoints/*.yaml."""
-    spaces, policies = {}, {}
+    spaces, policies, keys = {}, {}, project_keys(files)
     for f in files.glob("*/*/spaces/*/space.yaml"):
         for d in _load_yaml(f):
             if d.get("kind") == "ContextSpace":
@@ -199,7 +251,7 @@ def load_endpoints(files: Path) -> list[Endpoint]:
             project = meta.get("namespace") or f.parts[-5]
             ref = s.get("contextSpaceRef")
             space = ref.get("name") if isinstance(ref, dict) else ref
-            tenant = urn_segment(project, space, (spaces.get((project, space)) or {}).get("urnSegment"))
+            tenant = space_tenant(project, space, (spaces.get((project, space)) or {}).get("urnSegment"), keys)
             refs = s.get("policyRefs") or ([s["policyRef"]] if s.get("policyRef") else None)
             bound = []
             for pname, pspec in policies.get((project, space), []):
@@ -265,14 +317,14 @@ def transient_types(files: Path) -> set:
     the broker deletes such an Entity once it has not been modified for that long (T-3900), so a
     bundle's rows of the type are gone minutes after the import (T-6833: helsinki's Vehicle rule
     PT5M emptied helsinki-transport before the mcp suite read it)."""
-    out = set()
+    out, keys = set(), project_keys(files)
     for f in files.glob("*/*/spaces/*/space.yaml"):
         for d in _load_yaml(f):
             if d.get("kind") != "ContextSpace":
                 continue
             spec = d.get("spec") or {}
-            tenant = urn_segment(d["metadata"].get("namespace") or f.parts[-4], d["metadata"]["name"],
-                                 spec.get("urnSegment"))
+            tenant = space_tenant(d["metadata"].get("namespace") or f.parts[-4], d["metadata"]["name"],
+                                  spec.get("urnSegment"), keys)
             for rule in spec.get("retention") or []:
                 keep = duration(rule.get("current")) if isinstance(rule, dict) else None
                 if keep is not None and keep <= TRANSIENT and rule.get("entityType"):

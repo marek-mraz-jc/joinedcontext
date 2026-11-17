@@ -134,8 +134,10 @@ async fn costs(state: &AppState, user: &CurrentUser, query: CostQuery) -> Result
     let spaces = futures_util::stream::iter(of_kind("ContextSpace"))
         .map(|(project, space)| async move {
             let broker = crate::spaces::broker(&state.mirror, &project, &space);
-            let tenant = crate::spaces::segment(&state.mirror, &project, &space);
-            let bytes = match state.space_usage.usage(&broker, &tenant).await {
+            let bytes = match match crate::spaces::tenant(&state.mirror, &project, &space) {
+                Ok(tenant) => state.space_usage.usage(&broker, &tenant).await,
+                Err(reason) => Err(reason),
+            } {
                 Ok(usage) => Ok(usage.bytes.map_or(0, |b| b.entities + b.attr_instances)),
                 Err(why) => Err(why),
             };

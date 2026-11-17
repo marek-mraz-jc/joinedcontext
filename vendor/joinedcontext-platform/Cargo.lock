@@ -647,6 +647,7 @@ dependencies = [
  "jc-ngsi-input",
  "jc-relationships",
  "jc-tabular",
+ "jc-types",
  "jcctl",
  "jsonschema",
  "jsonwebtoken",
@@ -1933,6 +1934,7 @@ dependencies = [
  "chrono",
  "form_urlencoded",
  "hyper-util",
+ "jc-types",
  "jsonschema",
  "jsonwebtoken",
  "ngsild-model",
@@ -2016,6 +2018,14 @@ dependencies = [
  "jc-core",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jc-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -4198,6 +4208,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "uuid"
+version = "1.29.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
+dependencies = [
+ "getrandom 0.4.3",
+ "js-sys",
+ "serde_core",
+ "wasm-bindgen",
 ]
 
 [[package]]

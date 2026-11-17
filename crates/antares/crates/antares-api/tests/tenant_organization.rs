@@ -216,6 +216,25 @@ async fn the_organization_is_compared_whole_and_by_the_callers_rule() {
     assert_eq!(s, StatusCode::CREATED);
     assert_eq!(get("sk_b__x", visitor("sk_b")).await, StatusCode::OK);
     assert_eq!(get("sk_b__x", visitor("sk_a")).await, StatusCode::NOT_FOUND);
+    // a project-key Tenant compares its OrgId half the same way (ARCH/TEN-10)
+    const KEYED: &str = "apniwb5dkdjn5j4ik4hv7zugza__d3d2ouepc7jkdlbvzor5vezejv__x";
+    const ORG: &str = "apniwb5dkdjn5j4ik4hv7zugza";
+    let (s, ..) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some(KEYED),
+        &member(ORG),
+        Some(room("urn:ngsi-ld:Room:2")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    assert_eq!(get(KEYED, visitor(ORG)).await, StatusCode::OK);
+    assert_eq!(get(KEYED, member("sk_b")).await, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get(KEYED, visitor("bpniwb5dkdjn5j4ik4hv7zugza")).await,
+        StatusCode::NOT_FOUND
+    );
     // a member is held to its own Organization, not to the space's header
     let mut both = member("sk_a");
     both.push(("x-jc-space-organization", "sk_b"));

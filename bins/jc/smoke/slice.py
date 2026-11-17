@@ -61,11 +61,14 @@ def main(argv=None):
             shutil.copytree(src / d, out / d)
     (out / "grafana" / "dashboards").mkdir(parents=True, exist_ok=True)
     tenants = {e.tenant for e in ex.load_endpoints(out / "gitea" / "files")}
+    keys = ex.project_keys(src / "gitea" / "files")
     for f in out.glob("gitea/files/*/*/spaces/*/space.yaml"):
         for d in ex._load_yaml(f):
             if d.get("kind") == "ContextSpace":
-                tenants.add(ex.urn_segment(f.parts[-4], d["metadata"]["name"], (d.get("spec") or {}).get("urnSegment")))
+                tenants.add(ex.space_tenant(f.parts[-4], d["metadata"]["name"], (d.get("spec") or {}).get("urnSegment"), keys))
     (out / "antares").mkdir(exist_ok=True)
+    if keys:
+        shutil.copy(src / "antares" / "project-keys.json", out / "antares" / "project-keys.json")
     counts = {}
     for name in ("entities.jsonl", "temporal.jsonl"):
         n = 0
