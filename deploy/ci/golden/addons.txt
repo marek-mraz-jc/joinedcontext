@@ -44,6 +44,7 @@ batch/v1/Job addons/jc-daiya-db-create-role-daiya-app-login
 batch/v1/Job addons/jc-dataroom-db-create-role-dataroom-app-login
 batch/v1/Job addons/jc-ekiben-db-create-role-ekiben-app-login
 batch/v1/Job addons/jc-kaisatsu-db-create-role-kaisatsu-app-readonly
+batch/v1/Job addons/jc-portal-db-create-role-jc-portal-app-login
 batch/v1/Job addons/jc-shako-db-create-role-shako-app-login
 batch/v1/Job addons/keycloak-admin-permissions
 batch/v1/Job addons/keycloak-config-keycloak-config-cli
@@ -288,6 +289,7 @@ v1/Secret addons/db-jc-ekiben-app
 v1/Secret addons/db-jc-kaisatsu
 v1/Secret addons/db-jc-kaisatsu-app
 v1/Secret addons/db-jc-portal
+v1/Secret addons/db-jc-portal-app
 v1/Secret addons/db-jc-shako
 v1/Secret addons/db-jc-shako-app
 v1/Secret addons/db-keycloak

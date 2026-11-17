@@ -45,8 +45,9 @@ SUPERUSER_RESERVED_DEFAULT = 3
 # joinedcontext-portal src/db.rs and joinedcontext-platform crates/assistant/src/bin/jc-assistant.rs.
 # joinedcontext-portal src/state.rs: the Portal's apps admin pool in apps-db, 4.
 # jc (monorepo crates/portal/src/db.rs): the same Portal pool inside the one binary, 5; jc renders
-# no apps-db, so the Portal opens no apps admin pool there.
-COMPILED = {"portal": ("portal", 5), "assistant": ("jc-assistant", 10), "jc_apps_admin": ("portal", 4), "jc_portal": ("jc", 5)}
+# no apps-db, so the Portal opens no apps admin pool there. It serves as jc_portal_app and migrates
+# at start as jc_portal (T-7179), whose pool closes after the grant; both counted at 5.
+COMPILED = {"portal": ("portal", 5), "assistant": ("jc-assistant", 10), "jc_apps_admin": ("portal", 4), "jc_portal": ("jc", 5), "jc_portal_app": ("jc", 5)}
 # Drivers' own defaults, used when the render sets nothing.
 ANTARES_DEFAULT = 20  # antares-broker main.rs parse_pg_pool
 KEYCLOAK_DEFAULT = 100  # Quarkus/Agroal KC_DB_POOL_MAX_SIZE
@@ -210,6 +211,7 @@ CLIENTS = {
     "jc_apps_admin": compiled("jc_apps_admin"),
     "decidim": decidim,
     "jc_portal": compiled("jc_portal"),
+    "jc_portal_app": compiled("jc_portal_app"),
     "jc_antares": lambda docs: antares(docs, jc=True),
     "kaisatsu_migrate": jc_kaisatsu,
     **{f"{m}_migrate": jc_module(m) for m in ("shako", "daiya", "dataroom", "ekiben")},

@@ -197,7 +197,10 @@ fn is_secret(name: &str) -> bool {
     }
     if name.ends_with("_URL") {
         // The connection string carries the password inside it; every other address does not.
-        return name == "JC_PORTAL_DATABASE_URL";
+        return matches!(
+            name,
+            "JC_PORTAL_DATABASE_URL" | "JC_PORTAL_MIGRATION_DATABASE_URL"
+        );
     }
     name.contains("SECRET") || name.contains("TOKEN") || name.ends_with("_KEY")
 }
@@ -223,6 +226,7 @@ fn the_source_reader_knows_a_read_from_a_mention() {
     assert!(is_secret("JC_SHAKO_TOKEN"));
     assert!(is_secret("JC_PORTAL_COOKIE_KEY"));
     assert!(is_secret("JC_PORTAL_DATABASE_URL"), "it carries a password");
+    assert!(is_secret("JC_PORTAL_MIGRATION_DATABASE_URL"), "so does this one");
     assert!(!is_secret("JC_PORTAL_GATEWAY_URL"), "an address is not one");
     assert!(!is_secret("JC_BASEMAP_KEY_FILE"), "a path is not the value");
     assert_eq!(without_tests("a\n#[cfg(test)]\nb"), "a\n");

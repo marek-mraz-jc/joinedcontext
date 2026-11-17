@@ -251,6 +251,20 @@ def test_jc_streams_sign_in_as_their_pipelines_own_client(rendered, env):
 
 
 @requires_helmfile
+@pytest.mark.parametrize("env", ["jc-prod", "jc-dev"])
+def test_jc_portal_serves_as_a_role_apart_from_the_one_that_migrates(rendered, env):
+    # T-7179: the Portal migrates as jc_portal, the owner, and serves as jc_portal_app, so the
+    # running Portal cannot drop the operators' audit triggers. Each password from its own Secret.
+    container = jc_container(rendered(env))
+    env_of = {e["name"]: e for e in container["env"]}
+    serving, migrating = (env_of[k].get("value", "") for k in ("JC_PORTAL_DATABASE_URL", "JC_PORTAL_MIGRATION_DATABASE_URL"))
+    assert serving.startswith("postgresql://jc_portal_app:$(PORTAL_APP_DB_PASSWORD)@") and serving.endswith("/jc_portal")
+    assert migrating.startswith("postgresql://jc_portal:$(PORTAL_DB_PASSWORD)@") and migrating.endswith("/jc_portal")
+    refs = {k: env_of[k]["valueFrom"]["secretKeyRef"]["name"] for k in ("PORTAL_APP_DB_PASSWORD", "PORTAL_DB_PASSWORD")}
+    assert refs == {"PORTAL_APP_DB_PASSWORD": "db-jc-portal-app", "PORTAL_DB_PASSWORD": "db-jc-portal"}
+
+
+@requires_helmfile
 def test_jc_prod_carries_the_cutover_parts(rendered):
     # Supervisor 2026-11-10 06:3xZ: prod parity on jc-prod. bbsk. keeps its own certificate, off
     # the copied edge certificate's SAN list; App functions run on jc-prod's realm and gateway; the

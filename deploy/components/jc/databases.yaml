@@ -2,6 +2,9 @@
 # jc's Postgres stores on the shared postgres-cluster, one per module (bins/jc/STATUS.md stage 8b):
 # without its database a module keeps memory, and a restart loses its repositories, dashboards,
 # datasets and streams.
+# The Portal migrates as jc_portal, the owner of every table and trigger, and serves as
+# jc_portal_app, which it grants the rows of its tables at each start and on the operators' audit
+# INSERT and SELECT alone, so the running Portal cannot drop the audit's triggers (T-7179).
 jc_portal:
   name: 'jc_portal'
   embedded: true
@@ -12,6 +15,12 @@ jc_portal:
     generate: true
   hostServiceName: 'postgres-cluster-rw'
   port: 5432
+  additionalRoles:
+    - name: 'jc_portal_app'
+      type: 'login'
+      credentialsSecret:
+        name: 'db-jc-portal-app'
+        passwordKey: 'password'
 jc_antares:
   name: 'jc_antares'
   embedded: true
