@@ -1078,6 +1078,16 @@ pub static DOORS: &[Door] = &[
         &[],
         Who::ProjectReader,
     ),
+    // The same for the Organization's own rules (the `org` namespace), which no project door
+    // binds to: every page asks them for its Organization controls.
+    door(
+        "portal_org_permissions_me",
+        Org,
+        Method::GET,
+        "/projects/org/permissions/me",
+        &[],
+        Who::Person,
+    ),
     door(
         "portal_operation_run",
         Project,

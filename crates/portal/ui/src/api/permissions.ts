@@ -153,13 +153,25 @@ export function emptyGrantsRetry(
 }
 
 /**
+ * The caller's rules in `project` through its Portal door: the Organization's own (the `org`
+ * namespace) through the Organization's door, since no project door serves `org` (T-7176).
+ */
+export async function readPermissions(project: string): Promise<RestAnswer<"permissions_me">> {
+  const answer =
+    project === ORG_NAMESPACE
+      ? await door("portal_org_permissions_me", {})
+      : await door("portal_permissions_me", {}, project);
+  return answer as RestAnswer<"permissions_me">;
+}
+
+/**
  * The caller's effective permissions in `project` (T-0526). A convenience for the UI: a
  * control renders only when the API would honour it, and the API decides on its own.
  */
 export function usePermissions(project: string) {
   const query = useQuery({
     queryKey: queryKeys.permissions(project),
-    queryFn: async () => (await door("portal_permissions_me", {}, project)) as RestAnswer<"permissions_me">,
+    queryFn: () => readPermissions(project),
     enabled: project !== "",
     // A refused or failed read stays the answer for every control mounted after it: asked again on
     // each mount, it went back to pending (no document), and a refusal that mounts on the answer

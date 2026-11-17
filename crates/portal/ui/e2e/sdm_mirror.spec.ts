@@ -5,7 +5,7 @@ import type { Page } from "@playwright/test";
 import { doorsAsRest } from "./manifestReads";
 
 // T-7176: the stub answers permissions/me by its REST address; the page asks its Portal door.
-test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_project_list"]));
+test.beforeEach(({ page }) => doorsAsRest(page, ["portal_permissions_me", "portal_org_permissions_me", "portal_project_list"]));
 
 const PROJECT = "banskabystrica";
 const IDENTITY = { subject: "s", username: "jana", name: "Jana", email: "jana@bb.sk", roles: ["portal-editor"] };
