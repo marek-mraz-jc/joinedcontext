@@ -154,7 +154,7 @@ fn unix_now() -> i64 {
 
 /// Whether `name` is a branch's name, `b-` and a `ProjectId` in the path form: a name no person
 /// can choose (RTE-05, T-7212).
-fn branch_name(name: &str) -> bool {
+pub fn branch_name(name: &str) -> bool {
     name.strip_prefix("b-").is_some_and(path_form)
 }
 

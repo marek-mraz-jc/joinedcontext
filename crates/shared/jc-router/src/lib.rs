@@ -26,7 +26,7 @@ mod hosts;
 mod projects;
 pub mod registry;
 pub use hosts::{HOST_ROLE_HEADER, HostRole, HostRow, HostTable, Organization, RegistryHost};
-pub use projects::{IdAddress, ProjectTable, RegistryProject};
+pub use projects::{IdAddress, ProjectTable, RegistryProject, branch_name};
 
 /// The client's address as the router resolved it: the TCP peer, or, when the peer is a trusted
 /// proxy, the right-most `X-Forwarded-For` hop that is not itself a trusted proxy. Modules key

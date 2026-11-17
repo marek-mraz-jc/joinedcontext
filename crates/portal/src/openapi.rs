@@ -257,6 +257,8 @@ use crate::tools::model_tools::{
         crate::api::flow_map::get_flow_map,
         crate::api::space_retention::preview_retention,
         crate::api::space_retention::retention_deleted,
+        crate::api::branches::open_branch,
+        crate::api::branches::renew_branch,
         crate::api::erasures::export_subject,
         crate::api::erasures::erase_subject,
         crate::api::erasures::get_erasure,
@@ -437,6 +439,7 @@ use crate::tools::model_tools::{
     ),
     components(schemas(
         crate::api::access_attributes::AttributeExplained,
+        crate::api::branches::Branch,
         crate::api::grafana::GrafanaPage,
         crate::api::grafana::VisualizationItem,
         crate::api::grafana::EndpointOption,

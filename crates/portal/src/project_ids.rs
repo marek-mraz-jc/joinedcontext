@@ -134,6 +134,18 @@ pub async fn key_of(
             None => Ok(None),
         };
     }
+    // A name never resolves to a branch (RTE-05, TEN-12): only the request its own id address
+    // placed reaches it, so a branch named in a body or a tool argument answers like an unknown
+    // project. On an id address every pair present agrees: any other project's name gets no key.
+    let placed = crate::request_id::placed_id();
+    if jc_router::branch_name(project) {
+        return match placed {
+            Some(placed) if project.strip_prefix("b-") == Some(placed.as_str()) => {
+                live_branch(pool, project).await
+            }
+            _ => Ok(None),
+        };
+    }
     if mirror.get(ORG_NAMESPACE, "Project", project).is_none() {
         return Ok(None);
     }
@@ -141,10 +153,29 @@ pub async fn key_of(
         Some(organization) => key(pool, &organization, project).await?,
         None => None,
     };
+    let key = key.filter(|key| {
+        placed
+            .as_deref()
+            .is_none_or(|placed| key.project.path_segment() == placed)
+    });
     if let Some(key) = key {
         crate::request_id::record_key(project, key);
     }
     Ok(key)
+}
+
+/// The key of the live branch named `name` (TEN-12, CHG-15) whose Organization is an active one of
+/// the registry; `None` once it expired, so a tombstone answers like an unknown project.
+async fn live_branch(pool: &PgPool, name: &str) -> Result<Option<ProjectKey>, sqlx::Error> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT o.key::text, p.id::text FROM project_ids p JOIN project_branches b ON b.id = p.id \
+         JOIN organizations o ON o.name = p.organization \
+         WHERE p.parent IS NOT NULL AND p.name = $1 AND b.expires_at > now() AND o.state = 'active'",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.and_then(|(org, project)| parsed(&org, &project)))
 }
 
 /// The key of `project` for a write of `what` (T-7200): a project whose Organization is not an
@@ -259,6 +290,129 @@ pub async fn every_branch_owned(
             parsed(&org, &project).map(|key| (organization, name, key, expires_at))
         })
         .collect())
+}
+
+/// A branch project as the registry holds it (TEN-12, CHG-15): its id, its name `b-{id}` (path
+/// form), who opened it and when it stops answering, in Unix seconds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchRow {
+    pub id: ProjectId,
+    pub name: String,
+    pub created_by: String,
+    pub expires_at: i64,
+}
+
+/// Opens a branch of the live project `parent` for `created_by`, living `lifetime_days` (TEN-12,
+/// CHG-15): its `project_ids` row (name `b-{id}`, the parent, the parent's Organization) and its
+/// `project_branches` row in one transaction, the parent's row locked so two requests count the
+/// same live branches. `None` when the parent already keeps `per_parent` live branches or is not
+/// a live project of an Organization (a reserved project, a branch, a copy).
+pub async fn open_branch(
+    pool: &PgPool,
+    parent: ProjectKey,
+    created_by: &str,
+    lifetime_days: u32,
+    per_parent: u32,
+) -> Result<Option<BranchRow>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let organization: Option<(String,)> = sqlx::query_as(
+        "SELECT organization FROM project_ids WHERE id = $1::uuid AND parent IS NULL \
+         AND NOT reserved AND organization IS NOT NULL FOR UPDATE",
+    )
+    .bind(parent.project.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((organization,)) = organization else {
+        return Ok(None);
+    };
+    let (live,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
+         WHERE p.parent = $1::uuid AND b.expires_at > now()",
+    )
+    .bind(parent.project.to_string())
+    .fetch_one(&mut *tx)
+    .await?;
+    if live >= i64::from(per_parent) {
+        return Ok(None);
+    }
+    let id = ProjectId::mint();
+    let name = format!("b-{}", id.path_segment());
+    sqlx::query(
+        "INSERT INTO project_ids (id, name, parent, organization) VALUES ($1::uuid, $2, $3::uuid, $4)",
+    )
+    .bind(id.to_string())
+    .bind(&name)
+    .bind(parent.project.to_string())
+    .bind(&organization)
+    .execute(&mut *tx)
+    .await?;
+    let (expires_at,): (i64,) = sqlx::query_as(
+        "INSERT INTO project_branches (id, created_by, expires_at) \
+         VALUES ($1::uuid, $2, now() + make_interval(days => $3)) \
+         RETURNING extract(epoch FROM expires_at)::bigint",
+    )
+    .bind(id.to_string())
+    .bind(created_by)
+    .bind(i32::try_from(lifetime_days).unwrap_or(7))
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Some(BranchRow {
+        id,
+        name,
+        created_by: created_by.to_owned(),
+        expires_at,
+    }))
+}
+
+/// The live branch `id` of `parent`; `None` once it expired or when it is another project's.
+pub async fn live_branch_of(
+    pool: &PgPool,
+    parent: ProjectKey,
+    id: ProjectId,
+) -> Result<Option<BranchRow>, sqlx::Error> {
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        "SELECT p.name, b.created_by, extract(epoch FROM b.expires_at)::bigint \
+         FROM project_ids p JOIN project_branches b ON b.id = p.id \
+         WHERE p.id = $1::uuid AND p.parent = $2::uuid AND b.expires_at > now()",
+    )
+    .bind(id.to_string())
+    .bind(parent.project.to_string())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(name, created_by, expires_at)| BranchRow {
+        id,
+        name,
+        created_by,
+        expires_at,
+    }))
+}
+
+/// Renews the live branch `id` of `parent` by 7 days, never past 30 days from its creation
+/// (CHG-15), with the audit row of `renewed_by` in the same statement. `None` when the branch
+/// is not a live one of `parent` or already lives to its 30 days.
+pub async fn renew_branch(
+    pool: &PgPool,
+    parent: ProjectKey,
+    id: ProjectId,
+    renewed_by: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    let renewed: Option<(i64,)> = sqlx::query_as(
+        "WITH renewed AS (UPDATE project_branches b \
+         SET expires_at = least(b.expires_at + interval '7 days', b.created_at + interval '30 days') \
+         FROM project_ids p WHERE p.id = b.id AND b.id = $1::uuid AND p.parent = $2::uuid \
+         AND b.expires_at > now() AND b.expires_at < b.created_at + interval '30 days' \
+         RETURNING b.id, b.expires_at), \
+         audit AS (INSERT INTO project_branch_renewals (branch, renewed_by, expires_at) \
+         SELECT id, $3, expires_at FROM renewed) \
+         SELECT extract(epoch FROM expires_at)::bigint FROM renewed",
+    )
+    .bind(id.to_string())
+    .bind(parent.project.to_string())
+    .bind(renewed_by)
+    .fetch_optional(pool)
+    .await?;
+    Ok(renewed.map(|(expires_at,)| expires_at))
 }
 
 /// A transaction in the key [`recorded`] for `project`, or an unkeyed one while it has none: it

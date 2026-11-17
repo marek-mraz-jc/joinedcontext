@@ -39,6 +39,21 @@ tokio::task_local! {
     static CURRENT: String;
     /// The request's span and the project its address names, whose key [`record_key`] puts on it.
     static ADDRESSED: (tracing::Span, Option<String>);
+    /// The project id an id address placed the request under (RTE-05): jc-router's
+    /// `IdAddress` extension, which a client cannot send.
+    static PLACED: Option<String>;
+}
+
+/// The project id, in path form, of the id address the current request came in on; `None` on a
+/// name address and outside a request (a spawned task, a sweep), where no branch resolves.
+pub fn placed_id() -> Option<String> {
+    PLACED.try_with(Clone::clone).ok().flatten()
+}
+
+/// Runs `f` as a request the router placed under the id address `id` (a test's stand-in for
+/// [`middleware`] behind jc-router).
+pub async fn placed<F: std::future::Future>(id: Option<String>, f: F) -> F::Output {
+    PLACED.scope(id, f).await
 }
 
 /// The project an address names: `/api/v1/projects/{project}/...` or the OData form
@@ -93,12 +108,16 @@ pub async fn middleware(request: Request, next: Next) -> Response {
         project = tracing::field::Empty
     );
     let addressed = addressed_project(request.uri().path()).map(str::to_owned);
+    let placed = request
+        .extensions()
+        .get::<jc_router::IdAddress>()
+        .map(|placed| placed.0.clone());
     let mut response = CURRENT
         .scope(
             id.clone(),
             ADDRESSED.scope(
                 (span.clone(), addressed),
-                next.run(request).instrument(span.clone()),
+                PLACED.scope(placed, next.run(request).instrument(span.clone())),
             ),
         )
         .await;

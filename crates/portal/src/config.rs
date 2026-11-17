@@ -57,6 +57,9 @@ pub struct Config {
     /// The hosts the operator lists for each Organization's portals and the deployment's
     /// `portals.max` (`JC_PORTAL_PORTAL_HOSTS`, `JC_PORTAL_PORTALS_MAX`; ODP-08, ODP-09).
     pub portal_settings: crate::portals::PortalSettings,
+    /// Branch projects (TEN-12, CHG-15): live branches per project and a new one's lifetime in
+    /// days (`JC_PORTAL_BRANCHES_PER_PROJECT`, `JC_PORTAL_BRANCH_LIFETIME_DAYS`).
+    pub branches: crate::api::branches::BranchSettings,
     /// Each Organization's own catalogue (`JC_PORTAL_ORGANIZATION_CATALOGUES`, a JSON array of
     /// `{organization, url, api?, reach?, dataHost?, tokenFile}`; jc fills it from its
     /// `[[organizations]]`): every Endpoint of that Organization's projects publishes there,
@@ -2045,6 +2048,12 @@ impl Config {
             reason,
         })?;
 
+        let branches = crate::api::branches::parse(
+            lookup("JC_PORTAL_BRANCHES_PER_PROJECT").as_deref(),
+            lookup("JC_PORTAL_BRANCH_LIFETIME_DAYS").as_deref(),
+        )
+        .map_err(|(var, reason)| ConfigError::Invalid { var, reason })?;
+
         let organization_addresses = crate::organization_host::parse_addresses(
             &lookup("JC_PORTAL_ORGANIZATION_ADDRESSES").unwrap_or_default(),
         )
@@ -2303,6 +2312,7 @@ impl Config {
             organization_hosts,
             organization_realms,
             portal_settings,
+            branches,
             organization_catalogues,
             organization_addresses,
             oidc,
@@ -2407,6 +2417,7 @@ impl Config {
             organization_hosts: Vec::new(),
             organization_realms: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
+            branches: crate::api::branches::BranchSettings::default(),
             organization_catalogues: Vec::new(),
             organization_addresses: Vec::new(),
             oidc: None,
