@@ -55,14 +55,22 @@ CREATE FUNCTION reserved_rows() RETURNS text
 
 -- Whether table `t` holds any reserved-Tenant row: an index probe that lets
 -- the document passes skip a table such as `entity_values`, where the planner
--- would otherwise scan every row for the `::text LIKE` filter.
+-- would otherwise scan every row for the `::text LIKE` filter. One probe per
+-- arm of `reserved_rows()`: under an OR the index serves no condition, and
+-- statistics a rename left stale make a full scan look cheaper, so it is
+-- ruled out.
 CREATE FUNCTION tenant_reserved_held(t text) RETURNS boolean
   LANGUAGE plpgsql STABLE
+  SET enable_seqscan = off
   AS $$
 DECLARE
   held boolean;
 BEGIN
-  EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE %s)', t, reserved_rows()) INTO held;
+  EXECUTE format(
+    'SELECT EXISTS (SELECT 1 FROM %1$I WHERE tenant_id IN (''distsub-index'', ''antares-views'',
+                    ''antares-policy'', ''antares-grants'', ''antares-channels''))
+         OR EXISTS (SELECT 1 FROM %1$I WHERE tenant_id >= ''snap-'' AND tenant_id < ''snap.'')', t)
+    INTO held;
   RETURN held;
 END $$;
 
