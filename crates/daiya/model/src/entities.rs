@@ -3,7 +3,7 @@
 //! Every row carries `installation_id`, `org_id` (UUIDv7), and `instance_id`.
 
 use crate::ids::{InstallationId, InstanceId, OrgId};
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,8 +27,8 @@ pub struct FolderRecord {
     pub managed_by: Option<String>,
     pub created_by: String,
     pub updated_by: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Stored dashboard record (`cr_dashboard`: whole Grafana JSON at schemaVersion 42 + normalized index, R1).
@@ -57,8 +57,8 @@ pub struct DashboardRecord {
     pub data: Value,
     pub created_by: String,
     pub updated_by: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Version history entry for a dashboard (`cr_dashboard_version`, §2.2, R10).
@@ -75,7 +75,7 @@ pub struct DashboardVersionRecord {
     pub message: String,
     pub data: Value,
     pub created_by: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Datasource configuration record (`cr_datasource`, R3, R5, §4.2).
@@ -107,8 +107,8 @@ pub struct DatasourceRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wasm_digest: Option<String>,
     pub version: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Reusable library panel record (`cr_library_panel`, §2.2, R10).
@@ -127,8 +127,8 @@ pub struct LibraryPanelRecord {
     pub description: String,
     pub model: Value,
     pub version: i32,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Share type of a public dashboard (`GF pkg/services/publicdashboards/models/models.go`).
@@ -173,8 +173,8 @@ pub struct PublicDashboardRecord {
     pub share: ShareType,
     pub created_by: String,
     pub updated_by: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Per-datasource query cache statistics (`QueryCacheStats` entity set, R10).
@@ -204,5 +204,5 @@ pub struct ImportReportRecord {
     pub refused_count: i32,
     pub mapped_count: i32,
     pub summary: Value,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }

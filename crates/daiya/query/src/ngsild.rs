@@ -372,12 +372,12 @@ pub fn build_ngsild_request(
         };
         add(&mut params, "format", Some(fmt.to_owned()));
         add(&mut params, "timerel", Some("between".to_owned()));
-        let from_iso = chrono::DateTime::from_timestamp_millis(from_ms)
-            .unwrap_or_default()
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        let to_iso = chrono::DateTime::from_timestamp_millis(to_ms)
-            .unwrap_or_default()
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let from_iso = jc_time::TimestampTz::from_millis(from_ms)
+            .unwrap_or(jc_time::TimestampTz::UNIX_EPOCH)
+            .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
+        let to_iso = jc_time::TimestampTz::from_millis(to_ms)
+            .unwrap_or(jc_time::TimestampTz::UNIX_EPOCH)
+            .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
         add(&mut params, "timeAt", Some(from_iso));
         add(&mut params, "endTimeAt", Some(to_iso));
 
@@ -599,9 +599,9 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
             };
             if let Some(inst_val) = inst {
                 if let Some(obs_str) = inst_val.get("observedAt").and_then(Value::as_str)
-                    && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(obs_str)
+                    && let Some(dt) = jc_time::parse_rfc3339(obs_str)
                 {
-                    let ms = dt.timestamp_millis();
+                    let ms = dt.as_millisecond();
                     newest_obs = Some(newest_obs.map_or(ms, |prev| prev.max(ms)));
                     has_observed = true;
                 }
@@ -713,8 +713,8 @@ fn temporal_entities_to_frames(ref_id: &str, entities: &[Value], model: &Value) 
                             let v = extract_ngsi_value(&arr[0], lang).as_f64();
                             let t = arr[1]
                                 .as_str()
-                                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                                .map(|dt| dt.timestamp_millis())
+                                .and_then(jc_time::parse_rfc3339)
+                                .map(jiff::Timestamp::as_millisecond)
                                 .unwrap_or(0);
                             pts.push((t, v));
                         }
@@ -745,8 +745,8 @@ fn temporal_entities_to_frames(ref_id: &str, entities: &[Value], model: &Value) 
                                 let v = arr[0].as_f64();
                                 let t = arr[1]
                                     .as_str()
-                                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                                    .map(|dt| dt.timestamp_millis())
+                                    .and_then(jc_time::parse_rfc3339)
+                                    .map(jiff::Timestamp::as_millisecond)
                                     .unwrap_or(0);
                                 pts.push((t, v));
                             }

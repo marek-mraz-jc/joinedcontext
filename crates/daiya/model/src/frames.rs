@@ -214,9 +214,7 @@ impl FieldColumn {
     pub fn time_ms_at(&self, idx: usize) -> Option<i64> {
         match self.values.get(idx)? {
             Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-            Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|dt| dt.timestamp_millis()),
+            Value::String(s) => jc_time::parse_rfc3339(s).map(jiff::Timestamp::as_millisecond),
             _ => None,
         }
     }

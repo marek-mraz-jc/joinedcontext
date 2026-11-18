@@ -235,7 +235,7 @@ async fn a_stored_datasource_whose_host_is_refused_reports_unhealthy_and_queries
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     assert!(body.to_string().contains("url"), "{body}");
     // ...but a row stored before that check still reaches nothing when it is used.
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     state
         .store
         .upsert_datasource(DatasourceRecord {

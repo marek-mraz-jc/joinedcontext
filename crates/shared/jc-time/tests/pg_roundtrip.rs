@@ -53,7 +53,7 @@ async fn timestamptz_round_trips_in_both_formats_and_zones() {
             let printed: String = row.get("s");
             assert_eq!(
                 format!("{printed}Z"),
-                sent.to_rfc3339(SecondsFormat::Micros),
+                sent.to_rfc3339_opts(SecondsFormat::Micros, true),
                 "{zone} server sees {v}"
             );
             let text = sqlx::raw_sql(AssertSqlSafe(format!("SELECT '{v}'::timestamptz AS t")))

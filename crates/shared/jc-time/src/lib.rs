@@ -4,7 +4,8 @@
 //!
 //! - JSON: RFC 3339 in UTC with `Z` and 0, 3, 6 or 9 fraction digits, as chrono's
 //!   `DateTime<Utc>` serialized (`SecondsFormat::AutoSi`).
-//! - [`format_rfc3339`]: chrono's `to_rfc3339_opts(SecondsFormat::X, use_z)`.
+//! - [`format_rfc3339`], [`TimestampTz::to_rfc3339`], [`TimestampTz::to_rfc3339_opts`]: chrono's
+//!   methods of the same names, same digits.
 //! - [`parse_rfc3339`]: chrono's `DateTime::parse_from_rfc3339` grammar, no wider.
 //! - feature `schemars`: chrono's JSON Schema (`string`, `date-time`).
 //! - feature `sqlx`: Postgres `timestamptz` (sqlx 0.9 has no jiff feature), plus [`PgTimestamp`]
@@ -55,10 +56,23 @@ impl TimestampTz {
         self.0.as_second()
     }
 
-    /// RFC 3339 in UTC with `Z` (chrono's `to_rfc3339_opts(digits, true)`).
+    /// RFC 3339 in UTC with `+00:00` and `AutoSi` digits (chrono's `to_rfc3339()`).
     #[must_use]
-    pub fn to_rfc3339(self, digits: SecondsFormat) -> String {
-        format_rfc3339(self.0, digits, true)
+    pub fn to_rfc3339(self) -> String {
+        format_rfc3339(self.0, SecondsFormat::AutoSi, false)
+    }
+
+    /// RFC 3339 in UTC, `Z` when `use_z` (chrono's `to_rfc3339_opts(digits, use_z)`).
+    #[must_use]
+    pub fn to_rfc3339_opts(self, digits: SecondsFormat, use_z: bool) -> String {
+        format_rfc3339(self.0, digits, use_z)
+    }
+}
+
+/// The Unix epoch, as chrono's `DateTime::<Utc>::default()`.
+impl Default for TimestampTz {
+    fn default() -> Self {
+        Self::UNIX_EPOCH
     }
 }
 
@@ -398,6 +412,15 @@ mod tests {
             format_rfc3339(at(0), SecondsFormat::Millis, true),
             "2025-11-18T16:20:00.000Z"
         );
+        assert_eq!(
+            TimestampTz(t).to_rfc3339(),
+            "2025-11-18T16:20:00.123456+00:00"
+        );
+        assert_eq!(
+            TimestampTz(t).to_rfc3339_opts(SecondsFormat::Millis, true),
+            "2025-11-18T16:20:00.123Z"
+        );
+        assert_eq!(TimestampTz::default(), TimestampTz::UNIX_EPOCH);
         assert_eq!(
             format_rfc3339(at(0), SecondsFormat::AutoSi, false),
             "2025-11-18T16:20:00+00:00"

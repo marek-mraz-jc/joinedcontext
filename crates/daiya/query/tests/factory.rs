@@ -4,13 +4,13 @@
 //! from a [`DatasourceRecord`] and the query reaches a local mock server (or the test
 //! Postgres) through the outbound guard, with credentials from `secretRefs` only.
 
-use chrono::Utc;
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, Subject};
 use daiya_query::{
     DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OperatorReach, OutboundPolicy,
     PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver, guard_for,
 };
 use ipnet::IpNet;
+use jc_time::TimestampTz;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -49,7 +49,7 @@ async fn mock(routes: Vec<(&'static str, Value)>) -> (String, Arc<Mutex<Vec<Stri
 }
 
 fn record(uid: &str, kind: &str, url: &str, json_data: Value) -> DatasourceRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DatasourceRecord {
         installation_id: InstallationId::from_u128(1),
         org_id: ORG,

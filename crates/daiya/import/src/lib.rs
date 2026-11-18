@@ -15,13 +15,13 @@ pub use provisioning::{
     parse_datasources_yaml, safe_uid_from_name, validate_provisioning_path,
 };
 
-use chrono::Utc;
 use daiya_model::{
     CanonicalJson, CrError, CrResult, DaiyaStore, DashboardDocument, DashboardRecord,
     DataSourceInfo, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
     ImportReportRecord, InputLimits, InstallationId, InstanceId, LibraryPanelRecord,
     MigrationReport, OrgId, Verdict, classify_and_validate, migrate_to_latest, sha256_hex,
 };
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -347,7 +347,7 @@ pub async fn import_dashboards(
     let mut refused_count = 0usize;
     let mut mapped_count = 0usize;
     let mut supported_count = 0usize;
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     for item in inputs {
         let (doc, canonical_val, mut rep) =

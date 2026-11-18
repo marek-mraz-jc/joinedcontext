@@ -24,11 +24,11 @@ use crate::provisioning::{
     safe_uid_from_name,
 };
 use crate::{DashboardImportInput, ImportReport, import_dashboards};
-use chrono::Utc;
 use daiya_model::{
     CrError, CrResult, DaiyaStore, DatasourceRecord, FolderRecord, InputLimits, InstallationId,
     InstanceId, OrgId, Verdict,
 };
+use jc_time::TimestampTz;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -345,7 +345,7 @@ pub async fn load_provisioning_dir(
         if let Some((uid, title)) = &batch.folder
             && store.get_folder(batch.org_id, uid).await?.is_none()
         {
-            let now = Utc::now();
+            let now = TimestampTz::now();
             store
                 .upsert_folder(FolderRecord {
                     installation_id: target.installation_id,

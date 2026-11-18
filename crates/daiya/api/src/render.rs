@@ -3,7 +3,6 @@
 //! first-page table renderer, and the in-process `panel_view` API for the Portal and dataroom (R6, R6b, §9.2).
 
 use crate::state::DaiyaState;
-use chrono::Utc;
 use daiya_expr::{
     ExprNodeSpec, apply_transformations, evaluate_pipeline, is_expression_datasource_uid,
     parse_duration_ms,
@@ -14,6 +13,7 @@ use daiya_model::{
     sanitize_markdown_to_html, validation::html_escape,
 };
 use daiya_query::{CacheKey, Query, QueryCtx};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -77,7 +77,7 @@ pub struct PanelView {
 /// Parses a Grafana time string (`"now"`, `"now-6h"`, `"now-30d"`, ISO 8601, or epoch ms string) into epoch milliseconds.
 #[must_use]
 pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
-    let now_ms = Utc::now().timestamp_millis();
+    let now_ms = TimestampTz::now().as_millis();
     let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return now_ms + default_offset_ms;
     };
@@ -93,8 +93,8 @@ pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
     if let Ok(epoch_ms) = s.parse::<i64>() {
         return epoch_ms;
     }
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return dt.timestamp_millis();
+    if let Some(dt) = jc_time::parse_rfc3339(s) {
+        return dt.as_millisecond();
     }
     now_ms + default_offset_ms
 }
@@ -130,8 +130,8 @@ pub fn render_frames_html_table(panel_title: &str, frames: &[Frame], max_rows: u
                 (_, Value::Null) => "–".to_owned(),
                 (FieldType::Time, Value::Number(n)) => n
                     .as_i64()
-                    .and_then(chrono::DateTime::from_timestamp_millis)
-                    .map_or_else(|| n.to_string(), |dt| dt.to_rfc3339()),
+                    .and_then(TimestampTz::from_millis)
+                    .map_or_else(|| n.to_string(), TimestampTz::to_rfc3339),
                 (_, Value::String(s)) => s.clone(),
                 (_, other) => other.to_string(),
             };

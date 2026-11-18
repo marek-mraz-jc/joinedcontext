@@ -14,9 +14,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
 use daiya_import::export_dashboard;
 use daiya_model::RequestCtx;
+use jc_time::TimestampTz;
 
 /// `ctx` with `org_id` as the active organization (the authorizer only decides inside it).
 fn ctx_in_org(ctx: &RequestCtx, org_id: OrgId) -> RequestCtx {
@@ -288,7 +288,7 @@ impl UpsertDatasourceReq {
         {
             allow_hosts.push(h.to_owned());
         }
-        let now = Utc::now();
+        let now = TimestampTz::now();
         DatasourceRecord {
             installation_id: state.installation_id,
             org_id: ctx.org_id,
@@ -611,7 +611,7 @@ async fn create_folder(
             "a folder with the same uid already exists".into(),
         ));
     }
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let saved = state
         .store
         .upsert_folder(FolderRecord {

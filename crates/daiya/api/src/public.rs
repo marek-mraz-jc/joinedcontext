@@ -20,7 +20,6 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
-use chrono::Utc;
 use daiya_expr::apply_transformations;
 use daiya_model::{
     Action, CanonicalJson, CrError, CrResult, DashboardDocument, FrameSet, ObjectTarget,
@@ -28,6 +27,7 @@ use daiya_model::{
 };
 use daiya_query::PublicCacheKey;
 use jc_router::ClientAddr;
+use jc_time::TimestampTz;
 use parking_lot::Mutex;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -188,7 +188,7 @@ pub async fn create_or_update_public_dashboard(
         .get_public_dashboard_by_dashboard_uid(req_ctx.org_id, dashboard_uid)
         .await?;
 
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let record = if let Some(mut ex) = existing {
         if let Some(en) = dto.is_enabled {
             ex.is_enabled = en;
@@ -291,7 +291,7 @@ pub async fn rotate_public_dashboard_token(
     updated.access_token_hash = new_hash;
     updated.access_token = Some(new_raw_token);
     updated.updated_by = req_ctx.actor_name().to_owned();
-    updated.updated_at = Utc::now();
+    updated.updated_at = TimestampTz::now();
 
     state.store.upsert_public_dashboard(updated).await
 }

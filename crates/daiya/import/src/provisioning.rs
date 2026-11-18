@@ -8,11 +8,11 @@
 //!   provider paths (CVE-2021-43798 / R12).
 
 use crate::yaml::parse_yaml_to_json;
-use chrono::Utc;
 use daiya_model::{
     CrError, CrResult, DatasourceRecord, FeatureFinding, InstallationId, InstanceId, OrgId,
     Verdict, sha256_hex,
 };
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -290,7 +290,7 @@ pub fn parse_datasources_doc(
     let mut default_count = 0usize;
     let mut datasources = Vec::with_capacity(ds_arr.len());
     let mut findings = Vec::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     for (idx, item) in ds_arr.iter().enumerate() {
         let Some(m) = item.as_object() else {

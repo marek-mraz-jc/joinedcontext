@@ -9,7 +9,7 @@ publish = false
 axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 bytes = "1"
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 daiya-expr = { path = "../expr" }
 daiya-import = { path = "../import" }
 daiya-model = { path = "../model" }

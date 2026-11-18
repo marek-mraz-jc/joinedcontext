@@ -559,7 +559,7 @@ async fn every_entity_set_hides_what_the_caller_cannot_read() {
         leaked.access_token_hash = "00".repeat(32);
         w.store.inner.upsert_public_dashboard(leaked).await.unwrap();
         for (uid, folder) in [("lp-open", "open"), ("lp-hidden", "hidden")] {
-            let now = chrono::Utc::now();
+            let now = jc_time::TimestampTz::now();
             w.store
                 .inner
                 .upsert_library_panel(daiya_model::LibraryPanelRecord {
@@ -694,7 +694,7 @@ async fn paging_keys_cache_stats_and_refused_exports() {
     // More rows than one page: a nextLink with a skiptoken the service accepts back.
     {
         use daiya_model::DaiyaStore;
-        let now = chrono::Utc::now();
+        let now = jc_time::TimestampTz::now();
         for i in 0..501 {
             w.store
                 .inner

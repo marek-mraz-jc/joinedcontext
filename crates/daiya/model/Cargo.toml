@@ -6,14 +6,15 @@ license.workspace = true
 publish = false
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time", features = ["schemars"] }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 hex = "0.4"
 indexmap = { version = "2", features = ["serde"] }
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }
 odata-url = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-url" }
 regex = "1"
-schemars = { version = "0.8", features = ["uuid1", "chrono"] }
+schemars = { version = "0.8", features = ["uuid1"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

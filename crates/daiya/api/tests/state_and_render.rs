@@ -292,7 +292,7 @@ async fn registered_drivers_come_first_and_built_ones_are_cached_per_revision() 
 
 #[test]
 fn time_strings_parse_as_grafana_writes_them() {
-    let now = chrono::Utc::now().timestamp_millis();
+    let now = jc_time::TimestampTz::now().as_millis();
     let near = |v: i64, want: i64| (v - want).abs() < 5_000;
     assert!(near(parse_time_str_ms(None, -1000), now - 1000));
     assert!(near(parse_time_str_ms(Some("  "), 0), now));
@@ -332,7 +332,7 @@ fn the_html_table_escapes_every_cell_and_names_an_empty_answer() {
     assert!(no_fields.contains("No data"));
     let frame = Frame {
         fields: vec![
-            FieldColumn::time("t", vec![1_700_000_000_000, i64::MAX]),
+            FieldColumn::time("t", vec![1_700_000_000_000, i64::MAX, 1_763_482_800_120]),
             FieldColumn::strings("s", vec![Some("<b>".into()), None]),
             FieldColumn::numbers("n", BTreeMap::new(), vec![Some(1.5), None]),
             FieldColumn {
@@ -344,6 +344,8 @@ fn the_html_table_escapes_every_cell_and_names_an_empty_answer() {
     };
     let html = render_frames_html_table("t", std::slice::from_ref(&frame), 10);
     assert!(html.contains("2023-11-14T22:13:20+00:00"), "{html}");
+    // chrono's to_rfc3339(): 3 fraction digits for whole milliseconds, `+00:00` (T-7234).
+    assert!(html.contains("2025-11-18T16:20:00.120+00:00"), "{html}");
     assert!(html.contains(&i64::MAX.to_string()), "{html}");
     assert!(
         html.contains("&lt;b&gt;") && !html.contains("<b>"),
