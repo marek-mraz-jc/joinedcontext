@@ -135,7 +135,10 @@ done
 } > "$split/core.toml"
 if [ "$data_replicas" -gt 0 ]; then
   # The gateway's client secret both sides take, and the one OAuth signing key of every data replica.
-  gateway_secret=$(secret gateway-client-secret)
+  # An imported realm names the context-gateway client's secret itself (KC_CONTEXT_GATEWAY_SECRET in
+  # the realm secrets dir): kaisatsu holds that one, so the data plane's token grant needs it too.
+  gateway_secret=$home/secrets/realm/KC_CONTEXT_GATEWAY_SECRET
+  [ -s "$gateway_secret" ] || gateway_secret=$(secret gateway-client-secret)
   {
     printf '%s\n%s\n%s\n%s\n' "$profile_line" "${part[antares]}" "$realm_config" "$door"
     printf '\n[gateway]\nportal_internal = "http://127.0.0.1:%s"\n' $((pg_port + 100))
