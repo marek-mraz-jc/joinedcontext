@@ -138,10 +138,11 @@ pub(crate) async fn mcp_answer(
     let federates = member_names(&gateway, &endpoint);
     let (mut parts, _) = request.into_parts();
     let mut reserved = None;
+    let mut deletes = None;
     if calls {
         capped_arguments(&mut message);
         match mcp::writes::guarded(&gateway, &endpoint, &subject, &caller, &mut message).await {
-            Ok(held) => reserved = held,
+            Ok(held) => (reserved, deletes) = (held.reserved, held.deletes),
             Err(refusal) => {
                 note(Outcome::Refused);
                 return mcp::jsonrpc::json_response(StatusCode::OK, &refusal);
@@ -193,6 +194,22 @@ pub(crate) async fn mcp_answer(
     if let Some(reserved) = reserved.filter(|_| !answer.status().is_success()) {
         reserved.release(&gateway, &endpoint);
     }
+    // A confirmed delete's relationship changes wait for the broker's result, read whole here.
+    let answer = if deletes.is_some() {
+        let (parts, body) = answer.into_parts();
+        let held = axum::body::to_bytes(body, MAX_BODY)
+            .await
+            .unwrap_or_default();
+        let taken = mcp::writes::taken(parts.status, &held);
+        if let Err(why) = mcp::writes::carry_out(&gateway, deletes, taken).await {
+            let refusal =
+                mcp::jsonrpc::result(id.clone(), mcp::jsonrpc::refused(&why, &Value::Null));
+            return mcp::jsonrpc::json_response(StatusCode::OK, &refusal);
+        }
+        proxy::with_body(parts, held)
+    } else {
+        answer
+    };
     if answer.status().is_server_error() {
         let (parts, body) = answer.into_parts();
         return broker_failure(
@@ -274,7 +291,8 @@ async fn refuse_before_forward(
         if let Value::Object(arguments) = arguments {
             if let Err(why) = mcp::tools::anonymous_bounds(tool, arguments) {
                 note(Outcome::Refused);
-                let refusal = mcp::jsonrpc::result(id, mcp::jsonrpc::refused(&why, &Value::Null));
+                let refusal =
+                    mcp::jsonrpc::result(id.clone(), mcp::jsonrpc::refused(&why, &Value::Null));
                 return Some(mcp::jsonrpc::json_response(StatusCode::OK, &refusal));
             }
         }
@@ -672,9 +690,9 @@ pub(crate) async fn member_call(
     // A caller without a token lists and calls reads alone here (T-4168), so a write's create
     // is always a signed-in principal's.
     let caller = crate::handlers::ngsi_ld::create_key(subject, &parts.headers);
-    let reserved =
+    let (reserved, deletes) =
         match mcp::writes::guarded(gateway, endpoint, subject, &caller, &mut message).await {
-            Ok(reserved) => reserved,
+            Ok(guarded) => (guarded.reserved, guarded.deletes),
             Err(refusal) => return refusal,
         };
     parts
@@ -717,14 +735,20 @@ pub(crate) async fn member_call(
     let held = held.unwrap_or_default();
     // Parsed once: an answer is up to MAX_BODY, and each check below reads the same value.
     let parsed = serde_json::from_slice::<Value>(&held).ok();
-    if let Some(reserved) = reserved {
-        let taken = status.is_success()
-            && parsed
-                .as_ref()
-                .is_some_and(|answer| answer["result"]["isError"] != true);
-        if !taken {
-            reserved.release(gateway, endpoint);
-        }
+    let taken = status.is_success()
+        && parsed
+            .as_ref()
+            .is_some_and(|answer| answer["result"]["isError"] != true);
+    if let Some(reserved) = reserved.filter(|_| !taken) {
+        reserved.release(gateway, endpoint);
+    }
+    // A confirmed delete's relationship changes are made once the broker took it.
+    let taken = taken
+        && parsed
+            .as_ref()
+            .is_some_and(|answer| answer["result"].is_object());
+    if let Err(why) = mcp::writes::carry_out(gateway, deletes, taken).await {
+        return member_refusal(id, Some(why));
     }
     if status.is_success() {
         // DM-128 (T-6885): a read of personal attributes is recorded or refused, as on the
