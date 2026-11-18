@@ -553,9 +553,10 @@ pub fn is_refusal(message: &str) -> bool {
 
 /// A new request id: `ar-` and twelve hex digits from the CSPRNG.
 pub fn new_id() -> String {
-    use sha2::{Digest, Sha256};
-    let drawn = Sha256::digest(crate::auth::csrf::new_token().as_bytes());
-    let hex: String = drawn[..6].iter().map(|b| format!("{b:02x}")).collect();
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    let mut drawn = [0u8; 6];
+    OsRng.fill_bytes(&mut drawn);
+    let hex: String = drawn.iter().map(|b| format!("{b:02x}")).collect();
     format!("ar-{hex}")
 }
 
@@ -592,9 +593,16 @@ struct Row {
     change: Option<String>,
 }
 
-impl From<Row> for AccessRequest {
-    fn from(row: Row) -> Self {
-        Self {
+/// A stored `types` that no longer reads as the list it was written as fails the read: an empty
+/// list would turn an approval into a Policy that names nothing.
+impl TryFrom<Row> for AccessRequest {
+    type Error = sqlx::Error;
+
+    fn try_from(row: Row) -> Result<Self, sqlx::Error> {
+        let types = serde_json::from_value(row.types).map_err(|e| {
+            sqlx::Error::Decode(format!("access request {}: types: {e}", row.id).into())
+        })?;
+        Ok(Self {
             id: row.id,
             project: row.project,
             requester: match row.person {
@@ -605,7 +613,7 @@ impl From<Row> for AccessRequest {
             endpoint: row.endpoint,
             space: row.space,
             operations: Operations::parse(&row.operations),
-            types: serde_json::from_value(row.types).unwrap_or_default(),
+            types,
             until: row.until,
             reason: row.reason,
             state: row.state,
@@ -615,7 +623,7 @@ impl From<Row> for AccessRequest {
             decided_at: row.decided_at,
             decision_reason: row.decision_reason,
             change: row.change,
-        }
+        })
     }
 }
 
@@ -673,7 +681,7 @@ pub async fn get(
         .bind(endpoint_project)
         .fetch_optional(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
         .await
-        .map(|row| row.map(AccessRequest::from))
+        .and_then(|row| row.map(AccessRequest::try_from).transpose())
 }
 
 /// The requests into `endpoint_project`'s spaces, newest first.
@@ -687,7 +695,7 @@ pub async fn incoming(
     .bind(endpoint_project)
     .fetch_all(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
     .await
-    .map(|rows| rows.into_iter().map(AccessRequest::from).collect())
+    .and_then(|rows| rows.into_iter().map(AccessRequest::try_from).collect())
 }
 
 /// The requests of one pipeline, newest first. A request is keyed by the Endpoint's project
@@ -717,7 +725,10 @@ pub async fn outgoing(
         );
         tx.commit().await?;
     }
-    let mut found: Vec<AccessRequest> = found.into_iter().map(AccessRequest::from).collect();
+    let mut found = found
+        .into_iter()
+        .map(AccessRequest::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     found.sort_by_key(|r| std::cmp::Reverse(r.requested_at));
     found.truncate(200);
     Ok(found)
@@ -737,7 +748,7 @@ pub async fn of_person(
     .bind(endpoint)
     .fetch_all(&mut *crate::project_ids::recorded_tx(pool, endpoint_project).await?)
     .await
-    .map(|rows| rows.into_iter().map(AccessRequest::from).collect())
+    .and_then(|rows| rows.into_iter().map(AccessRequest::try_from).collect())
 }
 
 /// Moves a request from `from` to `to`, recording who decided, why and the Change; `Ok(false)`
@@ -1060,6 +1071,34 @@ mod tests {
             &request.types,
             Operations::Read
         ));
+    }
+
+    /// A stored `types` that no longer parses fails the read instead of becoming no types.
+    #[test]
+    fn unreadable_stored_types_fail_the_read() {
+        let row = |types: Value| Row {
+            id: "ar-0a1b2c3d4e5f".into(),
+            project: "city-kpis".into(),
+            pipeline: "air-index".into(),
+            person: None,
+            endpoint_project: "helsinki".into(),
+            endpoint: "air".into(),
+            space: "air".into(),
+            operations: "read".into(),
+            types,
+            until: None,
+            reason: String::new(),
+            state: "pending".into(),
+            requested_by: "someone".into(),
+            requested_at: time::macros::datetime!(2026-11-01 0:00 UTC),
+            decided_by: None,
+            decided_at: None,
+            decision_reason: None,
+            change: None,
+        };
+        assert!(AccessRequest::try_from(row(json!([{"type": 7}]))).is_err());
+        assert!(AccessRequest::try_from(row(json!("AirQualityObserved"))).is_err());
+        assert!(AccessRequest::try_from(row(json!([]))).is_ok());
     }
 
     #[test]

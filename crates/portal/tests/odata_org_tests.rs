@@ -610,6 +610,19 @@ async fn each_refused_option_answers_its_status() {
 
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
 /// an Organization's portal reader sees only that Organization's portals.
+/// The router placed the request in an Organization this Portal holds no host for (one the
+/// registry added or removed a moment ago): the Portal refuses it rather than serving it
+/// unpinned, across every Organization.
+#[tokio::test]
+async fn an_organization_the_portal_does_not_hold_is_refused_not_served_unpinned() {
+    let state = state();
+    let root = cookies(&state.config, person("root", groups_of("root")), "").await;
+    for uri in ["/api/v1/projects", "/api/v1/auth/me"] {
+        let answer = send(&state, Mode::Path("gone"), &root, uri, &[]).await;
+        assert_eq!(answer.status, StatusCode::MISDIRECTED_REQUEST, "{uri}");
+    }
+}
+
 #[tokio::test]
 async fn the_portals_set_answers_401_403_and_only_the_callers_own() {
     let state = state();

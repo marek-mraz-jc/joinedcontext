@@ -121,7 +121,7 @@ pub fn token_hash(token: &str) -> Vec<u8> {
 
 /// Whether two hashes are equal, in time that does not depend on where they differ.
 pub fn same_hash(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    crate::auth::csrf::constant_time_bytes_eq(a, b)
 }
 
 /// A fresh build token: 32 random bytes as 64 hex characters.

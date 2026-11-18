@@ -424,12 +424,13 @@ impl BackupStore {
                     };
                     let rows: Vec<TargetRow> = sqlx::query_as(
                         "UPDATE organization_backup_targets SET last_run_at = now() \
-                     WHERE enabled AND (last_run_at IS NULL \
+                     WHERE organization = $1 AND enabled AND (last_run_at IS NULL \
                      OR last_run_at <= now() - make_interval(hours => every_hours)) \
                      RETURNING organization, kind, endpoint, region, bucket, prefix, \
                      access_key_id, sealed_secret, enabled, every_hours, keep_days, recipients, \
                      updated_by, updated_at, last_run_at",
                     )
+                    .bind(&organization)
                     .fetch_all(&mut *tx)
                     .await
                     .map_err(db)?;

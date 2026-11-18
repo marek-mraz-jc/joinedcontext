@@ -112,6 +112,18 @@ pub fn router(config: &crate::config::Config) -> Router<AppState> {
         .layer(browser_clients(config))
 }
 
+/// The one realm a client of this host signs in at: the host's Organization realm, else the
+/// installation's (RTE-13).
+pub(crate) fn authorization_servers(state: &AppState) -> Vec<String> {
+    if let Some(own) = crate::auth::realms::here(state) {
+        vec![own.issuer().trim_end_matches('/').to_string()]
+    } else if let Some(oidc) = state.config.oidc.as_ref() {
+        vec![oidc.issuer.as_str().trim_end_matches('/').to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// RFC 9728 OAuth 2.0 Protected Resource Metadata document.
 pub async fn oauth_protected_resource(State(state): State<AppState>) -> Response {
     let resource = format!(
@@ -120,13 +132,7 @@ pub async fn oauth_protected_resource(State(state): State<AppState>) -> Response
     );
     // On an Organization's host with a realm of its own, that realm alone (T-7230): the door
     // takes its tokens there (T-7142), and a client is never sent to a second realm.
-    let authorization_servers = if let Some(own) = crate::auth::realms::here(&state) {
-        vec![own.issuer().trim_end_matches('/').to_string()]
-    } else if let Some(oidc) = state.config.oidc.as_ref() {
-        vec![oidc.issuer.as_str().trim_end_matches('/').to_string()]
-    } else {
-        Vec::new()
-    };
+    let authorization_servers = authorization_servers(&state);
 
     let doc = json!({
         "resource": resource,
@@ -333,7 +339,12 @@ fn held_to(body: &Bytes, project: &str) -> Result<Bytes, Option<Value>> {
         .get("uri")
         .and_then(Value::as_str)
         .and_then(|uri| uri.strip_prefix("jc://"))
-        .is_some_and(|rest| !matches!(rest.split('/').next(), Some(p) if p == project || p == "-"));
+        .is_some_and(|rest| {
+            // `jc://schemas/{Kind}` is the installation's schema of a kind, no project's.
+            let schema =
+                matches!(rest.split_once('/'), Some(("schemas", kind)) if !kind.contains('/'));
+            !schema && !matches!(rest.split('/').next(), Some(p) if p == project || p == "-")
+        });
     if foreign_uri {
         return Err(Some(id));
     }
@@ -382,6 +393,16 @@ async fn dispatch(state: AppState, caller: crate::ops::Caller, body: Bytes) -> R
 
     match method {
         "initialize" => {
+            // The project door names its project: a caller who may not read it gets the answer
+            // an unknown project gets, so the handshake tells nobody that the project exists.
+            if let Some(project) = params.get("project").and_then(Value::as_str) {
+                if !may_read(&state, &caller, project) {
+                    return json_response(
+                        StatusCode::NOT_FOUND,
+                        &error(id, -32602, "unknown project"),
+                    );
+                }
+            }
             let protocol_version =
                 negotiated_version(params.get("protocolVersion").and_then(Value::as_str));
             json_response(
@@ -1846,6 +1867,7 @@ mod tests {
             json!({"id": 2, "method": "tools/call", "params": {"name": "x", "arguments": {"project": "doprava"}}}),
             json!({"id": 3, "method": "resources/read", "params": {"uri": "jc://doprava/spaces/a"}}),
             json!({"id": 4, "method": "resources/read", "params": {"uri": "jc://-/organizations/a"}}),
+            json!({"id": 10, "method": "resources/read", "params": {"uri": "jc://schemas/Endpoint"}}),
         ] {
             assert!(held(same.clone()).is_ok(), "{same}");
         }
@@ -1855,6 +1877,7 @@ mod tests {
             json!({"id": 7, "method": "tools/call", "params": {"name": "x", "arguments": {"project": 7}}}),
             json!({"id": 8, "method": "resources/read", "params": {"uri": "jc://ovzdusie/spaces/a"}}),
             json!({"id": 9, "method": "tools/list", "params": "doprava"}),
+            json!({"id": 11, "method": "resources/read", "params": {"uri": "jc://schemas/spaces/a"}}),
         ] {
             let id = other["id"].clone();
             assert_eq!(held(other.clone()).err(), Some(Some(id)), "{other}");
