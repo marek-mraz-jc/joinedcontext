@@ -2650,7 +2650,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "daiya-expr",
  "daiya-import",
  "daiya-model",
@@ -2661,6 +2660,7 @@ dependencies = [
  "http-body-util",
  "indexmap 2.14.2",
  "jc-router",
+ "jc-time",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -2682,7 +2682,6 @@ dependencies = [
 name = "daiya-expr"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "daiya-model",
  "indexmap 2.14.2",
  "regex",
@@ -2695,9 +2694,9 @@ dependencies = [
 name = "daiya-import"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "daiya-model",
  "daiya-store-memory",
+ "jc-time",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -2729,9 +2728,10 @@ dependencies = [
 name = "daiya-model"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "hex",
  "indexmap 2.14.2",
+ "jc-time",
+ "jiff",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -2750,13 +2750,14 @@ name = "daiya-query"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "chrono",
  "daiya-expr",
  "daiya-model",
  "futures-util",
  "hex",
  "indexmap 2.14.2",
  "ipnet",
+ "jc-time",
+ "jiff",
  "parking_lot",
  "percent-encoding",
  "regex",
@@ -2779,7 +2780,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
- "chrono",
  "clap",
  "daiya-api",
  "daiya-expr",
@@ -2793,6 +2793,7 @@ dependencies = [
  "http-body-util",
  "ipnet",
  "jc-router",
+ "jc-time",
  "parking_lot",
  "percent-encoding",
  "reqwest 0.12.28",
@@ -2809,8 +2810,8 @@ dependencies = [
 name = "daiya-store-memory"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "daiya-model",
+ "jc-time",
  "parking_lot",
  "serde",
  "serde_json",
@@ -2822,11 +2823,12 @@ dependencies = [
 name = "daiya-store-pg"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "daiya-import",
  "daiya-model",
  "daiya-query",
  "daiya-store-memory",
+ "jc-time",
+ "jiff",
  "serde",
  "serde_json",
  "sqlx",
@@ -7134,7 +7136,6 @@ name = "jc-manifest"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "jc-core",
  "jc-secret",
  "jsonschema",
@@ -7198,6 +7199,18 @@ dependencies = [
  "jc-core",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jc-time"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]
@@ -12484,12 +12497,12 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "futures-util",
  "gix-ref",
  "hex",
  "hmac 0.12.1",
  "jc-router",
+ "jc-time",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-url 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12517,11 +12530,11 @@ name = "shako-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "gix-validate",
  "globset",
  "hex",
  "ipnet",
+ "jc-time",
  "jsonwebtoken 11.1.0",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -12547,7 +12560,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bstr 1.13.1",
- "chrono",
  "flate2",
  "gix",
  "gix-hash",
@@ -12558,6 +12570,7 @@ dependencies = [
  "gix-packetline",
  "gix-ref",
  "gix-validate",
+ "jc-time",
  "parking_lot",
  "regex",
  "reqwest 0.12.28",
@@ -12591,9 +12604,9 @@ name = "shako-registry"
 version = "0.1.0"
 dependencies = [
  "axum",
- "chrono",
  "http-body-util",
  "jc-router",
+ "jc-time",
  "parking_lot",
  "serde",
  "serde_json",
@@ -12612,13 +12625,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
- "chrono",
  "clap",
  "hex",
  "hmac 0.12.1",
  "http-body-util",
  "ipnet",
  "jc-router",
+ "jc-time",
  "joinedcontext-portal",
  "jsonwebtoken 9.3.1",
  "p256 0.13.2",
@@ -12649,7 +12662,7 @@ dependencies = [
 name = "shako-store-memory"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "jc-time",
  "parking_lot",
  "shako-core",
  "tokio",
@@ -12660,7 +12673,7 @@ dependencies = [
 name = "shako-store-pg"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "jc-time",
  "serde",
  "serde_json",
  "shako-core",

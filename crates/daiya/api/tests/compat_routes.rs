@@ -453,7 +453,7 @@ async fn the_api_cannot_make_a_datasource_read_only_nor_change_a_provisioned_one
     w.ok("DELETE", "/api/datasources/uid/ro", None).await;
 
     // A provisioned (read-only) record refuses an API update with 403.
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     use daiya_model::DaiyaStore;
     w.store
         .inner

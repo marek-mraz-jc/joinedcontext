@@ -146,8 +146,8 @@ async fn a_full_directory_loads_datasources_folders_and_dashboards_like_grafana(
             managed_by: None,
             created_by: "someone".into(),
             updated_by: "someone".into(),
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
+            updated_at: jc_time::TimestampTz::now(),
         })
         .await
         .unwrap();

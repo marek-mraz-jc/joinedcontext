@@ -6,10 +6,10 @@
 
 use std::process::Command;
 
-use chrono::{DateTime, TimeZone, Utc};
 use jc_core::kinds::{Lifetime, Pipeline, PipelineSpec};
 use jc_manifest::lifetime::{check, step};
 use jc_manifest::model_schema::ModelSchema;
+use jiff::Timestamp;
 use serde_json::{json, Value};
 
 /// `components/pipeline-runner/images.yaml` of joinedcontext-deployment.
@@ -59,10 +59,8 @@ spec:
     pipeline.spec
 }
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 10, 20, 18, 0, 0)
-        .single()
-        .expect("instant")
+fn now() -> Timestamp {
+    "2026-10-20T18:00:00Z".parse().expect("instant")
 }
 
 const ALL: &str = "    - type: Bus
@@ -191,15 +189,19 @@ fn instant(text: &Value) -> i64 {
         text.ends_with('Z') && text.len() == 20,
         "RFC 3339 UTC to the second: {text}"
     );
-    DateTime::parse_from_rfc3339(text)
-        .expect("RFC 3339")
-        .timestamp()
+    text.parse::<Timestamp>().expect("RFC 3339").as_second()
 }
 
 #[test]
 fn the_generated_step_writes_each_mode_in_the_runners_bento() {
     let text = step(&spec(ALL)).expect("compiles").expect("a step");
-    let before = Utc::now().timestamp();
+    // An `at` enters the text as RFC 3339 in UTC to the second, as chrono's
+    // to_rfc3339_opts(Secs, true) wrote it (pinned before the move to jiff, T-7237).
+    assert!(
+        text.contains(r#""2030-06-01T10:00:00Z".ts_unix()"#),
+        "{text}"
+    );
+    let before = Timestamp::now().as_second();
     let rows = run(
         &text,
         &[
@@ -216,7 +218,7 @@ fn the_generated_step_writes_each_mode_in_the_runners_bento() {
             json!([{"id": "urn:ngsi-ld:Event:2", "type": "Event"}, {"id": "urn:ngsi-ld:Other:1", "type": "Other"}]),
         ],
     );
-    let after = Utc::now().timestamp();
+    let after = Timestamp::now().as_second();
     let by_id = |id: &str| {
         rows.iter()
             .find(|(doc, _)| doc["id"] == id || doc[0]["id"] == id)

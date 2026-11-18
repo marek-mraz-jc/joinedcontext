@@ -14,7 +14,6 @@ use axum::body::Body;
 use axum::extract::Query as AxumQuery;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::routing::get;
-use chrono::Utc;
 use daiya_api::state::TokenBinding;
 use daiya_api::{PanelTimeRange, panel_view};
 use daiya_import::parse_dashboard_providers_yaml;
@@ -31,6 +30,7 @@ use daiya_server::{DaiyaState, execute_cli_command, router};
 use daiya_store_memory::MemoryStore;
 use http_body_util::BodyExt;
 use jc_router::{JcRouterBuilder, Mount, MountSpec};
+use jc_time::TimestampTz;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -276,7 +276,7 @@ async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
         ..GuardConfig::default()
     });
 
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     // Register Prometheus + NGSI-LD datasources in org_a
     let mut prom_secrets = BTreeMap::new();

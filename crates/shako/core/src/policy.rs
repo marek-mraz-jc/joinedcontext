@@ -438,7 +438,7 @@ impl RefPolicy {
 mod tests {
     use super::*;
     use crate::auth::{LocalAuthorizer, RoleBinding, Subject};
-    use chrono::Utc;
+    use jc_time::TimestampTz;
 
     #[test]
     fn ref_policy_enforces_whitelist_outdated_base_reviews_and_admin_override() {
@@ -669,7 +669,7 @@ mod tests {
             author_login: "jc-portal".into(),
             commit_id: "sha1".into(),
             dismissed: false,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         };
         assert!(
             policy

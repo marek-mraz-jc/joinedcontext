@@ -2,7 +2,6 @@
 //! Round-trip, fixed-point, feature census (§1.2), `check`, `plan`/`apply` stale-plan refusal,
 //! and provisioning security tests over all 9 deployment dashboards (R1, R2, §7.2, §7.3, §8).
 
-use chrono::Utc;
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, apply_plan, check_dashboards_offline,
     compute_plan, export_dashboard, import_dashboards, parse_dashboard_providers_yaml,
@@ -13,6 +12,7 @@ use daiya_model::{
     InputLimits, InstallationId, InstanceId, OrgId, Verdict, migrate_to_latest,
 };
 use daiya_store_memory::MemoryStore;
+use jc_time::TimestampTz;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -83,7 +83,7 @@ async fn all_9_dashboards_match_inventory_and_import_export_import_is_fixed_poin
     let inst = InstallationId::new();
     let org = OrgId::new();
     let instance = InstanceId::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     for ds in all_known_datasources() {
         store
@@ -282,7 +282,7 @@ async fn plan_and_apply_refuse_stale_plan_and_provisioning_guards_work() {
     let inst = InstallationId::new();
     let org = OrgId::new();
     let instance = InstanceId::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     let desired = DesiredBundle {
         folders: vec![FolderRecord {

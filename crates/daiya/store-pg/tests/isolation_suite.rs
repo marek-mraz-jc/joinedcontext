@@ -5,7 +5,6 @@
 //! Runs against `MemoryStore` unconditionally and against `PgStore` when
 //! `DAIYA_TEST_DATABASE_URL` is set (printing a `SKIP` line when unset, per R8).
 
-use chrono::Utc;
 use daiya_model::{
     Action, Authorizer, DaiyaStore, DashboardDocument, DashboardRecord, DatasourceRecord,
     FolderRecord, GrafanaRole, InputLimits, InstallationId, InstanceId, LibraryPanelRecord,
@@ -16,6 +15,7 @@ use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
     REQUIRED_RLS_TABLES, TableRlsStatus, connect_test_database, validate_rls_catalog_rows,
 };
+use jc_time::TimestampTz;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -28,7 +28,7 @@ fn sample_dashboard(
     folder_uid: &str,
     ds_uid: &str,
 ) -> DashboardRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DashboardRecord {
         installation_id: inst,
         org_id: org,
@@ -76,7 +76,7 @@ async fn run_8_isolation_tests(store: &dyn DaiyaStore) {
     let instance = InstanceId::new();
     let org_a = OrgId::new();
     let org_b = OrgId::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     // Seed organizations `a` and `b` holding dashboards with the same uid (`jc-portal`),
     // folders with the same title (`Shared Folder`), and datasources with the same name (`Prometheus`)

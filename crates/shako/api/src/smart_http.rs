@@ -343,7 +343,7 @@ pub async fn sync_repo_mirrors_on_commit(
         .await
         {
             Ok(()) => {
-                m.last_sync = Some(chrono::Utc::now());
+                m.last_sync = Some(jc_time::TimestampTz::now());
                 m.last_error = String::new();
             }
             Err(e) => {

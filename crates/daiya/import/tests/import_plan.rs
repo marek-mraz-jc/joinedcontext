@@ -7,7 +7,6 @@
 
 mod common;
 
-use chrono::Utc;
 use common::FailingStore;
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, ImportReport, apply_plan,
@@ -18,6 +17,7 @@ use daiya_model::{
     DaiyaStore, DataSourceInfo, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
     InputLimits, InstallationId, InstanceId, LibraryPanelRecord, OrgId, Verdict,
 };
+use jc_time::TimestampTz;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,8 +70,8 @@ fn folder(uid: &str, title: &str) -> FolderRecord {
         managed_by: None,
         created_by: "t".into(),
         updated_by: "t".into(),
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: TimestampTz::now(),
+        updated_at: TimestampTz::now(),
     }
 }
 
@@ -93,8 +93,8 @@ fn datasource(uid: &str) -> DatasourceRecord {
         allow_hosts: vec!["prom.example".into()],
         wasm_digest: None,
         version: 1,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: TimestampTz::now(),
+        updated_at: TimestampTz::now(),
     }
 }
 
@@ -114,8 +114,8 @@ fn library_panel(uid: &str) -> LibraryPanelRecord {
             "type": "stat", "title": "From library", "options": { "colorMode": "value" }
         }),
         version: 1,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: TimestampTz::now(),
+        updated_at: TimestampTz::now(),
     }
 }
 

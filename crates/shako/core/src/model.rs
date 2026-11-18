@@ -3,7 +3,7 @@
 //! Every row carries `instance_id` and `org_id`.
 
 use crate::ids::{InstanceId, OrgId, PackageId, RepoId, WebhookId};
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,14 +23,14 @@ pub struct InstanceRecord {
     pub max_repos: u64,
     pub max_storage_bytes: u64,
     pub max_push_bytes: u64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 impl InstanceRecord {
     #[must_use]
     pub fn default_for(instance_id: InstanceId, org_id: OrgId, host: impl Into<String>) -> Self {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         Self {
             instance_id,
             org_id,
@@ -61,8 +61,8 @@ pub struct RepoRecord {
     pub archived: bool,
     pub size_bytes: u64,
     pub next_pr_number: u64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 impl RepoRecord {
@@ -198,8 +198,8 @@ pub struct ProtectionRuleRecord {
     pub org_id: OrgId,
     pub repo_id: RepoId,
     pub rule: BranchProtectionRule,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
 }
 
 /// Stored tag protection rule record.
@@ -211,7 +211,7 @@ pub struct TagProtectionRecord {
     pub org_id: OrgId,
     pub repo_id: RepoId,
     pub rule: TagProtectionRule,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Pull request record (`shako.pull_request`, S10).
@@ -237,9 +237,9 @@ pub struct PullRequestRecord {
     pub author_login: String,
     pub author_name: String,
     pub author_email: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub closed_at: Option<DateTime<Utc>>,
+    pub created_at: TimestampTz,
+    pub updated_at: TimestampTz,
+    pub closed_at: Option<TimestampTz>,
 }
 
 /// Review verdict (`APPROVED`, `REQUEST_CHANGES`, `COMMENT`, S10).
@@ -288,7 +288,7 @@ pub struct ReviewRecord {
     pub author_login: String,
     pub commit_id: String,
     pub dismissed: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Commit status record (`shako.commit_status`, S11 row 23).
@@ -304,7 +304,7 @@ pub struct CommitStatusRecord {
     pub state: String,
     pub description: String,
     pub target_url: String,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
 }
 
 /// Webhook record (`shako.webhook`, S14).
@@ -326,7 +326,7 @@ pub struct WebhookRecord {
     /// How a delivery is shaped and signed; a hook stored before formats existed is Gitea's.
     #[serde(default)]
     pub format: WebhookFormat,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// The body and headers a webhook delivers: Gitea's (`X-Gitea-*`, Gitea's payload) for a hook an
@@ -351,7 +351,7 @@ pub struct DeliveryRecord {
     pub event: String,
     pub status: String,
     pub response_code: Option<u16>,
-    pub delivered_at: DateTime<Utc>,
+    pub delivered_at: TimestampTz,
 }
 
 /// Push mirror record (`shako.push_mirror`, S15).
@@ -373,9 +373,9 @@ pub struct PushMirrorRecord {
     /// empty: every branch and tag, as the remote is told.
     #[serde(default)]
     pub branch: String,
-    pub last_sync: Option<DateTime<Utc>>,
+    pub last_sync: Option<TimestampTz>,
     pub last_error: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Package record (`shako.package`, S13).
@@ -388,7 +388,7 @@ pub struct PackageRecord {
     pub owner: String,
     pub package_type: String,
     pub name: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Package version record (`shako.package_version`, S13).
@@ -412,7 +412,7 @@ pub struct PackageVersionRecord {
     pub artifact_type: Option<String>,
     pub size_bytes: u64,
     pub signed: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Generic package file record (`shako.package_file`, S13).
@@ -429,7 +429,7 @@ pub struct PackageFileRecord {
     pub filename: String,
     pub sha256: String,
     pub size_bytes: u64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Registry blob metadata record (`shako.blob`, S13).
@@ -443,7 +443,7 @@ pub struct BlobRecord {
     pub repo_name: String,
     pub digest: String,
     pub size_bytes: u64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Quota usage record (`shako.quota_usage`, S6).
@@ -455,7 +455,7 @@ pub struct QuotaUsageRecord {
     pub repo_count: u64,
     pub git_bytes: u64,
     pub package_bytes: u64,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
 }
 
 impl QuotaUsageRecord {
@@ -477,6 +477,6 @@ pub struct OutboxEvent {
     pub idempotency_key: String,
     pub payload: Value,
     pub dispatched: bool,
-    pub created_at: DateTime<Utc>,
-    pub dispatched_at: Option<DateTime<Utc>>,
+    pub created_at: TimestampTz,
+    pub dispatched_at: Option<TimestampTz>,
 }

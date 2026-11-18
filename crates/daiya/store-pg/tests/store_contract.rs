@@ -5,7 +5,6 @@
 //! set, with a `SKIP` line otherwise (R8). Postgres-only checks follow: RLS seen through raw
 //! SQL, the public-token policy, the boot check, the pool configuration and persistence.
 
-use chrono::{Duration as ChronoDuration, Utc};
 use daiya_model::{
     DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
     InstallationId, InstanceId, LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord,
@@ -15,6 +14,8 @@ use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
     PgPoolConfig, PgStore, TestDatabase, connect_test_database, parse_url_without_password,
 };
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use serde_json::json;
 use sqlx::Row;
 use std::collections::BTreeMap;
@@ -28,7 +29,7 @@ const INST: InstallationId = InstallationId::from_u128(7);
 const INSTANCE: InstanceId = InstanceId::from_u128(9);
 
 fn folder(org: OrgId, uid: &str, parent: Option<&str>) -> FolderRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     FolderRecord {
         installation_id: INST,
         org_id: org,
@@ -47,7 +48,7 @@ fn folder(org: OrgId, uid: &str, parent: Option<&str>) -> FolderRecord {
 }
 
 fn dashboard(org: OrgId, uid: &str, folder_uid: Option<&str>) -> DashboardRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DashboardRecord {
         installation_id: INST,
         org_id: org,
@@ -74,7 +75,7 @@ fn dashboard(org: OrgId, uid: &str, folder_uid: Option<&str>) -> DashboardRecord
 }
 
 fn datasource(org: OrgId, uid: &str, name: &str, kind: &str) -> DatasourceRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DatasourceRecord {
         installation_id: INST,
         org_id: org,
@@ -103,7 +104,7 @@ fn public_dashboard(
     dashboard_uid: &str,
     token: &str,
 ) -> PublicDashboardRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     PublicDashboardRecord {
         installation_id: INST,
         org_id: org,
@@ -499,7 +500,7 @@ async fn contract_datasources(store: &dyn DaiyaStore) {
 
 async fn contract_library_panels(store: &dyn DaiyaStore) {
     let org = OrgId::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let mut panel = LibraryPanelRecord {
         installation_id: INST,
         org_id: org,
@@ -662,7 +663,7 @@ async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
             .is_empty()
     );
 
-    let base = Utc::now() - ChronoDuration::minutes(5);
+    let base = TimestampTz(TimestampTz::now().0 - SignedDuration::from_mins(5));
     for (i, id) in ["older", "newer"].into_iter().enumerate() {
         store
             .insert_import_report(ImportReportRecord {
@@ -675,7 +676,7 @@ async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
                 refused_count: 0,
                 mapped_count: 1,
                 summary: json!({ "n": i }),
-                created_at: base + ChronoDuration::minutes(i as i64),
+                created_at: TimestampTz(base.0 + SignedDuration::from_mins(i as i64)),
             })
             .await
             .unwrap();
@@ -1202,7 +1203,7 @@ async fn a_lost_database_is_an_internal_error_that_leaks_nothing() {
         store.list_query_cache_stats(org).await.unwrap_err(),
         store.list_import_reports(org).await.unwrap_err(),
     ];
-    let now = Utc::now();
+    let now = TimestampTz::now();
     errors.push(
         store
             .upsert_library_panel(LibraryPanelRecord {

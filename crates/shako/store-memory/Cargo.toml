@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 shako-core = { path = "../core" }
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 parking_lot = "0.12"
 tokio = { version = "1.54", features = ["sync"] }
 uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }

@@ -98,9 +98,7 @@ fn odata_rows_to_frame(ref_id: &str, entity_set: &str, rows: &[Value]) -> Frame 
                 |sample| match sample {
                     Value::Number(_) => FieldType::Number,
                     Value::Bool(_) => FieldType::Bool,
-                    Value::String(s) if chrono::DateTime::parse_from_rfc3339(s).is_ok() => {
-                        FieldType::Time
-                    }
+                    Value::String(s) if jc_time::parse_rfc3339(s).is_some() => FieldType::Time,
                     Value::String(_) => FieldType::String,
                     _ => FieldType::Json,
                 },

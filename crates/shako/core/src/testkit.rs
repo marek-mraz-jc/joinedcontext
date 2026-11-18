@@ -5,7 +5,7 @@
 use crate::ids::{InstanceId, OrgId, PackageId, RepoId, WebhookId};
 use crate::model::*;
 use crate::store::Store;
-use chrono::Utc;
+use jc_time::TimestampTz;
 use serde_json::json;
 
 /// Runs the shared multi-tenant store isolation and invariant suite against `store` (S2).
@@ -18,7 +18,7 @@ pub async fn run_isolation_suite(store: &dyn Store) {
     let inst = InstanceId::new();
     let org_a = OrgId::new();
     let org_b = OrgId::new();
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     store
         .upsert_instance(InstanceRecord::default_for(inst, org_a, "git.city.example"))

@@ -3,12 +3,12 @@
 //! per-organization (`OrgId`) row isolation, quota enforcement, version history, and boot RLS
 //! verification (R8, §5.3).
 
-use chrono::Utc;
 use daiya_model::{
     CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
     FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord,
     QueryCacheStatRecord, constant_time_eq, store::StoreFuture,
 };
+use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -154,7 +154,7 @@ impl DaiyaStore for MemoryStore {
             let org = guard.orgs.entry(folder.org_id).or_default();
             check_folder_depth(&org.folders, &folder.uid, folder.parent_uid.as_deref())?;
 
-            let now = Utc::now();
+            let now = TimestampTz::now();
             if let Some(existing) = org.folders.get(&folder.uid) {
                 folder.version = existing.version + 1;
                 folder.created_at = existing.created_at;
@@ -229,7 +229,7 @@ impl DaiyaStore for MemoryStore {
                 });
             }
 
-            let now = Utc::now();
+            let now = TimestampTz::now();
             let parent_version;
             if let Some(existing) = org.dashboards.get(&dashboard.uid) {
                 if !overwrite && dashboard.version != existing.version {
@@ -432,7 +432,7 @@ impl DaiyaStore for MemoryStore {
                 }
             }
 
-            let now = Utc::now();
+            let now = TimestampTz::now();
             if let Some(existing) = org.datasources.get(&ds.uid) {
                 ds.version = existing.version + 1;
                 ds.created_at = existing.created_at;
@@ -498,7 +498,7 @@ impl DaiyaStore for MemoryStore {
         Box::pin(async move {
             let mut guard = self.inner.write();
             let org = guard.orgs.entry(panel.org_id).or_default();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             if let Some(existing) = org.library_panels.get(&panel.uid) {
                 panel.version = existing.version + 1;
                 panel.created_at = existing.created_at;
@@ -600,7 +600,7 @@ impl DaiyaStore for MemoryStore {
                     pubdash.dashboard_uid
                 )));
             }
-            let now = Utc::now();
+            let now = TimestampTz::now();
             if let Some(existing) = org.public_dashboards.get(&pubdash.uid) {
                 pubdash.created_at = existing.created_at;
                 pubdash.updated_at = now;

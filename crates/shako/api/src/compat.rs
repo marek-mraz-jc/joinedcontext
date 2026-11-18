@@ -17,8 +17,8 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use shako_core::{
@@ -1033,7 +1033,7 @@ async fn compat_post_commit_status(
         state: req.state,
         description: req.description.unwrap_or_default(),
         target_url: req.target_url.unwrap_or_default(),
-        updated_at: Utc::now(),
+        updated_at: TimestampTz::now(),
     };
     match state.store().upsert_commit_status(rec).await {
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),

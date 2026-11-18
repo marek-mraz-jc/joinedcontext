@@ -20,9 +20,12 @@ use crate::{
     Datasource, DsError, DsFuture, EditorFieldHint, EditorSchema, Health, ImportOutcome, Query,
     QueryCtx, ResourceReq, ResourceResp,
 };
-use chrono::{DateTime, SecondsFormat, Utc};
 use daiya_expr::parse_duration_ms;
 use daiya_model::{FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity};
+use jc_time::{PgDate, PgTimestamp, SecondsFormat, TimestampTz};
+use jiff::Timestamp;
+use jiff::civil::Time;
+use jiff::tz::Offset;
 use regex::Regex;
 use serde_json::{Value, json};
 use sqlx::postgres::{PgValueFormat, PgValueRef};
@@ -196,11 +199,11 @@ pub fn interpolate_postgres_macros(
         reason: e.to_string(),
     })?;
 
-    let from_iso = DateTime::<Utc>::from_timestamp_millis(from_ms)
-        .unwrap_or_default()
+    let from_iso = TimestampTz::from_millis(from_ms)
+        .unwrap_or(TimestampTz::UNIX_EPOCH)
         .to_rfc3339_opts(SecondsFormat::Nanos, true);
-    let to_iso = DateTime::<Utc>::from_timestamp_millis(to_ms)
-        .unwrap_or_default()
+    let to_iso = TimestampTz::from_millis(to_ms)
+        .unwrap_or(TimestampTz::UNIX_EPOCH)
         .to_rfc3339_opts(SecondsFormat::Nanos, true);
     let from_sec = from_ms / 1000;
     let to_sec = to_ms / 1000;
@@ -1274,26 +1277,29 @@ fn cell(row: &sqlx::postgres::PgRow, idx: usize, type_name: &str) -> Value {
     let time = |ms: Option<i64>| ms.map_or(Value::Null, Value::from);
     match type_name {
         "TIMESTAMPTZ" => time(
-            row.try_get::<Option<DateTime<Utc>>, _>(idx)
+            row.try_get::<Option<TimestampTz>, _>(idx)
                 .ok()
                 .flatten()
-                .map(|t| t.timestamp_millis()),
+                .map(TimestampTz::as_millis),
         ),
+        // A zoneless timestamp or a date counts as UTC, its midnight for a date.
         "TIMESTAMP" => time(
-            row.try_get::<Option<chrono::NaiveDateTime>, _>(idx)
+            row.try_get::<Option<PgTimestamp>, _>(idx)
                 .ok()
                 .flatten()
-                .map(|t| t.and_utc().timestamp_millis()),
+                .and_then(|t| Offset::UTC.to_timestamp(t.0).ok())
+                .map(Timestamp::as_millisecond),
         ),
         "DATE" => time(
-            row.try_get::<Option<chrono::NaiveDate>, _>(idx)
+            row.try_get::<Option<PgDate>, _>(idx)
                 .ok()
                 .flatten()
-                .map(|d| {
-                    d.and_time(chrono::NaiveTime::MIN)
-                        .and_utc()
-                        .timestamp_millis()
-                }),
+                .and_then(|d| {
+                    Offset::UTC
+                        .to_timestamp(d.0.to_datetime(Time::midnight()))
+                        .ok()
+                })
+                .map(Timestamp::as_millisecond),
         ),
         "INT2" => number(
             row.try_get::<Option<i16>, _>(idx)

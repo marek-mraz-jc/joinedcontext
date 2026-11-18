@@ -544,7 +544,7 @@ pub fn commit_file_changes(
     }
 
     let root_tree_oid = build_nested_trees(&tree_entries, &mut new_objects)?;
-    let now_secs = chrono::Utc::now().timestamp();
+    let now_secs = jc_time::TimestampTz::now().as_second();
     let time = gix::date::Time::new(now_secs, 0);
     let author_sig = gix::actor::Signature {
         name: BString::from(sanitize_actor_field(&author.name, "shako")),
@@ -1017,12 +1017,12 @@ fn decode_commit_info(commit: &gix::Commit<'_>) -> ShakoResult<CommitInfo> {
     let author = decoded.author().unwrap_or_default();
     let committer = decoded.committer().unwrap_or_default();
     let author_dt =
-        chrono::DateTime::from_timestamp(author.time().map(|t| t.seconds).unwrap_or(0), 0)
-            .unwrap_or_else(chrono::Utc::now)
+        jc_time::TimestampTz::from_second(author.time().map(|t| t.seconds).unwrap_or(0))
+            .unwrap_or_else(jc_time::TimestampTz::now)
             .to_rfc3339();
     let committer_dt =
-        chrono::DateTime::from_timestamp(committer.time().map(|t| t.seconds).unwrap_or(0), 0)
-            .unwrap_or_else(chrono::Utc::now)
+        jc_time::TimestampTz::from_second(committer.time().map(|t| t.seconds).unwrap_or(0))
+            .unwrap_or_else(jc_time::TimestampTz::now)
             .to_rfc3339();
     Ok(CommitInfo {
         sha: commit.id.to_hex().to_string(),
@@ -1318,6 +1318,33 @@ mod tests {
                 .collect(),
         };
         repo.write_object(&tree).expect("write tree").detach()
+    }
+
+    #[test]
+    fn commit_dates_read_as_rfc3339_utc_as_chrono_wrote_them() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = gix::init_bare(tmp.path()).expect("init");
+        let tree = tree_of(&repo, &[]);
+        let sig = |seconds| gix::actor::Signature {
+            name: "a".into(),
+            email: "a@example.org".into(),
+            time: gix::date::Time::new(seconds, 7200),
+        };
+        let commit = gix_object::Commit {
+            tree,
+            parents: Default::default(),
+            author: sig(1_763_482_800),
+            committer: sig(0),
+            encoding: None,
+            message: "m".into(),
+            extra_headers: Vec::new(),
+        };
+        let id = repo.write_object(&commit).expect("write commit").detach();
+        let info = read_commit_info(tmp.path(), &id.to_hex().to_string()).expect("read");
+        // chrono's to_rfc3339(), pinned before the move to jiff (T-7237): UTC as `+00:00`
+        // whatever the signature's own offset, whole seconds.
+        assert_eq!(info.author_date, "2025-11-18T16:20:00+00:00");
+        assert_eq!(info.committer_date, "1970-01-01T00:00:00+00:00");
     }
 
     #[test]

@@ -6,8 +6,8 @@
 //! `X-Shako-Signature`, `X-Shako-Event` and `X-Shako-Delivery` (the Portal's receiver).
 
 use crate::state::ShakoState;
-use chrono::Utc;
 use hmac::{Hmac, Mac};
+use jc_time::TimestampTz;
 use serde_json::{Value, json};
 use sha2::Sha256;
 use shako_core::{
@@ -201,7 +201,7 @@ pub async fn emit_and_dispatch_event(
             idempotency_key,
             payload,
             dispatched: false,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             dispatched_at: None,
         })
         .await?;
@@ -301,12 +301,12 @@ pub async fn deliver_webhook_with_retries(
                 event: event_kind.to_owned(),
                 status: "failed".into(),
                 response_code: None,
-                delivered_at: Utc::now(),
+                delivered_at: TimestampTz::now(),
             })
             .await;
     };
     let sig = compute_gitea_signature(&secret, &body_bytes)?;
-    let ts = Utc::now().timestamp().to_string();
+    let ts = TimestampTz::now().as_second().to_string();
 
     let prefix = match hook.format {
         WebhookFormat::Gitea => "X-Gitea",
@@ -380,7 +380,7 @@ pub async fn deliver_webhook_with_retries(
             "failed".into()
         },
         response_code: last_status_code,
-        delivered_at: Utc::now(),
+        delivered_at: TimestampTz::now(),
     };
     state.store().record_delivery(rec).await
 }
