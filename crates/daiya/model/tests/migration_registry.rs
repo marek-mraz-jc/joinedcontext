@@ -499,6 +499,21 @@ fn the_chain_converts_v2_refuses_non_objects_and_never_reruns_steps() {
     let report = migrate_to_latest(&mut newer, &index()).unwrap();
     assert!(report.steps_applied.is_empty());
     assert_eq!(newer["refresh"], 5, "a v42 document is not migrated again");
+    assert!(report.warnings.is_empty());
+
+    // A document from a later schema is read as 42 and says so; the highest number does not overflow.
+    for version in [43, u16::MAX] {
+        let mut later = json!({"schemaVersion": version});
+        let report = migrate_to_latest(&mut later, &index()).unwrap();
+        assert!(report.steps_applied.is_empty());
+        assert_eq!(report.original_schema_version, version);
+        assert_eq!(
+            report.warnings,
+            [format!(
+                "schemaVersion {version} is newer than 42: read as 42, settings of the newer schema may be lost"
+            )]
+        );
+    }
 }
 
 fn ctx(subject: Subject) -> RequestCtx {

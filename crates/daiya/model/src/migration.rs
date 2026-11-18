@@ -886,7 +886,13 @@ pub fn migrate_to_latest(
         warnings.push("schemaVersion below 36: migrate in Grafana first".to_owned());
         MIN_SUPPORTED_SCHEMA_VERSION
     } else {
-        original_version + 1
+        if original_version > LATEST_SCHEMA_VERSION {
+            warnings.push(format!(
+                "schemaVersion {original_version} is newer than {LATEST_SCHEMA_VERSION}: read as \
+                 {LATEST_SCHEMA_VERSION}, settings of the newer schema may be lost"
+            ));
+        }
+        original_version.saturating_add(1)
     };
 
     for step in start_from..=LATEST_SCHEMA_VERSION {
