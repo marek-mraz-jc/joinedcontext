@@ -378,6 +378,15 @@ async fn malformed_action_bodies_and_unknown_actions() {
     for (uri, body) in [
         ("/odata/v4/Datasource.Query", json!({ "queries": "x" })),
         ("/odata/v4/Import", json!({ "dryRun": "yes" })),
+        // The provisioning fields belong to the loader alone.
+        (
+            "/odata/v4/Import",
+            json!({ "dashboards": [{ "rawJson": dashboard("p", "prom"), "isProvisioned": true }] }),
+        ),
+        (
+            "/odata/v4/Import",
+            json!({ "dashboards": [{ "rawJson": dashboard("p", "prom"), "externalId": "boards/p.json" }] }),
+        ),
         ("/odata/v4/Plan", json!({ "bundle": { "folders": "x" } })),
         ("/odata/v4/Apply", json!({ "plan": 3 })),
         ("/odata/v4/PublicDashboard.Query", json!({ "panelId": 1 })),

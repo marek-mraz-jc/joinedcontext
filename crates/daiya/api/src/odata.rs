@@ -631,7 +631,18 @@ pub struct ODataImportActionBody {
     pub dry_run: bool,
     pub dashboard: Option<Value>,
     #[serde(default)]
-    pub dashboards: Vec<DashboardImportInput>,
+    pub dashboards: Vec<ODataImportItem>,
+    #[serde(default)]
+    pub folder_uid: Option<String>,
+}
+
+/// One dashboard of an `Import` body. The provisioning fields of [`DashboardImportInput`]
+/// (`isProvisioned`, `allowUiUpdates`, `externalId`) are set by the provisioning loader alone,
+/// so a body naming them is refused.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ODataImportItem {
+    pub raw_json: Value,
     #[serde(default)]
     pub folder_uid: Option<String>,
 }
@@ -648,16 +659,23 @@ pub async fn exec_odata_import(
     );
     dec.into_result("Organization not found")?;
 
-    let mut inputs = body.dashboards;
+    let mut items = body.dashboards;
     if let Some(single) = body.dashboard {
-        inputs.push(DashboardImportInput {
+        items.push(ODataImportItem {
             raw_json: single,
             folder_uid: body.folder_uid,
+        });
+    }
+    let inputs: Vec<DashboardImportInput> = items
+        .into_iter()
+        .map(|item| DashboardImportInput {
+            raw_json: item.raw_json,
+            folder_uid: item.folder_uid,
             is_provisioned: false,
             allow_ui_updates: true,
             external_id: None,
-        });
-    }
+        })
+        .collect();
     let report = import_dashboards(
         state.store.as_ref(),
         state.installation_id,

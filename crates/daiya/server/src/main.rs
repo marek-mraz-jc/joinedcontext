@@ -283,7 +283,10 @@ async fn main() {
                     "import",
                     json!({
                         "dryRun": dry_run,
-                        "dashboards": inputs,
+                        "dashboards": inputs
+                            .into_iter()
+                            .map(|i| json!({ "rawJson": i.raw_json, "folderUid": i.folder_uid }))
+                            .collect::<Vec<_>>(),
                     }),
                 )
                 .await
