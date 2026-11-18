@@ -306,6 +306,18 @@ fn time_strings_parse_as_grafana_writes_them() {
         parse_time_str_ms(Some("1700000000000"), 0),
         1_700_000_000_000
     );
+    // A time outside the years 0..=9999 is not a time: the default applies, so no range
+    // arithmetic downstream can overflow.
+    for wild in [
+        "9223372036854775807",
+        "-9223372036854775808",
+        "now-99999999999999w",
+    ] {
+        assert!(
+            near(parse_time_str_ms(Some(wild), -1000), now - 1000),
+            "{wild}"
+        );
+    }
     assert_eq!(
         parse_time_str_ms(Some("2023-11-14T22:13:20Z"), 0),
         1_700_000_000_000
