@@ -1757,10 +1757,11 @@ async fn dispatch_ui_route(
             stripped_path,
             had_url_prefix,
         } => {
+            // `?lang=` picks only a language the catalogue offers; any other value is ignored.
             let chosen = q_params
                 .get("lang")
-                .cloned()
-                .filter(|_| !had_url_prefix)
+                .map(|l| dataroom_web::i18n::normalize_lang_code(l))
+                .filter(|l| !had_url_prefix && branding.languages.offered.contains(l))
                 .unwrap_or(lang);
             (chosen, stripped_path, had_url_prefix)
         }

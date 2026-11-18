@@ -3749,6 +3749,13 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     .await;
     assert_eq!(a.status, StatusCode::OK);
     assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    // `?lang=` picks an offered language; any other value leaves the default in place.
+    let a = get(app, "/about?lang=en", None).await;
+    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(!a.body.contains("xx&"), "the value never reaches the page");
 }
 
 #[tokio::test]
