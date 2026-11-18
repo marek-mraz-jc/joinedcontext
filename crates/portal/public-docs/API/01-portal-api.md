@@ -2634,6 +2634,9 @@ MCP (Streamable HTTP, protocol 2026-07-28):
   POST /api/v1/mcp                         # server/discover, tools/*, resources/*, prompts/*, tasks/*
   GET  /.well-known/oauth-protected-resource/api/v1/mcp   # RFC 9728
   Bearer only, aud = the Portal; 401 + WWW-Authenticate: Bearer resource_metadata="…" otherwise.
+  Cross-origin (CORS, no credentials) only for the Organization's own Portal host (the
+  deployment's on an address of no Organization) and the origins JC_PORTAL_MCP_CLIENT_ORIGINS
+  names, e.g. `http://localhost:6274,https://inspector.example.org` (RTE-10).
   The revisions this server speaks are `2026-07-28`, `2025-11-25`, `2025-06-18` and `2025-03-26`.
   `initialize` and `server/discover` answer the client's own revision when it names one of them
   and `2026-07-28` otherwise — never the client's string for a revision the server does not

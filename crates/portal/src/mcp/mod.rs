@@ -64,21 +64,34 @@ const MAX_RESPONSE_BYTES: usize = crate::connectors::PERSON_LIMITS.result_bytes;
 /// What a browser-based MCP client is allowed to do cross-origin (T-0971).
 ///
 /// These routes authenticate by `Authorization` and nothing else — a session cookie alone is
-/// `401` here, which `mcp_session_cookie_only_returns_401` holds — so opening them to any origin
-/// hands a page no authority it did not already have: without `allow_credentials` the browser
-/// sends no cookie, and a token is something the client had to be given. The rest of the API,
-/// which does trust the session cookie, is deliberately not wrapped: there `*` would be a
-/// cross-site request forgery surface.
-fn browser_clients() -> tower_http::cors::CorsLayer {
+/// `401` here, which `mcp_session_cookie_only_returns_401` holds — and without
+/// `allow_credentials` the browser sends no cookie. Still only the Organization's own Portal
+/// host (the deployment's, on an address of no Organization) and the configured client origins
+/// (`JC_PORTAL_MCP_CLIENT_ORIGINS`) are answered (RTE-10): a page of another Organization or
+/// of any site holding a person's token gets no readable answer. The rest of the API, which
+/// does trust the session cookie, is deliberately not wrapped.
+fn browser_clients(config: &crate::config::Config) -> tower_http::cors::CorsLayer {
     use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+    let deployment = config.public_base_url.origin().ascii_serialization();
+    let configured = config.mcp_client_origins.clone();
+    let allowed = move |origin: &axum::http::HeaderValue, _: &axum::http::request::Parts| {
+        let Ok(origin) = origin.to_str() else {
+            return false;
+        };
+        let own = crate::organization_host::pinned().map_or_else(
+            || deployment.clone(),
+            |pin| pin.base.origin().ascii_serialization(),
+        );
+        origin == own || configured.iter().any(|c| c == origin)
+    };
     tower_http::cors::CorsLayer::new()
-        .allow_origin(tower_http::cors::Any)
+        .allow_origin(tower_http::cors::AllowOrigin::predicate(allowed))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([ACCEPT, AUTHORIZATION, CONTENT_TYPE])
         .expose_headers([axum::http::header::WWW_AUTHENTICATE])
 }
 
-pub fn router() -> Router<AppState> {
+pub fn router(config: &crate::config::Config) -> Router<AppState> {
     Router::new()
         .route(
             "/api/v1/mcp",
@@ -96,7 +109,7 @@ pub fn router() -> Router<AppState> {
             "/.well-known/oauth-protected-resource",
             get(oauth_protected_resource),
         )
-        .layer(browser_clients())
+        .layer(browser_clients(config))
 }
 
 /// The one realm a client of this host signs in at: the host's Organization realm, else the
@@ -1801,6 +1814,46 @@ fn too_many_at_once() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RTE-10 (S1-52): on an Organization's own Portal host the MCP routes answer that host's
+    /// origin cross-origin, never the deployment's or another Organization's.
+    #[tokio::test]
+    async fn the_mcp_cors_answers_the_pinned_organizations_own_host() {
+        use crate::organization_host::{scope, OrganizationHost};
+        use tower::ServiceExt;
+        let config = crate::config::Config::for_tests();
+        let app = Router::<()>::new()
+            .route("/api/v1/mcp", post(|| async { "ok" }))
+            .layer(browser_clients(&config));
+        let host = |name: &str| OrganizationHost {
+            organization: name.to_owned(),
+            base: format!("https://portal.{name}.example")
+                .parse()
+                .expect("url"),
+        };
+        let allowed = |origin: &str| {
+            let (app, origin) = (app.clone(), origin.to_owned());
+            async move {
+                let request = axum::http::Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/mcp")
+                    .header(axum::http::header::ORIGIN, origin)
+                    .header("access-control-request-method", "POST")
+                    .body(axum::body::Body::empty())
+                    .expect("request");
+                let response = app.oneshot(request).await.expect("answer");
+                response
+                    .headers()
+                    .contains_key(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            }
+        };
+        let deployment = config.public_base_url.origin().ascii_serialization();
+        assert!(scope(host("a"), allowed("https://portal.a.example")).await);
+        assert!(!scope(host("a"), allowed("https://portal.b.example")).await);
+        assert!(!scope(host("a"), allowed(&deployment)).await);
+        assert!(allowed(&deployment).await);
+        assert!(!allowed("https://portal.a.example").await);
+    }
 
     /// MCP-33 (T-7194): the project door holds every message to its project; one naming
     /// another project, by params, arguments or a resource address, is not found.
