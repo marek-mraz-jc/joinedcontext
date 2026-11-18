@@ -834,12 +834,17 @@ pub(crate) async fn space_mcp_message(
 pub(crate) async fn protected_resource(
     State(gateway): State<Arc<Gateway>>,
     Path(slug): Path<String>,
+    request: Request,
 ) -> Response<Body> {
     let readable = gateway
         .resolver
         .resolve(&slug)
         .is_some_and(|endpoint| endpoint.admits(None));
-    let servers = crate::oauth::authorization_servers(&gateway, readable);
+    let servers = crate::oauth::authorization_servers(
+        &gateway,
+        readable,
+        request.extensions().get::<crate::app::HostOrganization>(),
+    );
     if servers.is_empty() {
         // No realm and no anonymous OAuth server: there is no authorization server to point a
         // client at.

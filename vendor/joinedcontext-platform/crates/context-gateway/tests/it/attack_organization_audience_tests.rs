@@ -308,6 +308,55 @@ async fn only_the_endpoints_own_organization_realm_and_the_installations_sign_in
     );
 }
 
+/// The authorization servers a protected-resource document at `uri` names on `host`'s
+/// Organization host (`None`: a host of no Organization).
+async fn servers_on(fixture: &Fixture, uri: &str, host: Option<&str>) -> Vec<String> {
+    let mut request = Request::builder()
+        .uri(uri)
+        .body(Body::empty())
+        .expect("a request");
+    if let Some(host) = host {
+        request
+            .extensions_mut()
+            .insert(context_gateway::app::HostOrganization(host.to_owned()));
+    }
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("the gateway answers");
+    assert_eq!(response.status(), StatusCode::OK, "{uri} on {host:?}");
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("a readable body");
+    let doc: Value = serde_json::from_slice(&body).expect("json");
+    serde_json::from_value(doc["authorization_servers"].clone()).expect("a list")
+}
+
+/// T-7230: on an Organization's host the metadata of the hub and of an Endpoint's MCP door names
+/// that Organization's realm alone, so a client signs in there and nowhere else; on a host of no
+/// Organization it names the installation realm.
+#[tokio::test]
+async fn the_metadata_on_an_organizations_host_names_its_own_realm_alone() {
+    let (_hel, _zilina, fixture, verifier) = fixture_with_own_realms("realm-metadata").await;
+    let installation = verifier.issuer().to_owned();
+    let hub = "/.well-known/oauth-protected-resource/api/mcp";
+    // The Endpoint is hel's: on zilina's host its address is the 404 of an unknown one.
+    let door = format!("/.well-known/oauth-protected-resource/api/endpoint/{SLUG}/mcp");
+    assert_eq!(servers_on(&fixture, hub, Some("hel")).await, [HEL_ISSUER]);
+    assert_eq!(
+        servers_on(&fixture, hub, Some("zilina")).await,
+        [ZILINA_ISSUER]
+    );
+    assert_eq!(
+        servers_on(&fixture, hub, None).await,
+        std::slice::from_ref(&installation)
+    );
+    assert_eq!(servers_on(&fixture, &door, Some("hel")).await, [HEL_ISSUER]);
+    assert_eq!(servers_on(&fixture, &door, None).await, [installation]);
+}
+
 /// T-7180: the Organizations' own realms follow the host registry without a restart: a realm
 /// the registry no longer serves signs nobody in from the next request on, the installation
 /// realm still does, and a realm served again signs in once its keys are loaded.

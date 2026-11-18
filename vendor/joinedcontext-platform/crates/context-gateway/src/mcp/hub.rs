@@ -1548,14 +1548,21 @@ fn challenged(gateway: &Gateway, mut response: Response<Body>) -> Response<Body>
 const OUTSIDE_REACH: &str = "no Endpoint you may read has that slug: list_endpoints lists the ones you may read, and an Endpoint that is not public is read after signing in with an account its Policy grants";
 
 /// The hub's protected-resource metadata (RFC 9728, ADR-N-025 section 4).
-pub async fn protected_resource(State(gateway): State<Arc<Gateway>>) -> Response<Body> {
+pub async fn protected_resource(
+    State(gateway): State<Arc<Gateway>>,
+    request: Request,
+) -> Response<Body> {
     // The hub answers an anonymous caller whenever one Endpoint is public (ADR-N-052 §2.2).
     let readable = gateway
         .resolver
         .endpoints()
         .iter()
         .any(|endpoint| endpoint.admits(None));
-    let servers = crate::oauth::authorization_servers(&gateway, readable);
+    let servers = crate::oauth::authorization_servers(
+        &gateway,
+        readable,
+        request.extensions().get::<HostOrganization>(),
+    );
     if servers.is_empty() {
         return ProblemDetails::not_found().into_response();
     }

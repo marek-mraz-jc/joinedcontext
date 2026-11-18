@@ -764,7 +764,7 @@ pub async fn protected_resource(
     }) else {
         return ProblemDetails::not_found().into_response();
     };
-    let servers = crate::oauth::authorization_servers(&gateway, server.admits(None));
+    let servers = crate::oauth::authorization_servers(&gateway, server.admits(None), host);
     if servers.is_empty() {
         return ProblemDetails::not_found().into_response();
     }

@@ -62,7 +62,8 @@ NOT_LIVE = {"restore": "docker: rehearsal only", "image": "docker: rehearsal onl
             "multiorg": "signs in personas and writes: rehearsal only",
             "logs": "reads the rehearsal's own log file", "pipelines": "runs pipelines (writes): rehearsal only",
             "ui": "signs in personas in Chromium: rehearsal only", "assistant": "signs in and spends the model key",
-            "parity": "signs in a person: rehearsal only"}
+            "parity": "signs in a person: rehearsal only",
+            "crossrealm": "runs on its own: run crossrealm --jc-config <the deployment's jc.toml>"}
 
 
 def picked(run: str, names: str) -> bool:
