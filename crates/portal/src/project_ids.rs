@@ -37,10 +37,16 @@ pub fn key_column(table: &str) -> &'static str {
 /// Tables of a project's data that stay installation-level, with the reason (T-7202). A
 /// person's invitation exists before the person belongs to any project and is read by person
 /// alone: its `project` is only the place the invitation offers, nullable.
-pub const LEFT_UNKEYED: &[(&str, &str)] = &[(
-    "person_invitations",
-    "an invitation is the person's, read by person id before they join; its project is optional",
-)];
+pub const LEFT_UNKEYED: &[(&str, &str)] = &[
+    (
+        "person_invitations",
+        "an invitation is the person's, read by person id before they join; its project is optional",
+    ),
+    (
+        "project_rows_set_aside",
+        "rows 0080 found of a name no Project ever had; no project holds them, an operator reads them",
+    ),
+];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
 /// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
