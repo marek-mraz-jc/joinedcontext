@@ -258,6 +258,8 @@ pub async fn import_repository(
     let inst_id = ctx.instance_id;
     let def_branch = origin.default_branch.clone();
     let desc = req.description.clone().unwrap_or_default();
+    // A push or compaction on the source must not add or drop packs while they are copied.
+    let _source_guard = state.repo_locks.lock(origin.id).await;
     let dest = blocking(move || {
         let dest = init_bare_repo(&root, inst_id, new_id, &def_branch, false, &desc)?;
         copy_bare_repo(&origin_disk, &dest, &def_branch)?;
@@ -1625,27 +1627,38 @@ pub async fn publish_generic_file(
             created_at: now,
         })
         .await?;
-    let ver_rec = state
+    // A version holds several files: the first file creates it, later files join it, so the
+    // files already stored keep a version id that exists.
+    let existing = state
         .store()
-        .upsert_package_version(PackageVersionRecord {
-            id: uuid::Uuid::now_v7(),
-            instance_id: ctx.instance_id,
-            org_id: target_org,
-            package_id: pkg_rec.id,
-            owner: owner.to_owned(),
-            package_type: "generic".into(),
-            package_name: pkg.to_owned(),
-            version: ver.to_owned(),
-            digest: format!("sha256:{sha256}"),
-            media_type: "application/octet-stream".into(),
-            manifest_bytes: Vec::new(),
-            subject_digest: None,
-            artifact_type: None,
-            size_bytes: bytes.len() as u64,
-            signed: false,
-            created_at: now,
-        })
+        .get_package_version(ctx.instance_id, target_org, owner, "generic", pkg, ver)
         .await?;
+    let ver_rec = match existing {
+        Some(v) => v,
+        None => {
+            state
+                .store()
+                .upsert_package_version(PackageVersionRecord {
+                    id: uuid::Uuid::now_v7(),
+                    instance_id: ctx.instance_id,
+                    org_id: target_org,
+                    package_id: pkg_rec.id,
+                    owner: owner.to_owned(),
+                    package_type: "generic".into(),
+                    package_name: pkg.to_owned(),
+                    version: ver.to_owned(),
+                    digest: format!("sha256:{sha256}"),
+                    media_type: "application/octet-stream".into(),
+                    manifest_bytes: Vec::new(),
+                    subject_digest: None,
+                    artifact_type: None,
+                    size_bytes: bytes.len() as u64,
+                    signed: false,
+                    created_at: now,
+                })
+                .await?
+        }
+    };
     let saved = state
         .store()
         .insert_package_file(PackageFileRecord {

@@ -1285,9 +1285,7 @@ async fn generic_put_file(
         Ok(b) => b,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    match service::publish_generic_file(&state, &ctx, &owner, &pkg, &ver, &file, bytes.to_vec())
-        .await
-    {
+    match service::publish_generic_file(&state, &ctx, &owner, &pkg, &ver, &file, bytes).await {
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }

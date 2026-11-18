@@ -349,4 +349,21 @@ mod tests {
         }
         assert!(validate_tree_path("projects/helsinki/spaces/air/space.yaml").is_ok());
     }
+
+    #[test]
+    fn owners_named_like_a_route_and_paths_deeper_than_a_tree_are_refused() {
+        for owner in ["api", "V2", "odata", "mcp", "user"] {
+            assert!(
+                validate_repo_or_owner_name(owner, "owner").is_err(),
+                "{owner}"
+            );
+            assert!(
+                validate_repo_or_owner_name(owner, "repository").is_ok(),
+                "{owner}"
+            );
+        }
+        let deepest = vec!["d"; MAX_TREE_DEPTH].join("/");
+        assert!(validate_tree_path(&deepest).is_ok());
+        assert!(validate_tree_path(&format!("{deepest}/f")).is_err());
+    }
 }
