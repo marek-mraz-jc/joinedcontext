@@ -1003,6 +1003,25 @@ pub struct PutFileReq {
     pub committer: Option<AuthorDto>,
 }
 
+/// The branch a contents write goes on: with `new_branch`, that branch cut from `branch` (the
+/// default branch when unset) first, as Gitea does; otherwise `branch`.
+async fn cut_new_branch(
+    state: &ShakoState,
+    ctx: &shako_core::RequestCtx,
+    owner: &str,
+    repo: &str,
+    new_branch: Option<String>,
+    branch: Option<String>,
+) -> ShakoResult<Option<String>> {
+    match new_branch.filter(|b| !b.is_empty()) {
+        Some(new) => {
+            service::create_branch(state, ctx, owner, repo, &new, branch).await?;
+            Ok(Some(new))
+        }
+        None => Ok(branch),
+    }
+}
+
 async fn compat_put_contents(
     State(state): State<ShakoState>,
     headers: HeaderMap,
@@ -1018,8 +1037,13 @@ async fn compat_put_contents(
         Err(e) => return gitea_error_response(&state, &e),
     };
     let is_create = req.sha.as_deref().is_none_or(str::is_empty);
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),
@@ -1086,8 +1110,13 @@ async fn compat_delete_contents(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),
@@ -1147,8 +1176,13 @@ async fn compat_post_contents_multi(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),

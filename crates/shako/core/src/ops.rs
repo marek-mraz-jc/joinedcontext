@@ -562,13 +562,25 @@ impl OperationRegistry {
                 rest_method: "GET",
                 rest_path: Box::leak(format!("/odata/{set}").into_boxed_str()),
                 compat_path: None,
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository name or owner/repo" },
-                        "filter": { "type": "string", "description": "OData $filter expression" }
-                    }
-                }),
+                // `repo` is offered only where the rows carry a repository id to narrow by.
+                input_schema: if service.sets.iter().any(|e| {
+                    e.set == set && e.fields.iter().any(|f| f.name == "RepoId")
+                }) {
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "repo": { "type": "string", "description": "Repository as owner/repo or its id" },
+                            "filter": { "type": "string", "description": "OData $filter expression" }
+                        }
+                    })
+                } else {
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "filter": { "type": "string", "description": "OData $filter expression" }
+                        }
+                    })
+                },
                 output_schema: json!({ "type": "object" }),
                 odata: ODataOperation {
                     kind: EntitySetRead,

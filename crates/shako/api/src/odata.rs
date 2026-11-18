@@ -1904,6 +1904,34 @@ pub async fn exec_odata_operation(
             .await?;
             Ok(review_row(&saved))
         }
+        "Mergeable" | "jc_forge_mergeable" | "mergeable" => {
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            exec_bound_pr_mergeable(state, ctx, &format!("{r_key}:{number}")).await
+        }
+        "ArchiveLink"
+        | "jc_forge_archive_link"
+        | "archive-link"
+        | "BundleLink"
+        | "jc_forge_bundle_link"
+        | "bundle-link" => {
+            let (r, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
+            let git_ref = text(&body, "Ref").unwrap_or_else(|| r.default_branch.clone());
+            shako_core::validate_branch_name(&git_ref)
+                .or_else(|_| shako_core::validate_tag_name(&git_ref))?;
+            let ext = if op_name.contains("undle") {
+                "bundle".to_owned()
+            } else {
+                text(&body, "Format").unwrap_or_else(|| "zip".into())
+            };
+            if !matches!(ext.as_str(), "zip" | "tar.gz" | "bundle") {
+                return Err(ShakoError::Unprocessable(
+                    "format must be zip or tar.gz".into(),
+                ));
+            }
+            Ok(json!({
+                "value": format!("{}/api/v1/repos/{}/{}/archive/{git_ref}.{ext}", mount.public_base(), r.owner, r.name)
+            }))
+        }
         "Merge" | "jc_forge_merge_pull_request" | "merge-pr" => {
             let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
             let repo = bound_repo(state, ctx, &r_key).await?;
@@ -2157,7 +2185,24 @@ pub async fn exec_odata_operation(
                     op_def.name
                 )));
             };
-            let filter_q = text(&body, "Filter").map(|f| format!("$filter={f}"));
+            // The tools name the repository in `repo`: its id narrows the set, beside the
+            // caller's own filter. The filter travels encoded, so it never adds an option.
+            let mut filter = text(&body, "Filter").filter(|f| !f.trim().is_empty());
+            let takes_repo = op_def.input_schema["properties"].get("repo").is_some();
+            if takes_repo && !repo_key.is_empty() {
+                let (r, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
+                let by_repo = format!("RepoId eq '{}'", r.id);
+                filter = Some(match filter {
+                    Some(f) => format!("({f}) and {by_repo}"),
+                    None => by_repo,
+                });
+            }
+            let filter_q = filter.map(|f| {
+                format!(
+                    "$filter={}",
+                    percent_encoding::utf8_percent_encode(&f, percent_encoding::NON_ALPHANUMERIC)
+                )
+            });
             let table =
                 build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref(), None)
                     .await?;

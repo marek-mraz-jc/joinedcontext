@@ -45,6 +45,7 @@ pub struct ShakoState {
     pub owner_to_org: Arc<RwLock<BTreeMap<String, OrgId>>>,
     pub event_bus: broadcast::Sender<shako_core::OutboxEvent>,
     pub subscribers: Arc<RwLock<Vec<InProcessEventSubscriber>>>,
+    /// Documentation link in Gitea-shaped error bodies; empty unless the host sets one.
     pub docs_url: String,
 }
 
@@ -76,7 +77,7 @@ impl ShakoState {
             owner_to_org: Arc::new(RwLock::new(BTreeMap::new())),
             event_bus: tx,
             subscribers: Arc::new(RwLock::new(Vec::new())),
-            docs_url: "https://docs.joinedcontext.invalid/shako".into(),
+            docs_url: String::new(),
         }
     }
 

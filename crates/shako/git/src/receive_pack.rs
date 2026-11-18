@@ -9,6 +9,7 @@ use crate::pktline::{
 };
 use crate::repo::{collect_changed_blobs, collect_tree_blobs, is_ancestor, open_isolated};
 use gix_hash::ObjectId;
+use gix_object::tree::EntryKind;
 use gix_pack::data::input::{BytesToEntriesIter, EntryDataMode, Mode as InputMode};
 use gix_packetline::Channel;
 use gix_ref::{
@@ -132,10 +133,6 @@ static SECRET_SCAN_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::ne
         (
             "github-token",
             Regex::new(r"ghp_[A-Za-z0-9]{36}").expect("static regex"),
-        ),
-        (
-            "shako-fake-secret",
-            Regex::new(r"SHAKO_SECRET_KEY_[A-Za-z0-9]{16,}").expect("static regex"),
         ),
     ]
 });
@@ -690,10 +687,13 @@ fn verify_tip_connectivity_and_tree(
         let _ = collect_tree_blobs(repo, &old_tree, "", &mut old_blobs);
     }
 
-    for (path, (_, blob_oid)) in &new_blobs {
+    for (path, (kind, blob_oid)) in &new_blobs {
         validate_tree_path(path).map_err(|e| e.to_string())?;
-        repo.find_blob(*blob_oid)
-            .map_err(|_| "missing necessary objects".to_owned())?;
+        // A gitlink's commit lives in the submodule's repository, not in this pack.
+        if *kind != EntryKind::Commit {
+            repo.find_blob(*blob_oid)
+                .map_err(|_| "missing necessary objects".to_owned())?;
+        }
         let old_entry = old_blobs.get(path);
         if old_entry.map(|(_, o)| o) != Some(blob_oid) {
             changed_paths.push(path.clone());

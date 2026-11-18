@@ -1382,6 +1382,156 @@ async fn commit_statuses_take_known_states_only() {
     assert_eq!(st, StatusCode::CREATED);
 }
 
+/// A PATCH keeps the stored rule's other fields; a contents write on `new_branch` cuts that
+/// branch from `branch`; commit pages move.
+#[tokio::test]
+async fn compat_writes_keep_what_the_client_did_not_send() {
+    let world = setup_world();
+    let repo = "/api/v1/repos/joinedcontext/kept";
+    create_repo(&world, "kept").await;
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({ "rule_name": "main", "enable_push": true, "required_approvals": 2 })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, rule) = send_json(
+        &world.app,
+        "PATCH",
+        &format!("{repo}/branch_protections/main"),
+        Some("portal-token"),
+        Some(json!({ "block_on_outdated_branch": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rule}");
+    assert_eq!(rule["required_approvals"], json!(2));
+    assert_eq!(rule["block_on_outdated_branch"], json!(true));
+
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "main",
+            "new_branch": "topic",
+            "message": "Add on a new branch",
+            "files": [{ "operation": "create", "path": "t.txt", "content": STANDARD.encode("t\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, commits) = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/commits?sha=topic&limit=1&page=2"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    // Page 2 of one is the initial commit of main: the new branch carries main's history.
+    let main_head = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/branches/main"),
+        Some("portal-token"),
+        None,
+    )
+    .await
+    .1["commit"]["id"]
+        .clone();
+    assert_eq!(commits[0]["sha"], main_head, "{commits}");
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "no-such-branch",
+            "message": "Lost",
+            "files": [{ "operation": "create", "path": "x.txt", "content": STANDARD.encode("x\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "no orphan branch");
+}
+
+/// Every registry 401 names where a token comes from.
+#[tokio::test]
+async fn every_registry_401_carries_the_token_challenge() {
+    let world = setup_world();
+    let resp = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v2/joinedcontext/img/blobs/sha256:{}", "0".repeat(64)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let challenge = resp.headers()[axum::http::header::WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap();
+    assert!(challenge.contains("/v2/token"), "{challenge}");
+}
+
+/// The mergeable and link tools answer, and list tools narrow by the repository they name.
+#[tokio::test]
+async fn advertised_forge_tools_answer() {
+    let world = setup_world();
+    create_repo(&world, "tooled").await;
+    create_repo(&world, "other").await;
+    let ctx = RequestCtx::new(
+        InstanceId::from_u128(1),
+        world.org_a,
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+    );
+    let mount = Mount::default();
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/repos/joinedcontext/tooled/branches",
+        Some("alice-token"),
+        Some(json!({ "new_branch_name": "f", "old_branch_name": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/repos/joinedcontext/tooled/pulls",
+        Some("alice-token"),
+        Some(json!({ "head": "f", "base": "main", "title": "Same" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let call = |tool: &'static str, args: Value| {
+        let (state, ctx, mount) = (world.state.clone(), ctx.clone(), mount.clone());
+        async move { call_mcp_tool(&state, &ctx, &mount, tool, args).await }
+    };
+    call("jc_forge_mergeable", json!({ "repo": "joinedcontext/tooled", "number": 1 }))
+        .await
+        .expect("mergeable");
+    let link = call(
+        "jc_forge_archive_link",
+        json!({ "repo": "joinedcontext/tooled", "ref": "main" }),
+    )
+    .await
+    .expect("archive link");
+    assert!(link.to_string().contains("archive/main.zip"), "{link}");
+    let branches = call("jc_forge_branches_list", json!({ "repo": "joinedcontext/tooled" }))
+        .await
+        .expect("branches");
+    assert_eq!(branches["result"]["value"].as_array().map(Vec::len), Some(2), "{branches}");
+}
+
 #[test]
 fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
     let root = tempfile::tempdir().unwrap();

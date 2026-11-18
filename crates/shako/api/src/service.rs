@@ -763,8 +763,29 @@ pub async fn commit_files(
 
     let guard = state.repo_locks.lock(repo.id).await;
     let (disk, b, msg) = (disk_path.clone(), branch.clone(), req.message);
-    let commit_sha =
-        blocking(move || commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)).await?;
+    // Only the default branch may start without history (the first commit of an empty
+    // repository); any other branch is cut first, so a commit never makes an orphan branch.
+    let may_start = branch == repo.default_branch;
+    let commit_sha = blocking(move || {
+        if !may_start {
+            let full_ref = format!("refs/heads/{b}");
+            let partial: &gix_ref::PartialNameRef = full_ref
+                .as_str()
+                .try_into()
+                .map_err(|_| ShakoError::NotFound(format!("branch '{b}' does not exist")))?;
+            if open_isolated(&disk)?
+                .try_find_reference(partial)
+                .map_err(|e| ShakoError::Git(e.to_string()))?
+                .is_none()
+            {
+                return Err(ShakoError::NotFound(format!(
+                    "branch '{b}' does not exist; create it first or name new_branch with branch as its base"
+                )));
+            }
+        }
+        commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)
+    })
+    .await?;
     record_repo_size(state, &mut repo, &disk_path).await;
     drop(guard);
 

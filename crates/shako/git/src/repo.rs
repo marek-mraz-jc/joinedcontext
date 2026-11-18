@@ -200,7 +200,6 @@ pub fn copy_bare_repo(
         }
     }
 
-    // Also pack any loose objects from origin
     let mut edits = Vec::new();
     let platform = origin
         .references()
@@ -699,7 +698,11 @@ fn walk_tree(
                 .map_err(|e| ShakoError::Git(format!("find subtree: {e}")))?;
             walk_tree(repo, &sub, &full, depth + 1, walk, out)?;
         } else {
-            let kind = if entry.mode.is_executable() {
+            // A gitlink (submodule) names a commit of another repository: kept as such so a
+            // rebuilt tree holds it, never looked up as a blob here.
+            let kind = if entry.mode.is_commit() {
+                EntryKind::Commit
+            } else if entry.mode.is_executable() {
                 EntryKind::BlobExecutable
             } else if entry.mode.is_link() {
                 EntryKind::Link
@@ -776,7 +779,7 @@ fn walk_changed(
                 .map(|e| find(e.oid))
                 .collect::<ShakoResult<Vec<_>>>()?;
             walk_changed(repo, &sub, &subs, &full, depth + 1, walk, out)?;
-        } else {
+        } else if !entry.mode.is_commit() {
             out.insert(full, entry.oid.to_owned());
         }
     }
@@ -1426,5 +1429,28 @@ mod tests {
         let mut out = BTreeMap::new();
         collect_tree_blobs(&repo, &repo.find_tree(ok).unwrap(), "", &mut out).expect("plain tree");
         assert_eq!(out.keys().collect::<Vec<_>>(), ["d/f"]);
+    }
+
+    #[test]
+    fn a_submodule_entry_is_kept_as_a_gitlink_and_never_read_as_a_blob() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = gix::init_bare(tmp.path()).expect("init");
+        let blob = repo.write_blob(b"x").expect("blob").detach();
+        // The submodule's commit lives in another repository, so this one does not hold it.
+        let elsewhere = ObjectId::from_hex(b"1111111111111111111111111111111111111111").unwrap();
+        let tree = tree_of(
+            &repo,
+            &[
+                ("f", EntryKind::Blob, blob),
+                ("sub", EntryKind::Commit, elsewhere),
+            ],
+        );
+        let tree = repo.find_tree(tree).unwrap();
+        let mut all = BTreeMap::new();
+        collect_tree_blobs(&repo, &tree, "", &mut all).expect("walk");
+        assert_eq!(all.get("sub"), Some(&(EntryKind::Commit, elsewhere)));
+        let mut changed = BTreeMap::new();
+        collect_changed_blobs(&repo, &tree, &[], &mut changed).expect("walk changed");
+        assert_eq!(changed.keys().collect::<Vec<_>>(), ["f"]);
     }
 }

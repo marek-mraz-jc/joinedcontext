@@ -1362,6 +1362,29 @@ pub fn oci_v2_routes() -> Router<ShakoState> {
             "/api/packages/{owner}/generic/{pkg}/{ver}/{file}",
             put(generic_put_file).get(generic_get_file),
         )
+        .layer(axum::middleware::from_fn(registry_challenge))
+}
+
+/// Gives every 401 of the registry the token challenge the ping sends, so a client whose token
+/// ran out during a long push can fetch a new one (distribution spec token flow).
+async fn registry_challenge(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let realm = req
+        .extensions()
+        .get::<Mount>()
+        .map(|m| format!("{}://{}/v2/token", m.scheme, m.host));
+    let mut resp = next.run(req).await;
+    if resp.status() == StatusCode::UNAUTHORIZED
+        && !resp.headers().contains_key(header::WWW_AUTHENTICATE)
+        && let Some(value) = realm.and_then(|r| {
+            header::HeaderValue::from_str(&format!(
+                "Bearer realm=\"{r}\",service=\"container_registry\""
+            ))
+            .ok()
+        })
+    {
+        resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
+    }
+    resp
 }
 
 /// Stripped-prefix `/v2` router mounted at `MountSpec { path_prefix: Some("/v2") }` in `bins/jc` (Contract S1).
@@ -1394,6 +1417,7 @@ pub fn stripped_v2_registry_routes() -> Router<ShakoState> {
             get(oci_list_referrers),
         )
         .merge(oci_v2_routes())
+        .layer(axum::middleware::from_fn(registry_challenge))
 }
 
 #[cfg(test)]
