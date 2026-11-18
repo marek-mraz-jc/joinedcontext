@@ -6,6 +6,20 @@
 -- NOT NULL and row-level security is enabled and forced: a statement outside `db::tenant_tx`
 -- reads none of these rows and writes none. There is no default Organization to key a row
 -- with (TEN-05): an operator places the project or removes its rows.
+--
+-- A row whose project the registry never minted an id for (no `project_ids` row: the previous
+-- release's backfill found no Project of that name in the mirror, e.g. an MCP call that named
+-- `platform`) can never be keyed, and no operator step places it. Such rows are moved, whole and
+-- with the rows that would cascade from them, to `project_rows_set_aside` (installation-level,
+-- read by an operator only), instead of stopping every start of this release (T-7201, jc-dev
+-- 2026-11-18). A project the registry holds keeps refusing: its Organization can still be added.
+
+CREATE TABLE IF NOT EXISTS project_rows_set_aside (
+    source_table text NOT NULL,
+    project text,
+    content jsonb NOT NULL,
+    set_aside_at timestamptz NOT NULL DEFAULT now()
+);
 
 DO $$
 DECLARE
@@ -21,9 +35,41 @@ DECLARE
         'erasures', 'access_requests',
         'drafts', 'activity', 'workspaces', 'agent_runs'];
     t text;
+    col text;
+    unplaceable text;
+    child record;
     names text;
     waiting text[] := ARRAY[]::text[];
 BEGIN
+    -- Children first (alert_notices before alert_subscriptions), so no set-aside row cascades.
+    FOR i IN REVERSE cardinality(tables)..1 LOOP
+        t := tables[i];
+        col := CASE t WHEN 'access_requests' THEN 'endpoint_project' ELSE 'project' END;
+        unplaceable := format(
+            '(r.org_id IS NULL OR r.project_id IS NULL) AND (r.%1$I IS NULL OR (r.%1$I <> ''org'' '
+            'AND NOT EXISTS (SELECT 1 FROM project_ids p WHERE p.name = r.%1$I)))', col);
+        -- Rows of other tables that ON DELETE CASCADE would take with a set-aside row.
+        FOR child IN
+            SELECT c.conrelid::regclass::text AS tbl, a.attname AS fk, pa.attname AS pk
+            FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+            JOIN pg_attribute pa ON pa.attrelid = c.confrelid AND pa.attnum = c.confkey[1]
+            WHERE c.contype = 'f' AND c.confrelid = t::regclass AND c.confdeltype = 'c'
+                AND cardinality(c.conkey) = 1
+        LOOP
+            EXECUTE format(
+                'WITH gone AS (DELETE FROM %1$s ch USING %2$I r WHERE ch.%3$I = r.%4$I AND %5$s '
+                'RETURNING to_jsonb(ch) AS content, r.%6$I AS project) '
+                'INSERT INTO project_rows_set_aside (source_table, project, content) '
+                'SELECT %7$L, project, content FROM gone',
+                child.tbl, t, child.fk, child.pk, unplaceable, col, child.tbl);
+        END LOOP;
+        EXECUTE format(
+            'WITH gone AS (DELETE FROM %1$I r WHERE %2$s RETURNING to_jsonb(r) AS content, r.%3$I AS project) '
+            'INSERT INTO project_rows_set_aside (source_table, project, content) '
+            'SELECT %1$L, project, content FROM gone',
+            t, unplaceable, col);
+    END LOOP;
     FOREACH t IN ARRAY tables LOOP
         -- The column naming the project whose key a row takes (project_ids::key_column).
         EXECUTE format(

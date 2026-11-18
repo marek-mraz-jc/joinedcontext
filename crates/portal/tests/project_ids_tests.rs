@@ -759,20 +759,36 @@ async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_
     let listed = grafana::list(&pool, key, &placed).await.expect("list");
     assert_eq!(listed.len(), 2, "{listed:?}");
 
-    // T-7201: the forcing migration waits for the two projects with no key, then forces it.
+    // T-7201: the forcing migration waits for the project the registry holds with no key, and
+    // names it; a name the registry never minted (jc-dev's `platform` activity row) can never be
+    // keyed, so its row is set aside whole instead of stopping every start.
     let refused = migrate_on(&pool)
         .await
         .expect_err("refused while a row has no key")
         .to_string();
-    for project in [&orphan, &gone] {
-        assert!(refused.contains(project.as_str()), "{project}: {refused}");
-    }
+    assert!(refused.contains(orphan.as_str()), "{refused}");
+    assert!(!refused.contains(gone.as_str()), "{refused}");
     assert!(refused.contains("Organizations page"), "{refused}");
-    sqlx::query("DELETE FROM grafana_visualizations WHERE project_id IS NULL")
+    sqlx::query("DELETE FROM grafana_visualizations WHERE project = $1")
+        .bind(&orphan)
         .execute(&pool)
         .await
-        .expect("the rows no project keys removed");
+        .expect("the unplaced project's rows removed");
     migrate_on(&pool).await.expect("forced");
+    let set_aside: Vec<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT source_table, project, content->>'id' FROM project_rows_set_aside")
+            .fetch_all(&pool)
+            .await
+            .expect("set aside");
+    assert_eq!(
+        set_aside,
+        vec![(
+            "grafana_visualizations".to_owned(),
+            Some(gone.clone()),
+            Some(removed.clone())
+        )],
+        "only the row no project can ever key is set aside, whole"
+    );
 
     // The forced table: the key alone decides what a role without BYPASSRLS reads.
     let other = project_ids::reserved(&pool, &org)
@@ -812,6 +828,72 @@ async fn project_rows_are_keyed_by_the_backfill_and_the_policy_reads_only_their_
         assert_eq!(n, expected, "{key:?}");
         tx.rollback().await.expect("rollback");
     }
+}
+
+/// T-7201 (jc-dev 2026-11-18): an activity row of `platform`, a name no Project ever had, stopped
+/// every start at 0080, with no operator step to place it. 0080 sets such rows aside whole, with the
+/// rows ON DELETE CASCADE would take with them (a comment's notification), and forces the rest.
+#[tokio::test]
+async fn rows_no_project_can_key_are_set_aside_and_the_key_forced() {
+    let pool = migrated_before(80, "pkaside").await;
+    let gone = run_name("asidegone");
+    sqlx::query(
+        "INSERT INTO activity (time, project, kind, source, summary, severity) \
+         VALUES (now(), 'platform', 'mcp.tool', 'portal', 'anna read through Claude (MCP)', 'info')",
+    )
+    .execute(&pool)
+    .await
+    .expect("the platform row");
+    let comment: i64 = sqlx::query_scalar(
+        "INSERT INTO entity_comments (project, space, urn, author, author_name, body) \
+         VALUES ($1, 'air', 'urn:ngsi-ld:Device:1', 'anna', 'Anna', 'calibrated') RETURNING id",
+    )
+    .bind(&gone)
+    .fetch_one(&pool)
+    .await
+    .expect("a comment");
+    sqlx::query(
+        "INSERT INTO notifications (recipient, project, space, urn, comment_id, author, author_name, excerpt) \
+         VALUES ('eeva', $1, 'air', 'urn:ngsi-ld:Device:1', $2, 'anna', 'Anna', 'calibrated')",
+    )
+    .bind(&gone)
+    .bind(comment)
+    .execute(&pool)
+    .await
+    .expect("its notification");
+
+    migrate_on(&pool)
+        .await
+        .expect("0080 runs: no row waits for an operator step");
+
+    let mut set_aside: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT source_table, project FROM project_rows_set_aside")
+            .fetch_all(&pool)
+            .await
+            .expect("set aside");
+    set_aside.sort();
+    assert_eq!(
+        set_aside,
+        vec![
+            ("activity".to_owned(), Some("platform".to_owned())),
+            ("entity_comments".to_owned(), Some(gone.clone())),
+            ("notifications".to_owned(), Some(gone.clone())),
+        ]
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM activity) + (SELECT count(*) FROM entity_comments) \
+         + (SELECT count(*) FROM notifications)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(left, 0);
+    let forced: bool =
+        sqlx::query_scalar("SELECT relforcerowsecurity FROM pg_class WHERE relname = 'activity'")
+            .fetch_one(&pool)
+            .await
+            .expect("forced");
+    assert!(forced);
 }
 
 /// A row of each table of T-7197 for `project`, written as before the key: what the backfill

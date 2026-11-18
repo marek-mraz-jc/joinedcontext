@@ -640,6 +640,10 @@ pub const PORTAL_TABLES: &[Table] = &[
 /// jc_portal is on [`PORTAL_TABLES`] or here; a test holds that, so a new table is decided on.
 pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     (
+        "project_rows_set_aside",
+        "rows of a name no Project ever had (migration 0080), held by no Organization",
+    ),
+    (
         "connectors",
         "a person's own connector grants, not an Organization's",
     ),

@@ -28,6 +28,18 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
         migrator.set_ignore_missing(true);
     }
     migrator.run(&pool).await?;
+    let set_aside: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM project_rows_set_aside WHERE set_aside_at > now() - interval '1 day'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    if set_aside > 0 {
+        tracing::warn!(
+            rows = set_aside,
+            "migration 0080 set aside project rows of names no Project ever had: they are in \
+             project_rows_set_aside; an operator restores a row by hand once its project exists"
+        );
+    }
     Ok(pool)
 }
 
