@@ -489,7 +489,7 @@ async fn totp_wrong_replayed_and_combined() {
     let (st, _, html) = a.password(&app, STEWARD, STEWARD_PW).await;
     assert_eq!(st, StatusCode::OK);
     assert!(html.contains("name=\"otp\""), "{html}");
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let code = steward_totp(&store, now).await;
     let (st, h, html) = a.post(&app, &[("otp", &code)]).await;
     // The steward belongs to several organizations: the picker comes next.
@@ -618,7 +618,8 @@ async fn step_up_enrols_a_totp_credential() {
         ..Default::default()
     };
     let code =
-        generate_totp_code_for_credential(&cred, chrono::Utc::now().timestamp() as u64).unwrap();
+        generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
     let (st, h, _) = a.post(&app, &[("otp", &code)]).await;
     assert!(is_code(st, &h));
     let m = user(&store, MEMBER).await;
@@ -672,7 +673,7 @@ async fn org_with_member(store: &MemoryStore, alias: &str, value: Option<&str>, 
             org_id: alias.into(),
             person_id: p.id,
             org_roles: Vec::new(),
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -738,7 +739,7 @@ async fn the_floor_required_sends_a_person_without_otp_to_enrolment() {
                     .into(),
             ..Default::default()
         },
-        chrono::Utc::now().timestamp() as u64,
+        jc_time::TimestampTz::now().as_second() as u64,
     )
     .unwrap();
     let (st, h, html) = a.post(&app, &[("otp", &code)]).await;
@@ -1001,7 +1002,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     assert_eq!(fail_rec.num_failures, 1);
 
     // Next combined submit with the right OTP succeeds from the same step.
-    let valid_otp = steward_totp(&store, chrono::Utc::now().timestamp()).await;
+    let valid_otp = steward_totp(&store, jc_time::TimestampTz::now().as_second()).await;
     let (st_next, h_next, html_next) = comb
         .post(
             &app,
@@ -1027,7 +1028,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
             user_id: steward_user.id.clone(),
             credential_type: "recovery-authn-codes".into(),
             user_label: Some("Recovery codes".into()),
-            created_date: chrono::Utc::now().timestamp_millis(),
+            created_date: jc_time::TimestampTz::now().as_millis(),
             secret_data: json!({ "hashes": code_hashes }).to_string(),
             credential_data: json!({ "remaining": 10 }).to_string(),
             temporary: false,
@@ -1421,7 +1422,7 @@ async fn k7_recovery_code_single_use_holds_under_a_concurrent_submit() {
             user_id: steward.id.clone(),
             credential_type: "recovery-authn-codes".into(),
             user_label: None,
-            created_date: chrono::Utc::now().timestamp_millis(),
+            created_date: jc_time::TimestampTz::now().as_millis(),
             secret_data: serde_json::json!({ "hashes": hashes }).to_string(),
             credential_data: serde_json::json!({ "remaining": 10 }).to_string(),
             temporary: false,
@@ -1433,7 +1434,7 @@ async fn k7_recovery_code_single_use_holds_under_a_concurrent_submit() {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("recovery:{}:{}", steward.id, hashes[0])),
             realm_id: "dev".into(),
-            expires_at: chrono::Utc::now() + chrono::Duration::days(1),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24),
         })
         .await
         .unwrap();

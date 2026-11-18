@@ -3,7 +3,8 @@
 //! secrets mount, localized messages, and signed single-use 15-min action links (W7).
 
 use crate::i18n::Bundle;
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{KaisatsuError, Result, RevokedTokenRecord, SmtpServerConfig, Store};
 use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt, verify_jwt};
 use serde::{Deserialize, Serialize};
@@ -86,7 +87,7 @@ impl EmailSender {
             .iter()
             .find(|k| k.status == "ACTIVE")
             .ok_or_else(|| KaisatsuError::Crypto("no active signing key".into()))?;
-        let now = Utc::now().timestamp();
+        let now = TimestampTz::now().as_second();
         let ttl = lifespan_secs.unwrap_or(ACTION_TOKEN_TTL_SECS).min(43_200);
         let claims = SignedActionToken {
             iss: issuer.to_owned(),
@@ -120,7 +121,7 @@ impl EmailSender {
             .mark_token_revoked(RevokedTokenRecord {
                 jti_hash: sha256_hex(&format!("action:{}", claims.jti)),
                 realm_id: realm_id.to_owned(),
-                expires_at: Utc::now() + Duration::hours(12),
+                expires_at: TimestampTz::now() + SignedDuration::from_hours(12),
             })
             .await
             .map_err(|_| KaisatsuError::BadRequest("action link has already been used".into()))?;

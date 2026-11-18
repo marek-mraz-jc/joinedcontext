@@ -271,7 +271,7 @@ async fn check_every_workload_on(realm: Value, store: Arc<dyn Store>, kek: Kek) 
     let app = router(state, Mount::new("kaisatsu", "https", HOST, "").unwrap());
     let token_path = format!("/realms/{name}/protocol/openid-connect/token");
     let issuer = format!("https://{HOST}/realms/{name}");
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     // Every client of the file is known to the realm (`bins/jc/smoke/run names` asks this way):
     // an authorization request naming it gets any refusal but `invalid_client`.
     let mut unknown = Vec::new();

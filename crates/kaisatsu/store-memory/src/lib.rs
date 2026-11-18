@@ -2,7 +2,8 @@
 //! In-memory implementation of [`kaisatsu_core::Store`] with `odata-table::MemoryTable` backing
 //! every entity set and enforcing the same organization isolation as PostgreSQL RLS (W2, W4).
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::store::StoreFuture;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, KeyManager};
@@ -520,7 +521,7 @@ impl Store for MemoryStore {
                 *em = em.to_ascii_lowercase();
             }
             if user.created_timestamp.is_none() {
-                user.created_timestamp = Some(Utc::now().timestamp_millis());
+                user.created_timestamp = Some(TimestampTz::now().as_millis());
             }
             let mut st = self.inner.write();
             let dup = st.users.iter().any(|u| {
@@ -727,7 +728,7 @@ impl Store for MemoryStore {
                 cred.id = uuid::Uuid::now_v7().to_string();
             }
             if cred.created_date == 0 {
-                cred.created_date = Utc::now().timestamp_millis();
+                cred.created_date = TimestampTz::now().as_millis();
             }
             let mut st = self.inner.write();
             st.credentials
@@ -1408,7 +1409,7 @@ impl Store for MemoryStore {
                         enabled: true,
                         email_verified: false,
                         service_account_client_id: Some(client.client_id.clone()),
-                        created_timestamp: Some(Utc::now().timestamp_millis()),
+                        created_timestamp: Some(TimestampTz::now().as_millis()),
                         ..Default::default()
                     });
                 }
@@ -1689,7 +1690,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<AuthSession>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             Ok(st
                 .auth_sessions
                 .iter()
@@ -1790,7 +1791,7 @@ impl Store for MemoryStore {
         realm_id: &'a str,
         device_code_hash: &'a str,
         client_id: &'a str,
-        now: chrono::DateTime<Utc>,
+        now: jc_time::TimestampTz,
     ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>> {
         Box::pin(async move {
             let mut st = self.inner.write();
@@ -1823,7 +1824,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<ParRequestRecord>> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             let Some(rec) = st.par_requests.iter_mut().find(|p| {
                 p.realm_id == realm_id
                     && p.request_uri_hash == request_uri_hash
@@ -1856,8 +1857,8 @@ impl Store for MemoryStore {
                         client_id: cid.clone(),
                         user_id: session.user_id.clone(),
                         scopes: vec!["openid".into()],
-                        created_at: Utc::now(),
-                        last_access: Utc::now(),
+                        created_at: TimestampTz::now(),
+                        last_access: TimestampTz::now(),
                     });
                 }
             }
@@ -1873,7 +1874,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<SsoSession>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             Ok(st
                 .sso_sessions
                 .iter()
@@ -1894,7 +1895,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Option<SsoSession>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             Ok(st
                 .sso_sessions
                 .iter()
@@ -1915,7 +1916,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Vec<SsoSession>> {
         Box::pin(async move {
             let st = self.inner.read();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             Ok(st
                 .sso_sessions
                 .iter()
@@ -2110,7 +2111,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, bool> {
         Box::pin(async move {
             let st = self.inner.read();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             Ok(st
                 .revoked_tokens
                 .iter()
@@ -2482,7 +2483,7 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, Vec<EmailOutboxRecord>> {
         Box::pin(async move {
             let cap = limit.clamp(1, 50);
-            let now = Utc::now();
+            let now = TimestampTz::now();
             let mut st = self.inner.write();
             let mut claimed = Vec::new();
             for row in st.email_outbox.iter_mut() {
@@ -2506,7 +2507,7 @@ impl Store for MemoryStore {
         id: &'a str,
         sent: bool,
         error: Option<String>,
-        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
@@ -2518,7 +2519,7 @@ impl Store for MemoryStore {
             {
                 if sent {
                     row.status = "sent".into();
-                    row.sent_at = Some(Utc::now());
+                    row.sent_at = Some(TimestampTz::now());
                     row.last_error = None;
                 } else {
                     row.last_error = error;
@@ -2526,8 +2527,8 @@ impl Store for MemoryStore {
                         row.status = "failed".into();
                     } else {
                         row.status = "pending".into();
-                        row.next_attempt_at =
-                            next_attempt_at.unwrap_or_else(|| Utc::now() + Duration::seconds(5));
+                        row.next_attempt_at = next_attempt_at
+                            .unwrap_or_else(|| TimestampTz::now() + SignedDuration::from_secs(5));
                     }
                 }
             }
@@ -2556,7 +2557,7 @@ impl Store for MemoryStore {
             row.status = "pending".into();
             row.attempts = 0;
             row.last_error = None;
-            row.next_attempt_at = Utc::now();
+            row.next_attempt_at = TimestampTz::now();
             Ok(Some(row.clone()))
         })
     }
@@ -2634,7 +2635,7 @@ impl Store for MemoryStore {
     fn sweep_expired<'a>(&'a self) -> StoreFuture<'a, u64> {
         Box::pin(async move {
             let mut st = self.inner.write();
-            let now = Utc::now();
+            let now = TimestampTz::now();
             let mut removed = 0u64;
 
             let b1 = st.auth_sessions.len();
@@ -2663,7 +2664,7 @@ impl Store for MemoryStore {
             st.revoked_tokens.retain(|r| r.expires_at > now);
             removed += (b6 - st.revoked_tokens.len()) as u64;
 
-            let _ = Duration::seconds(0);
+            let _ = SignedDuration::from_secs(0);
             Ok(removed)
         })
     }

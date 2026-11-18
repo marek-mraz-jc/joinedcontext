@@ -2,7 +2,7 @@
 //! DPoP (RFC 9449) proof verification and JWK thumbprint (`cnf.jkt`) calculation (W1, W12).
 
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
-use chrono::Utc;
+use jc_time::TimestampTz;
 use jsonwebtoken::decode_header;
 use kaisatsu_core::{KaisatsuError, Result};
 use kaisatsu_crypto::{sha256_base64url, verify_jwt_with_jwk};
@@ -186,7 +186,7 @@ pub fn verify_dpop_proof(
     let claims: DpopClaims = serde_json::from_slice(&payload_bytes)
         .map_err(|_| KaisatsuError::invalid_dpop_proof("invalid DPoP claims"))?;
 
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
     if (now - claims.iat).abs() > 300 {
         return Err(KaisatsuError::invalid_dpop_proof(
             "DPoP proof iat is outside the 300s freshness window",
@@ -288,8 +288,7 @@ mod tests {
     }
 
     fn claims(extra: Value) -> Value {
-        let mut c =
-            json!({ "jti": "j-1", "htm": "POST", "htu": HTU, "iat": Utc::now().timestamp() });
+        let mut c = json!({ "jti": "j-1", "htm": "POST", "htu": HTU, "iat": TimestampTz::now().as_second() });
         for (k, v) in extra.as_object().unwrap() {
             c[k] = v.clone();
         }
@@ -372,13 +371,13 @@ mod tests {
                 &h,
                 "dpop+jwt",
                 &h.jwk,
-                &claims(json!({ "iat": Utc::now().timestamp() - 310 })),
+                &claims(json!({ "iat": TimestampTz::now().as_second() - 310 })),
             ),
             proof_with(
                 &h,
                 "dpop+jwt",
                 &h.jwk,
-                &claims(json!({ "iat": Utc::now().timestamp() + 310 })),
+                &claims(json!({ "iat": TimestampTz::now().as_second() + 310 })),
             ),
             proof_with(&h, "dpop+jwt", &h.jwk, &claims(json!({ "htm": "GET" }))),
             proof_with(

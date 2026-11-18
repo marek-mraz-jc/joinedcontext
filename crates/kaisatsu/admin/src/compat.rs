@@ -11,8 +11,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{random_handle_256, verify_jwt};
 use kaisatsu_oidc::OidcState;
@@ -715,7 +715,7 @@ pub(crate) async fn record_admin_write(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: ctx.realm_id.clone(),
             org_id: ctx.active_org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             operation_type: operation_type.to_owned(),
             resource_type: resource_type.to_owned(),
             resource_path: resource_path.to_owned(),

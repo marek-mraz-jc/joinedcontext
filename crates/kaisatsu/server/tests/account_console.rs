@@ -200,7 +200,7 @@ async fn steward_totp(store: &MemoryStore) -> String {
     let s = user(store, STEWARD).await;
     let creds = store.list_credentials("dev", &s.id).await.unwrap();
     let otp = creds.iter().find(|c| c.credential_type == "otp").unwrap();
-    generate_totp_code_for_credential(otp, chrono::Utc::now().timestamp() as u64).unwrap()
+    generate_totp_code_for_credential(otp, jc_time::TimestampTz::now().as_second() as u64).unwrap()
 }
 
 async fn user(store: &MemoryStore, name: &str) -> UserRepresentation {
@@ -913,7 +913,7 @@ async fn passkeys_are_removed_only_by_their_owner() {
             attestation_type: "none".into(),
             rp_id: "idm.dev.example.test".into(),
             user_label: Some("Laptop".into()),
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
             last_used_at: None,
         })
         .await
@@ -1215,7 +1215,7 @@ async fn update_password_is_an_application_initiated_action_with_reauthenticatio
         .await
         .unwrap()
         .unwrap();
-    sso.auth_time = chrono::Utc::now().timestamp();
+    sso.auth_time = jc_time::TimestampTz::now().as_second();
     store.upsert_sso_session(sso).await.unwrap();
     let page = authorize(&app, "&kc_action=UPDATE_PASSWORD&max_age=0", Some(&me.sso))
         .await
@@ -1260,7 +1260,8 @@ async fn configure_totp_adds_a_named_authenticator_and_reports_success() {
     assert!(html.contains("Invalid authenticator code"));
     assert!(!html.contains("e-mail or password"));
     let code =
-        generate_totp_code_for_credential(&cred, chrono::Utc::now().timestamp() as u64).unwrap();
+        generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
     let (st, h, html) = page
         .post(
             &app,

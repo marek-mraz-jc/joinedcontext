@@ -4,7 +4,8 @@
 //! `idp_links`), and K15 (`PgScopedTable` OData SQL pushdown matching `MemoryTable` and
 //! resisting SQL injection).
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::*;
 use kaisatsu_crypto::Kek;
 use kaisatsu_store_memory::MemoryStore;
@@ -106,8 +107,8 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now(),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now(),
+        created_at: TimestampTz::now(),
         sent_at: None,
     };
     let res = store
@@ -147,8 +148,8 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now() - Duration::seconds(1),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now() - SignedDuration::from_secs(1),
+        created_at: TimestampTz::now(),
         sent_at: None,
     };
     store
@@ -224,7 +225,7 @@ async fn assert_outbox_and_webauthn_contract(store: Arc<dyn Store>) {
         attestation_type: "None".into(),
         rp_id: "idm.localhost".into(),
         user_label: Some("Laptop".into()),
-        created_at: Utc::now(),
+        created_at: TimestampTz::now(),
         last_used_at: None,
     };
     store
@@ -438,8 +439,8 @@ fn outbox_record() -> EmailOutboxRecord {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now(),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now(),
+        created_at: TimestampTz::now(),
         sent_at: None,
     }
 }

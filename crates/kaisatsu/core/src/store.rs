@@ -306,7 +306,7 @@ pub trait Store: Send + Sync {
         realm_id: &'a str,
         device_code_hash: &'a str,
         client_id: &'a str,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>>;
 
     fn upsert_sso_session<'a>(&'a self, session: SsoSession) -> StoreFuture<'a, ()>;
@@ -469,7 +469,7 @@ pub trait Store: Send + Sync {
         id: &'a str,
         sent: bool,
         error: Option<String>,
-        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
     ) -> StoreFuture<'a, ()>;
     fn retry_outbox_row<'a>(

@@ -21,8 +21,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Form};
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration, Utc};
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
 use kaisatsu_core::*;
@@ -108,7 +109,7 @@ pub async fn device_authorization(
         5,
         (1, 60),
     );
-    let now = Utc::now();
+    let now = TimestampTz::now();
     // A user code another pending authorization holds is drawn again (the store refuses it).
     let mut issued = None;
     for _ in 0..3 {
@@ -131,7 +132,7 @@ pub async fn device_authorization(
             last_poll_at: None,
             consumed: false,
             created_at: now,
-            expires_at: now + Duration::seconds(lifespan),
+            expires_at: now + SignedDuration::from_secs(lifespan),
         };
         match state.store.put_device_code(rec).await {
             Ok(()) => {
@@ -184,8 +185,9 @@ async fn signed_in(
         .store
         .get_sso_session_by_handle(&realm.id, &sha256_hex(&handle))
         .await?;
-    let Some(sso) = sso.filter(|s| s.max_expires_at > Utc::now() && s.idle_expires_at > Utc::now())
-    else {
+    let Some(sso) = sso.filter(|s| {
+        s.max_expires_at > TimestampTz::now() && s.idle_expires_at > TimestampTz::now()
+    }) else {
         return Ok(None);
     };
     // A session without the second factor the person now needs approves no device: sign in again.
@@ -284,7 +286,7 @@ async fn start_login(
 ) -> Result<Response> {
     let id = uuid::Uuid::now_v7().to_string();
     let handle = random_handle_256();
-    let now = Utc::now();
+    let now = TimestampTz::now();
     state
         .store
         .put_auth_session(AuthSession {
@@ -320,7 +322,7 @@ async fn start_login(
             amr: Vec::new(),
             acr_achieved: String::new(),
             created_at: now,
-            expires_at: now + Duration::minutes(30),
+            expires_at: now + SignedDuration::from_mins(30),
         })
         .await?;
     let set_cookie = crate::handlers::add_auth_cookie(headers, &handle, 1800);
@@ -388,13 +390,13 @@ pub async fn device_page(
 
 /// Whether the person's wrong codes reached the cap in the current window.
 async fn capped(state: &OidcState, realm: &RealmConfig, user_id: &str) -> Result<bool> {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     Ok(state
         .store
         .get_login_failure(&realm.id, &format!("device:{user_id}"))
         .await?
         .is_some_and(|r| {
-            r.window_started_at + Duration::seconds(WRONG_CODE_WINDOW_SECS) > now
+            r.window_started_at + SignedDuration::from_secs(WRONG_CODE_WINDOW_SECS) > now
                 && r.num_failures >= MAX_WRONG_CODES
         }))
 }
@@ -406,12 +408,12 @@ async fn count_wrong_code(
     client_ip: &str,
 ) -> Result<()> {
     let key = format!("device:{user_id}");
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let mut rec = state
         .store
         .get_login_failure(&realm.id, &key)
         .await?
-        .filter(|r| r.window_started_at + Duration::seconds(WRONG_CODE_WINDOW_SECS) > now)
+        .filter(|r| r.window_started_at + SignedDuration::from_secs(WRONG_CODE_WINDOW_SECS) > now)
         .unwrap_or_else(|| LoginFailureRecord {
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
@@ -423,7 +425,7 @@ async fn count_wrong_code(
             window_started_at: now,
         });
     rec.num_failures += 1;
-    rec.last_failure_ms = now.timestamp_millis();
+    rec.last_failure_ms = now.as_millis();
     client_ip.clone_into(&mut rec.last_ip_failure);
     state.store.upsert_login_failure(rec).await
 }
@@ -499,7 +501,7 @@ pub async fn device_submit(
         .map(String::as_str)
         .unwrap_or_default();
     let code = normalize_user_code(entered);
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let found = if code.len() == 8 {
         state
             .store
@@ -619,7 +621,7 @@ pub async fn device_submit(
                     id: uuid::Uuid::now_v7().to_string(),
                     realm_id: realm.id.clone(),
                     org_id: None,
-                    time: now.timestamp_millis(),
+                    time: now.as_millis(),
                     event_type: if allow {
                         "OAUTH2_DEVICE_VERIFY_USER_CODE".into()
                     } else {
