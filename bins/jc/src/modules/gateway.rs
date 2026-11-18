@@ -1612,7 +1612,7 @@ mod tests {
                 "http://jc-core:8080".into(),
             ),
         );
-        let bind = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "0.0.0.0:9090".to_owned());
+        let bind = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "[::]:9090".to_owned());
         let core = "http://jc-core-internal:9090";
         let v = vars(
             &siblings,
@@ -1871,7 +1871,7 @@ mod tests {
     #[test]
     fn the_forge_credential_is_the_one_a_remote_forwarder_swaps() {
         let dir = tempfile::tempdir().unwrap();
-        let forge = archives("http://127.0.0.1:1", dir.path());
+        let forge = archives("http://localhost:1", dir.path());
         assert!(crate::door::is_credential(
             Module::Shako,
             &forge.authorization,
