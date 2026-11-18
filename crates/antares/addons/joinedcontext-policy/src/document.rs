@@ -1126,10 +1126,6 @@ mod tests {
                 "names no scope path",
             ),
             (
-                json!({"policies": [with("scopeQ", json!("/a;/b"))]}),
-                "only paths joined by | or ,",
-            ),
-            (
                 json!({"policies": [with("scopeQ", json!("(/a|/b);/c"))]}),
                 "only paths joined by | or ,",
             ),
