@@ -107,7 +107,8 @@ realm = {"realm": "jc-split", "enabled": True, "clientScopes": [scope(m) for m i
 with open(out, "w") as f:
     json.dump(realm, f, indent=1)
 PY
-split_realm="$origin/id/realms/jc-split"
+# kaisatsu answers at /login since T-6992; /id answers 308 there, which no token client follows.
+split_realm="$origin/login/realms/jc-split"
 
 door=$(printf '\n[door]\nissuer = "%s"\njwks_url = "%s/protocol/openid-connect/certs"\nclients = ["portal-remote"]\n' \
   "$split_realm" "$split_realm")
@@ -222,12 +223,10 @@ done
 # The data plane after core: it takes its tokens from core's kaisatsu and its revocations from
 # core's Portal. One replica at a time, as core: the first runs the broker's migrations.
 for r in $(seq "$data_replicas"); do
-  # The broker's admin token is one for the data plane, as a Secret gives every pod (notify_once.py).
-  if [ "$r" -gt 1 ] && [ ! -e "$split/data-$r-state/antares-admin-token" ]; then
-    mkdir -p -m 700 "$split/data-$r-state"
-    cp -p "$split/data-1-state/antares-admin-token" "$split/data-$r-state/"
-  fi
-  ANTARES_BUS=nats ANTARES_NATS_URL=$nats_url start_jc "data-$r" gateway,antares "$split/data.toml" \
+  # The broker's admin token is the installation's, as one Secret gives every pod: core's Portal
+  # keeps it in its state, the smoke and notify_once.py read it there. Without the Portal beside
+  # it a broker holds a fresh one per boot in memory, which nobody else knows.
+  JCBIN_ANTARES_ADMIN_TOKEN_FILE=$home/state/antares-admin-token ANTARES_BUS=nats ANTARES_NATS_URL=$nats_url start_jc "data-$r" gateway,antares "$split/data.toml" \
     $((pg_port + 419 + r)) $((pg_port + 219 + r)) "$split/data-$r.log" "$split/data-$r.pid" \
     --state-dir "$split/data-$r-state"
   "$here/wait-jc.sh" "$(cat "$split/data-$r.pid")" "$split/data-$r.log" || exit 1
