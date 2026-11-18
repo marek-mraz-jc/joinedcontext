@@ -9,6 +9,7 @@ use crate::app::{Gateway, MAX_BODY};
 use crate::auth::subject::principal_of;
 use crate::auth::subject::Subject;
 use crate::handlers::ngsi_ld::{reserve_create, view_payload};
+use crate::handlers::writes::{apply_planned, Planned};
 use crate::mcp::tools::{Shape, TOOLS};
 use crate::resolver::Endpoint;
 use crate::{mcp, operations, query};
@@ -33,6 +34,51 @@ impl Reserved {
     }
 }
 
+/// What a guarded call holds until the broker answers it.
+#[derive(Default)]
+pub(crate) struct Guarded {
+    /// The create it holds of a form's daily quota.
+    pub(crate) reserved: Option<Reserved>,
+    /// A confirmed delete's planned relationship changes and the headers they are made with,
+    /// made only once the broker took the call ([`carry_out`]).
+    pub(crate) deletes: Option<(HeaderMap, Planned)>,
+}
+
+/// Makes a confirmed delete's planned changes when the broker `taken` the call: the broker
+/// alone knows whether the `requestState` is one it sealed, so nothing changes before it
+/// deleted the entity (DM-71). `Err` is the text the call answers instead.
+pub(crate) async fn carry_out(
+    gateway: &Gateway,
+    deletes: Option<(HeaderMap, Planned)>,
+    taken: bool,
+) -> Result<(), String> {
+    let Some((headers, planned)) = deletes.filter(|_| taken) else {
+        return Ok(());
+    };
+    // ponytail: a batch_delete result's per-id errors are not read, so the plan of an id the
+    // broker kept inside a taken batch is still made; read them once the tool's result shape is
+    // shared with the broker.
+    apply_planned(gateway, &headers, &planned, |_| true)
+        .await
+        .map_err(|problem| problem.detail.unwrap_or(problem.title))
+}
+
+/// Whether a tool call's answer, JSON or the last event of a stream, is a result that is not a
+/// tool error.
+pub(crate) fn taken(status: axum::http::StatusCode, held: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(held) else {
+        return false;
+    };
+    let json = text
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix("data:"))
+        .unwrap_or(text);
+    status.is_success()
+        && serde_json::from_str::<Value>(json.trim())
+            .is_ok_and(|answer| answer["result"].is_object() && answer["result"]["isError"] != true)
+}
+
 /// Runs the guards on a `tools/call` of a write tool and rewrites its body argument with what
 /// they kept; a read tool passes untouched. `Err` is the JSON-RPC answer that refuses the call.
 pub(crate) async fn guarded(
@@ -41,14 +87,14 @@ pub(crate) async fn guarded(
     subject: &Subject,
     caller: &str,
     message: &mut Value,
-) -> Result<Option<Reserved>, Value> {
+) -> Result<Guarded, Value> {
     let id = message["id"].clone();
     // A call that names no tool runs none: the broker answers it with its invalid-params error.
     let Some(tool) = message["params"]["name"].as_str().map(str::to_owned) else {
-        return Ok(None);
+        return Ok(Guarded::default());
     };
     if is_read_tool(&tool) {
-        return Ok(None);
+        return Ok(Guarded::default());
     }
     let refuse =
         |why: &str| mcp::jsonrpc::result(id.clone(), mcp::jsonrpc::refused(why, &Value::Null));
@@ -86,6 +132,7 @@ pub(crate) async fn guarded(
     };
     crate::middleware::tenancy::pin_tenant(&mut headers, tenant);
     let mut divided = None;
+    let mut planned = Planned::new();
     if let Err(refusal) = view_payload(
         gateway,
         (endpoint, subject),
@@ -93,7 +140,7 @@ pub(crate) async fn guarded(
         &mut headers,
         &mut sent,
         &mut divided,
-        confirmed,
+        &mut planned,
     )
     .await
     {
@@ -125,6 +172,8 @@ pub(crate) async fn guarded(
             arguments.insert(name.to_owned(), kept);
         }
     }
+    // The call before the person's answer only plans the changes, so a refusal is told at once.
+    let deletes = (confirmed && !planned.is_empty()).then_some((headers, planned));
     match reserve_create(gateway, endpoint, caller, operation) {
         Ok(at) => {
             let reserved = at.map(|at| Reserved {
@@ -134,12 +183,12 @@ pub(crate) async fn guarded(
             // The call before the person's answer only learns a slot is free; the confirmed
             // retry takes it.
             if confirmed {
-                return Ok(reserved);
+                return Ok(Guarded { reserved, deletes });
             }
             if let Some(reserved) = reserved {
                 reserved.release(gateway, endpoint);
             }
-            Ok(None)
+            Ok(Guarded::default())
         }
         Err(refusal) => {
             let held = axum::body::to_bytes(refusal.into_body(), MAX_BODY)

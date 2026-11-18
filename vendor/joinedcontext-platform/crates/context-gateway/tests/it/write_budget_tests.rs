@@ -217,6 +217,51 @@ async fn a_write_past_the_budget_waits_then_is_answered_503_and_never_reaches_th
         .is_success());
 }
 
+/// PRF-03: a write the Endpoint's Policy refuses is answered at once, never queued for the
+/// write budget behind the writes it would delay.
+#[tokio::test]
+async fn a_refused_write_is_answered_without_waiting_for_the_budget() {
+    let mut broker = stalled_broker().await;
+    let gateway = Arc::new(
+        Gateway::new(Broker::new(broker.url.clone()), Box::new(PolicyPdp), DOMAIN)
+            .budget_writes(1)
+            .wait_for_writes(Duration::from_millis(100))
+            .serve([endpoint()]),
+    );
+    let app = router(gateway);
+    let held = tokio::spawn(app.clone().oneshot(upsert(700, 1)));
+    broker
+        .arrived
+        .recv()
+        .await
+        .expect("the first write arrives");
+
+    // The Policy grants no create of entities, so this write is refused before the budget.
+    let body = "x".repeat(700 * 1024);
+    let refused = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities"))
+                .header("content-type", "application/json")
+                .header(CONTENT_LENGTH, body.len())
+                .body(Body::from(body))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+
+    broker.release.add_permits(1);
+    assert!(held
+        .await
+        .expect("joined")
+        .expect("answered")
+        .status()
+        .is_success());
+}
+
 /// A DELETE carries no body and no Content-Length.
 fn delete(n: usize) -> Request<Body> {
     Request::builder()

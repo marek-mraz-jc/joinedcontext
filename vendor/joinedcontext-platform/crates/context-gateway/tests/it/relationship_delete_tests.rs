@@ -4,7 +4,7 @@
 //! gateway reads the space and then writes: a one-to-one target another source stores is
 //! refused (`target-taken`), and a delete runs the rule of every relationship that points at
 //! what it deletes: `restrict` answers 409 with the count, `cascade` and `set-null` change the
-//! pointing entities first and the entity itself last. The broker here is a small in-memory
+//! pointing entities once the broker deleted the entity itself. The broker here is a small in-memory
 //! store that answers the computed end's query (`type` + `q={slot}=="{urn}"`) and applies the
 //! writes, so each test reads the store after the request.
 
@@ -109,6 +109,9 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
     };
     if method != Method::GET && store.failing.contains(&decode(&path)) {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if method == Method::POST && path.ends_with("/mcp") {
+        return mcp_tool(&mut store, &bytes);
     }
     let segments: Vec<String> = path
         .trim_start_matches("/ngsi-ld/v1/")
@@ -219,6 +222,27 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
         }
         _ => StatusCode::NO_CONTENT.into_response(),
     }
+}
+
+/// The broker's MCP view for `delete_entity`: the first call asks the person, the retry with
+/// the state it sealed deletes, and any other state is refused.
+fn mcp_tool(store: &mut Store, bytes: &[u8]) -> axum::response::Response {
+    let message: Value = serde_json::from_slice(bytes).unwrap_or(Value::Null);
+    let answer = match message["params"]["requestState"].as_str() {
+        None => json!({ "result": { "content": [{ "type": "text", "text": "confirm?" }] } }),
+        Some("sealed-by-the-broker") => {
+            let id = message["params"]["arguments"]["id"]
+                .as_str()
+                .unwrap_or_default();
+            store.entities.remove(id);
+            json!({ "result": { "content": [{ "type": "text", "text": "deleted" }] } })
+        }
+        Some(_) => json!({ "error": { "code": -32602, "message": "unknown requestState" } }),
+    };
+    let mut answer = answer;
+    answer["jsonrpc"] = json!("2.0");
+    answer["id"] = message["id"].clone();
+    axum::Json(answer).into_response()
 }
 
 async fn broker(held: Vec<Value>, failing: &[&str]) -> (String, Shared) {
@@ -664,8 +688,8 @@ async fn a_cascade_two_levels_deep_deletes_from_the_farthest_in() {
     for kept in [urn("School", "s2"), urn("Teacher", "t2"), urn("Desk", "d1")] {
         assert!(answer.held(&kept).is_some(), "{kept} went too");
     }
-    // The lessons go before their teacher, and the teacher before the school: a stop part way
-    // leaves nothing pointing at an entity already gone.
+    // The school goes first, as the caller's delete; then the lessons before their teacher, so
+    // a stop part way leaves nothing pointing at an entity the rules deleted.
     let deletes: Vec<String> = answer
         .writes()
         .into_iter()
@@ -682,7 +706,10 @@ async fn a_cascade_two_levels_deep_deletes_from_the_farthest_in() {
         at(":l1") < at(":t1") && at(":l2") < at(":t1"),
         "{deletes:?}"
     );
-    assert!(at(":t1") < at(":s1"), "{deletes:?}");
+    assert!(
+        at(":s1") < at(":l1") && at(":s1") < at(":l2"),
+        "{deletes:?}"
+    );
 }
 
 #[tokio::test]
@@ -776,11 +803,23 @@ async fn an_mcp_delete_unlinks_nothing_before_the_person_confirms_it() {
             .is_some()
     );
 
+    // A state the broker did not seal deletes nothing, so the rules change nothing either.
+    let mut forged = asked.clone();
+    forged["requestState"] = json!("made-up-by-the-caller");
+    let response = app.clone().oneshot(call(forged)).await.expect("an answer");
+    assert!(response.status().is_success(), "{}", response.status());
+    assert!(!unlinked(), "unlinked on a state the broker refused");
+
     let mut confirmed = asked;
     confirmed["requestState"] = json!("sealed-by-the-broker");
     let response = app.oneshot(call(confirmed)).await.expect("an answer");
     assert!(response.status().is_success(), "{}", response.status());
     assert!(unlinked(), "the confirmed delete runs its rules");
+    assert!(!store
+        .lock()
+        .expect("the store")
+        .entities
+        .contains_key(&urn("Desk", "d1")));
 }
 
 /// T-3767: the reads and the unlinking a held delete makes are the gateway's own and speak as
@@ -821,8 +860,8 @@ async fn a_held_delete_unlinks_under_the_callers_provenance_and_reason() {
         .zip(store.provenance.iter())
         .filter(|(call, _)| !call.starts_with("GET "))
         .collect();
-    let (last, callers) = writes.last().expect("the caller's own delete");
-    assert!(last.contains("Desk"), "{writes:?}");
+    let (first, callers) = writes.first().expect("the caller's own delete");
+    assert!(first.contains("Desk"), "{writes:?}");
     assert!(callers.0.is_some(), "the caller's delete names an actor");
     assert_eq!(callers.1.as_deref(), Some("test"));
     assert!(
@@ -897,7 +936,7 @@ async fn a_cascade_into_entities_the_caller_may_not_delete_is_refused_without_id
     assert!(answer.writes().is_empty(), "{:?}", answer.writes());
 }
 
-/// The rules change entities as the gateway before the broker's view decides the delete, so a
+/// The gateway decides the root under the caller's grant before it plans anything, so a
 /// caller who may change every dependent but not delete the root changes nothing (F-R2PLT2-002).
 #[tokio::test]
 async fn a_root_the_caller_may_not_delete_leaves_its_dependents_untouched() {
@@ -969,9 +1008,35 @@ async fn a_batch_delete_of_more_ids_than_the_broker_takes_is_refused_unplanned()
     );
 }
 
+/// The broker decides the delete before any rule changes a dependent: a root it refuses (a
+/// precondition, a row filter, a space on hold) leaves every dependent as it was.
 #[tokio::test]
-async fn a_change_the_broker_refuses_stops_the_delete_with_the_entity_in_place() {
-    // The lessons go first, l2 then l1; l1 is refused, so the teacher and the school are never
+async fn a_root_the_broker_refuses_leaves_its_dependents_untouched() {
+    let s1 = format!("/ngsi-ld/v1/entities/{}", urn("School", "s1"));
+    let answer = send(
+        CLASSES,
+        &[s1.as_str()],
+        Method::DELETE,
+        &format!("/entities/{}", urn("School", "s1")),
+        None,
+    )
+    .await;
+
+    assert!(answer.status.is_server_error(), "{}", answer.body);
+    for kept in [
+        urn("School", "s1"),
+        urn("Teacher", "t1"),
+        urn("Lesson", "l1"),
+        urn("Lesson", "l2"),
+    ] {
+        assert!(answer.held(&kept).is_some(), "{kept} went");
+    }
+    assert_eq!(answer.writes().len(), 1, "{:?}", answer.writes());
+}
+
+#[tokio::test]
+async fn a_change_the_broker_refuses_after_the_delete_says_how_far_the_rules_got() {
+    // The school goes, then the lessons, l2 then l1; l1 is refused, so the teacher is never
     // touched and the answer counts the one change already made.
     let l1 = format!("/ngsi-ld/v1/entities/{}", urn("Lesson", "l1"));
     let answer = send(
@@ -986,8 +1051,8 @@ async fn a_change_the_broker_refuses_stops_the_delete_with_the_entity_in_place()
     assert_eq!(answer.status, StatusCode::BAD_GATEWAY, "{}", answer.body);
     assert_eq!(answer.body["changed"], 1, "{}", answer.body);
     let detail = answer.body["detail"].as_str().unwrap_or_default();
-    assert!(detail.contains("is not deleted"), "{detail}");
-    assert!(answer.held(&urn("School", "s1")).is_some());
+    assert!(detail.contains("is deleted, but"), "{detail}");
+    assert!(answer.held(&urn("School", "s1")).is_none());
     assert!(answer.held(&urn("Teacher", "t1")).is_some());
     assert!(answer.held(&urn("Lesson", "l1")).is_some());
     assert!(answer.held(&urn("Lesson", "l2")).is_none());

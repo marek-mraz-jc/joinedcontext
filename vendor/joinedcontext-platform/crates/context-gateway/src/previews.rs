@@ -141,6 +141,31 @@ pub struct Mirror {
     seen: BTreeMap<String, u64>,
 }
 
+/// Writes one preview's files and its access file under `staging`.
+fn staged(
+    staging: &Path,
+    prefix: &str,
+    files: &BTreeMap<String, String>,
+    access: &Access,
+) -> std::io::Result<()> {
+    let _ = std::fs::remove_dir_all(staging);
+    for (relative, text) in files {
+        let Some(path) = inside(staging, relative) else {
+            tracing::warn!(%prefix, path = %relative, "a file outside the preview is left out");
+            continue;
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, text)?;
+    }
+    std::fs::create_dir_all(staging)?;
+    std::fs::write(
+        staging.join(ACCESS_FILE),
+        serde_json::to_vec(access).map_err(std::io::Error::other)?,
+    )
+}
+
 impl Mirror {
     /// A mirror that writes under `dir`.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
@@ -178,29 +203,28 @@ impl Mirror {
                 continue;
             }
             let staging = self.dir.join(format!(".{}", preview.prefix));
-            let _ = std::fs::remove_dir_all(&staging);
-            for (relative, text) in &preview.files {
-                let Some(path) = inside(&staging, relative) else {
-                    tracing::warn!(prefix = %preview.prefix, path = %relative, "a file outside the preview is left out");
-                    continue;
-                };
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                std::fs::write(path, text)?;
+            // One preview that cannot be written is withdrawn, not served stale, and the others
+            // and the removals below still run.
+            if let Err(error) =
+                staged(&staging, &preview.prefix, &preview.files, &access).and_then(|()| {
+                    let _ = std::fs::remove_dir_all(&target);
+                    std::fs::rename(&staging, &target)
+                })
+            {
+                tracing::warn!(prefix = %preview.prefix, %error, "a preview could not be written; it is withdrawn");
+                let _ = std::fs::remove_dir_all(&staging);
+                let _ = std::fs::remove_dir_all(&target);
+                self.seen.remove(&preview.prefix);
+                continue;
             }
-            std::fs::create_dir_all(&staging)?;
-            std::fs::write(
-                staging.join(ACCESS_FILE),
-                serde_json::to_vec(&access).map_err(std::io::Error::other)?,
-            )?;
-            let _ = std::fs::remove_dir_all(&target);
-            std::fs::rename(&staging, &target)?;
             self.seen.insert(preview.prefix, digest);
         }
         for (prefix, path) in listed(&self.dir) {
             if !wanted.contains(&prefix) {
-                std::fs::remove_dir_all(path)?;
+                if let Err(error) = std::fs::remove_dir_all(path) {
+                    tracing::warn!(%prefix, %error, "a withdrawn preview could not be removed");
+                    continue;
+                }
                 self.seen.remove(&prefix);
             }
         }

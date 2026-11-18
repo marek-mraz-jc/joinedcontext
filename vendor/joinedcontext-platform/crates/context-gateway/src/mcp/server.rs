@@ -335,13 +335,22 @@ pub(crate) async fn serve(
                 Ok(claims) => claims,
                 Err(rejected) => return ProblemDetails::from(rejected).into_response(),
             };
-            if !server.admits(Some(&projects_of(&gateway, &claims))) {
+            let projects = projects_of(&gateway, &claims);
+            if !server.admits(Some(&projects)) {
                 tracing::warn!(
                     principal = %claims.sub,
                     server = %server.path(),
                     "the token names no project this server admits"
                 );
                 return ProblemDetails::forbidden().into_response();
+            }
+            if !of_its_organization(&gateway, &server, &claims, &projects) {
+                tracing::warn!(
+                    principal = %claims.sub,
+                    server = %server.path(),
+                    "the caller is of another organization than the server"
+                );
+                return ProblemDetails::not_found().into_response();
             }
             let reach = members
                 .into_iter()
@@ -407,6 +416,28 @@ fn readable(
     subject: Subject,
 ) -> Option<(Arc<Endpoint>, Subject)> {
     tools::reads_anything(gateway, &endpoint, &subject).then_some((endpoint, subject))
+}
+
+/// Whether a verified caller of `projects` belongs to an `organization` server's Organization,
+/// as an `organization` Endpoint asks (EP-14, ADR-N-058 2.4): by the Organization the token
+/// names, or by a project of it. A server of no Organization (the installation's own servers)
+/// keeps every member, its member Endpoints still deciding each call.
+fn of_its_organization(
+    gateway: &Gateway,
+    server: &McpServer,
+    claims: &Claims,
+    projects: &[String],
+) -> bool {
+    if server.audience != Audience::Organization {
+        return true;
+    }
+    let Some(ours) = gateway.organization_of(&server.project) else {
+        return true;
+    };
+    claims.member_of(&ours)
+        || projects
+            .iter()
+            .any(|project| gateway.organization_of(project).as_deref() == Some(ours.as_str()))
 }
 
 /// The projects a verified caller acts in: a ServiceAccount's own, a person's groups.
