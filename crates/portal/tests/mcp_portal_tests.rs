@@ -2246,9 +2246,9 @@ async fn the_organizations_own_resources_are_listed_and_read_under_their_own_hea
     assert!(text.contains("Pipeline"), "the rule it carries: {text}");
 }
 
-/// T-0971: a browser-based MCP client is allowed cross-origin, because these routes authenticate
-/// by `Authorization` and nothing else. The rest of the API, which trusts the session cookie, is
-/// deliberately not opened: there an allowed origin would be a request-forgery surface.
+/// T-0971, RTE-10 (S1-52): a browser-based MCP client is allowed cross-origin only from an
+/// origin the deployment names; `https://client.example` is none here. The rest of the API,
+/// which trusts the session cookie, is not opened to any origin.
 #[tokio::test]
 async fn a_browser_client_may_reach_the_mcp_door_and_not_the_cookie_api() {
     let (app, _issuer, _signer, _kid) = setup_app_and_keys().await;
@@ -2277,8 +2277,8 @@ async fn a_browser_client_may_reach_the_mcp_door_and_not_the_cookie_api() {
         .unwrap_or_default()
         .to_owned();
     assert_eq!(
-        allowed, "*",
-        "the MCP door answers a browser client: {preflight:?}"
+        allowed, "",
+        "the MCP door answers no origin it was not given: {preflight:?}"
     );
     // No credentials: the browser sends no cookie, so an open origin carries no ambient authority.
     assert!(

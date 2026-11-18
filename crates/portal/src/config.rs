@@ -428,6 +428,10 @@ pub struct Config {
     /// the one origin `connect-src` gains, for the Apps that declare blob storage. `None` adds
     /// nothing, and such an App's uploads are refused by its policy.
     pub apps_store_origin: Option<String>,
+    /// The browser-based MCP clients' origins (`JC_PORTAL_MCP_CLIENT_ORIGINS`, comma-separated,
+    /// e.g. `http://localhost:6274,https://inspector.example.org`): beside the Organization's own
+    /// Portal host, the only origins the MCP routes answer cross-origin (RTE-10).
+    pub mcp_client_origins: Vec<String>,
     /// The artifact store and the root credential the reconciler mints per-organization
     /// credentials with (PF-32, ADR-N-015). `None` leaves the store untouched: a Portal outside
     /// a cluster reconciles a repository and issues nothing.
@@ -1683,6 +1687,46 @@ fn apps_store_origin(
     Ok(Some(url.origin().ascii_serialization()))
 }
 
+/// `JC_PORTAL_MCP_CLIENT_ORIGINS`: comma-separated origins, each `https://host[:port]`, or
+/// `http://` on a loopback host (a local MCP inspector); unset is none. A wildcard, a path or
+/// credentials would widen the MCP routes' CORS past the clients named.
+fn mcp_client_origins(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, ConfigError> {
+    const VAR: &str = "JC_PORTAL_MCP_CLIENT_ORIGINS";
+    let invalid = |entry: &str, reason: &str| ConfigError::Invalid {
+        var: VAR,
+        reason: format!("'{entry}': {reason}, such as https://inspector.example.org"),
+    };
+    let raw = lookup(VAR).unwrap_or_default();
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let url = Url::parse(entry).map_err(|_| invalid(entry, "not a URL"))?;
+            let host = url.host_str().unwrap_or_default();
+            let loopback = matches!(host, "localhost" | "127.0.0.1" | "[::1]");
+            if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
+                return Err(invalid(entry, "an https origin, or http on localhost"));
+            }
+            if host.is_empty()
+                || host.contains('*')
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                return Err(invalid(entry, "one host, no wildcard and no credentials"));
+            }
+            if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+                return Err(invalid(
+                    entry,
+                    "an origin alone, with no path, query or fragment",
+                ));
+            }
+            Ok(url.origin().ascii_serialization())
+        })
+        .collect()
+}
+
 /// `JC_PORTAL_APP_PODS`: `{name}={origin}` pairs, comma-separated, or unset. A name is one DNS
 /// label (an App's), an origin is `http(s)://host[:port]` alone: the request path is the App's.
 fn app_pods(
@@ -2321,6 +2365,7 @@ impl Config {
         let app_pods = app_pods(&lookup)?;
         let basemap = basemap_config(&lookup)?;
         let apps_store_origin = apps_store_origin(&lookup)?;
+        let mcp_client_origins = mcp_client_origins(&lookup)?;
         let app_settings = app_settings(&lookup, &public_base_url, basemap.is_some())?;
         let build_pods = build_pod_settings(&lookup)?;
         let agent_settings = agent_settings(&lookup)?;
@@ -2459,6 +2504,7 @@ impl Config {
             app_tests,
             basemap,
             apps_store_origin,
+            mcp_client_origins,
             artifact_store,
             apps_db,
             pipeline_secrets,
@@ -2529,6 +2575,7 @@ impl Config {
             app_tests: None,
             basemap: None,
             apps_store_origin: None,
+            mcp_client_origins: Vec::new(),
             apps_dir: None,
             smtp_url: None,
             erasure_key: None,
@@ -4213,6 +4260,35 @@ mod tests {
             "a=http://x,a=http://y",
         ] {
             assert!(read(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_mcp_client_origins_are_https_origins_or_loopback_http() {
+        let read = |value: &str| {
+            let value = value.to_owned();
+            Config::from_vars(move |k| (k == "JC_PORTAL_MCP_CLIENT_ORIGINS").then(|| value.clone()))
+        };
+        assert_eq!(
+            read(" https://inspector.example.org/, http://localhost:6274 ,")
+                .expect("valid")
+                .mcp_client_origins,
+            ["https://inspector.example.org", "http://localhost:6274"]
+        );
+        assert!(read("").expect("unset").mcp_client_origins.is_empty());
+        for bad in [
+            "*",
+            "https://*.example.org",
+            "http://inspector.example.org",
+            "https://inspector.example.org/mcp",
+            "https://user:pw@inspector.example.org",
+            "inspector.example.org",
+        ] {
+            let error = read(bad).expect_err(bad).to_string();
+            assert!(
+                error.contains("JC_PORTAL_MCP_CLIENT_ORIGINS"),
+                "{bad}: {error}"
+            );
         }
     }
 

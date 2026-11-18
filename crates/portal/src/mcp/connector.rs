@@ -33,7 +33,7 @@ use crate::state::AppState;
 /// connector reads is the plan view, a static page that holds no data (T-5960).
 const METHODS: &[&str] = &["initialize", "ping", "tools/list", "tools/call"];
 
-pub fn router() -> Router<AppState> {
+pub fn router(config: &crate::config::Config) -> Router<AppState> {
     Router::new()
         .route(
             "/c/{id}",
@@ -43,7 +43,7 @@ pub fn router() -> Router<AppState> {
             "/c/{id}/.well-known/oauth-protected-resource",
             get(connector_metadata),
         )
-        .layer(super::browser_clients())
+        .layer(super::browser_clients(config))
 }
 
 fn base(state: &AppState) -> String {

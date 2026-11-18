@@ -112,8 +112,8 @@ pub fn app(state: AppState) -> Router {
         // Portal MCP server and RFC 9728 protected resource metadata (AG-60, AG-32).
         // Stateless Streamable HTTP with audience-bound Bearer authentication; exempt from
         // the session refresh and CSRF layers.
-        .merge(crate::mcp::router())
-        .merge(crate::mcp::connector::router())
+        .merge(crate::mcp::router(&state.config))
+        .merge(crate::mcp::connector::router(&state.config))
         // The configuration repositories, read-only over git's smart HTTP (T-6896): a bearer in
         // the header is the whole of its authentication, so no session or CSRF guard applies.
         .merge(crate::forge::git_door::router())

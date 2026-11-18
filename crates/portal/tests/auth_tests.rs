@@ -537,11 +537,51 @@ async fn a_tossed_csrf_cookie_or_a_same_site_post_without_the_header_is_forbidde
     }
 }
 
-/// T-6991 §4: `/api/v1` answers no cross-origin read but `/api/v1/mcp`, which takes any
-/// origin with a bearer token and never credentials.
+/// T-6991 §4, RTE-10 (S1-52): `/api/v1` answers no cross-origin read but `/api/v1/mcp`, and
+/// that only for the Portal's own origin and the configured MCP client origins, never with
+/// credentials.
 #[tokio::test]
 async fn only_the_mcp_route_answers_cross_origin_and_never_with_credentials() {
-    let app = server::app(AppState::new(Config::for_tests(), None));
+    let mut config = Config::for_tests();
+    config.mcp_client_origins = vec!["http://localhost:6274".into()];
+    let own = config.public_base_url.origin().ascii_serialization();
+    let app = server::app(AppState::new(config, None));
+    let preflight_from = |origin: &str, path: &str| {
+        Request::builder()
+            .method("OPTIONS")
+            .uri(path)
+            .header(header::ORIGIN, origin)
+            .header("access-control-request-method", "POST")
+            .header(
+                "access-control-request-headers",
+                "authorization, content-type",
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    for origin in ["https://evil.example", "http://localhost:6275", "null"] {
+        let response = app
+            .clone()
+            .oneshot(preflight_from(origin, "/api/v1/mcp"))
+            .await
+            .unwrap();
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none(),
+            "{origin}: {:?}",
+            response.headers()
+        );
+    }
+    for origin in ["http://localhost:6274", own.as_str()] {
+        let response = app
+            .clone()
+            .oneshot(preflight_from(origin, "/api/v1/mcp"))
+            .await
+            .unwrap();
+        assert_eq!(response.headers()["access-control-allow-origin"], origin);
+    }
     let preflight = |path: &str| {
         Request::builder()
             .method("OPTIONS")
@@ -567,9 +607,12 @@ async fn only_the_mcp_route_answers_cross_origin_and_never_with_credentials() {
             "{path}"
         );
     }
-    let response = app.clone().oneshot(preflight("/api/v1/mcp")).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(preflight_from("http://localhost:6274", "/api/v1/mcp"))
+        .await
+        .unwrap();
     let headers = response.headers();
-    assert_eq!(headers["access-control-allow-origin"], "*");
     assert!(
         headers.get("access-control-allow-credentials").is_none(),
         "{headers:?}"
