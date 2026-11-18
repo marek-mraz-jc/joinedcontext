@@ -591,6 +591,31 @@ async fn the_mcp_door_takes_an_organizations_realm_on_its_own_host_alone() {
     );
 }
 
+/// T-7230: the MCP door's protected-resource metadata on ba's host names ba's realm alone, so a
+/// client signs in there; another host names the installation realm. One realm per host.
+#[tokio::test]
+async fn the_mcp_metadata_names_the_hosts_own_realm_alone() {
+    let w = world();
+    for (at, realm) in [(BA, BA_REALM), (HEL, INSTALLATION), ("portal.example", INSTALLATION)] {
+        let response = server::app(w.state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/.well-known/oauth-protected-resource/api/v1/mcp")
+                    .header(header::HOST, at)
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK, "{at}");
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .expect("body");
+        let doc: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(doc["authorization_servers"], json!([realm]), "{at}");
+    }
+}
+
 async fn people(state: &AppState, at: &str, token: &str) -> StatusCode {
     server::app(state.clone())
         .oneshot(

@@ -105,7 +105,11 @@ pub async fn oauth_protected_resource(State(state): State<AppState>) -> Response
         "{}/api/v1/mcp",
         state.config.public_base().as_str().trim_end_matches('/')
     );
-    let authorization_servers = if let Some(oidc) = state.config.oidc.as_ref() {
+    // On an Organization's host with a realm of its own, that realm alone (T-7230): the door
+    // takes its tokens there (T-7142), and a client is never sent to a second realm.
+    let authorization_servers = if let Some(own) = crate::auth::realms::here(&state) {
+        vec![own.issuer().trim_end_matches('/').to_string()]
+    } else if let Some(oidc) = state.config.oidc.as_ref() {
         vec![oidc.issuer.as_str().trim_end_matches('/').to_string()]
     } else {
         Vec::new()

@@ -7,7 +7,7 @@
 //! carries, and the gateway's own tokens are taken off a request in `admit` before anything
 //! else reads it, so every handler, the rate limiter included, sees an anonymous caller.
 
-use crate::app::Gateway;
+use crate::app::{Gateway, HostOrganization};
 use axum::body::Body;
 use axum::extract::rejection::{FormRejection, JsonRejection, QueryRejection};
 use axum::extract::{Form, Json, Query, Request, State};
@@ -430,8 +430,14 @@ pub(crate) async fn admit(
 
 /// The authorization servers a resource's metadata names (RFC 9728): this gateway's first when an
 /// anonymous caller reads the resource and the deployment serves one, then the realm's (ADR-N-052
-/// §2.2.1). A resource no anonymous caller reads names the realm alone, as before.
-pub(crate) fn authorization_servers(gateway: &Gateway, anonymous_readable: bool) -> Vec<String> {
+/// §2.2.1). A resource no anonymous caller reads names the realm alone, as before. On an
+/// Organization's host the realm is that Organization's own when it has one (T-7131), never the
+/// installation's beside it: one realm per host (T-7230).
+pub(crate) fn authorization_servers(
+    gateway: &Gateway,
+    anonymous_readable: bool,
+    host: Option<&HostOrganization>,
+) -> Vec<String> {
     gateway
         .oauth
         .as_ref()
@@ -442,7 +448,18 @@ pub(crate) fn authorization_servers(gateway: &Gateway, anonymous_readable: bool)
             gateway
                 .verifier
                 .as_ref()
-                .map(|verifier| verifier.issuer().to_owned()),
+                .map(|verifier| {
+                    host.and_then(|host| {
+                        verifier
+                            .organizations()
+                            .into_iter()
+                            .find(|(organization, _)| *organization == host.0)
+                    })
+                    .map_or_else(
+                        || verifier.issuer().to_owned(),
+                        |(_, own)| own.issuer().to_owned(),
+                    )
+                }),
         )
         .collect()
 }
