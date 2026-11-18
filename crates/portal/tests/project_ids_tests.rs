@@ -1035,6 +1035,9 @@ async fn a_start_after_one_stopped_before_0080_keys_the_rows_again() {
         .execute(&pool)
         .await
         .expect("an unkeyed row");
+        project_ids::ensure(&pool, &["bratislava".to_owned()])
+            .await
+            .expect("its id, minted with no Organization yet");
         pool.close().await;
         let started = joinedcontext_portal::db::connect_with(&url, Some(&smartcity)).await;
         if keyed {
