@@ -7,7 +7,8 @@
 //! reformatted from its parsed instant. Every string still enters the text as a JSON literal or
 //! a quoted path segment, never as code.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use std::time::SystemTime;
+
 use jc_core::error::{Error, Result};
 use jc_core::kinds::pipeline_lifetime::{is_slot_name, End, OBSERVED_AT};
 use jc_core::kinds::{Lifetime, LifetimeMode, PipelineSpec};
@@ -31,7 +32,11 @@ const FORMAT: &str = r#".ts_format("2006-01-02T15:04:05Z", "UTC")"#;
 
 /// The model checks of PL-81 at proposal time: each type a class of the space's model, each
 /// name one of its slots, each `from` a date-time slot or `observedAt`, no `at` already past.
-pub fn check(spec: &PipelineSpec, model: &ModelSchema, now: DateTime<Utc>) -> Result<()> {
+///
+/// `now` takes any instant type with a `SystemTime` conversion (jiff's `Timestamp`, chrono's
+/// `DateTime`), so callers move off chrono at their own pace (T-7233).
+pub fn check(spec: &PipelineSpec, model: &ModelSchema, now: impl Into<SystemTime>) -> Result<()> {
+    let now = now.into();
     for (index, entry) in spec.lifetime.iter().enumerate() {
         let path = format!("spec.lifetime[{index}]");
         let Some(class) = model.attributes(&entry.entity_type) else {
@@ -75,7 +80,7 @@ pub fn check(spec: &PipelineSpec, model: &ModelSchema, now: DateTime<Utc>) -> Re
                         });
                     }
                 }
-                End::At(instant) if instant <= now => {
+                End::At(instant) if SystemTime::from(instant) <= now => {
                     return Err(Error::Invalid {
                         field: format!("{at}.at"),
                         reason: format!(
@@ -222,9 +227,9 @@ fn end_expression(end: &End) -> String {
         End::At(instant) => format!(
             "{}.ts_unix()",
             literal(
-                &instant
-                    .with_timezone(&Utc)
-                    .to_rfc3339_opts(SecondsFormat::Secs, true)
+                // RFC 3339 in UTC to the second (chrono's `to_rfc3339_opts(Secs, true)`).
+                // `instant` is jc-core's chrono value until its slice (T-7252) moves it.
+                &instant.to_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string()
             )
         ),
         End::From {
