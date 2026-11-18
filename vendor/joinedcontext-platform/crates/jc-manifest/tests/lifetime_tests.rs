@@ -197,7 +197,10 @@ fn the_generated_step_writes_each_mode_in_the_runners_bento() {
     let text = step(&spec(ALL)).expect("compiles").expect("a step");
     // An `at` enters the text as RFC 3339 in UTC to the second, as chrono's
     // to_rfc3339_opts(Secs, true) wrote it (pinned before the move to jiff, T-7237).
-    assert!(text.contains(r#""2030-06-01T10:00:00Z".ts_unix()"#), "{text}");
+    assert!(
+        text.contains(r#""2030-06-01T10:00:00Z".ts_unix()"#),
+        "{text}"
+    );
     let before = Timestamp::now().as_second();
     let rows = run(
         &text,
