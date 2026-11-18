@@ -207,6 +207,32 @@ class Clock:
         monkeypatch.setattr(suite.time, "sleep", lambda s: setattr(self, "now", self.now + s))
 
 
+def test_a_run_now_refused_for_a_scheduled_run_going_waits_for_it_and_asks_once_more(monkeypatch):
+    import suite
+    clock = Clock(monkeypatch)  # 1_000_000 s is 1970-01-12T13:46:40Z
+    posts = []
+
+    class P:
+        def call(self, method, path, *a, **k):
+            if method == "POST":
+                posts.append(clock.now)
+                if len(posts) == 1 or clock.now < 1_000_000:
+                    return 409, {}, b"pipeline 'beach-water' is running (1970-01-12T13:46:00Z)"
+                return 202, {}, b'{"run":"1970-01-12T13:47:10Z"}'
+            if path.endswith("/runs?limit=5"):
+                return 200, {}, b'{"items":[]}'
+            msg = ("running since 1970-01-12T13:46:00Z" if clock.now < 1_000_020
+                   else "the last run ended 1970-01-12T13:47:00Z after 60 s")
+            return 200, {}, json.dumps({"status": {"conditions": [{"type": "Ready", "message": msg}]}}).encode()
+
+    _, t0, st, _ = suite.start_run(P(), "/b", 300, float("inf"))
+    assert st == 202 and posts == [1_000_000, 1_000_020] and t0 == 1_000_020
+    # The scheduled run outlasts the wait: asked once more, the 409 stands; no third request.
+    posts.clear()
+    clock.now = 900_000
+    assert suite.start_run(P(), "/b", 10, float("inf"))[2] == 409 and posts == [900_000, 900_010]
+
+
 def queue_portal(clock, ahead: int, starts_at: float | None, drain: float | None = None):
     """A Portal whose run-now is Queued behind `ahead` runs of 50 s and starts at `starts_at`
     (never when None); the run then lasts 10 s. With `drain`, one run ahead leaves every `drain`

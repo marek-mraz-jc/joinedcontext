@@ -324,6 +324,25 @@ def status_of(http: Http, base: str) -> str:
     return "; ".join(f"{c.get('reason')}: {c.get('message')}" for c in conditions(as_json(raw) or {}))[:200]
 
 
+def start_run(http: Http, base: str, wait: float, until: float) -> tuple[dict, float, int, bytes]:
+    """POST a run-now; a 409 because a scheduled run is going (smoke 44305292121: beach-water's
+    13:00Z run) waits for that run to end, within `wait` and the budget, and asks once more.
+    Returns the runs listed before the request, its time, and the answer."""
+    def ask():
+        st, _, raw = http.call("GET", base + "/runs?limit=5")
+        before = {x.get("run"): x for x in (as_json(raw) or {}).get("items") or []} if st == 200 else {}
+        t0 = time.time()
+        return (before, t0, *http.call("POST", base + "/runs")[::2])
+
+    before, t0, st, raw = ask()
+    if st == 409 and b"is running" in raw:
+        end = min(t0 + wait, until)
+        while time.time() < end and not ended_since(http, base, t0):
+            time.sleep(5)
+        before, t0, st, raw = ask()
+    return before, t0, st, raw
+
+
 def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, projects=(),
                  prod: dict | None = None, runlog: Path | None = None, found: dict | None = None,
                  until: float = float("inf")) -> None:
@@ -332,10 +351,7 @@ def run_pipeline(r: Results, http: Http, anon: Http, p: Pipeline, wait: float, p
     `until` is the suite's budget end: no wait passes it."""
     found = found if found is not None else {}
     base = f"/api/v1/projects/{p.project}/pipelines/{p.name}"
-    st, _, raw = http.call("GET", base + "/runs?limit=5")
-    before = {x.get("run"): x for x in (as_json(raw) or {}).get("items") or []} if st == 200 else {}
-    t0 = time.time()
-    st, _, raw = http.call("POST", base + "/runs")
+    before, t0, st, raw = start_run(http, base, wait, until)
     r.check("run", p.key, f"POST {base}/runs", "202 run started", f"{st} {short(raw)}", st == 202)
     if st != 202:
         for x in ("history", "log", "landed"):
