@@ -402,11 +402,7 @@ impl PgDocStore {
         id: &str,
         doc: &'a Value,
     ) -> Result<std::borrow::Cow<'a, Value>, sqlx::Error> {
-        Ok(super::seal::sealed(
-            self.key.as_deref(),
-            seal_row(kind, tenant, id),
-            doc,
-        )?)
+        super::seal::sealed(self.key.as_deref(), seal_row(kind, tenant, id), doc)
     }
 
     /// Rows of `SELECT {doc}, id`, each credential opened for its own row.
@@ -1111,6 +1107,11 @@ impl PgDocStore {
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;
+        // a Tenant's own row claims the Tenant like any other write, so its
+        // purge reaches the row and a renamed-away name is refused
+        if let Some(t) = tenant.filter(|_| kind != "Cached") {
+            super::claim_tenant(&mut tx, t).await?;
+        }
         // `xmax` is zero on a fresh row and the locking transaction's id
         // on the conflict path: the eviction then runs only when the table
         // actually grew, never on a usage bump rewriting a row in place.
