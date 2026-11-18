@@ -302,7 +302,7 @@ pub fn execute_pr_merge(
     }
     let root_tree_oid = build_nested_trees(&flat_entries, &mut new_objects)?;
 
-    let now_secs = chrono::Utc::now().timestamp();
+    let now_secs = jc_time::TimestampTz::now().as_second();
     let time = gix::date::Time::new(now_secs, 0);
     let author_sig = gix::actor::Signature {
         name: BString::from(author.name.as_str()),

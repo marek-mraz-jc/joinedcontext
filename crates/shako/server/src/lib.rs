@@ -11,8 +11,8 @@ use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 pub use shako_api::ShakoState;
@@ -240,7 +240,7 @@ pub async fn apply_manifest_bundle(
     bundle: &ShakoManifestBundle,
 ) -> ShakoResult<Value> {
     check_manifest_bundle(bundle, state, org_id)?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     if let Some(inst) = &bundle.instance {
         let mut rec = InstanceRecord::default_for(state.default_instance_id, org_id, &inst.host);

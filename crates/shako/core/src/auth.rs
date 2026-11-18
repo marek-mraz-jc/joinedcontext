@@ -6,7 +6,7 @@ use crate::error::{ShakoError, ShakoResult};
 use crate::ids::{InstanceId, OrgId, constant_time_eq, sha256_hex};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use chrono::Utc;
+use jc_time::TimestampTz;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
@@ -656,7 +656,7 @@ impl ShakoSigningKey {
         scope: &str,
         ttl_secs: i64,
     ) -> ShakoResult<String> {
-        let now = Utc::now().timestamp();
+        let now = TimestampTz::now().as_second();
         let ttl = ttl_secs.clamp(1, 900);
         let claims = JwtClaims {
             iss: Some("shako".into()),

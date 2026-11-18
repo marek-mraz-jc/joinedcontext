@@ -248,7 +248,7 @@ fn repo(
     org: shako_core::OrgId,
     name: &str,
 ) -> shako_core::RepoRecord {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     shako_core::RepoRecord {
         id: shako_core::RepoId::new(),
         instance_id: inst,
@@ -305,7 +305,7 @@ async fn postgres_store_log_survives_a_restart_and_stays_per_tenant() {
         .allocate_pr_number(inst, org_a, repo_a.id)
         .await
         .unwrap();
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     first
         .create_pull_request(shako_core::PullRequestRecord {
             id: uuid::Uuid::now_v7(),

@@ -9,7 +9,7 @@ publish = false
 shako-core = { path = "../core" }
 base64 = "0.22"
 bstr = "1.13"
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 flate2 = "1.1"
 gix = "0.90"
 gix-hash = "0.28"

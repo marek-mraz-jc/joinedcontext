@@ -22,8 +22,8 @@ use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -469,7 +469,7 @@ async fn oci_post_blob_upload(
                 repo_name: image.clone(),
                 digest: clean_digest.clone(),
                 size_bytes: existing.size_bytes,
-                created_at: Utc::now(),
+                created_at: TimestampTz::now(),
             };
             let _ = state.store().upsert_blob(mounted).await;
             return (
@@ -779,7 +779,7 @@ async fn finish_blob_store(
         repo_name: image.to_owned(),
         digest: computed.clone(),
         size_bytes: bytes.len() as u64,
-        created_at: Utc::now(),
+        created_at: TimestampTz::now(),
     };
     let _ = state.store().upsert_blob(rec).await;
     let _ = state
@@ -885,7 +885,7 @@ async fn oci_put_manifest(
         .map(str::to_owned);
 
     let target_org = state.resolve_org_for_owner(&owner, &ctx.subject);
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let pkg = match state
         .store()
         .upsert_package(PackageRecord {
@@ -1014,7 +1014,7 @@ async fn store_cosign_signature_tag(
                 repo_name: image.to_owned(),
                 digest: digest.clone(),
                 size_bytes: bytes.len() as u64,
-                created_at: Utc::now(),
+                created_at: TimestampTz::now(),
             })
             .await;
     }
@@ -1059,7 +1059,7 @@ async fn store_cosign_signature_tag(
             artifact_type: Some("application/vnd.dev.cosign.simplesigning.v1+json".into()),
             size_bytes: sig_manifest_bytes.len() as u64,
             signed: true,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await?;
     Ok(())

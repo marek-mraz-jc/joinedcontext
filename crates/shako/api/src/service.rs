@@ -16,7 +16,7 @@ use crate::smart_http::sync_repo_mirrors_on_commit;
 use crate::state::{ShakoState, resolve_and_authorize_repo};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use chrono::Utc;
+use jc_time::TimestampTz;
 use shako_core::{
     Action, BranchProtectionRule, CommitStatusRecord, DeliveryRecord, MERGE_OPERATION_WEIGHT_BYTES,
     MergePolicyInput, ObjectTarget, PackageFileRecord, PackageId, PackageRecord,
@@ -174,7 +174,7 @@ pub async fn create_repository(
     let disk_path =
         blocking(move || init_bare_repo(&root, inst_id, repo_id, &def_branch, auto_init, &desc))
             .await?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let rec = RepoRecord {
         id: repo_id,
         instance_id: ctx.instance_id,
@@ -247,7 +247,7 @@ pub async fn import_repository(
         Ok(dest)
     })
     .await?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let rec = RepoRecord {
         id: new_id,
         instance_id: ctx.instance_id,
@@ -489,7 +489,7 @@ pub async fn protect_branch(
         &repo.owner,
         &repo.name,
     )?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     state
         .store()
         .upsert_protection_rule(ProtectionRuleRecord {
@@ -769,7 +769,7 @@ pub async fn open_pull_request(
     let (d, head_sha) = (disk_path.clone(), m.head_sha.clone());
     let _ =
         blocking(move || set_ref_direct(&d, &format!("refs/pull/{number}/head"), &head_sha)).await;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let saved = state
         .store()
         .create_pull_request(PullRequestRecord {
@@ -945,7 +945,7 @@ pub async fn create_review(
                 .filter(|c| !c.is_empty())
                 .unwrap_or_else(|| pr.head_sha.clone()),
             dismissed: false,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
 }
@@ -973,7 +973,7 @@ pub async fn patch_pull_request(
     match patch.state.as_deref() {
         Some("closed") if pr.state != "closed" => {
             pr.state = "closed".into();
-            pr.closed_at = Some(Utc::now());
+            pr.closed_at = Some(TimestampTz::now());
         }
         Some("open") if !pr.merged => {
             pr.state = "open".into();
@@ -1172,7 +1172,7 @@ pub async fn merge_pull_request(
     pr.base_sha = m.base_sha;
     pr.merge_base = m.merge_base;
     pr.merge_commit_sha = merge_sha.clone();
-    pr.closed_at = Some(Utc::now());
+    pr.closed_at = Some(TimestampTz::now());
     let saved = state.store().update_pull_request(pr).await?;
     record_repo_size(state, &mut repo, &disk_path).await;
     let payload = build_pr_webhook_payload(&repo, &saved, "closed", &ctx.subject.username);
@@ -1279,7 +1279,7 @@ pub async fn add_push_mirror(
             branch: req.branch.unwrap_or_default(),
             last_sync: None,
             last_error: String::new(),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
 }
@@ -1386,7 +1386,7 @@ pub async fn add_webhook(
             secret_ref,
             previous_secret_ref: req.previous_secret_ref,
             format: req.format,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
 }
@@ -1504,7 +1504,7 @@ pub async fn publish_generic_file(
     tokio::fs::write(&disk_path, &bytes)
         .await
         .map_err(|e| ShakoError::Storage(e.to_string()))?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let pkg_rec = state
         .store()
         .upsert_package(PackageRecord {

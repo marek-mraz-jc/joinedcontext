@@ -2,7 +2,7 @@
 //! `shako-store-memory`: In-memory implementation of [`shako_core::Store`] with strict
 //! per-`(InstanceId, OrgId)` isolation and simulated boot RLS checks (Contract S2).
 
-use chrono::Utc;
+use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use shako_core::{
     BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
@@ -124,7 +124,7 @@ impl Store for MemoryStore {
                     repo_count: 0,
                     git_bytes: 0,
                     package_bytes: 0,
-                    updated_at: Utc::now(),
+                    updated_at: TimestampTz::now(),
                 }))
         })
     }
@@ -146,7 +146,7 @@ impl Store for MemoryStore {
             t.quota.git_bytes = (t.quota.git_bytes as i64 + git_bytes_delta).max(0) as u64;
             t.quota.package_bytes =
                 (t.quota.package_bytes as i64 + package_bytes_delta).max(0) as u64;
-            t.quota.updated_at = Utc::now();
+            t.quota.updated_at = TimestampTz::now();
             Ok(t.quota.clone())
         })
     }
@@ -179,7 +179,7 @@ impl Store for MemoryStore {
             if !t.repos.contains_key(&repo.id) {
                 return Err(ShakoError::NotFound("repository not found".into()));
             }
-            repo.updated_at = Utc::now();
+            repo.updated_at = TimestampTz::now();
             t.repos.insert(repo.id, repo.clone());
             Ok(repo)
         })
@@ -287,7 +287,7 @@ impl Store for MemoryStore {
                 .tenants
                 .entry((rec.instance_id, rec.org_id))
                 .or_default();
-            rec.updated_at = Utc::now();
+            rec.updated_at = TimestampTz::now();
             t.protection_rules
                 .insert((rec.repo_id, rec.rule.rule_name.clone()), rec.clone());
             Ok(rec)
@@ -407,7 +407,7 @@ impl Store for MemoryStore {
                 .tenants
                 .entry((pr.instance_id, pr.org_id))
                 .or_default();
-            pr.updated_at = Utc::now();
+            pr.updated_at = TimestampTz::now();
             t.pull_requests.insert((pr.repo_id, pr.number), pr.clone());
             Ok(pr)
         })
@@ -955,7 +955,7 @@ impl Store for MemoryStore {
             };
             if let Some(ev) = t.outbox.iter_mut().find(|e| e.id == event_id) {
                 ev.dispatched = true;
-                ev.dispatched_at = Some(Utc::now());
+                ev.dispatched_at = Some(TimestampTz::now());
                 return Ok(true);
             }
             Ok(false)

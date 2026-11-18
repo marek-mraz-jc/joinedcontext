@@ -12,7 +12,7 @@ jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["json"] }
 base64 = "0.22"
 bytes = "1.12"
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 futures-util = "0.3"
 gix-ref = "0.69"
 hex = "0.4"

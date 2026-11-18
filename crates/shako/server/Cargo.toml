@@ -20,7 +20,7 @@ shako-store-pg = { path = "../store-pg" }
 shako-web = { path = "../web" }
 jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["json"] }
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 clap = { version = "4.6", features = ["derive"] }
 hex = "0.4"
 serde = { version = "1.0", features = ["derive"] }

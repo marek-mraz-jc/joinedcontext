@@ -17,7 +17,7 @@ use std::str::FromStr;
 const APP_LOGIN: &str = "shako_restart_login";
 
 fn repo(instance_id: InstanceId, org_id: OrgId, name: &str) -> RepoRecord {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     RepoRecord {
         id: RepoId::new(),
         instance_id,
