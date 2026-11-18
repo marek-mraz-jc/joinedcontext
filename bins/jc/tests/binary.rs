@@ -220,7 +220,7 @@ fn serves_from_a_config_file_and_stops_on_sigterm() {
             .await
             .unwrap()
     });
-    assert!(body.contains("database"), "{body}");
+    assert!(body.contains("\"commit\":\"daiya\""), "{body}");
 
     sigterm_and_wait(&mut child);
     let rest: Vec<String> = lines.map_while(Result::ok).collect();

@@ -1217,7 +1217,7 @@ async fn the_portal_runs_on_its_own_host_in_host_mode() {
     let client = Client::new();
     for (path, needle) in [
         ("/opendata/api/3/action/status_show", "\"success\""),
-        ("/dashboards/api/health", "\"database\""),
+        ("/dashboards/api/health", "\"commit\":\"daiya\""),
         ("/streams/ping", "pong"),
         ("/broker/ngsi-ld/v1/info/sourceIdentity", "antares"),
         ("/git/api/healthz", "\"status\":\"ok\""),
