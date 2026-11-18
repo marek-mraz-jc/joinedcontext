@@ -11,6 +11,9 @@
 //! - PF-71: making an Endpoint public is a right of its own: a `propose` constrained to
 //!   `spec.audience` not in `[public]` plans an internal Endpoint and is refused a public one.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -25,7 +28,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -34,7 +36,6 @@ use joinedcontext_portal::resource::{self, ObjectMeta, ResourceEnvelope, API_VER
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 
-const CSRF: &str = "test-csrf-token-6827";
 const PROJECT: &str = "ovzdusie";
 const ADMIN: &str = "jana.kovacova@banskabystrica.sk";
 const SECOND: &str = "eva.hruba@banskabystrica.sk";
@@ -79,7 +80,7 @@ fn cookies(config: &Config, email: &str) -> String {
         .filter_map(|v| v.to_str().ok())
         .map(|v| v.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    format!("{}; {CSRF_COOKIE}={CSRF}", session.join("; "))
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session.join("; "))
 }
 
 fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
@@ -332,7 +333,7 @@ async fn send(
         .method(method)
         .uri(uri.as_ref())
         .header(header::COOKIE, cookies(&state.config, who))
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, content_type);
     if let Some(tag) = if_match {
         request = request.header(header::IF_MATCH, tag);

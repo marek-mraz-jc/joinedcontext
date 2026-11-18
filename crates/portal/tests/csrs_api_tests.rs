@@ -8,6 +8,7 @@
 //! kind's own repository path, and the Red lane a federation edge always takes (CC-63).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{classify, Lane, Operation};
 use joinedcontext_portal::config::Config;
@@ -72,7 +73,10 @@ fn cookies_for(config: &Config, username: &str, groups: &[&str]) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -243,7 +247,7 @@ fn request(uri: &str, cookie: Option<String>) -> Request<Body> {
         builder
             .method("POST")
             .header(header::COOKIE, cookie)
-            .header(CSRF_HEADER, CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
     } else {
         match cookie {
@@ -398,7 +402,7 @@ async fn a_write_becomes_a_red_lane_merge_request_at_the_kinds_own_path() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/csrs")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -440,7 +444,7 @@ async fn a_credential_typed_into_a_registration_is_refused_before_anything_is_wr
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/csrs")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -475,7 +479,7 @@ async fn a_registration_with_no_selector_is_refused_before_anything_is_written()
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/csrs")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({

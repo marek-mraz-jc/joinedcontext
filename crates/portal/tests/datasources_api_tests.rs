@@ -7,6 +7,7 @@
 //! request landed in the wrong folder.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase};
 use joinedcontext_portal::config::Config;
@@ -30,7 +31,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 const MANIFEST_PATH: &str = "projects/ovzdusie/datasources/mqtt-mesto.yaml";
 
 fn cookies(config: &Config) -> String {
@@ -62,7 +62,10 @@ fn cookies(config: &Config) -> String {
         let raw = value.to_str().expect("cookie header");
         parts.push(raw.split(';').next().unwrap_or_default().to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -234,7 +237,7 @@ async fn a_write_becomes_a_merge_request_at_the_kinds_own_path() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/datasources")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -276,7 +279,7 @@ async fn a_literal_credential_is_refused_before_anything_is_written() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/datasources")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -320,7 +323,7 @@ async fn a_token_pasted_into_a_secret_name_is_refused_and_never_echoed() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/datasources?dryRun=All")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -375,7 +378,7 @@ async fn an_access_token_in_a_runner_input_is_refused_by_its_key() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/datasources?dryRun=All")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({
@@ -440,7 +443,7 @@ async fn a_source_aimed_at_the_runner_or_its_environment_is_refused_at_the_door(
             .method("POST")
             .uri("/api/v1/projects/ovzdusie/datasources")
             .header(header::COOKIE, cookies(&config))
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body))
             .expect("request")

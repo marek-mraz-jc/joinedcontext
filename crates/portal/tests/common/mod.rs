@@ -6,6 +6,7 @@
 
 pub mod apps_db;
 pub mod build_lane;
+pub mod csrf_echo;
 pub mod unique;
 
 use std::sync::Arc;
@@ -20,7 +21,8 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use csrf_echo::EchoCsrf;
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -201,7 +203,10 @@ pub fn session_cookie(config: &Config, session: &Session) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -256,7 +261,7 @@ pub async fn send_body(
                 .method(http)
                 .uri(uri)
                 .header(header::COOKIE, cookie(&config, identity))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, content_type)
                 .body(body)
                 .expect("request"),
@@ -290,7 +295,7 @@ pub async fn send_placed(
         .method(http)
         .uri(uri)
         .header(header::COOKIE, cookie(&config, identity))
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .body(Body::empty())
         .expect("request");
     request

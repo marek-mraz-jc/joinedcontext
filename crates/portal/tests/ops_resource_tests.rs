@@ -1,6 +1,9 @@
 //! Every kind read, changed and removed through the operations registry, on the same path as the
 //! resource routes (T-0735, AG-77, ADR-N-021, PF-50, CC-19, MF-24, AG-11).
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -12,7 +15,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -22,7 +25,6 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
-const CSRF_TOKEN: &str = "test-csrf-token-resources";
 const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn identity(username: &str, groups: &[&str]) -> Identity {
@@ -60,7 +62,10 @@ fn cookie(config: &Config, who: Identity) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -204,7 +209,7 @@ async fn send_once(
                 .method(http)
                 .uri(uri)
                 .header(header::COOKIE, cookie(&config, who))
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),

@@ -3,6 +3,9 @@
 //! holding the file alone; the form refuses what it cannot write, naming the field, and a name
 //! another file declares.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::{Arc, Mutex};
 
 use age::secrecy::ExposeSecret;
@@ -12,7 +15,7 @@ use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use base64::Engine as _;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -27,7 +30,6 @@ use wiremock::{Mock, MockServer, Request as Seen, ResponseTemplate};
 #[path = "common/unique.rs"]
 mod unique;
 
-const CSRF: &str = "secret-form-csrf";
 const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 const TYPED: &str = "typed-in-the-form-0123456789";
 
@@ -70,7 +72,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -239,7 +244,7 @@ impl World {
             .method(verb)
             .uri("/api/v1/projects/ovzdusie/secrets")
             .header(header::COOKIE, cookies(&self.config, person(email)))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
         if body.is_some() {
             request = request.header(header::CONTENT_TYPE, "application/json");
         }

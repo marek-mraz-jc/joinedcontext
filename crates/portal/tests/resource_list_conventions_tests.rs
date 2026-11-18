@@ -3,6 +3,7 @@
 //! One loop over every kind the resource API serves, so a new kind is checked the day it lands.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -101,7 +102,7 @@ async fn send(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, common::cookie(&state.config, who))
-        .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json");
     for (name, value) in extra {
         request = request.header(name, *value);

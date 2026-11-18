@@ -5,9 +5,12 @@
 //! write to (locally: `docker run -e POSTGRES_PASSWORD=… postgres:17-alpine`); otherwise they
 //! skip with a note, so the fast lane without a service container stays green.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
@@ -18,8 +21,6 @@ use tower::ServiceExt;
 
 #[path = "common/unique.rs"]
 mod unique;
-
-const CSRF: &str = "csrf-token-value";
 
 fn session_cookie(config: &Config, subject: &str) -> String {
     use axum::response::IntoResponse;
@@ -52,7 +53,10 @@ fn session_cookie(config: &Config, subject: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -66,7 +70,7 @@ async fn call(
         .method(method)
         .uri("/api/v1/preferences")
         .header(header::COOKIE, cookie)
-        .header("x-csrf-token", CSRF);
+        .echo_csrf();
     let body = match body {
         Some(json) => {
             request = request.header(header::CONTENT_TYPE, "application/json");
@@ -322,7 +326,7 @@ async fn recent_pages_are_merged_without_touching_the_rest() {
                         .method(Method::POST)
                         .uri("/api/v1/preferences/recent")
                         .header(header::COOKIE, cookie)
-                        .header("x-csrf-token", CSRF)
+                        .echo_csrf()
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(body.to_string()))
                         .unwrap(),

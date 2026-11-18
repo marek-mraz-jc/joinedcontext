@@ -13,6 +13,9 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -35,7 +38,6 @@ const MEMBER: &str = "demo.builder";
 const STRANGER: &str = "demo.stranger";
 const EDITOR: &str = "demo.editor";
 const VIEWER: &str = "demo.viewer";
-const CSRF: &str = "csrf-token-edge-assistant";
 
 fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
     ResourceEnvelope {
@@ -171,7 +173,10 @@ fn cookie(config: &Config, username: &str, groups: &[&str]) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -227,7 +232,7 @@ async fn post(app: &axum::Router, cookie: &str, uri: &str, body: &Value) -> (Sta
                 .method(Method::POST)
                 .uri(uri)
                 .header(header::COOKIE, cookie)
-                .header("x-csrf-token", CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("a request"),

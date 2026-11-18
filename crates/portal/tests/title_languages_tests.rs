@@ -2,6 +2,7 @@
 //! other language, whatever door it comes through; only a map sent without a language drops it.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use base64::Engine;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -22,7 +23,6 @@ use serde_json::{json, Value};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-12345";
 const MANIFEST_PATH: &str = "projects/ovzdusie/datasources/mqtt-mesto.yaml";
 
 fn cookies(config: &Config) -> String {
@@ -62,7 +62,10 @@ fn cookies(config: &Config) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -161,7 +164,7 @@ async fn committed(metadata: Value) -> Value {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datasources/mqtt-mesto")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({

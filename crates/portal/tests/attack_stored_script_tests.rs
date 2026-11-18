@@ -15,6 +15,7 @@
 //! stop an inline script even if one got through).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use axum::http::{header, StatusCode};
 use serde_json::{json, Value};
@@ -99,7 +100,7 @@ async fn markup_a_person_typed_travels_as_json_under_the_policy() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces?dryRun=All")
                 .header(header::COOKIE, common::cookie(&state.config, admin()))
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(axum::body::Body::from(
                     json!({

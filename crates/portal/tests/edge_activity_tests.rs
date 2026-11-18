@@ -13,6 +13,9 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -28,7 +31,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use joinedcontext_portal::activity::{ActivityEvent, ActivityFilter, DEFAULT_LIMIT, MAX_LIMIT};
 use joinedcontext_portal::api::activity::COLLECTOR_CLIENT;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -38,7 +41,6 @@ use joinedcontext_portal::store::Mirror;
 
 const PROJECT: &str = "helsinki";
 const ELSEWHERE: &str = "espoo";
-const CSRF: &str = "test-csrf-activity-edge";
 const REALM_PATH: &str = "/realms/banskabystrica";
 const PORTAL_AUDIENCE: &str = "portal-api";
 
@@ -93,7 +95,10 @@ fn cookie(config: &Config, username: &str, roles: Vec<&str>) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -120,9 +125,7 @@ fn event_at(
 async fn get(app: &axum::Router, cookie: Option<&str>, uri: &str) -> (StatusCode, Value) {
     let mut request = Request::builder().method(Method::GET).uri(uri);
     if let Some(cookie) = cookie {
-        request = request
-            .header(header::COOKIE, cookie)
-            .header(CSRF_HEADER, CSRF);
+        request = request.header(header::COOKIE, cookie).echo_csrf();
     }
     let response = app
         .clone()
@@ -929,7 +932,7 @@ async fn only_the_collectors_own_client_appends_to_the_audit_trail() {
                 .method(Method::POST)
                 .uri("/api/v1/activity")
                 .header(header::COOKIE, jana)
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     otlp(vec![record(PROJECT, "access.denied")]).to_string(),

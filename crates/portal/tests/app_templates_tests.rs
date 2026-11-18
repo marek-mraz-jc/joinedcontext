@@ -12,8 +12,6 @@ use joinedcontext_portal::state::AppState;
 use serde_json::Value;
 use tower::ServiceExt;
 
-const CSRF: &str = "csrf-token-value";
-
 fn session_cookie(config: &Config, subject: &str) -> String {
     use axum::response::IntoResponse;
     let now = session::now_unix();
@@ -45,7 +43,10 @@ fn session_cookie(config: &Config, subject: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 

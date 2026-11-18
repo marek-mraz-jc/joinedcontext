@@ -4,6 +4,7 @@
 //! onto its new slug, and the registry entry with this deployment's values proposed.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -315,7 +316,7 @@ async fn import(
                     axum::http::header::COOKIE,
                     common::cookie(&state.config, who),
                 )
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(
                     axum::http::header::CONTENT_TYPE,
                     format!("multipart/form-data; boundary={boundary}"),
@@ -706,7 +707,7 @@ async fn a_refused_import_never_reads_the_upload() {
                         axum::http::header::COOKIE,
                         common::cookie(&state.config, person("peter")),
                     )
-                    .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                    .echo_csrf()
                     .header(
                         axum::http::header::CONTENT_TYPE,
                         "multipart/form-data; boundary=jcgitimport",

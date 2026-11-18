@@ -1,5 +1,8 @@
 //! The catalog search, `jc_catalog_search` (T-0578, AG-58, API/01 §18): what matches, what the caller
 //! may open, how fresh it is, and what a restricted item does not say.
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -7,7 +10,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -156,7 +159,7 @@ async fn search(config: Config, cookie: Option<&str>, input: Value) -> (StatusCo
         .method("POST")
         .uri("/api/v1/projects/helsinki/ops/jc_catalog_search")
         .header(header::COOKIE, cookies)
-        .header(CSRF_HEADER, CSRF_TOKEN)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(input.to_string()))
         .unwrap();

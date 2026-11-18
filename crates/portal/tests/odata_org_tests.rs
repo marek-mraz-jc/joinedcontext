@@ -156,7 +156,7 @@ async fn cookies(config: &Config, identity: Identity, org: &str) -> String {
         };
         let jar = session::store(PrivateCookieJar::new(config.cookie_key.clone()), &session)
             .expect("store");
-        let token = csrf::Token::mint();
+        let token = csrf::Token::bound(&config.cookie_key, &session);
         let response = (jar, StatusCode::OK).into_response();
         let mut parts: Vec<String> = response
             .headers()

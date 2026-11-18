@@ -4,6 +4,7 @@
 //! repository and proposes the App building from it; both are an organization administrator's.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -287,7 +288,7 @@ async fn import(
                     axum::http::header::COOKIE,
                     common::cookie(&state.config, who),
                 )
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(
                     axum::http::header::CONTENT_TYPE,
                     format!("multipart/form-data; boundary={boundary}"),

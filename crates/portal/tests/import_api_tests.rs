@@ -7,6 +7,7 @@
 //! not, because the half that landed is now a project nobody described.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::io::Write;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -242,7 +243,7 @@ fn session_cookie_of(config: &Config, username: &str, groups: &[&str]) -> String
 
 /// The session and the double-submit CSRF cookie, which every UI mutation carries.
 fn cookies(config: &Config, groups: &[&str]) -> String {
-    format!("{}; {CSRF_COOKIE}={CSRF}", session_cookie(config, groups))
+    common::csrf_echo::with_bound_csrf(&config.cookie_key, &session_cookie(config, groups))
 }
 
 /// The bootstrap administrator of `Config::for_tests`, who may propose every kind.
@@ -339,7 +340,7 @@ async fn send(
                 .uri(uri)
                 .header(header::COOKIE, cookie)
                 .header(header::CONTENT_TYPE, content_type)
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::from(body))
                 .unwrap(),
         )
@@ -1042,7 +1043,7 @@ async fn a_dry_run_asked_for_in_the_query_writes_nothing_either() {
                 .uri(format!("/api/v1/projects/{PROJECT}/import?dryRun=All"))
                 .header(header::COOKIE, cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::from(serde_json::to_vec(&body).expect("body")))
                 .unwrap(),
         )
@@ -1097,7 +1098,7 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
             .uri(&action)
             .header(header::COOKIE, &cookie)
             .header(header::CONTENT_TYPE, "application/json")
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
         if let Some(tag) = if_match {
             request = request.header(header::IF_MATCH, tag);
         }
@@ -1381,7 +1382,7 @@ async fn an_anonymous_import_is_refused_before_anything_is_parsed() {
                 .method("POST")
                 .uri(format!("/api/v1/projects/{PROJECT}/import"))
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, content_type)
                 .body(Body::from(body))
                 .unwrap(),
@@ -1437,7 +1438,7 @@ async fn an_import_by_someone_who_may_propose_nothing_is_refused_before_the_body
                 .uri(format!("/api/v1/projects/{PROJECT}/import"))
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::from_stream(unreadable))
                 .unwrap(),
         )
@@ -2143,9 +2144,9 @@ async fn one_persons_check_does_not_open_the_door_for_another() {
     let server = forge().await;
     let (state, cookie) = state(&server, vec![]);
     check(state.clone(), &cookie, &bundle_archive(), &[]).await;
-    let other = format!(
-        "{}; {CSRF_COOKIE}={CSRF}",
-        session_cookie_of(&state.config, "peter.novak", &["portal-approver"])
+    let other = common::csrf_echo::with_bound_csrf(
+        &state.config.cookie_key,
+        &session_cookie_of(&state.config, "peter.novak", &["portal-approver"]),
     );
     let (status, body) = import_unchecked(state, &other, &[]).await;
 

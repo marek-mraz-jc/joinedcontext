@@ -4,6 +4,7 @@
 //! pipeline that it is not there.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path_regex};
@@ -314,7 +315,7 @@ async fn the_check_needs_a_session_and_read_on_the_pipeline() {
             Request::post(CHECK)
                 // The CSRF pair without a session: CSRF is checked first.
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={}", common::CSRF))
-                .header(CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

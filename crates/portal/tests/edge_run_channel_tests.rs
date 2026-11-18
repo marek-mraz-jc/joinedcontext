@@ -36,7 +36,6 @@ mod common;
 const PROJECT: &str = "helsinki";
 const OWNER: &str = "demo.builder";
 const OTHER: &str = "demo.other";
-const CSRF: &str = "csrf-token-edge-channel";
 const SLUG: &str = "si6epqkx364lprho5uaigutk274r5grb";
 
 fn config() -> Config {
@@ -196,7 +195,10 @@ fn cookie(config: &Config, username: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 

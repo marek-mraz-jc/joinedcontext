@@ -1,11 +1,14 @@
 //! The Portal in front of Model Tools: what a session may compile, what a caller may steer, and
 //! what happens when the compiler is absent (DM-10, DM-18, DM-19).
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::server;
@@ -55,7 +58,10 @@ fn session_cookie(config: &Config) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -68,7 +74,7 @@ async fn post(config: Config, uri: &str, body: &str) -> (StatusCode, serde_json:
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::COOKIE, &cookie)
-        .header(CSRF_HEADER, TEST_CSRF_TOKEN);
+        .echo_csrf();
     let response = app
         .oneshot(request.body(Body::from(body.to_string())).unwrap())
         .await
@@ -103,7 +109,7 @@ async fn upload(
             format!("multipart/form-data; boundary={boundary}"),
         )
         .header(header::COOKIE, &cookie)
-        .header(CSRF_HEADER, TEST_CSRF_TOKEN);
+        .echo_csrf();
     let response = app
         .oneshot(request.body(Body::from(body)).unwrap())
         .await
@@ -282,7 +288,7 @@ async fn an_anonymous_caller_cannot_compile() {
                 .uri("/api/v1/tools/generate")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::from(r#"{"source":"name: aq\n"}"#))
                 .unwrap(),
         )

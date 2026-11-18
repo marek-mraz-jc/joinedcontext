@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::ops;
@@ -23,8 +23,6 @@ use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-ops-123";
 
 fn session_cookie(
     config: &Config,
@@ -62,7 +60,10 @@ fn session_cookie(
         let pair = raw.split(';').next().unwrap_or_default();
         parts.push(pair.to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -100,7 +101,7 @@ async fn every_registered_name_answers_on_post_ops() {
             .method("POST")
             .uri(format!("/api/v1/projects/ovzdusie/ops/{}", op.name))
             .header(header::COOKIE, &steward_cookie)
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(b"{}".to_vec()))
             .expect("request");
@@ -259,7 +260,7 @@ async fn unknown_field_in_input_returns_422() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_catalog_search")
                 .header(header::COOKIE, steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -308,7 +309,7 @@ async fn principal_without_binding_reads_a_project_that_is_not_there() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_catalog_search")
                 .header(header::COOKIE, unprivileged_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(b"{\"q\":\"bikes\"}".to_vec()))
                 .unwrap(),
@@ -362,7 +363,7 @@ async fn jc_catalog_search_finds_the_public_endpoint() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_catalog_search")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(b"{\"q\":\"air\"}".to_vec()))
                 .unwrap(),
@@ -631,6 +632,7 @@ async fn the_run_operations_answer_and_an_agent_is_refused_by_name() {
 }
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 /// PF-65, AG-59, T-0870: the operation is the same door as the "New project" button. Who may
 /// open a project is the organization's own setting, so the registry lets the call through and
@@ -955,7 +957,7 @@ async fn get_schema_answers_every_kind_of_jc_core() {
             .method("POST")
             .uri("/api/v1/projects/ovzdusie/ops/jc_schema_get")
             .header(header::COOKIE, &cookie)
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(body.to_string()))
             .expect("request")

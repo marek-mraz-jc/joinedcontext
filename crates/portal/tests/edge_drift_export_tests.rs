@@ -13,6 +13,9 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -24,7 +27,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::MockServer;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -37,7 +40,6 @@ use joinedcontext_portal::state::AppState;
 const PROJECT: &str = "helsinki";
 const SPACE: &str = "helsinki";
 const ENTITY: &str = "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:station-1";
-const CSRF: &str = "csrf-token-edge-drift";
 const MEMBER: &str = "peter.member@hel.fi";
 const STRANGER: &str = "nobody@hel.fi";
 
@@ -83,7 +85,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -154,7 +159,7 @@ async fn call(state: &AppState, email: &str, verb: Method, uri: &str) -> (Status
                 .method(verb)
                 .uri(uri)
                 .header(header::COOKIE, cookie(&state.config, email))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("a request"),
         )

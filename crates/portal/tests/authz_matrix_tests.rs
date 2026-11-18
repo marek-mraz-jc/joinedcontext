@@ -19,6 +19,7 @@
 //! `JC_AUTHZ_RECORD=<file>` writes what every cell answered instead of asserting, for a new row.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::collections::BTreeMap;
 
@@ -28,8 +29,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use common::{cookie, envelope, person, CSRF};
-use joinedcontext_portal::auth::csrf::CSRF_HEADER;
+use common::{cookie, envelope, person};
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -591,7 +591,7 @@ async fn send(
             };
             request = request
                 .header(header::COOKIE, cookie(&state.config, identity))
-                .header(CSRF_HEADER, CSRF);
+                .echo_csrf();
         }
     }
     let body = match (&row.form, &row.body) {

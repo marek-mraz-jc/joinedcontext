@@ -5,6 +5,9 @@
 //! the findings" beside the chip, so the findings have to be there; and the strict gate then reads
 //! one shape instead of two.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -14,15 +17,13 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-verdict-findings";
 
 fn session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -55,7 +56,10 @@ fn session_cookie(config: &Config) -> String {
         let raw = value.to_str().expect("cookie header");
         parts.push(raw.split(';').next().unwrap_or_default().to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -76,7 +80,7 @@ async fn check_on(plural: &str, manifest: Value) -> (StatusCode, Value, AppState
                 .method("POST")
                 .uri(format!("/api/v1/projects/ovzdusie/{plural}?dryRun=All"))
                 .header(header::COOKIE, session_cookie(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&manifest).unwrap()))
                 .unwrap(),

@@ -1,14 +1,17 @@
 //! T-0526: roles as code, enforced (PF-50). Who may propose, delete and approve comes from the
 //! `Role` and `RoleBinding` manifests in the mirror, never from the token.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use chrono::{TimeZone, Utc};
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use jc_core::kinds::Verb;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::{effective, is_service_account, ORG_NAMESPACE};
@@ -18,8 +21,6 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-
-const CSRF: &str = "test-csrf-token-12345";
 
 fn identity(email: &str, groups: &[&str]) -> Identity {
     Identity {
@@ -60,7 +61,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -159,7 +163,7 @@ async fn post(
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, cookies(config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).expect("json")))
                 .expect("request"),
@@ -294,7 +298,7 @@ async fn deletion_needs_delete_and_the_bootstrap_group_needs_no_repository() {
                     .method("DELETE")
                     .uri("/api/v1/projects/ovzdusie/pipelines/aq?dryRun=All")
                     .header(header::COOKIE, cookies(&config, who))
-                    .header(CSRF_HEADER, CSRF)
+                    .echo_csrf()
                     .body(Body::empty())
                     .expect("request"),
             )
@@ -1802,7 +1806,7 @@ async fn send(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookies(config, identity(who, &[])))
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json");
     let body = body.map_or_else(Body::empty, |b| {
         Body::from(serde_json::to_vec(b).expect("json"))

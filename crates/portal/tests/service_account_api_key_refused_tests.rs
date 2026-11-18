@@ -2,13 +2,15 @@
 //! declares an `api-key` credential is no manifest the Portal takes: its apply answers 400, its
 //! dry run is invalid and red, both name the credential kind, and nothing reaches Git.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -18,8 +20,6 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::MockServer;
-
-const CSRF: &str = "test-csrf-api-key-token";
 
 fn cookies(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -58,7 +58,7 @@ fn cookies(config: &Config) -> String {
                 .to_owned()
         })
         .collect();
-    format!("{}; {CSRF_COOKIE}={CSRF}", session.join("; "))
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session.join("; "))
 }
 
 fn account(kind: &str) -> Value {
@@ -110,7 +110,7 @@ async fn send(method: &str, uri: &str, payload: &Value) -> (StatusCode, String, 
                 .method(method)
                 .uri(uri)
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(payload).expect("json")))
                 .expect("request"),

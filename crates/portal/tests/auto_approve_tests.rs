@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use axum::body::Body;
@@ -16,7 +17,6 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase};
 use joinedcontext_portal::config::Config;
@@ -31,7 +31,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-2651";
 const EMAIL: &str = "jana.kovacova@banskabystrica.sk";
 const SPACE_PATH: &str = "projects/ovzdusie/spaces/mobility/space.yaml";
 const SPACE_YAML: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n";
@@ -78,7 +77,7 @@ fn cookies(config: &Config) -> String {
                 .to_owned()
         })
         .collect();
-    format!("{}; {CSRF_COOKIE}={CSRF}", session.join("; "))
+    common::csrf_echo::with_bound_csrf(&config.cookie_key, &session.join("; "))
 }
 
 fn org(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
@@ -250,7 +249,7 @@ async fn propose_space(state: AppState) -> Change {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(manifest.to_string()))
                 .expect("request"),
@@ -273,7 +272,7 @@ async fn remove_space(state: AppState, confirm: Option<&str>) -> Change {
                 .method("DELETE")
                 .uri(uri)
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -338,7 +337,7 @@ async fn an_administrators_red_lane_removal_through_propose_delete_lands_with_th
                 .method("POST")
                 .uri("/api/v1/spaces(project='ovzdusie',name='mobility')/JoinedContext.Portal.propose_delete")
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::IF_MATCH, "*")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(json!({ "confirm": "mobility" }).to_string()))

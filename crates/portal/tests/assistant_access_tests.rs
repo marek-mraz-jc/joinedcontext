@@ -9,6 +9,7 @@
 //! bearer, and an entity change previewed with the person's grants.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +22,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use http_body_util::BodyExt;
 use joinedcontext_portal::agents::run::AgentRunEvent;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -35,7 +36,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, path_regex, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-access";
 const SHARE_SECTION: &str = "## WHEN THE PERSON ASKS TO SHARE OR PUBLISH DATA";
 const KPI_SECTION: &str = "## WHEN THE PERSON ASKS FOR AN INDICATOR";
 
@@ -120,7 +120,10 @@ fn cookie(config: &Config, identity: Identity) -> String {
         .filter_map(|v| v.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -276,7 +279,7 @@ async fn converse_with(
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/assistant/conversations")
                 .header(header::COOKIE, cookie(&config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({ "message": conversation.message }).to_string(),
@@ -1080,7 +1083,7 @@ async fn a_profile_naming_an_operation_the_portal_does_not_register_is_refused_o
                     header::COOKIE,
                     cookie(&config, person("admin@hel.fi", &["portal-approver"])),
                 )
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&profile).expect("json")))
                 .expect("request"),
@@ -1400,7 +1403,7 @@ async fn ask_the_data_listing(
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/assistant/conversations")
                 .header(header::COOKIE, cookie(&config, person("admin@hel.fi", &["portal-approver"])))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({ "message": "Which stations have no bikes?", "endpointNames": endpoints }).to_string(),
@@ -1806,7 +1809,7 @@ async fn start_conversation(state: &AppState, config: &Config, message: &str) ->
                     header::COOKIE,
                     cookie(config, person("admin@hel.fi", &["portal-approver"])),
                 )
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(json!({ "message": message }).to_string()))
                 .expect("request"),
