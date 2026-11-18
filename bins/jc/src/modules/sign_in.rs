@@ -29,11 +29,13 @@ pub fn from_config(orgs: &[crate::config::OrganizationSection]) -> Vec<SignIn> {
 }
 
 /// One registry row as [`from_registry`] reads it: host, Organization, role, state.
+#[cfg(feature = "portal")]
 pub type Row<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 /// The registry's `served` `signin` rows of the Organizations jc runs (`known`), one per
 /// Organization (the first row wins; the registry's check refuses a second). A row of an
 /// Organization jc does not run is left out: none of its modules could serve it.
+#[cfg(feature = "portal")]
 pub fn from_registry<'a>(rows: impl IntoIterator<Item = Row<'a>>, known: &[String]) -> Vec<SignIn> {
     let mut out: Vec<SignIn> = Vec::new();
     for (host, organization, role, state) in rows {
@@ -62,11 +64,12 @@ pub fn follow(module: &'static str, follow: impl Fn(&[SignIn]) + Send + Sync + '
 }
 
 /// Hands `set` to every follower when it differs from the last one; `true` when it did.
+#[cfg(feature = "portal")]
 pub fn publish(set: Vec<SignIn>) -> bool {
     SIGN_IN.publish(set)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "portal"))]
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};

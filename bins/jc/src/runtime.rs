@@ -68,6 +68,7 @@ const SECONDS: &[f64] = &[
 /// label set, 45-305 MiB of the prod rehearsal's heap, and no `_bucket` series for the
 /// dashboards' `histogram_quantile` (jc-memory-peak).
 fn builder() -> Result<PrometheusBuilder, BuildError> {
+    #[cfg_attr(not(any(feature = "portal", feature = "antares")), allow(unused_mut))]
     let mut tables: Vec<(&str, &[f64])> = Vec::new();
     #[cfg(feature = "portal")]
     tables.extend_from_slice(joinedcontext_portal::telemetry::BUCKETS);

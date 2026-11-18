@@ -470,6 +470,7 @@ fn hosts_specs(
 /// (working, open data, API, sign-in) and every Portal site. `rows` are `(host, Organization,
 /// role)` of `served` rows; an Apps domain and a `[[hosts]]` row stay jc.toml's (a wildcard
 /// entry and a root path the registry does not hold).
+#[cfg(feature = "portal")]
 pub(crate) fn registry_hosts<'a>(
     rows: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
 ) -> std::collections::BTreeMap<String, crate::config::OrganizationHosts> {
@@ -496,6 +497,7 @@ pub(crate) fn registry_hosts<'a>(
 
 /// The entries every module of `roles` takes on the registry's hosts (`registry_hosts`); the
 /// router mounts those of hosts jc.toml did not mount (`jc_router::HostSwap::mount_hosts`).
+#[cfg(feature = "portal")]
 pub(crate) fn registry_specs(
     orgs: &std::collections::BTreeMap<String, crate::config::OrganizationHosts>,
     roles: &[Module],
@@ -903,6 +905,7 @@ fn old_sign_in(scheme: String, host: String) -> Router {
 /// Portal's read door at `/git/...`, which checks the person and reads the forge in the pod;
 /// `GET /api/healthz` reaches `shako`; everything else, a push included, is `404`, as is the
 /// door when the Portal runs elsewhere.
+#[cfg(feature = "shako")]
 fn public_forge(portal: Option<Router>, shako: Router) -> Router {
     Router::new().fallback(move |mut req: Request| {
         let portal = portal.clone();
@@ -1374,6 +1377,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         let (secrets, door) = (Arc::new(secrets), door);
         let shutdown = running.shutdown.clone();
         let gateway = built.gateway;
+        #[cfg(feature = "portal")]
         let hosts = built.hosts;
         let attempt = {
             let (cfg, setup, siblings, secrets, door, shutdown) = (
@@ -1393,6 +1397,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                         secrets: secrets.clone(),
                         door: door.clone(),
                         portal_internal: portal_internal.clone(),
+                        #[cfg(feature = "portal")]
                         hosts: hosts.clone(),
                     },
                     mount.clone(),
@@ -1413,6 +1418,7 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
                     secrets,
                     door,
                     portal_internal: None,
+                    #[cfg(feature = "portal")]
                     hosts: None,
                 };
                 let built = gateway_attempt(cfg, shared, late.mount, late.hop, internal);
@@ -1452,6 +1458,7 @@ struct Shared {
     door: Option<Arc<crate::door::Door>>,
     portal_internal: Option<Arc<std::net::TcpListener>>,
     /// The router's host table, which the Portal keeps on the host registry (T-7136).
+    #[cfg(feature = "portal")]
     hosts: Option<jc_router::HostSwap>,
 }
 
@@ -1985,6 +1992,7 @@ mod tests {
 
     /// T-6896: the forge's public mount in host mode hands the Portal a clone's two requests at
     /// `/git/...` and answers everything else, a push included, with 404.
+    #[cfg(feature = "shako")]
     #[tokio::test]
     async fn the_public_forge_reaches_the_portals_read_door_alone() {
         let portal = Router::new().fallback(|req: Request| async move {
