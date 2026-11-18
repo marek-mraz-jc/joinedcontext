@@ -498,12 +498,6 @@ fn rows() -> Vec<Row> {
             get("/livez".to_owned()),
             Open("liveness probe"),
         ),
-        row(
-            "GET",
-            "/metrics",
-            get("/metrics".to_owned()),
-            Open("Prometheus counters, reachable only inside the cluster, no request of anyone's"),
-        ),
     ]
 }
 

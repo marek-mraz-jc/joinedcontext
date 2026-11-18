@@ -76,7 +76,6 @@ const ROUTES: &[(&str, &str)] = &[
     ),
     ("GET", "/healthz"),
     ("GET", "/livez"),
-    ("GET", "/metrics"),
 ];
 
 /// The files an endpoint stopped publishing (T-4597, API/02 §5): no handler serves them.

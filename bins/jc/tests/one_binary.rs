@@ -344,6 +344,13 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
 
     // The App pods' listener: the gateway's Endpoint reads, answered as on the gateway's own
     // host, whatever the Host; no other path or module, and no write.
+    // The gateway's own host serves no scrape (S2-18, T-7279): its series stay on the admin
+    // listener; before, the gateway's router answered `/metrics` here.
+    for path in ["/metrics", "/metrics?x=1"] {
+        let (status, body) = get(addr, "api.city.test", path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path} on the API host: {body}");
+    }
+
     let apps = running.apps_addr.expect("an apps listener");
     for path in [
         "/api/endpoint/x",
