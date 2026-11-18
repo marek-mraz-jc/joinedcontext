@@ -804,6 +804,41 @@ async fn a_non_public_apps_pod_hears_only_whom_the_app_admits() {
     assert_eq!(held[0].2[header::AUTHORIZATION], format!("Bearer {token}"));
 }
 
+/// A gated `ui-rust` App this installation runs no pod for answers an anonymous caller the `404`
+/// its visibility gives, never the `503` that names it (T-7229: jc-prod's air-quality).
+#[tokio::test]
+async fn a_gated_ui_rust_app_without_a_pod_is_not_named_to_a_stranger() {
+    let bundles = Bundles::new("pod-none", &[]);
+    let config = Config {
+        apps_dir: Some(bundles.0.to_string_lossy().into_owned()),
+        public_base_url: "https://portal.example.org".parse().unwrap(),
+        apps_url: Some("https://example.org".parse().unwrap()),
+        serve_app_hosts: true,
+        ..Config::for_tests()
+    };
+    let mirror = mirror();
+    let mut spec = app("ui-rust");
+    spec["visibility"] = "project".into();
+    mirror.upsert(envelope("App", "ovzdusie", "pod-gated", spec));
+    let portal = server::app(AppState::new(config, None).with_mirror(mirror));
+    // A browser's page request goes to sign-in first; a fetch or curl gets the visibility's answer.
+    for accept in ["application/json", "*/*"] {
+        let (status, _, body) = send(
+            &portal,
+            "pod-gated.apps.example.org",
+            "/",
+            &[("accept", accept)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{accept}");
+        let body = String::from_utf8_lossy(&body);
+        assert!(!body.contains("runs as its own service"), "{body}");
+    }
+    // A public one still says why it is not there.
+    let (status, _, _) = send(&portal, "air-pod.apps.example.org", "/", &[]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
 #[tokio::test]
 async fn a_pod_that_does_not_answer_is_a_502_problem() {
     let bundles = Bundles::new("pod-down", &[]);

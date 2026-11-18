@@ -27,6 +27,9 @@ const MAX_ENTRIES: usize = 10_000;
 pub enum FetchError {
     #[error("the forge did not hand over the package: {0}")]
     Forge(#[from] GitError),
+    /// The registry has no such package version, named so the log says which (T-7229).
+    #[error("the forge has no package {0}")]
+    Missing(String),
     #[error("bundle.tar.gz hashes to {found}, not the digest {expected} status.build names")]
     Mismatch { expected: String, found: String },
     #[error("the bundle cannot be unpacked: {0}")]
@@ -80,10 +83,20 @@ async fn fetch(
     let applications = shako.applications();
     let bytes = match read_bundle(&applications, name, commit, digest).await {
         Err(GitError::NotFound) if applications.owner != shako.owner => {
-            read_bundle(shako, name, commit, digest).await?
+            read_bundle(shako, name, commit, digest).await
         }
-        other => other?,
-    };
+        other => other,
+    }
+    .map_err(|err| match err {
+        GitError::NotFound => FetchError::Missing(format!(
+            "{} version {} (or {commit}) of owner {} or {}",
+            package(name),
+            version(commit, digest),
+            applications.owner,
+            shako.owner
+        )),
+        other => FetchError::Forge(other),
+    })?;
     let found = format!("sha256:{:x}", Sha256::digest(&bytes));
     if found != digest {
         return Err(FetchError::Mismatch {
@@ -234,6 +247,27 @@ pub fn unpack(archive: &[u8], dest: &Path) -> Result<(), FetchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7229: a package the registry lacks is named in the error the sync logs, so an operator
+    /// sees which build to publish again.
+    #[tokio::test]
+    async fn a_missing_package_is_named() {
+        let server = wiremock::MockServer::start().await;
+        let shako = ShakoClient::new(server.uri().parse().expect("url"), "jc", "config", "t")
+            .expect("client");
+        let dir = std::env::temp_dir().join(format!("jc-t7229-fetch-{}", std::process::id()));
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let err = fetch(&shako, &dir, "hsl-transport", "c0ffee", &digest)
+            .await
+            .expect_err("nothing to fetch");
+        let message = err.to_string();
+        assert!(
+            message.starts_with("the forge has no package app-hsl-transport version ")
+                && message.ends_with("(or c0ffee) of owner jc or jc"),
+            "{message}"
+        );
+        assert!(!dir.exists());
+    }
 
     /// A `.tar.gz` of `(path, kind, bytes)`, written with raw headers so a hostile path is kept
     /// as it is instead of being refused by the builder.

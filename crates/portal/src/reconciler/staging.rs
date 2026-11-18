@@ -189,7 +189,12 @@ pub(super) async fn listing(
     revision: &str,
     project: bool,
 ) -> Result<Listing, SyncError> {
-    let tree_blobs = shako.list_tree_blobs(revision).await?;
+    let tree_blobs = shako
+        .list_tree_blobs(revision)
+        .await
+        .map_err(SyncError::naming(|| {
+            format!("tree at {revision} in {}/{}", shako.owner, shako.repo)
+        }))?;
     let candidates: Vec<(String, String)> = tree_blobs
         .into_iter()
         .filter(|(p, _)| {

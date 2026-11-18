@@ -127,6 +127,20 @@ pub enum SyncError {
     /// before it undoes that, and the run queued behind the merge carries on (T-6455).
     #[error("a merged change went live during this run")]
     Superseded,
+    /// The forge answered `404` for what the run reads first: the repository, its branch or its
+    /// tree, named so the log says which (T-7229).
+    #[error("the forge has no {0}")]
+    Missing(String),
+}
+
+impl SyncError {
+    /// The forge's `404` for `what`, named; any other forge error as it came.
+    pub(super) fn naming(what: impl FnOnce() -> String) -> impl FnOnce(GitError) -> SyncError {
+        |err| match err {
+            GitError::NotFound => SyncError::Missing(what()),
+            other => SyncError::Git(other),
+        }
+    }
 }
 
 /// The feed's sentence for a run that could not load the repository (T-4967): a refused forge
@@ -922,6 +936,9 @@ impl Syncer {
                 Ok(before.manifests)
             }
             Err(err) => {
+                if matches!(err, SyncError::Git(_) | SyncError::Missing(_)) {
+                    self.serve_last_assembly(&err);
+                }
                 let message = err.to_string();
                 let repeated = before.last_error.as_deref() == Some(message.as_str());
                 self.status
@@ -1000,6 +1017,53 @@ impl Syncer {
             "merged change live"
         );
         Ok(())
+    }
+
+    /// A process whose runs have not read the forge yet serves the assembly the last process left
+    /// on the state volume, so a restart while the forge answers `404` or not at all keeps every
+    /// App host and Endpoint as it was instead of answering `404` for all of them (T-7229).
+    /// Nothing converges from it: only a run that read the forge does that, and its mirror
+    /// replaces this one whole.
+    fn serve_last_assembly(&self, err: &SyncError) {
+        use jc_core::project::RepositoryRole;
+        if self.status().revision.is_some() || !self.mirror.is_empty() {
+            return;
+        }
+        if !matches!(
+            jcctl::assemble::layout_at(&self.assembly, RepositoryRole::Organization),
+            Ok(2)
+        ) {
+            return;
+        }
+        let render = Render {
+            layout: 2,
+            root: self.assembly.clone(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let loaded = Repository::load(&self.assembly)
+            .map_err(SyncError::from)
+            .and_then(|repository| {
+                self.load_mirror(&render, &repository, &Refusals::new(), "", "")
+            });
+        match loaded {
+            Ok((mirror, manifests)) => {
+                self.mirror.replace_all(&mirror);
+                tracing::warn!(
+                    error = %err,
+                    manifests,
+                    assembly = %self.assembly.display(),
+                    "the first run read nothing from the forge: the last assembly serves until a run does"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, assembly = %self.assembly.display(), "the last assembly does not load either: nothing serves until the forge answers");
+            }
+        }
     }
 
     /// The mirror takes the run's result, unless a merge went live since `seen`.
@@ -1491,8 +1555,19 @@ impl Syncer {
     async fn do_sync(&self, leader: bool, seen: u64) -> Result<(usize, String), SyncError> {
         let mut steps = Steps::start();
         // 1. Resolve default branch and its commit revision
-        let default_branch = self.shako.default_branch().await?;
-        let revision = self.shako.branch_head(&default_branch).await?;
+        let repo = || format!("{}/{}", self.shako.owner, self.shako.repo);
+        let default_branch = self
+            .shako
+            .default_branch()
+            .await
+            .map_err(SyncError::naming(|| format!("repository {}", repo())))?;
+        let revision = self
+            .shako
+            .branch_head(&default_branch)
+            .await
+            .map_err(SyncError::naming(|| {
+                format!("branch {default_branch} of {}", repo())
+            }))?;
         steps.mark("revision");
 
         // 2, 3. The repository as files on disk, this run's own; in layout 2 the organization
@@ -5311,6 +5386,40 @@ output_error{stream="kpi"} 6
         assert!(
             after.get("b", "Endpoint", "e").is_some(),
             "the restart lost the project that did not load"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-7229: a restart whose forge answers `404` for the organization's repository serves the
+    /// last assembly on the state directory instead of nothing, and says which resource was
+    /// missing; the first run that reads the forge replaces it.
+    #[tokio::test]
+    async fn a_restart_whose_forge_has_no_repository_serves_the_last_assembly() {
+        let org = vec![
+            (".jc/layout", "2\n".to_owned()),
+            ("organization.yaml", organization()),
+            ("projects/b.yaml", registry_entry("b")),
+        ];
+        let (forge, shako, _shared) = changing_forge(&org).await;
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        project_repository(&forge, "b-repo", project_files("b"), up).await;
+        let dir = state_dir("forge-404");
+        Syncer::new(Arc::new(shako), Arc::new(Mirror::new()))
+            .with_state_dir(Some(dir.clone()))
+            .sync_once()
+            .await
+            .expect("the first run loads");
+
+        let empty = MockServer::start().await;
+        let gone = ShakoClient::new(empty.uri().parse().unwrap(), "jc", "config", "t").unwrap();
+        let after = Arc::new(Mirror::new());
+        let syncer =
+            Syncer::new(Arc::new(gone), Arc::clone(&after)).with_state_dir(Some(dir.clone()));
+        let err = syncer.sync_once().await.expect_err("the forge has nothing");
+        assert_eq!(err.to_string(), "the forge has no repository jc/config");
+        assert!(
+            after.get("b", "Endpoint", "e").is_some(),
+            "the restart served nothing while the forge answered 404"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

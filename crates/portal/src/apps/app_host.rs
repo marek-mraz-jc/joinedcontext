@@ -186,15 +186,17 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
             .await;
         }
         (Some((project, spec, _)), Some(AppClass::UiRust)) if !services => {
-            let Some(pod) = state.config.app_pods.get(&name) else {
-                return unavailable(&state, &req, &name, "pod");
-            };
-            // The pod never asks who calls: the App's visibility is judged here, as for a shard.
+            // The pod never asks who calls: the App's visibility is judged here, as for a shard,
+            // and before the `503` of a pod this installation lacks, which would name a gated
+            // App to a caller its visibility answers `404` (T-7229).
             if let Some(refused) =
                 super::static_host::refused(&state, req.headers(), project, &name, spec).await
             {
                 return refused;
             }
+            let Some(pod) = state.config.app_pods.get(&name) else {
+                return unavailable(&state, &req, &name, "pod");
+            };
             return to_pod(&state, req, pod, &rest, project, spec).await;
         }
         (_, Some(AppClass::UiRust)) if !services => {
