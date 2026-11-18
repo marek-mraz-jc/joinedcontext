@@ -46,7 +46,7 @@ impl Fixture {
 
     async fn token(&self, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys("jc").await.unwrap();
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut claims = json!({
             "iss": "https://idm.localhost/realms/jc",
             "sub": sub,

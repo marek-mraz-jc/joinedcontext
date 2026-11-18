@@ -21,8 +21,8 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get};
 use axum::{Extension, Json, Router};
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_oidc::second_factor_required;
@@ -327,7 +327,7 @@ async fn audit(state: &OidcState, c: &Caller, kind: &str, ip: &ClientIp, details
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: c.realm.id.clone(),
             org_id: c.user.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: kind.into(),
             client_id: Some(ACCOUNT_CONSOLE_CLIENT.into()),
             user_id: Some(c.user.id.clone()),
@@ -638,7 +638,7 @@ async fn credential_groups(state: &OidcState, c: &Caller) -> Result<Value> {
                 "id": p.id,
                 "type": "webauthn-passwordless",
                 "userLabel": p.user_label,
-                "createdDate": p.created_at.timestamp_millis(),
+                "createdDate": p.created_at.as_millis(),
             }})
         })
         .collect();
@@ -772,7 +772,7 @@ async fn sessions_get(
                 "mobile": mobile,
                 "started": s.start / 1000,
                 "lastAccess": s.last_access / 1000,
-                "expires": s.max_expires_at.timestamp(),
+                "expires": s.max_expires_at.as_second(),
                 "clients": clients,
                 "current": s.id == c.session_id,
             }));

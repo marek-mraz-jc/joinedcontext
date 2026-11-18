@@ -3,8 +3,8 @@
 //! pending with the error recorded (retry with backoff), and the production sender reads the
 //! SMTP password from its file only at send time.
 
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::{EmailOutboxRecord, RealmConfig, SmtpServerConfig, Store};
 use kaisatsu_crypto::{Kek, KeyManager};
 use kaisatsu_login::{MailSender, OutboxDispatcher, RealmSmtpSender, RecordingSender};
@@ -45,8 +45,8 @@ fn row(realm: &str, id: &str) -> EmailOutboxRecord {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now() - chrono::Duration::seconds(1),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now() - jiff::SignedDuration::from_secs(1),
+        created_at: TimestampTz::now(),
         sent_at: None,
     }
 }

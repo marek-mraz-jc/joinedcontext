@@ -218,7 +218,7 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_bad_state, StatusCode::BAD_REQUEST);
 
     // 3. Wrong nonce in upstream ID token is refused.
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": "entra-sub-1",
@@ -477,7 +477,7 @@ async fn upstream_callback(
     .await;
     let up = url::Url::parse(hdrs[header::LOCATION].to_str().unwrap()).unwrap();
     let qp: BTreeMap<String, String> = up.query_pairs().into_owned().collect();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     *up_state.next_claims.lock().unwrap() = json!({
         "iss": up_issuer,
         "sub": sub,

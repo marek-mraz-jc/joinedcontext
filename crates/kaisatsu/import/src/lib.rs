@@ -2,7 +2,7 @@
 //! `kaisatsu-import`: Declarative config-as-code apply, offline check, plan/apply with stale-plan
 //! refusal, drift detection, secret substitution, and round-trip export (W1, W1b).
 
-use chrono::Utc;
+use jc_time::TimestampTz;
 use kaisatsu_core::claims::is_known_mapper_kind;
 use kaisatsu_core::*;
 use kaisatsu_crypto::hash_password;
@@ -1533,7 +1533,7 @@ pub async fn apply_realm_files(
                                             .get("userLabel")
                                             .and_then(Value::as_str)
                                             .map(str::to_owned),
-                                        created_date: Utc::now().timestamp_millis(),
+                                        created_date: TimestampTz::now().as_millis(),
                                         secret_data: phc,
                                         credential_data: String::new(),
                                         temporary: cred_val
@@ -1556,7 +1556,7 @@ pub async fn apply_realm_files(
                                             .get("userLabel")
                                             .and_then(Value::as_str)
                                             .map(str::to_owned),
-                                        created_date: Utc::now().timestamp_millis(),
+                                        created_date: TimestampTz::now().as_millis(),
                                         secret_data: sec_data.to_owned(),
                                         credential_data: cred_val
                                             .get("credentialData")
@@ -1593,7 +1593,7 @@ pub async fn apply_realm_files(
                                         .get("userLabel")
                                         .and_then(Value::as_str)
                                         .map(str::to_owned),
-                                    created_date: Utc::now().timestamp_millis(),
+                                    created_date: TimestampTz::now().as_millis(),
                                     secret_data,
                                     credential_data: cred_val
                                         .get("credentialData")
@@ -1621,7 +1621,7 @@ pub async fn apply_realm_files(
                     id: uuid::Uuid::now_v7().to_string(),
                     realm_id: realm_id.clone(),
                     org_id: None,
-                    time: Utc::now().timestamp_millis(),
+                    time: TimestampTz::now().as_millis(),
                     operation_type: format!("APPLY_{:?}", ch.action).to_ascii_uppercase(),
                     resource_type: ch.kind.clone(),
                     resource_path: ch.id.clone(),

@@ -10,7 +10,8 @@ kaisatsu-core = { path = "../core" }
 argon2 = "0.6"
 aws-lc-rs = "1.19"
 base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 hmac = "0.13"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 password-hash = { version = "0.6", features = ["alloc", "phc", "getrandom"] }

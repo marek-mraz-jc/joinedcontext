@@ -2,8 +2,8 @@
 //! WebAuthn passkey registration and authentication ceremony helpers for `kaisatsu-login`
 //! and `kaisatsu-admin` (W3C WebAuthn Level 3 §7.1 & §7.2, W7, K11).
 
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::{
     KaisatsuError, RealmConfig, Result, Store, UserRepresentation, WebAuthnCredentialRecord,
 };
@@ -174,7 +174,7 @@ pub async fn complete_passkey_registration(
         attestation_type: verified.attestation_type,
         rp_id,
         user_label: label.or_else(|| Some("Passkey".into())),
-        created_at: Utc::now(),
+        created_at: TimestampTz::now(),
         last_used_at: None,
     };
     store.insert_webauthn_credential(rec).await
@@ -248,7 +248,7 @@ pub async fn complete_passkey_authentication(
     if !cred.uv_initialized && verified.user_verified {
         cred.uv_initialized = true;
     }
-    cred.last_used_at = Some(Utc::now());
+    cred.last_used_at = Some(TimestampTz::now());
     store.update_webauthn_credential(cred).await?;
 
     Ok((user, verified.user_verified))

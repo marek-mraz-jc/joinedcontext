@@ -2,7 +2,7 @@
 //! Error paths of the pairwise subject mapper (K4, OIDC Core §8.1) and the OData row builders of
 //! the K-item entity sets: nothing secret leaves in a row.
 
-use chrono::{TimeZone, Utc};
+use jc_time::TimestampTz;
 use kaisatsu_core::claims::{compute_pairwise_sub, compute_subject_for_client};
 use kaisatsu_core::odata_defs::{
     email_outbox_to_row, idp_link_to_row, signing_key_to_row, webauthn_credential_to_row,
@@ -80,9 +80,56 @@ fn pairwise_reads_the_salt_key_and_redirect_hosts() {
     assert_eq!(compute_subject_for_client(&c, &[], "u-1").unwrap(), "u-1");
 }
 
+// Wire formats of a record's instants, pinned from chrono 0.4 before the jiff switch (T-7241):
+// JSON is RFC 3339 with `Z` and the fewest of 0/3/6/9 digits, the OData row `+00:00`.
+#[test]
+fn record_instants_keep_chrono_wire_format() {
+    for (nanos, json, row) in [
+        (0, "2026-11-08T12:00:00Z", "2026-11-08T12:00:00+00:00"),
+        (
+            120_000_000,
+            "2026-11-08T12:00:00.120Z",
+            "2026-11-08T12:00:00.120+00:00",
+        ),
+        (
+            123_456_000,
+            "2026-11-08T12:00:00.123456Z",
+            "2026-11-08T12:00:00.123456+00:00",
+        ),
+        (
+            123_456_789,
+            "2026-11-08T12:00:00.123456789Z",
+            "2026-11-08T12:00:00.123456789+00:00",
+        ),
+    ] {
+        let at = TimestampTz(jiff::Timestamp::new(1_794_139_200, nanos).unwrap());
+        let key = SigningKeyRecord {
+            id: "k1".into(),
+            realm_id: "dev".into(),
+            kid: "kid-1".into(),
+            algorithm: "ES256".into(),
+            status: "ACTIVE".into(),
+            priority: 100,
+            public_jwk_json: "{}".into(),
+            encrypted_private_key: vec![],
+            created_at: at,
+            activate_at: Some(at),
+            expires_at: None,
+        };
+        let value = serde_json::to_value(&key).unwrap();
+        assert_eq!(value["createdAt"], json);
+        assert_eq!(value["activateAt"], json);
+        assert_eq!(
+            serde_json::from_value(value["createdAt"].clone()).ok(),
+            Some(at)
+        );
+        assert_eq!(signing_key_to_row(&key)["created_at"], row);
+    }
+}
+
 #[test]
 fn k_item_rows_carry_no_secret_fields() {
-    let at = Utc.with_ymd_and_hms(2026, 11, 8, 12, 0, 0).unwrap();
+    let at = TimestampTz::from_second(1_794_139_200).unwrap();
     let key = SigningKeyRecord {
         id: "k1".into(),
         realm_id: "dev".into(),

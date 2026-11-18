@@ -240,7 +240,7 @@ async fn private_key_jwt_refusals_and_replay() {
         &[("jwks.string", "{}".into())],
     )
     .await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let assertion = |sub: &str, aud: Value, jti: &str| {
         sign_jwt(
             &key,
@@ -317,7 +317,7 @@ async fn federated_jwt_refusals() {
     let cluster = KeyManager::generate_es256("cluster", &kek, 100, "ACTIVE").unwrap();
     let jwk: Value = serde_json::from_str(&cluster.public_jwk_json).unwrap();
     let k8s_iss = "https://kubernetes.default.svc.cluster.local";
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let sa = |sub: &str| {
         sign_jwt(
             &cluster,
@@ -748,7 +748,8 @@ async fn password_grant_refusals_and_totp() {
     let creds = store.list_credentials("dev", &s.id).await.unwrap();
     let otp = creds.iter().find(|c| c.credential_type == "otp").unwrap();
     let code =
-        generate_totp_code_for_credential(otp, chrono::Utc::now().timestamp() as u64).unwrap();
+        generate_totp_code_for_credential(otp, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
     let mut with_code = steward.to_vec();
     with_code.push(("totp", code));
     let (st, _, body) = send(gw(&with_code)).await;
@@ -775,8 +776,11 @@ async fn password_grant_refusals_and_totp() {
     let mut second_code = steward.to_vec();
     second_code.push((
         "totp",
-        generate_totp_code_for_credential(&second, chrono::Utc::now().timestamp() as u64 + 30)
-            .unwrap(),
+        generate_totp_code_for_credential(
+            &second,
+            jc_time::TimestampTz::now().as_second() as u64 + 30,
+        )
+        .unwrap(),
     ));
     let (st, _, body) = send(gw(&second_code)).await;
     assert_eq!(st, StatusCode::OK, "the second device's code: {body}");
@@ -812,7 +816,7 @@ async fn token_exchange_refusals_and_delegation() {
         .await
         .unwrap()
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let subject = |extra: Value| {
         let mut c = json!({"iss": ISSUER, "sub": member.id, "aud": "apisix-gateway", "typ": "Bearer",
             "jti": uuid::Uuid::now_v7().to_string(), "iat": now, "exp": now + 300});
@@ -903,7 +907,7 @@ async fn token_exchange_refusals_and_delegation() {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(revoked_claims["jti"].as_str().unwrap()),
             realm_id: "dev".into(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_mins(5),
         })
         .await
         .unwrap();
@@ -962,7 +966,7 @@ async fn jwt_bearer_refusals() {
         &[("jwks.string", "{}".into())],
     )
     .await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let grant = |cid: &'static str, assertion: Option<String>| {
         let app = app.clone();
         async move {

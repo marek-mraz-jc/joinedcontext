@@ -5,7 +5,8 @@
 //! the PostgreSQL boot and migration refusals. Runs against `MemoryStore` always and `PgStore`
 //! with `KAISATSU_TEST_DATABASE_URL`.
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::*;
 use kaisatsu_crypto::Kek;
 use kaisatsu_store_memory::MemoryStore;
@@ -47,7 +48,7 @@ fn passkey(id: &str, user: &str, org: &str) -> WebAuthnCredentialRecord {
         attestation_type: "None".into(),
         rp_id: "idm.example.test".into(),
         user_label: Some("Key".into()),
-        created_at: Utc::now(),
+        created_at: TimestampTz::now(),
         last_used_at: None,
     }
 }
@@ -70,14 +71,14 @@ fn outbox_row(id: &str, user: &str) -> EmailOutboxRecord {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now() - Duration::seconds(1),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now() - SignedDuration::from_secs(1),
+        created_at: TimestampTz::now(),
         sent_at: None,
     }
 }
 
-fn sso(id: &str, user: &str, expires_in: Duration) -> SsoSession {
-    let now = Utc::now();
+fn sso(id: &str, user: &str, expires_in: SignedDuration) -> SsoSession {
+    let now = TimestampTz::now();
     SsoSession {
         id: id.into(),
         realm_id: R.into(),
@@ -87,9 +88,9 @@ fn sso(id: &str, user: &str, expires_in: Duration) -> SsoSession {
         username: user.into(),
         ip_address: "192.0.2.1".into(),
         user_agent: String::new(),
-        start: now.timestamp(),
-        last_access: now.timestamp(),
-        auth_time: now.timestamp(),
+        start: now.as_second(),
+        last_access: now.as_second(),
+        auth_time: now.as_second(),
         acr: "1".into(),
         amr: vec!["pwd".into()],
         clients: HashMap::new(),
@@ -98,8 +99,8 @@ fn sso(id: &str, user: &str, expires_in: Duration) -> SsoSession {
     }
 }
 
-fn offline(id: &str, user: &str, client: &str, expires_in: Duration) -> OfflineSession {
-    let now = Utc::now();
+fn offline(id: &str, user: &str, client: &str, expires_in: SignedDuration) -> OfflineSession {
+    let now = TimestampTz::now();
     OfflineSession {
         id: id.into(),
         realm_id: R.into(),
@@ -149,7 +150,7 @@ async fn passkeys_and_links(store: &Arc<dyn Store>) {
         .unwrap();
     let mut used = passkey("pk-ann", "ann", "helsinki");
     used.sign_count = 7;
-    used.last_used_at = Some(Utc::now());
+    used.last_used_at = Some(TimestampTz::now());
     store.update_webauthn_credential(used).await.unwrap();
     let listed = store.list_webauthn_credentials(R, "ann").await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -219,7 +220,7 @@ async fn passkeys_and_links(store: &Arc<dyn Store>) {
         idp_alias: "upstream".into(),
         external_user_id: "ext-1".into(),
         external_username: Some("ann.upstream".into()),
-        created_at: Utc::now(),
+        created_at: TimestampTz::now(),
     };
     store.upsert_idp_link(link.clone()).await.unwrap();
     let found = store
@@ -265,7 +266,7 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
     let claimed = store.claim_outbox_batch(R, 10).await.unwrap();
     assert_eq!(claimed.len(), 1);
     // A failed send under the attempt cap goes back to pending with a default backoff.
-    let before = Utc::now();
+    let before = TimestampTz::now();
     store
         .complete_outbox_row(R, "ob-a", false, Some("421 try later".into()), None, 5)
         .await
@@ -295,24 +296,39 @@ async fn outbox_backoff(store: &Arc<dyn Store>) {
 
 async fn sessions_go_with_their_person(store: &Arc<dyn Store>) {
     store
-        .upsert_sso_session(sso("s-live", "ann", Duration::hours(1)))
+        .upsert_sso_session(sso("s-live", "ann", SignedDuration::from_hours(1)))
         .await
         .unwrap();
     store
-        .upsert_sso_session(sso("s-old", "bob", -Duration::hours(1)))
+        .upsert_sso_session(sso("s-old", "bob", -SignedDuration::from_hours(1)))
         .await
         .unwrap();
     store
-        .upsert_offline_session(offline("o-1", "ann", "portal", Duration::hours(1)))
+        .upsert_offline_session(offline(
+            "o-1",
+            "ann",
+            "portal",
+            SignedDuration::from_hours(1),
+        ))
         .await
         .unwrap();
     // The same offline session written twice stays one row.
     store
-        .upsert_offline_session(offline("o-1", "ann", "portal", Duration::hours(2)))
+        .upsert_offline_session(offline(
+            "o-1",
+            "ann",
+            "portal",
+            SignedDuration::from_hours(2),
+        ))
         .await
         .unwrap();
     store
-        .upsert_offline_session(offline("o-old", "bob", "portal", -Duration::hours(1)))
+        .upsert_offline_session(offline(
+            "o-old",
+            "bob",
+            "portal",
+            -SignedDuration::from_hours(1),
+        ))
         .await
         .unwrap();
     store
@@ -377,7 +393,7 @@ async fn k_entity_sets(store: &Arc<dyn Store>) {
             idp_alias: "upstream".into(),
             external_user_id: "ext-odata".into(),
             external_username: None,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
         .unwrap();

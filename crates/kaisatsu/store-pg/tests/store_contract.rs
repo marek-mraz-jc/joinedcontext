@@ -2,7 +2,8 @@
 //! One behaviour contract for every `Store` implementation (W2): the same calls and the same
 //! expected answers against `MemoryStore` and, with `KAISATSU_TEST_DATABASE_URL`, `PgStore`.
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::*;
 use kaisatsu_crypto::Kek;
 use kaisatsu_store_memory::MemoryStore;
@@ -68,13 +69,13 @@ fn family(id: &str, session: &str, user: &str, client: &str) -> RefreshTokenFami
         dpop_jkt: None,
         offline: false,
         revoked: false,
-        expires_at: Utc::now() + Duration::hours(1),
+        expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
         act: None,
         only_audience: None,
     }
 }
 
-fn sso(id: &str, user: &str, handle: &str, expires_in: Duration) -> SsoSession {
+fn sso(id: &str, user: &str, handle: &str, expires_in: SignedDuration) -> SsoSession {
     SsoSession {
         id: id.into(),
         realm_id: R.into(),
@@ -90,8 +91,8 @@ fn sso(id: &str, user: &str, handle: &str, expires_in: Duration) -> SsoSession {
         acr: "1".into(),
         amr: vec!["pwd".into()],
         clients: HashMap::from([("portal".to_owned(), "portal".to_owned())]),
-        idle_expires_at: Utc::now() + expires_in,
-        max_expires_at: Utc::now() + Duration::hours(10),
+        idle_expires_at: TimestampTz::now() + expires_in,
+        max_expires_at: TimestampTz::now() + SignedDuration::from_hours(10),
     }
 }
 
@@ -248,7 +249,7 @@ async fn realms_orgs_and_memberships(store: &dyn Store) {
                 org_id: "zil".into(),
                 person_id: "u-member".into(),
                 org_roles: vec!["org-admin".into()],
-                created_at: Utc::now(),
+                created_at: TimestampTz::now(),
             })
             .await
             .expect("membership");
@@ -1051,7 +1052,7 @@ async fn roles_and_clients(store: &dyn Store) {
 }
 
 async fn sessions_and_tokens(store: &dyn Store) {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let auth = AuthSession {
         id: "as1".into(),
         realm_id: R.into(),
@@ -1084,7 +1085,7 @@ async fn sessions_and_tokens(store: &dyn Store) {
         amr: Vec::new(),
         acr_achieved: "0".into(),
         created_at: now,
-        expires_at: now + Duration::minutes(30),
+        expires_at: now + SignedDuration::from_mins(30),
     };
     store.put_auth_session(auth.clone()).await.expect("put");
     let mut replaced = auth.clone();
@@ -1098,7 +1099,7 @@ async fn sessions_and_tokens(store: &dyn Store) {
     assert_eq!(got.user_id.as_deref(), Some("u1"));
     let mut expired = auth.clone();
     expired.id = "as-old".into();
-    expired.expires_at = now - Duration::minutes(1);
+    expired.expires_at = now - SignedDuration::from_mins(1);
     store.put_auth_session(expired).await.expect("put expired");
     assert!(
         store
@@ -1135,7 +1136,7 @@ async fn sessions_and_tokens(store: &dyn Store) {
         auth_time: 1,
         consumed: false,
         created_at: now,
-        expires_at: now + Duration::seconds(60),
+        expires_at: now + SignedDuration::from_secs(60),
     };
     store.put_auth_code(code.clone()).await.expect("put code");
     let (first, replay) = store
@@ -1161,12 +1162,12 @@ async fn sessions_and_tokens(store: &dyn Store) {
         client_id: "portal".into(),
         params: BTreeMap::from([("scope".to_owned(), "openid".to_owned())]),
         consumed: false,
-        expires_at: now + Duration::seconds(60),
+        expires_at: now + SignedDuration::from_secs(60),
     };
     store.put_par_request(par.clone()).await.expect("par");
     let mut old_par = par.clone();
     old_par.request_uri_hash = "par-old".into();
-    old_par.expires_at = now - Duration::seconds(1);
+    old_par.expires_at = now - SignedDuration::from_secs(1);
     store.put_par_request(old_par).await.expect("old par");
     assert!(
         store
@@ -1191,19 +1192,24 @@ async fn sessions_and_tokens(store: &dyn Store) {
     );
 
     store
-        .upsert_sso_session(sso("sso1", "u1", "handle-1", Duration::hours(1)))
+        .upsert_sso_session(sso("sso1", "u1", "handle-1", SignedDuration::from_hours(1)))
         .await
         .expect("sso");
     store
-        .upsert_sso_session(sso("sso1", "u1", "handle-1", Duration::hours(1)))
+        .upsert_sso_session(sso("sso1", "u1", "handle-1", SignedDuration::from_hours(1)))
         .await
         .expect("sso twice");
     store
-        .upsert_sso_session(sso("sso2", "u1", "handle-2", Duration::hours(1)))
+        .upsert_sso_session(sso("sso2", "u1", "handle-2", SignedDuration::from_hours(1)))
         .await
         .expect("sso");
     store
-        .upsert_sso_session(sso("sso-old", "u1", "handle-old", -Duration::minutes(1)))
+        .upsert_sso_session(sso(
+            "sso-old",
+            "u1",
+            "handle-old",
+            -SignedDuration::from_mins(1),
+        ))
         .await
         .expect("sso");
     let got = store
@@ -1435,8 +1441,8 @@ async fn sessions_and_tokens(store: &dyn Store) {
             scopes: vec!["offline_access".into()],
             created_at: now,
             last_access: now,
-            idle_expires_at: now + Duration::days(30),
-            max_expires_at: now + Duration::days(60),
+            idle_expires_at: now + SignedDuration::from_hours(24 * 30),
+            max_expires_at: now + SignedDuration::from_hours(24 * 60),
         })
         .await
         .expect("offline");
@@ -1456,7 +1462,7 @@ async fn sessions_and_tokens(store: &dyn Store) {
     let rec = RevokedTokenRecord {
         jti_hash: "jti-1".into(),
         realm_id: R.into(),
-        expires_at: now + Duration::minutes(5),
+        expires_at: now + SignedDuration::from_mins(5),
     };
     store.mark_token_revoked(rec.clone()).await.expect("revoke");
     assert!(matches!(
@@ -1469,7 +1475,7 @@ async fn sessions_and_tokens(store: &dyn Store) {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: "jti-old".into(),
             realm_id: R.into(),
-            expires_at: now - Duration::minutes(5),
+            expires_at: now - SignedDuration::from_mins(5),
         })
         .await
         .expect("revoke expired");
@@ -1753,7 +1759,7 @@ async fn config_events_and_sweeper(store: &dyn Store) {
 }
 
 fn device(device: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DeviceCodeRecord {
         device_code_hash: device.into(),
         user_code_hash: user_code.into(),
@@ -1771,14 +1777,14 @@ fn device(device: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRe
         last_poll_at: None,
         consumed: false,
         created_at: now,
-        expires_at: now + Duration::seconds(ttl),
+        expires_at: now + SignedDuration::from_secs(ttl),
     }
 }
 
 /// RFC 8628 device codes (D1): unique user codes, polls only by the client the code was issued
 /// to, `slow_down` on a poll inside the interval, one answer per code, single-use tokens.
 async fn device_codes(store: &dyn Store) {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     store
         .put_device_code(device("dev-a", "user-a", "jcctl", 600))
         .await
@@ -1822,7 +1828,7 @@ async fn device_codes(store: &dyn Store) {
         .expect("known");
     assert_eq!(first, DevicePoll::Pending);
     let (_, fast) = store
-        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(1))
+        .poll_device_code(R, "dev-a", "jcctl", now + SignedDuration::from_secs(1))
         .await
         .expect("poll")
         .expect("known");
@@ -1850,14 +1856,14 @@ async fn device_codes(store: &dyn Store) {
         "a code answers once"
     );
     let (before, ok) = store
-        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(30))
+        .poll_device_code(R, "dev-a", "jcctl", now + SignedDuration::from_secs(30))
         .await
         .expect("poll")
         .expect("known");
     assert_eq!(ok, DevicePoll::Approved);
     assert_eq!(before.user_id.as_deref(), Some("u1"));
     let (_, again) = store
-        .poll_device_code(R, "dev-a", "jcctl", now + Duration::seconds(60))
+        .poll_device_code(R, "dev-a", "jcctl", now + SignedDuration::from_secs(60))
         .await
         .expect("poll")
         .expect("known");

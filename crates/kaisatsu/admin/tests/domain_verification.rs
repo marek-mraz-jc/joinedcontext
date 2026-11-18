@@ -7,9 +7,10 @@
 
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
-use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_admin::{AdminState, HickoryDnsResolver, odata_router};
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, sign_jwt};
@@ -82,14 +83,14 @@ async fn setup() -> (
                 org_id: org_id.into(),
                 person_id: admin_id.into(),
                 org_roles: vec!["org-admin".into()],
-                created_at: Utc::now(),
+                created_at: TimestampTz::now(),
             })
             .await
             .unwrap();
     }
 
     let keys = store.list_signing_keys("dev").await.unwrap();
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
     let mint = |sub: &str, org: &str| {
         sign_jwt(
             &keys[0],
@@ -217,7 +218,8 @@ async fn k13_domain_verification_happy_path_failures_and_cross_org_404() {
         .await
         .unwrap()
         .unwrap();
-    expired_org.domains[0].challenge_expires_at = Some(Utc::now() - Duration::minutes(1));
+    expired_org.domains[0].challenge_expires_at =
+        Some(TimestampTz::now() - SignedDuration::from_mins(1));
     store.upsert_organization(expired_org).await.unwrap();
     resolver.insert_mock_txt("_kaisatsu-challenge.hel.fi", vec![txt_value.clone()]);
     let (st_exp, _) = post_odata(

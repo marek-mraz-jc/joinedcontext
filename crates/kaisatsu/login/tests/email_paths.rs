@@ -148,7 +148,7 @@ async fn action_links_need_the_action_type_and_the_realm_key() {
         .into_iter()
         .find(|k| k.status == "ACTIVE")
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let access = sign_jwt(
         &key,
         &kek,

@@ -15,7 +15,7 @@ fn b64(v: &Value) -> String {
 }
 
 fn claims() -> Value {
-    json!({ "jti": "j-err", "htm": "POST", "htu": HTU, "iat": chrono::Utc::now().timestamp() })
+    json!({ "jti": "j-err", "htm": "POST", "htu": HTU, "iat": jc_time::TimestampTz::now().as_second() })
 }
 
 /// A proof assembled by hand: the signature segment is junk, so every case must stop before or

@@ -10,7 +10,8 @@ use aws_lc_rs::signature::{
     ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, Ed25519KeyPair, KeyPair,
 };
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{KaisatsuError, Result, SigningKeyRecord};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -228,7 +229,7 @@ impl KeyManager {
             public_jwk_json: serde_json::to_string(&jwk)
                 .map_err(|e| KaisatsuError::Crypto(e.to_string()))?,
             encrypted_private_key: encrypted,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             activate_at: None,
             expires_at: None,
         })
@@ -272,7 +273,7 @@ impl KeyManager {
             public_jwk_json: serde_json::to_string(&jwk)
                 .map_err(|err| KaisatsuError::Crypto(err.to_string()))?,
             encrypted_private_key: encrypted,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             activate_at: None,
             expires_at: None,
         })
@@ -314,7 +315,7 @@ impl KeyManager {
             public_jwk_json: serde_json::to_string(&jwk)
                 .map_err(|err| KaisatsuError::Crypto(err.to_string()))?,
             encrypted_private_key: encrypted,
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             activate_at: None,
             expires_at: None,
         })
@@ -322,7 +323,7 @@ impl KeyManager {
 
     /// Builds the public `JwkSet` from the realm's non-expired keys (`ACTIVE` and `PASSIVE`, W10).
     pub fn build_jwks(records: &[SigningKeyRecord]) -> PublicJwkSet {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut keys = Vec::new();
         for rec in records {
             if rec.status == "RETIRED" {
@@ -367,7 +368,7 @@ impl KeyManager {
         token_ttl_secs: i64,
         immediate: bool,
     ) -> Result<SigningKeyRecord> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut new_key = Self::generate(
             algorithm,
             realm_id,
@@ -380,11 +381,11 @@ impl KeyManager {
                 .filter(|k| k.algorithm == algorithm && k.status == "ACTIVE")
             {
                 k.status = "PASSIVE".into();
-                k.expires_at = Some(now + Duration::seconds(token_ttl_secs.max(300) * 2));
+                k.expires_at = Some(now + SignedDuration::from_secs(token_ttl_secs.max(300) * 2));
             }
         } else {
             // W10: published in JWKS one token lifetime before it signs
-            new_key.activate_at = Some(now + Duration::seconds(token_ttl_secs.max(300)));
+            new_key.activate_at = Some(now + SignedDuration::from_secs(token_ttl_secs.max(300)));
         }
         Ok(new_key)
     }

@@ -1545,7 +1545,7 @@ mod tests {
             .mark_token_revoked(kaisatsu_core::RevokedTokenRecord {
                 jti_hash: "gone".into(),
                 realm_id: "dev".into(),
-                expires_at: chrono::Utc::now() - chrono::Duration::minutes(1),
+                expires_at: jc_time::TimestampTz::UNIX_EPOCH,
             })
             .await
             .unwrap();

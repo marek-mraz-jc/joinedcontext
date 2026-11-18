@@ -41,7 +41,7 @@ impl Api {
     async fn token_in(&self, realm: &str, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys(realm).await.unwrap();
         let key = keys.iter().find(|k| k.status == "ACTIVE").unwrap();
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut claims = json!({ "iss": format!("{HOST}/realms/{realm}"), "sub": sub,
                                  "azp": "admin-cli", "typ": "Bearer", "iat": now, "exp": now + 600 });
         for (k, v) in extra.as_object().unwrap() {

@@ -64,7 +64,7 @@ impl Fixture {
                     org_id: org.into(),
                     person_id: admin.into(),
                     org_roles: vec!["org-admin".into()],
-                    created_at: chrono::Utc::now(),
+                    created_at: jc_time::TimestampTz::now(),
                 })
                 .await
                 .unwrap();
@@ -128,7 +128,7 @@ impl Fixture {
 
     async fn token(&self, realm: &str, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys(realm).await.unwrap();
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut claims = json!({
             "iss": format!("https://idm.localhost/realms/{realm}"),
             "sub": sub, "azp": "admin-cli", "typ": "Bearer",
@@ -684,7 +684,7 @@ async fn a_revoked_admin_token_is_refused() {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&jti),
             realm_id: "dev".into(),
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(1),
         })
         .await
         .unwrap();
@@ -697,7 +697,7 @@ async fn a_revoked_admin_token_is_refused() {
 
 /// A live refresh family of `hel-person` in `hel-app`.
 fn live_family(id: &str, sso: &str) -> RefreshTokenFamily {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     RefreshTokenFamily {
         id: id.into(),
         realm_id: "dev".into(),
@@ -709,14 +709,14 @@ fn live_family(id: &str, sso: &str) -> RefreshTokenFamily {
         mapper_scopes: Vec::new(),
         acr: "pwd".into(),
         amr: Vec::new(),
-        auth_time: now.timestamp(),
+        auth_time: now.as_second(),
         rotation_counter: 0,
         current_jti_hash: "h".into(),
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
         revoked: false,
-        expires_at: now + chrono::Duration::hours(1),
+        expires_at: now + jiff::SignedDuration::from_hours(1),
         act: None,
         only_audience: None,
     }
@@ -778,7 +778,7 @@ async fn disabling_a_person_by_admin_rest_or_odata_ends_their_sessions() {
 #[tokio::test]
 async fn person_delete_and_service_account_user_follow_the_person() {
     let f = Fixture::new().await;
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let fam = RefreshTokenFamily {
         id: "fam-1".into(),
         realm_id: "dev".into(),
@@ -790,14 +790,14 @@ async fn person_delete_and_service_account_user_follow_the_person() {
         mapper_scopes: Vec::new(),
         acr: "pwd".into(),
         amr: Vec::new(),
-        auth_time: now.timestamp(),
+        auth_time: now.as_second(),
         rotation_counter: 0,
         current_jti_hash: "h".into(),
         previous_hashes: Vec::new(),
         dpop_jkt: None,
         offline: false,
         revoked: false,
-        expires_at: now + chrono::Duration::hours(1),
+        expires_at: now + jiff::SignedDuration::from_hours(1),
         act: None,
         only_audience: None,
     };
@@ -913,7 +913,7 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
             org_id: "helsinki".into(),
             person_id: "pm-hel".into(),
             org_roles: vec!["people-manager".into()],
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
         })
         .await
         .unwrap();

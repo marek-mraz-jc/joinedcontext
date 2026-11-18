@@ -15,8 +15,9 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Json, Router};
 use base64::engine::{Engine, general_purpose::STANDARD as B64_STD};
-use chrono::{Duration, Utc};
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::claims::ActClaim;
 use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
@@ -506,7 +507,7 @@ async fn par_endpoint(
         client_id: client.client_id,
         params,
         consumed: false,
-        expires_at: Utc::now() + Duration::seconds(60),
+        expires_at: TimestampTz::now() + SignedDuration::from_secs(60),
     };
     state.store.put_par_request(rec).await?;
 
@@ -984,7 +985,7 @@ async fn authorize_get(
         existing_sso = None;
     }
 
-    let now_unix = Utc::now().timestamp();
+    let now_unix = TimestampTz::now().as_second();
     let force_reauth = prompt.as_deref().is_some_and(|p| {
         p.split_whitespace()
             .any(|t| matches!(t, "login" | "select_account"))
@@ -1052,12 +1053,13 @@ async fn authorize_get(
             dpop_jkt: params.get("dpop_jkt").cloned(),
             auth_time: sso.auth_time,
             consumed: false,
-            created_at: Utc::now(),
-            expires_at: Utc::now() + Duration::seconds(realm.access_code_lifespan.max(60)),
+            created_at: TimestampTz::now(),
+            expires_at: TimestampTz::now()
+                + SignedDuration::from_secs(realm.access_code_lifespan.max(60)),
         };
         sso.clients
             .insert(client.client_id.clone(), client.client_id.clone());
-        sso.last_access = Utc::now().timestamp_millis();
+        sso.last_access = TimestampTz::now().as_millis();
         state.store.upsert_sso_session(sso).await?;
         state.store.put_auth_code(code_rec).await?;
 
@@ -1124,12 +1126,13 @@ async fn authorize_get(
                 dpop_jkt: params.get("dpop_jkt").cloned(),
                 auth_time: sso.auth_time,
                 consumed: false,
-                created_at: Utc::now(),
-                expires_at: Utc::now() + Duration::seconds(realm.access_code_lifespan.max(60)),
+                created_at: TimestampTz::now(),
+                expires_at: TimestampTz::now()
+                    + SignedDuration::from_secs(realm.access_code_lifespan.max(60)),
             };
             sso.clients
                 .insert(client.client_id.clone(), client.client_id.clone());
-            sso.last_access = Utc::now().timestamp_millis();
+            sso.last_access = TimestampTz::now().as_millis();
             state.store.upsert_sso_session(sso).await?;
             state.store.put_auth_code(code_rec).await?;
 
@@ -1278,8 +1281,8 @@ async fn authorize_get(
         user_id: pre_user_id,
         amr: pre_amr,
         acr_achieved: pre_acr,
-        created_at: Utc::now(),
-        expires_at: Utc::now() + Duration::minutes(30),
+        created_at: TimestampTz::now(),
+        expires_at: TimestampTz::now() + SignedDuration::from_mins(30),
     };
     state.store.put_auth_session(auth_session).await?;
 
@@ -1442,12 +1445,12 @@ fn audience_matches(claims: &Value, allowed: &[String]) -> bool {
 
 /// How long a used assertion's replay marker lives: until the assertion itself expires (plus
 /// the verifier's 30 s leeway), and at least `floor`, so it is refused again for its whole life.
-fn replay_marker_until(claims: &Value, floor: Duration) -> chrono::DateTime<Utc> {
-    let at_least = Utc::now() + floor;
+fn replay_marker_until(claims: &Value, floor: SignedDuration) -> TimestampTz {
+    let at_least = TimestampTz::now() + floor;
     claims
         .get("exp")
         .and_then(Value::as_i64)
-        .and_then(|exp| chrono::DateTime::from_timestamp(exp.saturating_add(30), 0))
+        .and_then(|exp| TimestampTz::from_second(exp.saturating_add(30)))
         .map_or(at_least, |exp| exp.max(at_least))
 }
 
@@ -1607,7 +1610,7 @@ async fn verify_client_assertion(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("client-assertion:{jti}")),
             realm_id: realm.id.clone(),
-            expires_at: replay_marker_until(&unverified, Duration::minutes(10)),
+            expires_at: replay_marker_until(&unverified, SignedDuration::from_mins(10)),
         })
         .await
         .map_err(|_| KaisatsuError::invalid_client("replayed client_assertion jti"))?;
@@ -1751,7 +1754,7 @@ async fn mint_tokens_for_principal(
     let user =
         &with_group_roles(state.store.as_ref(), &realm.id, user, &user_groups, client).await?;
 
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
     // A client may shorten its tokens' lifetime, or lengthen it up to an hour (or the realm's own
     // longer lifetime): the lifetime is the revocation window of a token verified offline.
     let realm_ttl = realm.access_token_lifespan.max(60);
@@ -1903,7 +1906,7 @@ async fn mint_tokens_for_principal(
                     .saturating_sub(MAX_PREVIOUS_REFRESH_HASHES);
                 fam.previous_hashes.drain(..excess);
                 fam.rotation_counter += 1;
-                fam.expires_at = Utc::now() + Duration::seconds(refresh_ttl);
+                fam.expires_at = TimestampTz::now() + SignedDuration::from_secs(refresh_ttl);
                 if let Some(jkt) = dpop_jkt {
                     fam.dpop_jkt = Some(jkt.to_owned());
                 }
@@ -1933,7 +1936,7 @@ async fn mint_tokens_for_principal(
                         dpop_jkt: dpop_jkt.map(str::to_owned),
                         offline: is_offline,
                         revoked: false,
-                        expires_at: Utc::now() + Duration::seconds(refresh_ttl),
+                        expires_at: TimestampTz::now() + SignedDuration::from_secs(refresh_ttl),
                         act,
                         only_audience: only_audience.map(str::to_owned),
                     })
@@ -1954,11 +1957,13 @@ async fn mint_tokens_for_principal(
                         .split_whitespace()
                         .map(str::to_owned)
                         .collect(),
-                    created_at: Utc::now(),
-                    last_access: Utc::now(),
-                    idle_expires_at: Utc::now() + Duration::seconds(refresh_ttl),
-                    max_expires_at: Utc::now()
-                        + Duration::seconds(realm.offline_session_max_lifespan.max(refresh_ttl)),
+                    created_at: TimestampTz::now(),
+                    last_access: TimestampTz::now(),
+                    idle_expires_at: TimestampTz::now() + SignedDuration::from_secs(refresh_ttl),
+                    max_expires_at: TimestampTz::now()
+                        + SignedDuration::from_secs(
+                            realm.offline_session_max_lifespan.max(refresh_ttl),
+                        ),
                 })
                 .await?;
         }
@@ -2062,7 +2067,7 @@ async fn token_endpoint(
     let client = authenticate_client(&state, &realm, &mount, &headers, &form).await?;
 
     // Verify optional DPoP header (RFC 9449 §4.3 & §8)
-    let now_unix = Utc::now().timestamp();
+    let now_unix = TimestampTz::now().as_second();
     let issued_as_nonce = crate::dpop::issue_dpop_nonce(&state.kek, &realm.id, "as", now_unix);
     let dpop_headers: Vec<_> = headers.get_all("dpop").iter().collect();
     if dpop_headers.len() > 1 {
@@ -2105,7 +2110,7 @@ async fn token_endpoint(
             .mark_token_revoked(RevokedTokenRecord {
                 jti_hash: sha256_hex(&format!("dpop:{}", proof.jti)),
                 realm_id: realm.id.clone(),
-                expires_at: Utc::now() + Duration::minutes(10),
+                expires_at: TimestampTz::now() + SignedDuration::from_mins(10),
             })
             .await
             .map_err(|_| KaisatsuError::invalid_dpop_proof("replayed DPoP proof jti"))?;
@@ -2277,7 +2282,7 @@ async fn handle_authorization_code_grant(
         return Err(KaisatsuError::invalid_grant("Code already used"));
     }
 
-    if code_rec.expires_at <= Utc::now() {
+    if code_rec.expires_at <= TimestampTz::now() {
         return Err(KaisatsuError::invalid_grant("Code is expired"));
     }
     // Rauthy GHSA-55g7-fq48-7mr4 (redirect_uri binding)
@@ -2341,7 +2346,7 @@ async fn handle_authorization_code_grant(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
             org_id: user.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: "CODE_TO_TOKEN".into(),
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
@@ -2393,7 +2398,12 @@ async fn handle_device_code_grant(
         .ok_or_else(|| KaisatsuError::invalid_request("missing device_code"))?;
     let (rec, answer) = state
         .store
-        .poll_device_code(&realm.id, &sha256_hex(raw), &client.client_id, Utc::now())
+        .poll_device_code(
+            &realm.id,
+            &sha256_hex(raw),
+            &client.client_id,
+            TimestampTz::now(),
+        )
         .await?
         .ok_or_else(|| KaisatsuError::invalid_grant("Device code not valid"))?;
     let pending = |error: &str, text: &str| Err(KaisatsuError::oauth(400, error, text));
@@ -2448,7 +2458,7 @@ async fn handle_device_code_grant(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
             org_id: user.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: "OAUTH2_DEVICE_CODE_TO_TOKEN".into(),
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
@@ -2533,7 +2543,7 @@ async fn handle_refresh_token_grant(
             "Refresh token was issued to another client",
         ));
     }
-    if family.revoked || family.expires_at <= Utc::now() {
+    if family.revoked || family.expires_at <= TimestampTz::now() {
         return Err(KaisatsuError::invalid_grant("Session not active"));
     }
 
@@ -2561,9 +2571,9 @@ async fn handle_refresh_token_grant(
             .await?
             .ok_or_else(|| KaisatsuError::invalid_grant("Session not active"))?;
         let mut updated_sso = sso;
-        updated_sso.last_access = Utc::now().timestamp_millis();
-        updated_sso.idle_expires_at =
-            Utc::now() + Duration::seconds(realm.sso_session_idle_timeout.max(3600));
+        updated_sso.last_access = TimestampTz::now().as_millis();
+        updated_sso.idle_expires_at = TimestampTz::now()
+            + SignedDuration::from_secs(realm.sso_session_idle_timeout.max(3600));
         state.store.upsert_sso_session(updated_sso).await?;
     }
 
@@ -2670,7 +2680,7 @@ async fn revoke_reused_family(
         id: uuid::Uuid::now_v7().to_string(),
         realm_id: realm.id.clone(),
         org_id: family.org_id.clone(),
-        time: Utc::now().timestamp_millis(),
+        time: TimestampTz::now().as_millis(),
         event_type: "REFRESH_TOKEN_ERROR".into(),
         client_id: Some(family.client_id.clone()),
         user_id: Some(family.user_id.clone()),
@@ -2792,7 +2802,7 @@ async fn handle_client_credentials_grant(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
             org_id: client.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: "CLIENT_LOGIN".into(),
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
@@ -2991,7 +3001,7 @@ async fn handle_token_exchange_grant(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
             org_id: user.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: "TOKEN_EXCHANGE".into(),
             client_id: Some(requester.client_id.clone()),
             user_id: Some(user.id.clone()),
@@ -3127,7 +3137,7 @@ async fn handle_jwt_bearer_grant(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("jwt-bearer:{}:{jti}", client.client_id)),
             realm_id: realm.id.clone(),
-            expires_at: replay_marker_until(&claims, Duration::hours(1)),
+            expires_at: replay_marker_until(&claims, SignedDuration::from_hours(1)),
         })
         .await
         .map_err(|_| KaisatsuError::invalid_grant("replayed jwt-bearer assertion"))?;
@@ -3146,7 +3156,7 @@ async fn handle_jwt_bearer_grant(
             id: uuid::Uuid::now_v7().to_string(),
             realm_id: realm.id.clone(),
             org_id: client.org_id.clone(),
-            time: Utc::now().timestamp_millis(),
+            time: TimestampTz::now().as_millis(),
             event_type: "CLIENT_LOGIN".into(),
             client_id: Some(client.client_id.clone()),
             user_id: Some(user.id.clone()),
@@ -3267,7 +3277,7 @@ async fn handle_password_grant(
             .or_else(|| form.get("otp"))
             .map(String::as_str)
             .ok_or_else(|| KaisatsuError::invalid_grant("Missing totp code"))?;
-        let now_secs = Utc::now().timestamp() as u64;
+        let now_secs = TimestampTz::now().as_second() as u64;
         let Some((otp_cred, matched_step)) = verify_any_totp_code(
             &creds,
             submitted_totp,
@@ -3286,7 +3296,7 @@ async fn handle_password_grant(
             .mark_token_revoked(RevokedTokenRecord {
                 jti_hash: step_key,
                 realm_id: realm.id.clone(),
-                expires_at: Utc::now() + Duration::seconds(90),
+                expires_at: TimestampTz::now() + SignedDuration::from_secs(90),
             })
             .await
             .map_err(|_| KaisatsuError::invalid_grant("TOTP code already used in this window"))?;
@@ -3296,7 +3306,7 @@ async fn handle_password_grant(
     }
     bf.record_success(realm, &user.id).await?;
 
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let sso_id = uuid::Uuid::now_v7().to_string();
     let sso = SsoSession {
         id: sso_id.clone(),
@@ -3307,14 +3317,14 @@ async fn handle_password_grant(
         username: user.username.clone(),
         ip_address: client_ip.for_audit(),
         user_agent: String::new(),
-        start: now.timestamp_millis(),
-        last_access: now.timestamp_millis(),
-        auth_time: now.timestamp(),
+        start: now.as_millis(),
+        last_access: now.as_millis(),
+        auth_time: now.as_second(),
         acr: acr.clone(),
         amr: amr.clone(),
         clients: HashMap::from([(client.client_id.clone(), client.client_id.clone())]),
-        idle_expires_at: now + Duration::seconds(realm.sso_session_idle_timeout.max(3600)),
-        max_expires_at: now + Duration::seconds(realm.sso_session_max_lifespan.max(36000)),
+        idle_expires_at: now + SignedDuration::from_secs(realm.sso_session_idle_timeout.max(3600)),
+        max_expires_at: now + SignedDuration::from_secs(realm.sso_session_max_lifespan.max(36000)),
     };
     state.store.upsert_sso_session(sso).await?;
 
@@ -3338,7 +3348,7 @@ async fn handle_password_grant(
         &amr,
         Some(&sso_id),
         None,
-        Some(now.timestamp()),
+        Some(now.as_second()),
         dpop_jkt,
         None,
         true,
@@ -3381,7 +3391,7 @@ async fn introspect_endpoint(
                 .get_sso_session(&realm.id, &family.sso_session_id)
                 .await?
                 .is_some();
-        if !current || family.revoked || family.expires_at <= Utc::now() || !session_alive {
+        if !current || family.revoked || family.expires_at <= TimestampTz::now() || !session_alive {
             return Ok(Json(json!({ "active": false })));
         }
         let fam_client = state
@@ -3405,7 +3415,7 @@ async fn introspect_endpoint(
             "azp": family.client_id,
             "client_id": family.client_id,
             "scope": family.scope,
-            "exp": family.expires_at.timestamp(),
+            "exp": family.expires_at.as_second(),
         });
         if !family.offline {
             out["sid"] = Value::String(family.sso_session_id.clone());
@@ -3515,7 +3525,7 @@ async fn revoke_endpoint(
                 .mark_token_revoked(RevokedTokenRecord {
                     jti_hash: sha256_hex(jti),
                     realm_id: realm.id.clone(),
-                    expires_at: Utc::now() + Duration::hours(24),
+                    expires_at: TimestampTz::now() + SignedDuration::from_hours(24),
                 })
                 .await;
         }
@@ -3700,7 +3710,7 @@ pub async fn dispatch_backchannel_logout(
 ) -> Result<()> {
     let keys = state.store.list_signing_keys(&realm.id).await?;
     let issuer = mount.realm_issuer(&realm.realm);
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
 
     for client_id in session.clients.keys() {
         let Some(client) = state
@@ -3850,7 +3860,7 @@ async fn verify_and_consume_logout_csrf_token(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("logout-csrf:{session_id}:{nonce}")),
             realm_id: realm_id.to_owned(),
-            expires_at: Utc::now() + Duration::minutes(30),
+            expires_at: TimestampTz::now() + SignedDuration::from_mins(30),
         })
         .await
         .map_err(|_| KaisatsuError::Forbidden("logout confirmation token already used".into()))
@@ -4197,17 +4207,17 @@ mod replay_marker_tests {
 
     #[test]
     fn a_used_assertion_stays_refused_until_it_expires() {
-        let now = Utc::now();
-        let in_a_day = now.timestamp() + 86_400;
-        let until = replay_marker_until(&json!({ "exp": in_a_day }), Duration::minutes(10));
-        assert!(until.timestamp() >= in_a_day);
+        let now = TimestampTz::now();
+        let in_a_day = now.as_second() + 86_400;
+        let until = replay_marker_until(&json!({ "exp": in_a_day }), SignedDuration::from_mins(10));
+        assert!(until.as_second() >= in_a_day);
         let soon = replay_marker_until(
-            &json!({ "exp": now.timestamp() + 5 }),
-            Duration::minutes(10),
+            &json!({ "exp": now.as_second() + 5 }),
+            SignedDuration::from_mins(10),
         );
-        assert!(soon >= now + Duration::minutes(10) - Duration::seconds(1));
-        let without = replay_marker_until(&json!({}), Duration::hours(1));
-        assert!(without >= now + Duration::hours(1) - Duration::seconds(1));
+        assert!(soon >= now + SignedDuration::from_mins(10) - SignedDuration::from_secs(1));
+        let without = replay_marker_until(&json!({}), SignedDuration::from_hours(1));
+        assert!(without >= now + SignedDuration::from_hours(1) - SignedDuration::from_secs(1));
     }
 }
 

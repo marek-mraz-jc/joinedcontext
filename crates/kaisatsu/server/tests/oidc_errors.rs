@@ -367,7 +367,7 @@ async fn refresh_refusals_after_session_end_and_disable_and_membership_org() {
             org_id: "org-t-mem".into(),
             person_id: analyst.clone(),
             org_roles: vec![],
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -473,7 +473,7 @@ async fn token_exchange_and_its_refresh_keep_read_only_the_organization_pin_and_
                 org_id: format!("org-{alias}"),
                 person_id: analyst.clone(),
                 org_roles: vec![],
-                created_at: chrono::Utc::now(),
+                created_at: jc_time::TimestampTz::now(),
             })
             .await
             .unwrap();
@@ -548,7 +548,7 @@ async fn token_exchange_keeps_an_earlier_act_and_jwt_bearer_needs_an_enabled_acc
     })
     .await;
     let member = user_id(&store, "demo.orgmember@hel.fi").await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let subject = realm_token(
         &store,
         &kek,
@@ -713,7 +713,7 @@ async fn a_client_without_pkce_logs_in_on_fresh_and_sso_paths() {
 #[tokio::test]
 async fn userinfo_refusals() {
     let (app, store, kek) = app().await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let member = user_id(&store, "demo.orgmember@hel.fi").await;
     let userinfo = |authz: String, dpop: Option<HeaderValue>| {
         let app = app.clone();
@@ -761,7 +761,7 @@ async fn userinfo_refusals() {
         }];
     })
     .await;
-    let start = chrono::Utc::now();
+    let start = jc_time::TimestampTz::now();
     store
         .upsert_sso_session(SsoSession {
             id: "sso-pw".into(),
@@ -772,14 +772,14 @@ async fn userinfo_refusals() {
             username: "demo.orgmember@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
             user_agent: String::new(),
-            start: start.timestamp_millis(),
-            last_access: start.timestamp_millis(),
-            auth_time: start.timestamp(),
+            start: start.as_millis(),
+            last_access: start.as_millis(),
+            auth_time: start.as_second(),
             acr: "pwd".into(),
             amr: vec!["pwd".into()],
             clients: HashMap::new(),
-            idle_expires_at: start + chrono::Duration::hours(1),
-            max_expires_at: start + chrono::Duration::hours(8),
+            idle_expires_at: start + jiff::SignedDuration::from_hours(1),
+            max_expires_at: start + jiff::SignedDuration::from_hours(8),
         })
         .await
         .unwrap();

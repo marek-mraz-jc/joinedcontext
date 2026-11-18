@@ -31,7 +31,7 @@ async fn setup_app() -> (axum::Router, Arc<MemoryStore>, String, String) {
     // Seed realm-admin token and org-admin token for `helsinki`
     let keys = store.list_signing_keys("dev").await.unwrap();
     let key = &keys[0];
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
 
     let realm_admin_token = sign_jwt(
         key,
@@ -70,7 +70,7 @@ async fn setup_app() -> (axum::Router, Arc<MemoryStore>, String, String) {
             org_id: "helsinki".into(),
             person_id: "org-admin-hel".into(),
             org_roles: vec!["org-admin".into()],
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -153,7 +153,7 @@ async fn row_01_02_03_realms_and_partial_import() {
         .await
         .unwrap();
     let master_keys = store.list_signing_keys("master").await.unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let master_admin_token = sign_jwt(
         &master_keys[0],
         store.kek(),

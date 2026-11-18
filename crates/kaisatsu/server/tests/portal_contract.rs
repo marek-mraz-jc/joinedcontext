@@ -1134,7 +1134,7 @@ async fn realm_admin(realm: &Realm) -> String {
         .into_iter()
         .find(|k| k.status == "ACTIVE")
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     sign_jwt(
         &key,
         &realm.kek,
