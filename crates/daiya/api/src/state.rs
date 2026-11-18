@@ -273,8 +273,7 @@ impl DaiyaState {
         if credential.is_empty() {
             return None;
         }
-        let is_bearer = scheme.eq_ignore_ascii_case("bearer");
-        if !is_bearer && !scheme.eq_ignore_ascii_case("basic") {
+        if !scheme.eq_ignore_ascii_case("bearer") && !scheme.eq_ignore_ascii_case("basic") {
             return None;
         }
         let digest = sha256_hex(credential.as_bytes());
@@ -284,11 +283,8 @@ impl DaiyaState {
                 found = Some(binding);
             }
         }
-        let mut subject = found?.subject.clone();
-        if is_bearer {
-            subject.bearer_token = Some(credential.to_owned());
-        }
-        Some(subject)
+        // A daiya API credential is never a token to pass on to an Endpoint or an exchanger.
+        Some(found?.subject.clone())
     }
 
     /// Registers a runtime [`Datasource`] implementation for `(org_id, uid)`.

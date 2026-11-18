@@ -121,8 +121,8 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
         Some("admin")
     );
     let ctx = resolve_request_ctx(&w.state, &headers(&[("authorization", "Bearer admin")]));
-    assert_eq!(ctx.subject.bearer_token.as_deref(), Some("admin"));
-    // Basic carries the credential but never becomes a token to pass on.
+    // A daiya API credential, Bearer or Basic, never becomes a token to pass on.
+    assert!(ctx.subject.bearer_token.is_none());
     let basic = resolve_request_ctx(&w.state, &headers(&[("authorization", "basic viewer")]));
     assert_eq!(basic.subject.actor_id.as_deref(), Some("viewer"));
     assert!(basic.subject.bearer_token.is_none());
