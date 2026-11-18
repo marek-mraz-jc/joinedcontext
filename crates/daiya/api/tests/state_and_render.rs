@@ -603,6 +603,19 @@ async fn query_requests_are_bounded_and_named() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+    // A caller with no identity is refused before any target is parsed or evaluated,
+    // also when the request names no datasource at all.
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/ds/query",
+            None,
+            Some(q(
+                json!([{ "refId": "A", "datasource": { "uid": "__expr__" }, "type": "math", "expression": "1 + 1" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
 }
 
 #[tokio::test]
