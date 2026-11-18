@@ -1796,12 +1796,23 @@ impl Harness {
         token: Option<String>,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        // The person's session echoes its own token (RTE-12); with none, the plain double submit.
+        let mut edge = axum::http::HeaderMap::new();
+        if let Some(value) = token.as_deref().and_then(|t| t.parse().ok()) {
+            edge.insert(EDGE_TOKEN_HEADER, value);
+        }
+        let csrf = match joinedcontext_portal::auth::csrf::session_of(&self.state, &edge).await {
+            Some(session) => joinedcontext_portal::auth::csrf::Token::bound(
+                &self.state.config.cookie_key,
+                &session,
+            )
+            .as_str()
+            .to_owned(),
+            None => "scn-csrf".to_owned(),
+        };
         let mut headers = vec![
-            (header::COOKIE, format!("{CSRF_COOKIE}=scn-csrf")),
-            (
-                header::HeaderName::from_static(CSRF_HEADER),
-                "scn-csrf".to_owned(),
-            ),
+            (header::COOKIE, format!("{CSRF_COOKIE}={csrf}")),
+            (header::HeaderName::from_static(CSRF_HEADER), csrf),
         ];
         headers.extend(token.map(|t| (EDGE_TOKEN_HEADER, t)));
         self.request(&self.app, method, uri, headers, body).await

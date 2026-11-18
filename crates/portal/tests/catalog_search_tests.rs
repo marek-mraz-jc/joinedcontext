@@ -152,9 +152,12 @@ fn helsinki() -> Arc<Mirror> {
 
 /// Runs `jc_catalog_search` in helsinki, the one door the search has (T-4453).
 async fn search(config: Config, cookie: Option<&str>, input: Value) -> (StatusCode, Value) {
+    // A session echoes its own token (RTE-12); nobody signed in, the plain double submit.
+    let cookies = cookie.map_or_else(
+        || format!("{CSRF_COOKIE}={CSRF_TOKEN}"),
+        |cookie| csrf_echo::with_bound_csrf(&config.cookie_key, cookie),
+    );
     let app = server::app(AppState::new(config, None).with_mirror(helsinki()));
-    let csrf = format!("{CSRF_COOKIE}={CSRF_TOKEN}");
-    let cookies = cookie.map_or(csrf.clone(), |cookie| format!("{cookie}; {csrf}"));
     let request = Request::builder()
         .method("POST")
         .uri("/api/v1/projects/helsinki/ops/jc_catalog_search")

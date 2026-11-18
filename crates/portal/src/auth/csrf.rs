@@ -239,10 +239,14 @@ pub async fn require_csrf(
     request: Request,
     next: Next,
 ) -> Result<Response, crate::error::ApiError> {
+    // `is_allowed` lets these by whatever the session; skip resolving it.
     if matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS
-    ) {
+    ) || request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
         return Ok(next.run(request).await);
     }
     let session = session_of(&state, request.headers()).await;
