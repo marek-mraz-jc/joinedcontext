@@ -35,11 +35,12 @@ fn answer(bytes: &[u8]) -> Result<Answer, String> {
     serde_json::from_slice(bytes).map_err(|e| e.to_string())
 }
 
-/// A relay that hands every request to the hub that listened last, and
-/// records what it was asked to listen to and stop listening to.
+/// A relay that hands a request to the hub that listened on its subject
+/// (Tenant and connection) and to no other, as NATS does, and records what it
+/// was asked to listen to and stop listening to.
 #[derive(Default)]
 struct Loopback {
-    hub: Mutex<Option<Weak<Hub>>>,
+    hubs: Mutex<std::collections::HashMap<String, Weak<Hub>>>,
     seen: Mutex<Vec<String>>,
 }
 
@@ -52,23 +53,23 @@ impl Loopback {
 impl Relay for Loopback {
     fn request<'a>(
         &'a self,
+        tenant: &'a str,
         connection: &'a str,
         payload: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + Send + 'a>> {
-        let hub = self
-            .hub
-            .lock()
-            .ok()
-            .and_then(|h| h.as_ref().and_then(Weak::upgrade));
-        Box::pin(async move { hub.map(|h| h.answer(connection, &payload)) })
+        let hub = self.hubs.lock().ok().and_then(|h| {
+            h.get(&format!("{tenant}.{connection}"))
+                .and_then(Weak::upgrade)
+        });
+        Box::pin(async move { hub.map(|h| h.answer(tenant, connection, &payload)) })
     }
 
-    fn listen(&self, hub: Weak<Hub>, connection: &str) {
-        if let Ok(mut h) = self.hub.lock() {
-            *h = Some(hub);
+    fn listen(&self, hub: Weak<Hub>, tenant: &str, connection: &str) {
+        if let Ok(mut h) = self.hubs.lock() {
+            h.insert(format!("{tenant}.{connection}"), hub);
         }
         if let Ok(mut s) = self.seen.lock() {
-            s.push(format!("listen {connection}"));
+            s.push(format!("listen {tenant}.{connection}"));
         }
     }
 
@@ -92,9 +93,15 @@ async fn ws_the_sink_delivers_only_to_a_known_connection() -> Result<(), String>
         .is_err());
     assert!(sink.deliver(&unknown, &out, TIMEOUT).await.is_err());
     // what another pod asks for a connection this one does not hold
-    assert_eq!(answer(&hub.answer("nobody", b"not json"))?, Answer::Unknown);
+    assert_eq!(
+        answer(&hub.answer("default", "nobody", b"not json"))?,
+        Answer::Unknown
+    );
     let n = forwarded("urn:ngsi-ld:Subscription:s", None, 1)?;
-    assert_eq!(answer(&hub.answer("nobody", &n))?, Answer::Unknown);
+    assert_eq!(
+        answer(&hub.answer("default", "nobody", &n))?,
+        Answer::Unknown
+    );
     Ok(())
 }
 
@@ -138,6 +145,59 @@ fn ws_previous_values_are_seen_in_multi_instance_attributes() {
     let n = Forwarded::of(&out);
     assert_eq!(n.as_ref().map(|n| n.changes), Some(true), "{n:?}");
     assert_eq!(n.map(|n| n.tenant), Some("city".to_owned()));
+}
+
+/// T-7275: two Tenants on one relay. Each connection listens on the subject
+/// of its own Tenant: a notification of `default` for `city`'s connection
+/// reaches no pod, one of `default` sent on `city`'s subject is not written,
+/// and `city`'s own arrives.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_the_relay_keeps_each_tenant_on_its_own_subject() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let relay = Arc::new(Loopback::default());
+    b.hub.set_relay(relay.clone());
+    let mut mine = connect(b.addr, ROOT, &[]).await?;
+    let mut city = connect(b.addr, ROOT, &[("NGSILD-Tenant", "city")]).await?;
+    let made = city.subscribe(cars()).await?;
+    assert_eq!(status(&made), 201, "{made}");
+    let sub = text(&made, "/body/id");
+    let endpoint = format!("{ENDPOINT_PREFIX}{}", city.connection);
+    let mut listened = relay.seen();
+    listened.sort();
+    let mut want = vec![
+        format!("listen city.{}", city.connection),
+        format!("listen default.{}", mine.connection),
+    ];
+    want.sort();
+    assert_eq!(listened, want);
+
+    let other = Hub::new(Limits::default());
+    other.set_relay(relay.clone());
+    let sink = Sink::new(other);
+    assert!(sink
+        .deliver(&endpoint, &outbound(Some(&sub), None), TIMEOUT)
+        .await
+        .is_err());
+    assert_eq!(
+        answer(
+            &b.hub
+                .answer("city", &city.connection, &forwarded(&sub, None, 1)?)
+        )?,
+        Answer::Unknown
+    );
+    sink.deliver(&endpoint, &outbound(Some(&sub), Some("city")), TIMEOUT)
+        .await
+        .map_err(|e| format!("{e:?}"))?;
+    let n = city.notification().await?;
+    assert_eq!(n.pointer("/body/subscriptionId"), Some(&json!(sub)), "{n}");
+    // `default`'s connection got nothing of `city`'s
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), mine.notification())
+            .await
+            .is_err(),
+        "a notification crossed Tenants"
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -205,7 +265,7 @@ async fn ws_a_held_connection_answers_another_pods_relay() -> Result<(), String>
     until(&b.hub, |h| h.connections() == 0).await?;
     assert_eq!(
         relay.seen(),
-        vec![format!("listen {id}"), format!("unlisten {id}")]
+        vec![format!("listen default.{id}"), format!("unlisten {id}")]
     );
     let path = format!("/ngsi-ld/v1/subscriptions/{sub}");
     let (code, body) = b.http.call("GET", &path, &[], None).await?;
@@ -236,9 +296,11 @@ async fn ws_coalescing_keeps_subscriptions_and_entities_apart() -> Result<(), St
     ];
     let mut answers = Vec::new();
     for (sub, entity, n) in offers {
-        answers.push(answer(
-            &b.hub.answer(&c.connection, &forwarded(sub, entity, n)?),
-        )?);
+        answers.push(answer(&b.hub.answer(
+            "default",
+            &c.connection,
+            &forwarded(sub, entity, n)?,
+        ))?);
     }
     assert_eq!(answers, vec![Answer::Queued; 5]);
     let mut got = Vec::new();
@@ -313,7 +375,11 @@ async fn ws_an_overflow_while_away_is_a_gap_on_resume() -> Result<(), String> {
     until(&b.hub, |h| h.attached() == 0).await?;
     let mut answers = Vec::new();
     for n in 1..=3 {
-        answers.push(answer(&b.hub.answer(&id, &forwarded(&sub, None, n)?))?);
+        answers.push(answer(&b.hub.answer(
+            "default",
+            &id,
+            &forwarded(&sub, None, n)?,
+        ))?);
     }
     assert_eq!(answers.last(), Some(&Answer::Overflow), "{answers:?}");
 
@@ -360,11 +426,11 @@ async fn ws_the_notification_cap_holds_to_the_byte() -> Result<(), String> {
         .map_err(|e| e.to_string())
     };
     assert_eq!(
-        answer(&b.hub.answer(&c.connection, &offer(fits + 1)?))?,
+        answer(&b.hub.answer("default", &c.connection, &offer(fits + 1)?))?,
         Answer::TooLarge
     );
     assert_eq!(
-        answer(&b.hub.answer(&c.connection, &offer(fits)?))?,
+        answer(&b.hub.answer("default", &c.connection, &offer(fits)?))?,
         Answer::Queued
     );
     let n = c.notification().await?;

@@ -531,13 +531,32 @@ pub async fn reap_expired_entity_batch(pool: &PgPool, limit: i64) -> Result<u64,
     Ok(u64::try_from(ids.len()).unwrap_or(u64::MAX))
 }
 
+/// The keys [`retain_current`] removes: `$4` at most of Tenant `$1` whose
+/// type is the one of `$2` and that are unchanged since `$3`. `types @> $2`
+/// is no index condition under RLS (`arraycontains` is not leakproof), so the
+/// type reads as the entity query's two leakproof arms (entity.rs `arms`,
+/// T-4781): the Entities whose first type it is (`i_entities_first_type_id`)
+/// and the multi-type ones whose first type is another
+/// (`i_entities_multi_type_id`). The arms are disjoint; each is bounded, and
+/// so is their union (T-7275). Public for tests/pg_explain.rs.
+pub const RETAIN_CURRENT_ROWS: &str = "(SELECT tenant_id, id FROM entities
+           WHERE tenant_id = $1 AND types[1] = ($2::text[])[1]
+             AND expires_at IS NULL AND modified_at < $3::timestamptz
+           LIMIT $4)
+         UNION ALL
+         (SELECT tenant_id, id FROM entities
+           WHERE tenant_id = $1 AND cardinality(types) > 1
+             AND types[1] <> ALL($2::text[]) AND types @> $2::text[]
+             AND expires_at IS NULL AND modified_at < $3::timestamptz
+           LIMIT $4)
+         LIMIT $4";
+
 /// Retention of current state (`/q/retention`, T-3900): at most `batch`
 /// Entities of one Tenant and type that carry no `expiresAt` (a writer's 4.22
-/// stamp wins) and were last modified before `before`. The subquery bounds
-/// the statement; `i_entities_types` serves the (tenant, type) match. Service
-/// role, like every reap here; the 4.22 reap's precedent holds: rows go, no
-/// notification is owed for a removal the client declared. `dry_run` counts
-/// the same rows and deletes none.
+/// stamp wins) and were last modified before `before`
+/// ([`RETAIN_CURRENT_ROWS`]). Service role, like every reap here; the 4.22
+/// reap's precedent holds: rows go, no notification is owed for a removal
+/// the client declared. `dry_run` counts the same rows and deletes none.
 pub async fn retain_current(
     pool: &PgPool,
     tenant: &str,
@@ -546,13 +565,9 @@ pub async fn retain_current(
     batch: usize,
     dry_run: bool,
 ) -> Result<u64, sqlx::Error> {
-    const ROWS: &str = "SELECT tenant_id, id FROM entities
-           WHERE tenant_id = $1 AND types @> $2::text[]
-             AND expires_at IS NULL AND modified_at < $3::timestamptz
-           LIMIT $4";
     retain(
         pool,
-        ROWS,
+        RETAIN_CURRENT_ROWS,
         "DELETE FROM entities WHERE (tenant_id, id) IN",
         (tenant, &[type_iri.to_owned()], None, before, batch),
         dry_run,

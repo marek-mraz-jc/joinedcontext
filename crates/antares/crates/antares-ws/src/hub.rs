@@ -478,21 +478,22 @@ fn carries_previous(entity: &Value) -> bool {
     })
 }
 
-/// Cross-pod delivery (rule 9, `bus = nats`): a request on the connection's
-/// own subject, answered by the pod that holds it. The broker implements it
-/// over its bus; the hub only asks and answers.
+/// Cross-pod delivery (rule 9, `bus = nats`): a request on the subject of
+/// the connection and its Tenant, answered by the pod that holds it. The
+/// broker implements it over its bus; the hub only asks and answers.
 pub trait Relay: Send + Sync {
-    /// Send `payload` (a serialized [`Forwarded`]) to whichever pod holds
-    /// `connection`; its serialized [`Answer`], or `None` when no pod
-    /// answered.
+    /// Send `payload` (a serialized [`Forwarded`] of `tenant`) to whichever
+    /// pod holds `connection` of `tenant`; its serialized [`Answer`], or
+    /// `None` when no pod answered.
     fn request<'a>(
         &'a self,
+        tenant: &'a str,
         connection: &'a str,
         payload: Vec<u8>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<Vec<u8>>> + Send + 'a>>;
-    /// Start answering requests for `connection` on this pod, through
-    /// [`Hub::answer`].
-    fn listen(&self, hub: std::sync::Weak<Hub>, connection: &str);
+    /// Start answering requests for `connection` of `tenant` on this pod,
+    /// through [`Hub::answer`].
+    fn listen(&self, hub: std::sync::Weak<Hub>, tenant: &str, connection: &str);
     /// Stop answering for `connection`.
     fn unlisten(&self, connection: &str);
 }
@@ -635,7 +636,7 @@ impl Hub {
         conns.insert(id.clone(), conn.clone());
         drop(conns);
         if let Some(relay) = self.relay() {
-            relay.listen(Arc::downgrade(self), &id);
+            relay.listen(Arc::downgrade(self), &conn.tenant, &id);
         }
         Ok(conn)
     }
@@ -707,10 +708,14 @@ impl Hub {
         answer
     }
 
-    /// Answer a request another pod sent for a connection on this one.
+    /// Answer a request another pod sent for a connection of `tenant` on
+    /// this one: a notification of another Tenant than the subject's is not
+    /// written, nor one for a connection of another Tenant.
     #[must_use]
-    pub fn answer(&self, connection: &str, payload: &[u8]) -> Vec<u8> {
+    pub fn answer(&self, tenant: &str, connection: &str, payload: &[u8]) -> Vec<u8> {
         let answer = serde_json::from_slice::<Forwarded>(payload)
+            .ok()
+            .filter(|n| n.tenant == tenant)
             .map_or(Answer::Unknown, |n| self.offer_here(connection, n));
         serde_json::to_vec(&answer).unwrap_or_default()
     }
@@ -728,7 +733,7 @@ impl Hub {
         // on the other side
         let payload = serde_json::to_vec(&n).unwrap_or_default();
         relay
-            .request(id, payload)
+            .request(&n.tenant, id, payload)
             .await
             .and_then(|a| serde_json::from_slice(&a).ok())
             .unwrap_or(Answer::Unknown)
