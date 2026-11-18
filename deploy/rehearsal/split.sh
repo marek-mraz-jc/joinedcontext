@@ -7,16 +7,23 @@
 #           /opendata and /streams to their module's process, everything else to core
 #   core    kaisatsu, antares, gateway, portal, model-tools, assistant, viz; REHEARSAL_CORE_REPLICAS
 #           (default 1) processes on the same jc.toml and state dir, the broker on the NATS bus
+#   data    with REHEARSAL_DATA_REPLICAS=1-9 (T-7226): gateway and antares leave core for that many
+#           processes of `--role gateway,antares` (the data plane, `[gateway]`), each with a state
+#           dir of its own; the front sends the gateway's root paths and /broker to them in turn,
+#           core's Portal calls the broker through `[remote]` and names the gateway there
 #   shako, daiya, dataroom, ekiben (ekiben not with REHEARSAL_HOLD_PIPELINES=1): one process each,
 #           behind `[door]`; core's Portal calls them through `[remote]`
 #   nats    NATS with JetStream in docker on loopback, user and password from a 0600 file
 #
-# Why the gateway and the broker stay in core (T-7014; worker-t7007's module table in T-7008): the
+# Why the gateway and the broker stayed in core before T-7226 (T-7014; worker-t7007's module table in T-7008): the
 # gateway reaches the broker on the in-process hop alone (modules/gateway.rs vars
 # JC_GATEWAY_BROKER_URL, app.rs `hop_secret` only with both roles), verifies persons only with
 # kaisatsu and the Portal in its process (gateway.rs vars, `portal_internal`), and reads a Portal
-# session through PORTAL_STATE (gateway.rs session_reads). So core scales as a whole: two core
-# replicas are two brokers and two gateways.
+# session through PORTAL_STATE (gateway.rs session_reads). So core scaled as a whole: two core
+# replicas are two brokers and two gateways. The data plane (T-7226) reaches the broker on its own
+# hop, verifies persons against core's kaisatsu (`[gateway] kaisatsu`), reads revocations,
+# connectors, usage and Portal sessions on core replica 1's internal listener with its
+# `context-gateway` token, and follows the forge through `[remote.modules] shako`.
 #
 # Every cross-process call carries a kaisatsu token: the realm jc-split (state/realms) holds the
 # client portal-remote, allowed one scope per remote module whose audience mapper names it; each
@@ -41,9 +48,21 @@ if [ -n "${REHEARSAL_JC_TOML_EXTRA:-}" ]; then
 fi
 replicas=${REHEARSAL_CORE_REPLICAS:-1}
 case $replicas in [1-9]) ;; *) echo "split.sh: REHEARSAL_CORE_REPLICAS is 1-9" >&2; exit 1 ;; esac
+data_replicas=${REHEARSAL_DATA_REPLICAS:-0}
+case $data_replicas in [0-9]) ;; *) echo "split.sh: REHEARSAL_DATA_REPLICAS is 0-9" >&2; exit 1 ;; esac
 remote_modules=(shako daiya dataroom)
 [ "${REHEARSAL_HOLD_PIPELINES:-0}" = 1 ] || remote_modules+=(ekiben)
 core_roles=kaisatsu,antares,gateway,portal,model-tools,assistant,viz
+# The scopes of the realm jc-split: the remote modules, and the broker when it is in the data plane.
+door_modules=("${remote_modules[@]}")
+if [ "$data_replicas" -gt 0 ]; then
+  core_roles=kaisatsu,portal,model-tools,assistant,viz
+  door_modules+=(antares)
+fi
+# The gateway's root paths (bins/jc/src/module.rs `root_paths`) and the broker's slug.
+data_paths=(/api/endpoint /api/endpoints /api/mcp /cs /catalog /catalog.jsonld /catalog.ttl /oauth
+  /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/api/mcp
+  /.well-known/oauth-protected-resource/api/endpoint /broker)
 declare -A slug=([shako]=git [daiya]=dashboards [dataroom]=opendata [ekiben]=streams)
 declare -A mport
 i=0
@@ -70,7 +89,7 @@ for _ in $(seq 30); do (exec 3<>"/dev/tcp/127.0.0.1/$nats_port") 2>/dev/null && 
 mkdir -p "$home/secrets/realm"
 chmod 700 "$home/secrets/realm"
 secret realm/portal-remote >/dev/null
-python3 -I - "$home/state/realms/jc-split.json" "${remote_modules[@]}" <<'PY'
+python3 -I - "$home/state/realms/jc-split.json" "${door_modules[@]}" <<'PY'
 import json, sys
 out, mods = sys.argv[1], sys.argv[2:]
 scope = lambda m: {"name": m, "protocol": "openid-connect",
@@ -108,7 +127,23 @@ done
   printf '\n[remote]\ntoken_url = "%s/protocol/openid-connect/token"\nclient_id = "portal-remote"\n' "$split_realm"
   printf 'client_secret_file = "%s"\n\n[remote.modules]\n' "$home/secrets/realm/portal-remote"
   for m in "${remote_modules[@]}"; do printf '%s = "%s/%s"\n' "$m" "$origin" "${slug[$m]}"; done
+  if [ "$data_replicas" -gt 0 ]; then
+    # The broker through the front's round robin; the gateway at replica 1 (a Service in a cluster).
+    printf 'antares = "%s/broker"\ngateway = "http://127.0.0.1:%s"\n' "$origin" $((pg_port + 420))
+  fi
 } > "$split/core.toml"
+if [ "$data_replicas" -gt 0 ]; then
+  # The gateway's client secret both sides take, and the one OAuth signing key of every data replica.
+  gateway_secret=$(secret gateway-client-secret)
+  {
+    printf '%s\n%s\n%s\n%s\n' "$profile_line" "${part[antares]}" "$realm_config" "$door"
+    printf '\n[gateway]\nportal_internal = "http://127.0.0.1:%s"\n' $((pg_port + 100))
+    printf 'kaisatsu = "%s/login"\nkaisatsu_internal = "http://127.0.0.1:%s/login"\n' "$origin" $((pg_port + 400))
+    printf 'client_secret_file = "%s"\noauth_key_file = "%s"\n' "$gateway_secret" "$(secret gateway-oauth-key)"
+    printf '\n[remote]\ntoken_url = "%s/protocol/openid-connect/token"\nclient_id = "portal-remote"\n' "$split_realm"
+    printf 'client_secret_file = "%s"\n\n[remote.modules]\nshako = "%s/git"\n' "$home/secrets/realm/portal-remote" "$origin"
+  } > "$split/data.toml"
+fi
 
 start_jc() { # start_jc <name> <roles> <toml> <listen port> <admin port> <log> <pid file> [jc args]
   local name=$1 roles=$2 toml=$3 lport=$4 aport=$5 log=$6 pid_file=$7
@@ -142,12 +177,22 @@ front_image=${REHEARSAL_FRONT_IMAGE:-nginx:1.27-alpine@sha256:65645c7bb6a0661892
   printf '  upstream core {\n'
   for r in $(seq "$replicas"); do printf '    server 127.0.0.1:%s;\n' $((pg_port + 399 + r)); done
   printf '    keepalive 32;\n  }\n'
+  if [ "$data_replicas" -gt 0 ]; then
+    printf '  upstream data {\n'
+    for r in $(seq "$data_replicas"); do printf '    server 127.0.0.1:%s;\n' $((pg_port + 419 + r)); done
+    printf '    keepalive 32;\n  }\n'
+  fi
   printf '  server {\n    listen %s:%s;\n    proxy_set_header Host $http_host;\n' "$bind" "$port"
   printf '    proxy_set_header Upgrade $http_upgrade;\n    proxy_set_header Connection $connection_upgrade;\n'
   for m in "${remote_modules[@]}"; do
     printf '    location = /%s { proxy_pass http://127.0.0.1:%s; }\n' "${slug[$m]}" "${mport[$m]}"
     printf '    location /%s/ { proxy_pass http://127.0.0.1:%s; }\n' "${slug[$m]}" "${mport[$m]}"
   done
+  if [ "$data_replicas" -gt 0 ]; then
+    for p in "${data_paths[@]}"; do
+      printf '    location = %s { proxy_pass http://data; }\n    location %s/ { proxy_pass http://data; }\n' "$p" "$p"
+    done
+  fi
   printf '    location / { proxy_pass http://core; }\n  }\n}\n'
 } > "$split/front.conf"
 docker rm -f "rh-front-$env_name" >/dev/null 2>&1 || true
@@ -160,6 +205,8 @@ core_args=(--state-dir "$home/state" --kaisatsu-import-dir "$home/state/realms"
   --kaisatsu-import-secrets-dir "$home/secrets/realm"
   --kaisatsu-database-url-file "$home/secrets/kaisatsu-db-url"
   --kaisatsu-db-password-file "$(secret kaisatsu-app-pw)")
+# kaisatsu's `context-gateway` client takes the secret the data plane holds (`[gateway]`).
+[ "$data_replicas" = 0 ] || export JCBIN_GATEWAY_CLIENT_SECRET_FILE=$gateway_secret
 for r in $(seq "$replicas"); do
   if [ "$r" = 1 ]; then log=$home/jc.log pid_file=$home/jc.pid; else log=$split/core-$r.log pid_file=$split/core-$r.pid; fi
   ANTARES_BUS=nats ANTARES_NATS_URL=$nats_url JC_INTERNAL_BIND=127.0.0.1:$((pg_port + 99 + r)) \
@@ -168,8 +215,22 @@ for r in $(seq "$replicas"); do
   # One replica at a time: the first start makes the state dir's generated secrets the next reads.
   "$here/wait-jc.sh" "$(cat "$pid_file")" "$log" || exit 1
 done
+unset JCBIN_GATEWAY_CLIENT_SECRET_FILE
 for m in "${remote_modules[@]}"; do
   "$here/wait-jc.sh" "$(cat "$split/$m.pid")" "$split/$m.log" || exit 1
 done
+# The data plane after core: it takes its tokens from core's kaisatsu and its revocations from
+# core's Portal. One replica at a time, as core: the first runs the broker's migrations.
+for r in $(seq "$data_replicas"); do
+  # The broker's admin token is one for the data plane, as a Secret gives every pod (notify_once.py).
+  if [ "$r" -gt 1 ] && [ ! -e "$split/data-$r-state/antares-admin-token" ]; then
+    mkdir -p -m 700 "$split/data-$r-state"
+    cp -p "$split/data-1-state/antares-admin-token" "$split/data-$r-state/"
+  fi
+  ANTARES_BUS=nats ANTARES_NATS_URL=$nats_url start_jc "data-$r" gateway,antares "$split/data.toml" \
+    $((pg_port + 419 + r)) $((pg_port + 219 + r)) "$split/data-$r.log" "$split/data-$r.pid" \
+    --state-dir "$split/data-$r-state"
+  "$here/wait-jc.sh" "$(cat "$split/data-$r.pid")" "$split/data-$r.log" || exit 1
+done
 unset nats_pw nats_url
-echo "$env_name: split layout on $origin: core x$replicas, ${remote_modules[*]} (front rh-front-$env_name, NATS rh-nats-$env_name)"
+echo "$env_name: split layout on $origin: core x$replicas, data x$data_replicas, ${remote_modules[*]} (front rh-front-$env_name, NATS rh-nats-$env_name)"

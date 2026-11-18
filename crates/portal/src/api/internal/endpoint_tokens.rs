@@ -34,9 +34,15 @@ struct Answer {
 pub async fn endpoint_token_for_session(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(ask): Json<Ask>,
+    body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
+    // The caller first, the body after: nobody without the gateway's token learns its shape.
     crate::auth::internal::authenticate_gateway(&state, &headers).await?;
+    let ask: Ask = serde_json::from_slice(&body).map_err(|why| {
+        ApiError::BadRequest(format!(
+            "the body is {{\"slug\": \"<Endpoint name>\", \"host\": \"<host>\"}}: {why}"
+        ))
+    })?;
     let named = !ask.slug.is_empty()
         && ask.slug.len() <= 64
         && ask

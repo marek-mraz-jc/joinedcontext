@@ -994,9 +994,9 @@ pub async fn build(
         serve_internal(bind, internal).await?;
     }
     let app = match remote_sessions {
-        Some(remote) => built.app.layer(axum::middleware::from_fn(move |req, next| {
-            remote_session_reads(remote.clone(), req, next)
-        })),
+        Some(remote) => built.app.layer(axum::middleware::from_fn(
+            move |req: Request, next: Next| remote_session_reads(remote.clone(), req, next),
+        )),
         #[cfg(feature = "portal")]
         None => built.app.layer(axum::middleware::from_fn(session_reads)),
         #[cfg(not(feature = "portal"))]
@@ -1071,24 +1071,24 @@ impl RemoteSessions {
 
     /// The person's token for `slug`, `Ok(None)` when the cookie names nobody. The cookie and the
     /// host the browser sent go to the Portal, nothing else of the request.
-    async fn token_for(&self, req: &Request, slug: &str) -> Result<Option<String>, String> {
+    async fn token_for(
+        &self,
+        slug: &str,
+        host: Option<String>,
+        cookies: Vec<HeaderValue>,
+    ) -> Result<Option<String>, String> {
         use axum::http::{StatusCode, header};
         #[derive(serde::Deserialize)]
         struct Answer {
             token: String,
         }
-        let host = req
-            .headers()
-            .get(header::HOST)
-            .and_then(|h| h.to_str().ok())
-            .or_else(|| req.uri().authority().map(|a| a.as_str()));
         let mut ask = self
             .http
             .post(&self.url)
             .bearer_auth(self.token.get().await?)
             .json(&serde_json::json!({ "slug": slug, "host": host }));
-        for cookie in req.headers().get_all(header::COOKIE) {
-            ask = ask.header(header::COOKIE, cookie.clone());
+        for cookie in cookies {
+            ask = ask.header(header::COOKIE, cookie);
         }
         let answer = ask
             .send()
@@ -1112,7 +1112,18 @@ impl RemoteSessions {
 /// anonymous, never wider.
 async fn remote_session_reads(remote: RemoteSessions, mut req: Request, next: Next) -> Response {
     if let Some(slug) = session_slug(&req) {
-        match remote.token_for(&req, &slug).await {
+        let headers = req.headers();
+        let host = headers
+            .get(axum::http::header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .or_else(|| req.uri().authority().map(|a| a.as_str()))
+            .map(str::to_owned);
+        let cookies = headers
+            .get_all(axum::http::header::COOKIE)
+            .iter()
+            .cloned()
+            .collect();
+        match remote.token_for(&slug, host, cookies).await {
             Ok(Some(token)) => {
                 if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
                     value.set_sensitive(true);
@@ -1344,9 +1355,9 @@ mod tests {
                             .map_or("anonymous".to_owned(), |v| v.to_str().unwrap().to_owned())
                     }),
                 )
-                .layer(axum::middleware::from_fn(move |req, next| {
-                    remote_session_reads(remote.clone(), req, next)
-                }))
+                .layer(axum::middleware::from_fn(
+                    move |req: Request, next: Next| remote_session_reads(remote.clone(), req, next),
+                ))
         };
         let read = |app: Router, cookie: &'static str| async move {
             let req = axum::http::Request::get("/api/endpoint/closedslug")
