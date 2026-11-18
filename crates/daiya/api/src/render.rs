@@ -498,12 +498,9 @@ pub async fn panel_view(
                 },
             );
             if !dec.allowed {
-                let ds_title = state
-                    .store
-                    .get_datasource(org_id, ds_uid)
-                    .await?
-                    .map_or_else(|| ds_uid.to_owned(), |d| d.name);
-                let msg = format!("You cannot read the source of this panel: {ds_title}");
+                // Only the uid the dashboard already carries: the stored name, or whether the
+                // source exists at all, is not told to a caller who may not read it.
+                let msg = format!("You cannot read the source of this panel: {ds_uid}");
                 return Ok(PanelView {
                     dashboard_uid: dash_record.uid,
                     dashboard_title: dash_record.title,

@@ -522,24 +522,23 @@ async fn an_unreadable_panel_source_is_a_named_empty_state() {
         .unwrap();
     assert_eq!(
         view.access_denied_message.as_deref(),
-        Some("You cannot read the source of this panel: Prom named")
+        Some("You cannot read the source of this panel: named")
     );
     assert!(view.frame_sets.is_empty());
     assert!(view.html_table.contains("No data"));
 
-    // A source the caller cannot read and the store does not hold is named by its uid.
+    // The message names only the uid the dashboard already shows, never the stored name, and
+    // reads the same whether or not the store holds the source.
     w.store.inner.delete_datasource(ORG, "named").await.unwrap();
+    w.store.fail("get_datasource");
     let view = panel_view(&w.state, &who, ORG, "fx", 4, PanelTimeRange::default())
         .await
         .unwrap();
+    w.store.heal();
     assert_eq!(
         view.access_denied_message.as_deref(),
         Some("You cannot read the source of this panel: named")
     );
-    w.store.fail("get_datasource");
-    let failed = panel_view(&w.state, &who, ORG, "fx", 4, PanelTimeRange::default()).await;
-    w.store.heal();
-    assert_eq!(failed.unwrap_err().status_code(), 500);
 }
 
 #[tokio::test]
