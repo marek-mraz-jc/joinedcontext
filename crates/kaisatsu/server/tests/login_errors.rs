@@ -579,7 +579,7 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let form = [
         ("csrf_token", csrf.as_str()),
         ("session_code", session.as_str()),
-        ("new_password", NEW_PW),
+        ("new_password", "Fresh-Member-Pass-77!q"),
     ];
     let (st, _, _) = send(&app, Method::POST, ACTION, Some(&form), Some(&cookie), None).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
