@@ -835,10 +835,11 @@ pub fn by_organization(
                         "this host is not served here",
                     ));
                 }
-                // Once the deployment has Organizations, a request the router placed in none
-                // (the App pods' listener, a path a later router change lets through) reaches no
-                // Endpoint: the gateway would answer it for every Organization (S1-03).
-                if decided.is_none() && !(links.is_empty() && registry_links().is_empty()) {
+                // Once jc.toml has Organizations, a request the router placed in none (the App
+                // pods' listener, a path a later router change lets through) reaches no Endpoint:
+                // the gateway would answer it for every Organization (S1-03). The host registry's
+                // alone leave the installation's own API host answering (T-7271).
+                if decided.is_none() && !links.is_empty() {
                     return axum::response::IntoResponse::into_response((
                         axum::http::StatusCode::NOT_FOUND,
                         "unmounted path",

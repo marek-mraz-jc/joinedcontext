@@ -180,6 +180,9 @@ pub struct HostTable {
     /// The path prefixes a shared host answers without an Organization once the deployment has
     /// one (RTE-03): `/-`, `/.well-known` and what [`HostTable::deployment_paths`] adds.
     deployment: BTreeSet<String>,
+    /// The Organizations [`HostTable::with_registry`] added (the host registry's, T-7184): each
+    /// is bound to hosts of its own, so they alone do not close the shared hosts' paths.
+    registry: BTreeSet<String>,
 }
 
 /// The deployment's own prefixes on every table: its pages and discovery documents.
@@ -285,12 +288,13 @@ impl HostTable {
     }
 
     /// Whether a shared host answers `path` without an Organization: always while the deployment
-    /// has none, else only a deployment path, any path of a sign-in host, and any path of an
+    /// names none in jc.toml (the host registry's alone keep the installation's own Portal and
+    /// API on its shared hosts, T-7271), else only a deployment path, any path of a sign-in host, and any path of an
     /// Apps host (`{app}--{org}.{apps-base}`: the Portal reads the Organization from that
     /// label). Nothing else reaches a module without its Organization, since a module answers
     /// such a request for every Organization (S1-03).
     fn organization_less(&self, host_with_port: &str, host_only: &str, path: &str) -> bool {
-        self.organizations.is_empty()
+        self.organizations.is_subset(&self.registry)
             || DEPLOYMENT_PATHS
                 .into_iter()
                 .chain(self.deployment.iter().map(String::as_str))
@@ -472,6 +476,7 @@ impl HostTable {
                 continue;
             }
             if !table.organizations.contains(row.organization) {
+                table.registry.insert(row.organization.to_owned());
                 table = match row.organization_id {
                     Some(id) => table.organization_id(row.organization, id)?,
                     None => table.organization(row.organization)?,
@@ -492,6 +497,7 @@ impl HostTable {
         let mut table = self.clone();
         for name in organizations {
             table.organizations.remove(*name);
+            table.registry.remove(*name);
             table.ids.retain(|_, n| n != name);
             let hosts: Vec<String> = table
                 .rows
@@ -832,6 +838,74 @@ mod tests {
                 "api org=com_example base=https://opendata.example.com/com_example/api path=/v1/x"
                     .into()
             )
+        );
+    }
+
+    /// T-7271: the host registry's Organizations alone (jc-dev, jc-prod: no `[[organizations]]`)
+    /// leave the installation's Portal and API answering on its shared hosts; one of jc.toml
+    /// beside them still closes those paths (S1-03).
+    #[tokio::test]
+    async fn registry_organizations_alone_keep_the_installation_paths() {
+        let build = |table: HostTable| {
+            let mut b = JcRouterBuilder::new("https", "city.example").hosts(table);
+            for name in ["portal", "api"] {
+                b = b.mount(
+                    MountSpec {
+                        module: name.into(),
+                        host: None,
+                        path_prefix: Some(format!("/{name}")),
+                    },
+                    Router::new().fallback(any(echo)),
+                );
+            }
+            b.build().expect("router")
+        };
+        let row = [RegistryHost {
+            host: "smartcity.bbsk.sk",
+            organization: "sk_bbsk",
+            organization_id: None,
+            role: "working",
+            served: true,
+        }];
+        let shared = HostTable::new()
+            .shared("city.example")
+            .and_then(|t| t.shared("api.city.example"))
+            .and_then(|t| t.deployment_paths(&["/login"]))
+            .expect("rows");
+        let jc = build(shared.clone());
+        jc.host_swap()
+            .expect("a host table")
+            .rebuild(&row)
+            .expect("rebuild");
+        assert_eq!(
+            call(&jc, "city.example", "/portal/api/v1/projects", API).await,
+            (
+                StatusCode::OK,
+                "portal org=- base=https://city.example/portal path=/api/v1/projects".into()
+            )
+        );
+        assert_eq!(
+            call(&jc, "api.city.example", "/api/endpoint/air", API).await,
+            (
+                StatusCode::OK,
+                "api org=- base=https://api.city.example/api path=/endpoint/air".into()
+            )
+        );
+        assert_eq!(
+            call(&jc, "smartcity.bbsk.sk", "/api/endpoint/air", API)
+                .await
+                .0,
+            StatusCode::OK
+        );
+        // An Organization of jc.toml beside the registry's closes them again.
+        let jc = build(shared.organization("com_example").expect("row"));
+        jc.host_swap()
+            .expect("a host table")
+            .rebuild(&row)
+            .expect("rebuild");
+        assert_eq!(
+            call(&jc, "city.example", "/portal/api/v1/projects", API).await,
+            (StatusCode::NOT_FOUND, "unmounted path".into())
         );
     }
 
