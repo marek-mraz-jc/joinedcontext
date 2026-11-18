@@ -251,6 +251,14 @@ async fn clause_5_2_41_create_validation() {
         json!({"type": "Snapshot", "endpoint": "http://127.0.0.1:9/n",
             "receiverInfo": [{"key": "X", "value": "a\r\nInjected: 1"}],
             "snapshotQueries": [{"type": "Query", "entities": [{"type": "V"}]}]}),
+        // the HTTP client owns framing and routing headers, as on a
+        // Subscription's receiverInfo
+        json!({"type": "Snapshot", "endpoint": "http://127.0.0.1:9/n",
+            "receiverInfo": [{"key": "Transfer-Encoding", "value": "chunked"}],
+            "snapshotQueries": [{"type": "Query", "entities": [{"type": "V"}]}]}),
+        json!({"type": "Snapshot", "endpoint": "http://127.0.0.1:9/n",
+            "receiverInfo": [{"key": "host", "value": "elsewhere.example"}],
+            "snapshotQueries": [{"type": "Query", "entities": [{"type": "V"}]}]}),
     ] {
         let (status, body) =
             send(&st, "POST", "/ngsi-ld/v1/snapshots", Some(bad.to_string())).await;

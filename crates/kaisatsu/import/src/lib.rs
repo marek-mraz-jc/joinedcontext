@@ -536,6 +536,7 @@ pub fn check_realm_value(doc: &Value, opts: &ApplyOptions) -> Result<Vec<String>
         ..opts.clone()
     };
     check_no_secret_substitution_in_plain_fields(doc, "$")?;
+    parse_realm_config(doc)?;
 
     let obj = doc
         .as_object()
@@ -1159,7 +1160,7 @@ pub async fn apply_realm_files(
     }
 
     // 1. RealmConfig
-    let mut realm_cfg: RealmConfig = serde_json::from_value(merged.clone()).unwrap_or_default();
+    let mut realm_cfg = parse_realm_config(&merged)?;
     if merged.get("cimdAllowedClientDomains").is_none() {
         let (clients, redirects) = cimd_policy(&merged);
         realm_cfg.cimd_allowed_client_domains = clients;
@@ -1167,7 +1168,11 @@ pub async fn apply_realm_files(
     }
     realm_cfg.id = realm_id.clone();
     realm_cfg.realm = realm_name.clone();
-    realm_cfg.apply_checksum = Some(file_checksum.clone());
+    // The new checksum is stored only once every step below has been written (the end of this
+    // function): a failed apply keeps the old one, so the next apply of the same files retries.
+    realm_cfg.apply_checksum = existing_realm
+        .as_ref()
+        .and_then(|r| r.apply_checksum.clone());
     // Files that name no SMTP server leave the stored one (the Portal's operators save it at run
     // time, T-7152), its password included.
     if merged.get("smtpServer").is_none() {
@@ -1626,6 +1631,8 @@ pub async fn apply_realm_files(
                 })
                 .await?;
         }
+        realm_cfg.apply_checksum = Some(file_checksum.clone());
+        store.upsert_realm(realm_cfg).await?;
     }
 
     Ok(ApplyReport {
@@ -1636,6 +1643,13 @@ pub async fn apply_realm_files(
         changes,
         warnings,
     })
+}
+
+/// The realm settings of a realm document: a field of the wrong type is refused, never reset
+/// to its default (password policy, lifetimes and brute-force settings included).
+fn parse_realm_config(doc: &Value) -> Result<RealmConfig> {
+    serde_json::from_value(doc.clone())
+        .map_err(|e| KaisatsuError::BadRequest(format!("invalid realm settings: {e}")))
 }
 
 /// Builds a [`ApplyPlan`] (`kaisatsu plan`, W1b) recording the realm's current `base_state_checksum`.

@@ -49,7 +49,7 @@ pub use guard::{
 pub use handlers::{
     AUTH_COOKIE_HANDLES, OidcState, add_auth_cookie, auth_cookie_holds,
     dispatch_backchannel_logout, dummy_verify_off_runtime, oidc_router, password_work, read_cookie,
-    redirect_with_params, sign_in_cookie, sign_in_cookie_name,
+    redirect_with_params, sign_in_cookie, sign_in_cookie_name, token_is_live,
 };
 pub use redirect::{validate_post_logout_redirect_uri, validate_redirect_uri};
 pub use second_factor::{

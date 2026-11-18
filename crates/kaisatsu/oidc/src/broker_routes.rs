@@ -43,7 +43,8 @@ pub struct BrokerLoginQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+// A redirect back from another party: providers add their own parameters (`iss`,
+// `session_state`, a mail tracker's), which are ignored, not refused.
 pub struct BrokerEndpointQuery {
     #[serde(default)]
     pub code: Option<String>,
@@ -347,7 +348,16 @@ async fn broker_endpoint_get(
             .store
             .list_credentials(&realm.id, &existing.id)
             .await?;
-        let needs_password = creds.iter().any(|c| c.credential_type == "password");
+        // The upstream e-mail alone proves nothing about a local account: linking needs the
+        // account's own password, and an Organization's identity provider links only that
+        // Organization's people.
+        let other_org = idp
+            .org_id
+            .as_ref()
+            .is_some_and(|o| existing.org_id.as_ref() != Some(o));
+        if other_org || !creds.iter().any(|c| c.credential_type == "password") {
+            return Err(KaisatsuError::Forbidden(LINK_REFUSED.into()));
+        }
         pending.pending_claims = Some(claims);
         pending.pending_existing_user_id = Some(existing.id.clone());
         auth_session.broker_state_json = Some(serde_json::to_string(&pending).unwrap_or_default());
@@ -360,7 +370,7 @@ async fn broker_endpoint_get(
             &idp.alias,
             &auth_session,
             &existing.username,
-            needs_password,
+            true,
             false,
         )
         .await;
@@ -401,6 +411,10 @@ async fn broker_endpoint_get(
 
     hand_to_login(&state, &mount, &realm, auth_session, &created, &idp.alias).await
 }
+
+/// Why an upstream identity is not linked to the local account holding its e-mail address.
+const LINK_REFUSED: &str = "an account with this e-mail address already exists and cannot be \
+     linked by e-mail alone: sign in with that account, or ask an administrator to link it";
 
 /// `POST /realms/{realm}/broker/{alias}/endpoint` (K12):
 /// Confirms linking an upstream identity to an existing local account after verifying the CSRF
@@ -458,7 +472,10 @@ async fn broker_endpoint_confirm_post(
         .store
         .list_credentials(&realm.id, &existing.id)
         .await?;
-    if let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") {
+    let Some(pw_cred) = creds.iter().find(|c| c.credential_type == "password") else {
+        return Err(KaisatsuError::Forbidden(LINK_REFUSED.into()));
+    };
+    {
         let submitted = form.password.as_deref().unwrap_or_default();
         // The login page's brute-force protector: a locked account gets the wrong-password
         // answer after the same hashing work, and each wrong password counts.

@@ -233,7 +233,11 @@ mod tests {
 
     #[test]
     fn cimd_accepts_claude_and_refuses_unknown_fields_or_untrusted_hosts() {
-        let realm = RealmConfig::default();
+        let realm = RealmConfig {
+            cimd_allowed_client_domains: vec!["claude.ai".into()],
+            cimd_allowed_redirect_domains: vec!["claude.ai".into()],
+            ..RealmConfig::default()
+        };
         let raw = serde_json::json!({
             "client_id": "https://claude.ai/oauth/mcp-oauth-client-metadata",
             "client_name": "Claude",
