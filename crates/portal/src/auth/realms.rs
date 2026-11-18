@@ -216,10 +216,31 @@ impl AppState {
     }
 }
 
+/// `client`'s proof in `realm`: a client secret becomes the realm's own; a federated assertion
+/// stays, as it names no secret.
+fn own_auth(
+    installation: &crate::auth::client_auth::ClientAuth,
+    realm: &str,
+    client: &str,
+) -> crate::auth::client_auth::ClientAuth {
+    use crate::auth::client_auth::ClientAuth;
+    match installation {
+        ClientAuth::Secret(secret) => ClientAuth::Secret(
+            jc_core::Secret::new(secret.as_str())
+                .for_realm(realm, client)
+                .expose()
+                .to_owned(),
+        ),
+        other => other.clone(),
+    }
+}
+
 impl OrganizationRealm {
-    /// The realm of `setting`, signing in as the installation's Portal client (T-7001 §3: one
-    /// client secret for every realm) with the redirect URI of the Organization's host `base`,
-    /// and managing its people as the installation's admin client `admin` of the same name.
+    /// The realm of `setting`, signing in as the installation's Portal client with the redirect
+    /// URI of the Organization's host `base`, and managing its people as the installation's
+    /// admin client `admin` of the same name. A client secret is the realm's own, derived from
+    /// the installation's as jc's kaisatsu writes it into the realm (S1-04,
+    /// `setup::organization_realm_env`): a secret read in one realm signs in nowhere else.
     pub fn new(
         setting: &RealmSetting,
         installation: &OidcConfig,
@@ -235,7 +256,8 @@ impl OrganizationRealm {
         );
         Self {
             people: admin.and_then(|(id, auth)| {
-                crate::people::People::new(&backchannel, id.clone(), auth.clone()).map(Arc::new)
+                let auth = own_auth(auth, &setting.organization, id);
+                crate::people::People::new(&backchannel, id.clone(), auth).map(Arc::new)
             }),
             setting: setting.clone(),
             backchannel,
@@ -244,7 +266,11 @@ impl OrganizationRealm {
             config: OidcConfig {
                 issuer: setting.issuer.clone(),
                 client_id: installation.client_id.clone(),
-                auth: installation.auth.clone(),
+                auth: own_auth(
+                    &installation.auth,
+                    &setting.organization,
+                    &installation.client_id,
+                ),
                 extra_ca_pem: installation.extra_ca_pem.clone(),
                 admin_url: Some(origin),
             },
@@ -483,6 +509,43 @@ mod tests {
         );
         let err = parse(&format!("[{hel}]"), None, &hosts()).expect_err("no installation realm");
         assert!(err.contains("JC_OIDC_ISSUER"), "{err}");
+    }
+
+    /// S1-04: the Portal signs in to each Organization realm with that realm's own secret, the
+    /// one jc's kaisatsu derives (`jc_core::Secret::for_realm`), never the installation's.
+    #[test]
+    fn each_realm_signs_in_with_its_own_secret() {
+        use crate::auth::client_auth::ClientAuth;
+        let secret = |auth: &ClientAuth| match auth {
+            ClientAuth::Secret(s) => s.clone(),
+            _ => panic!("a client secret"),
+        };
+        let admin = (
+            "portal-reconciler".to_owned(),
+            ClientAuth::Secret("r".into()),
+        );
+        let realm = |org: &str| {
+            let raw = format!(
+                "[{}]",
+                row(
+                    org,
+                    &format!("https://idm.{org}.test/realms/{org}"),
+                    &format!("http://idm.{org}.test/realms/{org}/protocol/openid-connect/certs"),
+                )
+            );
+            let setting = parse(&raw, Some(&installation()), &hosts()).expect("valid");
+            let base: Url = format!("https://portal.{org}.test").parse().expect("url");
+            OrganizationRealm::new(&setting[0], &installation(), &base, Some(&admin))
+        };
+        let (hel, ba) = (realm("hel"), realm("ba"));
+        let derived = jc_core::Secret::new("s").for_realm("hel", "portal-api");
+        assert_eq!(secret(&hel.config.auth), derived.expose());
+        assert_ne!(secret(&hel.config.auth), secret(&ba.config.auth));
+        assert_ne!(secret(&hel.config.auth), "s", "the installation's secret");
+        // A federated assertion names no secret and stays as it is.
+        let path = std::path::PathBuf::from("/var/run/secrets/token");
+        let federated = own_auth(&ClientAuth::Assertion(path.clone()), "hel", "portal-api");
+        assert!(matches!(federated, ClientAuth::Assertion(p) if p == path));
     }
 
     #[test]

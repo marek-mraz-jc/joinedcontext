@@ -312,6 +312,8 @@ async fn apply_portal_realm(
 /// does not sign in through kaisatsu.
 #[derive(Clone)]
 struct OrganizationRealmFiles {
+    /// The installation realm's importer variables ([`setup::realm_env`]): each realm gets its
+    /// own secrets derived from them ([`setup::organization_realm_env`]), never these.
     env_vars: BTreeMap<String, String>,
     gateway: bool,
     assistant: bool,
@@ -370,7 +372,7 @@ impl OrganizationRealmFiles {
             files.push(setup::assistant_realm_file(&realm));
         }
         let options = ApplyOptions {
-            env_vars: self.env_vars.clone(),
+            env_vars: setup::organization_realm_env(&self.env_vars, &realm),
             ..ApplyOptions::default()
         };
         let report = apply_realm_files(store, &files, &options)
@@ -1222,6 +1224,88 @@ mod tests {
         assert!(sibling.headers().get(header::LOCATION).is_none());
         let elsewhere = auth("idm.b.test", "smartcity.a.test").await.unwrap();
         assert_eq!(elsewhere.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// S1-04: each Organization realm holds its own client secrets. A's `portal-reconciler`
+    /// (manage-users) secret buys a token in A's realm and is refused by B's token endpoint and
+    /// the installation's; neither realm holds the installation's secret.
+    #[tokio::test]
+    async fn one_organizations_client_secret_is_refused_by_another_realm() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode, header};
+        use tower::ServiceExt;
+        let dir = tempfile::tempdir().unwrap();
+        let setup =
+            setup::Setup::prepare(dir.path(), &crate::module::Module::ALL, &Default::default())
+                .unwrap();
+        let kek = Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+        let installation = setup::realm_env(&setup);
+        let base = |o: &str| vec![format!("https://smartcity.{o}.test")];
+        let files = OrganizationRealmFiles {
+            env_vars: installation.clone(),
+            gateway: true,
+            assistant: true,
+            bases: BTreeMap::from([("a".to_owned(), base("a")), ("b".to_owned(), base("b"))]),
+        };
+        files.apply(&store, "a").await.unwrap();
+        files.apply(&store, "b").await.unwrap();
+        let realm_env = |o: &str| {
+            setup::organization_realm_env(&installation, &setup::Realm::parse(o).unwrap())
+        };
+        let (a, b) = (realm_env("a"), realm_env("b"));
+        assert_eq!(a.len(), 5, "every client has its own secret");
+        assert!(!a.contains_key("JC_SETUP_FIRST_ADMIN_PASSWORD"));
+        for (name, value) in &a {
+            assert_ne!(Some(value), b.get(name), "{name}: one value in two realms");
+            assert_ne!(
+                Some(value),
+                installation.get(name),
+                "{name}: the installation's"
+            );
+        }
+        let idm = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
+        let pins = RealmHosts::default()
+            .pin("a", idm("idm.a.test"))
+            .pin("b", idm("idm.b.test"));
+        let state = KaisatsuState::new(
+            store,
+            kek,
+            OutboundGuard::default(),
+            Arc::new(LocalAuthorizer),
+        )
+        .with_realm_hosts(pins);
+        let app = router(state, idm("login.city.test"));
+        let token = |realm: &str, secret: &str| {
+            let form = format!(
+                "grant_type=client_credentials&client_id={}&client_secret={secret}",
+                setup::PORTAL_ADMIN_CLIENT
+            );
+            let req = Request::post(format!("/realms/{realm}/protocol/openid-connect/token"))
+                .extension(idm(&format!("idm.{realm}.test")))
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(form))
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        let secret_of_a = &a["CLIENT_SECRET_PORTAL_RECONCILER"];
+        assert_eq!(
+            token("a", secret_of_a).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            token("b", secret_of_a).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED,
+            "A's secret in B's realm"
+        );
+        assert_eq!(
+            token("b", &installation["CLIENT_SECRET_PORTAL_RECONCILER"])
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "the installation's secret in B's realm"
+        );
     }
 
     /// T-7180: kaisatsu's pins follow the host registry. A sign-in host served at run time

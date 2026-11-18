@@ -1008,6 +1008,20 @@ async fn a_token_of_an_organizations_realm_binds_a_run_of_that_organization_alon
     assert_eq!(grants.token(&run.id).await.expect("a grant"), DELEGATED);
     grants.end(&run.id).await;
     assert_eq!(bodies(&ba, &at("revoke")).await.len(), 1);
+    // S1-04: ba's realm holds the proxy's client under ba's own secret, never the installation's.
+    let own = jc_core::Secret::new(PROXY_SECRET).for_realm("ba", PROXY_CLIENT);
+    let sent: Vec<String> = ba
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert_eq!(sent.len(), 3, "introspection, exchange and revocation");
+    for body in &sent {
+        assert!(body.contains(&format!("client_secret={}", own.expose())));
+        assert!(!body.contains(&format!("client_secret={PROXY_SECRET}")));
+    }
     let seen = installation.received_requests().await.unwrap_or_default();
     assert!(
         seen.iter()

@@ -346,11 +346,26 @@ impl Config {
     /// `client_assertion` and no `client_id` (Keycloak finds a `federated-jwt` client by the
     /// token's subject and refuses one named beside it), else the id and the secret.
     pub fn client_auth(&self) -> Result<Vec<(&'static str, String)>, String> {
+        self.client_auth_in(None)
+    }
+
+    /// [`Config::client_auth`] in the realm of `organization` (`None`: the installation's). An
+    /// Organization's own realm holds this client under a secret of its own, derived from the
+    /// installation's as jc writes it (S1-04, `jc_core::Secret::for_realm`); an assertion names
+    /// no secret and stays.
+    pub fn client_auth_in(
+        &self,
+        organization: Option<&str>,
+    ) -> Result<Vec<(&'static str, String)>, String> {
         match &self.oidc_client_assertion_file {
             Some(path) => jc_core::ClientCredential::Assertion(path.clone()),
-            None => jc_core::ClientCredential::Secret(jc_core::Secret::new(
-                self.oidc_client_secret.clone(),
-            )),
+            None => {
+                let secret = jc_core::Secret::new(self.oidc_client_secret.as_str());
+                jc_core::ClientCredential::Secret(match organization {
+                    Some(realm) => secret.for_realm(realm, &self.oidc_client_id),
+                    None => secret,
+                })
+            }
         }
         .form(&self.oidc_client_id)
     }

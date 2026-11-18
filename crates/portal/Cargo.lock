@@ -2672,6 +2672,7 @@ dependencies = [
  "axum",
  "chrono",
  "form_urlencoded",
+ "hmac 0.12.1",
  "hyper-util",
  "jc-types",
  "jsonschema",

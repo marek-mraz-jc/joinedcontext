@@ -32,6 +32,27 @@ impl Secret {
         &self.0
     }
 
+    /// The secret of `client` in an Organization's own `realm`, derived from this, the client's
+    /// installation secret (S1-04): HMAC-SHA256 keyed by the value's SHA-256 over the
+    /// length-prefixed realm and client names, as hex. jc's kaisatsu writes it into the realm;
+    /// the Portal and the model proxy sign in to that realm with it, each from the one value it
+    /// already holds, so nothing more is stored. A secret read in one realm is worthless in any
+    /// other realm and in the installation's.
+    pub fn for_realm(&self, realm: &str, client: &str) -> Self {
+        use hmac::{Hmac, Mac};
+        use sha2::{Digest, Sha256};
+        // A fixed-size key (the value's digest in a zeroed block): HMAC takes it infallibly.
+        let mut key = zeroize::Zeroizing::new([0u8; 64]);
+        key[..32].copy_from_slice(&Sha256::digest(self.0.as_bytes()));
+        let mut mac = <Hmac<Sha256> as Mac>::new(&(*key).into());
+        for part in [realm, client] {
+            mac.update(&(part.len() as u64).to_be_bytes());
+            mac.update(part.as_bytes());
+        }
+        let digest = mac.finalize().into_bytes();
+        Self(digest.iter().map(|b| format!("{b:02x}")).collect())
+    }
+
     /// Whether the credential is empty, for the checks that must not read it.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -166,6 +187,33 @@ mod client_credential_tests {
 #[cfg(test)]
 mod tests {
     use super::Secret;
+
+    /// S1-04: one realm's secret is its own per realm and client, stable, and never the
+    /// installation's.
+    #[test]
+    fn a_realm_secret_is_its_own_per_realm_and_client() {
+        let installation = Secret::new("installation-client-secret-0123456789");
+        let a = installation.for_realm("a", "portal-api");
+        assert_eq!(
+            a.expose(),
+            installation.for_realm("a", "portal-api").expose()
+        );
+        // The operator's recipe gives the same value (T-7267 upgrade path):
+        // hmac.new(sha256(secret).digest(), len8(realm)+realm+len8(client)+client, sha256).
+        assert_eq!(
+            a.expose(),
+            "832642d31ee2cae5cf32a0223511823115ff3a0f295c6aacf5e122a0754f6683"
+        );
+        for other in [
+            installation.for_realm("b", "portal-api"),
+            installation.for_realm("a", "portal-reconciler"),
+            installation.for_realm("ap", "ortal-api"),
+            Secret::new("another-installation").for_realm("a", "portal-api"),
+            installation.clone(),
+        ] {
+            assert_ne!(a.expose(), other.expose());
+        }
+    }
 
     /// SEC-GAP-03: the property is the absence of the value, not the presence of a word.
     #[test]

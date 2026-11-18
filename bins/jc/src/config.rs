@@ -1736,8 +1736,6 @@ pub use crate::setup::Given;
 pub struct Secrets {
     /// The admin listener's bearer token.
     pub admin_token: Option<Given>,
-    /// shako's ES256 signing key.
-    pub shako_signing_key: Option<Given>,
     /// The secrets first-start setup otherwise generates.
     pub module: BTreeMap<crate::setup::Secret, Given>,
     /// `EKIBEN_VAR_<NAME>` values, by `NAME` and by the whole variable name.
@@ -1778,10 +1776,6 @@ impl Secrets {
         };
         let mut out = Self {
             admin_token: given("JCBIN_ADMIN_TOKEN", cfg.admin_token_file.as_deref())?,
-            shako_signing_key: given(
-                "JCBIN_SHAKO_SIGNING_KEY",
-                cfg.shako.signing_key_file.as_deref(),
-            )?,
             ..Self::default()
         };
         if cfg.admin_listen.is_some() && out.admin_token.is_none() {
@@ -1802,6 +1796,11 @@ impl Secrets {
                 S::AntaresAdminToken,
                 "JCBIN_ANTARES_ADMIN_TOKEN",
                 cfg.antares.admin_token_file.as_deref(),
+            ),
+            (
+                S::ShakoSigningKey,
+                "JCBIN_SHAKO_SIGNING_KEY",
+                cfg.shako.signing_key_file.as_deref(),
             ),
             (
                 S::ShakoToken,
@@ -1913,9 +1912,6 @@ impl Secrets {
         let mut out = Vec::new();
         if let Some(g) = &self.admin_token {
             out.push(("admin-token", g.source));
-        }
-        if let Some(g) = &self.shako_signing_key {
-            out.push(("shako-signing-key", g.source));
         }
         if !self.pipeline_client_secrets.is_empty() {
             out.push(("ekiben-pipeline-client-secrets", jc_secret::Source::File));
@@ -2529,7 +2525,6 @@ path_prefix = "/api/endpoint"
             let given = |s: &Secrets| -> Option<Given> {
                 match name {
                     "JCBIN_ADMIN_TOKEN" => s.admin_token.clone(),
-                    "JCBIN_SHAKO_SIGNING_KEY" => s.shako_signing_key.clone(),
                     _ => s.module.values().next().cloned(),
                 }
             };
