@@ -74,11 +74,13 @@ pub struct PanelView {
     pub access_denied_message: Option<String>,
 }
 
-/// Epoch milliseconds of the years 0..=9999: a parsed time outside them is not a time.
-const TIME_MS_RANGE: std::ops::RangeInclusive<i64> = -62_167_219_200_000..=253_402_300_799_999;
+/// Epoch milliseconds of the first and last instant of the years 0..=9999.
+const MIN_TIME_MS: i64 = -62_167_219_200_000;
+const MAX_TIME_MS: i64 = 253_402_300_799_999;
 
 /// Parses a Grafana time string (`"now"`, `"now-6h"`, `"now-30d"`, ISO 8601, or epoch ms string)
-/// into epoch milliseconds; a value outside [`TIME_MS_RANGE`] counts as unparsed.
+/// into epoch milliseconds, clamped to the years 0..=9999 so no range arithmetic downstream
+/// can overflow.
 #[must_use]
 pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
     let now_ms = TimestampTz::now().as_millis();
@@ -99,8 +101,8 @@ pub fn parse_time_str_ms(raw: Option<&str>, default_offset_ms: i64) -> i64 {
                 .ok()
                 .or_else(|| jc_time::parse_rfc3339(s).map(|dt| dt.as_millisecond()))
         })
-        .filter(|ms| TIME_MS_RANGE.contains(ms));
-    parsed.unwrap_or_else(|| now_ms.saturating_add(default_offset_ms))
+        .unwrap_or_else(|| now_ms.saturating_add(default_offset_ms));
+    parsed.clamp(MIN_TIME_MS, MAX_TIME_MS)
 }
 
 /// Renders a list of [`Frame`]s into a safe, accessible server-side HTML `<table>` for no-JS and
