@@ -738,7 +738,7 @@ pub async fn build_router(
         builder = mount_renamed(builder, &plan);
         #[cfg(feature = "shako")]
         if plan.module == Module::Shako {
-            let state = modules::shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
+            let state = modules::shako::build_state(&cfg.shako, ctx.setup).await?;
             let (main_router, v2_router) = modules::shako::build(
                 state,
                 plan.mount.clone(),

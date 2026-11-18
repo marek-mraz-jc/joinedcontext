@@ -68,10 +68,21 @@ async fn open_store(
     Ok(Arc::new(store))
 }
 
+/// shako's signing key: the operator's or the one setup keeps in the state directory (generated
+/// once), so a restart keeps every stored image signature and issued token verifiable. No key
+/// held refuses the start, never a fresh key per boot.
+fn signing_key(setup: &crate::setup::Setup) -> Result<ShakoSigningKey, StartError> {
+    let text = setup
+        .value(crate::setup::Secret::ShakoSigningKey)
+        .ok_or_else(|| err("shako has no signing key (JCBIN_SHAKO_SIGNING_KEY_FILE)"))?;
+    ShakoSigningKey::from_text(text.as_bytes()).map_err(|_| {
+        err("shako's signing key is not a P-256 key (64 hex, raw 32 bytes or PKCS#8 PEM)")
+    })
+}
+
 pub async fn build_state(
     cfg: &ShakoSection,
     setup: &crate::setup::Setup,
-    secrets: &crate::config::Secrets,
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
     let org_id = ORG;
@@ -89,10 +100,7 @@ pub async fn build_state(
         repo: None,
     }]));
 
-    let key = match &secrets.shako_signing_key {
-        Some(given) => ShakoSigningKey::from_text(given.secret.expose().as_bytes()).map_err(err)?,
-        None => ShakoSigningKey::generate().map_err(err)?,
-    };
+    let key = signing_key(setup)?;
 
     let mut static_tokens = Vec::new();
     if let Some(token) = setup.value(crate::setup::Secret::ShakoToken) {
@@ -121,4 +129,34 @@ pub fn build(state: ShakoState, mount: Mount, portal: &str) -> (Router, Router) 
         router(state.clone(), mount.clone()).layer(axum::Extension(PortalBase(portal.into())));
     let v2_router = registry_router(state, mount);
     (main_router, v2_router)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn signing_key_is_kept_across_boots_and_missing_refuses_the_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let boot = || crate::setup::Setup::prepare(tmp.path(), &[Module::Shako], &BTreeMap::new());
+        let first = signing_key(&boot().unwrap()).unwrap();
+        let second = signing_key(&boot().unwrap()).unwrap();
+        assert_eq!(first.kid, second.kid, "same key after a restart");
+        let payload = b"image digest";
+        assert!(second.verify_cosign_payload(payload, &first.sign_cosign_payload(payload)));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(tmp.path().join("shako-signing-key"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        let without =
+            crate::setup::Setup::prepare(tmp.path(), &[Module::Antares], &BTreeMap::new()).unwrap();
+        let e = signing_key(&without).unwrap_err().to_string();
+        assert!(e.contains("no signing key"), "{e}");
+    }
 }

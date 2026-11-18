@@ -31,6 +31,26 @@ impl Secret {
         Self(Zeroizing::new(value))
     }
 
+    /// The secret of `client` in an Organization's own `realm`, derived from the client's
+    /// installation secret (HMAC-SHA256, hex): kaisatsu writes it into that realm and the Portal
+    /// signs in with it, both from the one value they already hold, so nothing more is stored.
+    /// A secret read in one realm is worthless in every other realm and in the installation's.
+    #[must_use]
+    pub fn for_realm(&self, realm: &str, client: &str) -> Self {
+        use hmac::{Hmac, Mac};
+        use sha2::{Digest, Sha256};
+        // The key is the value's SHA-256 in a zeroed block, a fixed size HMAC always takes.
+        let mut key = Zeroizing::new([0u8; 64]);
+        key[..32].copy_from_slice(&Sha256::digest(self.0.as_bytes()));
+        let mut mac = <Hmac<Sha256> as Mac>::new(&(*key).into());
+        // Length-prefixed, so no (realm, client) pair reads as another.
+        for part in [realm, client] {
+            mac.update(&(part.len() as u64).to_be_bytes());
+            mac.update(part.as_bytes());
+        }
+        Self::new(hex::encode(mac.finalize().into_bytes()))
+    }
+
     /// `bytes` random bytes as lower-case hex (`2 * bytes` characters).
     pub fn generate(bytes: usize) -> Result<Self, String> {
         let mut buf = Zeroizing::new(vec![0u8; bytes]);
@@ -207,6 +227,23 @@ mod tests {
     use super::*;
 
     const VALUE: &str = "s3cret-value-0123456789";
+
+    #[test]
+    fn a_realm_secret_is_its_own_per_realm_and_client_and_stable() {
+        let installation = Secret::generate(32).unwrap();
+        let a = installation.for_realm("a", "portal-api");
+        assert_eq!(a, installation.for_realm("a", "portal-api"));
+        for other in [
+            installation.for_realm("b", "portal-api"),
+            installation.for_realm("a", "portal-reconciler"),
+            installation.for_realm("ap", "ortal-api"),
+            Secret::generate(32).unwrap().for_realm("a", "portal-api"),
+        ] {
+            assert_ne!(a, other);
+        }
+        assert_ne!(a, installation);
+        assert_eq!(a.expose().len(), 64);
+    }
 
     #[test]
     fn every_formatting_is_redacted() {

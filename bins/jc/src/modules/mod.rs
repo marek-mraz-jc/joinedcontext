@@ -201,7 +201,7 @@ pub async fn build(
         }
         #[cfg(feature = "shako")]
         Module::Shako => {
-            let state = shako::build_state(&cfg.shako, ctx.setup, ctx.secrets).await?;
+            let state = shako::build_state(&cfg.shako, ctx.setup).await?;
             Ok(shako::build(
                 state,
                 mount,

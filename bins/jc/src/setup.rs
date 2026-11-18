@@ -158,10 +158,13 @@ pub enum Secret {
     AssistantClientSecret,
     /// Its proxy's `agent-proxy` client in kaisatsu.
     ProxyClientSecret,
+    /// shako's ES256 key (P-256 scalar as 64 hex characters): it signs registry tokens and the
+    /// cosign signatures stored beside each image, so it must outlive a restart.
+    ShakoSigningKey,
 }
 
 impl Secret {
-    pub const ALL: [Secret; 17] = [
+    pub const ALL: [Secret; 18] = [
         Secret::KaisatsuKek,
         Secret::PortalClientSecret,
         Secret::PortalAdminClientSecret,
@@ -179,6 +182,7 @@ impl Secret {
         Secret::GatewayOauthKey,
         Secret::AssistantClientSecret,
         Secret::ProxyClientSecret,
+        Secret::ShakoSigningKey,
     ];
 
     /// The credential the Portal calls `module` with, for the modules a role split may place in
@@ -221,6 +225,7 @@ impl Secret {
             Secret::GatewayOauthKey => "gateway-oauth-key",
             Secret::AssistantClientSecret => "assistant-client-secret",
             Secret::ProxyClientSecret => "proxy-client-secret",
+            Secret::ShakoSigningKey => "shako-signing-key",
         }
     }
 
@@ -252,7 +257,7 @@ impl Secret {
             | Secret::PortalAdminClientSecret
             | Secret::PortalCookieKey
             | Secret::FirstAdminPassword => &[Module::Kaisatsu, Module::Portal],
-            Secret::ShakoToken => &[Module::Shako],
+            Secret::ShakoToken | Secret::ShakoSigningKey => &[Module::Shako],
             Secret::ForgeWebhookSecret => &[Module::Shako, Module::Portal],
             Secret::EkibenToken => &[Module::Ekiben],
             Secret::AntaresAdminToken => &[Module::Antares],
@@ -476,23 +481,69 @@ impl Setup {
     }
 }
 
-/// The importer variables the realm files name (`$(NAME)`), filled from memory.
+/// The confidential clients of the realm files: the importer variable naming each one's secret
+/// (`$(NAME)`), the client and the setup secret behind it.
+const REALM_CLIENTS: [(&str, &str, Secret); 5] = [
+    (
+        "CLIENT_SECRET_PORTAL_API",
+        PORTAL_CLIENT,
+        Secret::PortalClientSecret,
+    ),
+    (
+        "CLIENT_SECRET_PORTAL_RECONCILER",
+        PORTAL_ADMIN_CLIENT,
+        Secret::PortalAdminClientSecret,
+    ),
+    (
+        "CLIENT_SECRET_CONTEXT_GATEWAY",
+        GATEWAY_CLIENT,
+        Secret::GatewayClientSecret,
+    ),
+    (
+        "CLIENT_SECRET_JC_ASSISTANT",
+        ASSISTANT_CLIENT,
+        Secret::AssistantClientSecret,
+    ),
+    (
+        "CLIENT_SECRET_AGENT_PROXY",
+        PROXY_CLIENT,
+        Secret::ProxyClientSecret,
+    ),
+];
+
+/// The importer variable of the first administrator's password.
+const FIRST_ADMIN_PASSWORD_VAR: &str = "JC_SETUP_FIRST_ADMIN_PASSWORD";
+
+/// The importer variables the installation realm's files name (`$(NAME)`), filled from memory.
 #[must_use]
 pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
-    [
-        ("CLIENT_SECRET_PORTAL_API", Secret::PortalClientSecret),
-        (
-            "CLIENT_SECRET_PORTAL_RECONCILER",
-            Secret::PortalAdminClientSecret,
-        ),
-        ("JC_SETUP_FIRST_ADMIN_PASSWORD", Secret::FirstAdminPassword),
-        ("CLIENT_SECRET_CONTEXT_GATEWAY", Secret::GatewayClientSecret),
-        ("CLIENT_SECRET_JC_ASSISTANT", Secret::AssistantClientSecret),
-        ("CLIENT_SECRET_AGENT_PROXY", Secret::ProxyClientSecret),
-    ]
-    .into_iter()
-    .filter_map(|(name, secret)| Some((name.to_owned(), setup.value(secret)?.to_owned())))
-    .collect()
+    REALM_CLIENTS
+        .iter()
+        .map(|(name, _, secret)| (*name, *secret))
+        .chain([(FIRST_ADMIN_PASSWORD_VAR, Secret::FirstAdminPassword)])
+        .filter_map(|(name, secret)| Some((name.to_owned(), setup.value(secret)?.to_owned())))
+        .collect()
+}
+
+/// The importer variables of an Organization's own `realm` (S1-04), from the installation
+/// realm's ([`realm_env`]): each client's secret is its
+/// own to that realm ([`jc_secret::Secret::for_realm`] of the installation's), so a secret read
+/// in one realm signs in nowhere else; the Portal derives the same value
+/// (`auth::realms::OrganizationRealm`). No first administrator's password: such a realm seeds
+/// none (`organization_realm_files`).
+#[must_use]
+pub fn organization_realm_env(
+    installation: &BTreeMap<String, String>,
+    realm: &Realm,
+) -> BTreeMap<String, String> {
+    REALM_CLIENTS
+        .iter()
+        .filter_map(|(name, client, _)| Some((name, client, installation.get(*name)?)))
+        .map(|(name, client, value)| {
+            let own = jc_secret::Secret::new(value.clone()).for_realm(realm.as_str(), client);
+            ((*name).to_owned(), own.expose().to_owned())
+        })
+        .collect()
 }
 
 /// kaisatsu's shipped realm file for the Portal (`crates/kaisatsu/import/realms/jc-portal.json`).
