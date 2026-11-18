@@ -83,6 +83,9 @@ impl FromStr for Zone {
 
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         static KEPT: OnceLock<Mutex<HashMap<String, &'static Entry>>> = OnceLock::new();
+        // the bundled database, never the host's: /usr/share/zoneinfo differs between images
+        // (Debian moves `US/Eastern` and the other backward links to tzdata-legacy)
+        static BUNDLED: OnceLock<jiff::tz::TimeZoneDatabase> = OnceLock::new();
         let unknown = || UnknownZone(name.to_owned());
         let mut kept = KEPT
             .get_or_init(Mutex::default)
@@ -91,9 +94,6 @@ impl FromStr for Zone {
         if let Some(entry) = kept.get(name) {
             return Ok(Self(entry));
         }
-        // the bundled database, never the host's: /usr/share/zoneinfo differs between images
-        // (Debian moves `US/Eastern` and the other backward links to tzdata-legacy)
-        static BUNDLED: OnceLock<jiff::tz::TimeZoneDatabase> = OnceLock::new();
         let tz = BUNDLED
             .get_or_init(jiff::tz::TimeZoneDatabase::bundled)
             .get(name)
