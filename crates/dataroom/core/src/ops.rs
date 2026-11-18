@@ -14,7 +14,7 @@ use crate::model::{
 };
 use crate::odata_defs::scope_for_context;
 use crate::store::Store;
-use chrono::Utc;
+use jc_time::TimestampTz;
 use odata_table::{query as odata_query, QueryOptions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -494,7 +494,7 @@ fn scoped_record(mut raw: Value, req_ctx: &RequestCtx, timestamps: &[&str]) -> R
         "catalogueId".into(),
         Value::String(req_ctx.catalogue_id.to_string()),
     );
-    let now = Value::String(Utc::now().to_rfc3339());
+    let now = Value::String(TimestampTz::now().to_rfc3339());
     for key in timestamps {
         obj.entry((*key).to_owned()).or_insert_with(|| now.clone());
     }
@@ -659,7 +659,7 @@ fn activity_row(
         org_id: req_ctx.org_id,
         catalogue_id: req_ctx.catalogue_id,
         id: format!("act-{}", Uuid::now_v7()),
-        at: Utc::now(),
+        at: TimestampTz::now(),
         actor: req_ctx.actor_name().to_owned(),
         operation: operation.into(),
         object_type: object_type.into(),
@@ -730,7 +730,7 @@ pub async fn execute_operation(
             })?;
             cat.org_id = req_ctx.org_id;
             cat.id = req_ctx.catalogue_id;
-            cat.modified = Utc::now();
+            cat.modified = TimestampTz::now();
             let stored = op_ctx
                 .store
                 .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
@@ -750,7 +750,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "catalogue.propose".into(),
                         object_type: "Catalogue".into(),
@@ -1047,7 +1047,7 @@ pub async fn execute_operation(
                             org_id: req_ctx.org_id,
                             catalogue_id: req_ctx.catalogue_id,
                             id: format!("act-{}", Uuid::now_v7()),
-                            at: Utc::now(),
+                            at: TimestampTz::now(),
                             actor: req_ctx.actor_name().to_owned(),
                             operation: "dataset.propose".into(),
                             object_type: "Dataset".into(),
@@ -1074,7 +1074,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "dataset.propose".into(),
                         object_type: "Dataset".into(),
@@ -1117,7 +1117,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "dataset.withdraw".into(),
                         object_type: "Dataset".into(),
@@ -1205,7 +1205,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "publisher.propose".into(),
                         object_type: "Publisher".into(),
@@ -1544,7 +1544,7 @@ pub async fn execute_operation(
                 .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
             let br_val = input.get("branding").cloned().unwrap_or(input);
             cat.branding = Some(br_val);
-            cat.modified = Utc::now();
+            cat.modified = TimestampTz::now();
             let saved = op_ctx.store.upsert_catalogue(cat).await?;
             op_ctx
                 .store
@@ -1554,7 +1554,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "branding.propose".into(),
                         object_type: "Catalogue".into(),
@@ -1599,7 +1599,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "profile.propose".into(),
                         object_type: "Profile".into(),
@@ -1637,7 +1637,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "publisher.merge".into(),
                         object_type: "Publisher".into(),
@@ -1676,7 +1676,7 @@ pub async fn execute_operation(
                         org_id: req_ctx.org_id,
                         catalogue_id: req_ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: req_ctx.actor_name().to_owned(),
                         operation: "publisher.withdraw".into(),
                         object_type: "Publisher".into(),

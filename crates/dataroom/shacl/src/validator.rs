@@ -5,13 +5,13 @@
 //! `in`, `hasValue`, `pattern`, `node`, `or`, `and`, `not`, `minLength`, `maxLength`,
 //! `languageIn`, `uniqueLang`, `severity`, and `message`.
 
-use chrono::Utc;
 use dataroom_core::{
     CatalogueId, DataroomError, OrgId, Result, ShaclFinding, ShaclSeverity, ShaclValidationReport,
     Texts,
 };
 use dataroom_rdf::turtle::parse_turtle_checked;
 use dataroom_rdf::{ns, RdfGraph, RdfLimits, SubjectNode, Term};
+use jc_time::TimestampTz;
 use regex::RegexBuilder;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -620,7 +620,7 @@ pub fn validate_graph_against_shapes(
         violation_count,
         warning_count,
         findings,
-        checked_at: Utc::now(),
+        checked_at: TimestampTz::now(),
     }
 }
 
@@ -1224,8 +1224,7 @@ fn datatype_matches(lit: &dataroom_rdf::LiteralValue, expected_dt: &str) -> bool
         ns::XSD_DECIMAL | ns::XSD_DOUBLE | XSD_FLOAT => lit.value.parse::<f64>().is_ok(),
         ns::XSD_BOOLEAN => matches!(lit.value.as_str(), "true" | "false" | "1" | "0"),
         ns::XSD_DATE => lit.value.get(..10).is_some_and(|date| {
-            chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
-                && is_xsd_timezone(&lit.value[10..])
+            jc_time::parse_date(date).is_some() && is_xsd_timezone(&lit.value[10..])
         }),
         ns::XSD_HEX_BINARY => {
             lit.value.len().is_multiple_of(2) && lit.value.bytes().all(|b| b.is_ascii_hexdigit())

@@ -209,7 +209,7 @@ pub(crate) fn catalogue_of(
             ),
         }
     };
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     Ok(CatalogueSpec {
         org_id: org.org_id,
         id,
@@ -280,7 +280,7 @@ pub(crate) fn harvest_sources_of(
         .find(|o| o.name == portal.organization_ref)
         .ok_or_else(|| format!("no [[organizations]] {}", portal.organization_ref))?;
     let (org_id, catalogue_id) = catalogue_key(portal, orgs).ok_or("no catalogue")?;
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let mut out = Vec::new();
     for (position, source) in portal.sources.iter().enumerate() {
         if source.kind == PortalSourceType::Endpoints {
@@ -370,7 +370,7 @@ fn publisher_of(
     (org_id, catalogue_id): (OrgId, CatalogueId),
     lang: &str,
     name: &str,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> Publisher {
     let title = source
         .publisher_title

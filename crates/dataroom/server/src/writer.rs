@@ -137,7 +137,7 @@ impl CatalogueWriter {
             || row.left_hosts != cat.left_hosts
             || row.portal_base != cat.portal_base
         {
-            row.modified = chrono::Utc::now();
+            row.modified = jc_time::TimestampTz::now();
             cat = store.upsert_catalogue(row).await?;
         }
         let ctx = RequestCtx::new(org, id, Subject::anonymous());

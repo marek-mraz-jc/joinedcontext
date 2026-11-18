@@ -10,7 +10,6 @@ pub mod i18n;
 pub mod listing;
 
 use askama::Template;
-use chrono::Datelike;
 use dataroom_core::branding::Address;
 use dataroom_core::vocab::{find_licence, theme_code};
 use dataroom_core::{
@@ -29,7 +28,7 @@ use helpers::{
     STATIC_PAGE_NAMES,
 };
 use i18n::{
-    available_languages, format_date_localized, jc_number, jc_rows, jc_t, language_display_name,
+    available_languages, format_ts_localized, jc_number, jc_rows, jc_t, language_display_name,
     normalize_lang_code, url_in_lang,
 };
 use serde::{Deserialize, Serialize};
@@ -966,14 +965,9 @@ fn to_dataset_row_view(
         publisher_title: pub_title,
         formats: chips.join(", "),
         format_chips: chips,
-        modified: ds.modified.format("%Y-%m-%d").to_string(),
+        modified: ds.modified.0.strftime("%Y-%m-%d").to_string(),
         modified_iso: ds.modified.to_rfc3339(),
-        modified_localized: format_date_localized(
-            ds.modified.year(),
-            ds.modified.month(),
-            ds.modified.day(),
-            lang,
-        ),
+        modified_localized: format_ts_localized(ds.modified, lang),
     }
 }
 
@@ -1828,23 +1822,13 @@ pub fn render_resource_page(
     let updated_dt = dist.modified.unwrap_or(dataset.modified);
     let mut dates = vec![(
         jc_t("updated", &chrome.lang),
-        format_date_localized(
-            updated_dt.year(),
-            updated_dt.month(),
-            updated_dt.day(),
-            &chrome.lang,
-        ),
+        format_ts_localized(updated_dt, &chrome.lang),
     )];
     let created_dt = dist.issued.unwrap_or(dataset.issued);
-    if created_dt.date_naive() != updated_dt.date_naive() {
+    if created_dt.utc().date() != updated_dt.utc().date() {
         dates.push((
             jc_t("created", &chrome.lang),
-            format_date_localized(
-                created_dt.year(),
-                created_dt.month(),
-                created_dt.day(),
-                &chrome.lang,
-            ),
+            format_ts_localized(created_dt, &chrome.lang),
         ));
     }
 

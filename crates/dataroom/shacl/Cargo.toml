@@ -7,7 +7,7 @@ description = "SHACL Core validator, built-in and uploaded versioned DCAT-AP pro
 publish = false
 
 [dependencies]
-chrono = { version = "0.4.38", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
 dataroom-core = { path = "../core" }
 dataroom-rdf = { path = "../rdf" }
 regex = "1.11.1"

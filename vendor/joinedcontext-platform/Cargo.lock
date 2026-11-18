@@ -1956,8 +1956,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "jc-chart"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "flate2",
+ "jc-time",
+ "jiff",
  "serde_json",
  "sha2 0.10.9",
 ]
@@ -2055,6 +2056,14 @@ dependencies = [
  "jc-core",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jc-time"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde",
 ]
 
 [[package]]

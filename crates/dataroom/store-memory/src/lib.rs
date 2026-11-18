@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 //! In-memory implementation of [`dataroom_core::Store`] (C1, C14, C16).
 
-use chrono::Utc;
 use dataroom_core::odata_defs::{
     activity_to_row, catalogue_to_row, dataroom_service, dataset_to_row, distribution_to_row,
     harvest_run_to_row, harvest_source_to_row, publisher_to_row, shacl_report_to_row,
@@ -12,6 +11,7 @@ use dataroom_core::{
     Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
     RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
+use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
@@ -122,8 +122,8 @@ impl Store for MemoryStore {
         let Some(cat) = inner.catalogues.get_mut(&(org_id, catalogue_id)) else {
             return Box::pin(std::future::ready(Ok(false)));
         };
-        cat.deleted = Some(chrono::Utc::now());
-        cat.modified = chrono::Utc::now();
+        cat.deleted = Some(jc_time::TimestampTz::now());
+        cat.modified = jc_time::TimestampTz::now();
         let mine = |o: &OrgId, c: &CatalogueId| *o == org_id && *c == catalogue_id;
         inner.publishers.retain(|(o, c, _), _| !mine(o, c));
         inner.datasets.retain(|(o, c, _), _| !mine(o, c));
@@ -295,13 +295,13 @@ impl Store for MemoryStore {
                 && (ds.publisher_id == source.id || ds.publisher_id == source.name)
             {
                 ds.publisher_id = target.name.clone();
-                ds.modified = Utc::now();
+                ds.modified = TimestampTz::now();
             }
         }
 
         source.merged_into = Some(target.name.clone());
         source.state = RecordState::Withdrawn;
-        source.modified = Utc::now();
+        source.modified = TimestampTz::now();
         guard
             .publishers
             .insert((ctx.org_id, ctx.catalogue_id, source.id.clone()), source);
@@ -326,7 +326,7 @@ impl Store for MemoryStore {
             )))));
         };
         p.state = RecordState::Withdrawn;
-        p.modified = Utc::now();
+        p.modified = TimestampTz::now();
         let out = p.clone();
         Box::pin(std::future::ready(Ok(out)))
     }
@@ -420,7 +420,7 @@ impl Store for MemoryStore {
             )))));
         };
         d.state = RecordState::Withdrawn;
-        d.modified = Utc::now();
+        d.modified = TimestampTz::now();
         let out = d.clone();
         Box::pin(std::future::ready(Ok(out)))
     }
@@ -671,7 +671,7 @@ impl Store for MemoryStore {
         &'a self,
         ctx: &'a RequestCtx,
         mut run: HarvestRun,
-        stale_before: chrono::DateTime<Utc>,
+        stale_before: TimestampTz,
     ) -> BoxFuture<'a, Result<bool>> {
         run.org_id = ctx.org_id;
         run.catalogue_id = ctx.catalogue_id;

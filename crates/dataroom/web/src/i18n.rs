@@ -2125,6 +2125,17 @@ pub fn jc_rows(value: usize, key: &str, lang: &str) -> String {
     format!("{number} {word}")
 }
 
+/// [`format_date_localized`] of the UTC calendar date of `at`.
+pub fn format_ts_localized(at: jc_time::TimestampTz, lang: &str) -> String {
+    let d = at.utc();
+    format_date_localized(
+        i32::from(d.year()),
+        u32::from(d.month().unsigned_abs()),
+        u32::from(d.day().unsigned_abs()),
+        lang,
+    )
+}
+
 /// Formats a date `(year, month, day)` in the page's language matching CKAN's `render_datetime`
 /// on `live/*.html` (e.g. `"7. novembra 2026"` in `sk`, `"7. listopadu 2026"` in `cs`, `"November 7, 2026"` in `en`).
 pub fn format_date_localized(year: i32, month: u32, day: u32, lang: &str) -> String {

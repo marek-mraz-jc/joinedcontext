@@ -9,7 +9,6 @@
 pub mod writer;
 pub use writer::{CatalogueSpec, CatalogueWriter, PortalRoute};
 
-use chrono::Utc;
 use clap::{Parser, Subcommand};
 use dataroom_api::{router, DataroomState};
 use dataroom_core::ckan_compat::dataset_from_ckan;
@@ -22,6 +21,7 @@ use dataroom_harvest::{HarvestEngine, HttpFetcher};
 use dataroom_shacl::ProfileRegistry;
 use dataroom_store_memory::MemoryStore;
 use dataroom_store_pg::PgStore;
+use jc_time::TimestampTz;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -136,7 +136,7 @@ pub async fn ensure_catalogue(
         Some(mut cat) => {
             cat.name = name.to_owned();
             cat.host = host.to_owned();
-            cat.modified = Utc::now();
+            cat.modified = TimestampTz::now();
             store.upsert_catalogue(cat).await
         }
     }
@@ -188,7 +188,7 @@ fn new_catalogue(org_id: OrgId, catalogue_id: CatalogueId, name: &str, host: &st
         allow_cross_org_harvest: true,
         allowed_outbound_hosts: Vec::new(),
         applicable_legislation: Vec::new(),
-        modified: Utc::now(),
+        modified: TimestampTz::now(),
         deleted: None,
         public_base: None,
         portal_base: None,
@@ -239,7 +239,7 @@ pub async fn import_ckan_json(
                 continue;
             }
             if store.get_publisher(ctx, slug).await?.is_none() {
-                let now = Utc::now();
+                let now = TimestampTz::now();
                 store
                     .upsert_publisher(
                         ctx,
@@ -332,7 +332,7 @@ pub async fn import_ckan_json(
             .unwrap_or(org_slug);
 
         if store.get_publisher(ctx, org_slug).await?.is_none() {
-            let now = Utc::now();
+            let now = TimestampTz::now();
             store
                 .upsert_publisher(
                     ctx,
@@ -595,7 +595,7 @@ mod tests {
                 allow_cross_org_harvest: true,
                 allowed_outbound_hosts: Vec::new(),
                 applicable_legislation: Vec::new(),
-                modified: Utc::now(),
+                modified: TimestampTz::now(),
                 deleted: None,
                 public_base: None,
                 portal_base: None,

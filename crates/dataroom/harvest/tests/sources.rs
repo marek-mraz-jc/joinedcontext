@@ -99,6 +99,43 @@ fn hub(id: &str, title: &str, kind: &str, licence: &str, modified: i64) -> Value
                           "modified": modified, "url": format!("https://services.city.example/{id}")}})
 }
 
+// Hub epoch milliseconds read as chrono 0.4.45 read them, pinned before the move to jiff
+// (T-7240); a value past the calendar's range falls back to the harvest time.
+#[test]
+fn hub_epoch_millis_keep_chrono_bytes() {
+    let (org, cat) = ids();
+    let src = source(
+        "arc-gis-hub",
+        "hub",
+        "https://hub.city.example/",
+        &["services.city.example"],
+    );
+    let mut item = hub(
+        "t",
+        "Čas",
+        "Feature Service",
+        "CC-BY-4.0",
+        1_792_888_200_000,
+    );
+    item["properties"]["created"] = json!(1_774_747_800_120_i64);
+    let mut far = hub("far", "Ďaleko", "Feature Service", "CC-BY-4.0", i64::MAX);
+    far["properties"]["created"] = json!(i64::MIN);
+    let before = serde_json::to_value(
+        parse_arcgis_hub_items(org, cat, &src, &[], &[far], "sk").0[0]
+            .1
+            .clone(),
+    )
+    .expect("json");
+    let (kept, _) = parse_arcgis_hub_items(org, cat, &src, &[], &[item], "sk");
+    let v = serde_json::to_value(&kept[0].1).expect("json");
+    assert_eq!(v["issued"], "2026-03-29T01:30:00.120Z");
+    assert_eq!(v["modified"], "2026-10-25T00:30:00Z");
+    for field in ["issued", "modified"] {
+        let at = before[field].as_str().expect("a time");
+        assert!(at.starts_with("20"), "{field} falls back to now: {at}");
+    }
+}
+
 #[test]
 fn hub_items_are_kept_or_skipped_with_a_reason() {
     let (org, cat) = ids();

@@ -10,7 +10,8 @@ publish = false
 base64 = "0.22.1"
 # Without `config`: askama.toml support pulls basic-toml (RUSTSEC-2026-0374, unmaintained).
 askama = { version = "0.12.1", default-features = false, features = ["humansize", "num-traits", "urlencode"] }
-chrono = { version = "0.4.38", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 dataroom-core = { path = "../core" }
 dataroom-search = { path = "../search" }
 # The open data pages' built-in Markdown and its one safe renderer (T-7030, T-7031).

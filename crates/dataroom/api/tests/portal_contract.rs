@@ -7,7 +7,6 @@
 //! stray sweep (`reconciler/ckan.rs` `sweep_with`) are sent as those functions send them, and
 //! the test asserts the fields they parse.
 
-use chrono::Utc;
 use dataroom_api::{
     mount, portal_publisher, portal_publisher_from_file, DataroomState, MIN_PORTAL_TOKEN_LEN,
 };
@@ -18,6 +17,7 @@ use dataroom_core::{
 use dataroom_store_memory::MemoryStore;
 use jc_core::kinds::ckan::CkanInstanceSpec;
 use jc_core::ngsi_catalog::Package;
+use jc_time::TimestampTz;
 use jcctl::loader::RawManifest;
 use jcctl::publish::ckan::{
     publish, publish_dataset, publish_views, withdraw, CkanApi, CkanError, Outcome, PublishError,
@@ -71,7 +71,7 @@ fn catalogue(org_id: OrgId, id: CatalogueId) -> Catalogue {
         allow_cross_org_harvest: false,
         allowed_outbound_hosts: Vec::new(),
         applicable_legislation: Vec::new(),
-        modified: Utc::now(),
+        modified: TimestampTz::now(),
         deleted: None,
         public_base: None,
         portal_base: None,

@@ -12,7 +12,6 @@ use axum::extract::{Path, RawQuery, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::Utc;
 use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::ckan_compat::{
     ckan_license_list, dataset_to_ckan, distribution_from_ckan, distribution_to_ckan,
@@ -24,6 +23,7 @@ use dataroom_core::{
 };
 use dataroom_plugin::validate_view_payload;
 use dataroom_search::{apply_fq_to_filter, search_datasets};
+use jc_time::TimestampTz;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -728,7 +728,7 @@ async fn answer_ckan_action(
                 Err(e) => return ckan_err(&base, &action, e),
             }
             ds.distributions.push(dist.clone());
-            ds.modified = Utc::now();
+            ds.modified = TimestampTz::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
                 return ckan_err(&base, &action, e);
             }
@@ -801,7 +801,7 @@ async fn answer_ckan_action(
                 &cat.default_language,
             );
             ds.distributions[pos] = updated_dist.clone();
-            ds.modified = Utc::now();
+            ds.modified = TimestampTz::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds.clone()).await {
                 return ckan_err(&base, &action, e);
             }
@@ -835,7 +835,7 @@ async fn answer_ckan_action(
                 return ckan_err(&base, &action, decision_error(dec));
             }
             ds.distributions.retain(|r| r.id != id);
-            ds.modified = Utc::now();
+            ds.modified = TimestampTz::now();
             if let Err(e) = state.store.upsert_dataset(&ctx, ds).await {
                 return ckan_err(&base, &action, e);
             }
@@ -1175,7 +1175,7 @@ async fn answer_ckan_action(
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("{base}/organization/{name}"));
-            let now = Utc::now();
+            let now = TimestampTz::now();
             let pub_rec = Publisher {
                 org_id: ctx.org_id,
                 catalogue_id: ctx.catalogue_id,
@@ -1301,7 +1301,7 @@ async fn answer_ckan_action(
             if let Some(img) = payload.get("image_url").and_then(Value::as_str) {
                 existing.logo_url = Some(img.to_owned());
             }
-            existing.modified = Utc::now();
+            existing.modified = TimestampTz::now();
             match state.store.upsert_publisher(&ctx, existing).await {
                 Ok(saved) => ckan_ok(
                     &base,

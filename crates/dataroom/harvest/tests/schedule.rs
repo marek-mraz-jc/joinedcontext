@@ -5,7 +5,6 @@
 
 mod common;
 
-use chrono::{TimeZone, Utc};
 use common::*;
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::store::BoxFuture;
@@ -15,6 +14,7 @@ use dataroom_harvest::{
     ValidatedTarget, RETRIES,
 };
 use dataroom_store_memory::MemoryStore;
+use jc_time::TimestampTz;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -65,7 +65,7 @@ fn engine_on(f: Arc<dyn OutboundFetcher>) -> HarvestEngine {
         .with_custom_dns(|_, port| Ok(vec![SocketAddr::from(([93, 184, 216, 34], port))]))
 }
 
-fn running(w: &World, id: &str, started: chrono::DateTime<Utc>) -> HarvestRun {
+fn running(w: &World, id: &str, started: TimestampTz) -> HarvestRun {
     serde_json::from_value(json!({
         "orgId": w.org, "catalogueId": w.cat, "id": id, "sourceId": "hs-hub",
         "state": "running", "startedAt": started, "createdCount": 0, "updatedCount": 0,
@@ -78,13 +78,13 @@ fn running(w: &World, id: &str, started: chrono::DateTime<Utc>) -> HarvestRun {
 async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
     let w = world(&[]).await;
     let src = source("arc-gis-hub", "hub", HUB, &["hub.city.example"]);
-    let held = running(&w, "run-held", Utc::now());
+    let held = running(&w, "run-held", TimestampTz::now());
     assert!(w
         .store
         .claim_harvest_run(
             &w.ctx,
             held.clone(),
-            Utc::now() - chrono::Duration::hours(1)
+            TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range")
         )
         .await
         .unwrap());
@@ -93,8 +93,8 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
         .store
         .claim_harvest_run(
             &w.ctx,
-            running(&w, "run-second", Utc::now()),
-            Utc::now() - chrono::Duration::hours(1)
+            running(&w, "run-second", TimestampTz::now()),
+            TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range")
         )
         .await
         .unwrap());
@@ -123,7 +123,11 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
 async fn a_running_run_past_the_deadline_is_marked_failed_and_frees_the_source() {
     let w = world(&[]).await;
     let src = source("arc-gis-hub", "hub", HUB, &["hub.city.example"]);
-    let stale = running(&w, "run-stale", Utc::now() - chrono::Duration::hours(2));
+    let stale = running(
+        &w,
+        "run-stale",
+        TimestampTz::from_second(TimestampTz::now().as_second() - 2 * 3_600).expect("in range"),
+    );
     w.store.upsert_harvest_run(&w.ctx, stale).await.unwrap();
 
     let f = MapFetcher::new();
@@ -203,11 +207,9 @@ fn scheduler(w: &World, store: Arc<MemoryStore>, f: Arc<Flaky>, granted: bool) -
     .with_retry_delay(Duration::ZERO)
 }
 
-const AT_0323: (i32, u32, u32, u32, u32) = (2026, 11, 9, 3, 23);
-
-fn at(h: u32, m: u32) -> chrono::DateTime<Utc> {
-    let (y, mo, d, _, _) = AT_0323;
-    Utc.with_ymd_and_hms(y, mo, d, h, m, 0).unwrap()
+fn at(h: i8, m: i8) -> TimestampTz {
+    let at = jiff::civil::date(2026, 11, 9).at(h, m, 0, 0);
+    TimestampTz(jiff::tz::Offset::UTC.to_timestamp(at).expect("in range"))
 }
 
 #[tokio::test]

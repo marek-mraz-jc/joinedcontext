@@ -2,7 +2,6 @@
 //! CKAN Action API dictionaries: what `package_show` writes, what `package_create/update` reads,
 //! and that a show -> update cycle keeps what it showed (jcctl, the Portal, od-standards.py).
 
-use chrono::NaiveDate;
 use dataroom_core::ckan_compat::{
     ckan_license_list, dataset_from_ckan, dataset_to_ckan, distribution_from_ckan,
     distribution_to_ckan, resource_view_to_ckan,
@@ -11,6 +10,7 @@ use dataroom_core::{
     AgentDetails, CatalogueId, ContactKind, ContactPoint, DataService, Dataset, OrgId, Publisher,
     RecordState, ResourceView, TemporalPeriod, Visibility,
 };
+use jc_time::Date;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -52,8 +52,8 @@ fn full() -> Dataset {
         "http://data.europa.eu/nuts/code/SK031".into(),
     ];
     ds.temporal = Some(TemporalPeriod {
-        start: NaiveDate::from_ymd_opt(2020, 1, 1),
-        end: NaiveDate::from_ymd_opt(2025, 12, 31),
+        start: Date::new(2020, 1, 1),
+        end: Date::new(2025, 12, 31),
     });
     ds.contact_point = Some(ContactPoint {
         uri: None,
@@ -368,7 +368,7 @@ fn package_payload_variants_parse_like_ckan() {
     // GeoJSON in `spatial` is not a place IRI.
     assert_eq!(ds.spatial, vec!["http://example.org/place".to_string()]);
     let t = ds.temporal.unwrap();
-    assert_eq!(t.start, NaiveDate::from_ymd_opt(2021, 3, 4));
+    assert_eq!(t.start, Date::new(2021, 3, 4));
     assert_eq!(t.end, None);
     assert_eq!(ds.issued.to_rfc3339(), "2020-05-06T07:08:09+00:00");
     assert_eq!(ds.languages.len(), 1);

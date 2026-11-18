@@ -855,7 +855,7 @@ fn publisher_of(
     org: &OrganizationSection,
     scheme: &str,
 ) -> Publisher {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     Publisher {
         org_id,
         catalogue_id,
@@ -894,7 +894,7 @@ pub async fn seed_hidden(
     };
     if cat.hidden_datasets != *hidden {
         cat.hidden_datasets = hidden.clone();
-        cat.modified = chrono::Utc::now();
+        cat.modified = jc_time::TimestampTz::now();
         store.upsert_catalogue(cat).await?;
     }
     Ok(())
@@ -919,7 +919,7 @@ pub async fn seed_harvest(
             DataroomError::field_error("kind", format!("unknown kind '{}'", seed.kind))
         })?;
     dataroom_harvest::validate_outbound_url(&seed.url, &seed.allowed_hosts, &[], false)?;
-    dataroom_harvest::cron_matches(&seed.schedule, chrono::Utc::now())?;
+    dataroom_harvest::cron_matches(&seed.schedule, jc_time::TimestampTz::now())?;
     // A source that names no gateway reads its converted datasets from this instance's own.
     let gateway = match (&seed.gateway, own_gateway) {
         (Some(gateway), _) => {
@@ -934,7 +934,7 @@ pub async fn seed_harvest(
         Some(path) => converted_datasets(path, seed.datasets_base.as_deref(), site)?,
     };
     let ctx = RequestCtx::new(org_id, catalogue_id, Subject::anonymous());
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     if store.get_publisher(&ctx, &seed.publisher).await?.is_none() {
         store
             .upsert_publisher(

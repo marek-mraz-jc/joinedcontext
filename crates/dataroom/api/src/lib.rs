@@ -1209,7 +1209,7 @@ async fn handle_post_branding(
         return problem_response(DataroomError::Forbidden(dec.reason));
     }
     cat.branding = Some(override_val);
-    cat.modified = chrono::Utc::now();
+    cat.modified = jc_time::TimestampTz::now();
     let saved = match state.store.upsert_catalogue(cat).await {
         Ok(c) => c,
         Err(e) => return problem_response(e),
@@ -1222,7 +1222,7 @@ async fn handle_post_branding(
                 org_id: ctx.org_id,
                 catalogue_id: ctx.catalogue_id,
                 id: format!("act-{}", Uuid::now_v7()),
-                at: chrono::Utc::now(),
+                at: jc_time::TimestampTz::now(),
                 actor: ctx.actor_name().to_owned(),
                 operation: "branding.propose".into(),
                 object_type: "Catalogue".into(),
@@ -1281,7 +1281,7 @@ async fn handle_upload_logo(
                 org_id: ctx.org_id,
                 catalogue_id: ctx.catalogue_id,
                 id: format!("act-{}", Uuid::now_v7()),
-                at: chrono::Utc::now(),
+                at: jc_time::TimestampTz::now(),
                 actor: ctx.actor_name().to_owned(),
                 operation: "branding.logo".into(),
                 object_type: "Catalogue".into(),

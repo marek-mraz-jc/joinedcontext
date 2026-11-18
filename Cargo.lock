@@ -2942,7 +2942,6 @@ name = "dataroom-api"
 version = "0.1.0"
 dependencies = [
  "axum",
- "chrono",
  "dataroom-core",
  "dataroom-harvest",
  "dataroom-mcp",
@@ -2955,6 +2954,7 @@ dependencies = [
  "http-body-util",
  "jc-core",
  "jc-router",
+ "jc-time",
  "jcctl",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
@@ -2973,8 +2973,8 @@ name = "dataroom-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "dataroom-store-memory",
+ "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "schemars 0.8.22",
  "serde",
@@ -2991,10 +2991,11 @@ dependencies = [
 name = "dataroom-harvest"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
  "dataroom-rdf",
  "dataroom-store-memory",
+ "jc-time",
+ "jiff",
  "reqwest 0.12.28",
  "serde_json",
  "sha2 0.10.9",
@@ -3029,8 +3030,9 @@ dependencies = [
 name = "dataroom-rdf"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
+ "jc-time",
+ "jiff",
  "oxjsonld",
  "oxrdf",
  "oxrdfxml",
@@ -3044,9 +3046,9 @@ dependencies = [
 name = "dataroom-search"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
  "dataroom-store-memory",
+ "jc-time",
  "serde",
  "serde_json",
  "tokio",
@@ -3059,7 +3061,6 @@ name = "dataroom-server"
 version = "0.1.0"
 dependencies = [
  "axum",
- "chrono",
  "clap",
  "dataroom-api",
  "dataroom-core",
@@ -3068,6 +3069,7 @@ dependencies = [
  "dataroom-store-memory",
  "dataroom-store-pg",
  "http-body-util",
+ "jc-time",
  "serde_json",
  "sqlx",
  "tokio",
@@ -3079,9 +3081,9 @@ dependencies = [
 name = "dataroom-shacl"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
  "dataroom-rdf",
+ "jc-time",
  "linkml-model",
  "regex",
  "serde_json",
@@ -3092,8 +3094,8 @@ dependencies = [
 name = "dataroom-store-memory"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
+ "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde_json",
  "uuid",
@@ -3103,9 +3105,9 @@ dependencies = [
 name = "dataroom-store-pg"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "dataroom-core",
  "dataroom-store-memory",
+ "jc-time",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "serde_json",
  "sqlx",
@@ -3119,10 +3121,11 @@ version = "0.1.0"
 dependencies = [
  "askama",
  "base64 0.22.1",
- "chrono",
  "dataroom-core",
  "dataroom-search",
  "jc-core",
+ "jc-time",
+ "jiff",
  "serde",
  "serde_json",
  "url",
@@ -7000,6 +7003,7 @@ dependencies = [
  "jc-manifest",
  "jc-router",
  "jc-secret",
+ "jc-time",
  "jcctl",
  "joinedcontext-portal",
  "kaisatsu-core",
@@ -7044,8 +7048,9 @@ dependencies = [
 name = "jc-chart"
 version = "0.1.0"
 dependencies = [
- "chrono",
  "flate2",
+ "jc-time",
+ "jiff",
  "serde_json",
  "sha2 0.10.9",
 ]

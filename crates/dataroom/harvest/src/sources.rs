@@ -3,12 +3,12 @@
 //! DCAT-AP RDF feeds (with Hydra pagination), and CKAN Action API (`package_search`).
 
 use crate::guard::validate_outbound_url;
-use chrono::{TimeZone, Utc};
 use dataroom_core::{
     AgentDetails, CatalogueId, DataroomError, Dataset, Distribution, HarvestSkippedItem,
     HarvestSource, OrgId, RecordState, Result, TermsOfUse, Visibility,
 };
 use dataroom_rdf::{ns, parse_datasets_from_rdf, parse_rdf_graph, RdfFormat, RdfLimits};
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -384,13 +384,13 @@ pub fn parse_arcgis_hub_items(
         let created_dt = item
             .get("created")
             .and_then(Value::as_i64)
-            .and_then(|ms| Utc.timestamp_millis_opt(ms).single())
-            .unwrap_or_else(Utc::now);
+            .and_then(TimestampTz::from_millis)
+            .unwrap_or_else(TimestampTz::now);
         let modified_dt = item
             .get("modified")
             .and_then(Value::as_i64)
-            .and_then(|ms| Utc.timestamp_millis_opt(ms).single())
-            .unwrap_or_else(Utc::now);
+            .and_then(TimestampTz::from_millis)
+            .unwrap_or_else(TimestampTz::now);
 
         let mut ds = Dataset {
             org_id,
@@ -755,8 +755,8 @@ pub fn parse_nkod_sparql_bindings(
                 ("source_uri".into(), raw.iri.clone()),
             ]),
             restricted_grants: Vec::new(),
-            issued: Utc::now(),
-            modified: Utc::now(),
+            issued: TimestampTz::now(),
+            modified: TimestampTz::now(),
         };
         let hash = compute_harvest_hash(&ds);
         ds.harvest_hash = Some(hash.clone());

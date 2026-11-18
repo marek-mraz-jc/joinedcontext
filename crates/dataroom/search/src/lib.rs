@@ -9,12 +9,12 @@
 //! - Facet counts over `publisher`, `theme`, `format`, `keyword`, `licence`, `spatial`, `year`,
 //!   and `visibility`, where each facet counts over datasets kept by every *other* facet filter.
 
-use chrono::{Datelike, Utc};
 use dataroom_core::vocab::{find_licence, theme_code, theme_label};
 use dataroom_core::{
     text_in_lang, Action, Authorizer, DataroomError, Dataset, DatasetFilter, ObjectTarget,
     Publisher, RecordState, RequestCtx, Result, Visibility,
 };
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -495,7 +495,10 @@ impl FiledDataset {
             .collect();
 
         let years: Vec<(String, String)> = match &dataset.temporal {
-            Some(temp) => match (temp.start.map(|d| d.year()), temp.end.map(|d| d.year())) {
+            Some(temp) => match (
+                temp.start.map(|d| i32::from(d.0.year())),
+                temp.end.map(|d| i32::from(d.0.year())),
+            ) {
                 (Some(s), e) => {
                     let end = e.unwrap_or(this_year).max(s).min(s + 99);
                     (s..=end).map(|y| (y.to_string(), y.to_string())).collect()
@@ -606,7 +609,7 @@ pub fn search_datasets(
     lang: &str,
 ) -> Result<SearchOutcome> {
     let terms = parse_search_terms(&filter.q)?;
-    let this_year = Utc::now().year();
+    let this_year = i32::from(TimestampTz::now().utc().year());
 
     let mut pub_map = BTreeMap::new();
     for p in publishers {
@@ -883,10 +886,10 @@ impl SearchFacets {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
     use dataroom_core::{
         CatalogueId, Distribution, GrantRule, OrgId, PolicyAuthorizer, Subject, TemporalPeriod,
     };
+    use jc_time::Date;
     use uuid::Uuid;
 
     fn test_ids() -> (OrgId, CatalogueId) {
@@ -929,8 +932,8 @@ mod tests {
             spatial: vec!["http://data.europa.eu/nuts/code/SK032".into()],
             spatial_resolution_in_meters: None,
             temporal: Some(TemporalPeriod {
-                start: NaiveDate::from_ymd_opt(2024, 3, 1),
-                end: NaiveDate::from_ymd_opt(2025, 6, 30),
+                start: Date::new(2024, 3, 1),
+                end: Date::new(2025, 6, 30),
             }),
             temporal_resolution: None,
             frequency: None,
@@ -993,8 +996,8 @@ mod tests {
                 .collect(),
             extras: BTreeMap::new(),
             restricted_grants: Vec::new(),
-            issued: Utc::now(),
-            modified: Utc::now(),
+            issued: TimestampTz::now(),
+            modified: TimestampTz::now(),
         }
     }
 
@@ -1048,8 +1051,8 @@ mod tests {
                 state: RecordState::Active,
                 merged_into: None,
                 editor_grants: Vec::new(),
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
             Publisher {
                 org_id,
@@ -1071,8 +1074,8 @@ mod tests {
                 state: RecordState::Active,
                 merged_into: None,
                 editor_grants: Vec::new(),
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         ];
 
@@ -1320,7 +1323,8 @@ mod tests {
             &["CSV"],
             Visibility::Public,
         );
-        a.modified = Utc::now() - chrono::Duration::days(2);
+        a.modified = TimestampTz::from_second(TimestampTz::now().as_second() - 2 * 86_400)
+            .expect("in range");
         a.harvest_source_id = Some("h1".into());
         a.keywords
             .insert("sk".into(), vec!["voda".into(), "ovzdusie".into()]);
@@ -1337,12 +1341,12 @@ mod tests {
         b.spatial.push("{\"type\":\"Point\"}".into());
         b.temporal = Some(TemporalPeriod {
             start: None,
-            end: NaiveDate::from_ymd_opt(2020, 1, 1),
+            end: Date::new(2020, 1, 1),
         });
         let mut c = make_dataset("gamma", "pub-a", "Mid", &[], &[], Visibility::Public);
         c.temporal = Some(TemporalPeriod {
-            start: NaiveDate::from_ymd_opt(2026, 1, 1),
-            end: NaiveDate::from_ymd_opt(2020, 1, 1),
+            start: Date::new(2026, 1, 1),
+            end: Date::new(2020, 1, 1),
         });
         c.licence_id = None;
         let mut draft = make_dataset("draft", "pub-a", "Draft", &[], &[], Visibility::Public);
@@ -1674,7 +1678,8 @@ mod tests {
         let (org_id, catalogue_id) = test_ids();
         let ctx = RequestCtx::anonymous(org_id, catalogue_id);
         let authz = PolicyAuthorizer::default();
-        let when = Utc::now() - chrono::Duration::days(1);
+        let when =
+            TimestampTz::from_second(TimestampTz::now().as_second() - 86_400).expect("in range");
         let twin = |name: &str| {
             let mut d = make_dataset(name, "pub-a", "Rovnaký", &[], &[], Visibility::Public);
             d.modified = when;
