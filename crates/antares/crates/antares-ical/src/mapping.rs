@@ -17,8 +17,8 @@
 //! without `DTEND`), a `GEO` off the globe or a `URL` that is not
 //! http(s) is no `VEVENT` at all, and its reason is counted (EP-126).
 
+use crate::iana::Zone as Tz;
 use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, NaiveTime, TimeZone as _, Utc};
-use chrono_tz::Tz;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -120,7 +120,7 @@ impl When {
             // a read value is never floating (`Plan::when` zones it)
             other => format!(
                 "{name}:{}",
-                other.utc_key(chrono_tz::UTC).format("%Y%m%dT%H%M%SZ")
+                other.utc_key(Tz::utc()).format("%Y%m%dT%H%M%SZ")
             ),
         }
     }
@@ -314,8 +314,12 @@ pub const PRESET_TYPES: [&str; 3] = ["Event", "CouncilMeeting", "OfficeHours"];
 pub use antares_ops::outputs::{is_language_tag, is_output_name, Filter, MAX_OUTPUTS};
 use antares_ops::outputs::{is_name, is_plain};
 
-/// The zone of an output that names none.
-pub const DEFAULT_ZONE: Tz = chrono_tz::Europe::Bratislava;
+/// The zone of an output that names none: `Europe/Bratislava` (UTC only if the bundled IANA
+/// database lacked it, which `default_zone_is_bratislava` rules out).
+#[must_use]
+pub fn default_zone() -> Tz {
+    "Europe/Bratislava".parse().unwrap_or_else(|_| Tz::utc())
+}
 
 /// The text of a `languageMap` for `want`: its exact tag, the same tag in another case, a tag
 /// of the same primary language (`sk` for `sk-SK` and back), then `@none`, then the first tag
@@ -582,7 +586,7 @@ impl Default for Plan {
                 .into_iter()
                 .map(|(field, remap)| (field, Compiled { remap, zone: None }))
                 .collect(),
-            zone: DEFAULT_ZONE,
+            zone: default_zone(),
             lang: None,
         }
     }
@@ -642,7 +646,7 @@ impl Plan {
         Ok(Self {
             entity_type: mapping.entity_type.clone(),
             fields,
-            zone: DEFAULT_ZONE,
+            zone: default_zone(),
             lang: None,
         })
     }
@@ -725,7 +729,7 @@ impl CompiledOutput {
             return fail("sources lists 1 to 10 types".to_owned());
         }
         let zone = match &o.timezone {
-            None => DEFAULT_ZONE,
+            None => default_zone(),
             Some(name) => match name.parse::<Tz>() {
                 Ok(z) => z,
                 Err(_) => return fail(format!("timezone {name:?} is not an IANA zone")),

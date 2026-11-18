@@ -32,6 +32,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod iana;
 pub mod mapping;
 pub mod zone;
 
@@ -229,7 +230,7 @@ fn asked(uri: &axum::http::Uri) -> Result<Asked, Problem> {
         ..Asked::default()
     };
     if let (Some(from), Some(to)) = (out.from, out.to) {
-        if from.utc_key(chrono_tz::UTC) >= to.utc_past(chrono_tz::UTC) {
+        if from.utc_key(crate::iana::Zone::utc()) >= to.utc_past(crate::iana::Zone::utc()) {
             return Err(bad("from is after to".to_owned()));
         }
     }
