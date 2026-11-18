@@ -14,7 +14,7 @@ use axum::{Extension, Json, Router};
 use chrono::Utc;
 use jc_router::Mount;
 use kaisatsu_core::*;
-use kaisatsu_crypto::{random_handle_256, sha256_hex, verify_jwt};
+use kaisatsu_crypto::{random_handle_256, verify_jwt};
 use kaisatsu_oidc::OidcState;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -324,12 +324,15 @@ pub async fn extract_admin_ctx(
         )
         .await?;
     }
-    if let Some(jti) = claims.get("jti").and_then(Value::as_str)
-        && state
-            .oidc
-            .store
-            .is_token_revoked(token_realm, &sha256_hex(jti))
-            .await?
+    // The rule userinfo and introspection apply: a revoked token, an ended session or a revoked
+    // refresh family ends the bearer's admin rights before `exp`.
+    if !kaisatsu_oidc::token_is_live(
+        &state.oidc,
+        token_realm,
+        claims.get("jti").and_then(Value::as_str),
+        claims.get("sid").and_then(Value::as_str),
+    )
+    .await?
     {
         return Err(KaisatsuError::Unauthorized(
             "invalid admin bearer token".into(),
@@ -370,12 +373,18 @@ pub async fn extract_admin_ctx(
     // Store-side role mappings come only from the realm that issued the token (never a same-id
     // person of another realm).
     if let Some(uid) = &sub
-        && let Ok(Some(u)) = state
+        && let Some(u) = state
             .oidc
             .store
             .get_user_by_id(token_realm, None, uid)
-            .await
+            .await?
     {
+        // A disabled person's tokens carry no admin rights.
+        if !u.enabled {
+            return Err(KaisatsuError::Unauthorized(
+                "invalid admin bearer token".into(),
+            ));
+        }
         for r in u.realm_roles {
             if !realm_roles.contains(&r) {
                 realm_roles.push(r);
@@ -561,6 +570,112 @@ fn check_application(
             managed_by: client.managed_by.clone(),
         },
     ))
+}
+
+/// Client attributes that put claims into the client's tokens (`jc.project`, `jc.kind`) or link
+/// the Portal's Endpoint scopes: only a realm-wide client manager sets or changes them.
+const RESERVED_CLIENT_ATTRIBUTES: [&str; 3] = [
+    CLIENT_PROJECT_ATTRIBUTE,
+    CLIENT_KIND_ATTRIBUTE,
+    LINKED_SCOPE_PREFIX,
+];
+
+/// A realm administrator, or a realm-management service account (the Portal's) acting without an
+/// Organization pinned.
+fn realm_wide_client_manager(ctx: &RequestCtx) -> bool {
+    let p = &ctx.principal;
+    p.is_realm_admin()
+        || (ctx.active_org_id.is_none()
+            && ["manage-clients", "view-clients", "manage-users"]
+                .iter()
+                .any(|r| p.has_realm_mgmt_role(r)))
+}
+
+/// Refuses a client write that changes a reserved attribute without realm-wide rights, or links a
+/// scope (by the default or optional list) the caller may not read: a linked scope's mappers and
+/// audience go into the client's tokens.
+async fn guard_client_write(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    existing: Option<&ClientRepresentation>,
+    client: &ClientRepresentation,
+) -> Result<()> {
+    if !realm_wide_client_manager(ctx) {
+        for key in RESERVED_CLIENT_ATTRIBUTES {
+            if client.attributes.get(key) != existing.and_then(|e| e.attributes.get(key)) {
+                return Err(KaisatsuError::Forbidden(format!(
+                    "the client attribute {key} is set by the platform: only a realm-wide client manager changes it"
+                )));
+            }
+        }
+    }
+    let added: Vec<&String> = client
+        .default_client_scopes
+        .iter()
+        .chain(&client.optional_client_scopes)
+        .filter(|name| {
+            existing.is_none_or(|e| {
+                !e.default_client_scopes.contains(name) && !e.optional_client_scopes.contains(name)
+            })
+        })
+        .collect();
+    if added.is_empty() {
+        return Ok(());
+    }
+    let scopes = state.oidc.store.list_client_scopes(&ctx.realm_id).await?;
+    for name in added {
+        ensure_scope_linkable(state, ctx, scopes.iter().find(|s| &s.name == name), name)?;
+    }
+    Ok(())
+}
+
+/// A scope may be linked to a client when it is one of the realm's built-in scopes or the caller
+/// may read it (its Organization and mark judged by the Authorizer); an unknown name is refused.
+fn ensure_scope_linkable(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    scope: Option<&ClientScopeRepresentation>,
+    name: &str,
+) -> Result<()> {
+    let builtin = BUILTIN_CLIENT_SCOPES.contains(&name);
+    match scope {
+        None if builtin => Ok(()),
+        None => Err(KaisatsuError::NotFound(format!(
+            "client scope {name} does not exist in this realm"
+        ))),
+        Some(s) if builtin && s.org_id.is_none() => Ok(()),
+        Some(s) => check_decision(state.authorizer.check(
+            ctx,
+            Action::Read,
+            &ObjectTarget::ClientScope {
+                realm_id: ctx.realm_id.clone(),
+                org_id: s.org_id.clone(),
+                scope_id: s.id.clone(),
+                managed_by: scope_mark(s),
+            },
+        )),
+    }
+}
+
+/// The name of the scope a link route names by id (or by name, as the Portal sends built-ins),
+/// once the caller may link it.
+async fn linkable_scope_name(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    scope_id: &str,
+) -> Result<String> {
+    let scope = match state.oidc.store.get_client_scope(&ctx.realm_id, scope_id).await? {
+        Some(s) => Some(s),
+        None => state
+            .oidc
+            .store
+            .list_client_scopes(&ctx.realm_id)
+            .await?
+            .into_iter()
+            .find(|s| s.name == scope_id),
+    };
+    ensure_scope_linkable(state, ctx, scope.as_ref(), scope_id)?;
+    Ok(scope.map_or_else(|| scope_id.to_owned(), |s| s.name))
 }
 
 pub(crate) fn check_decision(dec: Decision) -> Result<()> {
@@ -2140,6 +2255,7 @@ async fn compat_create_client(
             managed_by: managed,
         },
     ))?;
+    guard_client_write(&state, &ctx, None, &client).await?;
     // The store upserts by clientId or id: a create naming a taken one would replace that
     // client (another organization's, or a realm client) and keep its secret. Keycloak: 409.
     if state
@@ -2282,15 +2398,15 @@ async fn compat_update_client(
     client.realm_id = realm;
     // Only a realm admin moves an application to another organization.
     if client.org_id.is_none() || !ctx.principal.is_realm_admin() {
-        client.org_id = existing.org_id;
+        client.org_id = existing.org_id.clone();
     }
     // W1 quirk-free behaviour: preserve existing default/optional scopes when PUT body omits them
     if client.default_client_scopes.is_empty() && !existing.default_client_scopes.is_empty() {
-        client.default_client_scopes = existing.default_client_scopes;
+        client.default_client_scopes = existing.default_client_scopes.clone();
     }
     // Keycloak's PUT without `protocolMappers` keeps them (they have their own routes).
     if client.protocol_mappers.is_empty() {
-        client.protocol_mappers = existing.protocol_mappers;
+        client.protocol_mappers = existing.protocol_mappers.clone();
     }
     // The client as written is checked too: an edit may not drop or change the mark that
     // decides who writes it.
@@ -2304,6 +2420,7 @@ async fn compat_update_client(
             managed_by: client.attributes.get("managed-by").cloned(),
         },
     ))?;
+    guard_client_write(&state, &ctx, Some(&existing), &client).await?;
     let updated = state.oidc.store.upsert_client(client).await?;
     record_admin_write(
         &state,
@@ -2932,13 +3049,7 @@ async fn compat_link_client_default_scope(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_application(&state, &ctx, &client, Action::Update)?;
-    let scope_name = state
-        .oidc
-        .store
-        .get_client_scope(&realm, &scope_id)
-        .await?
-        .map(|s| s.name)
-        .unwrap_or(scope_id);
+    let scope_name = linkable_scope_name(&state, &ctx, &scope_id).await?;
     if !client.default_client_scopes.contains(&scope_name) {
         client.default_client_scopes.push(scope_name);
     }
@@ -3039,13 +3150,7 @@ async fn compat_link_client_optional_scope(
         .await?
         .ok_or_else(|| KaisatsuError::NotFound("client not found".into()))?;
     check_application(&state, &ctx, &client, Action::Update)?;
-    let scope_name = state
-        .oidc
-        .store
-        .get_client_scope(&realm, &scope_id)
-        .await?
-        .map(|s| s.name)
-        .unwrap_or(scope_id);
+    let scope_name = linkable_scope_name(&state, &ctx, &scope_id).await?;
     if !client.optional_client_scopes.contains(&scope_name) {
         client.optional_client_scopes.push(scope_name);
     }

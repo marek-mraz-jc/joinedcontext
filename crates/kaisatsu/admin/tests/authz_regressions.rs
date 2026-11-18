@@ -214,6 +214,123 @@ async fn a_person_cannot_grant_themselves_roles_through_their_own_user() {
     assert_eq!(st, StatusCode::OK);
 }
 
+/// An Organization's client manager links to its client only scopes it may read (built-ins or
+/// its own Organization's), and never sets the attributes that put claims into the client's
+/// tokens.
+#[tokio::test]
+async fn an_org_client_manager_links_only_its_own_scopes_and_no_reserved_attribute() {
+    let f = Fixture::new().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "scope-esp".into(),
+            realm_id: "dev".into(),
+            org_id: Some("espoo".into()),
+            name: "esp-scope".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    for kind in ["optional", "default"] {
+        for id in ["scope-esp", "esp-scope", "no-such-scope"] {
+            let path = format!("/admin/realms/dev/clients/uuid-hel-app/{kind}-client-scopes/{id}");
+            let st = f.send(Method::PUT, &path, &t, None).await;
+            assert_eq!(st, StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/clients/uuid-hel-app/optional-client-scopes/profile",
+            &t,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "a built-in scope links");
+    let app = f
+        .store
+        .get_client_by_uuid("dev", None, "uuid-hel-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(app.optional_client_scopes, vec!["profile".to_owned()]);
+
+    let mark = json!({ "managed-by": "joinedcontext" });
+    for (key, value) in [
+        ("jc.project", "01JCPROJECT0000000000000000"),
+        ("jc.kind", "serviceAccount"),
+        ("kaisatsu.linked-scope-prefix", "endpoint:"),
+    ] {
+        let mut attributes = mark.clone();
+        attributes[key] = json!(value);
+        let st = f
+            .send(
+                Method::PUT,
+                "/admin/realms/dev/clients/uuid-hel-app",
+                &t,
+                Some(json!({ "clientId": "hel-app", "attributes": attributes })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{key}");
+        let st = f
+            .send(
+                Method::POST,
+                "/admin/realms/dev/clients",
+                &t,
+                Some(json!({ "clientId": format!("new-{key}"), "attributes": attributes })),
+            )
+            .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{key}");
+    }
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/clients",
+            &t,
+            Some(json!({ "clientId": "hel-new", "optionalClientScopes": ["esp-scope"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let st = f
+        .send(
+            Method::PUT,
+            "/admin/realms/dev/clients/uuid-hel-app",
+            &t,
+            Some(json!({ "clientId": "hel-app", "attributes": mark, "defaultClientScopes": ["esp-scope"] })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let app = f
+        .store
+        .get_client_by_uuid("dev", None, "uuid-hel-app")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!app.attributes.contains_key("jc.project"));
+    assert!(!app.default_client_scopes.contains(&"esp-scope".to_owned()));
+}
+
+/// A disabled person's bearer, or one whose SSO session ended, opens no admin route.
+#[tokio::test]
+async fn the_admin_api_refuses_a_disabled_person_or_an_ended_session() {
+    let f = Fixture::new().await;
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let path = "/admin/realms/dev/users/hel-person";
+    assert_eq!(f.send(Method::GET, path, &t, None).await, StatusCode::OK);
+    let ended = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"], "sid": "gone" }))
+        .await;
+    assert_eq!(f.send(Method::GET, path, &ended, None).await, StatusCode::UNAUTHORIZED);
+    let mut admin = f.user("org-admin-hel").await;
+    admin.enabled = false;
+    f.store.update_user(admin).await.unwrap();
+    assert_eq!(f.send(Method::GET, path, &t, None).await, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn org_admin_put_keeps_role_mappings_and_organization() {
     let f = Fixture::new().await;

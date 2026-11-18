@@ -82,8 +82,9 @@ pub(crate) async fn ensure_person_ceiling(
     user: &UserRepresentation,
 ) -> Result<()> {
     let caller = &ctx.principal;
+    // `scim` is an Organization's HR credential, not a realm-wide people manager: it meets the
+    // same ceilings as an Organization admin.
     if caller.has_realm_mgmt_role("manage-users")
-        || caller.has_realm_mgmt_role("scim")
         || caller.subject.as_deref() == Some(user.id.as_str())
     {
         return Ok(());
@@ -139,7 +140,7 @@ pub(crate) async fn ensure_may_join_group(
     group: &GroupRepresentation,
 ) -> Result<()> {
     let caller = &ctx.principal;
-    if caller.has_realm_mgmt_role("manage-users") || caller.has_realm_mgmt_role("scim") {
+    if caller.has_realm_mgmt_role("manage-users") {
         return Ok(());
     }
     let admin_client =

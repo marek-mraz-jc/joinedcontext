@@ -73,6 +73,34 @@ async fn a_member_of_the_wrong_type_is_refused_per_section() {
     }
 }
 
+#[tokio::test]
+async fn a_realm_setting_of_the_wrong_type_is_refused_not_reset() {
+    let doc = json!({"realm": "typed", "accessTokenLifespan": "300"});
+    let e = check_realm_value(&doc, &opts()).unwrap_err();
+    assert!(matches!(e, KaisatsuError::BadRequest(_)), "{e:?}");
+    let s = store();
+    let e = apply_realm_files(&s, &[("r.json".into(), doc)], &opts())
+        .await
+        .unwrap_err();
+    assert!(matches!(e, KaisatsuError::BadRequest(_)), "{e:?}");
+    assert!(s.get_realm("typed").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_failed_apply_is_retried_by_the_next_apply_of_the_same_files() {
+    let s = store();
+    let bad = json!({"realm": "half", "clients": [{"clientId": "c", "enabled": "yes"}]});
+    apply_realm_files(&s, &[("r.json".into(), bad.clone())], &opts())
+        .await
+        .unwrap_err();
+    let realm = s.get_realm("half").await.unwrap().expect("the realm row");
+    assert_eq!(realm.apply_checksum, None, "no checksum before every step is written");
+    let e = apply_realm_files(&s, &[("r.json".into(), bad)], &opts())
+        .await
+        .unwrap_err();
+    assert!(matches!(e, KaisatsuError::BadRequest(_)), "{e:?}");
+}
+
 #[test]
 fn secret_files_that_cannot_be_read_or_confined_are_refused() {
     let base = std::env::temp_dir().join(format!("kaisatsu-imp-{}", uuid::Uuid::now_v7()));

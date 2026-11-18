@@ -282,6 +282,20 @@ pub async fn resolve_or_fetch_client(
 /// The scope that takes every write right from a token (jc-core `READ_ONLY_SCOPE`, T-5955).
 const READ_ONLY_SCOPE: &str = "jc:read-only";
 
+/// The granted scopes the request named (an `organization:` alias in its canonical case): what
+/// a stored consent must cover.
+fn asked_scope(granted_scope: &str, requested: &str) -> String {
+    granted_scope
+        .split_whitespace()
+        .filter(|g| {
+            requested
+                .split_whitespace()
+                .any(|t| t.eq_ignore_ascii_case(g))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub async fn resolve_scopes_for_client(
     store: &Arc<dyn Store>,
     realm: &RealmConfig,
@@ -989,16 +1003,6 @@ async fn authorize_get(
             }
             return Ok(redirect_with_params(&redirect_uri, &response_mode, &pairs));
         };
-        if client.consent_required {
-            let consents = state.store.list_consents(&realm.id, &sso.user_id).await?;
-            if !consents.iter().any(|c| c.client_id == client.client_id) {
-                let mut pairs = vec![("error", "consent_required")];
-                if let Some(st) = state_param.as_deref() {
-                    pairs.push(("state", st));
-                }
-                return Ok(redirect_with_params(&redirect_uri, &response_mode, &pairs));
-            }
-        }
         let (active, granted_scope) = resolve_scopes_for_client(
             &state.store,
             &realm,
@@ -1006,6 +1010,19 @@ async fn authorize_get(
             params.get("scope").map(String::as_str),
         )
         .await?;
+        // A silent code needs a stored consent covering every scope asked for, as the SSO
+        // branch below: consent to fewer scopes is no consent to these.
+        if client.consent_required {
+            let asked = asked_scope(&granted_scope, params.get("scope").map_or("", String::as_str));
+            let consents = state.store.list_consents(&realm.id, &sso.user_id).await?;
+            if !consents.iter().any(|c| c.covers(&client.client_id, &asked)) {
+                let mut pairs = vec![("error", "consent_required")];
+                if let Some(st) = state_param.as_deref() {
+                    pairs.push(("state", st));
+                }
+                return Ok(redirect_with_params(&redirect_uri, &response_mode, &pairs));
+            }
+        }
         let raw_code = random_handle_256();
         let code_rec = AuthorizationCodeRecord {
             code_hash: sha256_hex(&raw_code),
@@ -1059,16 +1076,7 @@ async fn authorize_get(
             params.get("scope").map(String::as_str),
         )
         .await?;
-        let requested = params.get("scope").map_or("", String::as_str);
-        let asked = granted_scope
-            .split_whitespace()
-            .filter(|g| {
-                requested
-                    .split_whitespace()
-                    .any(|t| t.eq_ignore_ascii_case(g))
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        let asked = asked_scope(&granted_scope, params.get("scope").map_or("", String::as_str));
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
                 false
@@ -2672,7 +2680,7 @@ async fn revoke_reused_family(
 
 /// Whether an access token's `jti` and `sid` still stand: the `jti` is not revoked, the SSO
 /// session lives, and the refresh family the `jti` names (if any) exists and is not revoked.
-async fn token_is_live(
+pub async fn token_is_live(
     state: &OidcState,
     realm_id: &str,
     jti: Option<&str>,
