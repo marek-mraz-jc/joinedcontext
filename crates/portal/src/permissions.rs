@@ -839,12 +839,13 @@ pub fn installation_organization_manifest(
 }
 
 /// Whether a binding scoped to `organization` applies in `project` (PF-123, ADR-N-058 section
-/// 2.4). With one Organization it applies everywhere, as before several existed. With several, the
-/// organization's own namespace ([`ORG_NAMESPACE`]: bindings, groups, brokers, platform settings)
-/// is the installation Organization's alone, and a project is its Organization's alone: deny by
-/// default, so a binding naming an Organization that owns nothing grants nothing.
+/// 2.4). With no Organization manifest yet it applies everywhere, as before Organizations existed.
+/// Otherwise the organization's own namespace ([`ORG_NAMESPACE`]: bindings, groups, brokers,
+/// platform settings) is the installation Organization's alone, and a project is its
+/// Organization's alone: deny by default, so a binding naming an Organization that does not exist
+/// or owns nothing grants nothing, with one Organization as with several.
 fn organization_reaches(mirror: &Mirror, organization: &str, project: &str) -> bool {
-    if organizations(mirror).len() <= 1 {
+    if organizations(mirror).is_empty() {
         return true;
     }
     let owner = if project == ORG_NAMESPACE || project.is_empty() {
@@ -2567,6 +2568,41 @@ mod tests {
             &Value::Null,
             &spec(serde_json::json!([grant("a")]))
         ));
+    }
+
+    /// ISO-01: with one Organization, a binding scoped to an Organization name that does not exist
+    /// grants nothing; the binding naming the one Organization grants in its projects.
+    #[test]
+    fn a_binding_scoped_to_an_unknown_organization_grants_nothing_beside_one() {
+        let mirror = Mirror::new();
+        mirror.upsert(org("Organization", "hel", serde_json::json!({})));
+        mirror.upsert(org(
+            "Role",
+            "reader",
+            serde_json::json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        for scope in ["hel", "helx"] {
+            mirror.upsert(org(
+                "RoleBinding",
+                &format!("read-{scope}"),
+                serde_json::json!({ "subjects": [{ "user": format!("{scope}@hel.fi") }],
+                                    "role": "reader", "scope": { "organization": scope } }),
+            ));
+        }
+        for (scope, reads) in [("hel", true), ("helx", false)] {
+            let who = Identity {
+                client: None,
+                subject: format!("f:1:{scope}"),
+                username: format!("{scope}@hel.fi"),
+                email: Some(format!("{scope}@hel.fi")),
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            };
+            let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
+            assert_eq!(grants.may_read("Endpoint"), reads, "{scope}");
+        }
     }
 
     /// T-6464: propose on any kind opens a conversation; reading does not, and the build lane's

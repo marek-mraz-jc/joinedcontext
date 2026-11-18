@@ -55,7 +55,15 @@ pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool
              role, which owns its tables and could drop the operators' audit triggers; set it to \
              the owning role and JC_PORTAL_DATABASE_URL to a role that owns nothing"
         );
-        return connect(serving).await;
+        let pool = connect(serving).await?;
+        if let Some(attribute) = rls_bypass(&pool).await? {
+            tracing::warn!(
+                "the Portal's database role has {attribute}: row-level security does not apply \
+                 to it; a deployment serves as a second role without it \
+                 (JC_PORTAL_MIGRATION_DATABASE_URL), where the Portal refuses to start"
+            );
+        }
+        return Ok(pool);
     };
     let role = sqlx::postgres::PgConnectOptions::from_str(serving)?
         .get_username()
@@ -74,6 +82,16 @@ pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool
     grant_serving_role(&owner, &role).await?;
     owner.close().await;
     let pool = pool_options().connect(serving).await?;
+    if let Some(attribute) = rls_bypass(&pool).await? {
+        return Err(sqlx::Error::Configuration(
+            format!(
+                "the serving role `{role}` (JC_PORTAL_DATABASE_URL) has {attribute}: row-level \
+                 security does not apply to it, so the tenancy walls of the Portal's tables are \
+                 void; name a role without SUPERUSER and BYPASSRLS"
+            )
+            .into(),
+        ));
+    }
     let owned: Vec<String> = sqlx::query_scalar(
         "SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND c.relowner = \
@@ -92,6 +110,22 @@ pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool
         ));
     }
     Ok(pool)
+}
+
+/// `SUPERUSER` or `BYPASSRLS` when the pool's role has it: row-level security, forced or not,
+/// does not apply to such a role.
+async fn rls_bypass(pool: &PgPool) -> Result<Option<&'static str>, sqlx::Error> {
+    let (superuser, bypass): (bool, bool) =
+        sqlx::query_as("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+            .fetch_one(pool)
+            .await?;
+    Ok(if superuser {
+        Some("SUPERUSER")
+    } else if bypass {
+        Some("BYPASSRLS")
+    } else {
+        None
+    })
 }
 
 /// What the serving role may do, granted again after every migration so a new table is covered:

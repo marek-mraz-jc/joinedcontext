@@ -390,11 +390,20 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
     if hosts.is_empty() {
         return next.run(request).await;
     }
-    let decided = request
-        .extensions()
-        .get::<RequestOrganization>()
+    let placed = request.extensions().get::<RequestOrganization>();
+    let decided = placed
         .and_then(|org| hosts.iter().find(|h| h.organization == org.0))
         .cloned();
+    // An Organization the router placed but this Portal holds no host for (one the registry
+    // added or removed a moment ago) is refused, as the gateway refuses it: unpinned, the request
+    // would be served across every Organization.
+    if placed.is_some() && decided.is_none() {
+        return (
+            axum::http::StatusCode::MISDIRECTED_REQUEST,
+            "this host is not served here",
+        )
+            .into_response();
+    }
     let host = request
         .extensions()
         .get::<RequestHost>()

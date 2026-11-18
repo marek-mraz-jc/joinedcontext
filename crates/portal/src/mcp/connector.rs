@@ -82,12 +82,7 @@ pub async fn connector_metadata(State(state): State<AppState>, Path(id): Path<St
     if !connectors::is_id(&id) {
         return unknown();
     }
-    let authorization_servers: Vec<String> = state
-        .config
-        .oidc
-        .iter()
-        .map(|oidc| oidc.issuer.as_str().trim_end_matches('/').to_owned())
-        .collect();
+    let authorization_servers = super::authorization_servers(&state);
     Json(json!({
         "resource": connectors::address(&base(&state), &id),
         "authorization_servers": authorization_servers,

@@ -417,6 +417,12 @@ async fn an_expired_branch_answers_nothing_and_is_swept_to_a_tombstone() {
     .execute(&mut *tx)
     .await
     .expect("a branch's row");
+    // A table keyed by another column than `project` is swept by its own filter.
+    sqlx::query("INSERT INTO sync_source_state (namespace, name) VALUES ($1, 'source')")
+        .bind(&name)
+        .execute(&mut *tx)
+        .await
+        .expect("a branch's sync state");
     tx.commit().await.expect("commit");
     project_ids::read_branches(&pool).await.expect("read");
 
@@ -444,6 +450,13 @@ async fn an_expired_branch_answers_nothing_and_is_swept_to_a_tombstone() {
             .await
             .expect("count");
     assert_eq!(rows, 0, "the branch's data is deleted");
+    let synced: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_source_state WHERE namespace = $1")
+            .bind(&name)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(synced, 0, "the branch's sync state is deleted");
     let tombstone: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM project_ids p JOIN project_branches b ON b.id = p.id \
          WHERE p.id = $1::uuid AND b.swept_at IS NOT NULL",

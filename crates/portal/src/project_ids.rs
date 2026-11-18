@@ -297,7 +297,8 @@ pub async fn every_recorded_owned(
 
 /// Every branch project (TEN-12, CHG-15) with its Organization, its name `b-{ProjectId}` and when
 /// it expires in Unix seconds: what the router's project table places on id addresses beside
-/// [`every_recorded_owned`]. An expired branch stays listed; the router refuses it by the time.
+/// [`every_recorded_owned`]. An expired branch stays listed until it is swept; the router refuses
+/// it by the time, and a missing one alike.
 pub async fn every_branch_owned(
     pool: &PgPool,
 ) -> Result<Vec<(String, String, ProjectKey, i64)>, sqlx::Error> {
@@ -305,7 +306,7 @@ pub async fn every_branch_owned(
         "SELECT p.organization, p.name, o.key::text, p.id::text, \
          extract(epoch FROM b.expires_at)::bigint FROM project_branches b \
          JOIN project_ids p ON p.id = b.id JOIN organizations o ON o.name = p.organization \
-         WHERE p.parent IS NOT NULL ORDER BY p.organization, p.name",
+         WHERE p.parent IS NOT NULL AND b.swept_at IS NULL ORDER BY p.organization, p.name",
     )
     .fetch_all(pool)
     .await?;
@@ -532,7 +533,7 @@ pub async fn read_branches(pool: &PgPool) -> Result<(), sqlx::Error> {
     let rows: Vec<(String, String, String, i64)> = sqlx::query_as(
         "SELECT p.name, parent.name, b.created_by, extract(epoch FROM b.expires_at)::bigint \
          FROM project_branches b JOIN project_ids p ON p.id = b.id \
-         JOIN project_ids parent ON parent.id = p.parent",
+         JOIN project_ids parent ON parent.id = p.parent WHERE b.swept_at IS NULL",
     )
     .fetch_all(pool)
     .await?;
@@ -556,9 +557,10 @@ pub async fn read_branches(pool: &PgPool) -> Result<(), sqlx::Error> {
 /// The expiry job (CHG-15): every branch expired more than an hour ago and not swept yet loses
 /// (the reconciler's runs in that hour revoke its clients first: an expired branch's manifests
 /// leave the mirror at once, so their clients are removed and their tokens ended)
-/// its rows in each Portal table of a project's data, under its own key, and is marked swept;
-/// its `project_ids` and `project_branches` rows stay as the tombstone. A table whose rows
-/// refuse deletion (an append-only audit) keeps them. Returns the branches swept.
+/// its rows in each Portal table of a project's data, under its own key and by that table's own
+/// filter, and is marked swept once every delete committed; a branch whose delete failed is
+/// tried again at the next pass. Its `project_ids` and `project_branches` rows stay as the
+/// tombstone. Returns the branches swept.
 pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
     let due: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT p.name, o.key::text, p.id::text FROM project_branches b \
@@ -572,25 +574,33 @@ pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::
         let Some(key) = parsed(&org, &project) else {
             continue;
         };
+        let mut complete = true;
         for table in crate::org_backup::data::PORTAL_TABLES {
             if table.keys != "projects" {
                 continue;
             }
+            let filter = match key_column(table.name) {
+                "project" => table.filter.to_owned(),
+                column => format!("{column} = ANY($1)"),
+            };
             let mut tx = crate::db::tenant_tx(pool, key).await?;
-            let column = key_column(table.name);
-            let statement = format!("DELETE FROM {} WHERE {column} = $1", table.name);
-            // The table name is one of PORTAL_TABLES, a constant; the branch name is bound.
+            let statement = format!("DELETE FROM {} WHERE {filter}", table.name);
+            // The table name and its filter are PORTAL_TABLES constants; the branch name is bound.
             match sqlx::query(sqlx::AssertSqlSafe(statement))
-                .bind(&name)
+                .bind(std::slice::from_ref(&name))
                 .execute(&mut *tx)
                 .await
             {
                 Ok(_) => tx.commit().await?,
                 Err(err) => {
-                    tracing::info!(branch = %name, table = table.name, error = %err, "a branch's rows are kept");
+                    tracing::warn!(branch = %name, table = table.name, error = %err, "a branch's rows could not be deleted; the next pass tries again");
                     tx.rollback().await?;
+                    complete = false;
                 }
             }
+        }
+        if !complete {
+            continue;
         }
         sqlx::query("UPDATE project_branches SET swept_at = now() WHERE id = $1::uuid")
             .bind(&project)

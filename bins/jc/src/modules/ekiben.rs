@@ -176,10 +176,12 @@ fn with_ingest(api: Router, ingest: Router) -> Router {
         .nest(INGEST_PREFIX, ingest.clone())
         .fallback_service(api);
     Router::new().fallback_service(tower::service_fn(move |req: axum::extract::Request| {
+        // The entry's own prefix: the public one also carries an Organization's segment on a
+        // shared host.
         let ingest_entry = req
             .extensions()
-            .get::<jc_router::Mount>()
-            .is_some_and(|mount| mount.path_prefix == INGEST_PREFIX);
+            .get::<jc_router::RoutePrefix>()
+            .is_some_and(|prefix| prefix.0 == INGEST_PREFIX);
         let router = if ingest_entry {
             ingest.clone()
         } else {
@@ -494,14 +496,21 @@ mod tests {
     use super::*;
 
     async fn answer(router: &Router, path: &str, prefix: Option<&str>) -> (u16, String) {
+        answer_at(router, path, prefix.map(|p| (p, p))).await
+    }
+
+    /// `entry` is the mount's (public prefix, route prefix) as jc-router sets them.
+    async fn answer_at(router: &Router, path: &str, entry: Option<(&str, &str)>) -> (u16, String) {
         use tower::ServiceExt;
         let mut req = axum::http::Request::post(path)
             .body(axum::body::Body::empty())
             .unwrap();
-        if let Some(prefix) = prefix {
+        if let Some((public, route)) = entry {
             req.extensions_mut().insert(
-                jc_router::Mount::new("ekiben", "https", "portal.city.test", prefix).unwrap(),
+                jc_router::Mount::new("ekiben", "https", "portal.city.test", public).unwrap(),
             );
+            req.extensions_mut()
+                .insert(jc_router::RoutePrefix(route.to_owned()));
         }
         let res = router.clone().oneshot(req).await.unwrap();
         let status = res.status().as_u16();
@@ -525,6 +534,11 @@ mod tests {
         assert_eq!(
             answer(&router, "/default/hel.ttn/uplinks", Some(INGEST_PREFIX)).await,
             (200, "ingest /default/hel.ttn/uplinks".into())
+        );
+        // The same entry reached in an Organization's prefixed form on a shared host.
+        assert_eq!(
+            answer_at(&router, "/streams", Some(("/hel/ingest", INGEST_PREFIX))).await,
+            (200, "ingest /streams".into())
         );
         assert_eq!(
             answer(&router, "/streams", Some("/streams")).await,
