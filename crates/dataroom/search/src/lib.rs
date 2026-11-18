@@ -1678,8 +1678,8 @@ mod tests {
         let (org_id, catalogue_id) = test_ids();
         let ctx = RequestCtx::anonymous(org_id, catalogue_id);
         let authz = PolicyAuthorizer::default();
-        let when = TimestampTz::from_second(TimestampTz::now().as_second() - 1 * 86_400)
-            .expect("in range");
+        let when =
+            TimestampTz::from_second(TimestampTz::now().as_second() - 86_400).expect("in range");
         let twin = |name: &str| {
             let mut d = make_dataset(name, "pub-a", "Rovnaký", &[], &[], Visibility::Public);
             d.modified = when;

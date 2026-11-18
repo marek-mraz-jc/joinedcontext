@@ -84,7 +84,7 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
         .claim_harvest_run(
             &w.ctx,
             held.clone(),
-            TimestampTz::from_second(TimestampTz::now().as_second() - 1 * 3_600).expect("in range")
+            TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range")
         )
         .await
         .unwrap());
@@ -94,7 +94,7 @@ async fn a_source_with_a_live_running_run_is_refused_and_nothing_is_written() {
         .claim_harvest_run(
             &w.ctx,
             running(&w, "run-second", TimestampTz::now()),
-            TimestampTz::from_second(TimestampTz::now().as_second() - 1 * 3_600).expect("in range")
+            TimestampTz::from_second(TimestampTz::now().as_second() - 3_600).expect("in range")
         )
         .await
         .unwrap());
