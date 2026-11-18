@@ -1123,6 +1123,7 @@ async fn an_owner_name_in_a_token_names_no_organization() {
     .await;
     assert_eq!(st, StatusCode::CREATED);
 
+    use p256::pkcs8::EncodePrivateKey as _;
     let secret = p256::SecretKey::random(&mut rand_core::OsRng);
     let mut jwk: Value = serde_json::from_str(&secret.public_key().to_jwk_string()).unwrap();
     jwk["kid"] = json!("owner-name-test");
