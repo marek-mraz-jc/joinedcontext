@@ -93,7 +93,7 @@ async fn main() {
     }
     // Each tick sends what is due; a few rounds let every queued run start once.
     for _ in 0..3 {
-        deployer.tick_queue(chrono::Utc::now()).await;
+        deployer.tick_queue(std::time::SystemTime::now()).await;
     }
     for (project, name, outcome) in &outcomes {
         println!(

@@ -360,13 +360,13 @@ fn number(v: f64) -> String {
 }
 
 fn date(ms: f64, span_ms: f64) -> String {
-    let Some(at) = chrono::DateTime::from_timestamp_millis(ms as i64) else {
+    let Ok(at) = jiff::Timestamp::from_millisecond(ms as i64) else {
         return "?".into();
     };
     if span_ms <= 2.0 * 86_400_000.0 {
-        at.format("%H:%M").to_string()
+        at.strftime("%H:%M").to_string()
     } else {
-        at.format("%Y-%m-%d").to_string()
+        at.strftime("%Y-%m-%d").to_string()
     }
 }
 

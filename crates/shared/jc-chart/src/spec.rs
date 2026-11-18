@@ -445,9 +445,9 @@ pub fn cell(value: Option<&Value>, scale: Scale, cats: &mut Categories) -> Optio
     match scale {
         Scale::Quantitative => value.as_f64().filter(|v| v.is_finite()).map(Cell::Number),
         Scale::Temporal => match value {
-            Value::String(s) => chrono::DateTime::parse_from_rfc3339(s)
-                .ok()
-                .map(|t| Cell::Number(t.timestamp_millis() as f64)),
+            Value::String(s) => {
+                jc_time::parse_rfc3339(s).map(|t| Cell::Number(t.as_millisecond() as f64))
+            }
             other => other.as_f64().map(Cell::Number),
         },
         Scale::Nominal => cats.index(value).map(Cell::Category),
@@ -498,12 +498,15 @@ pub fn view_point(point: &Point, row: &Map<String, Value>) -> Value {
     let observed = row
         .get("observedAt")
         .and_then(Value::as_str)
-        .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok());
+        .and_then(jc_time::parse_rfc3339);
     if let Some(t) = observed {
-        let utc = t.with_timezone(&chrono::Utc);
         out.insert(
             "observedAt".into(),
-            json!(utc.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+            json!(jc_time::format_rfc3339(
+                t,
+                jc_time::SecondsFormat::Millis,
+                true
+            )),
         );
     }
     Value::Object(out)
