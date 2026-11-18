@@ -318,7 +318,11 @@ async fn an_org_client_manager_links_only_its_own_scopes_and_no_reserved_attribu
 async fn a_mapping_to_an_unknown_client_grants_no_realm_role() {
     let f = Fixture::new().await;
     let admin = f
-        .token("dev", "realm-op", json!({ "realm_access": { "roles": ["realm-admin"] } }))
+        .token(
+            "dev",
+            "realm-op",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
         .await;
     let st = f
         .send(
@@ -358,13 +362,23 @@ async fn the_admin_api_refuses_a_disabled_person_or_an_ended_session() {
     let path = "/admin/realms/dev/users/hel-person";
     assert_eq!(f.send(Method::GET, path, &t, None).await, StatusCode::OK);
     let ended = f
-        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"], "sid": "gone" }))
+        .token(
+            "dev",
+            "org-admin-hel",
+            json!({ "jc_org": ["helsinki"], "sid": "gone" }),
+        )
         .await;
-    assert_eq!(f.send(Method::GET, path, &ended, None).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        f.send(Method::GET, path, &ended, None).await,
+        StatusCode::UNAUTHORIZED
+    );
     let mut admin = f.user("org-admin-hel").await;
     admin.enabled = false;
     f.store.update_user(admin).await.unwrap();
-    assert_eq!(f.send(Method::GET, path, &t, None).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        f.send(Method::GET, path, &t, None).await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]

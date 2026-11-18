@@ -1017,7 +1017,10 @@ async fn authorize_get(
         // A silent code needs a stored consent covering every scope asked for, as the SSO
         // branch below: consent to fewer scopes is no consent to these.
         if client.consent_required {
-            let asked = asked_scope(&granted_scope, params.get("scope").map_or("", String::as_str));
+            let asked = asked_scope(
+                &granted_scope,
+                params.get("scope").map_or("", String::as_str),
+            );
             let consents = state.store.list_consents(&realm.id, &sso.user_id).await?;
             if !consents.iter().any(|c| c.covers(&client.client_id, &asked)) {
                 let mut pairs = vec![("error", "consent_required")];
@@ -1080,7 +1083,10 @@ async fn authorize_get(
             params.get("scope").map(String::as_str),
         )
         .await?;
-        let asked = asked_scope(&granted_scope, params.get("scope").map_or("", String::as_str));
+        let asked = asked_scope(
+            &granted_scope,
+            params.get("scope").map_or("", String::as_str),
+        );
         let has_consent = if client.consent_required || prompt.as_deref() == Some("consent") {
             if prompt.as_deref() == Some("consent") {
                 false
@@ -1754,7 +1760,9 @@ async fn mint_tokens_for_principal(
         .get("access.token.lifespan")
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|ttl| *ttl > 0)
-        .map_or(realm_ttl, |ttl| ttl.min(realm_ttl.max(MAX_CLIENT_ACCESS_TTL)));
+        .map_or(realm_ttl, |ttl| {
+            ttl.min(realm_ttl.max(MAX_CLIENT_ACCESS_TTL))
+        });
     let access_exp = now + access_ttl;
     // The family this grant's refresh token belongs to, named in the access token's `jti` so a
     // revoked family takes its access tokens with it (introspection, userinfo, token exchange).

@@ -517,10 +517,20 @@ async fn an_upstream_email_alone_links_no_passwordless_or_foreign_account() {
         })
         .await
         .unwrap();
-    let (st, _, _) =
-        upstream_callback(&app, &up_issuer, &up_state, "entra-sub-nopw", "no.password@hel.fi").await;
+    let (st, _, _) = upstream_callback(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-nopw",
+        "no.password@hel.fi",
+    )
+    .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
-    let person = store.get_user_by_id("dev", None, "nopw-1").await.unwrap().unwrap();
+    let person = store
+        .get_user_by_id("dev", None, "nopw-1")
+        .await
+        .unwrap()
+        .unwrap();
     assert!(person.attributes.is_empty(), "{:?}", person.attributes);
 
     // The demo member has a password but is not a person of this IdP's Organization.

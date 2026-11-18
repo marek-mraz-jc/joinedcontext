@@ -664,7 +664,12 @@ async fn linkable_scope_name(
     ctx: &RequestCtx,
     scope_id: &str,
 ) -> Result<String> {
-    let scope = match state.oidc.store.get_client_scope(&ctx.realm_id, scope_id).await? {
+    let scope = match state
+        .oidc
+        .store
+        .get_client_scope(&ctx.realm_id, scope_id)
+        .await?
+    {
         Some(s) => Some(s),
         None => state
             .oidc

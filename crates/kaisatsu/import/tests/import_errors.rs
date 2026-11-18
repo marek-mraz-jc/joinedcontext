@@ -94,7 +94,10 @@ async fn a_failed_apply_is_retried_by_the_next_apply_of_the_same_files() {
         .await
         .unwrap_err();
     let realm = s.get_realm("half").await.unwrap().expect("the realm row");
-    assert_eq!(realm.apply_checksum, None, "no checksum before every step is written");
+    assert_eq!(
+        realm.apply_checksum, None,
+        "no checksum before every step is written"
+    );
     let e = apply_realm_files(&s, &[("r.json".into(), bad)], &opts())
         .await
         .unwrap_err();

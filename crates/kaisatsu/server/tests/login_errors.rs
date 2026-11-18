@@ -583,7 +583,10 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     ];
     let (st, _, _) = send(&app, Method::POST, ACTION, Some(&form), Some(&cookie), None).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    assert_eq!(store.list_credentials("dev", &member.id).await.unwrap(), before);
+    assert_eq!(
+        store.list_credentials("dev", &member.id).await.unwrap(),
+        before
+    );
 
     // A password form whose person was deleted meanwhile.
     let link = mint(&store, &member.id, &["UPDATE_PASSWORD"]).await;

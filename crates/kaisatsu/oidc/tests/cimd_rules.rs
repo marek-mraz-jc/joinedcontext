@@ -15,7 +15,11 @@ const ID: &str = "https://claude.ai/oauth/meta";
 fn cimd_realm() -> RealmConfig {
     RealmConfig {
         cimd_allowed_client_domains: vec!["claude.ai".into()],
-        cimd_allowed_redirect_domains: vec!["claude.ai".into(), "localhost".into(), "127.0.0.1".into()],
+        cimd_allowed_redirect_domains: vec![
+            "claude.ai".into(),
+            "localhost".into(),
+            "127.0.0.1".into(),
+        ],
         ..RealmConfig::default()
     }
 }

@@ -318,7 +318,12 @@ async fn reset_credentials_acts_the_same_through_odata_and_mcp() {
     assert_eq!(rpc["error"]["data"]["slug"], slug);
     // No password at all is refused whatever the realm's policy.
     let (st, _, _, raw) = api
-        .call(Method::POST, &uri, &admin, Some(json!({ "temporary": true })))
+        .call(
+            Method::POST,
+            &uri,
+            &admin,
+            Some(json!({ "temporary": true })),
+        )
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{raw}");
 

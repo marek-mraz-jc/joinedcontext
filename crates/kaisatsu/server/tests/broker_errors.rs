@@ -497,7 +497,10 @@ async fn broker_link_confirmation_refusals_and_escaping() {
     assert_eq!(st, StatusCode::OK, "{html}");
     assert!(html.contains("&lt;i&gt;link&lt;/i&gt;"), "{html}");
     assert!(!html.contains("<i>link</i>"), "the account name is escaped");
-    assert!(html.contains(r#"name="password""#), "the password is asked for");
+    assert!(
+        html.contains(r#"name="password""#),
+        "the password is asked for"
+    );
     let csrf = extract_hidden_input(&html, "csrf_token");
     let ep = "/realms/dev/broker/entra/endpoint";
 
@@ -583,7 +586,12 @@ async fn broker_link_confirmation_refusals_and_escaping() {
     );
     // An account without a password is never linked by the confirmation.
     pend(&store, &s, json!(saved)).await;
-    assert!(store.delete_credential("dev", "markup-user", "markup-pw").await.unwrap());
+    assert!(
+        store
+            .delete_credential("dev", "markup-user", "markup-pw")
+            .await
+            .unwrap()
+    );
     let (st, _, body) = post_form(&app, ep, &form, Some(&ck)).await;
     assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
     store

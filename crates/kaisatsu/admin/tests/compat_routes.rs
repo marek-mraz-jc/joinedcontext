@@ -1596,7 +1596,11 @@ async fn realm_partial_import_and_native_routes() {
             None,
         )
         .await;
-        assert_eq!(st, StatusCode::UNAUTHORIZED, "the operations need a bearer: {realm}");
+        assert_eq!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "the operations need a bearer: {realm}"
+        );
     }
     let (st, _, ops) = call(
         &f.app,
