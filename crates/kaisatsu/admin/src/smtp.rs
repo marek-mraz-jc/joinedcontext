@@ -129,10 +129,10 @@ impl SmtpWrite {
                 ));
             }
             Some(p) if !p.is_empty() => p,
-            // The stored password goes only to the server it was given for: a new host, port or
-            // user needs it typed again.
+            // The stored password goes only to the server it was given for: a new host or user
+            // needs it typed again.
             _ => stored
-                .filter(|s| s.host == host && s.port == self.port.to_string() && s.user == user)
+                .filter(|s| s.host == host && s.user == user)
                 .map(|s| s.password.clone())
                 .unwrap_or_default(),
         };

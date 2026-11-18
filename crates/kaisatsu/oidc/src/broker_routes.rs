@@ -43,7 +43,8 @@ pub struct BrokerLoginQuery {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+// A redirect back from another party: providers add their own parameters (`iss`,
+// `session_state`, a mail tracker's), which are ignored, not refused.
 pub struct BrokerEndpointQuery {
     #[serde(default)]
     pub code: Option<String>,

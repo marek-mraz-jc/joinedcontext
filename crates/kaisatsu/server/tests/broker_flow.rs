@@ -491,7 +491,7 @@ async fn upstream_callback(
     let (st, h, _) = get_with_ck(
         app,
         &format!(
-            "/realms/dev/broker/entra/endpoint?code=c1&state={}",
+            "/realms/dev/broker/entra/endpoint?code=c1&state={}&session_state=upstream-sid",
             qp["state"]
         ),
         &auth_cookie,
