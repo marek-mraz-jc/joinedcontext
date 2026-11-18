@@ -1483,6 +1483,22 @@ async fn every_registry_401_carries_the_token_challenge() {
         .to_str()
         .unwrap();
     assert!(challenge.contains("/v2/token"), "{challenge}");
+
+    // A cross-repository mount asks for the target and the source in one token request.
+    let basic = STANDARD.encode("joinedcontext:portal-token");
+    let resp = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/token?service=container_registry&scope=repository%3Ajoinedcontext%2Ftarget%3Apush%2Cpull&scope=repository%3Ajoinedcontext%2Fsource%3Apull")
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 /// The mergeable and link tools answer, and list tools narrow by the repository they name.

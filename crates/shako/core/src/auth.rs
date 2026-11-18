@@ -407,7 +407,10 @@ impl Authorizer for LocalAuthorizer {
             match object {
                 ObjectTarget::Package { owner, name, .. } => {
                     let prefix = format!("repository:{owner}/{name}:");
-                    let Some(actions_csv) = reg_scope.strip_prefix(&prefix) else {
+                    let Some(actions_csv) = reg_scope
+                        .split(' ')
+                        .find_map(|entry| entry.strip_prefix(prefix.as_str()))
+                    else {
                         return Decision::deny_hidden("registry token not scoped to this image");
                     };
                     let acts: Vec<&str> = actions_csv.split(',').collect();

@@ -12612,6 +12612,7 @@ dependencies = [
  "jc-router",
  "jc-time",
  "parking_lot",
+ "percent-encoding",
  "serde",
  "serde_json",
  "shako-api",

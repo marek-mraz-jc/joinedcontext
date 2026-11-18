@@ -175,26 +175,39 @@ async fn oci_v2_ping(
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OciTokenQuery {
-    #[serde(default)]
-    pub service: Option<String>,
-    #[serde(default)]
-    pub scope: Option<String>,
-    #[serde(default)]
-    pub account: Option<String>,
-    #[serde(default)]
-    pub client_id: Option<String>,
-    #[serde(default)]
-    pub offline_token: Option<String>,
+/// The `scope` values of a token request (`scope` may repeat: a cross-repository mount asks
+/// for the target and the source); the other known parameters are accepted and unused.
+fn token_scopes(raw: Option<&str>) -> Result<Vec<String>, String> {
+    let mut scopes = Vec::new();
+    for pair in raw.unwrap_or_default().split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let plus_as_space = value.replace('+', " ");
+        let value = percent_encoding::percent_decode_str(&plus_as_space)
+            .decode_utf8()
+            .map_err(|_| "token request parameters must be UTF-8".to_owned())?;
+        match key {
+            "scope" => scopes.extend(
+                value
+                    .split(' ')
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned),
+            ),
+            "service" | "account" | "client_id" | "offline_token" => {}
+            other => return Err(format!("unknown token request parameter '{other}'")),
+        }
+    }
+    Ok(scopes)
 }
 
 async fn oci_get_token(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Query(q): Query<OciTokenQuery>,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
 ) -> Response {
+    let requested = match token_scopes(raw.as_deref()) {
+        Ok(s) => s,
+        Err(why) => return oci_error_response(StatusCode::BAD_REQUEST, "UNSUPPORTED", &why, None),
+    };
     let auth_hdr = match headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -229,57 +242,60 @@ async fn oci_get_token(
         }
     };
 
-    let scope = q.scope.unwrap_or_default();
-    let mut granted_scope = String::new();
+    let mut granted = Vec::new();
     let mut target_org = subject
         .organizations
         .first()
         .copied()
         .unwrap_or(state.default_org_id);
 
-    // Validate requested scope `repository:{owner}/{image}:{actions}` against Authorizer (T4)
-    if let Some(rest) = scope.strip_prefix("repository:")
-        && let Some((repo_part, actions_part)) = rest.rsplit_once(':')
-        && let Some((owner, image)) = repo_part.split_once('/')
-    {
-        target_org = state.resolve_org_for_owner(owner, &subject);
-        let ctx = RequestCtx::new(state.default_instance_id, target_org, subject.clone());
+    // Each requested `repository:{owner}/{image}:{actions}` is checked against the Authorizer
+    // (T4); the token carries the granted ones, space separated.
+    for (idx, scope) in requested.iter().enumerate() {
+        let Some(rest) = scope.strip_prefix("repository:") else {
+            continue;
+        };
+        let Some((repo_part, actions_part)) = rest.rsplit_once(':') else {
+            continue;
+        };
+        let Some((owner, image)) = repo_part.split_once('/') else {
+            continue;
+        };
+        let org = state.resolve_org_for_owner(owner, &subject);
+        if idx == 0 {
+            target_org = org;
+        } else if org != target_org {
+            continue;
+        }
+        let ctx = RequestCtx::new(state.default_instance_id, org, subject.clone());
         let mut allowed_actions = Vec::new();
         for act in actions_part.split(',') {
-            match act.trim() {
-                "pull" => {
-                    if authorize_package(&state, &ctx, owner, "container", image, Action::Read)
-                        .is_ok()
-                    {
-                        allowed_actions.push("pull");
-                    }
-                }
-                "push"
-                    if authorize_package(
-                        &state,
-                        &ctx,
-                        owner,
-                        "container",
-                        image,
-                        Action::Publish,
-                    )
-                    .is_ok() =>
-                {
-                    allowed_actions.push("push");
-                }
-                _ => {}
+            let action = match act.trim() {
+                "pull" => Action::Read,
+                "push" => Action::Publish,
+                _ => continue,
+            };
+            if authorize_package(&state, &ctx, owner, "container", image, action).is_ok() {
+                allowed_actions.push(act.trim());
             }
         }
-        if allowed_actions.is_empty() {
-            return oci_error_response(
-                StatusCode::FORBIDDEN,
-                "DENIED",
-                "requested access to the resource is denied",
-                None,
-            );
+        if !allowed_actions.is_empty() {
+            granted.push(format!(
+                "repository:{owner}/{image}:{}",
+                allowed_actions.join(",")
+            ));
         }
-        granted_scope = format!("repository:{owner}/{image}:{}", allowed_actions.join(","));
     }
+    let asked_repository = requested.iter().any(|s| s.starts_with("repository:"));
+    if asked_repository && granted.is_empty() {
+        return oci_error_response(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            "requested access to the resource is denied",
+            None,
+        );
+    }
+    let granted_scope = granted.join(" ");
 
     match state
         .signing_key()
