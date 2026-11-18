@@ -15,9 +15,9 @@
 //!   matcher /     one shared DURABLE ("matcher"): decode → process_change →
 //!   notifier      ack AFTER processing; the KV-watched subscription mirror;
 //!                 the interval loop (single-winner by row-lock claim).
-//!   temporal      no bus consumer — auto-recording is synchronous in the
-//!                 write path; the role only carries the
-//!                 plain-mode partition job, wired in main.rs.
+//!   temporal      gates nothing: auto-recording is synchronous in the write
+//!                 path, and the partition job in lib.rs `spawn_background`
+//!                 runs on every pod whatever its roles.
 //!
 //! Concurrent drains on N api pods double-publish only within the stream's
 //! duplicate window, where `Nats-Msg-Id` = outbox seq absorbs them — that is
@@ -274,7 +274,7 @@ pub async fn wire_nats(
         // federation path reads. Consumer created BEFORE the hydrate so no
         // delta can fall between them; last-writer-wins per key converges.
         let reg_mirror = Arc::new(antares_api::mirror::DocMirror::default());
-        let reg_consumer = bus.consume_registry_broadcast().await?;
+        let mut reg_consumer = bus.consume_registry_broadcast().await?;
         // Installed only if it is whole. A mirror that is present and SHORT
         // is read as the truth — `reg_docs` asks it and never the store — so
         // half a hydrate silently drops Context Sources for the life of the
@@ -295,6 +295,7 @@ pub async fn wire_nats(
         }
         let egress_for_cool = state.egress.clone();
         let store_for_reg = state.store.clone();
+        let bus_for_broadcast = bus.clone();
         tokio::spawn(async move {
             // The consumer is ephemeral, so a NATS restart or an inactivity
             // gap deletes it server-side and the next pull errors. Ending the
@@ -304,27 +305,35 @@ pub async fn wire_nats(
             // and re-hydrate from the store because a fresh consumer starts
             // at NEW and never replays what the gap dropped.
             loop {
-                let mut msgs = match reg_consumer.messages().await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!("registry broadcast consumer stream failed: {e}");
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
+                match reg_consumer.messages().await {
+                    Ok(mut msgs) => {
+                        while let Some(delta) = nats::next_delta(&mut msgs).await {
+                            // 5.2.34 read side: a cooldown stamp updates this pod's
+                            // map (a marker delta has no tenant/id — apply_delta
+                            // ignores it on pods that predate the member).
+                            if let Some(rid) =
+                                delta.get("cooldownReg").and_then(serde_json::Value::as_str)
+                            {
+                                egress_for_cool
+                                    .reg_record(rid, delta["ok"].as_bool().unwrap_or(false));
+                                continue;
+                            }
+                            apply_delta(reg_mirror.as_ref(), &delta);
+                        }
                     }
-                };
-                while let Some(delta) = nats::next_delta(&mut msgs).await {
-                    // 5.2.34 read side: a cooldown stamp updates this pod's
-                    // map (a marker delta has no tenant/id — apply_delta
-                    // ignores it on pods that predate the member).
-                    if let Some(rid) = delta.get("cooldownReg").and_then(serde_json::Value::as_str)
-                    {
-                        egress_for_cool.reg_record(rid, delta["ok"].as_bool().unwrap_or(false));
-                        continue;
-                    }
-                    apply_delta(reg_mirror.as_ref(), &delta);
+                    Err(e) => tracing::warn!("registry broadcast consumer stream failed: {e}"),
                 }
                 tracing::warn!("registry broadcast consumer stream ended — reopening");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                // The ended stream's consumer is gone server-side: a pull on
+                // its handle ends at once again, so the reopen needs a new one.
+                match bus_for_broadcast.consume_registry_broadcast().await {
+                    Ok(fresh) => reg_consumer = fresh,
+                    Err(e) => {
+                        tracing::warn!("registry broadcast consumer re-create failed: {e}");
+                        continue;
+                    }
+                }
                 // Already installed, so this one cannot be withheld. A failed
                 // re-hydrate leaves the mirror holding what it had before the
                 // gap, which the federation path will serve as current: say
@@ -516,7 +525,8 @@ pub async fn wire_nats(
                         }
                     }
                     let mut changes = Vec::with_capacity(batch.len());
-                    for msg in &batch {
+                    let mut done = Vec::with_capacity(batch.len());
+                    for msg in batch {
                         // Change lag = stream-publish → matcher-processing
                         // age, from the JetStream metadata timestamp.
                         if let Ok(info) = msg.info() {
@@ -528,19 +538,27 @@ pub async fn wire_nats(
                                     .record(age.as_secs_f64());
                             }
                         }
-                        if let Some(ev) = nats::decode(msg) {
-                            let (before, after) = resolve_payloads(&st, &ev).await;
+                        if let Some(ev) = nats::decode(&msg) {
+                            // a store fault: no ack, the server redelivers it
+                            let Some((before, after)) = resolve_payloads(&st, &ev).await else {
+                                continue;
+                            };
                             changes.push((ev.tenant.as_str().to_owned(), before, after));
                         }
+                        done.push(msg);
                     }
                     antares_api::notify::process_changes(&st, changes).await;
-                    for msg in batch {
+                    for msg in done {
                         let _ = msg.ack().await;
                     }
                     if ended {
                         break;
                     }
                 }
+                // an errored or ended stream reopens after a pause, not in a
+                // tight loop against a server that keeps refusing it
+                tracing::warn!("matcher consumer stream ended — reopening");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
         });
 
@@ -558,7 +576,7 @@ pub async fn wire_nats(
 
     // The temporal role carries no bus consumer: auto-recording is
     // synchronous in the write path (see above), and plain-mode partition
-    // maintenance runs from main.rs regardless of bus mode.
+    // maintenance runs from lib.rs `spawn_background` regardless of bus mode.
 
     // The server must agree these are shared durables.
     bus.assert_topology(&durables).await?;
@@ -566,7 +584,6 @@ pub async fn wire_nats(
     Ok(bus)
 }
 
-/// Hydrate a mirror from the system of record (Postgres) at startup.
 /// Attempts a mirror write gets before the divergence is logged as an error.
 const MIRROR_SYNC_ATTEMPTS: u32 = 5;
 
@@ -616,27 +633,29 @@ fn apply_delta(mirror: &dyn antares_api::mirror::Mirror, delta: &serde_json::Val
 /// changed and the change reaches no subscriber. It stays the fallback for
 /// `payload_ref` alone, where being newer than the referenced version is the
 /// ordinary at-least-once reality the matcher already tolerates.
+/// `None` when the store failed to answer: the message stays unacked and
+/// comes back, where reading the fault as "row gone" would drop the change.
 async fn resolve_payloads(
     st: &AppState,
     ev: &ChangeEvent,
-) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+) -> Option<(Option<serde_json::Value>, Option<serde_json::Value>)> {
     if ev.payload_ref.is_none() && ev.prev_payload_ref.is_none() {
-        return (ev.prev_payload.clone(), ev.payload.clone());
+        return Some((ev.prev_payload.clone(), ev.payload.clone()));
     }
     // 0 is the local bus, which never claim-checks: it hands the payloads to
     // the matcher in process.
     let kept = match ev.seq {
         0 => None,
-        seq => st
-            .store
-            .outbox_event(seq, &ev.tenant)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|v| serde_json::from_value::<ChangeEvent>(v).ok()),
+        seq => match st.store.outbox_event(seq, &ev.tenant).await {
+            Ok(v) => v.and_then(|v| serde_json::from_value::<ChangeEvent>(v).ok()),
+            Err(e) => {
+                tracing::warn!("claim-check read for seq {seq} failed ({e}); redelivering");
+                return None;
+            }
+        },
     };
     if let Some(kept) = kept {
-        return (kept.prev_payload, kept.payload);
+        return Some((kept.prev_payload, kept.payload));
     }
     // Past the retention window, or a deployment whose store keeps no outbox.
     // The after-image is still recoverable; the before-image is not, and a
@@ -645,12 +664,17 @@ async fn resolve_payloads(
     let after = match ev.payload.clone() {
         Some(v) => Some(v),
         None => match ev.payload_ref.as_ref() {
-            Some(r) => st
+            Some(r) => match st
                 .store
                 .get(&ev.tenant, Kind::Entity, r.entity_id.as_str())
                 .await
-                .ok()
-                .flatten(),
+            {
+                Ok(doc) => doc,
+                Err(e) => {
+                    tracing::warn!("claim-check entity read failed ({e}); redelivering");
+                    return None;
+                }
+            },
             None => None,
         },
     };
@@ -662,7 +686,7 @@ async fn resolve_payloads(
             ev.entity_id.as_str()
         );
     }
-    (ev.prev_payload.clone(), after)
+    Some((ev.prev_payload.clone(), after))
 }
 
 #[cfg(test)]
@@ -848,8 +872,9 @@ mod tests {
         let doc = json!({"id": "urn:ngsi-ld:T:1", "type": "T"});
         let st = state_with(Some(doc.clone())).await;
 
-        let (before, after) =
-            resolve_payloads(&st, &event(Some(json!({"inline": true})), None)).await;
+        let (before, after) = resolve_payloads(&st, &event(Some(json!({"inline": true})), None))
+            .await
+            .expect("resolved");
         assert_eq!(after, Some(json!({"inline": true})), "inline payload wins");
         assert_eq!(before, None);
 
@@ -857,7 +882,9 @@ mod tests {
             entity_id: EntityId::new("urn:ngsi-ld:T:1").expect("id"),
             version: 1,
         };
-        let (_, after) = resolve_payloads(&st, &event(None, Some(r.clone()))).await;
+        let (_, after) = resolve_payloads(&st, &event(None, Some(r.clone())))
+            .await
+            .expect("resolved");
         assert_eq!(
             after.as_ref().and_then(|a| a["id"].as_str()),
             Some("urn:ngsi-ld:T:1"),
@@ -866,12 +893,43 @@ mod tests {
 
         // The row was deleted between publish and consumption.
         let gone = state_with(None).await;
-        let (before, after) = resolve_payloads(&gone, &event(None, Some(r))).await;
+        let (before, after) = resolve_payloads(&gone, &event(None, Some(r)))
+            .await
+            .expect("resolved");
         assert_eq!(after, None, "a dangling reference must resolve to None");
         assert_eq!(before, None);
 
-        let (before, after) = resolve_payloads(&st, &event(None, None)).await;
+        let (before, after) = resolve_payloads(&st, &event(None, None))
+            .await
+            .expect("resolved");
         assert!(before.is_none() && after.is_none(), "no payload, no fetch");
+    }
+
+    /// A store fault while resolving a claim check is not a row that is
+    /// gone: the change must come back (no ack), not notify nobody.
+    #[tokio::test]
+    async fn a_store_fault_resolving_a_claim_check_leaves_the_change_for_redelivery() {
+        let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_secs(1))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/antares_no_such_db")
+            .expect("lazy pool");
+        let st = AppState::with_store(
+            "antares".into(),
+            std::sync::Arc::new(antares_sql::store::any::AnyStore::Pg(
+                antares_sql::store::any::PgBackend::new(pool),
+            )),
+            "postgres",
+        );
+        let r = PayloadRef {
+            entity_id: EntityId::new("urn:ngsi-ld:T:1").expect("id"),
+            version: 2,
+        };
+        let mut ev = event(None, Some(r.clone()));
+        ev.prev_payload_ref = Some(r);
+        ev.seq = 7;
+        assert_eq!(resolve_payloads(&st, &ev).await, None, "outbox read fault");
+        ev.seq = 0;
+        assert_eq!(resolve_payloads(&st, &ev).await, None, "entity read fault");
     }
 
     /// A claim-check fetch is scoped to the EVENT's tenant: a reference must
@@ -887,7 +945,7 @@ mod tests {
             }),
         );
         ev.tenant = TenantId::new("other").expect("tenant");
-        let (_, after) = resolve_payloads(&st, &ev).await;
+        let (_, after) = resolve_payloads(&st, &ev).await.expect("resolved");
         assert_eq!(
             after, None,
             "a reference resolved another tenant's entity: {after:?}"
@@ -974,7 +1032,7 @@ mod tests {
             wire.prev_payload_ref.is_some() && wire.payload_ref.is_some(),
             "the fixture must be over the claim-check ceiling"
         );
-        let (before, after) = resolve_payloads(&st, &wire).await;
+        let (before, after) = resolve_payloads(&st, &wire).await.expect("resolved");
         assert_eq!(before.as_ref(), Some(&before_doc), "before-image lost");
         assert_eq!(after.as_ref(), Some(&after_doc));
         assert_ne!(
