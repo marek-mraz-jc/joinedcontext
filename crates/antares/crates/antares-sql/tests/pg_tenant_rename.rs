@@ -339,6 +339,215 @@ async fn a_write_under_a_renamed_away_name_is_refused_and_the_rollback_stays_ope
     db.drop().await;
 }
 
+async fn rename(pool: &PgPool, old: &str, new: &str) {
+    sqlx::query("SELECT antares_tenant_rename($1, $2)")
+        .bind(old)
+        .bind(new)
+        .execute(pool)
+        .await
+        .expect("renamed");
+}
+
+/// A subscription's stored document, read past the store.
+async fn stored_sub(pool: &PgPool, tenant: &str, id: &str) -> serde_json::Value {
+    sqlx::query_scalar("SELECT subscription FROM subscriptions WHERE tenant_id = $1 AND id = $2")
+        .bind(tenant)
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("stored subscription")
+}
+
+/// T-7274, S5-01: with ANTARES_SECRET_KEY set, a renamed Tenant's
+/// subscription still opens and records its deliveries, its sealed
+/// `NGSILD-Tenant` header names the new Tenant, the boot pass reseals it under
+/// the new name and forgets the old one, and a value written after the rename
+/// opens again after the rollback. No step stores the credential in plaintext.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sealed_subscription_opens_and_notifies_after_the_rename() {
+    use antares_sql::store::pg::doc::{DocKind, PgDocStore};
+    use antares_sql::store::pg::seal::SecretKey;
+    let db = own_db!("sealed");
+    let pool = db.pool.clone();
+    let n = run_id();
+    let old = format!("seal{n}-air");
+    let new = keyed(n, "air");
+    let docs = PgDocStore::new(pool.clone()).with_secret_key(
+        SecretKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").expect("key"),
+    );
+    let token = "Bearer the-webhook-token";
+    let id = "urn:ngsi-ld:Subscription:sealed";
+    let t_old = TenantId::new(&old).expect("tenant");
+    pg::ensure_tenant(&pool, &t_old).await.expect("tenant row");
+    let sub = serde_json::json!({"id": id, "type": "Subscription",
+        "notification": {"endpoint": {"uri": "http://localhost:9", "receiverInfo": [
+            {"key": "Authorization", "value": token},
+            {"key": "NGSILD-Tenant", "value": old}]}}});
+    assert!(docs
+        .create(&t_old, DocKind::Subscription, id, &sub)
+        .await
+        .expect("create"));
+    let at_rest = |doc: serde_json::Value| {
+        let text = doc.to_string();
+        assert!(
+            !text.contains("the-webhook-token"),
+            "plaintext at rest: {text}"
+        );
+        text
+    };
+    let before = at_rest(stored_sub(&pool, &old, id).await);
+
+    rename(&pool, &old, &new).await;
+    let t_new = TenantId::new(&new).expect("tenant");
+    assert_eq!(at_rest(stored_sub(&pool, &new, id).await), before);
+    let got = docs
+        .get(&t_new, DocKind::Subscription, id)
+        .await
+        .expect("opens under the new name")
+        .expect("there");
+    let pairs = &got["notification"]["endpoint"]["receiverInfo"];
+    assert_eq!(pairs[0]["value"], token);
+    assert_eq!(pairs[1]["value"], new.as_str());
+    let sent = docs
+        .record_deliveries(
+            &t_new,
+            DocKind::Subscription,
+            &[(id, "2026-11-18T10:00:00Z", 1)],
+        )
+        .await
+        .expect("a delivery is recorded");
+    assert_eq!(sent[id].0["notification"]["timesSent"], 1);
+    assert_eq!(
+        sent[id].0["notification"]["endpoint"]["receiverInfo"][0]["value"],
+        token
+    );
+
+    // the boot pass reseals under the new name and forgets the old one
+    assert!(docs.seal_plaintext().await.expect("boot pass") >= 1);
+    let resealed = at_rest(stored_sub(&pool, &new, id).await);
+    assert_ne!(resealed, before);
+    let aliases: i64 = sqlx::query_scalar("SELECT count(*) FROM tenant_seal_alias")
+        .fetch_one(&pool)
+        .await
+        .expect("aliases");
+    assert_eq!(aliases, 0);
+    let got = docs
+        .get(&t_new, DocKind::Subscription, id)
+        .await
+        .expect("opens without a former name")
+        .expect("there");
+    assert_eq!(
+        got["notification"]["endpoint"]["receiverInfo"][0]["value"],
+        token
+    );
+    assert_eq!(docs.seal_plaintext().await.expect("again"), 0);
+
+    // sealed under the new name, opened under the old after the rollback
+    sqlx::query("SELECT antares_tenant_rename_rollback($1)")
+        .bind(&new)
+        .execute(&pool)
+        .await
+        .expect("rolled back");
+    let got = docs
+        .get(&t_old, DocKind::Subscription, id)
+        .await
+        .expect("opens after the rollback")
+        .expect("there");
+    assert_eq!(
+        got["notification"]["endpoint"]["receiverInfo"][0]["value"],
+        token
+    );
+    db.drop().await;
+}
+
+/// T-7274, S5-19: the rename moves only the members that name a Tenant by
+/// contract (a registration's `tenant`, an `NGSILD-Tenant` pair); the old
+/// name as an attribute, a key or plain text stays, in the renamed Tenant's
+/// rows and in every other Tenant's.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rename_rewrites_only_the_members_that_name_a_tenant() {
+    use antares_sql::store::pg::doc::{DocKind, PgDocStore};
+    let db = own_db!("contract");
+    let pool = db.pool.clone();
+    let n = run_id();
+    let old = format!("word{n}");
+    let new = keyed(n, "word");
+    let docs = PgDocStore::new(pool.clone());
+    let sub = |tenant_header: &str| {
+        serde_json::json!({"id": "urn:ngsi-ld:Subscription:s", "type": "Subscription",
+            "description": old, "watchedAttributes": [old], "q": format!("{old}==1"),
+            "entities": [{"type": old}], "jsonldContext": {old.as_str(): "https://x/n"},
+            "notification": {"attributes": [old], "endpoint": {"uri": "http://localhost:9",
+                "receiverInfo": [{"key": "X-Note", "value": old},
+                                 {"key": "ngsild-tenant", "value": tenant_header}]}}})
+    };
+    let mut want = Vec::new();
+    for name in [old.clone(), format!("other{n}")] {
+        let t = TenantId::new(&name).expect("tenant");
+        pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+        assert!(docs
+            .create(
+                &t,
+                DocKind::Subscription,
+                "urn:ngsi-ld:Subscription:s",
+                &sub(&old)
+            )
+            .await
+            .expect("create"));
+        let reg = serde_json::json!({"id": "urn:ngsi-ld:R:r", "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": old}]}], "endpoint": "http://localhost:9",
+            "tenant": old, "description": old,
+            "contextSourceInfo": [{"key": "NGSILD-Tenant", "value": old}, {"key": "X-Note", "value": old}]});
+        assert!(docs
+            .create(&t, DocKind::Registration, "urn:ngsi-ld:R:r", &reg)
+            .await
+            .expect("create registration"));
+        let mut s = sub(&new);
+        let mut r = reg.clone();
+        r["tenant"] = new.clone().into();
+        r["contextSourceInfo"][0]["value"] = new.clone().into();
+        s["notification"]["endpoint"]["receiverInfo"][1]["value"] = new.clone().into();
+        let after = if name == old { new.clone() } else { name };
+        want.push((after, s, r));
+    }
+
+    rename(&pool, &old, &new).await;
+    for (tenant, s, r) in want {
+        let mut got = stored_sub(&pool, &tenant, "urn:ngsi-ld:Subscription:s").await;
+        for member in ["timesSent", "status"] {
+            got["notification"]
+                .as_object_mut()
+                .expect("notification")
+                .remove(member);
+        }
+        let mut s = s;
+        for member in ["timesSent", "status"] {
+            s["notification"]
+                .as_object_mut()
+                .expect("notification")
+                .remove(member);
+        }
+        assert_eq!(got, s, "{tenant}");
+        let reg: serde_json::Value = sqlx::query_scalar(
+            "SELECT registration FROM csource_registrations WHERE tenant_id = $1 AND id = 'urn:ngsi-ld:R:r'",
+        )
+        .bind(&tenant)
+        .fetch_one(&pool)
+        .await
+        .expect("registration");
+        assert_eq!(reg, r, "{tenant}");
+        let headers: serde_json::Value = sqlx::query_scalar(
+            "SELECT headers FROM csource_index WHERE tenant_id = $1 AND registration_id = 'urn:ngsi-ld:R:r' LIMIT 1",
+        )
+        .bind(&tenant)
+        .fetch_one(&pool)
+        .await
+        .expect("index row");
+        assert_eq!(headers, r["contextSourceInfo"], "{tenant}");
+    }
+    db.drop().await;
+}
+
 /// The rename refuses a target holding rows, a tombstoned or reserved name,
 /// the default Tenant, and a rollback nobody recorded; nothing moves.
 #[tokio::test(flavor = "multi_thread")]

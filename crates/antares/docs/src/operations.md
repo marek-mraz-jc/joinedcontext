@@ -609,8 +609,16 @@ the broker's role is refused), in a window with the gateway's writes held:
   transaction: each table's `tenant_id`, the hosted `@context`s by owner,
   the reserved-tenant documents whose `tenant` member or id names `old`
   (views, policy rules, the distributed-subscription index), and
-  `csource_index.tenant_at_peer`. It writes `tenant_rename(old, new,
-  renamed_at)` and returns the moved rows per table as JSON, with
+  `csource_index.tenant_at_peer`. In every Tenant's subscriptions and
+  registrations it rewrites only the members that name a Tenant by
+  contract (0038, T-7274): a registration's `tenant` and an `NGSILD-Tenant`
+  pair of `receiverInfo` or `contextSourceInfo`; the old name as an
+  attribute, a type or text stays. A credential sealed under
+  `ANTARES_SECRET_KEY` stays bound to `old`: the rename records `old` in
+  `tenant_seal_alias`, every broker opens such a value by it and renames a
+  sealed `NGSILD-Tenant` header as it reads, and the next broker boot
+  reseals those rows under `new` and deletes the alias row. It writes
+  `tenant_rename(old, new, renamed_at)` and returns the moved rows per table as JSON, with
   `text_still_naming_old`: rows where `old` stays inside a longer string,
   for the operator to read. It refuses, moving nothing, for a reserved or
   default name, an unknown `old`, a `new` outside the grammar, a `new` that
@@ -622,7 +630,8 @@ the broker's role is refused), in a window with the gateway's writes held:
   order-free hash with the Tenant's name normalised, so the digest before
   under `old` equals the digest after under `new`.
 - `antares_tenant_rename_rollback(new)` moves the Tenant back by its
-  `tenant_rename` row and deletes that row.
+  `tenant_rename` row and deletes that row; it records `new` as an alias
+  of `old`, so a credential sealed after the rename still opens.
 
 The runbook, per broker database:
 

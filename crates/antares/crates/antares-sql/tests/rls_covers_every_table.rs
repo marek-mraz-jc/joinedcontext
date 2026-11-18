@@ -30,6 +30,13 @@ const EXEMPT: &[(&str, &str)] = &[
          only the BYPASSRLS rename functions of 0037 write it",
     ),
     (
+        "tenant_seal_alias",
+        "per tenant the NAMES a rename moved it away from (0038): the broker \
+         reads it to open a credential sealed under such a name and deletes \
+         a name once its boot pass resealed every row; it holds no tenant \
+         data, and the rename functions write it",
+    ),
+    (
         "jsonld_contexts",
         "5.13.1: Cached rows are copies of documents the broker fetched from \
          public URLs and belong to no tenant. The tenant-authored kinds \

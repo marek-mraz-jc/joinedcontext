@@ -60,7 +60,9 @@ consumer re-reads with Query Entities. Losses in a row share one `x-gap`.
 
 In a split fleet (`ANTARES_BUS=nats`) the notifier pod reaches the api pod
 that holds the socket over core NATS request/reply on
-`antares.ws.<connection>`.
+`antares.ws.<tenant>.<connection>`: a pod answers only on the subject of
+its connection's own Tenant and writes a relayed notification only when its
+Tenant is the subject's.
 
 ## 3. Resume and lifetime
 
