@@ -485,12 +485,28 @@ async fn answer_ckan_action(
             let op_ctx = state.op_context();
             let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
             if !name.is_empty() {
-                if let Ok(Some(_)) = state.store.get_dataset(&ctx, name).await {
-                    return ckan_err(
-                        &base,
-                        &action,
-                        DataroomError::field_error("name", "That URL is already in use."),
-                    );
+                // Only a caller who may see or edit the dataset learns that the name is taken;
+                // anyone else gets the refusal dataset.propose gives for a record it cannot edit.
+                if let Ok(Some(ds)) = state.store.get_dataset(&ctx, name).await {
+                    let pub_rec = state
+                        .store
+                        .get_publisher(&ctx, &ds.publisher_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+                    let known = dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref())
+                        || state
+                            .authorizer
+                            .check(&ctx, Action::Propose, &target)
+                            .allowed;
+                    if known {
+                        return ckan_err(
+                            &base,
+                            &action,
+                            DataroomError::field_error("name", "That URL is already in use."),
+                        );
+                    }
                 }
             }
             match dataroom_core::ops::execute_operation(

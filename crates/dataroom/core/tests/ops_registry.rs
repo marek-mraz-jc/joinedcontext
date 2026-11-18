@@ -675,6 +675,17 @@ async fn dataset_propose_authorizes_validates_and_records() {
     assert!(is_forbidden(&r), "member without a grant: {r:?}");
     let r = w.run(&w.outsider(), "dataset.propose", ckan.clone()).await;
     assert!(is_forbidden(&r), "outsider: {r:?}");
+    // A name the caller cannot see answers as a free one does: forbidden, never not found.
+    for caller in [w.outsider(), w.anonymous()] {
+        let r = w
+            .run(
+                &caller,
+                "dataset.propose",
+                json!({"name": "internal", "owner_org": "city"}),
+            )
+            .await;
+        assert!(is_forbidden(&r), "existing hidden name: {r:?}");
+    }
     let created = w
         .run(&w.admin(), "dataset.propose", json!({"dataset": ckan}))
         .await

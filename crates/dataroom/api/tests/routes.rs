@@ -1202,6 +1202,18 @@ async fn ckan_dataset_and_resource_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+    // A name the caller cannot see answers like a free one: the refusal, never "in use".
+    for name in ["secret", "veiled", "inner"] {
+        let a = ckan(
+            app,
+            "package_create",
+            None,
+            json!({"name": name, "owner_org": "city"}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::FORBIDDEN, "{name}: {}", a.body);
+        assert!(!a.body.contains("already in use"), "{name}: {}", a.body);
+    }
 
     // package_update: by id or name; unknown is not found.
     let a = ckan(

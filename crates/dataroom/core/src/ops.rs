@@ -923,6 +923,16 @@ pub async fn execute_operation(
             Ok(dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &lang))
         }
         "dataset.propose" => {
+            // A caller who can never write is refused before any lookup, so a name it cannot
+            // see answers as a free one does (the authorizer's own write rules, steps 3 and 4).
+            if req_ctx.subject.read_only {
+                return Err(DataroomError::Forbidden("connector is read-only".into()));
+            }
+            if !req_ctx.subject.is_member_of(req_ctx.org_id) {
+                return Err(DataroomError::Forbidden(
+                    "caller is not a member of the organization".into(),
+                ));
+            }
             let raw_ds = input.get("dataset").cloned().unwrap_or(input);
             let non_empty = |key: &str| {
                 raw_ds
