@@ -6,6 +6,7 @@
 //! found, which is why a page renders without waiting on a broker.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::reconciler::drift::{Difference, Drifted, Found, Kind, Store};
@@ -23,7 +24,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use tower::ServiceExt;
 
-const CSRF_TOKEN: &str = "test-csrf-token-12345";
 const PROJECT: &str = "helsinki";
 const SPACE: &str = "helsinki";
 const ENTITY: &str = "urn:ngsi-ld:AirQualityObserved:hel.fi:helsinki:station-1";
@@ -59,7 +59,10 @@ fn cookies(config: &Config, groups: Vec<String>) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -119,7 +122,7 @@ async fn call(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie)
-        .header(CSRF_HEADER, CSRF_TOKEN)
+        .echo_csrf()
         .body(Body::empty())
         .expect("request");
     let response = server::app(state).oneshot(request).await.expect("response");

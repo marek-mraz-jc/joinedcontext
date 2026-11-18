@@ -13,11 +13,14 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::server;
@@ -26,8 +29,6 @@ use joinedcontext_portal::tools::model_tools::MAX_SAMPLE_BYTES;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::MockServer;
-
-const CSRF: &str = "test-csrf-token-model-tools";
 
 fn session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -60,7 +61,10 @@ fn session_cookie(config: &Config) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -87,7 +91,7 @@ async fn send(
     if !anonymous {
         request = request
             .header(header::COOKIE, session_cookie(config))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
     }
     let response = server::app(AppState::new(config.clone(), None))
         .oneshot(request.body(Body::from(body)).expect("a request"))

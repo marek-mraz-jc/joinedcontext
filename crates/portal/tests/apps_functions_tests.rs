@@ -99,6 +99,7 @@ fn app(name: &str, visibility: &str) -> joinedcontext_portal::resource::Resource
 
 struct Rig {
     app: axum::Router,
+    state: AppState,
     runtime: MockServer,
     /// The suite's own realm; `None` where the process's signing realm stands in.
     _realm: Option<MockServer>,
@@ -147,7 +148,8 @@ async fn rig(test: &str) -> Rig {
     mirror.upsert(app("tampered", "public"));
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
-        app: server::app(state),
+        app: server::app(state.clone()),
+        state,
         runtime,
         _realm: Some(realm),
         _root: root,
@@ -433,7 +435,8 @@ async fn organization_rig(test: &str, runtime: MockServer) -> Rig {
     common::bind(&mirror, "eva", "parks");
     let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::new(mirror));
     Rig {
-        app: server::app(state),
+        app: server::app(state.clone()),
+        state,
         runtime,
         _realm: None,
         _root: root,
@@ -460,14 +463,15 @@ async fn an_organization_apps_function_acts_as_the_viewer_and_answers_her_refusa
         .await;
     let rig = organization_rig("fn-organization", runtime).await;
     let eva = common::REALM.person_token("bbsk-events", "eva", &[]);
-    let cookie = format!("__Host-jc_csrf={CSRF}");
+    let token = common::csrf_echo::edge_csrf(&rig.state, &eva).await;
+    let cookie = format!("__Host-jc_csrf={token}");
     let (status, body) = post(
         &rig,
         "/apps/bbsk-events/api/functions/near-me",
         &[
             ("x-access-token", &eva),
             ("cookie", &cookie),
-            ("x-csrf-token", CSRF),
+            ("x-csrf-token", &token),
         ],
         Vec::new(),
     )

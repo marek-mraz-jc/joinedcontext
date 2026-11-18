@@ -5,6 +5,7 @@
 //! proposal like everything else, and that is what the last two cases assert.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use std::sync::Arc;
@@ -13,7 +14,6 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -26,7 +26,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF_TOKEN: &str = "test-csrf-token-12345";
 const SLUG: &str = "zt4qm7ge2xdv6ksb3ncf5arw2y";
 const INSTANCE_PATH: &str = "projects/ovzdusie/ckan/open-data.yaml";
 
@@ -357,7 +356,7 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
         .await;
 
     let config = Config::for_tests();
-    let cookies = format!("{}; {CSRF_COOKIE}={CSRF_TOKEN}", session_cookie(&config));
+    let cookies = common::csrf_echo::with_bound_csrf(&config.cookie_key, &session_cookie(&config));
     let app = server::app(AppState::new(config, None).with_shako(Arc::new(client)));
 
     let response = app
@@ -367,7 +366,7 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
                 .uri("/api/v1/projects/ovzdusie/ckaninstances")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::from(
                     json!({
                         "apiVersion": API_VERSION,
@@ -397,7 +396,7 @@ async fn a_catalogue_is_configured_through_the_resource_api_as_a_change_proposal
 #[tokio::test]
 async fn a_catalogue_carrying_an_inline_token_is_refused() {
     let config = Config::for_tests();
-    let cookies = format!("{}; {CSRF_COOKIE}={CSRF_TOKEN}", session_cookie(&config));
+    let cookies = common::csrf_echo::with_bound_csrf(&config.cookie_key, &session_cookie(&config));
     let app = server::app(AppState::new(config, None).with_mirror(seeded()));
 
     let response = app
@@ -407,7 +406,7 @@ async fn a_catalogue_carrying_an_inline_token_is_refused() {
                 .uri("/api/v1/projects/ovzdusie/ckaninstances")
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::from(
                     json!({
                         "apiVersion": API_VERSION,

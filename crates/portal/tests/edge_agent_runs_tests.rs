@@ -33,6 +33,7 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 const CSRF: &str = "csrf-token-edge-runs";
 const PROJECT: &str = "helsinki";
@@ -94,7 +95,10 @@ fn session_cookie(config: &Config, username: &str, roles: &[&str], groups: &[&st
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -188,7 +192,7 @@ async fn call(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie)
-        .header("x-csrf-token", CSRF);
+        .echo_csrf();
     let body = match body {
         Some(json) => {
             request = request.header(header::CONTENT_TYPE, "application/json");
@@ -965,6 +969,7 @@ async fn a_run_started_at_the_edge_hands_its_persons_token_to_the_proxy_and_keep
     .expect("the realm is discoverable");
     let state = AppState::new(config, Some(oidc)).with_mirror(mirror());
     let app = server::app(state.clone());
+    let own = common::csrf_echo::edge_csrf(&state, &person).await;
 
     let response = app
         .clone()
@@ -973,9 +978,9 @@ async fn a_run_started_at_the_edge_hands_its_persons_token_to_the_proxy_and_keep
                 .method(Method::POST)
                 .uri(format!("/api/v1/projects/{PROJECT}/agent-runs"))
                 .header("x-access-token", &person)
-                // The edge's session is a browser's: the double-submit token rides along.
-                .header(header::COOKIE, format!("__Host-jc_csrf={CSRF}"))
-                .header("x-csrf-token", CSRF)
+                // The edge's session is a browser's: its own double-submit token rides along.
+                .header(header::COOKIE, format!("__Host-jc_csrf={own}"))
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(create_body().to_string()))
                 .expect("a request"),
@@ -1032,14 +1037,17 @@ async fn a_run_started_at_the_edge_hands_its_persons_token_to_the_proxy_and_keep
         )
         .await
         .expect("a question");
+    let own = common::csrf_echo::edge_csrf(&state, &person).await;
     let turn = |route: &str, body: Value, token: Option<&str>| {
+        // A person's session echoes its own token; with none, the plain double submit.
+        let csrf = if token.is_some() { own.as_str() } else { CSRF };
         let mut request = Request::builder()
             .method(Method::POST)
             .uri(format!(
                 "/api/v1/projects/{PROJECT}/agent-runs/{id}/{route}"
             ))
-            .header(header::COOKIE, format!("__Host-jc_csrf={CSRF}"))
-            .header("x-csrf-token", CSRF)
+            .header(header::COOKIE, format!("__Host-jc_csrf={csrf}"))
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json");
         if let Some(token) = token {
             request = request.header("x-access-token", token);

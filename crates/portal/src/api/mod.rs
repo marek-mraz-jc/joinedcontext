@@ -132,7 +132,7 @@ use crate::auth;
 use crate::error::ApiError;
 use crate::state::AppState;
 
-pub fn router() -> Router<AppState> {
+pub fn router(state: AppState) -> Router<AppState> {
     // Routes protected by double-submit CSRF tokens (session-based UI mutations).
     let protected = Router::new()
         .merge(health::router())
@@ -242,7 +242,10 @@ pub fn router() -> Router<AppState> {
         .merge(mqtt_allowance::router())
         .merge(workspaces::router())
         .merge(crate::tools::model_tools::router())
-        .layer(axum::middleware::from_fn(auth::csrf::require_csrf));
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            auth::csrf::require_csrf,
+        ));
 
     // The forge webhook is a server-to-server call authenticated by its HMAC signature
     // (x-shako-signature), so it must be exempt from the session guard and CSRF protection.

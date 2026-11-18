@@ -1,3 +1,6 @@
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -5,7 +8,6 @@ use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::api::mutate::branch_name;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::Operation;
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
@@ -19,8 +21,6 @@ use serde_json::json;
 use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 
 fn make_session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -57,7 +57,7 @@ fn make_session_cookie(config: &Config) -> String {
 
 fn session_and_csrf_cookies(config: &Config) -> String {
     let session = make_session_cookie(config);
-    format!("{session}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}")
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session)
 }
 
 #[tokio::test]
@@ -139,7 +139,7 @@ async fn delete_returns_202_with_change_and_commits_to_the_forge() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -250,7 +250,7 @@ async fn delete_missing_name_returns_404() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/nonexistent")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -297,7 +297,7 @@ async fn delete_unknown_plural_returns_404() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/unknownplurals/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -377,7 +377,7 @@ async fn delete_blocked_by_dependents_returns_409_naming_this_projects_reference
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -426,7 +426,7 @@ async fn delete_blocked_by_dependents_returns_409_naming_this_projects_reference
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -478,7 +478,7 @@ async fn delete_without_forge_returns_503() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -636,7 +636,7 @@ async fn delete_mobility(config: &Config, state: AppState) -> axum::response::Re
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -881,7 +881,7 @@ async fn deleting_a_datamodel_removes_its_source_and_its_artefacts_in_one_change
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/datamodels/bikes")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -1011,7 +1011,7 @@ async fn a_source_another_manifest_still_names_survives_the_delete() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/datamodels/bikes")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

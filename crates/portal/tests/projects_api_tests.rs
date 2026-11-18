@@ -205,6 +205,7 @@ async fn empty_repository_lists_no_project() {
 // ---------------------------------------------------------------------------
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use common::{envelope, person, REPO};
 use serde_json::{json, Value};
@@ -241,7 +242,7 @@ async fn open(state: &AppState, who: Identity, body: Value) -> (StatusCode, Stri
                 .method("POST")
                 .uri("/api/v1/projects")
                 .header(header::COOKIE, common::cookie(&state.config, who))
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("request"),
@@ -503,7 +504,7 @@ async fn the_door_opens_a_project_and_nothing_else() {
                     header::COOKIE,
                     common::cookie(&state.config, person("nobody")),
                 )
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({
@@ -777,7 +778,7 @@ async fn delete_project(state: &AppState, who: Identity, project: &str) -> (Stat
                 .method("DELETE")
                 .uri(format!("/api/v1/projects/{project}"))
                 .header(header::COOKIE, common::cookie(&state.config, who))
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

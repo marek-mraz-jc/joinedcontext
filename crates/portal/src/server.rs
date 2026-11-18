@@ -64,7 +64,7 @@ pub fn app(state: AppState) -> Router {
     // its manifest (AP-12); the Portal's would override them, so those two headers are set on
     // the Portal's own routes only. Everything below them applies to both.
     let portal = Router::new()
-        .nest("/api/v1", api::router())
+        .nest("/api/v1", api::router(state.clone()))
         .merge(openapi::router())
         // The API and User Guide pages, for a signed-in person only (T-6200).
         .merge(crate::public_docs::router())

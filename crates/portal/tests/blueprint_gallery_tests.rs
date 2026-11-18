@@ -1,12 +1,14 @@
 //! The gallery's data and the flow it starts (T-0207, T-0208, CC-24, CC-30, CC-59).
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -15,8 +17,6 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 
 fn session_cookie(config: &Config, roles: &[&str]) -> String {
     use axum::response::IntoResponse;
@@ -47,7 +47,7 @@ fn session_cookie(config: &Config, roles: &[&str]) -> String {
         let raw = value.to_str().expect("cookie header");
         parts.push(raw.split(';').next().unwrap_or_default().to_string());
     }
-    format!("{}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}", parts.join("; "))
+    csrf_echo::with_bound_csrf(&config.cookie_key, &parts.join("; "))
 }
 
 /// A Dashboard, the simplest project-scoped kind: one path segment, no `{space}` placeholder.
@@ -217,7 +217,7 @@ async fn post_flow_to(app: axum::Router, cookie: &str, body: Value) -> (StatusCo
                 .uri("/api/v1/projects/ovzdusie/flows")
                 .header(header::COOKIE, cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .header("x-csrf-token", TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -280,7 +280,7 @@ async fn post_flow(roles: &[&str], body: Value) -> (StatusCode, Value) {
                 .uri("/api/v1/projects/ovzdusie/flows")
                 .header(header::COOKIE, &cookie)
                 .header(header::CONTENT_TYPE, "application/json")
-                .header("x-csrf-token", TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )

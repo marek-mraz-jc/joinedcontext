@@ -2,9 +2,12 @@
 //! (`GET /q/tenants/{tenant}` with the admin token), read with the same rights as the space, kept
 //! for five minutes, and a broker that cannot answer is a reason, never a zero.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -350,22 +353,21 @@ async fn without_the_admin_token_or_with_a_refused_one_the_reason_is_answered() 
 /// `POST .../usage/recalculate` with the session cookie and the CSRF pair the UI sends; no
 /// cookie at all for `email` "".
 async fn recalculate(state: &AppState, email: &str, uri: &str) -> (StatusCode, Value) {
-    use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+    use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
     const CSRF: &str = "test-csrf-token-space-usage-recalculate";
     let mut request = Request::builder()
         .method("POST")
-        .uri(format!("{uri}/recalculate"))
-        .header(CSRF_HEADER, CSRF);
+        .uri(format!("{uri}/recalculate"));
     request = if email.is_empty() {
         request.header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
     } else {
         request.header(
             header::COOKIE,
-            format!("{}; {CSRF_COOKIE}={CSRF}", cookie(&state.config, email)),
+            csrf_echo::with_bound_csrf(&state.config.cookie_key, &cookie(&state.config, email)),
         )
     };
     let response = server::app(state.clone())
-        .oneshot(request.body(Body::empty()).expect("a request"))
+        .oneshot(request.echo_csrf().body(Body::empty()).expect("a request"))
         .await
         .expect("a response");
     let status = response.status();

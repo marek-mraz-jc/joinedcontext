@@ -13,6 +13,9 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -89,7 +92,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -162,7 +168,7 @@ async fn federation_graph(
             "/api/v1/projects/{project}/ops/jc_federation_graph"
         ))
         .header(header::COOKIE, cookies)
-        .header("x-csrf-token", CSRF)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from("{}"))
         .expect("a request");

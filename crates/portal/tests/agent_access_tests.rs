@@ -1,12 +1,15 @@
 //! The Access view of an agent's ServiceAccount and revoking a grant now (API/01 §52,
 //! AG-130…AG-132): who may read it, who may revoke, and what a revoke refuses before the forge.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -20,7 +23,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "agent-access-csrf";
 const ACCESS: &str = "/api/v1/projects/ovzdusie/serviceaccounts/vendor-ci/access";
 const REVOKE: &str = "/api/v1/projects/ovzdusie/serviceaccounts/vendor-ci/revoke";
 
@@ -63,7 +65,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -148,7 +153,7 @@ async fn call(
     if let Some(who) = who {
         request = request
             .header(header::COOKIE, cookies(config, who))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
     }
     let body = match body {
         Some(body) => {

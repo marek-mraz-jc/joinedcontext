@@ -1,12 +1,15 @@
 //! T-0528: a public dashboard reads only through public Endpoints (UI-19), refused at write
 //! time wherever the three manifests meet.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -15,7 +18,6 @@ use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const CSRF: &str = "test-csrf-token-12345";
 const PROJECT: &str = "ovzdusie";
 
 fn cookies(config: &Config) -> String {
@@ -53,7 +55,10 @@ fn cookies(config: &Config) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -144,7 +149,7 @@ async fn write(
                     if dry_run { "?dryRun=All" } else { "" }
                 ))
                 .header(header::COOKIE, cookies(config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).expect("json")))
                 .expect("request"),
@@ -318,7 +323,7 @@ async fn propose_op(
                     "/api/v1/projects/{project}/ops/jc_resource_propose"
                 ))
                 .header(header::COOKIE, cookies(config))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&json!({ "manifest": manifest })).expect("json"),

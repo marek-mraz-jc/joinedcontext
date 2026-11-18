@@ -1,3 +1,6 @@
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -7,7 +10,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use joinedcontext_portal::api::changes::{ChangeList, ChangeProposal};
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
@@ -21,8 +23,6 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 
 fn make_session_cookie(
     config: &Config,
@@ -71,7 +71,7 @@ fn session_and_csrf_cookies(
     roles: Vec<&str>,
 ) -> String {
     let session = make_session_cookie(config, username, email, name, roles);
-    format!("{session}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}")
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session)
 }
 
 fn approver_cookies(config: &Config) -> String {
@@ -690,7 +690,7 @@ async fn approve_without_portal_approver_role_returns_403() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000001/approve")
                 .header(header::COOKIE, viewer_cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -799,7 +799,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000001/approve")
                 .header(header::COOKIE, author_approver_cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -931,7 +931,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000001/reject")
                 .header(header::COOKIE, author_approver_cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -1045,7 +1045,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000002/approve")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -1089,7 +1089,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000002/approve")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&wrong_body).unwrap()))
                 .expect("request"),
@@ -1143,7 +1143,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000002/approve")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&right_body).unwrap()))
                 .expect("request"),
@@ -1330,7 +1330,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000003/approve")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -1502,7 +1502,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000004/reject")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(r#"{"reason":"validator test App"}"#))
                 .expect("request"),
@@ -1613,7 +1613,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000004/reject")
                 .header(header::COOKIE, approver_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::empty())
                 .expect("request"),
@@ -1864,7 +1864,7 @@ async fn approve_own(state: AppState) -> axum::response::Response {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000001/approve")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(json!({ "confirm": "mobility" }).to_string()))
                 .expect("request"),
@@ -2108,7 +2108,7 @@ async fn approve_bundle(state: AppState, confirm: Option<&str>) -> (StatusCode, 
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000007/approve")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(body)
                 .expect("request"),
@@ -2621,7 +2621,7 @@ async fn approve_endpoint(state: AppState, confirm: Option<&str>) -> (StatusCode
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000042/approve")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(body)
                 .expect("request"),
@@ -3435,7 +3435,7 @@ async fn reject_66_as(
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/changes/chg-00000042/reject")
                 .header(header::COOKIE, cookies)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({ "reason": "proposed by mistake" }).to_string(),

@@ -19,7 +19,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -28,10 +28,10 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 const PROJECT: &str = "helsinki";
 const ELSEWHERE: &str = "espoo";
-const CSRF: &str = "csrf-token-edge-pipeline";
 const AUTHOR: &str = "jana.author@hel.fi";
 const READER: &str = "peter.reader@hel.fi";
 const STRANGER: &str = "nobody@hel.fi";
@@ -104,7 +104,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -167,7 +170,7 @@ async fn send(
     if let Some(email) = email {
         request = request
             .header(header::COOKIE, cookie(&state.config, email))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
     }
     let body = match body {
         Some(json) => {

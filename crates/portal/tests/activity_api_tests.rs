@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 use joinedcontext_portal::activity::ActivityEvent;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -22,10 +22,10 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::unique;
 
 const PROJECT: &str = "helsinki";
-const CSRF: &str = "test-csrf-activity";
 
 fn mirror() -> Arc<Mirror> {
     let mirror = Arc::new(Mirror::new());
@@ -73,7 +73,10 @@ fn cookie(config: &Config, username: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -102,7 +105,7 @@ async fn call(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie)
-        .header(CSRF_HEADER, CSRF);
+        .echo_csrf();
     let body = match body {
         Some(json) => {
             request = request.header(header::CONTENT_TYPE, "application/json");

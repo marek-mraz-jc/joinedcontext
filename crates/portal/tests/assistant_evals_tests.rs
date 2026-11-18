@@ -13,6 +13,9 @@
 //!   succeeded on dev; the replay shows this build still makes them from the same answers.
 //!   Conversations not yet recorded are counted, and the count only ever falls.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,7 +28,7 @@ use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::agents::run::AgentRunEvent;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::ops;
@@ -40,7 +43,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-assistant-evals";
 const PROJECT: &str = "helsinki";
 
 /// The queued pipeline `pipeline--run-now` runs.
@@ -275,7 +277,10 @@ fn cookie(config: &Config, who: &str) -> String {
         .filter_map(|v| v.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -361,7 +366,7 @@ async fn post(
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, cookie(config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("request"),

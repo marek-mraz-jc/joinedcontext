@@ -1,6 +1,9 @@
 //! The assistant's endpoint proposal through the router (T-0586, EP-72, PF-50): rendered, not
 //! written; refused for a caller who may not propose an Endpoint; the lane says what the
 //! change would be.
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -8,7 +11,7 @@ use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -60,7 +63,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -107,7 +113,7 @@ async fn post(config: &Config, who: Identity, uri: &str, body: &Value) -> (Statu
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, cookies(config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).expect("json")))
                 .expect("request"),
@@ -259,7 +265,7 @@ async fn anonymous_is_401() {
                 // The CSRF pair without a session: CSRF is checked first, so this is what
                 // proves the session check answers 401.
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::from(request().to_string()))
                 .expect("request"),
         )

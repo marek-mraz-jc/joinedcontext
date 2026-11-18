@@ -1,6 +1,7 @@
 //! Tests for reading and saving DataModel LinkML source and compiled schema artifacts (DM-01, DM-02, DM-22, DM-24, DM-56).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use axum_extra::extract::cookie::PrivateCookieJar;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane};
 use joinedcontext_portal::config::Config;
@@ -22,8 +23,6 @@ use serde_json::json;
 use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const TEST_CSRF_TOKEN: &str = "csrf-token-12345";
 
 const PUBLISHED_LINKML: &str = r#"id: https://example.org/models/air-quality
 name: air-quality
@@ -85,7 +84,10 @@ fn session_cookie(config: &Config) -> String {
         let pair = raw.split(';').next().unwrap_or_default();
         parts.push(pair.to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -394,7 +396,7 @@ slots:
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source?version=1.0.1")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(breaking_source))
                 .unwrap(),
@@ -488,7 +490,7 @@ slots:
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(candidate))
                 .unwrap(),
@@ -586,7 +588,7 @@ slots:
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source?dryRun=All")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(additive_source))
                 .unwrap(),
@@ -738,7 +740,7 @@ slots:
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(additive_source))
                 .unwrap(),
@@ -901,7 +903,7 @@ async fn create_bikes_through(uri: &str) -> Vec<String> {
                 .method("PUT")
                 .uri(uri)
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(NEW_MODEL))
                 .unwrap(),
@@ -997,7 +999,7 @@ async fn put_of_a_source_past_the_limit_is_refused_and_the_forge_is_not_called()
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/bikes/source?space=mobility")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(huge))
                 .unwrap(),
@@ -1026,7 +1028,7 @@ async fn put_naming_a_space_the_project_does_not_hold_is_404() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/bikes/source?space=nowhere")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(NEW_MODEL))
                 .unwrap(),
@@ -1248,7 +1250,7 @@ async fn dry_run(
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source?dryRun=All")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(source))
                 .unwrap(),
@@ -1359,7 +1361,7 @@ async fn deleting_an_imported_organization_model_is_refused_naming_its_importers
                 .method("DELETE")
                 .uri("/api/v1/projects/org/datamodels/stations")
                 .header(header::COOKIE, &cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .unwrap(),
         )

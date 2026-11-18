@@ -2531,10 +2531,15 @@ async fn serve(state: AppState, mut parts: axum::http::request::Parts, body: Byt
         }
     };
     // The API router's own guard, which this layer stands in front of.
-    if !crate::auth::csrf::is_allowed(&parts.method, &parts.headers) {
+    let user = CurrentUser::from_request_parts(&mut parts, &state).await;
+    let bound = user.as_ref().ok().map(|user| crate::auth::csrf::Bound {
+        session: &user.0,
+        config: &state.config,
+    });
+    if !crate::auth::csrf::is_allowed(&parts.method, &parts.headers, bound) {
         return as_odata_error(crate::error::ApiError::Forbidden.into_response()).await;
     }
-    let user = match CurrentUser::from_request_parts(&mut parts, &state).await {
+    let user = match user {
         Ok(user) => user,
         Err(rejected) => return as_odata_error(rejected.into_response()).await,
     };
@@ -3240,7 +3245,7 @@ async fn portal_door(
             .map_err(|_| no(bad(format!("{name}: a parameter is no valid address"))))?;
         // ponytail: the API router is built per door call (a person's click, never a hot path);
         // keep one in AppState if a profile ever shows it.
-        let mut router = crate::api::router().with_state(state.clone());
+        let mut router = crate::api::router(state.clone()).with_state(state.clone());
         let Ok(response) = tower::Service::call(&mut router, request).await;
         Ok::<_, Refused>(response)
     };

@@ -6,6 +6,7 @@
 //! entity their Policy hides is the same 404 as one that is not there.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -14,7 +15,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -30,7 +31,6 @@ const OTHER: &str = "anna.air@hel.fi";
 const STRANGER: &str = "nobody@hel.fi";
 /// Reads `air` through a Group, not by name.
 const GROUPED: &str = "pia.air@hel.fi";
-const CSRF: &str = "test-csrf-token-12345";
 
 fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
     ResourceEnvelope {
@@ -79,7 +79,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect::<Vec<_>>()
         .join("; ")
-        + &format!("; {CSRF_COOKIE}={CSRF}")
+        + &format!(
+            "; {CSRF_COOKIE}={}",
+            joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+        )
 }
 
 /// The Portal with its gateway: a stub that lets every caller read the entities of `air` except
@@ -196,7 +199,7 @@ async fn call_with_cookie(state: &AppState, email: &str, uri: &str) -> (StatusCo
         .method("GET")
         .uri(uri)
         .header(header::COOKIE, cookie(&state.config, email))
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .body(Body::empty())
         .expect("a request");
     answer(state, request).await

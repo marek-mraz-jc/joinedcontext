@@ -2,6 +2,7 @@
 //! goes to the runner's streams API, what it posts back is the trace, the stream is deleted
 //! whatever happened, and nothing else is touched.
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,7 +12,7 @@ use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -65,7 +66,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -170,7 +174,7 @@ async fn send(state: &AppState, who: &str, uri: &str, body: &Value) -> (StatusCo
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, cookies(&state.config, identity(who)))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).expect("json")))
                 .expect("request"),
@@ -553,7 +557,7 @@ async fn a_script_test_needs_a_session_and_the_propose_verb_on_script() {
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),
@@ -667,7 +671,7 @@ async fn anonymous_is_401_and_a_capture_for_no_test_is_404() {
                 .header(header::CONTENT_TYPE, "application/json")
                 // The CSRF pair without a session: CSRF is checked first.
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::from(request("root = this").to_string()))
                 .expect("request"),
         )
@@ -1366,7 +1370,7 @@ async fn a_webhook_source_answers_only_a_session_with_the_grant_each_route_names
             .method(method)
             .uri(uri)
             .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-            .header(CSRF_HEADER, CSRF)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(r#"{"pipeline":"p","body":"{}"}"#))
             .expect("request")
@@ -1417,7 +1421,7 @@ async fn testing_a_source_needs_a_session_and_a_grant_that_proposes_it() {
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, format!("{CSRF_COOKIE}={CSRF}"))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

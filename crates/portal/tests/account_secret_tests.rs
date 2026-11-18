@@ -1,13 +1,16 @@
 //! Issuing a ServiceAccount's client secret once (PF-37, API/01 §52, T-5626): who may, what the
 //! door refuses before Keycloak, and that the secret is answered once and read nowhere again.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use joinedcontext_portal::activity::ActivityFilter;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -20,7 +23,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "account-secret-csrf";
 const REALM: &str = "/admin/realms/bb";
 
 fn secret_of(account: &str) -> String {
@@ -66,7 +68,10 @@ fn cookies(config: &Config, identity: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -229,7 +234,7 @@ async fn call(
     if let Some(who) = who {
         request = request
             .header(header::COOKIE, cookies(config, who))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
     }
     let response = server::app(state.clone())
         .oneshot(request.body(Body::empty()).expect("request"))

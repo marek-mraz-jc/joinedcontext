@@ -8,6 +8,7 @@
 //! cluster: the mirror, the drafts and the model are in this process.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +18,6 @@ use axum::http::{header, Request, StatusCode};
 use http_body_util::BodyExt;
 use joinedcontext_portal::agents::data_query::MAX_CALLS;
 use joinedcontext_portal::agents::run::AgentRunEvent;
-use joinedcontext_portal::auth::csrf::CSRF_HEADER;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -243,7 +243,7 @@ async fn converse(access: Value, who: Identity, message: &str, answers: &[&str])
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/assistant/conversations")
                 .header(header::COOKIE, common::cookie(&config, who))
-                .header(CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(json!({ "message": message }).to_string()))
                 .expect("request"),

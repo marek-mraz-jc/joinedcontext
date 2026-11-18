@@ -5,6 +5,7 @@
 //! to the broker with it. Equal headers are one decision: the broker decides on them alone.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use common::{envelope, person, session_cookie, CSRF};
+use common::{envelope, person, session_cookie};
 use context_gateway::auth::subject::{
     anonymous_with, person as gateway_person, with_endpoint_roles,
 };
@@ -25,7 +26,6 @@ use context_gateway::auth::token::Claims;
 use context_gateway::middleware::tenancy::caller_headers;
 use context_gateway::resolver::EndpointRoles;
 use jc_core::kinds::EndpointSpec;
-use joinedcontext_portal::auth::csrf::CSRF_HEADER;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -285,7 +285,7 @@ async fn preview(
             "/api/v1/projects/city/endpoints/{endpoint}/preview"
         ))
         .header(header::COOKIE, session_cookie(&r.state.config, session))
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json");
     for (name, value) in forged {
         request = request.header(*name, *value);

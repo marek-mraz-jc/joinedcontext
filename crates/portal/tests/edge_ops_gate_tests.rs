@@ -22,14 +22,17 @@
 //! sweep `ops::registry()` rather than naming operations, so an operation added tomorrow is held to
 //! the same contract without anybody remembering to add it here.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use jc_core::kinds::Verb;
 use joinedcontext_portal::agents::access::Access;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::ops::{self, Caller, OpError, Via};
@@ -41,7 +44,6 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 const PROJECT: &str = "ovzdusie";
-const CSRF: &str = "test-csrf-token-ops-gate";
 /// Names that exist in the mirror and may never appear in an answer to a caller with no binding.
 const LEAK_CANARY: &str = "kanarik-ovzdusie";
 const LEAK_CANARY_ELSEWHERE: &str = "kanarik-doprava";
@@ -167,7 +169,10 @@ fn cookies(config: &Config, who: Identity) -> String {
                 .to_owned()
         })
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -621,7 +626,7 @@ async fn the_operations_checked_by_their_route_tell_a_stranger_nothing() {
                     .method("POST")
                     .uri(format!("/api/v1/projects/{PROJECT}/ops/{name}"))
                     .header(header::COOKIE, stranger.clone())
-                    .header(CSRF_HEADER, CSRF)
+                    .echo_csrf()
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(b"{}".to_vec()))
                     .expect("request"),

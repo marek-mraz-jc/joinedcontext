@@ -1,3 +1,6 @@
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -5,7 +8,7 @@ use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::api::dry_run::DryRunResult;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::Lane;
 use joinedcontext_portal::config::Config;
@@ -17,8 +20,6 @@ use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use tower::ServiceExt;
 use wiremock::MockServer;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-dry-run-token";
 
 fn make_session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -55,7 +56,7 @@ fn make_session_cookie(config: &Config) -> String {
 
 fn session_and_csrf_cookies(config: &Config) -> String {
     let session = make_session_cookie(config);
-    format!("{session}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}")
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session)
 }
 
 #[tokio::test]
@@ -87,7 +88,7 @@ async fn post_dry_run_all_returns_200_and_makes_zero_git_requests() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces?dryRun=All")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -157,7 +158,7 @@ async fn put_dry_run_all_returns_200_and_makes_zero_git_requests() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility?dryRun=All")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -215,7 +216,7 @@ async fn delete_dry_run_all_returns_200_and_makes_zero_git_requests() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility?dryRun=All")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -284,7 +285,7 @@ async fn invalid_dry_run_query_value_returns_400() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces?dryRun=Foo")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -319,7 +320,7 @@ async fn invalid_dry_run_query_value_returns_400() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility?dryRun=Foo")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -349,7 +350,7 @@ async fn invalid_dry_run_query_value_returns_400() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility?dryRun=Foo")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )
@@ -387,7 +388,7 @@ async fn answer(
                 .method(method)
                 .uri(uri)
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).expect("json")))
                 .expect("request"),
@@ -591,7 +592,10 @@ async fn validate_only_refuses_a_stranger_before_the_checks() {
             .filter_map(|v| v.to_str().ok()?.split(';').next().map(str::to_owned))
             .collect::<Vec<_>>()
             .join("; ");
-        format!("{session_cookie}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}")
+        format!(
+            "{session_cookie}; {CSRF_COOKIE}={}",
+            joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+        )
     };
     let body = manifest("ContextSpace", "transit", json!({ "isSandbox": true }));
     let path = "/api/v1/projects/ovzdusie/spaces";

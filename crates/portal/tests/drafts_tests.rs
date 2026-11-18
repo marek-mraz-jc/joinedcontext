@@ -1,6 +1,7 @@
 //! Tests for shared drafts, the draft store, and the draft REST API (AG-61, UI-47).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::ops::drafts::{DraftError, DraftHub, DraftStore};
@@ -22,8 +23,6 @@ use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-drafts-123";
 
 fn session_cookie(
     config: &Config,
@@ -61,7 +60,10 @@ fn session_cookie(
         let pair = raw.split(';').next().unwrap_or_default();
         parts.push(pair.to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -283,7 +285,7 @@ async fn rest_api_draft_crud_roundtrip() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/drafts/DataSource/feed-1")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&put_body).unwrap()))
                 .unwrap(),
@@ -368,7 +370,7 @@ async fn rest_api_draft_crud_roundtrip() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/drafts/DataSource/feed-1")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&put_conflict).unwrap()))
                 .unwrap(),
@@ -385,7 +387,7 @@ async fn rest_api_draft_crud_roundtrip() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/drafts/DataSource/feed-1")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -912,7 +914,7 @@ async fn a_draft_of_a_copy_lives_in_that_copy() {
                     .method("PUT")
                     .uri(uri)
                     .header(header::COOKIE, cookie)
-                    .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                    .echo_csrf()
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Body::from(serde_json::to_vec(&body).unwrap()))
                     .unwrap(),
@@ -1010,7 +1012,7 @@ async fn a_draft_of_a_copy_lives_in_that_copy() {
                 .method("DELETE")
                 .uri("/api/v1/projects/ovzdusie/drafts/Pipeline/air-feed?workspace=air-v2")
                 .header(header::COOKIE, cookie.clone())
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .body(Body::empty())
                 .unwrap(),
         )

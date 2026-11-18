@@ -5,7 +5,7 @@
 //! - `cookie(token)` — the token is readable by the page on purpose, but the cookie is `Secure`,
 //!   `Lax` and path `/`, and **nothing a caller can put in the token may become a second cookie
 //!   attribute**.
-//! - `is_allowed(method, headers)` — a mutation passes only when a `__Host-jc_csrf` cookie and an
+//! - `is_allowed(method, headers, None)` — without a session, a mutation passes only when a `__Host-jc_csrf` cookie and an
 //!   `X-CSRF-Token` header carry the same non-empty value, byte for byte; a safe method always
 //!   passes; nothing else does.
 //! - `require_csrf` — a refusal is `403` as problem+json and says nothing about the request.
@@ -108,7 +108,7 @@ fn the_removal_cookie_clears_the_same_cookie_on_the_same_path() {
 #[test]
 fn a_safe_method_needs_no_token_and_a_mutation_does() {
     for safe in [Method::GET, Method::HEAD, Method::OPTIONS] {
-        assert!(is_allowed(&safe, &headers(None, None)), "{safe}");
+        assert!(is_allowed(&safe, &headers(None, None), None), "{safe}");
     }
     // Every other method is a mutation as far as this lock is concerned, TRACE and an extension
     // method included: the list is the safe one, not the dangerous one.
@@ -121,7 +121,10 @@ fn a_safe_method_needs_no_token_and_a_mutation_does() {
         Method::CONNECT,
         Method::from_bytes(b"PURGE").expect("extension method"),
     ] {
-        assert!(!is_allowed(&mutating, &headers(None, None)), "{mutating}");
+        assert!(
+            !is_allowed(&mutating, &headers(None, None), None),
+            "{mutating}"
+        );
     }
 }
 
@@ -130,7 +133,8 @@ fn a_mutation_passes_only_on_a_byte_for_byte_match() {
     let token = new_token();
     assert!(is_allowed(
         &Method::POST,
-        &headers(Some(&token), Some(&token))
+        &headers(Some(&token), Some(&token)),
+        None
     ));
 
     let near_misses = [
@@ -149,7 +153,7 @@ fn a_mutation_passes_only_on_a_byte_for_byte_match() {
     ];
     for (stored, presented) in near_misses {
         assert!(
-            !is_allowed(&Method::POST, &headers(stored, presented)),
+            !is_allowed(&Method::POST, &headers(stored, presented), None),
             "cookie {stored:?} with header {presented:?} passed",
         );
     }
@@ -162,7 +166,8 @@ fn a_mutation_passes_only_on_a_byte_for_byte_match() {
     };
     assert!(!is_allowed(
         &Method::POST,
-        &headers(Some(&token), Some(&flipped))
+        &headers(Some(&token), Some(&flipped)),
+        None
     ));
 
     // Percent-encoding is not decoded into a match, once or twice.
@@ -170,7 +175,8 @@ fn a_mutation_passes_only_on_a_byte_for_byte_match() {
     if encoded != token {
         assert!(!is_allowed(
             &Method::POST,
-            &headers(Some(&token), Some(&encoded))
+            &headers(Some(&token), Some(&encoded)),
+            None
         ));
     }
 }
@@ -186,7 +192,7 @@ fn the_cookie_that_counts_is_the_one_named_jc_csrf() {
             .expect("cookie header"),
     );
     with_others.insert(CSRF_HEADER, token.parse().expect("csrf header"));
-    assert!(is_allowed(&Method::POST, &with_others));
+    assert!(is_allowed(&Method::POST, &with_others, None));
 
     // A cookie of another name carrying the same value is not the token.
     let mut wrong_name = HeaderMap::new();
@@ -195,7 +201,7 @@ fn the_cookie_that_counts_is_the_one_named_jc_csrf() {
         format!("jc_csrf_x={token}").parse().expect("cookie header"),
     );
     wrong_name.insert(CSRF_HEADER, token.parse().expect("csrf header"));
-    assert!(!is_allowed(&Method::POST, &wrong_name));
+    assert!(!is_allowed(&Method::POST, &wrong_name, None));
 }
 
 #[test]
@@ -213,7 +219,7 @@ fn an_authorization_header_carries_its_own_authentication_and_an_empty_one_authe
             header::AUTHORIZATION,
             HeaderValue::from_str(value).expect("authorization header"),
         );
-        assert!(is_allowed(&Method::POST, &headers), "{value:?}");
+        assert!(is_allowed(&Method::POST, &headers, None), "{value:?}");
     }
 }
 

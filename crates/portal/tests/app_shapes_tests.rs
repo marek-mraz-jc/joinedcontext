@@ -5,6 +5,7 @@
 //! name, and changes nothing else in those files: no provenance stamp, no status, no other App.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -12,7 +13,6 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -27,7 +27,6 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const PROJECT: &str = "banskabystrica";
-const CSRF: &str = "test-csrf-token-12345";
 
 fn app(name: &str, kind: &str) -> String {
     format!(
@@ -124,7 +123,7 @@ fn cookie(config: &Config, groups: &[&str]) -> String {
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect::<Vec<_>>()
         .join("; ");
-    format!("{session}; {CSRF_COOKIE}={CSRF}")
+    common::csrf_echo::with_bound_csrf(&config.cookie_key, &session)
 }
 
 /// The project with `apps`; `groups` decide who calls (`portal-approver` is the bootstrap
@@ -174,7 +173,7 @@ async fn rename(state: AppState, cookie: &str, project: &str) -> (StatusCode, Va
         .method("POST")
         .uri(format!("/api/v1/projects/{project}/apps/rename-shapes"))
         .header(header::COOKIE, cookie)
-        .header(CSRF_HEADER, CSRF)
+        .echo_csrf()
         .body(Body::empty())
         .expect("request");
     let response = server::app(state).oneshot(request).await.expect("response");

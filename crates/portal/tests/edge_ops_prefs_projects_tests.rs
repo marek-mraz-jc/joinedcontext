@@ -12,14 +12,17 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -29,7 +32,6 @@ use joinedcontext_portal::state::AppState;
 
 const PROJECT: &str = "helsinki";
 const ELSEWHERE: &str = "espoo";
-const CSRF: &str = "csrf-token-edge-ops";
 const MEMBER: &str = "peter.member@hel.fi";
 const STRANGER: &str = "nobody@hel.fi";
 
@@ -83,7 +85,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -120,7 +125,7 @@ async fn send(
     if let Some(email) = email {
         request = request
             .header(header::COOKIE, cookie(&state.config, email))
-            .header(CSRF_HEADER, CSRF);
+            .echo_csrf();
     }
     let body = match body {
         Some(json) => {
@@ -197,7 +202,7 @@ async fn the_operations_door_runs_what_the_registry_holds_and_nothing_else() {
                 .method(Method::POST)
                 .uri(format!("/api/v1/projects/{PROJECT}/ops/jc_draft_list"))
                 .header(header::COOKIE, cookie(&state.config, MEMBER))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("not json"))
                 .expect("a request"),

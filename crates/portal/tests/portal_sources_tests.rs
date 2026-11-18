@@ -3,6 +3,7 @@
 //! one, a member without the right is 403, and every call reaches only the portal it names.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -315,7 +316,7 @@ async fn test_connection_is_rate_limited_per_person() {
                 .method("POST")
                 .uri(&uri)
                 .header(header::COOKIE, common::cookie(&config, admin))
-                .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

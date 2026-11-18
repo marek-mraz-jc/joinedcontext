@@ -47,7 +47,7 @@ pub async fn gate(
     let person = person.ok_or_else(|| Box::new(ApiError::Unauthorized.into_response()))?;
     if !method.is_safe()
         && headers.contains_key(&EDGE_TOKEN_HEADER)
-        && !crate::auth::csrf::double_submitted(headers)
+        && !super::functions::session_bound_token(state, headers).await
     {
         return Err(Box::new(ApiError::Forbidden.into_response()));
     }

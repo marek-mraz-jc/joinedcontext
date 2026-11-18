@@ -1,13 +1,14 @@
 //! `GET /api/v1/forms`: the UiSchema manifests that arrange the Portal's forms
 //! (T-0452, UI-01, UI-02, CC-31).
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
-use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
@@ -16,8 +17,6 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 
 fn session_cookie(config: &Config, roles: &[&str]) -> String {
     use axum::response::IntoResponse;
@@ -48,7 +47,7 @@ fn session_cookie(config: &Config, roles: &[&str]) -> String {
         let raw = value.to_str().expect("cookie header");
         parts.push(raw.split(';').next().unwrap_or_default().to_string());
     }
-    format!("{}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}", parts.join("; "))
+    csrf_echo::with_bound_csrf(&config.cookie_key, &parts.join("; "))
 }
 
 /// A `UiSchema` as the mirror holds it: organization-scoped, named after the kind it arranges.

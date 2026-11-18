@@ -5,6 +5,7 @@
 //! the assistant and MCP reached are gone, for the account's owner as for anyone (T-4616).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -23,7 +24,6 @@ use joinedcontext_portal::store::Mirror;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-const CSRF: &str = "csrf-token-value";
 const OWNER: &str = "jana.kovacova";
 
 fn session_cookie(config: &Config, username: &str, roles: &[&str]) -> String {
@@ -57,7 +57,10 @@ fn session_cookie(config: &Config, username: &str, roles: &[&str]) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -122,7 +125,7 @@ async fn call(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie)
-        .header("x-csrf-token", CSRF);
+        .echo_csrf();
     let body = match body {
         Some(json) => {
             request = request.header(header::CONTENT_TYPE, "application/json");

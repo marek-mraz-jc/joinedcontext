@@ -11,9 +11,12 @@
 //!
 //! Tests only (the family's rule). Every case here is green; a red one becomes its own task.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
+use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -82,7 +85,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -614,11 +620,13 @@ async fn post(
     let mut request = Request::builder()
         .method("POST")
         .uri(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(joinedcontext_portal::auth::csrf::CSRF_HEADER, CSRF);
-    if let Some(email) = email {
-        request = request.header(header::COOKIE, cookie(&state.config, email));
-    }
+        .header(header::CONTENT_TYPE, "application/json");
+    request = match email {
+        Some(email) => request
+            .header(header::COOKIE, cookie(&state.config, email))
+            .echo_csrf(),
+        None => request.header(joinedcontext_portal::auth::csrf::CSRF_HEADER, CSRF),
+    };
     let response = server::app(state.clone())
         .oneshot(
             request
@@ -1244,7 +1252,7 @@ async fn odata_endpoints_carry_the_shared_and_gone_rows_the_page_lists_and_no_ot
                 header::COOKIE,
                 cookie(&state.config, who.unwrap_or_default()),
             )
-            .header("x-csrf-token", CSRF)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(if body.is_null() {
                 Body::empty()

@@ -32,8 +32,8 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
-const CSRF: &str = "csrf-token-edge-writes";
 const PROJECT: &str = "helsinki";
 const ELSEWHERE: &str = "espoo";
 const OWNER: &str = "demo.builder";
@@ -94,7 +94,10 @@ fn cookie(config: &Config, username: &str, roles: &[&str], groups: &[&str]) -> S
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -222,9 +225,7 @@ async fn post(
 ) -> (StatusCode, Value) {
     let mut request = Request::builder().method(Method::POST).uri(uri);
     if let Some(cookie) = cookie {
-        request = request
-            .header(header::COOKIE, cookie)
-            .header("x-csrf-token", CSRF);
+        request = request.header(header::COOKIE, cookie).echo_csrf();
     }
     let body = match body {
         Some(json) => {
@@ -827,7 +828,7 @@ async fn a_function_call_is_a_function_the_run_has_and_a_body_that_is_json() {
                     "/api/v1/projects/{PROJECT}/agent-runs/{id}/functions/stations"
                 ))
                 .header(header::COOKIE, &owner)
-                .header("x-csrf-token", CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{not json"))
                 .expect("a request"),

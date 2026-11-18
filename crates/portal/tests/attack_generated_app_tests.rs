@@ -71,7 +71,7 @@ fn portal_cookies(config: &Config) -> (Vec<String>, String, String) {
         .iter()
         .map(|v| v.to_str().expect("cookie header").to_owned())
         .collect();
-    let token = csrf::Token::mint();
+    let token = csrf::Token::bound(&config.cookie_key, &s);
     lines.push(csrf::cookie(&token).to_string());
     let sent = lines
         .iter()

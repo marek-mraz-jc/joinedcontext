@@ -3,6 +3,9 @@
 //! merge request into another branch than the default or a non-writer's is neither listed nor
 //! approvable.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -13,7 +16,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use joinedcontext_portal::api::changes::{ChangeList, ChangeProposal};
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::Lane;
 use joinedcontext_portal::config::Config;
@@ -27,7 +29,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-12345";
 const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie-config')";
 const WRITER: (&str, &str) = ("wera.writer", "wera.writer@hel.fi");
 const APPROVER: (&str, &str) = ("jana.approver", "jana.approver@hel.fi");
@@ -70,7 +71,7 @@ fn cookies(config: &Config, (username, email): (&str, &str)) -> String {
                 .to_owned()
         })
         .collect();
-    format!("{}; {CSRF_COOKIE}={CSRF}", session.join("; "))
+    csrf_echo::with_bound_csrf(&config.cookie_key, &session.join("; "))
 }
 
 fn org(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
@@ -251,7 +252,7 @@ async fn approve(state: &AppState, who: (&str, &str), number: u64) -> StatusCode
                     "/api/v1/projects/ovzdusie/changes/chg-{number:08x}/approve"
                 ))
                 .header(header::COOKIE, cookies(&state.config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .body(Body::empty())
                 .expect("request"),
         )

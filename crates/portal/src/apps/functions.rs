@@ -55,7 +55,7 @@ pub(super) async fn call(
         return not_found();
     }
     let token = edge_token(&state, &headers);
-    if token.is_some() && !crate::auth::csrf::double_submitted(&headers) {
+    if token.is_some() && !session_bound_token(&state, &headers).await {
         return ApiError::Forbidden.into_response();
     }
     let Some(root) = app_root(
@@ -139,6 +139,17 @@ pub(crate) fn entry(module: &str, export: &str) -> String {
         name = quoted(export),
         detail = quoted(&format!("this build has no function '{export}'")),
     )
+}
+
+/// Whether an App door's write echoes the token of the session the request carries (RTE-12):
+/// the person the edge's token names, else the double-submit cookie of an anonymous visitor.
+pub(super) async fn session_bound_token(state: &AppState, headers: &HeaderMap) -> bool {
+    let session = crate::auth::csrf::session_of(state, headers).await;
+    let bound = session.as_ref().map(|session| crate::auth::csrf::Bound {
+        session,
+        config: &state.config,
+    });
+    crate::auth::csrf::double_submitted(headers, bound)
 }
 
 /// The token the edge set for this request, and only when this Portal trusts the edge.

@@ -4,6 +4,7 @@
 //! real propose door over a shako stub, and the test reads the paths the Portal wrote.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::CheckFirst;
 
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum_extra::extract::cookie::PrivateCookieJar;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -23,7 +24,6 @@ use serde_json::{json, Value};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request as Received, ResponseTemplate};
 
-const CSRF_TOKEN: &str = "test-csrf-token-12345";
 const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
 
 fn cookies(config: &Config) -> String {
@@ -58,7 +58,10 @@ fn cookies(config: &Config) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -161,7 +164,7 @@ async fn propose(
                     "/api/v1/projects/{ORG_NAMESPACE}/organizations/{name}"
                 ))
                 .header(header::COOKIE, cookies(&config))
-                .header(CSRF_HEADER, CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),

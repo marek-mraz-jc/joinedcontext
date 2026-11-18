@@ -3,6 +3,7 @@
 //! per page and language; nobody else, another Organization's administrator included, does.
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -123,17 +124,19 @@ async fn on(
         .uri(format!("/api/v1/organization/opendata/pages{path}"))
         .header(header::HOST, &host)
         .header(header::CONTENT_TYPE, "application/json");
-    // A CSRF token passes only on the host of the Organization it names (jc-multiorg-portal).
-    let token = format!("{organization}.{}", common::CSRF);
-    let plain = format!("{CSRF_COOKIE}={}", common::CSRF);
-    let csrf = format!("{CSRF_COOKIE}={token}");
-    request = request.header(CSRF_HEADER, &token);
+    // A CSRF token passes only on the host of the Organization it names (jc-multiorg-portal);
+    // a session's is its own, minted on that host (RTE-12).
     request = match who {
         Some(who) => {
             let cookie = scope(pin, async { common::cookie(&state.config, person(who)) }).await;
-            request.header(header::COOKIE, cookie.replace(&plain, &csrf))
+            request.header(header::COOKIE, cookie).echo_csrf()
         }
-        None => request.header(header::COOKIE, csrf),
+        None => {
+            let token = format!("{organization}.{}", common::CSRF);
+            request
+                .header(header::COOKIE, format!("{CSRF_COOKIE}={token}"))
+                .header(CSRF_HEADER, &token)
+        }
     };
     let body = body.map_or_else(Body::empty, |body| Body::from(body.to_string()));
     let response = server::app(state.clone())

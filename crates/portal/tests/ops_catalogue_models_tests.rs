@@ -10,6 +10,7 @@
 //! the repository as typed (T-1533, fixed in `check_source`).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use std::sync::Arc;
 
@@ -144,7 +145,6 @@ async fn forge_writes(server: &MockServer) -> usize {
 async fn put_raw(state: &AppState, text: &str) -> StatusCode {
     use axum::body::Body;
     use axum::http::{header, Request};
-    use joinedcontext_portal::auth::csrf::CSRF_HEADER;
     use tower::ServiceExt;
     joinedcontext_portal::server::app(state.clone())
         .oneshot(
@@ -152,7 +152,7 @@ async fn put_raw(state: &AppState, text: &str) -> StatusCode {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/datamodels/air-quality/source")
                 .header(header::COOKIE, common::cookie(&state.config, steward()))
-                .header(CSRF_HEADER, common::CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "text/yaml")
                 .body(Body::from(text.to_owned()))
                 .expect("request"),

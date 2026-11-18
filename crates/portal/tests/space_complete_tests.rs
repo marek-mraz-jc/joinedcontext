@@ -1,6 +1,7 @@
 //! Tests for `jc_space_complete` operation (T-0642).
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
@@ -14,7 +15,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::resource::API_VERSION;
@@ -22,7 +23,6 @@ use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-space-complete-123";
 /// The steward's Keycloak user id, the token `sub` a drafted grant names (ADR-N-061, PF-126).
 const STEWARD_ID: &str = "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14";
 
@@ -65,7 +65,10 @@ fn session_cookie(
         let pair = raw.split(';').next().unwrap_or_default();
         parts.push(pair.to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -91,7 +94,7 @@ async fn space_complete_rejects_both_or_neither_files_and_url() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(b"{}".to_vec()))
                 .unwrap(),
@@ -111,7 +114,7 @@ async fn space_complete_rejects_both_or_neither_files_and_url() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&both_payload).unwrap()))
                 .unwrap(),
@@ -145,7 +148,7 @@ async fn space_complete_viewer_without_propose_is_forbidden() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, unpriv_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -203,7 +206,7 @@ async fn space_complete_readme_url_candidate_never_fetched() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&files_payload).unwrap()))
                 .unwrap(),
@@ -283,7 +286,7 @@ async fn space_complete_env_file_creates_secret_ref_without_leaking_password() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&files_payload).unwrap()))
                 .unwrap(),
@@ -370,7 +373,7 @@ spec:
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -408,7 +411,7 @@ async fn complete_as_steward(payload: Value) -> (StatusCode, Value) {
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -472,7 +475,7 @@ async fn complete_against(
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -652,7 +655,7 @@ async fn a_hidden_dashboards_section_draws_no_map() {
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -722,7 +725,7 @@ async fn a_feeds_records_become_the_model_the_mapping_and_a_map_dashboard_with_f
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -838,7 +841,7 @@ async fn records_without_a_position_draw_no_map() {
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -996,7 +999,7 @@ async fn space_complete_endpoint_has_all_classes_projected() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
                 .header(header::COOKIE, steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -1164,7 +1167,7 @@ async fn complete_with_account(payload: Value) -> (StatusCode, Value) {
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -1396,7 +1399,7 @@ async fn a_completion_leaves_another_persons_draft_of_the_same_name_unchanged() 
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     json!({ "space": "city-bikes", "url": "https://example.invalid/free_bike_status.json" }).to_string(),
@@ -1463,7 +1466,7 @@ async fn a_proposed_space_commits_its_model_with_the_compiled_artifacts() {
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -1618,7 +1621,7 @@ async fn proposed_again(
                 .method("POST")
                 .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
                 .header(header::COOKIE, cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),

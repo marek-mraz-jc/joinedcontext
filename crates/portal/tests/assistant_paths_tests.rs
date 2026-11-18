@@ -2,6 +2,9 @@
 //! step without the model, a path narrows the tools, free text is routed by `choose_path`, and a
 //! hand-over is announced. The model is a stub proxy whose answers the tests script.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,7 +14,7 @@ use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
 use http_body_util::BodyExt;
 use joinedcontext_portal::agents::run::AgentRunEvent;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
@@ -24,7 +27,6 @@ use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const CSRF: &str = "test-csrf-token-paths";
 const READER: &str = "reader@hel.fi";
 const BLIND: &str = "blind@hel.fi";
 const PIPER: &str = "piper@hel.fi";
@@ -74,7 +76,10 @@ fn cookie(config: &Config, email: &str) -> String {
         .filter_map(|v| v.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_owned())
         .collect();
-    parts.push(format!("{CSRF_COOKIE}={CSRF}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -222,7 +227,7 @@ async fn send(
                 .method("POST")
                 .uri(uri)
                 .header(header::COOKIE, cookie(config, who))
-                .header(CSRF_HEADER, CSRF)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
                 .expect("request"),

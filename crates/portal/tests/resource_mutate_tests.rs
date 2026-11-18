@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 mod common;
+use common::csrf_echo::EchoCsrf;
 use common::{mirror_holding, CheckFirst};
 
 use axum::body::Body;
@@ -10,7 +11,6 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use http_body_util::BodyExt;
 use joinedcontext_portal::api::mutate::branch_name;
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::change::{Change, ChangePhase, Lane, Operation};
 use joinedcontext_portal::config::Config;
@@ -24,8 +24,6 @@ use serde_json::json;
 use tower::ServiceExt;
 use wiremock::matchers::{body_string_contains, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-12345";
 
 fn make_session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
@@ -62,7 +60,7 @@ fn make_session_cookie(config: &Config) -> String {
 
 fn session_and_csrf_cookies(config: &Config) -> String {
     let session = make_session_cookie(config);
-    format!("{session}; {CSRF_COOKIE}={TEST_CSRF_TOKEN}")
+    common::csrf_echo::with_bound_csrf(&config.cookie_key, &session)
 }
 
 /// A new space's Change carries its empty draft model beside the manifest (T-2699, DM-61, DM-62):
@@ -181,7 +179,7 @@ async fn create_returns_202_with_change_and_commits_to_the_forge() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -286,7 +284,7 @@ async fn create_invalid_manifest_bodies_return_400() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&foreign_ns_body).expect("json"),
@@ -335,7 +333,7 @@ async fn create_invalid_manifest_bodies_return_400() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&with_status_body).expect("json"),
@@ -382,7 +380,7 @@ async fn create_invalid_manifest_bodies_return_400() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&with_token_body).expect("json"),
@@ -432,7 +430,7 @@ async fn create_with_a_spec_the_kind_refuses_returns_400_naming_the_field() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/pipelines")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),
@@ -480,7 +478,7 @@ async fn create_with_a_field_the_kind_does_not_define_is_400_and_writes_nothing(
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),
@@ -535,7 +533,7 @@ async fn create_with_unknown_plural_returns_404() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/unknownplurals")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -590,7 +588,7 @@ async fn replace_with_name_mismatch_returns_400() {
                 .method("PUT")
                 .uri("/api/v1/projects/ovzdusie/spaces/path-space-name")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -637,7 +635,7 @@ async fn patch_unsupported_media_type_returns_415() {
                 .method("PATCH")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&patch_payload).expect("json"),
@@ -759,7 +757,7 @@ async fn patch_merge_patch_json_changes_field_and_returns_202() {
                 .method("PATCH")
                 .uri("/api/v1/projects/ovzdusie/spaces/mobility")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/merge-patch+json")
                 .body(Body::from(
                     serde_json::to_vec(&patch_payload).expect("json"),
@@ -892,7 +890,7 @@ async fn lane_classification_public_endpoint_red_and_sandbox_space_green() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/endpoints")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&public_endpoint).expect("json"),
@@ -937,7 +935,7 @@ async fn create_without_forge_returns_503() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -1081,7 +1079,7 @@ async fn a_second_proposal_while_a_change_is_open_names_it_and_writes_nothing() 
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -1182,7 +1180,7 @@ async fn an_open_change_on_a_suffixed_branch_still_blocks_a_proposal() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -1301,7 +1299,7 @@ async fn an_open_change_elsewhere_does_not_block_a_proposal() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -1410,7 +1408,7 @@ async fn a_stale_proposal_branch_is_recreated_from_main() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/spaces")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&payload).expect("json bytes"),
@@ -1474,7 +1472,7 @@ async fn a_kind_the_platform_cannot_load_is_refused_before_anything_is_written()
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/entities")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&body).expect("json")))
                 .expect("request"),
@@ -1584,7 +1582,7 @@ async fn a_subscription_is_proposed_into_the_space_it_watches() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/subscriptions")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -1632,7 +1630,7 @@ async fn a_subscription_carrying_a_literal_credential_is_refused() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/subscriptions")
                 .header(header::COOKIE, session_and_csrf_cookies(&config))
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).expect("json")))
                 .expect("request"),
@@ -1723,7 +1721,7 @@ async fn the_pipeline_above_the_quota_is_refused_with_the_count_and_the_limit() 
                         .method("POST")
                         .uri(uri)
                         .header(header::COOKIE, session_and_csrf_cookies(&config))
-                        .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                        .echo_csrf()
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(serde_json::to_vec(&body).expect("json")))
                         .expect("request"),
@@ -1980,7 +1978,7 @@ fn mapping_proposal(config: &Config, files: serde_json::Value) -> Request<Body> 
         .method("POST")
         .uri("/api/v1/projects/ovzdusie/mappings")
         .header(header::COOKIE, session_and_csrf_cookies(config))
-        .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
             serde_json::to_vec(&payload).expect("json bytes"),
@@ -2103,7 +2101,7 @@ fn participant_request(
         .method(method_name)
         .uri(uri)
         .header(header::COOKIE, session_and_csrf_cookies(config))
-        .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+        .echo_csrf()
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(serde_json::to_vec(body).expect("json")))
         .expect("request")
@@ -2211,7 +2209,7 @@ async fn a_step_names_its_own_secret_as_a_variable_and_nothing_else() {
             .method("POST")
             .uri("/api/v1/projects/ovzdusie/pipelines")
             .header(header::COOKIE, session_and_csrf_cookies(&config))
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&body).expect("json")))
             .expect("request")
@@ -2285,7 +2283,7 @@ async fn a_project_catalogue_is_checked_with_the_project_and_its_iri_is_required
                         .method("PUT")
                         .uri("/api/v1/projects/org/projects/banskabystrica?dryRun=All")
                         .header(header::COOKIE, session_and_csrf_cookies(&config))
-                        .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                        .echo_csrf()
                         .header(header::CONTENT_TYPE, "application/json")
                         .body(Body::from(serde_json::to_vec(&body).expect("json")))
                         .expect("request"),
@@ -2503,7 +2501,7 @@ async fn two_proposals_of_one_resource_at_once_open_one_change_and_delete_no_bra
             .method("POST")
             .uri("/api/v1/projects/ovzdusie/spaces")
             .header(header::COOKIE, session_and_csrf_cookies(&config))
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
                 serde_json::to_vec(&json!({

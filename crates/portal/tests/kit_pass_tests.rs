@@ -9,6 +9,9 @@
 //! version, a refused path, a repair, a second failure, an answer without blocks, an answer cut at
 //! the budget, the verification passes and their limit, and the tool loop after the first version.
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +36,6 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// The LinkML source of the `bikes` model, served by the forge (DM-56).
 const BIKES_LINKML: &str = "id: https://hel.fi/models/bikes\nname: bikes\nenums:\n  StationStatus:\n    permissible_values:\n      working: {}\n      closed: {}\nclasses:\n  BikeHireDockingStation:\n    slots: [id, name, location, availableBikeNumber, status, stewardNote]\nslots:\n  id: {}\n  name: { range: string, required: true }\n  location: { range: string }\n  availableBikeNumber: { range: integer, minimum_value: 0 }\n  status: { range: StationStatus }\n  stewardNote: { range: string }\n";
 
-const CSRF: &str = "csrf-token-value";
 const PROJECT: &str = "helsinki";
 const STEWARD: &str = "demo.steward";
 const SLUG: &str = "si6epqkx364lprho5uaigutk274r5grb";
@@ -121,7 +123,10 @@ fn session_cookie(config: &Config, username: &str) -> String {
         .filter_map(|value| value.to_str().ok())
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
-    parts.push(format!("__Host-jc_csrf={CSRF}"));
+    parts.push(format!(
+        "__Host-jc_csrf={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &session).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -364,7 +369,7 @@ async fn call(
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie)
-        .header("x-csrf-token", CSRF);
+        .echo_csrf();
     let body = match body {
         Some(json) => {
             request = request.header(header::CONTENT_TYPE, "application/json");

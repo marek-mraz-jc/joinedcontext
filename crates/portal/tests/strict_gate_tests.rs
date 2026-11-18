@@ -1,5 +1,8 @@
 //! Tests for strict validation gating and Verdict-based change proposal enforcement (AG-62, UI-48, PF-57).
 
+#[path = "common/csrf_echo.rs"]
+mod csrf_echo;
+use csrf_echo::EchoCsrf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -10,7 +13,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::MockServer;
 
-use joinedcontext_portal::auth::csrf::{CSRF_COOKIE, CSRF_HEADER};
+use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::forge::ShakoClient;
@@ -19,8 +22,6 @@ use joinedcontext_portal::resource::API_VERSION;
 use joinedcontext_portal::server;
 use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
-
-const TEST_CSRF_TOKEN: &str = "test-csrf-token-strict-456";
 
 fn session_cookie(
     config: &Config,
@@ -58,7 +59,10 @@ fn session_cookie(
         let pair = raw.split(';').next().unwrap_or_default();
         parts.push(pair.to_string());
     }
-    parts.push(format!("{CSRF_COOKIE}={TEST_CSRF_TOKEN}"));
+    parts.push(format!(
+        "{CSRF_COOKIE}={}",
+        joinedcontext_portal::auth::csrf::Token::bound(&config.cookie_key, &s).as_str()
+    ));
     parts.join("; ")
 }
 
@@ -172,7 +176,7 @@ async fn strict_mode_propose_without_verdict_refused_409() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -241,7 +245,7 @@ async fn strict_mode_check_runs_and_attaches_verdict_then_propose_succeeds() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_datasource_check")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&check_payload).unwrap()))
                 .unwrap(),
@@ -276,7 +280,7 @@ async fn strict_mode_check_runs_and_attaches_verdict_then_propose_succeeds() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&propose_payload).unwrap()))
                 .unwrap(),
@@ -343,7 +347,7 @@ async fn strict_mode_stale_verdict_refused_409() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_datasource_check")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&check_payload).unwrap()))
                 .unwrap(),
@@ -382,7 +386,7 @@ async fn strict_mode_stale_verdict_refused_409() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&propose_payload).unwrap()))
                 .unwrap(),
@@ -462,7 +466,7 @@ async fn strict_mode_red_verdict_refused_409() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&propose_payload).unwrap()))
                 .unwrap(),
@@ -533,7 +537,7 @@ async fn lax_mode_allows_propose_with_warning() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&propose_payload).unwrap()))
                 .unwrap(),
@@ -605,7 +609,7 @@ async fn pipeline_propose_requires_jc_pipeline_test() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -666,7 +670,7 @@ async fn space_propose_requires_jc_manifest_dry_run() {
                 .method("POST")
                 .uri("/api/v1/projects/ovzdusie/ops/jc_resource_propose")
                 .header(header::COOKIE, &steward_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
@@ -691,7 +695,7 @@ async fn rest(app: &axum::Router, method: &str, uri: &str, body: &Value) -> (Sta
                 .method(method)
                 .uri(uri)
                 .header(header::COOKIE, config_cookie)
-                .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+                .echo_csrf()
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(serde_json::to_vec(body).unwrap()))
                 .unwrap(),
@@ -984,7 +988,7 @@ async fn rest_door_with_a_draft_reaches_the_check_and_the_gate() {
             .method("POST")
             .uri(uri)
             .header(header::COOKIE, &steward_cookie)
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&with_draft).unwrap()))
             .unwrap()
@@ -1090,7 +1094,7 @@ async fn rest_door_with_a_draft_reaches_the_check_and_the_gate() {
             .method("POST")
             .uri(uri)
             .header(header::COOKIE, &steward_cookie)
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&with_draft).unwrap()))
             .unwrap()
@@ -1142,7 +1146,7 @@ async fn a_check_naming_an_unsaved_draft_creates_it_so_propose_follows_at_once()
             .method("POST")
             .uri(format!("/api/v1/projects/ovzdusie/ops/{op}"))
             .header(header::COOKIE, &cookie)
-            .header(CSRF_HEADER, TEST_CSRF_TOKEN)
+            .echo_csrf()
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(serde_json::to_vec(&payload).unwrap()))
             .unwrap()
