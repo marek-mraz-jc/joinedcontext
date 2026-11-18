@@ -880,7 +880,8 @@ impl SearchFacets {
 mod tests {
     use super::*;
     use dataroom_core::{
-        CatalogueId, Distribution, GrantRule, OrgId, PolicyAuthorizer, Subject, TemporalPeriod,
+        Action, CatalogueId, Distribution, GrantRule, OrgId, PolicyAuthorizer, Subject,
+        TemporalPeriod,
     };
     use jc_time::Date;
     use uuid::Uuid;

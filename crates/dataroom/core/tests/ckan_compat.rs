@@ -425,8 +425,9 @@ fn package_payload_variants_parse_like_ckan() {
             RecordState::Active,
         ),
         (
+            // An unknown visibility word never widens access (writers refuse it first).
             json!({"name": "p", "visibility": "odd", "state": "odd"}),
-            Visibility::Public,
+            Visibility::Internal,
             RecordState::Active,
         ),
     ] {

@@ -621,6 +621,24 @@ async fn dataset_propose_authorizes_validates_and_records() {
         .unwrap();
     assert_eq!(created["name"], "new-ckan");
     assert!(w.activity_ops().await.contains(&"dataset.propose".into()));
+    // A visibility word outside public, internal, restricted is refused, never read as public.
+    for word in ["private", "Internal", "publik"] {
+        let r = w
+            .run(
+                &w.admin(),
+                "dataset.propose",
+                json!({"dataset": {"name": "new-ckan", "owner_org": "city", "visibility": word}}),
+            )
+            .await;
+        assert!(field(&r, "visibility"), "{word}: {r:?}");
+    }
+    let kept = w
+        .store
+        .get_dataset(&w.admin(), "new-ckan")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.visibility, dataroom_core::Visibility::Internal);
 
     // The native shape (publisherId) and the publisher canonicalised to its name.
     let mut native =

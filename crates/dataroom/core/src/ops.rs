@@ -970,6 +970,7 @@ pub async fn execute_operation(
                 }
                 parsed
             } else {
+                crate::ckan_compat::check_ckan_visibility(&raw_ds)?;
                 dataset_from_ckan(
                     req_ctx.org_id,
                     req_ctx.catalogue_id,
