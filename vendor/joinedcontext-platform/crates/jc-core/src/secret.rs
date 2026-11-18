@@ -198,7 +198,12 @@ mod tests {
             a.expose(),
             installation.for_realm("a", "portal-api").expose()
         );
-        assert_eq!(a.expose().len(), 64);
+        // The operator's recipe gives the same value (T-7267 upgrade path):
+        // hmac.new(sha256(secret).digest(), len8(realm)+realm+len8(client)+client, sha256).
+        assert_eq!(
+            a.expose(),
+            "832642d31ee2cae5cf32a0223511823115ff3a0f295c6aacf5e122a0754f6683"
+        );
         for other in [
             installation.for_realm("b", "portal-api"),
             installation.for_realm("a", "portal-reconciler"),
