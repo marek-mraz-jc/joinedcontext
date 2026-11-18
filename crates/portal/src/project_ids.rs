@@ -576,7 +576,8 @@ pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::
         };
         let mut complete = true;
         for table in crate::org_backup::data::PORTAL_TABLES {
-            if table.keys != "projects" {
+            // The branch's own `project_ids` row is the tombstone that stays.
+            if table.keys != "projects" || table.name == "project_ids" {
                 continue;
             }
             let filter = match key_column(table.name) {
