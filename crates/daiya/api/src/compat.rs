@@ -730,23 +730,27 @@ async fn compat_post_dashboard(
     };
     match exec_odata_import(&state, &ctx, imp_body).await {
         Ok(rep) => {
-            let first = &rep["dashboards"][0];
-            let uid = first["uid"].as_str().unwrap_or("");
-            let title = first["title"].as_str().unwrap_or("");
-            let slug = title.to_ascii_lowercase().replace(' ', "-");
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "status": "success",
-                    "slug": slug,
-                    "version": 1,
-                    "id": 1,
-                    "uid": uid,
-                    "url": format!("/d/{uid}/{slug}"),
-                    "folderUid": folder_uid.unwrap_or_default(),
-                })),
-            )
-                .into_response()
+            // Answer from the stored record: the generated uid, its slug and version.
+            let uid = rep["dashboards"][0]["uid"].as_str().unwrap_or_default();
+            match state.store.get_dashboard(ctx.org_id, uid).await {
+                Ok(Some(saved)) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "status": "success",
+                        "slug": saved.slug,
+                        "version": saved.version,
+                        "id": 1,
+                        "uid": saved.uid,
+                        "url": format!("/d/{}/{}", saved.uid, saved.slug),
+                        "folderUid": folder_uid.unwrap_or_default(),
+                    })),
+                )
+                    .into_response(),
+                Ok(None) => error_response(&CrError::Internal(format!(
+                    "dashboard '{uid}' was not found after saving it"
+                ))),
+                Err(e) => error_response(&e),
+            }
         }
         Err(e) => error_response(&e),
     }

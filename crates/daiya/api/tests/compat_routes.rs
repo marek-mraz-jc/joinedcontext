@@ -576,6 +576,27 @@ async fn dashboards_save_read_version_search_and_delete() {
     assert_eq!(saved["slug"], "board-edge");
     assert_eq!(saved["url"], "/d/edge/board-edge");
     assert_eq!(saved["folderUid"], "ops");
+    assert_eq!(saved["version"], 1);
+    // The answer carries what was stored: a generated uid, the stored slug and version.
+    let mut fresh = dashboard("unused", "prom");
+    fresh.as_object_mut().unwrap().remove("uid");
+    fresh["title"] = json!("Fresh  Board!");
+    let made = w
+        .ok(
+            "POST",
+            "/api/dashboards/db",
+            Some(json!({ "dashboard": fresh })),
+        )
+        .await;
+    let uid = made["uid"].as_str().unwrap();
+    assert!(!uid.is_empty(), "{made}");
+    let got = w
+        .ok("GET", &format!("/api/dashboards/uid/{uid}"), None)
+        .await;
+    assert_eq!(made["slug"], got["meta"]["slug"], "{made} {got}");
+    assert_eq!(made["url"], got["meta"]["url"], "{made} {got}");
+    w.ok("DELETE", &format!("/api/dashboards/uid/{uid}"), None)
+        .await;
     w.add_dashboard(dashboard("money", "prom"), Some("finance"))
         .await;
     w.add_dashboard(dashboard("loose", "prom"), None).await;
@@ -615,6 +636,10 @@ async fn dashboards_save_read_version_search_and_delete() {
         .await;
     assert_eq!(st, StatusCode::OK, "{vers}");
     assert_eq!(vers["versions"].as_array().unwrap().len(), 1);
+    let again = w
+        .add_dashboard(dashboard("edge", "prom"), Some("ops"))
+        .await;
+    assert_eq!(again["version"], 2, "{again}");
     let (st, _) = w
         .call(
             "GET",
