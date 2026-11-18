@@ -444,23 +444,18 @@ pub(crate) fn authorization_servers(
         .filter(|_| anonymous_readable)
         .map(|issuer| issuer.issuer().to_owned())
         .into_iter()
-        .chain(
-            gateway
-                .verifier
-                .as_ref()
-                .map(|verifier| {
-                    host.and_then(|host| {
-                        verifier
-                            .organizations()
-                            .into_iter()
-                            .find(|(organization, _)| *organization == host.0)
-                    })
-                    .map_or_else(
-                        || verifier.issuer().to_owned(),
-                        |(_, own)| own.issuer().to_owned(),
-                    )
-                }),
-        )
+        .chain(gateway.verifier.as_ref().map(|verifier| {
+            host.and_then(|host| {
+                verifier
+                    .organizations()
+                    .into_iter()
+                    .find(|(organization, _)| *organization == host.0)
+            })
+            .map_or_else(
+                || verifier.issuer().to_owned(),
+                |(_, own)| own.issuer().to_owned(),
+            )
+        }))
         .collect()
 }
 

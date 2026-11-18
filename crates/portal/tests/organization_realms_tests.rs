@@ -596,7 +596,11 @@ async fn the_mcp_door_takes_an_organizations_realm_on_its_own_host_alone() {
 #[tokio::test]
 async fn the_mcp_metadata_names_the_hosts_own_realm_alone() {
     let w = world();
-    for (at, realm) in [(BA, BA_REALM), (HEL, INSTALLATION), ("portal.example", INSTALLATION)] {
+    for (at, realm) in [
+        (BA, BA_REALM),
+        (HEL, INSTALLATION),
+        ("portal.example", INSTALLATION),
+    ] {
         let response = server::app(w.state.clone())
             .oneshot(
                 Request::builder()

@@ -40,6 +40,7 @@ import argparse
 import re
 import secrets
 import socket
+import ssl
 import sys
 import tomllib
 import urllib.error
@@ -69,14 +70,23 @@ def organizations(doc: dict) -> dict[str, dict]:
     return out
 
 
-def routed(hosts: dict, resolve=socket.getaddrinfo) -> str | None:
-    """None when every host of an Organization has a DNS answer, else the first that has none: an
-    Organization the edge does not route yet (jc.toml lists it before its DNS records exist)."""
+def handshake(host: str) -> None:
+    """A verified TLS handshake with `host` (port 443 unless it names one); raises OSError."""
+    name, _, port = host.partition(":")
+    with socket.create_connection((name, int(port or 443)), timeout=10) as raw:
+        with ssl.create_default_context().wrap_socket(raw, server_hostname=name):
+            pass
+
+
+def routed(hosts: dict, shake=handshake) -> str | None:
+    """None when every host of an Organization completes a verified TLS handshake, else
+    "<host>: <why>" for the first that does not: an Organization jc.toml lists before the edge
+    has its certificates (the jc-dev wildcard DNS answers every name, so DNS alone says nothing)."""
     for host in hosts.values():
         try:
-            resolve(host.split(":")[0], 443)
-        except OSError:
-            return host
+            shake(host)
+        except OSError as e:
+            return f"{host}: {type(e).__name__}"
     return None
 
 
@@ -129,7 +139,7 @@ class Guard:
                 return
         raise Refused(f"{method} {u.hostname}{u.path}: outside the run's write list")
 
-    def note(self, method: str, url: str, status: int) -> None:
+    def note(self, method: str, url: str, status) -> None:
         if self.log:
             u = urllib.parse.urlsplit(url)
             with self.log.open("a") as f:
@@ -150,9 +160,14 @@ class Http(R.Http):
         super()._store(headers)
 
     def call(self, method, path, body=None, headers=None, form=None, timeout=30):
-        """(status, headers with lower-case names, body); status 0 when the host does not answer."""
-        self.guard.check(method, self.url(path))
+        """(status, headers with lower-case names, body); status 0 when the host does not answer
+        or the guard refuses the request (logged REFUSED, its row fails)."""
         self.set_cookies = []
+        try:
+            self.guard.check(method, self.url(path))
+        except Refused as e:
+            self.guard.note(method, self.url(path), "REFUSED")
+            return 0, {}, str(e).encode()
         try:
             st, hdrs, raw = super().call(method, path, body=body, headers=headers, form=form, timeout=timeout)
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as e:
@@ -437,8 +452,8 @@ def main(argv) -> int:
     orgs = organizations(doc)
     for o, hs in list(orgs.items()):
         if missing := routed(hs):
-            res.skip(f"routed.{o}", missing, "a DNS answer for every host of the Organization",
-                     "its rows run", f"{missing} has no DNS answer: {o} is not routed yet")
+            res.skip(f"routed.{o}", missing.split(":")[0], "a verified TLS handshake with every host of the "
+                     "Organization", "its rows run", f"{missing}: {o} is not routed yet")
             del orgs[o]
     if len(orgs) < 2:
         res.skip("one-realm", "jc", "a second Organization realm", "refused on the other's hosts", ONE_REALM)

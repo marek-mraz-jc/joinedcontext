@@ -311,13 +311,21 @@ async fn only_the_endpoints_own_organization_realm_and_the_installations_sign_in
 /// The authorization servers a protected-resource document at `uri` names on `host`'s
 /// Organization host (`None`: a host of no Organization).
 async fn servers_on(fixture: &Fixture, uri: &str, host: Option<&str>) -> Vec<String> {
-    let mut request = Request::builder().uri(uri).body(Body::empty()).expect("a request");
+    let mut request = Request::builder()
+        .uri(uri)
+        .body(Body::empty())
+        .expect("a request");
     if let Some(host) = host {
         request
             .extensions_mut()
             .insert(context_gateway::app::HostOrganization(host.to_owned()));
     }
-    let response = fixture.app.clone().oneshot(request).await.expect("the gateway answers");
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("the gateway answers");
     assert_eq!(response.status(), StatusCode::OK, "{uri} on {host:?}");
     let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
         .await
@@ -337,8 +345,14 @@ async fn the_metadata_on_an_organizations_host_names_its_own_realm_alone() {
     // The Endpoint is hel's: on zilina's host its address is the 404 of an unknown one.
     let door = format!("/.well-known/oauth-protected-resource/api/endpoint/{SLUG}/mcp");
     assert_eq!(servers_on(&fixture, hub, Some("hel")).await, [HEL_ISSUER]);
-    assert_eq!(servers_on(&fixture, hub, Some("zilina")).await, [ZILINA_ISSUER]);
-    assert_eq!(servers_on(&fixture, hub, None).await, [installation.clone()]);
+    assert_eq!(
+        servers_on(&fixture, hub, Some("zilina")).await,
+        [ZILINA_ISSUER]
+    );
+    assert_eq!(
+        servers_on(&fixture, hub, None).await,
+        std::slice::from_ref(&installation)
+    );
     assert_eq!(servers_on(&fixture, &door, Some("hel")).await, [HEL_ISSUER]);
     assert_eq!(servers_on(&fixture, &door, None).await, [installation]);
 }
