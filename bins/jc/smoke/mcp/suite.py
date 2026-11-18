@@ -675,17 +675,28 @@ class Suite:
                 a = doors[k].call("jc_resource_propose", {"project": elsewhere, "manifest": space})
                 self.check(f"portal.{k}.propose_elsewhere.refused", f"portal {k} in {elsewhere}",
                            "jc_resource_propose kind=ContextSpace", "refused (403 or 404)", a.brief(120), a.refused)
-        # People of the realm: the platform administrator's (P), refused to the others.
+        # People of the realm: the platform administrator's (P); an Organization administrator's
+        # own Organization's people (T-7220), never another Organization's; refused to the others.
         a = doors["platform"].call("jc_person_list", {"project": ORG_NAMESPACE})
         names = json.dumps(a.result or {})
         self.check("portal.platform.person_list", "portal platform", "jc_person_list",
                    "the persons of the realm, the smoke personas among them", a.brief(100),
                    a.ok and fx.people["project"].username in names)
-        for k, where in (("project", own), ("organization", foreign)):
+        if "organization" in doors and foreign:
+            a = doors["organization"].call("jc_person_list", {"project": foreign})
+            names = json.dumps(a.result or {})
+            leaked = [k for k in ("platform", "project") if fx.people[k].username in names]
+            self.check("portal.organization.person_list", f"portal organization in {foreign}", "jc_person_list",
+                       f"the persons of {plan['other_org']}, itself among them, no installation persona",
+                       f"leaked {leaked}" if leaked else a.brief(100),
+                       a.ok and fx.people["organization"].username in names and not leaked)
+        for k, where in (("project", own), ("organization", own)):
             if k in doors:
                 a = doors[k].call("jc_person_list", {"project": where})
-                self.check(f"portal.{k}.person_list.refused", f"portal {k}", "jc_person_list", "refused",
-                           a.brief(100), a.refused)
+                names = json.dumps(a.result or {})
+                self.check(f"portal.{k}.person_list.refused", f"portal {k} in {where}", "jc_person_list",
+                           "refused, no person named", a.brief(100),
+                           a.refused and fx.people["platform"].username not in names)
         return doors
 
     def portal_query(self, door, id, target, project, e, args_extra=None, expect=True):
