@@ -21,7 +21,6 @@ use sqlx::{Postgres, Row, Transaction};
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use zeroize::Zeroizing;
 
@@ -153,7 +152,6 @@ impl PgStoreConfig {
 pub struct PgStore {
     pool: PgPool,
     mirror: Arc<MemoryStore>,
-    outbox_notifications: Arc<AtomicU64>,
     write_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -179,7 +177,6 @@ impl PgStore {
         let store = Self {
             pool,
             mirror: Arc::new(MemoryStore::new()),
-            outbox_notifications: Arc::new(AtomicU64::new(0)),
             write_lock: Arc::default(),
         };
         store.verify_rls_enforced().await?;
@@ -192,7 +189,6 @@ impl PgStore {
         Self {
             pool,
             mirror: Arc::new(MemoryStore::new()),
-            outbox_notifications: Arc::new(AtomicU64::new(0)),
             write_lock: Arc::default(),
         }
     }
@@ -341,17 +337,6 @@ impl PgStore {
         .await
         .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
         Ok(tx)
-    }
-
-    /// Emits `NOTIFY shako_outbox` for low-latency outbox wakeup across replicas (S14).
-    pub async fn notify_outbox(&self, instance_id: InstanceId) -> ShakoResult<()> {
-        sqlx::query("SELECT pg_notify('shako_outbox', $1)")
-            .bind(instance_id.to_string())
-            .execute(&self.pool)
-            .await
-            .map_err(|e| ShakoError::Storage(format!("pg_notify failed: {e}")))?;
-        self.outbox_notifications.fetch_add(1, Ordering::SeqCst);
-        Ok(())
     }
 }
 
@@ -968,7 +953,6 @@ impl Store for PgStore {
                     .map_err(|e| ShakoError::Storage(e.to_string()))?;
                 self.mirror.append_outbox(event).await?
             };
-            let _ = self.notify_outbox(stored.instance_id).await;
             Ok(stored)
         })
     }

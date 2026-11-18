@@ -99,7 +99,7 @@ refused:
 | `operations` | CIM 009 clauses (`5.6.1`, `5.7.2`, ...); the compiler expands the platform's operation names and groups |
 | `validity` | optional half-open `[from, to)`, RFC 3339 |
 | `information` | the grant's selectors; each `entities` member has a `type` (an IRI or a core term), at most one of `id` and `idPattern`; `propertyNames` and `relationshipNames` are the Attributes it shows, none = the whole Entity |
-| `q`, `scopeQ` | NGSI-LD query and scope query, on the Entity |
+| `q`, `scopeQ` | NGSI-LD query and scope query, on the Entity; a `scopeQ` lists scope paths joined by a bar or a comma (each covers its subtree), and one with `;` or parentheses is refused at load |
 | `geoQ` | `georel=…;geometry=…;coordinates=…[;geoproperty=…]` |
 | `temporalQ` | `timerel=before|after|between;timeAt=…[;endTimeAt=…]`, an instant or an ISO 8601 duration before now (`P-1D`) |
 | `views` | optional, beside `policies`: `{"{viewId}": ["policy id", …]}`. A request through a listed view (the subject's `@view`, ADR-0020 amendment) is decided by those policies alone; a view not listed, and the plain NGSI-LD root, by every policy. Each id must name a policy of the document, at most once per view; a view may list none (it then grants nothing) |

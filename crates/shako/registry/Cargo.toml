@@ -6,6 +6,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
+tracing = "0.1"
+percent-encoding = "2.3"
 shako-api = { path = "../api" }
 shako-core = { path = "../core" }
 jc-router = { path = "../../shared/jc-router" }

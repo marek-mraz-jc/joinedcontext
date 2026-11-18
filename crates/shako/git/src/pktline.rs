@@ -117,13 +117,6 @@ pub fn write_delim(mut out: impl Write) -> ShakoResult<()> {
     Ok(())
 }
 
-/// Writes `ERR <message>\n` pkt-line.
-pub fn write_err_line(mut out: impl Write, message: &str) -> ShakoResult<()> {
-    encode::error_to_write(message.as_bytes(), &mut out)
-        .map_err(|e| ShakoError::Git(format!("pkt-line error write failed: {e}")))?;
-    Ok(())
-}
-
 /// Writes `data` chunked into sideband frames on `channel` (`Data = 1`, `Progress = 2`, `Error = 3`).
 pub fn write_sideband_chunks(
     mut out: impl Write,

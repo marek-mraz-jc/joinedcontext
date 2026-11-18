@@ -505,6 +505,25 @@ fn ckan_pages_need_success_and_give_source_scoped_ids() {
     assert_eq!(rows_a[0].1.publisher_id, "city");
     assert_eq!(rows_a[0].1.extras["source_id"], "same-id");
 
+    // Platform-meaning fields a remote package sets are this catalogue's to decide.
+    let page = json!({"success": true, "result": {"count": 1, "results": [{
+        "id": "claims", "name": "claims", "title": "T", "type": "api", "state": "draft",
+        "restricted_grants": ["city-editors"],
+        "extras": [{"key": "endpoint", "value": "https://ckan.remote.example/api/x"},
+                   {"key": "generated_by", "value": "urn:other"}]
+    }]}})
+    .to_string();
+    let (rows, _) = parse_ckan_search_page(org, cat, &a, &page, "sk").unwrap();
+    let ds = &rows[0].1;
+    assert_eq!(ds.dataset_type, "dataset");
+    assert_eq!(ds.state, dataroom_core::RecordState::Active);
+    assert_eq!(
+        (ds.endpoint_url.as_ref(), ds.generated_by.as_ref()),
+        (None, None)
+    );
+    assert!(ds.restricted_grants.is_empty());
+    assert!(!ds.extras.contains_key("endpoint") && !ds.extras.contains_key("generated_by"));
+
     let (rows, count) = parse_ckan_search_page(org, cat, &b, r#"{"success": true}"#, "sk").unwrap();
     assert_eq!((rows.len(), count), (0, 0));
     for bad in [r#"{"success": false}"#, r#"{"result": {}}"#] {

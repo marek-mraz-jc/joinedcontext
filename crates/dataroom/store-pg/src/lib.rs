@@ -1734,6 +1734,10 @@ impl Store for PgStore {
             // organization and catalogue (C1, C14). `PgTable` runs its statement on the bare
             // pool, where no tenant is set and RLS hides every row; the rows are therefore read
             // here and answered by the reference evaluator, as in the memory store.
+            if !dataroom_core::odata_defs::set_readable(ctx, set_name) {
+                let table = MemoryTable::new(info, Vec::new()).map_err(DataroomError::from)?;
+                return Ok(Arc::new(table) as Arc<dyn Table>);
+            }
             let lang = self
                 .get_catalogue(ctx.org_id, ctx.catalogue_id)
                 .await?

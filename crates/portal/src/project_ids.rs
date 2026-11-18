@@ -783,6 +783,89 @@ pub async fn backfill_tables(
     Ok(waiting.into_iter().collect())
 }
 
+/// The tables migration 0080 forces (T-7201), in its order: what [`key_under_installation`] keys.
+const FORCED_BY_0080: &[&str] = &[
+    "grafana_visualizations",
+    "alert_subscriptions",
+    "alert_incidents",
+    "alert_notices",
+    "health_check",
+    "health_check_history",
+    "space_quality",
+    "endpoint_usage_daily",
+    "link_check",
+    "app_service_usage",
+    "email_unsubscribes",
+    "mqtt_capture",
+    "entity_trash",
+    "entity_comments",
+    "data_views",
+    "pipeline_log",
+    "pipeline_runs",
+    "pipeline_rejected",
+    "pipeline_status",
+    "pipeline_templates",
+    "pipeline_record_hashes",
+    "pipeline_source_ledger",
+    "pipeline_source_holds",
+    "pipeline_source_complete",
+    "pipeline_source_removed",
+    "erasures",
+    "access_requests",
+    "drafts",
+    "activity",
+    "workspaces",
+    "agent_runs",
+];
+
+/// Keys every unkeyed row of the tables 0080 forces under `installation`, on a database from
+/// before the project registry, after 0079 and before 0080 ([`crate::db::connect_with`], T-7264):
+/// the Organization is seeded as jc seeds it, each named project gets its id and `installation`
+/// as its Organization ([`key`]), and the Organization's own rows ([`ORG_NAMESPACE`]) its reserved
+/// project. The Organization comes from the configuration alone, never from a project's name, so
+/// a project named like another Organization stays the installation's. A row without a name, of
+/// a branch, or of a project already recorded in another Organization is left for 0080 to set
+/// aside or refuse. Answers the rows keyed.
+pub async fn key_under_installation(
+    pool: &PgPool,
+    installation: &crate::host_registry::SeedOrganization,
+) -> Result<u64, sqlx::Error> {
+    crate::host_registry::seed_organizations(pool, std::slice::from_ref(installation)).await?;
+    let organization = installation.name.as_str();
+    let own = reserved(pool, organization).await?;
+    let mut keyed = 0;
+    for table in FORCED_BY_0080 {
+        let column = key_column(table);
+        let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT DISTINCT {column} FROM {table} \
+             WHERE (org_id IS NULL OR project_id IS NULL) AND {column} <> ''"
+        )))
+        .fetch_all(pool)
+        .await?;
+        for name in names {
+            let key = if name == ORG_NAMESPACE {
+                own
+            } else if jc_router::branch_name(&name) {
+                None
+            } else {
+                key(pool, organization, &name).await?
+            };
+            let Some(key) = key else { continue };
+            keyed += sqlx::query(sqlx::AssertSqlSafe(format!(
+                "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid \
+                 WHERE {column} = $3 AND (org_id IS NULL OR project_id IS NULL)"
+            )))
+            .bind(key.org.to_string())
+            .bind(key.project.to_string())
+            .bind(&name)
+            .execute(pool)
+            .await?
+            .rows_affected();
+        }
+    }
+    Ok(keyed)
+}
+
 /// Runs [`backfill`] each minute once the mirror holds a sync (a project's Organization lives
 /// only in Git), on the replica that leads; says each change of the projects that wait.
 pub(crate) fn spawn_backfill(state: crate::state::AppState) {

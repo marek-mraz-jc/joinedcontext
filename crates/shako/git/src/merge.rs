@@ -5,7 +5,7 @@
 
 use crate::repo::{
     CommitAuthor, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
-    resolve_commit_oid, write_objects_as_pack,
+    resolve_commit_oid, sanitize_actor_field, write_objects_as_pack,
 };
 use bstr::BString;
 use gix_hash::ObjectId;
@@ -97,7 +97,7 @@ pub fn check_mergeability(
 type MergedTree = BTreeMap<String, (EntryKind, ObjectId, Option<Vec<u8>>)>;
 
 /// Performs a 3-way tree merge in memory between `ancestor_oid`, `our_oid`, and `their_oid`,
-/// first attempting `gix::Repository::merge_trees` and verifying path-by-path 3-way resolution.
+/// path by path: a file both sides changed differently is a conflict (no line-level merge).
 fn merge_trees_in_memory(
     repo: &gix::Repository,
     ancestor_oid: Option<ObjectId>,
@@ -129,36 +129,6 @@ fn merge_trees_in_memory(
         .map_err(|e| ShakoError::Git(format!("find their tree: {e}")))?;
     let mut their_files = BTreeMap::new();
     collect_tree_blobs(repo, &their_tree, "", &mut their_files)?;
-
-    // Also invoke `repo.merge_trees` to leverage `gix-merge` line-level text merging when both sides touch a file
-    let anc_tree_oid = ancestor_oid
-        .and_then(|id| repo.find_commit(id).ok())
-        .and_then(|c| c.tree_id().ok())
-        .map_or_else(
-            || ObjectId::empty_tree(gix_hash::Kind::Sha1),
-            |id| id.detach(),
-        );
-    let gix_clean = repo
-        .tree_merge_options()
-        .ok()
-        .and_then(|opts| {
-            repo.merge_trees(
-                anc_tree_oid,
-                our_tree.id,
-                their_tree.id,
-                gix_merge::blob::builtin_driver::text::Labels {
-                    ancestor: Some("base".into()),
-                    current: Some("ours".into()),
-                    other: Some("theirs".into()),
-                },
-                opts,
-            )
-            .ok()
-        })
-        .is_some_and(|outcome| {
-            !outcome.has_unresolved_conflicts(gix_merge::tree::TreatAsUnresolved::default())
-        });
-    let _ = gix_clean;
 
     let mut all_paths = std::collections::BTreeSet::new();
     all_paths.extend(base_files.keys().cloned());
@@ -305,13 +275,13 @@ pub fn execute_pr_merge(
     let now_secs = jc_time::TimestampTz::now().as_second();
     let time = gix::date::Time::new(now_secs, 0);
     let author_sig = gix::actor::Signature {
-        name: BString::from(author.name.as_str()),
-        email: BString::from(author.email.as_str()),
+        name: BString::from(sanitize_actor_field(&author.name, "shako")),
+        email: BString::from(sanitize_actor_field(&author.email, "shako@local")),
         time,
     };
     let committer_sig = gix::actor::Signature {
-        name: BString::from(committer.name.as_str()),
-        email: BString::from(committer.email.as_str()),
+        name: BString::from(sanitize_actor_field(&committer.name, "shako")),
+        email: BString::from(sanitize_actor_field(&committer.email, "shako@local")),
         time,
     };
 

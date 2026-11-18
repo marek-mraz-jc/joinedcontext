@@ -751,6 +751,11 @@ pub async fn odata(store: &dyn Store) {
         odata_ids(store, &ctx, "ShaclResults").await,
         ["pkg-oda-air:eu:1"]
     );
+    // Members-only sets answer empty to anyone outside the Organization, unscoped as asked.
+    let anon = RequestCtx::anonymous(ctx.org_id, ctx.catalogue_id);
+    for set in dataroom_core::odata_defs::MEMBERS_ONLY_SETS {
+        assert!(odata_ids(store, &anon, set).await.is_empty(), "{set}");
+    }
     assert_eq!(odata_ids(store, &ctx_b, "Datasets").await, ["pkg-odb-air"]);
     assert_eq!(
         odata_ids(store, &ctx_a2, "Datasets").await,

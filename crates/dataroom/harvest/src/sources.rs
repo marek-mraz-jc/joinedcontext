@@ -888,6 +888,16 @@ pub fn parse_ckan_search_page(
         )
         .to_string();
         ds.publisher_id = source.publisher_id.clone();
+        // Fields with a meaning on this platform are this catalogue's, never the remote's: a
+        // harvested record is a published dataset with no local Endpoint, provenance or grants.
+        ds.dataset_type = "dataset".into();
+        ds.state = RecordState::Active;
+        ds.endpoint_url = None;
+        ds.generated_by = None;
+        ds.restricted_grants.clear();
+        for key in ["endpoint", "generated_by"] {
+            ds.extras.remove(key);
+        }
         ds.harvest_source_id = Some(source.name.clone());
         ds.harvest_source_item_id = Some(item_id.clone());
         ds.extras

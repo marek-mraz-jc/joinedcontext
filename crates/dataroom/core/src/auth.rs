@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Identity, request context, and single `Authorizer` decision trait (C4, C5, C16).
 
-use crate::model::{CatalogueId, Dataset, OrgId, Publisher, Visibility};
+use crate::model::{CatalogueId, Dataset, OrgId, Publisher, RecordState, Visibility};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -275,6 +275,29 @@ impl Decision {
 /// Single authorization decision interface (C4).
 pub trait Authorizer: Send + Sync {
     fn check(&self, ctx: &RequestCtx, action: Action, object: &ObjectTarget) -> Decision;
+}
+
+/// The one rule for whether the caller sees a dataset: it must be readable; a draft, a withdrawn
+/// record or a withdrawn publisher's record is shown only to members of the catalogue's
+/// Organization, and a `jc_hide` dataset (`hidden`) only to a caller who may propose changes to
+/// it. Being signed in is not enough: a subject of another Organization sees neither.
+pub fn dataset_visible(
+    authorizer: &dyn Authorizer,
+    ctx: &RequestCtx,
+    ds: &Dataset,
+    publisher: Option<&Publisher>,
+    hidden: bool,
+) -> bool {
+    let target = ObjectTarget::from_dataset(ds, publisher);
+    if !authorizer.check(ctx, Action::Read, &target).allowed {
+        return false;
+    }
+    let unpublished = ds.state != RecordState::Active
+        || publisher.is_some_and(|p| p.state == RecordState::Withdrawn);
+    if unpublished && !ctx.subject.is_member_of(ctx.org_id) {
+        return false;
+    }
+    !hidden || authorizer.check(ctx, Action::Propose, &target).allowed
 }
 
 /// Rule entry for the standalone/local [`PolicyAuthorizer`] (C4).
