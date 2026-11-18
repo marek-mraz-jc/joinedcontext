@@ -397,13 +397,28 @@ enum ValueKey<'q> {
     Text(&'q str),
 }
 
+/// A query number as `entity_value_rows` (0024) stores one: past 1e308 it
+/// is infinite, under 1e-300 in magnitude it is 0. The clamp is monotone, so
+/// a bound clamped the same way still selects every stored match.
+fn stored_num(n: f64) -> f64 {
+    if n > 1e308 {
+        f64::INFINITY
+    } else if n < -1e308 {
+        f64::NEG_INFINITY
+    } else if n.abs() < 1e-300 {
+        0.0
+    } else {
+        n
+    }
+}
+
 fn value_key(op: CmpOp, want: &QValue) -> Option<ValueKey<'_>> {
     Some(match (op, want) {
-        (CmpOp::Eq, QValue::Num(n)) => ValueKey::Eq(*n),
-        (CmpOp::Gt | CmpOp::Ge, QValue::Num(n)) => ValueKey::AtLeast(*n),
-        (CmpOp::Lt | CmpOp::Le, QValue::Num(n)) => ValueKey::AtMost(*n),
+        (CmpOp::Eq, QValue::Num(n)) => ValueKey::Eq(stored_num(*n)),
+        (CmpOp::Gt | CmpOp::Ge, QValue::Num(n)) => ValueKey::AtLeast(stored_num(*n)),
+        (CmpOp::Lt | CmpOp::Le, QValue::Num(n)) => ValueKey::AtMost(stored_num(*n)),
         (CmpOp::Eq, QValue::Range(lo, hi)) => match (lo.as_ref(), hi.as_ref()) {
-            (QValue::Num(a), QValue::Num(b)) => ValueKey::Between(*a, *b),
+            (QValue::Num(a), QValue::Num(b)) => ValueKey::Between(stored_num(*a), stored_num(*b)),
             _ => return None,
         },
         (CmpOp::Eq, QValue::Str(s)) if !s.contains('\0') => ValueKey::Text(s),
@@ -2382,6 +2397,30 @@ mod tests {
 
     fn wheres() -> Vec<String> {
         vec!["tenant_id = $1".to_owned()]
+    }
+
+    /// The probe of `entity_values` only narrows: a number 0024 stored as 0
+    /// or as infinity is probed for that same stored value.
+    #[test]
+    fn value_probe_binds_numbers_as_the_table_stores_them() {
+        let num = |n| QValue::Num(n);
+        assert_eq!(value_key(CmpOp::Eq, &num(1e-305)), Some(ValueKey::Eq(0.0)));
+        assert_eq!(
+            value_key(CmpOp::Ge, &num(-1e-305)),
+            Some(ValueKey::AtLeast(0.0))
+        );
+        assert_eq!(
+            value_key(CmpOp::Eq, &num(1.7e308)),
+            Some(ValueKey::Eq(f64::INFINITY))
+        );
+        assert_eq!(
+            value_key(CmpOp::Le, &num(-1.7e308)),
+            Some(ValueKey::AtMost(f64::NEG_INFINITY))
+        );
+        assert_eq!(
+            value_key(CmpOp::Lt, &num(42.5)),
+            Some(ValueKey::AtMost(42.5))
+        );
     }
 
     /// A count under many dataset patterns reads each id once, and selects
