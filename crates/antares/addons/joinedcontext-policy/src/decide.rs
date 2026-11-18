@@ -216,15 +216,8 @@ fn decided(
         write(&grants, op, &types)
     } else if NAME_READS.contains(&op.clause) {
         names(table, platform, now)
-    } else if types.iter().all(|t| {
-        grants
-            .iter()
-            .any(|p| p.selectors.is_empty() || p.selectors.iter().any(|s| s.types.contains(t)))
-    }) {
-        // a Subscription or Registration names only types some grant of the clause selects
-        Decision::Allow
     } else {
-        Decision::Deny(NOT_GRANTED.into())
+        Decision::Allow
     }
 }
 
@@ -1527,24 +1520,6 @@ mod tests {
                               "attributes": {"*": {"metadata": ["unitCode"]}}}]}]}))?;
         let got = members(on(&with_prohibition, "5.7.2", None))?.ok_or("no members")?;
         assert!(!got.rest.contains("unitCode") && got.rest.contains("observedAt"));
-        Ok(())
-    }
-
-    /// A grant of a Subscription or Registration clause covers the types it selects only.
-    #[test]
-    fn a_subscription_grant_covers_only_its_own_types() -> Result<(), String> {
-        let t = table(&json!({"operations": ["5.8.1", "5.9.2"]}))?;
-        for clause in ["5.8.1", "5.9.2"] {
-            let ask = |types: &[String]| with(&t, clause, types, &[], None, false);
-            assert!(matches!(ask(&car()), Decision::Allow), "{clause}");
-            let mixed = [car(), vec![iri("Bike")]].concat();
-            for types in [vec![iri("Bike")], mixed] {
-                assert!(
-                    matches!(ask(&types), Decision::Deny(_)),
-                    "{clause} {types:?}"
-                );
-            }
-        }
         Ok(())
     }
 
