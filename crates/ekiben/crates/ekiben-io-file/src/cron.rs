@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, NaiveDateTime, TimeDelta, TimeZone, Timelike, Utc};
-use chrono_tz::Tz;
+use ekiben_bloblang::iana::Zone as Tz;
 use ekiben_core::config::parse_duration_str;
 
 const STAR: u64 = 1 << 63;
@@ -74,7 +74,7 @@ pub fn parse(expr: &str) -> Result<Schedule, String> {
                 .map_err(|_| format!("provided bad location {name}: unknown time zone {name}"))?;
             (tz, spec.trim())
         }
-        None => (Tz::UTC, expr.trim()),
+        None => (Tz::utc(), expr.trim()),
     };
     if let Some(desc) = spec.strip_prefix('@') {
         return descriptor(desc, tz);
@@ -454,6 +454,25 @@ mod tests {
             next("TZ=Europe/Bratislava 0 0 9 * * *", "2026-11-15T12:00:00Z"),
             "2026-11-16T08:00:00+00:00"
         );
+    }
+
+    #[test]
+    fn helsinki_skips_the_spring_gap_and_fires_once_in_the_autumn_fold() {
+        // 2026-03-29 03:30 does not exist in Helsinki (EET -> EEST at 03:00).
+        assert_eq!(
+            next("TZ=Europe/Helsinki 0 30 3 * * *", "2026-03-28T12:00:00Z"),
+            "2026-03-30T00:30:00+00:00"
+        );
+        // 2026-10-25 03:30 happens twice (EEST -> EET at 04:00): the first one fires, once.
+        assert_eq!(
+            next("TZ=Europe/Helsinki 0 30 3 * * *", "2026-10-24T12:00:00Z"),
+            "2026-10-25T00:30:00+00:00"
+        );
+        assert_eq!(
+            next("TZ=Europe/Helsinki 0 30 3 * * *", "2026-10-25T00:30:00Z"),
+            "2026-10-26T01:30:00+00:00"
+        );
+        assert!(parse("TZ=europe/helsinki 0 30 3 * * *").is_err());
     }
 
     #[test]

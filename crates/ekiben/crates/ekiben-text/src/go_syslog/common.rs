@@ -8,7 +8,7 @@ use std::str::FromStr;
 use chrono::{
     DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike,
 };
-use chrono_tz::Tz;
+use ekiben_bloblang::iana::Zone as Tz;
 
 /// A Go `time.Time` reduced to what the machines keep: the instant and the zone offset it reads in.
 pub type GoTime = DateTime<FixedOffset>;
@@ -218,6 +218,32 @@ pub fn format_rfc3339_nano(t: &GoTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn in_location_follows_dst_in_bratislava_and_helsinki() {
+        let summer = parse_rfc3339(b"2026-07-15T12:00:00Z").unwrap();
+        let winter = parse_rfc3339(b"2026-01-15T12:00:00Z").unwrap();
+        for (name, w, s) in [
+            (
+                "Europe/Bratislava",
+                "2026-01-15T13:00:00+01:00",
+                "2026-07-15T14:00:00+02:00",
+            ),
+            (
+                "Europe/Helsinki",
+                "2026-01-15T14:00:00+02:00",
+                "2026-07-15T15:00:00+03:00",
+            ),
+        ] {
+            let loc = load_location(name).unwrap();
+            assert_eq!(format_rfc3339_nano(&in_location(winter, &loc)), w);
+            assert_eq!(format_rfc3339_nano(&in_location(summer, &loc)), s);
+        }
+        assert_eq!(
+            load_location("Nowhere/Town").unwrap_err(),
+            "unknown time zone Nowhere/Town"
+        );
+    }
 
     #[test]
     fn go_time_helpers_match_go() {

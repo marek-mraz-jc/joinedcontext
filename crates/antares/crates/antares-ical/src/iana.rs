@@ -91,7 +91,13 @@ impl FromStr for Zone {
         if let Some(entry) = kept.get(name) {
             return Ok(Self(entry));
         }
-        let tz = JiffZone::get(name).map_err(|_| unknown())?;
+        // the bundled database, never the host's: /usr/share/zoneinfo differs between images
+        // (Debian moves `US/Eastern` and the other backward links to tzdata-legacy)
+        static BUNDLED: OnceLock<jiff::tz::TimeZoneDatabase> = OnceLock::new();
+        let tz = BUNDLED
+            .get_or_init(jiff::tz::TimeZoneDatabase::bundled)
+            .get(name)
+            .map_err(|_| unknown())?;
         // jiff matches names case-insensitively; chrono-tz did not, and neither does this.
         if tz.iana_name() != Some(name) {
             return Err(unknown());
