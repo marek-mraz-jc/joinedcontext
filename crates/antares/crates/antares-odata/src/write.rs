@@ -91,11 +91,13 @@ pub(crate) async fn create(
     );
     let preferred = returned(headers);
     let minimal = preferred == Some(Return::Minimal);
-    let mut answer = if minimal {
-        no_content(version)
+    // The view reads it as any other Entity: what it hides stays out. The Entity is written
+    // either way, so a caller who may not read it back gets the minimal answer, never an error
+    // that invites a retry.
+    let read = if minimal {
+        None
     } else {
-        // The view reads it as any other Entity: what it hides stays out.
-        let mut read = entity(
+        entity(
             reads,
             caller,
             ctx,
@@ -104,19 +106,29 @@ pub(crate) async fn create(
             &QueryOptions::default(),
             headers,
         )
-        .await?;
-        *read.status_mut() = StatusCode::CREATED;
-        read
+        .await
+        .ok()
+    };
+    let shown = read.is_some();
+    let mut answer = match read {
+        Some(mut read) => {
+            *read.status_mut() = StatusCode::CREATED;
+            read
+        }
+        None => no_content(version),
     };
     // A key is a URL segment: always a header value.
     let location = HeaderValue::from_str(&location).unwrap_or(HeaderValue::from_static("/"));
-    if minimal {
+    if !shown {
         answer
             .headers_mut()
             .insert("OData-EntityId", location.clone());
     }
     answer.headers_mut().insert(LOCATION, location);
-    Ok(applied(answer, preferred))
+    Ok(applied(
+        answer,
+        if shown || minimal { preferred } else { None },
+    ))
 }
 
 /// The `return` preference of a write (Protocol 4.01 8.2.8.7).
