@@ -821,7 +821,8 @@ async fn a_gated_ui_rust_app_without_a_pod_is_not_named_to_a_stranger() {
     spec["visibility"] = "project".into();
     mirror.upsert(envelope("App", "ovzdusie", "pod-gated", spec));
     let portal = server::app(AppState::new(config, None).with_mirror(mirror));
-    for accept in ["text/html", "application/json"] {
+    // A browser's page request goes to sign-in first; a fetch or curl gets the visibility's answer.
+    for accept in ["application/json", "*/*"] {
         let (status, _, body) = send(
             &portal,
             "pod-gated.apps.example.org",
