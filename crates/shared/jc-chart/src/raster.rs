@@ -820,6 +820,61 @@ mod tests {
         Instant::now() + Duration::from_secs(10)
     }
 
+    // Times as chrono 0.4.45 read and printed them, pinned before the move to jiff (T-7240):
+    // axis labels in UTC, `observedAt` back in milliseconds with `Z`, a temporal cell in epoch ms.
+    #[test]
+    fn chart_times_keep_chrono_bytes() {
+        let ms = 1_774_747_800_120.0; // 2026-03-29T01:30:00.120Z, Bratislava's spring change
+        assert_eq!(date(ms, 3_600_000.0), "01:30");
+        assert_eq!(date(ms, 30.0 * 86_400_000.0), "2026-03-29");
+        assert_eq!(date(f64::MAX, 1.0), "?");
+        let point = Point {
+            x: Some(Cell::Number(1.0)),
+            y: None,
+            color: None,
+            size: None,
+            theta: None,
+        };
+        let mut cats = crate::spec::Categories::default();
+        for (input, observed, cell) in [
+            (
+                "2026-03-29T03:30:00.120+02:00",
+                Some("2026-03-29T01:30:00.120Z"),
+                Some(ms),
+            ),
+            (
+                "2026-10-25T03:30:00+03:00",
+                Some("2026-10-25T00:30:00.000Z"),
+                Some(1_792_888_200_000.0),
+            ),
+            (
+                "2026-03-29T01:30:00.1234Z",
+                Some("2026-03-29T01:30:00.123Z"),
+                Some(1_774_747_800_123.0),
+            ),
+            ("2026-03-29T01:30Z", None, None),
+            ("2026-03-29", None, None),
+        ] {
+            let row = serde_json::json!({ "observedAt": input });
+            let row = row.as_object().expect("row");
+            let v = crate::spec::view_point(&point, row);
+            assert_eq!(
+                v.get("observedAt").and_then(serde_json::Value::as_str),
+                observed,
+                "{input}"
+            );
+            let got = crate::spec::cell(row.get("observedAt"), Scale::Temporal, &mut cats);
+            assert_eq!(
+                got.map(|c| match c {
+                    Cell::Number(n) => n,
+                    Cell::Category(_) => f64::NAN,
+                }),
+                cell,
+                "{input}"
+            );
+        }
+    }
+
     fn png_size(png: &[u8]) -> (u32, u32) {
         let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
         (be(16), be(20))

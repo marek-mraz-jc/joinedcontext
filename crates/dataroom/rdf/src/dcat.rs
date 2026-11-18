@@ -2653,6 +2653,52 @@ mod tests {
         assert_ne!(ds[1].issued.to_rfc3339(), "not a date");
     }
 
+    // DCAT dates as chrono 0.4.45 wrote and read them, pinned before the move to jiff (T-7238).
+    #[test]
+    fn dcat_dates_keep_chrono_bytes() {
+        let mut v = serde_json::to_value(full_dataset()).expect("json");
+        v["issued"] = serde_json::json!("2026-03-29T03:30:00.120+02:00");
+        v["modified"] = serde_json::json!("2026-10-25T01:30:59.999+03:00");
+        v["temporal"] = serde_json::json!({"start": "0024-03-01", "end": "2026-10-25"});
+        let ds: Dataset = serde_json::from_value(v).expect("dataset");
+        let cid = ds.catalogue_id;
+        let cat = sample_catalogue(ds.org_id, cid);
+        let ttl = serialize_dataset(&ds, &cat, None, RdfFormat::NTriples, DcatProfileKind::Eu301);
+        let lines: Vec<&str> = ttl
+            .lines()
+            .filter(|l| l.contains("issued") || l.contains("modified") || l.contains("Date>"))
+            .collect();
+        let xsd = "^^<http://www.w3.org/2001/XMLSchema#";
+        assert_eq!(
+            lines,
+            [
+                format!("<https://data.example.org/ds/full> <http://purl.org/dc/terms/issued> \"2026-03-29T01:30:00Z\"{xsd}dateTime> ."),
+                format!("<https://data.example.org/ds/full> <http://purl.org/dc/terms/modified> \"2026-10-24T22:30:59Z\"{xsd}dateTime> ."),
+                format!("_:b2 <http://www.w3.org/ns/dcat#endDate> \"2026-10-25\"{xsd}date> ."),
+                format!("_:b2 <http://www.w3.org/ns/dcat#startDate> \"0024-03-01\"{xsd}date> ."),
+            ]
+        );
+        for (input, want) in [
+            (
+                "2026-03-29T03:30:00.5+02:00",
+                Some("2026-03-29T01:30:00.500+00:00"),
+            ),
+            ("2026-03-29T03:30:00", Some("2026-03-29T03:30:00+00:00")),
+            ("2026-3-29T3:30:00", Some("2026-03-29T03:30:00+00:00")),
+            ("2026-03-29T03:30", Some("2026-03-29T00:00:00+00:00")),
+            ("2026-03-29garbage", Some("2026-03-29T00:00:00+00:00")),
+            ("2026-02-30T00:00:00", None),
+            ("2026-02-30", None),
+            ("26-03-29", None),
+        ] {
+            assert_eq!(
+                parse_any_datetime(input).map(|t| t.to_rfc3339()).as_deref(),
+                want,
+                "{input}"
+            );
+        }
+    }
+
     #[test]
     fn publisher_licence_and_service_fallbacks() {
         let org = OrgId::from_uuid(Uuid::from_u128(1));
