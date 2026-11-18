@@ -734,6 +734,26 @@ async fn check_entity_conflict(
 /// `sweep_expired_registrations` on the sweep tick. Unlike a Subscription
 /// (5.8.6), a Registration has no `status` member that keeps an expired one
 /// visible.
+/// A patch's masked contextSourceInfo values (as a read answered them) keep
+/// the stored ones, on the stored endpoint only.
+fn keep_masked_csi(
+    norm: &mut Map<String, Value>,
+    stored: &Map<String, Value>,
+) -> Result<(), NgsiError> {
+    let moved = norm
+        .get("endpoint")
+        .is_some_and(|e| Some(e) != stored.get("endpoint"));
+    match norm.get_mut("contextSourceInfo") {
+        Some(csi) => crate::subscriptions::unmask_pairs(
+            "contextSourceInfo",
+            csi,
+            stored.get("contextSourceInfo"),
+            moved,
+        ),
+        None => Ok(()),
+    }
+}
+
 async fn take_live_registration(
     st: &AppState,
     tenant: &TenantId,
@@ -1425,8 +1445,7 @@ pub async fn update_registration(
         let obj = parsed.object(NgsiError::BadRequestData(
             "fragment must be a JSON object".into(),
         ))?;
-        gate!(st, &tenant, &headers, "5.9.3", ids: &[&id]).await?;
-        let norm = normalize_registration(obj, &parsed.ctx, true)?;
+        let mut norm = normalize_registration(obj, &parsed.ctx, true)?;
         let ts = now_iso();
         // The 5.9.3.4 re-checks below read the registration set that the
         // mutate then writes — the pair is atomic or a concurrent write can
@@ -1435,8 +1454,10 @@ pub async fn update_registration(
             let _serialized = registration_write_lock(&tenant).await;
             let before = take_live_registration(&st, &tenant, &id).await?;
             if let Some(prev) = before.as_ref().and_then(Value::as_object) {
-                // validate the post-merge document (4.3.6.3) BEFORE mutating:
-                // a patch may flip the mode or rewrite information
+                keep_masked_csi(&mut norm, prev)?;
+            }
+            // The post-merge document, as the update leaves it.
+            let merged = before.as_ref().and_then(Value::as_object).map(|prev| {
                 let mut merged = prev.clone();
                 for (k, v) in &norm {
                     if k == "id" {
@@ -1448,12 +1469,28 @@ pub async fn update_registration(
                         merged.insert(k.clone(), v.clone());
                     }
                 }
-                validate_exclusive(&merged)?;
+                merged
+            });
+            // The engine decides the Registration as it will be, as create
+            // does, so a patch cannot move a permitted Registration onto
+            // types or Attributes the engine refuses.
+            let (types, attrs) = merged.as_ref().map(info_members).unwrap_or_default();
+            gate!(
+                st, &tenant, &headers, "5.9.3",
+                ids: &[&id],
+                types: &types,
+                attrs: &attrs,
+            )
+            .await?;
+            if let Some(merged) = &merged {
+                // validate the post-merge document (clause 4.3.6, item 3) BEFORE mutating:
+                // a patch may flip the mode or rewrite information
+                validate_exclusive(merged)?;
                 // 5.9.3.4: the mode-specific rules apply to the merged document
-                validate_auxiliary_ops(&merged)?;
-                crate::federation::admit_registration(&st, &tenant, &merged).await?;
-                check_entity_conflict(&st, &tenant, &merged).await?;
-                check_proxied_overlap(&st, &tenant, &merged, Some(&id), &parsed.ctx).await?;
+                validate_auxiliary_ops(merged)?;
+                crate::federation::admit_registration(&st, &tenant, merged).await?;
+                check_entity_conflict(&st, &tenant, merged).await?;
+                check_proxied_overlap(&st, &tenant, merged, Some(&id), &parsed.ctx).await?;
             }
             let res = st
                 .store

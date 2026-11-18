@@ -15,6 +15,8 @@ pub(super) fn null_members(atype: &str) -> (&'static str, Value, &'static str) {
         ),
         "JsonProperty" => ("json", null, "previousJson"),
         "VocabProperty" => ("vocab", null, "previousVocab"),
+        "ListProperty" => ("valueList", null, "previousValueList"),
+        "ListRelationship" => ("objectList", null, "previousObjectList"),
         _ => ("value", null, "previousValue"),
     }
 }
@@ -355,4 +357,24 @@ pub(super) async fn build_data(
         _ => data.push(main),
     }
     data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A deleted list Attribute's tombstone holds its own member, and
+    /// showChanges carries the previous list (5.8.6).
+    #[test]
+    fn a_list_tombstone_names_the_list_member() {
+        let list = json!({"type": "ListProperty", "valueList": [1, 2]});
+        let t = tombstone(&list, false, true, "2026-01-01T00:00:00Z");
+        assert_eq!(t["valueList"], "urn:ngsi-ld:null", "{t}");
+        assert_eq!(t["previousValueList"], json!([1, 2]), "{t}");
+        assert!(t.get("value").is_none(), "{t}");
+        let rel = json!({"type": "ListRelationship", "objectList": [{"object": "urn:a"}]});
+        let t = tombstone(&rel, false, true, "2026-01-01T00:00:00Z");
+        assert_eq!(t["objectList"], "urn:ngsi-ld:null", "{t}");
+        assert_eq!(t["previousObjectList"], json!([{"object": "urn:a"}]), "{t}");
+    }
 }

@@ -80,12 +80,29 @@ pub fn present_registration(doc: &Value, ctx: &Context, sys_attrs: bool) -> Valu
                     .collect();
                 out.insert("information".into(), Value::Array(infos));
             }
+            // clause 4.3.6, item 5: Authorization material for the Context Source; a read
+            // and a 5.11 notification answer that it is set, not what it is.
+            "contextSourceInfo" => {
+                let mut csi = v.clone();
+                crate::subscriptions::mask_pairs(&mut csi, csi_shown);
+                out.insert(k.clone(), csi);
+            }
             _ => {
                 out.insert(k.clone(), v.clone());
             }
         }
     }
     Value::Object(out)
+}
+
+/// A contextSourceInfo pair a read shows as stored: the keys clause 4.3.6, item 6 gives a
+/// processing meaning (no header, no credential) and the
+/// `urn:ngsi-ld:request` placeholder, which names no value of its own.
+fn csi_shown(key: &str, value: &str) -> bool {
+    value == "urn:ngsi-ld:request"
+        || ["accept", "contentType", "jsonldContext"]
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case(key))
 }
 
 /// 5.10.2.4 temporal matching against observationInterval/managementInterval.

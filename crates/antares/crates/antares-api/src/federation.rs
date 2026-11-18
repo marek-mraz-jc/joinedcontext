@@ -1380,7 +1380,7 @@ async fn build_forward<'a>(
         // a client gets to probe by watching which registrations fail.
         // F-R2ANT1-005: another Antares believes the mesh identity and the gateway's `jc-*`
         // grants (provenance.rs `from_gateway`); a registrant never states them for a forward.
-        if lower.starts_with("l5d-") || lower.starts_with("jc-") {
+        if lower.starts_with("l5d-") || lower.starts_with("jc-") || lower.starts_with("x-jc-") {
             tracing::warn!(
                 "registration {} asks for the gateway trust header {k:?}; not forwarded",
                 reg.reg_id
@@ -1436,6 +1436,11 @@ async fn build_forward<'a>(
             }
             sent.push(("Content-Type".into(), "application/ld+json".into()));
         } else {
+            // application/json carries no @context member (6.3.5): the
+            // context travels in the Link header
+            if let Some(o) = b.as_object_mut() {
+                o.remove("@context");
+            }
             sent.push(("Content-Type".into(), "application/json".into()));
         }
         bytes = Some(serde_json::to_vec(&b).unwrap_or_default());
@@ -3616,6 +3621,57 @@ mod tests {
             timeout_ms: None,
             cooldown_ms: None,
         }
+    }
+
+    /// A forward labelled application/json carries no @context member in its
+    /// body (6.3.5), and no registrant-chosen `x-jc-*` header, which the
+    /// receiving broker reads as the gateway's word.
+    #[tokio::test]
+    async fn a_json_forward_carries_no_body_context_and_no_gateway_header() {
+        let st = AppState::new("me".into());
+        let tenant = antares_model::TenantId::default();
+        let mut r = reg("inclusive");
+        r.csi = vec![
+            ("X-JC-Member".into(), "true".into()),
+            ("x-jc-organization-id".into(), "sk_x".into()),
+            ("X-Custom".into(), "kept".into()),
+        ];
+        let body = json!({
+            "@context": "https://example.org/ctx.jsonld",
+            "type": "Property",
+            "value": 1
+        });
+        let built = build_forward(
+            &st,
+            reqwest::Method::PATCH,
+            "http://peer:9090/ngsi-ld/v1/temporal/entities/urn:x/attrs/a/urn:i".into(),
+            &[],
+            &HeaderMap::new(),
+            &tenant,
+            &r,
+            "https://example.org/ctx.jsonld",
+            Some(body),
+        )
+        .await;
+        let sent: Value =
+            serde_json::from_slice(built.body.as_deref().unwrap_or_default()).expect("a JSON body");
+        assert!(sent.get("@context").is_none(), "{sent}");
+        assert_eq!(sent["value"], 1, "{sent}");
+        let names: Vec<String> = built
+            .headers
+            .iter()
+            .map(|(k, _)| k.to_ascii_lowercase())
+            .collect();
+        assert!(names.iter().all(|n| !n.starts_with("x-jc-")), "{names:?}");
+        assert!(names.iter().any(|n| n == "x-custom"), "{names:?}");
+        assert!(
+            built
+                .headers
+                .iter()
+                .any(|(k, v)| k == "Content-Type" && v == "application/json"),
+            "{:?}",
+            built.headers
+        );
     }
 
     /// 5.12 condition 5, response side: a query idPattern was forwarded to a
