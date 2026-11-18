@@ -838,6 +838,7 @@ pub(crate) fn registry_links() -> std::sync::Arc<Links> {
 /// the ones [`by_organization`] links beside jc.toml's (T-7184): each at its API host, the
 /// working host without one. An Organization left out reaches the gateway with no
 /// Organization of its host from the next request on (its host answers `421` at the router).
+#[cfg(feature = "portal")]
 pub fn replace_registry_links(
     orgs: &BTreeMap<String, crate::config::OrganizationHosts>,
     scheme: &str,
