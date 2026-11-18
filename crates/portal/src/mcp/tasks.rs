@@ -232,14 +232,11 @@ impl McpTasks {
     }
 }
 
-/// A task id nobody can guess from another's: 64 bits of the process's randomness. The owner
-/// check is what protects a task; this only keeps ids apart.
+/// A task id nobody can guess from another's: 64 bits from the OS generator. The owner check is
+/// what protects a task; this only keeps ids apart.
 fn rand_id() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_i64(now_unix());
-    hasher.write_usize(std::ptr::addr_of!(hasher) as usize);
-    hasher.finish()
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    OsRng.next_u64()
 }
 
 #[cfg(test)]

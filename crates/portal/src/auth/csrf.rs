@@ -104,11 +104,14 @@ fn named(name: &'static str, token: &Token) -> Cookie<'static> {
 /// Byte-for-byte comparison that does not stop at the first difference. Used for the CSRF
 /// token here and for the agent proxy's bearer on the internal listener (AG-52).
 pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    constant_time_bytes_eq(a.as_bytes(), b.as_bytes())
+}
+
+/// The bytes form of [`constant_time_eq`], the Portal's one such comparison.
+pub(crate) fn constant_time_bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    // black_box keeps the optimiser from turning the fold into an early-exit comparison.
+    a.len() == b.len()
+        && std::hint::black_box(a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y))) == 0
 }
 
 /// True when the request may proceed: safe methods always, mutations only with a matching token.
