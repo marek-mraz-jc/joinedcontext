@@ -45,6 +45,15 @@ pub type BrandingOf = Arc<dyn Fn(&Catalogue) -> crate::BrandingBlock + Send + Sy
 /// Hook trait so `dataroom-core` operations can invoke SHACL validation without a circular
 /// dependency on `dataroom-shacl`.
 pub trait DatasetValidator: Send + Sync {
+    /// Makes the catalogue's stored uploaded profiles (`Store::list_profiles`) usable before a
+    /// validation, whatever this process saw uploaded.
+    fn load_stored_profiles(
+        &self,
+        _catalogue: &Catalogue,
+        _stored: &[crate::model::ProfileRecord],
+    ) {
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -998,6 +1007,7 @@ pub async fn execute_operation(
             }
 
             if let Some(validator) = &op_ctx.validator {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
                 let reports = validator.validate_dataset(&cat, &ds, Some(&pub_rec))?;
                 for report in &reports {
                     if report.profile_id == cat.main_profile
@@ -1496,6 +1506,7 @@ pub async fn execute_operation(
                 })
                 .collect();
             if let Some(validator) = &op_ctx.validator {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
                 validator.check_catalogue_feed(&cat, &public_ds, &pub_map, profile)
             } else {
                 Ok(json!({

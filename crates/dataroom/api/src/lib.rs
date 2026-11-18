@@ -860,7 +860,7 @@ async fn handle_list_profiles(State(state): State<DataroomState>, headers: Heade
     // uploads from the store, never another catalogue's.
     let mut profiles: Vec<ProfileRecord> = state
         .profiles
-        .list()
+        .list((ctx.org_id, ctx.catalogue_id))
         .into_iter()
         .filter(|p| p.built_in)
         .collect();
@@ -911,12 +911,17 @@ async fn handle_upload_profile(
         }
     }
 
-    // A published version is immutable (C17: catalogues pin versions). The registry serves
-    // every catalogue, so replacing a pair would change what another catalogue (or a built-in
-    // profile) validates against.
+    // A published version is immutable (C17: catalogues pin versions): neither a built-in
+    // profile nor this catalogue's stored upload (loaded first, whatever this process saw) is
+    // replaced.
+    let scope = (ctx.org_id, ctx.catalogue_id);
+    match state.store.list_profiles(&ctx).await {
+        Ok(stored) => state.profiles.load_stored(scope, &stored),
+        Err(e) => return problem_response(e),
+    }
     if state
         .profiles
-        .list()
+        .list(scope)
         .iter()
         .any(|p| p.id == req.profile.id && p.version == req.profile.version)
     {
@@ -1009,6 +1014,12 @@ async fn handle_activate_profile(
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
         .collect();
 
+    match state.store.list_profiles(&ctx).await {
+        Ok(stored) => state
+            .profiles
+            .load_stored((ctx.org_id, ctx.catalogue_id), &stored),
+        Err(e) => return problem_response(e),
+    }
     let dry_run = match state
         .profiles
         .dry_run(&id, &body.version, &cat, &datasets, &pub_map)
