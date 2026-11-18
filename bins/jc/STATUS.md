@@ -581,7 +581,29 @@ person in no group gets the exchanged token and is still refused by the gateway'
 - Portal container, `[remote]` (`token_url`, `client_id`, client secret, `modules.<name> = <base>`): each remote module
   gets a loopback forwarder; the Portal is pointed at it with a per-boot credential, and the forwarder swaps exactly
   that credential for a client-credentials token with scope and audience the module's name, cached until 30 s before
-  it expires. A remote module may not also run locally; only a jc with the Portal takes `[remote]`.
+  it expires. A remote module may not also run locally; only a jc with the Portal takes `[remote]`, apart from the
+  data plane below, which names shako alone.
+- Data plane, `[gateway]` (T-7226: `--role gateway,antares`, no Portal, no kaisatsu; scales to 2+ replicas with
+  `ANTARES_BUS=nats`): `portal_internal` (the Portal's internal listener, `JC_INTERNAL_BIND` in core), `kaisatsu`
+  (public base, the issuer's prefix), `kaisatsu_internal` (where the keys are read), `client_secret_file`,
+  `oauth_key_file`. A gateway without the Portal and without `[gateway]` is refused at start while jc wires its
+  siblings (`portal_siblings = false` leaves every key to the environment). The gateway reads revocations,
+  connectors and usage over the network with its own `context-gateway` token of audience `portal-internal`, which
+  the Portal checks per route (`crates/portal/tests/internal_listener_tests.rs`); revocations keep their 10 s poll.
+  It follows the forge read-only through `[remote.modules] shako` (header `token <credential>`, which the forwarder
+  swaps) and provisions nothing there. Core names the gateway as `[remote.modules] gateway = <base>` (no forwarder:
+  kaisatsu keeps the `context-gateway` client, the Portal sets `JC_PORTAL_GATEWAY_URL` and `_CLIENT_ID`). Both sides
+  take the one `JCBIN_GATEWAY_CLIENT_SECRET[_FILE]`; every replica the one `JCBIN_GATEWAY_OAUTH_KEY[_FILE]`. With 2+
+  replicas core sets `JC_PORTAL_GATEWAY_PODS_URL` to the data plane's headless Service, so a space move waits for
+  every replica's hold (F-POR4-014). Core
+  keeps the singletons (reconciler leader, ekiben streams, shako repositories, assistant tick). Tests:
+  `config::tests::a_gateway_without_the_portal_needs_the_portals_door_and_shared_secrets`,
+  `app::tests::both_sides_of_a_split_gateway_hold_the_given_client_secret`,
+  `modules::gateway::tests::the_data_plane_reads_the_portal_over_the_network_with_its_own_client`,
+  `modules::gateway::tests::the_forge_credential_is_the_one_a_remote_forwarder_swaps`.
+  Known limit: the Portal's own pages read a closed Endpoint with the person's session only where the Portal runs
+  (`session_reads` takes the token from the Portal in the same process); on the data plane such a read stays
+  anonymous, so a closed Endpoint answers 401 there until the session exchange crosses the internal listener.
 - kaisatsu: one client scope per module with an `oidc-audience-mapper` to the module's name, as optional scopes of
   the caller's service-account client (`tests/split_role.rs` builds that realm).
 

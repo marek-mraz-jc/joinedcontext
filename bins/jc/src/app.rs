@@ -973,6 +973,11 @@ fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
     if cfg.roles.contains(&Module::Portal) && cfg.remote_modules.contains_key(&Module::Shako) {
         out.push(crate::setup::Secret::ForgeWebhookSecret);
     }
+    // The gateway apart from the Portal (T-7226): kaisatsu's `context-gateway` client on one side,
+    // the gateway's token for the internal listener on the other, both from the given secret.
+    if cfg.gateway.is_some() || cfg.remote_modules.contains_key(&Module::Gateway) {
+        out.push(crate::setup::Secret::GatewayClientSecret);
+    }
     out
 }
 
@@ -992,6 +997,15 @@ async fn remote_forwarders(
     );
     let mut out = Vec::new();
     for (module, base) in &cfg.remote_modules {
+        // The gateway takes no service credential: the Portal only learns where it is and which
+        // client its token names (`JC_PORTAL_GATEWAY_URL`, `_CLIENT_ID`).
+        if *module == Module::Gateway {
+            siblings.insert_remote(
+                *module,
+                crate::siblings::Sibling::direct(base.clone(), base.clone()),
+            );
+            continue;
+        }
         let local = crate::setup::Secret::service_credential(*module)
             .and_then(|s| setup.get(s))
             .map(|held| held.value.clone())
@@ -1301,6 +1315,17 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     #[cfg(not(feature = "assistant"))]
     let assistant = None;
     let forwarders = remote_forwarders(cfg, &secrets, &setup, &mut siblings).await?;
+    // The data plane's gateway verifies persons against kaisatsu in the Portal's container.
+    if let Some(gateway) = &cfg.gateway {
+        let keys = gateway
+            .kaisatsu_internal
+            .as_ref()
+            .unwrap_or(&gateway.kaisatsu);
+        siblings.insert_remote(
+            Module::Kaisatsu,
+            crate::siblings::Sibling::direct(gateway.kaisatsu.clone(), keys.clone()),
+        );
+    }
     let door = match &cfg.door {
         Some(section) => Some(Arc::new(
             crate::door::Door::new(section).map_err(StartError::Setup)?,
@@ -1426,7 +1451,9 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
             }
         });
     } else if let Some(late) = built.gateway {
+        // A shako in another container is provisioned there: the data plane only reads it.
         if cfg.portal_siblings
+            && !cfg.remote_modules.contains_key(&Module::Shako)
             && let Err(e) = crate::provision::forge(&siblings, &setup, cfg).await
         {
             let _ = running.stop().await;
@@ -1541,6 +1568,7 @@ async fn build_gateway(
             mount,
             hop,
             portal,
+            cfg.gateway.as_ref().map(|g| g.portal_internal.as_str()),
         )
         .await
     }
@@ -1666,6 +1694,50 @@ mod tests {
             state.join("forge-webhook-secret").is_file(),
             "kept across restarts"
         );
+    }
+
+    /// T-7226: with the gateway in the data plane, both containers hold the one given
+    /// `context-gateway` secret (kaisatsu's client in core, the gateway's token in the data
+    /// plane), and the data plane the shako credential its forwarder swaps for a token.
+    #[test]
+    fn both_sides_of_a_split_gateway_hold_the_given_client_secret() {
+        use crate::setup::Secret;
+        let remote =
+            "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"r\"\n[remote.modules]\n";
+        let core = dev_config(
+            "kaisatsu,portal",
+            &format!("{remote}gateway = \"http://jc-data:8080\"\n"),
+        );
+        let data = dev_config(
+            "gateway,antares",
+            &format!(
+                "{remote}shako = \"https://city.test/git\"\n[gateway]\n\
+                 portal_internal = \"http://jc-core-internal:9090\"\n\
+                 kaisatsu = \"https://city.test/login\"\n"
+            ),
+        );
+        let given = std::collections::BTreeMap::from([(
+            Secret::GatewayClientSecret,
+            crate::setup::Given {
+                secret: jc_secret::Secret::new("given-gateway-secret".into()),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        )]);
+        for cfg in [&core, &data] {
+            let dir = tempfile::tempdir().unwrap();
+            let setup =
+                Setup::prepare_with(dir.path(), &cfg.roles, &given, &split_credentials(cfg))
+                    .unwrap();
+            assert_eq!(
+                setup.value(Secret::GatewayClientSecret),
+                Some("given-gateway-secret"),
+                "{:?}",
+                cfg.roles
+            );
+        }
+        assert!(split_credentials(&data).contains(&Secret::ShakoToken));
+        assert!(!split_credentials(&core).contains(&Secret::ShakoToken));
     }
 
     /// Which module the planned router table sends `host` `path` to, and the path it hands over

@@ -62,6 +62,15 @@ fn portal_internal(
     (addr.port() != 0).then(|| format!("http://{}", reach(addr)))
 }
 
+/// Where the gateway reads the Portal's internal listener.
+#[derive(Debug, Clone, Copy)]
+pub enum PortalAt<'a> {
+    /// In this jc, at the address its listener took (else `JC_INTERNAL_BIND`).
+    Here(Option<std::net::SocketAddr>),
+    /// In another container: `[gateway] portal_internal` (T-7226).
+    Remote(&'a str),
+}
+
 /// Where `jc` keeps the gateway's checkouts.
 #[must_use]
 pub fn work_dir(setup: &Setup) -> PathBuf {
@@ -90,7 +99,7 @@ pub fn vars(
     wire: bool,
     mount: &Mount,
     hop: Option<&Hop>,
-    portal_listener: Option<std::net::SocketAddr>,
+    portal_at: PortalAt<'_>,
     env: impl Fn(&str) -> Option<String>,
 ) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -139,11 +148,15 @@ pub fn vars(
         "JC_GATEWAY_OAUTH_KEY",
         secret(Secret::GatewayOauthKey),
     )]);
-    if let (Some(id), Some(_), Some(internal)) = (
-        siblings.get(Module::Kaisatsu),
-        siblings.get(Module::Portal),
-        portal_internal(portal_listener, &|k: &str| env(k)),
-    ) {
+    // The Portal's internal listener: in this jc, or over the network from the data plane
+    // (`[gateway] portal_internal`, T-7226), where the Portal checks the gateway's token there.
+    let internal = match portal_at {
+        PortalAt::Remote(url) => Some(url.to_owned()),
+        PortalAt::Here(bound) => siblings
+            .get(Module::Portal)
+            .and_then(|_| portal_internal(bound, &|k: &str| env(k))),
+    };
+    if let (Some(id), Some(internal)) = (siblings.get(Module::Kaisatsu), internal) {
         // No `JC_OIDC_TOKEN_URL`: the gateway's own token comes from the issuer's public
         // endpoint, as the Portal's sign-in does, because kaisatsu names the issuer by the host a
         // request reached it on and the Portal's internal listener checks it. The keys are read
@@ -211,7 +224,7 @@ const MAX_ANSWER: u64 = 64 * 1024;
 /// Repositories of shako read over its HTTP API, never with a `git` binary (the image has none):
 /// the commit of a ref from `branches/{ref}` (or the ref itself when it is a commit id), then
 /// `archive/{commit}.zip` once per commit, unpacked as `{cache}/{slug}.tree-{commit}`. Requests
-/// go to the forge's own address only, with its credential as a Basic header, and no redirect is
+/// go to the forge's own address only, with its credential as a `token` header, and no redirect is
 /// followed. An entry naming an outside `url` (CC-89) is refused: jc reads its own forge only.
 pub struct ForgeArchives {
     http: reqwest::blocking::Client,
@@ -263,19 +276,16 @@ impl ForgeArchives {
         token: &jc_secret::Secret,
         cache: PathBuf,
     ) -> Result<Self, String> {
-        use base64::Engine as _;
         if !(forge.starts_with("http://") || forge.starts_with("https://")) {
             return Err("the forge's address is not http or https".to_owned());
         }
         if !path_name(owner) {
             return Err(format!("`{owner}` is not an owner name"));
         }
-        let pair = format!("jc:{}", token.expose());
-        let mut authorization = HeaderValue::from_str(&format!(
-            "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(pair)
-        ))
-        .map_err(|_| "the forge's token is not a header value".to_owned())?;
+        // `token <value>`, which shako reads and which a `[remote]` forwarder recognises as the
+        // per-boot shako credential and swaps for a token (`door::is_credential`, T-7226).
+        let mut authorization = HeaderValue::from_str(&format!("token {}", token.expose()))
+            .map_err(|_| "the forge's token is not a header value".to_owned())?;
         authorization.set_sensitive(true);
         let http = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -891,6 +901,7 @@ pub async fn build(
     mount: Mount,
     hop: Option<Hop>,
     portal: Option<std::net::SocketAddr>,
+    remote_portal: Option<&str>,
 ) -> Result<Router, StartError> {
     let env = crate::config::portal_env;
     let mut filled = vars(
@@ -899,7 +910,7 @@ pub async fn build(
         wire,
         &mount,
         hop.as_ref(),
-        portal,
+        remote_portal.map_or(PortalAt::Here(portal), PortalAt::Remote),
         env,
     );
     // Beside the installation realm jc filled, never beside one the environment named; the
@@ -1242,7 +1253,8 @@ mod tests {
     #[tokio::test]
     async fn each_api_host_links_itself_and_a_shared_one_the_organizations_path() {
         use tower::ServiceExt;
-        let text = "base_host = \"city.example\"\n\
+        // A gateway alone, wired by the environment (no `[gateway]` needed).
+        let text = "portal_siblings = false\nbase_host = \"city.example\"\n\
             [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
             hosts = { portal = \"smartcity.bbsk.sk\", api = \"api.bbsk.sk\", mcp = \"mcp.bbsk.sk\" }\n\
             [[organizations]]\nname = \"zilina\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a2\"\n\
@@ -1420,7 +1432,15 @@ mod tests {
         let setup =
             Setup::prepare(dir.path(), &Module::ALL, &std::collections::BTreeMap::new()).unwrap();
         let taken = Some("127.0.0.1:40123".parse().unwrap());
-        let v = vars(&siblings, &setup, true, &mount, None, taken, |_: &str| None);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(taken),
+            |_: &str| None,
+        );
         assert_eq!(v["JC_OIDC_ISSUER"], "https://idm.city.example/realms/jc");
         let url = &v["JC_OIDC_JWKS_URL"];
         assert!(!url.starts_with("https://"), "the gateway refuses {url}");
@@ -1436,7 +1456,15 @@ mod tests {
         assert!(jc_core::auth::jwks::refresh(&verifier, url).await.is_err());
         // Slug mode reads the keys on a loopback address already: no reach.
         let (slug, setup, mount, _d) = fixture();
-        let v = vars(&slug, &setup, true, &mount, None, taken, |_: &str| None);
+        let v = vars(
+            &slug,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(taken),
+            |_: &str| None,
+        );
         assert!(!v.contains_key("JC_OIDC_JWKS_REACH"));
     }
 
@@ -1533,16 +1561,102 @@ mod tests {
         let (mut siblings, setup, mount, _d) = fixture();
         let none = |_: &str| None;
         siblings.set_internal(Module::Assistant, "127.0.0.1:40124".parse().unwrap());
-        let v = vars(&siblings, &setup, false, &mount, None, None, none);
+        let v = vars(
+            &siblings,
+            &setup,
+            false,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            none,
+        );
         assert_eq!(v["JC_GATEWAY_ASSISTANT_URL"], "http://127.0.0.1:40124");
         let own =
             |k: &str| (k == "JC_GATEWAY_ASSISTANT_URL").then(|| "http://a.example".to_owned());
-        let v = vars(&siblings, &setup, true, &mount, None, None, own);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            own,
+        );
         assert!(!v.contains_key("JC_GATEWAY_ASSISTANT_URL"));
         // The assistant off: no address, so the gateway offers `search_documents` nowhere.
         siblings.remove(Module::Assistant);
-        let v = vars(&siblings, &setup, true, &mount, None, None, none);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            none,
+        );
         assert!(!v.contains_key("JC_GATEWAY_ASSISTANT_URL"));
+    }
+
+    /// T-7226: the data plane (gateway and Antares, no Portal, no kaisatsu) reads the Portal's
+    /// internal listener at `[gateway] portal_internal` and verifies against kaisatsu in the
+    /// Portal's container, as the `context-gateway` client; the in-process listener and
+    /// `JC_INTERNAL_BIND` play no part there. Without the address it gets no realm.
+    #[test]
+    fn the_data_plane_reads_the_portal_over_the_network_with_its_own_client() {
+        let (mut siblings, setup, mount, _d) = fixture();
+        siblings.remove(Module::Portal);
+        siblings.insert_remote(
+            Module::Kaisatsu,
+            crate::siblings::Sibling::direct(
+                "https://idm.city.example".into(),
+                "http://jc-core:8080".into(),
+            ),
+        );
+        let bind = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "[::]:9090".to_owned());
+        let core = "http://jc-core-internal:9090";
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Remote(core),
+            bind,
+        );
+        assert_eq!(
+            v["JC_GATEWAY_REVOCATIONS_URL"],
+            "http://jc-core-internal:9090/internal/revocations"
+        );
+        assert_eq!(
+            v["JC_GATEWAY_CONNECTORS_URL"],
+            "http://jc-core-internal:9090/internal/connectors"
+        );
+        assert_eq!(
+            v["JC_GATEWAY_USAGE_URL"],
+            "http://jc-core-internal:9090/internal/usage"
+        );
+        assert_eq!(v["JC_OIDC_ISSUER"], "https://idm.city.example/realms/jc");
+        assert_eq!(
+            v["JC_OIDC_JWKS_URL"],
+            "http://jc-core:8080/realms/jc/protocol/openid-connect/certs"
+        );
+        assert_eq!(v["JC_OIDC_CLIENT_ID"], setup::GATEWAY_CLIENT);
+        assert_eq!(
+            v["JC_OIDC_CLIENT_SECRET"],
+            setup.value(Secret::GatewayClientSecret).unwrap()
+        );
+        // No Portal here and none named: JC_INTERNAL_BIND is not the gateway's to follow.
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            bind,
+        );
+        assert!(!v.contains_key("JC_OIDC_ISSUER"));
+        assert!(!v.contains_key("JC_GATEWAY_REVOCATIONS_URL"));
     }
 
     #[test]
@@ -1553,7 +1667,15 @@ mod tests {
             secret: "s".into(),
         };
         let bind = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "0.0.0.0:9090".to_owned());
-        let v = vars(&siblings, &setup, true, &mount, Some(&hop), None, bind);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            Some(&hop),
+            PortalAt::Here(None),
+            bind,
+        );
         assert_eq!(v["JC_GATEWAY_BROKER_URL"], "http://127.0.0.1:4242");
         assert_eq!(v["JC_GATEWAY_PUBLIC_URL"], "https://city.example");
         assert_eq!(
@@ -1573,7 +1695,15 @@ mod tests {
         // A deployment naming its realm moves the issuer and the keys with it.
         let mut dev = setup.clone();
         dev.realm = setup::Realm::parse("dev").unwrap();
-        let named = vars(&siblings, &dev, true, &mount, Some(&hop), None, bind);
+        let named = vars(
+            &siblings,
+            &dev,
+            true,
+            &mount,
+            Some(&hop),
+            PortalAt::Here(None),
+            bind,
+        );
         assert_eq!(
             named["JC_OIDC_ISSUER"],
             "https://city.example/login/realms/dev"
@@ -1591,20 +1721,52 @@ mod tests {
         // environment; without either there is no address and so no realm.
         let none = |_: &str| None;
         let taken = Some("127.0.0.1:40123".parse().unwrap());
-        let v = vars(&siblings, &setup, true, &mount, Some(&hop), taken, none);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            Some(&hop),
+            PortalAt::Here(taken),
+            none,
+        );
         assert_eq!(
             v["JC_GATEWAY_REVOCATIONS_URL"],
             "http://127.0.0.1:40123/internal/revocations"
         );
-        let v = vars(&siblings, &setup, true, &mount, Some(&hop), None, none);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            Some(&hop),
+            PortalAt::Here(None),
+            none,
+        );
         assert!(!v.contains_key("JC_OIDC_ISSUER") && !v.contains_key("JC_GATEWAY_REVOCATIONS_URL"));
         let port0 = |k: &str| (k == "JC_INTERNAL_BIND").then(|| "127.0.0.1:0".to_owned());
         assert!(
-            !vars(&siblings, &setup, true, &mount, Some(&hop), None, port0)
-                .contains_key("JC_OIDC_ISSUER")
+            !vars(
+                &siblings,
+                &setup,
+                true,
+                &mount,
+                Some(&hop),
+                PortalAt::Here(None),
+                port0
+            )
+            .contains_key("JC_OIDC_ISSUER")
         );
         // Without the wiring: the broker and the addresses only, no realm and no forge.
-        let bare = vars(&siblings, &setup, false, &mount, Some(&hop), None, bind);
+        let bare = vars(
+            &siblings,
+            &setup,
+            false,
+            &mount,
+            Some(&hop),
+            PortalAt::Here(None),
+            bind,
+        );
         assert_eq!(
             bare.keys().map(String::as_str).collect::<Vec<_>>(),
             [
@@ -1620,7 +1782,15 @@ mod tests {
         let env =
             |k: &str| (k == "JC_GATEWAY_OIDC_ISSUER").then(|| "https://idp.example/r".to_owned());
         let env = |k: &str| bind(k).or_else(|| env(k));
-        let v = vars(&siblings, &setup, true, &mount, None, None, env);
+        let v = vars(
+            &siblings,
+            &setup,
+            true,
+            &mount,
+            None,
+            PortalAt::Here(None),
+            env,
+        );
         assert!(!v.contains_key("JC_OIDC_CLIENT_SECRET"));
         assert!(!v.contains_key("JC_GATEWAY_BROKER_URL"));
     }
@@ -1696,6 +1866,24 @@ mod tests {
         ForgeArchives::new(forge, "city", &token, cache.to_path_buf()).unwrap()
     }
 
+    /// T-7226: the data plane follows a shako in another container through the `[remote]`
+    /// forwarder, which swaps only a header it recognises as the shako credential.
+    #[test]
+    fn the_forge_credential_is_the_one_a_remote_forwarder_swaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let forge = archives("http://localhost:1", dir.path());
+        assert!(crate::door::is_credential(
+            Module::Shako,
+            &forge.authorization,
+            "forge-token-not-secret"
+        ));
+        assert!(!crate::door::is_credential(
+            Module::Shako,
+            &forge.authorization,
+            "another-token"
+        ));
+    }
+
     /// A forge holding `main` at [`SHA`] with `archive` as its zip; counts the archive reads and
     /// refuses a request without the jc credential.
     fn forge(archive: Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
@@ -1703,13 +1891,7 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let reads = std::sync::Arc::new(AtomicUsize::new(0));
         let counted = reads.clone();
-        let want = format!(
-            "Basic {}",
-            base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                "jc:forge-token-not-secret"
-            )
-        );
+        let want = "token forge-token-not-secret".to_owned();
         let authorized = move |headers: &HeaderMap| {
             headers.get("authorization").and_then(|v| v.to_str().ok()) == Some(want.as_str())
         };

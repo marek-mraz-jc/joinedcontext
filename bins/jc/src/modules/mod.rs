@@ -166,6 +166,7 @@ pub async fn build(
             mount,
             None,
             None,
+            cfg.gateway.as_ref().map(|g| g.portal_internal.as_str()),
         )
         .await
         .map(gateway::at_root),
