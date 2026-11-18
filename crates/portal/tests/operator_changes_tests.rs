@@ -1273,6 +1273,7 @@ async fn the_serving_role_cannot_alter_the_audit_or_drop_its_triggers() {
         "CREATE OR REPLACE FUNCTION operator_audit_append_only() RETURNS trigger \
          LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$",
         "DELETE FROM _sqlx_migrations",
+        "SELECT count(*) FROM project_rows_set_aside",
     ] {
         let err = sqlx::query(statement)
             .execute(&pool)

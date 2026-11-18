@@ -95,14 +95,15 @@ pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool
 }
 
 /// What the serving role may do, granted again after every migration so a new table is covered:
-/// the rows of every table of `public`, never TRUNCATE, never the migration history, and on the
-/// operators' audit only INSERT and SELECT. The role name is quoted by Postgres (`%I`).
+/// the rows of every table of `public`, never TRUNCATE, never the migration history or the rows
+/// 0080 set aside (no project holds them), and on the operators' audit only INSERT and SELECT. The role name is quoted by Postgres (`%I`).
 async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Error> {
     let sql: String = sqlx::query_scalar(
         "SELECT format('GRANT USAGE ON SCHEMA public TO %1$I; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %1$I; \
          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %1$I; \
          REVOKE ALL ON _sqlx_migrations FROM %1$I; \
+         REVOKE ALL ON project_rows_set_aside FROM %1$I; \
          REVOKE ALL ON operator_audit FROM %1$I; \
          GRANT SELECT, INSERT ON operator_audit TO %1$I;', $1::text)",
     )
