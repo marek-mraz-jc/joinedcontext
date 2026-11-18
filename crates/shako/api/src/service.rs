@@ -945,24 +945,6 @@ pub async fn open_pull_request(
     Ok((repo, saved))
 }
 
-/// The pull requests of a repository, optionally of one state (`open`, `closed`; `all` or
-/// `None` for every one), newest number first.
-pub async fn list_pull_requests(
-    state: &ShakoState,
-    ctx: &RequestCtx,
-    owner: &str,
-    name: &str,
-    pr_state: Option<&str>,
-) -> ShakoResult<(RepoRecord, Vec<PullRequestRecord>)> {
-    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await?;
-    let wanted = pr_state.filter(|s| *s != "all");
-    let prs = state
-        .store()
-        .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), wanted)
-        .await?;
-    Ok((repo, prs))
-}
-
 /// One pull request; an open one has its mergeability refreshed against the branches.
 pub async fn get_pull_request(
     state: &ShakoState,

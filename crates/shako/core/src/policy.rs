@@ -163,30 +163,6 @@ impl RefPolicy {
         Ok(())
     }
 
-    /// Validates a `TagProtectionRule` before saving it.
-    pub fn validate_tag_rule_for_repo(
-        rule: &TagProtectionRule,
-        authorizer: &dyn Authorizer,
-        instance_id: InstanceId,
-        org_id: OrgId,
-        owner: &str,
-        repo: &str,
-    ) -> ShakoResult<()> {
-        if rule.name_pattern.trim().is_empty() {
-            return Err(ShakoError::Unprocessable(
-                "tag protection name_pattern must not be empty".into(),
-            ));
-        }
-        for subject in &rule.whitelist_usernames {
-            if !authorizer.principal_has_write(instance_id, org_id, owner, repo, subject) {
-                return Err(ShakoError::Unprocessable(format!(
-                    "whitelisted subject '{subject}' does not have write access on {owner}/{repo}"
-                )));
-            }
-        }
-        Ok(())
-    }
-
     /// Finds the first matching branch protection rule for `branch` (without `refs/heads/`).
     #[must_use]
     pub fn matching_branch_rule(&self, branch: &str) -> Option<&BranchProtectionRule> {
