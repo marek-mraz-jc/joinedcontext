@@ -840,13 +840,16 @@ pub fn installation_organization_manifest(
 
 /// Whether a binding scoped to `organization` applies in `project` (PF-123, ADR-N-058 section
 /// 2.4). With no Organization manifest yet it applies everywhere, as before Organizations existed.
-/// Otherwise the organization's own namespace ([`ORG_NAMESPACE`]: bindings, groups, brokers,
-/// platform settings) is the installation Organization's alone, and a project is its
-/// Organization's alone: deny by default, so a binding naming an Organization that does not exist
-/// or owns nothing grants nothing, with one Organization as with several.
+/// With one, a binding naming that Organization applies everywhere, as before several existed,
+/// and a binding naming any other name grants nothing. With several, the organization's own
+/// namespace ([`ORG_NAMESPACE`]: bindings, groups, brokers, platform settings) is the installation
+/// Organization's alone, and a project is its Organization's alone: deny by default, so a binding
+/// naming an Organization that does not exist or owns nothing grants nothing.
 fn organization_reaches(mirror: &Mirror, organization: &str, project: &str) -> bool {
-    if organizations(mirror).is_empty() {
-        return true;
+    match organizations(mirror).as_slice() {
+        [] => return true,
+        [(only, _)] => return only == organization,
+        _ => {}
     }
     let owner = if project == ORG_NAMESPACE || project.is_empty() {
         installation_organization(mirror)
@@ -2571,7 +2574,7 @@ mod tests {
     }
 
     /// ISO-01: with one Organization, a binding scoped to an Organization name that does not exist
-    /// grants nothing; the binding naming the one Organization grants in its projects.
+    /// grants nothing; the binding naming the one Organization grants everywhere (PF-123).
     #[test]
     fn a_binding_scoped_to_an_unknown_organization_grants_nothing_beside_one() {
         let mirror = Mirror::new();
