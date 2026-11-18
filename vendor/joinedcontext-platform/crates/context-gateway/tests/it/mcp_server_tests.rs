@@ -446,6 +446,49 @@ async fn a_project_list_server_admits_only_its_projects() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
+/// EP-14, ADR-N-058 2.4: an `organization` server admits callers of its own Organization only,
+/// and to the others it answers as a server nobody created.
+#[tokio::test]
+async fn an_organization_server_admits_only_its_organizations_callers() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let provenance = context_gateway::store::Provenance {
+        organizations: [("ovzdusie", "bb"), ("doprava-za", "zilina")]
+            .into_iter()
+            .map(|(project, organization)| (project.to_owned(), organization.to_owned()))
+            .collect(),
+        ..context_gateway::store::Provenance::without_organizations()
+    };
+    let gateway = Gateway::new(
+        Broker::new(broker.url.clone()),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .with_provenance(provenance)
+    .serve(vec![endpoint(AIR, vec![grant("steward", "queryEntity")])])
+    .authenticate(
+        Arc::new(realm.verifier()),
+        ServiceAccounts::new(),
+        Some(HOST.to_owned()),
+    );
+    gateway.replace_servers(vec![server("mobility", &[AIR], Audience::Organization)]);
+    let app = router(Arc::new(gateway));
+    let edge = |group| token_in(&realm, json!("context-gateway"), group);
+
+    let (status, _) = send(
+        app.clone(),
+        post(SERVER, Some(&edge("/ovzdusie")), every_station()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(
+        app,
+        post(SERVER, Some(&edge("/doprava-za")), every_station()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// §2.3, §2.5: the catalogue lists the readable members in the manifest's order; a read may leave
 /// `endpoint` out, a write may not; `initialize` speaks with the server's own title.
 #[tokio::test]

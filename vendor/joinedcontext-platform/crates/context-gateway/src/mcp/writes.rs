@@ -55,6 +55,9 @@ pub(crate) async fn carry_out(
     let Some((headers, planned)) = deletes.filter(|_| taken) else {
         return Ok(());
     };
+    // ponytail: a batch_delete result's per-id errors are not read, so the plan of an id the
+    // broker kept inside a taken batch is still made; read them once the tool's result shape is
+    // shared with the broker.
     apply_planned(gateway, &headers, &planned, |_| true)
         .await
         .map_err(|problem| problem.detail.unwrap_or(problem.title))

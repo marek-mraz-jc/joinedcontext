@@ -463,10 +463,6 @@ pub(crate) async fn serve_ngsi_ld_view(
     if let Err(answer) = answered_here(&endpoint, operation, &view, &params, passed.as_ref()) {
         return *answer;
     }
-    let _share = match write_share(gateway, &endpoint, operation, body_length(&request)).await {
-        Ok(share) => share,
-        Err(answer) => return *answer,
-    };
     // The audit line names the principal the gateway established (PF-46); the decision is the
     // broker's, and its answer says what it was.
     tracing::info!(
@@ -482,6 +478,11 @@ pub(crate) async fn serve_ngsi_ld_view(
         Ok(()) => {}
         Err(answer) => return *answer,
     }
+    // Authorized first, so a refused write never waits in line for the write budget (PRF-03).
+    let _share = match write_share(gateway, &endpoint, operation, body_length(&request)).await {
+        Ok(share) => share,
+        Err(answer) => return *answer,
+    };
 
     let (mut parts, body) = request.into_parts();
     let mut sent = match read_body(gateway, body).await {

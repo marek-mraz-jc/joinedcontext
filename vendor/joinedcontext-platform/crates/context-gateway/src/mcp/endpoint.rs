@@ -291,8 +291,7 @@ async fn refuse_before_forward(
         if let Value::Object(arguments) = arguments {
             if let Err(why) = mcp::tools::anonymous_bounds(tool, arguments) {
                 note(Outcome::Refused);
-                let refusal =
-                    mcp::jsonrpc::result(id.clone(), mcp::jsonrpc::refused(&why, &Value::Null));
+                let refusal = mcp::jsonrpc::result(id, mcp::jsonrpc::refused(&why, &Value::Null));
                 return Some(mcp::jsonrpc::json_response(StatusCode::OK, &refusal));
             }
         }
