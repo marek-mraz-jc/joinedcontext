@@ -61,9 +61,6 @@ pub enum ShakoError {
     #[error("quota exceeded for {resource}: limit is {limit}")]
     QuotaExceeded { resource: String, limit: u64 },
 
-    #[error("rate limit exceeded: {0}")]
-    RateLimited(String),
-
     #[error("outbound request blocked by SSRF guard: {0}")]
     SsrfBlocked(String),
 
@@ -99,7 +96,6 @@ impl ShakoError {
             Self::BehindBaseBranch(_) => "shako.behind_base_branch",
             Self::MethodNotAllowed(_) => "shako.method_not_allowed",
             Self::QuotaExceeded { .. } => "shako.quota_exceeded",
-            Self::RateLimited(_) => "shako.rate_limited",
             Self::SsrfBlocked(_) => "shako.ssrf_blocked",
             Self::NotImplemented(_) => "shako.not_implemented",
             Self::Overloaded(_) => "shako.overloaded",
@@ -120,7 +116,6 @@ impl ShakoError {
             Self::Unprocessable(_) => 422,
             Self::Conflict(_) => 409,
             Self::BehindBaseBranch(_) | Self::MethodNotAllowed(_) => 405,
-            Self::RateLimited(_) => 429,
             Self::NotImplemented(_) => 501,
             Self::Overloaded(_) => 503,
             Self::RlsNotEnforced(_) | Self::Git(_) | Self::Storage(_) | Self::Internal(_) => 500,
@@ -138,7 +133,6 @@ impl ShakoError {
             Self::Conflict(_) => "Conflict",
             Self::BehindBaseBranch(_) | Self::MethodNotAllowed(_) => "Method Not Allowed",
             Self::QuotaExceeded { .. } => "Quota Exceeded",
-            Self::RateLimited(_) => "Too Many Requests",
             Self::SsrfBlocked(_) => "Outbound Request Refused",
             Self::NotImplemented(_) => "Not Implemented",
             Self::Overloaded(_) => "Service Unavailable",
@@ -162,7 +156,6 @@ impl ShakoError {
             | Self::Conflict(m)
             | Self::BehindBaseBranch(m)
             | Self::MethodNotAllowed(m)
-            | Self::RateLimited(m)
             | Self::SsrfBlocked(m)
             | Self::NotImplemented(m)
             | Self::Overloaded(m) => m.clone(),

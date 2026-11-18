@@ -45,6 +45,15 @@ pub type BrandingOf = Arc<dyn Fn(&Catalogue) -> crate::BrandingBlock + Send + Sy
 /// Hook trait so `dataroom-core` operations can invoke SHACL validation without a circular
 /// dependency on `dataroom-shacl`.
 pub trait DatasetValidator: Send + Sync {
+    /// Makes the catalogue's stored uploaded profiles (`Store::list_profiles`) usable before a
+    /// validation, whatever this process saw uploaded.
+    fn load_stored_profiles(
+        &self,
+        _catalogue: &Catalogue,
+        _stored: &[crate::model::ProfileRecord],
+    ) {
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -512,38 +521,26 @@ fn enforce_decision(decision: Decision) -> Result<()> {
 }
 
 /// Whether `dataset.get` (and `allowed` about it) shows `ds` to the caller: the caller may read
-/// it, and, as `package_show` does, a withdrawn dataset or one of a withdrawn publisher is not
-/// shown to anonymous callers, and a dataset hidden by the publish gate only to its editors.
+/// it, and, as `package_show` does, a draft, a withdrawn dataset, one of a withdrawn publisher
+/// or one hidden by the publish gate only to its editors ([`crate::auth::dataset_visible`]).
 async fn dataset_shown(
     op_ctx: &OpContext,
     req_ctx: &RequestCtx,
     ds: &Dataset,
     pub_rec: Option<&Publisher>,
 ) -> Result<bool> {
-    let target = ObjectTarget::from_dataset(ds, pub_rec);
-    if !op_ctx
-        .authorizer
-        .check(req_ctx, Action::Read, &target)
-        .allowed
-    {
-        return Ok(false);
-    }
-    if req_ctx.subject.is_anonymous()
-        && (ds.state != RecordState::Active
-            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn))
-    {
-        return Ok(false);
-    }
     let hidden = op_ctx
         .store
         .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
         .await?
         .is_some_and(|c| c.hidden_datasets.contains_key(&ds.name));
-    Ok(!hidden
-        || op_ctx
-            .authorizer
-            .check(req_ctx, Action::Propose, &target)
-            .allowed)
+    Ok(crate::auth::dataset_visible(
+        op_ctx.authorizer.as_ref(),
+        req_ctx,
+        ds,
+        pub_rec,
+        hidden,
+    ))
 }
 
 /// The catalogue as `req_ctx` may read it: the publish gate's hidden datasets (names and
@@ -926,6 +923,16 @@ pub async fn execute_operation(
             Ok(dataset_to_ckan(&ds, pub_rec.as_ref(), &views, &lang))
         }
         "dataset.propose" => {
+            // A caller who can never write is refused before any lookup, so a name it cannot
+            // see answers as a free one does (the authorizer's own write rules, steps 3 and 4).
+            if req_ctx.subject.read_only {
+                return Err(DataroomError::Forbidden("connector is read-only".into()));
+            }
+            if !req_ctx.subject.is_member_of(req_ctx.org_id) {
+                return Err(DataroomError::Forbidden(
+                    "caller is not a member of the organization".into(),
+                ));
+            }
             let raw_ds = input.get("dataset").cloned().unwrap_or(input);
             let non_empty = |key: &str| {
                 raw_ds
@@ -982,6 +989,7 @@ pub async fn execute_operation(
                 }
                 parsed
             } else {
+                crate::ckan_compat::check_ckan_visibility(&raw_ds)?;
                 dataset_from_ckan(
                     req_ctx.org_id,
                     req_ctx.catalogue_id,
@@ -1009,6 +1017,7 @@ pub async fn execute_operation(
             }
 
             if let Some(validator) = &op_ctx.validator {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
                 let reports = validator.validate_dataset(&cat, &ds, Some(&pub_rec))?;
                 for report in &reports {
                     if report.profile_id == cat.main_profile
@@ -1507,6 +1516,7 @@ pub async fn execute_operation(
                 })
                 .collect();
             if let Some(validator) = &op_ctx.validator {
+                validator.load_stored_profiles(&cat, &op_ctx.store.list_profiles(req_ctx).await?);
                 validator.check_catalogue_feed(&cat, &public_ds, &pub_map, profile)
             } else {
                 Ok(json!({
@@ -1664,6 +1674,15 @@ pub async fn execute_operation(
                 })?;
             let target = ObjectTarget::from_publisher(&pub_rec);
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
+            if !pub_rec.named_by(pub_id) {
+                return Err(DataroomError::field_error(
+                    "publisher",
+                    format!(
+                        "'{pub_id}' was merged into '{}': withdraw that publisher by its own name",
+                        pub_rec.name
+                    ),
+                ));
+            }
             let withdrawn = op_ctx
                 .store
                 .withdraw_publisher(req_ctx, &pub_rec.id)

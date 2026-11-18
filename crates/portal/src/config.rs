@@ -345,6 +345,12 @@ pub struct Config {
     /// which then holds only the rows of its tables (on the operators' audit INSERT and SELECT),
     /// so it cannot drop the audit's triggers. Unset: one role migrates and serves, as before.
     pub migration_database_url: Option<String>,
+    /// The Organization every project of a database from before the project registry belongs to
+    /// (`JC_PORTAL_INSTALLATION_ORGANIZATION`, T-7264), e.g. `smartcity`: one of
+    /// `JC_PORTAL_ORGANIZATION_HOSTS`, whose host it is seeded at. Read only on the start that
+    /// upgrades such a database (schema before migration 0066): it keys the project rows under
+    /// this Organization before migration 0080 forces the key ([`crate::db::connect_upgrading`]).
+    pub installation_organization: Option<crate::host_registry::SeedOrganization>,
     /// The module databases a data backup reads and jc's tenant of each module
     /// ([`crate::org_backup::modules::BackupModules::from_lookup`] names the variables).
     pub backup_modules: crate::org_backup::modules::BackupModules,
@@ -552,6 +558,7 @@ impl std::fmt::Debug for Config {
                 "migration_database_url",
                 &self.migration_database_url.as_ref().map(|_| "[redacted]"),
             )
+            .field("installation_organization", &self.installation_organization)
             .field("backup_modules", &self.backup_modules)
             .field("app_settings", &self.app_settings)
             .field("build_pods", &self.build_pods)
@@ -1955,6 +1962,58 @@ pub enum ConfigError {
     Invalid { var: &'static str, reason: String },
 }
 
+/// `JC_PORTAL_INSTALLATION_ORGANIZATION` (T-7264): the Organization of that name in
+/// `JC_PORTAL_ORGANIZATION_HOSTS`, at its working host (lowercase, its port where it has one), as
+/// jc seeds it; `None` when unset. A name that is not an Organization name or has no host there is
+/// refused, so a typo never keys an installation's rows under an Organization nobody runs.
+pub fn installation_organization(
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<Option<crate::host_registry::SeedOrganization>, ConfigError> {
+    const VAR: &str = "JC_PORTAL_INSTALLATION_ORGANIZATION";
+    let Some(name) = lookup(VAR)
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+    else {
+        return Ok(None);
+    };
+    let invalid = |reason: String| ConfigError::Invalid { var: VAR, reason };
+    let hosts = crate::organization_host::parse(
+        &lookup("JC_PORTAL_ORGANIZATION_HOSTS").unwrap_or_default(),
+    )
+    .map_err(|reason| ConfigError::Invalid {
+        var: "JC_PORTAL_ORGANIZATION_HOSTS",
+        reason,
+    })?;
+    let base = hosts
+        .iter()
+        .find(|h| h.organization == name)
+        .map(|h| &h.base)
+        .ok_or_else(|| {
+            invalid(format!(
+                "'{name}' is not one of the Organizations of JC_PORTAL_ORGANIZATION_HOSTS; name the \
+                 [[organizations]] entry every existing project belongs to, e.g. smartcity"
+            ))
+        })?;
+    let host = base
+        .host_str()
+        .map(|h| match base.port() {
+            Some(port) => format!("{h}:{port}"),
+            None => h.to_owned(),
+        })
+        .ok_or_else(|| {
+            invalid(format!(
+                "'{name}' has no host in JC_PORTAL_ORGANIZATION_HOSTS"
+            ))
+        })?
+        .to_ascii_lowercase();
+    Ok(Some(crate::host_registry::SeedOrganization {
+        name,
+        organization_id: None,
+        host,
+        catalogue_id: None,
+    }))
+}
+
 impl Config {
     pub const DEFAULT_BIND: &'static str = "0.0.0.0:8080";
     const DEFAULT_BOOTSTRAP_ADMINS: &'static str = "platform-admins";
@@ -2278,6 +2337,7 @@ impl Config {
         let database_url = lookup("JC_PORTAL_DATABASE_URL").filter(|url| !url.trim().is_empty());
         let migration_database_url =
             lookup("JC_PORTAL_MIGRATION_DATABASE_URL").filter(|url| !url.trim().is_empty());
+        let installation_organization = installation_organization(&lookup)?;
         let backup_modules = crate::org_backup::modules::BackupModules::from_lookup(&lookup)
             .map_err(|reason| ConfigError::Invalid {
                 var: "JC_PORTAL_BACKUP_TENANTS",
@@ -2384,6 +2444,7 @@ impl Config {
             health_dir,
             database_url,
             migration_database_url,
+            installation_organization,
             backup_modules,
             bootstrap_admins,
             decisions_need_second_factor,
@@ -2486,6 +2547,7 @@ impl Config {
             health_dir: None,
             database_url: None,
             migration_database_url: None,
+            installation_organization: None,
             backup_modules: Default::default(),
             // The dev realm's approver role: a test session that carries it may do everything,
             // one that does not is bound by whatever Role/RoleBinding the test puts in the mirror.
@@ -2584,6 +2646,48 @@ mod tests {
             config.forge_var(key).as_deref(),
             Some("http://127.0.0.1:1/git")
         );
+    }
+
+    /// T-7264: the installation Organization is one of JC_PORTAL_ORGANIZATION_HOSTS, seeded at its
+    /// working host with its port; a name it does not list is refused, naming the variable.
+    #[test]
+    fn the_installation_organization_is_one_of_the_organization_hosts() {
+        let vars = |installation: &'static str| {
+            move |name: &str| {
+                match name {
+                "JC_PORTAL_INSTALLATION_ORGANIZATION" => Some(installation.to_owned()),
+                "JC_PORTAL_ORGANIZATION_HOSTS" => Some(
+                    "smartcity=https://Portal.SmartCity.example,bbsk=http://portal.bbsk.example:8443"
+                        .to_owned(),
+                ),
+                _ => None,
+            }
+            }
+        };
+        assert_eq!(installation_organization(|_| None).unwrap(), None);
+        assert_eq!(installation_organization(vars(" ")).unwrap(), None);
+        let seed = installation_organization(vars("smartcity"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (seed.name.as_str(), seed.host.as_str()),
+            ("smartcity", "portal.smartcity.example")
+        );
+        assert_eq!(seed.organization_id, None);
+        let seed = installation_organization(vars("bbsk")).unwrap().unwrap();
+        assert_eq!(seed.host, "portal.bbsk.example:8443");
+        let err = installation_organization(vars("praha"))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("JC_PORTAL_INSTALLATION_ORGANIZATION") && err.contains("'praha'"),
+            "{err}"
+        );
+        let err =
+            installation_organization(one("JC_PORTAL_INSTALLATION_ORGANIZATION", "smartcity"))
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("JC_PORTAL_ORGANIZATION_HOSTS"), "{err}");
     }
 
     /// T-5314: the catalogue's API moves to its Service only with both URLs, the public one https,

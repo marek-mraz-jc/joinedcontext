@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 //! `shako-server`: Mountable routers (`router(state, mount)` and `registry_router(state, mount)`),
-//! security headers + per-response CSP nonce middleware, declarative manifest `apply -f` / `check -f`,
+//! security headers and a fixed CSP (no page carries an inline style), declarative manifest `check -f`,
 //! and unified CLI dispatcher (Contract S1, S6, S8, S21).
 
 use axum::Json;

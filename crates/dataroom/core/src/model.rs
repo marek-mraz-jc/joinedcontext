@@ -423,6 +423,14 @@ pub struct Publisher {
     pub modified: TimestampTz,
 }
 
+impl Publisher {
+    /// Whether `ident` names this record itself (id, name or registry IRI), not a publisher
+    /// that was merged into it: a lookup by a merged name resolves to the target.
+    pub fn named_by(&self, ident: &str) -> bool {
+        self.id == ident || self.name == ident || self.uri == ident
+    }
+}
+
 /// Agent summary embedded on a dataset or service (`foaf:Agent`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

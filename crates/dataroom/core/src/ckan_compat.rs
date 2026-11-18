@@ -367,6 +367,28 @@ pub fn resource_view_to_ckan(view: &ResourceView) -> Value {
     Value::Object(obj)
 }
 
+fn parse_visibility(word: &str) -> Option<Visibility> {
+    match word {
+        "public" => Some(Visibility::Public),
+        "internal" => Some(Visibility::Internal),
+        "restricted" => Some(Visibility::Restricted),
+        _ => None,
+    }
+}
+
+/// Refuses a CKAN payload whose `visibility` is not `public`, `internal` or `restricted`
+/// (a typo must not publish a dataset).
+pub fn check_ckan_visibility(payload: &Value) -> crate::Result<()> {
+    match payload.get("visibility") {
+        None | Some(Value::Null) => Ok(()),
+        Some(v) if v.as_str().and_then(parse_visibility).is_some() => Ok(()),
+        Some(_) => Err(crate::DataroomError::field_error(
+            "visibility",
+            "must be one of public, internal, restricted",
+        )),
+    }
+}
+
 /// Parses a CKAN `package_create` / `package_update` payload into a [`Dataset`].
 pub fn dataset_from_ckan(
     org_id: OrgId,
@@ -473,11 +495,11 @@ pub fn dataset_from_ckan(
     }
 
     let visibility = if let Some(vis_str) = payload.get("visibility").and_then(Value::as_str) {
-        match vis_str {
-            "restricted" => Visibility::Restricted,
-            "internal" => Visibility::Internal,
-            _ => Visibility::Public,
-        }
+        // An unknown word never widens access: writers refuse it first (`check_ckan_visibility`),
+        // any other caller keeps the stored value or the narrowest member-only one.
+        parse_visibility(vis_str)
+            .or(existing.map(|ex| ex.visibility))
+            .unwrap_or(Visibility::Internal)
     } else if let Some(priv_bool) = payload.get("private").and_then(Value::as_bool) {
         if priv_bool {
             Visibility::Internal

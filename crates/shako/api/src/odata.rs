@@ -39,7 +39,6 @@ use shako_git::{
     list_tags, list_tree_entries, read_commit_info, read_file_at_ref,
 };
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 const MAX_ODATA_PAGE: u64 = 500;
 
@@ -132,11 +131,12 @@ fn parse_func_args(parens: Option<&str>, raw_query: Option<&str>) -> BTreeMap<St
     map
 }
 
-/// Extracts `RepoId` from either a composite key `"{RepoId}:{rest}"` or a `$filter` expression
-/// containing `RepoId eq '<uuid>'`.
+/// The repository (and walked ref) a request names: from a composite key `"{RepoId}:{rest}"`,
+/// or from `RepoId eq '<uuid>'` (and `Ref eq '<name>'`) joined by `and` at the top of the
+/// parsed `$filter`. A comparison under `or` or `not` names no repository.
 fn extract_repo_id_from_key_or_query(
     key_parens: Option<&str>,
-    raw_query: Option<&str>,
+    filter: Option<&odata_table::Cond>,
 ) -> Option<(RepoId, Option<String>)> {
     if let Some(k) = key_parens {
         let unq = unquote_odata_key(k);
@@ -146,34 +146,22 @@ fn extract_repo_id_from_key_or_query(
             return Some((rid, Some(rest.to_owned())));
         }
     }
-    let q = raw_query?;
-    let decoded = odata_url::percent_decoded(q).unwrap_or_else(|| q.to_owned());
-    let mut rest_str = decoded.as_str();
-    while let Some(pos) = rest_str.find("RepoId") {
-        let after = &rest_str[pos + "RepoId".len()..];
-        let trimmed = after.trim_start();
-        if let Some(after_eq) = trimmed.strip_prefix("eq") {
-            let val_part = after_eq.trim_start();
-            if let Some(quoted) = val_part.strip_prefix('\'')
-                && let Some((uuid_s, _)) = quoted.split_once('\'')
-                && let Ok(rid) = uuid_s.parse::<RepoId>()
-            {
-                let ref_hint = extract_string_eq_from_filter(&decoded, "Ref");
-                return Some((rid, ref_hint));
-            }
-        }
-        rest_str = after;
-    }
-    None
+    let filter = filter?;
+    let rid = top_level_eq(filter, "RepoId")?.parse::<RepoId>().ok()?;
+    Some((rid, top_level_eq(filter, "Ref")))
 }
 
-fn extract_string_eq_from_filter(decoded_query: &str, field: &str) -> Option<String> {
-    let pos = decoded_query.find(field)?;
-    let after = &decoded_query[pos + field.len()..];
-    let after_eq = after.trim_start().strip_prefix("eq")?.trim_start();
-    let quoted = after_eq.strip_prefix('\'')?;
-    let (val, _) = quoted.split_once('\'')?;
-    Some(val.to_owned())
+/// The string a top-level `and` conjunct `field eq '<value>'` of `cond` names.
+fn top_level_eq(cond: &odata_table::Cond, field: &str) -> Option<String> {
+    match cond {
+        odata_table::Cond::And(a, b) => top_level_eq(a, field).or_else(|| top_level_eq(b, field)),
+        odata_table::Cond::Compare {
+            path,
+            op: odata_url::CompareOp::Eq,
+            value: Value::String(v),
+        } if path.len() == 1 && path[0] == field => Some(v.clone()),
+        _ => None,
+    }
 }
 
 /// Builds an `odata-table::MemoryTable` for `set_name` scoped to `ctx` (Contract S9).
@@ -186,12 +174,18 @@ async fn build_entity_table(
     raw_query: Option<&str>,
     only_repo: Option<RepoId>,
 ) -> ShakoResult<MemoryTable> {
-    let model = Arc::new(state.registry.service.model());
+    let model = state.registry.model();
     let info = state
         .registry
         .service
         .info(model, set_name)
         .ok_or_else(|| ShakoError::NotFound(format!("unknown OData entity set '{set_name}'")))?;
+    // The filter as the table will apply it; a filter that does not parse names no repository
+    // and the query itself answers the error.
+    let filter = parse_odata_options_with_expand(&info.model, set_name, raw_query)
+        .ok()
+        .and_then(|(opts, _)| odata_table::plan(&info, &opts, MAX_ODATA_PAGE).ok())
+        .map(|p| p.filter);
 
     let visible_repos: Vec<RepoRecord> = state
         .store()
@@ -278,7 +272,7 @@ async fn build_entity_table(
         }
         "Repositories" => visible_repos.iter().map(|r| repo_row(mount, r)).collect(),
         "Branches" => {
-            let Some((repo_id, _)) = extract_repo_id_from_key_or_query(key_parens, raw_query)
+            let Some((repo_id, _)) = extract_repo_id_from_key_or_query(key_parens, filter.as_ref())
             else {
                 return Err(ShakoError::BadRequest(
                     "Branches query requires RepoId in key or $filter (e.g. $filter=RepoId eq '...')"
@@ -310,7 +304,7 @@ async fn build_entity_table(
                 .collect()
         }
         "Tags" => {
-            let Some((repo_id, _)) = extract_repo_id_from_key_or_query(key_parens, raw_query)
+            let Some((repo_id, _)) = extract_repo_id_from_key_or_query(key_parens, filter.as_ref())
             else {
                 return Err(ShakoError::BadRequest(
                     "Tags query requires RepoId in key or $filter".into(),
@@ -338,7 +332,7 @@ async fn build_entity_table(
         "Commits" => {
             // Contract S9: Commits requires RepoId in key or $filter; unbounded scans answer 501!
             let Some((repo_id, ref_or_sha)) =
-                extract_repo_id_from_key_or_query(key_parens, raw_query)
+                extract_repo_id_from_key_or_query(key_parens, filter.as_ref())
             else {
                 return Err(ShakoError::NotImplemented(
                     "unbounded Commits scan is not supported; specify RepoId in key or $filter"
@@ -349,6 +343,17 @@ async fn build_entity_table(
                 return MemoryTable::new(info, Vec::new()).map_err(map_table_error);
             };
             let git_ref = ref_or_sha.unwrap_or_else(|| repo.default_branch.clone());
+            // A branch, a tag or a full commit id; never a revision expression.
+            let is_sha =
+                matches!(git_ref.len(), 40 | 64) && git_ref.bytes().all(|b| b.is_ascii_hexdigit());
+            if !is_sha
+                && shako_core::validate_branch_name(&git_ref).is_err()
+                && shako_core::validate_tag_name(&git_ref).is_err()
+            {
+                return Err(ShakoError::Unprocessable(format!(
+                    "Ref '{git_ref}' must name a branch, a tag or a full commit id"
+                )));
+            }
             let disk_path = repo_disk_path(state.repo_root(), repo.instance_id, repo.id)?;
             let ref_label = git_ref.clone();
             let commits = tokio::task::spawn_blocking(move || {
@@ -1548,10 +1553,21 @@ pub async fn find_visible_repo_by_key(
         .store()
         .list_repos(ctx.instance_id, ctx.org_id)
         .await?;
-    let Some(repo) = repos.into_iter().find(|r| r.name == key) else {
-        return Err(ShakoError::NotFound("repository not found".into()));
-    };
-    resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Read).await
+    // A bare name stands for a repository only when exactly one the caller sees carries it.
+    let mut found = None;
+    for repo in repos.into_iter().filter(|r| r.name == key) {
+        if let Ok(visible) =
+            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Read).await
+        {
+            if found.is_some() {
+                return Err(ShakoError::Unprocessable(format!(
+                    "repository name '{key}' is held by more than one owner: name it as owner/{key} or by its id"
+                )));
+            }
+            found = Some(visible);
+        }
+    }
+    found.ok_or_else(|| ShakoError::NotFound("repository not found".into()))
 }
 
 async fn exec_bound_repo_tree(
@@ -1893,6 +1909,34 @@ pub async fn exec_odata_operation(
             .await?;
             Ok(review_row(&saved))
         }
+        "Mergeable" | "jc_forge_mergeable" | "mergeable" => {
+            let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
+            exec_bound_pr_mergeable(state, ctx, &format!("{r_key}:{number}")).await
+        }
+        "ArchiveLink"
+        | "jc_forge_archive_link"
+        | "archive-link"
+        | "BundleLink"
+        | "jc_forge_bundle_link"
+        | "bundle-link" => {
+            let (r, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
+            let git_ref = text(&body, "Ref").unwrap_or_else(|| r.default_branch.clone());
+            shako_core::validate_branch_name(&git_ref)
+                .or_else(|_| shako_core::validate_tag_name(&git_ref))?;
+            let ext = if op_name.contains("undle") {
+                "bundle".to_owned()
+            } else {
+                text(&body, "Format").unwrap_or_else(|| "zip".into())
+            };
+            if !matches!(ext.as_str(), "zip" | "tar.gz" | "bundle") {
+                return Err(ShakoError::Unprocessable(
+                    "format must be zip or tar.gz".into(),
+                ));
+            }
+            Ok(json!({
+                "value": format!("{}/api/v1/repos/{}/{}/archive/{git_ref}.{ext}", mount.public_base(), r.owner, r.name)
+            }))
+        }
         "Merge" | "jc_forge_merge_pull_request" | "merge-pr" => {
             let (r_key, number) = resolve_pr_target(&repo_key, &body)?;
             let repo = bound_repo(state, ctx, &r_key).await?;
@@ -2146,7 +2190,24 @@ pub async fn exec_odata_operation(
                     op_def.name
                 )));
             };
-            let filter_q = text(&body, "Filter").map(|f| format!("$filter={f}"));
+            // The tools name the repository in `repo`: its id narrows the set, beside the
+            // caller's own filter. The filter travels encoded, so it never adds an option.
+            let mut filter = text(&body, "Filter").filter(|f| !f.trim().is_empty());
+            let takes_repo = op_def.input_schema["properties"].get("repo").is_some();
+            if takes_repo && !repo_key.is_empty() {
+                let (r, _) = find_visible_repo_by_key(state, ctx, &repo_key).await?;
+                let by_repo = format!("RepoId eq '{}'", r.id);
+                filter = Some(match filter {
+                    Some(f) => format!("({f}) and {by_repo}"),
+                    None => by_repo,
+                });
+            }
+            let filter_q = filter.map(|f| {
+                format!(
+                    "$filter={}",
+                    percent_encoding::utf8_percent_encode(&f, percent_encoding::NON_ALPHANUMERIC)
+                )
+            });
             let table =
                 build_entity_table(state, ctx, mount, set_name, None, filter_q.as_deref(), None)
                     .await?;

@@ -264,7 +264,10 @@ async fn answer_ckan_action(
             };
             let mut tags = std::collections::BTreeSet::new();
             for ds in datasets {
-                if ds.state == RecordState::Active && ds.visibility == Visibility::Public {
+                if ds.state == RecordState::Active
+                    && ds.visibility == Visibility::Public
+                    && !cat.hidden_datasets.contains_key(&ds.name)
+                {
                     for t in ds.tags {
                         tags.insert(t);
                     }
@@ -289,6 +292,7 @@ async fn answer_ckan_action(
                 .filter(|d| {
                     d.state == RecordState::Active
                         && d.visibility == Visibility::Public
+                        && !cat.hidden_datasets.contains_key(&d.name)
                         && !pub_map
                             .get(&d.publisher_id)
                             .is_some_and(|p| p.state == RecordState::Withdrawn)
@@ -481,12 +485,28 @@ async fn answer_ckan_action(
             let op_ctx = state.op_context();
             let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
             if !name.is_empty() {
-                if let Ok(Some(_)) = state.store.get_dataset(&ctx, name).await {
-                    return ckan_err(
-                        &base,
-                        &action,
-                        DataroomError::field_error("name", "That URL is already in use."),
-                    );
+                // Only a caller who may see or edit the dataset learns that the name is taken;
+                // anyone else gets the refusal dataset.propose gives for a record it cannot edit.
+                if let Ok(Some(ds)) = state.store.get_dataset(&ctx, name).await {
+                    let pub_rec = state
+                        .store
+                        .get_publisher(&ctx, &ds.publisher_id)
+                        .await
+                        .ok()
+                        .flatten();
+                    let target = ObjectTarget::from_dataset(&ds, pub_rec.as_ref());
+                    let known = dataset_shown(&state, &ctx, &cat, &ds, pub_rec.as_ref())
+                        || state
+                            .authorizer
+                            .check(&ctx, Action::Propose, &target)
+                            .allowed;
+                    if known {
+                        return ckan_err(
+                            &base,
+                            &action,
+                            DataroomError::field_error("name", "That URL is already in use."),
+                        );
+                    }
                 }
             }
             match dataroom_core::ops::execute_operation(
@@ -1100,7 +1120,7 @@ async fn answer_ckan_action(
             }) else {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             };
-            if pub_rec.state == RecordState::Withdrawn && ctx.subject.is_anonymous() {
+            if pub_rec.state == RecordState::Withdrawn && !ctx.subject.is_member_of(ctx.org_id) {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             }
             let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
@@ -1109,6 +1129,7 @@ async fn answer_ckan_action(
                 .filter(|d| {
                     d.state == RecordState::Active
                         && d.visibility == Visibility::Public
+                        && !cat.hidden_datasets.contains_key(&d.name)
                         && (d.publisher_id == pub_rec.name || d.publisher_id == pub_rec.id)
                 })
                 .count();
@@ -1330,6 +1351,16 @@ async fn answer_ckan_action(
             let dec = state.authorizer.check(&ctx, Action::Delete, &target);
             if !dec.allowed {
                 return ckan_err(&base, &action, decision_error(dec));
+            }
+            if !existing.named_by(ident) {
+                return ckan_err(
+                    &base,
+                    &action,
+                    DataroomError::field_error(
+                        "id",
+                        format!("'{ident}' was merged into '{}'", existing.name),
+                    ),
+                );
             }
             match state.store.withdraw_publisher(&ctx, &existing.id).await {
                 Ok(_) => ckan_ok(&base, &action, json!({}), false),
