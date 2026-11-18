@@ -1047,7 +1047,7 @@ fn jc_frequency_reads_codes_and_uris_in_every_language() {
             .expect(code);
             assert_eq!(label, word, "{code} {lang}");
             assert_eq!(
-                n.map(|(dt, hourly)| ((dt - modified).num_hours(), hourly)),
+                n.map(|(dt, hourly)| ((dt.as_second() - modified.as_second()) / 3_600, hourly)),
                 next,
                 "{code}"
             );

@@ -7,12 +7,12 @@
 //! ([`harvest_principal`]), which holds `harvest` on that catalogue and nothing else.
 
 use crate::runner::HarvestEngine;
-use chrono::{DateTime, Datelike, Timelike, Utc};
 use dataroom_core::ops::HarvestRunner;
 use dataroom_core::{
     Action, Authorizer, CatalogueId, DataroomError, GrantRule, HarvestRun, ObjectTarget, OrgId,
     RequestCtx, Result, Store, Subject,
 };
+use jc_time::TimestampTz;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -62,7 +62,7 @@ fn field_matches(field: &str, value: u32, min: u32, max: u32) -> Result<bool> {
 
 /// Whether the five-field cron `expr` (minute hour day-of-month month day-of-week, UTC) fires
 /// in the minute of `at`. Day of month and day of week, both restricted, match either (cron).
-pub fn cron_matches(expr: &str, at: DateTime<Utc>) -> Result<bool> {
+pub fn cron_matches(expr: &str, at: TimestampTz) -> Result<bool> {
     let f: Vec<&str> = expr.split_whitespace().collect();
     let [min, hour, dom, mon, dow] = f.as_slice() else {
         return Err(DataroomError::field_error(
@@ -70,19 +70,21 @@ pub fn cron_matches(expr: &str, at: DateTime<Utc>) -> Result<bool> {
             format!("'{expr}' is not a five-field cron expression"),
         ));
     };
-    let weekday = at.weekday().num_days_from_sunday();
+    let at = at.utc();
+    let num = |n: i8| u32::from(n.unsigned_abs());
+    let weekday = num(at.weekday().to_sunday_zero_offset());
     // 7 is Sunday as well as 0.
     let dow_hit =
         field_matches(dow, weekday, 0, 7)? || (weekday == 0 && field_matches(dow, 7, 0, 7)?);
-    let dom_hit = field_matches(dom, at.day(), 1, 31)?;
+    let dom_hit = field_matches(dom, num(at.day()), 1, 31)?;
     let day = match (*dom == "*", *dow == "*") {
         (true, _) => dow_hit,
         (false, true) => dom_hit,
         (false, false) => dom_hit || dow_hit,
     };
-    Ok(field_matches(min, at.minute(), 0, 59)?
-        && field_matches(hour, at.hour(), 0, 23)?
-        && field_matches(mon, at.month(), 1, 12)?
+    Ok(field_matches(min, num(at.minute()), 0, 59)?
+        && field_matches(hour, num(at.hour()), 0, 23)?
+        && field_matches(mon, num(at.month()), 1, 12)?
         && day)
 }
 
@@ -128,7 +130,7 @@ impl HarvestScheduler {
 
     /// Runs every enabled source of every catalogue whose schedule fires in the minute of `now`,
     /// sources side by side, and returns each source's last outcome.
-    pub async fn run_due(&self, now: DateTime<Utc>) -> Vec<(String, Result<HarvestRun>)> {
+    pub async fn run_due(&self, now: TimestampTz) -> Vec<(String, Result<HarvestRun>)> {
         self.run_sources(Some(now)).await
     }
 
@@ -141,7 +143,7 @@ impl HarvestScheduler {
     }
 
     /// The enabled sources whose schedule fires in the minute of `at`, all of them for `None`.
-    async fn run_sources(&self, at: Option<DateTime<Utc>>) -> Vec<(String, Result<HarvestRun>)> {
+    async fn run_sources(&self, at: Option<TimestampTz>) -> Vec<(String, Result<HarvestRun>)> {
         let mut runs = tokio::task::JoinSet::new();
         let catalogues = self
             .catalogues
@@ -212,9 +214,9 @@ impl HarvestScheduler {
             let mut first = true;
             let mut last = None;
             loop {
-                let into_minute = u64::from(Utc::now().second());
+                let into_minute = u64::from(TimestampTz::now().utc().second().unsigned_abs());
                 tokio::time::sleep(Duration::from_secs(60 - into_minute)).await;
-                let (me, minute) = (me.clone(), Utc::now());
+                let (me, minute) = (me.clone(), TimestampTz::now());
                 if !new_minute(&mut last, minute) {
                     continue;
                 }
@@ -233,8 +235,8 @@ impl HarvestScheduler {
 
 /// Whether `now` falls in a later minute than the last check that fired; a wake-up a moment
 /// early (the wall clock stepped back) would otherwise run that minute's sources twice.
-fn new_minute(last: &mut Option<i64>, now: DateTime<Utc>) -> bool {
-    let minute = now.timestamp().div_euclid(60);
+fn new_minute(last: &mut Option<i64>, now: TimestampTz) -> bool {
+    let minute = now.as_second().div_euclid(60);
     if last.is_some_and(|l| minute <= l) {
         return false;
     }
@@ -276,11 +278,15 @@ async fn run_with_retries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
+
+    fn utc(h: i8, m: i8, s: i8) -> TimestampTz {
+        let at = jiff::civil::date(2026, 11, 9).at(h, m, s, 0);
+        TimestampTz(jiff::tz::Offset::UTC.to_timestamp(at).expect("in range"))
+    }
 
     #[test]
     fn each_minute_fires_once_even_when_the_clock_steps_back() {
-        let at = |m, s| Utc.with_ymd_and_hms(2026, 11, 9, 3, m, s).unwrap();
+        let at = |m, s| utc(3, m, s);
         let mut last = None;
         assert!(new_minute(&mut last, at(23, 0)));
         assert!(!new_minute(&mut last, at(23, 59)), "woke a moment early");
@@ -290,7 +296,7 @@ mod tests {
 
     #[test]
     fn prod_schedule_fires_once_a_day_at_03_23() {
-        let at = |h, m| Utc.with_ymd_and_hms(2026, 11, 9, h, m, 0).unwrap();
+        let at = |h, m| utc(h, m, 0);
         assert!(cron_matches("23 3 * * *", at(3, 23)).unwrap());
         assert!(!cron_matches("23 3 * * *", at(3, 24)).unwrap());
         assert!(!cron_matches("23 3 * * *", at(4, 23)).unwrap());

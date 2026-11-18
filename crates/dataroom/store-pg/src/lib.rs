@@ -2,7 +2,6 @@
 //! PostgreSQL [`Store`] implementation using `sqlx`, schema `dataroom`, forced RLS, and
 //! startup security verification (C1, C14, research-tenancy §2.4 & §5.3).
 
-use chrono::Utc;
 use dataroom_core::odata_defs::{
     activity_to_row, catalogue_to_row, dataroom_service, dataset_to_row, distribution_to_row,
     harvest_run_to_row, harvest_source_to_row, publisher_to_row, shacl_report_to_row,
@@ -13,6 +12,7 @@ use dataroom_core::{
     Distribution, HarvestRun, HarvestSource, OrgId, ProfileRecord, Publisher, RecordState,
     RequestCtx, ResourceView, Result, ShaclValidationReport, StaticPage, Store,
 };
+use jc_time::TimestampTz;
 use odata_table::{MemoryTable, Table};
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;
@@ -770,7 +770,7 @@ impl Store for PgStore {
             .fetch_all(&mut *tx)
             .await
             .map_err(db_err)?;
-            let now = Utc::now();
+            let now = TimestampTz::now();
             for (Json(mut ds),) in rows {
                 ds.publisher_id = target.name.clone();
                 ds.modified = now;
@@ -803,7 +803,7 @@ impl Store for PgStore {
                 )));
             };
             pub_rec.state = RecordState::Withdrawn;
-            pub_rec.modified = Utc::now();
+            pub_rec.modified = TimestampTz::now();
             self.upsert_publisher(ctx, pub_rec).await
         })
     }
@@ -883,7 +883,7 @@ impl Store for PgStore {
                 )));
             };
             ds.state = RecordState::Withdrawn;
-            ds.modified = Utc::now();
+            ds.modified = TimestampTz::now();
             self.upsert_dataset(ctx, ds).await
         })
     }
@@ -1344,7 +1344,7 @@ impl Store for PgStore {
         &'a self,
         ctx: &'a RequestCtx,
         mut run: HarvestRun,
-        stale_before: chrono::DateTime<Utc>,
+        stale_before: TimestampTz,
     ) -> BoxFuture<'a, Result<bool>> {
         Box::pin(async move {
             run.org_id = ctx.org_id;
@@ -1936,7 +1936,7 @@ mod tests {
                     allow_cross_org_harvest: true,
                     allowed_outbound_hosts: Vec::new(),
                     applicable_legislation: Vec::new(),
-                    modified: Utc::now(),
+                    modified: TimestampTz::now(),
                     deleted: None,
                     public_base: None,
                     portal_base: None,
@@ -1980,8 +1980,8 @@ mod tests {
                     state: RecordState::Active,
                     merged_into: None,
                     editor_grants: Vec::new(),
-                    created: Utc::now(),
-                    modified: Utc::now(),
+                    created: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await

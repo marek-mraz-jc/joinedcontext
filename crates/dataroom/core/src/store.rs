@@ -229,7 +229,7 @@ pub trait Store: Send + Sync {
         &'a self,
         _ctx: &'a RequestCtx,
         _run: HarvestRun,
-        _stale_before: chrono::DateTime<chrono::Utc>,
+        _stale_before: jc_time::TimestampTz,
     ) -> BoxFuture<'a, Result<bool>> {
         Box::pin(std::future::ready(Err(
             crate::error::DataroomError::NotSupported("this store holds no harvest lock".into()),

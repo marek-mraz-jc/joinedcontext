@@ -7,7 +7,7 @@ use crate::model::{
     Distribution, OrgId, Publisher, RecordState, ResourceView, TemporalPeriod, Visibility,
 };
 use crate::vocab::{default_licence_register, find_licence};
-use chrono::{DateTime, NaiveDate, Utc};
+use jc_time::{parse_date, parse_rfc3339, Date, TimestampTz};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -375,7 +375,7 @@ pub fn dataset_from_ckan(
     existing: Option<&Dataset>,
     default_lang: &str,
 ) -> Dataset {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     // CKAN callers address a dataset by id or by name in `id`; an update of an existing record
     // keeps that record's id, so `{"id": "<name>"}` never forks a second record.
     let id = existing
@@ -574,11 +574,13 @@ pub fn dataset_from_ckan(
         let start = extras_map
             .get("temporal_start")
             .and_then(|s| s.get(..10))
-            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            .and_then(parse_date)
+            .map(Date);
         let end = extras_map
             .get("temporal_end")
             .and_then(|s| s.get(..10))
-            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            .and_then(parse_date)
+            .map(Date);
         if start.is_some() || end.is_some() {
             Some(TemporalPeriod { start, end })
         } else {
@@ -680,8 +682,8 @@ pub fn dataset_from_ckan(
 
     let issued = extras_map
         .get("issued")
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+        .and_then(|s| parse_rfc3339(s))
+        .map(TimestampTz)
         .or_else(|| existing.map(|e| e.issued))
         .unwrap_or(now);
 

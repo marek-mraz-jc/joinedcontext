@@ -746,7 +746,7 @@ mod tests {
             allow_cross_org_harvest: true,
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
-            modified: chrono::Utc::now(),
+            modified: jc_time::TimestampTz::now(),
             deleted: None,
             public_base: None,
             portal_base: None,
@@ -838,8 +838,8 @@ mod tests {
             }],
             extras: BTreeMap::new(),
             restricted_grants: Vec::new(),
-            issued: chrono::Utc::now(),
-            modified: chrono::Utc::now(),
+            issued: jc_time::TimestampTz::now(),
+            modified: jc_time::TimestampTz::now(),
         };
 
         let mut ds_without_landing = ds_with_landing.clone();

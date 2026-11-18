@@ -5,8 +5,7 @@
 //! `jc_developer_page`, `jc_mcp_install`, `jc_assistants`, `jc_assistant_guide`, `jc_page`,
 //! `jc_sitemap_xml`, `jc_robots_txt`, `jc_plain_glyphs`, NUTS 3 lookup) for `dataroom-web` (D1-D7).
 
-use crate::i18n::{format_date_localized, jc_t, normalize_lang_code};
-use chrono::{DateTime, Datelike, Duration, Utc};
+use crate::i18n::{format_ts_localized, jc_t, normalize_lang_code};
 use dataroom_core::branding::{origin_of, Address};
 use dataroom_core::vocab::find_licence;
 use dataroom_core::{
@@ -14,6 +13,7 @@ use dataroom_core::{
     Catalogue, Dataset, Distribution, Publisher, PublisherBranding, RecordState, ResourceView,
     Visibility,
 };
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -881,23 +881,18 @@ pub fn jc_about(
 
     rows.push(AboutRow {
         label: jc_t("created", lang),
-        text: format_date_localized(ds.issued.year(), ds.issued.month(), ds.issued.day(), lang),
+        text: format_ts_localized(ds.issued, lang),
         link: None,
     });
     rows.push(AboutRow {
         label: jc_t("last_update", lang),
-        text: format_date_localized(
-            ds.modified.year(),
-            ds.modified.month(),
-            ds.modified.day(),
-            lang,
-        ),
+        text: format_ts_localized(ds.modified, lang),
         link: None,
     });
     if let Some((_, Some((next_dt, hourly)))) = freq_info {
-        let base_date = format_date_localized(next_dt.year(), next_dt.month(), next_dt.day(), lang);
+        let base_date = format_ts_localized(next_dt, lang);
         let text = if hourly {
-            format!("{base_date}{}", next_dt.format(", %H:%M (UTC)"))
+            format!("{base_date}{}", next_dt.0.strftime(", %H:%M (UTC)"))
         } else {
             base_date
         };
@@ -1026,7 +1021,7 @@ fn parse_sources_extra(raw: &str) -> Vec<(String, String)> {
 }
 
 /// A frequency label and, when known, the next expected update and whether it is overdue.
-pub type FrequencyInfo = (String, Option<(DateTime<Utc>, bool)>);
+pub type FrequencyInfo = (String, Option<(TimestampTz, bool)>);
 
 /// Frequency label and next expected update (`jc_frequency` in `plugin.py` lines 536-552).
 pub fn jc_frequency(ds: &Dataset, lang: &str) -> Option<FrequencyInfo> {
@@ -1117,7 +1112,12 @@ pub fn jc_frequency(ds: &Dataset, lang: &str) -> Option<FrequencyInfo> {
         "hu" => hu,
         _ => en,
     };
-    let next = hours.map(|h| (ds.modified + Duration::hours(h), h < 24));
+    let next = hours.and_then(|h| {
+        let at = ds
+            .modified
+            .checked_add(jiff::SignedDuration::from_hours(h))?;
+        Some((at, h < 24))
+    });
     Some((word.to_owned(), next))
 }
 
@@ -1736,7 +1736,7 @@ pub fn jc_schema_org_dict(
         .temporal
         .as_ref()
         .and_then(|t| t.start.map(|d| d.to_string()))
-        .unwrap_or_else(|| ds.issued.format("%Y-%m-%d").to_string());
+        .unwrap_or_else(|| ds.issued.0.strftime("%Y-%m-%d").to_string());
     let end = ds
         .temporal
         .as_ref()
@@ -2503,7 +2503,7 @@ pub fn jc_sitemap_xml(cat: &Catalogue, datasets: &[Dataset], publishers: &[Publi
 
     for ds in pub_ds.into_iter().take(50_000) {
         let loc = html_escape(&format!("{site}/dataset/{}", ds.name));
-        let lastmod = ds.modified.format("%Y-%m-%d").to_string();
+        let lastmod = ds.modified.0.strftime("%Y-%m-%d").to_string();
         lines.push(format!(
             "<url><loc>{loc}</loc><lastmod>{lastmod}</lastmod></url>"
         ));

@@ -6,13 +6,13 @@ use crate::guard::{validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX
 use crate::sources::{
     parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
 };
-use chrono::Utc;
 use dataroom_core::ops::{HarvestRunner, SourceTest};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     ActivityRow, DataroomError, Dataset, HarvestLogLine, HarvestRun, HarvestRunState,
     HarvestSkippedItem, HarvestSource, HarvestSourceKind, RecordState, RequestCtx, Result, Store,
 };
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
@@ -998,7 +998,7 @@ impl HarvestRunner for HarvestEngine {
         source: &'a HarvestSource,
     ) -> BoxFuture<'a, Result<HarvestRun>> {
         Box::pin(async move {
-            let started_at = Utc::now();
+            let started_at = TimestampTz::now();
             let run_id = format!("run-{}", Uuid::now_v7());
             let mut run = HarvestRun {
                 org_id: ctx.org_id,
@@ -1016,10 +1016,16 @@ impl HarvestRunner for HarvestEngine {
                 error: None,
                 logs: Vec::new(),
             };
-            let deadline = chrono::Duration::from_std(self.deadline)
-                .unwrap_or_else(|_| chrono::Duration::hours(1));
+            let deadline = jiff::SignedDuration::try_from(self.deadline)
+                .unwrap_or_else(|_| jiff::SignedDuration::from_hours(1));
             if !store
-                .claim_harvest_run(ctx, run.clone(), started_at - deadline)
+                .claim_harvest_run(
+                    ctx,
+                    run.clone(),
+                    started_at
+                        .checked_sub(deadline)
+                        .unwrap_or(TimestampTz::UNIX_EPOCH),
+                )
                 .await?
             {
                 return Err(DataroomError::Conflict(format!(
@@ -1052,10 +1058,10 @@ impl HarvestRunner for HarvestEngine {
                 .is_none_or(|r| r.state == HarvestRunState::Running);
             if still_running {
                 run.state = HarvestRunState::Failed;
-                run.finished_at = Some(Utc::now());
+                run.finished_at = Some(TimestampTz::now());
                 run.error = Some(err.to_string());
                 run.logs.push(HarvestLogLine {
-                    at: Utc::now(),
+                    at: TimestampTz::now(),
                     level: "error".into(),
                     fingerprint: fingerprint.into(),
                     message: err.to_string(),
@@ -1127,7 +1133,7 @@ impl HarvestEngine {
         store: &dyn Store,
         source: &HarvestSource,
         run_id: String,
-        started_at: chrono::DateTime<Utc>,
+        started_at: TimestampTz,
     ) -> Result<HarvestRun> {
         {
             let mut logs = Vec::new();
@@ -1188,7 +1194,7 @@ impl HarvestEngine {
                 Ok(pair) => pair,
                 Err(err) => {
                     logs.push(HarvestLogLine {
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         level: "error".into(),
                         fingerprint: format!("harvest.{}.fetch_error", source.kind.as_str()),
                         message: err.to_string(),
@@ -1200,7 +1206,7 @@ impl HarvestEngine {
                         source_id: source.id.clone(),
                         state: HarvestRunState::Failed,
                         started_at,
-                        finished_at: Some(Utc::now()),
+                        finished_at: Some(TimestampTz::now()),
                         created_count: 0,
                         updated_count: 0,
                         unchanged_count: 0,
@@ -1363,7 +1369,7 @@ impl HarvestEngine {
                     store.withdraw_dataset(ctx, &gone_ds.id).await?;
                     withdrawn_count += 1;
                     logs.push(HarvestLogLine {
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         level: "info".into(),
                         fingerprint: "harvest.withdrawn".into(),
                         message: format!(
@@ -1376,7 +1382,7 @@ impl HarvestEngine {
 
             for sk in &skipped {
                 logs.push(HarvestLogLine {
-                    at: Utc::now(),
+                    at: TimestampTz::now(),
                     level: "info".into(),
                     fingerprint: "harvest.skipped".into(),
                     message: format!("Skipped {} {:?}: {}", sk.item_id, sk.title, sk.reason),
@@ -1390,7 +1396,7 @@ impl HarvestEngine {
                 source_id: source.id.clone(),
                 state: HarvestRunState::Succeeded,
                 started_at,
-                finished_at: Some(Utc::now()),
+                finished_at: Some(TimestampTz::now()),
                 created_count,
                 updated_count,
                 unchanged_count,
@@ -1407,7 +1413,7 @@ impl HarvestEngine {
                         org_id: ctx.org_id,
                         catalogue_id: ctx.catalogue_id,
                         id: format!("act-{}", Uuid::now_v7()),
-                        at: Utc::now(),
+                        at: TimestampTz::now(),
                         actor: ctx.actor_name().to_owned(),
                         operation: "harvest.run".into(),
                         object_type: "HarvestSource".into(),
@@ -1614,7 +1620,7 @@ mod tests {
             gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             budget: budget.map(|bytes| HarvestBudget { records: 10, bytes }),
             position: 0,
         };
@@ -1644,7 +1650,7 @@ mod tests {
             allow_cross_org_harvest: false,
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             deleted: None,
             public_base: None,
             portal_base: None,
@@ -1842,7 +1848,7 @@ mod tests {
                 allow_cross_org_harvest: true,
                 allowed_outbound_hosts: vec!["hub.bbsk.sk".into()],
                 applicable_legislation: Vec::new(),
-                modified: Utc::now(),
+                modified: TimestampTz::now(),
                 deleted: None,
                 public_base: None,
                 portal_base: None,
@@ -1874,8 +1880,8 @@ mod tests {
                     badge_initials: None,
                     badge_colour: None,
                     declared_by_instance: None,
-                    created: Utc::now(),
-                    modified: Utc::now(),
+                    created: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await
@@ -1902,7 +1908,7 @@ mod tests {
             gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             budget: None,
             position: 0,
         };
@@ -2055,7 +2061,7 @@ mod tests {
             allow_cross_org_harvest: true,
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             deleted: None,
             public_base: None,
             portal_base: None,
@@ -2094,7 +2100,7 @@ mod tests {
                 gateway: None,
                 schedule: "23 3 * * *".into(),
                 enabled: true,
-                modified: Utc::now(),
+                modified: TimestampTz::now(),
                 budget: None,
                 position: *position,
             };
@@ -2481,7 +2487,7 @@ mod tests {
             gateway: None,
             schedule: "23 3 * * *".into(),
             enabled: true,
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             budget: None,
             position: 0,
         };

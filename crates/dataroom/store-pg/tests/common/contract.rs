@@ -420,9 +420,7 @@ pub async fn harvest_lock(store: &dyn Store) {
         r.finished_at = None;
         r
     };
-    let stale_before = chrono::DateTime::parse_from_rfc3339("2026-11-09T02:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
+    let stale_before = ts("2026-11-09T02:00:00Z");
     let (a, b) = tokio::join!(
         store.claim_harvest_run(&ctx, running("run-a", "2026-11-09T03:23:00Z"), stale_before),
         store.claim_harvest_run(&ctx, running("run-b", "2026-11-09T03:23:00Z"), stale_before),
@@ -456,9 +454,7 @@ pub async fn harvest_lock(store: &dyn Store) {
         .unwrap());
 
     // run-c is left Running; a claim whose deadline has passed it abandons run-c.
-    let later = chrono::DateTime::parse_from_rfc3339("2026-11-09T05:00:00Z")
-        .unwrap()
-        .with_timezone(&chrono::Utc);
+    let later = ts("2026-11-09T05:00:00Z");
     assert!(store
         .claim_harvest_run(&ctx, running("run-d", "2026-11-09T06:00:00Z"), later)
         .await
@@ -931,7 +927,7 @@ pub async fn deleted_catalogues(store: &dyn Store) {
             .map(drop),
         "source",
     );
-    let stale_before = chrono::Utc::now();
+    let stale_before = jc_time::TimestampTz::now();
     gone(
         store
             .claim_harvest_run(

@@ -7,7 +7,8 @@ description = "DCAT-AP 3.0.1, DCAT-AP-CZ and DCAT-AP-SK 2.0 RDF mapping and seri
 publish = false
 
 [dependencies]
-chrono = { version = "0.4.38", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 dataroom-core = { path = "../core" }
 oxjsonld = "0.1.0"
 oxrdf = "0.2.4"

@@ -2,7 +2,6 @@
 
 use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
-use chrono::Utc;
 use dataroom_api::{router, DataroomState, TokenBinding};
 use dataroom_core::ops::{all_operations, execute_operation};
 use dataroom_core::{
@@ -13,6 +12,7 @@ use dataroom_core::{
 use dataroom_harvest::{HarvestEngine, MapFetcher};
 use dataroom_store_memory::MemoryStore;
 use http_body_util::BodyExt;
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -115,7 +115,7 @@ fn make_catalogue(org_id: OrgId, cat_id: CatalogueId, name: &str, host: &str) ->
         allow_cross_org_harvest: true,
         allowed_outbound_hosts: vec!["external.example.org".into()],
         applicable_legislation: Vec::new(),
-        modified: Utc::now(),
+        modified: TimestampTz::now(),
         deleted: None,
         public_base: None,
         portal_base: None,
@@ -630,8 +630,8 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
                 badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -661,8 +661,8 @@ async fn two_publishers_in_one_catalogue_with_separate_editor_grants_and_merge()
                 badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -880,8 +880,8 @@ async fn dataset_rendered_under_eu_cz_and_sk_profiles_by_accept_profile() {
                 badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -987,8 +987,8 @@ async fn dataset_rendered_under_eu_cz_and_sk_profiles_by_accept_profile() {
                 }],
                 extras: BTreeMap::new(),
                 restricted_grants: Vec::new(),
-                issued: Utc::now(),
-                modified: Utc::now(),
+                issued: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -1137,8 +1137,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     badge_initials: None,
                     badge_colour: None,
                     declared_by_instance: None,
-                    created: Utc::now(),
-                    modified: Utc::now(),
+                    created: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await
@@ -1198,8 +1198,8 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                         distributions: Vec::new(),
                         extras: BTreeMap::new(),
                         restricted_grants: Vec::new(),
-                        issued: Utc::now(),
-                        modified: Utc::now(),
+                        issued: TimestampTz::now(),
+                        modified: TimestampTz::now(),
                     },
                 )
                 .await
@@ -1230,7 +1230,7 @@ async fn tenant_isolation_across_two_organizations_for_every_operation() {
                     gateway: None,
                     schedule: "23 3 * * *".into(),
                     enabled: true,
-                    modified: Utc::now(),
+                    modified: TimestampTz::now(),
                     budget: None,
                     position: 0,
                 },
@@ -1406,8 +1406,8 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
                     badge_initials: None,
                     badge_colour: None,
                     declared_by_instance: None,
-                    created: Utc::now(),
-                    modified: Utc::now(),
+                    created: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await
@@ -1465,8 +1465,8 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
                     distributions: Vec::new(),
                     extras: BTreeMap::new(),
                     restricted_grants: Vec::new(),
-                    issued: Utc::now(),
-                    modified: Utc::now(),
+                    issued: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await
@@ -1829,8 +1829,8 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
                     badge_initials: Some(initials.into()),
                     badge_colour: Some(colour.into()),
                     declared_by_instance: None,
-                    created: Utc::now(),
-                    modified: Utc::now(),
+                    created: TimestampTz::now(),
+                    modified: TimestampTz::now(),
                 },
             )
             .await
@@ -1976,8 +1976,8 @@ async fn d_live_pages_snapshot_and_security_headers_match_pack_html() {
                     ("was_generated_by".into(), "pipeline air-quality".into()),
                 ]),
                 restricted_grants: Vec::new(),
-                issued: Utc::now(),
-                modified: Utc::now(),
+                issued: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -2263,8 +2263,8 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
                 badge_initials: None,
                 badge_colour: None,
                 declared_by_instance: None,
-                created: Utc::now(),
-                modified: Utc::now(),
+                created: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await
@@ -2322,8 +2322,8 @@ async fn f1_f2_f3_operation_registry_surfaces_allowed_parity_and_admin_audit_row
                 distributions: Vec::new(),
                 extras: BTreeMap::new(),
                 restricted_grants: Vec::new(),
-                issued: Utc::now(),
-                modified: Utc::now(),
+                issued: TimestampTz::now(),
+                modified: TimestampTz::now(),
             },
         )
         .await

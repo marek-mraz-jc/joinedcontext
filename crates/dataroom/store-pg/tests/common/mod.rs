@@ -3,13 +3,13 @@
 //! Shared fixtures for the store tests: a migrated Postgres database reached through a request
 //! role without SUPERUSER or BYPASSRLS (the role production runs as, C1), and record builders.
 
-use chrono::{DateTime, Utc};
 use dataroom_core::{
     ActivityRow, Catalogue, CatalogueId, CataloguePlugin, Dataset, HarvestRun, HarvestSource,
     OrgId, ProfileRecord, Publisher, RequestCtx, ResourceView, ShaclValidationReport, StaticPage,
     Subject,
 };
 use dataroom_store_pg::PgStore;
+use jc_time::TimestampTz;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -137,10 +137,8 @@ pub fn member_ctx(org: OrgId, cat: CatalogueId) -> RequestCtx {
     )
 }
 
-pub fn ts(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .expect("timestamp")
-        .with_timezone(&Utc)
+pub fn ts(s: &str) -> TimestampTz {
+    TimestampTz(jc_time::parse_rfc3339(s).expect("timestamp"))
 }
 
 pub fn catalogue(org: OrgId, cat: CatalogueId, name: &str, host: &str) -> Catalogue {

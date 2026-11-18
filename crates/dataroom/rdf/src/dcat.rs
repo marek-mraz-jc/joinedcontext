@@ -11,7 +11,6 @@ use crate::rdfxml::{parse_rdfxml_bytes, serialize_rdfxml};
 use crate::turtle::{
     parse_ntriples_bytes, parse_turtle_bytes, serialize_ntriples, serialize_turtle,
 };
-use chrono::{DateTime, NaiveDate, Utc};
 use dataroom_core::vocab::{
     eu_iri_to_language, find_licence, format_to_eu_iri, frequency_to_eu_iri,
     iana_iri_to_media_type, language_to_eu_iri, media_type_to_iana_iri, theme_code, theme_to_iri,
@@ -20,6 +19,7 @@ use dataroom_core::{
     AgentDetails, Catalogue, CatalogueId, ContactKind, ContactPoint, DataService, Dataset,
     Distribution, OrgId, Publisher, RecordState, TemporalPeriod, TermsOfUse, Visibility,
 };
+use jc_time::{parse_date, parse_rfc3339, Date, TimestampTz};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
@@ -546,7 +546,7 @@ pub fn add_dataset_triples(
             ds_subj.clone(),
             format!("{}issued", ns::DCT),
             Term::Literal(LiteralValue::typed(
-                dataset.issued.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                dataset.issued.0.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
                 ns::XSD_DATE_TIME,
             )),
         );
@@ -554,7 +554,11 @@ pub fn add_dataset_triples(
             ds_subj.clone(),
             format!("{}modified", ns::DCT),
             Term::Literal(LiteralValue::typed(
-                dataset.modified.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+                dataset
+                    .modified
+                    .0
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string(),
                 ns::XSD_DATE_TIME,
             )),
         );
@@ -1359,18 +1363,10 @@ pub fn graph_to_datasets(
             .map(|p_subj| {
                 let start = graph
                     .first_object(&p_subj, "http://www.w3.org/ns/dcat#startDate")
-                    .and_then(|v| {
-                        v.string_value()
-                            .get(..10)
-                            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                    });
+                    .and_then(|v| v.string_value().get(..10).and_then(parse_date).map(Date));
                 let end = graph
                     .first_object(&p_subj, "http://www.w3.org/ns/dcat#endDate")
-                    .and_then(|v| {
-                        v.string_value()
-                            .get(..10)
-                            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                    });
+                    .and_then(|v| v.string_value().get(..10).and_then(parse_date).map(Date));
                 TemporalPeriod { start, end }
             })
             .filter(|tp| tp.start.is_some() || tp.end.is_some());
@@ -1762,7 +1758,7 @@ pub fn graph_to_datasets(
             });
         }
 
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let issued = graph
             .first_object(&ds_subj, "http://purl.org/dc/terms/issued")
             .and_then(|t| parse_any_datetime(t.string_value()))
@@ -1870,19 +1866,19 @@ fn extract_lang_map(
     map
 }
 
-fn parse_any_datetime(s: &str) -> Option<DateTime<Utc>> {
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.with_timezone(&Utc));
+fn parse_any_datetime(s: &str) -> Option<TimestampTz> {
+    if let Some(ts) = parse_rfc3339(s) {
+        return Some(TimestampTz(ts));
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(naive.and_utc());
+    if let Ok(ts) = jiff::fmt::strtime::parse("%Y-%m-%dT%H:%M:%S", s)
+        .and_then(|t| t.to_datetime())
+        .and_then(|dt| jiff::tz::Offset::UTC.to_timestamp(dt))
+    {
+        return Some(TimestampTz(ts));
     }
-    if let Some(d_str) = s.get(..10) {
-        if let Ok(d) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d") {
-            return d.and_hms_opt(0, 0, 0).map(|dt| dt.and_utc());
-        }
-    }
-    None
+    s.get(..10)
+        .and_then(parse_date)
+        .and_then(TimestampTz::from_date)
 }
 
 fn slugify(s: &str) -> String {
@@ -1956,7 +1952,7 @@ mod tests {
             allow_cross_org_harvest: true,
             allowed_outbound_hosts: Vec::new(),
             applicable_legislation: Vec::new(),
-            modified: Utc::now(),
+            modified: TimestampTz::now(),
             deleted: None,
             public_base: None,
             portal_base: None,

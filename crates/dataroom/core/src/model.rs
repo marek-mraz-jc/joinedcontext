@@ -2,7 +2,7 @@
 //! Domain records of `dataroom`.
 
 use crate::error::{DataroomError, Result};
-use chrono::{DateTime, NaiveDate, Utc};
+use jc_time::{Date, TimestampTz};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -278,12 +278,12 @@ pub struct Catalogue {
     pub allowed_outbound_hosts: Vec<String>,
     #[serde(default)]
     pub applicable_legislation: Vec<String>,
-    pub modified: DateTime<Utc>,
+    pub modified: TimestampTz,
     /// When the catalogue was deleted (ODP-09): its datasets, publishers and sources are gone,
     /// and the row stays as a tombstone so every address of it answers 410 and its host is
     /// not handed to another catalogue.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deleted: Option<DateTime<Utc>>,
+    pub deleted: Option<TimestampTz>,
     /// The public URL this catalogue is served at (scheme, host and mount prefix), when the
     /// installation configures one; never stored. [`Catalogue::base_url`] prefers it, so an
     /// http install or a catalogue under a path prefix answers links that reach it.
@@ -419,8 +419,8 @@ pub struct Publisher {
     /// never renames another's organization).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declared_by_instance: Option<String>,
-    pub created: DateTime<Utc>,
-    pub modified: DateTime<Utc>,
+    pub created: TimestampTz,
+    pub modified: TimestampTz,
 }
 
 /// Agent summary embedded on a dataset or service (`foaf:Agent`).
@@ -445,9 +445,9 @@ pub struct AgentDetails {
 #[serde(rename_all = "camelCase")]
 pub struct TemporalPeriod {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<NaiveDate>,
+    pub start: Option<Date>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<NaiveDate>,
+    pub end: Option<Date>,
 }
 
 /// National terms-of-use specification (`pu:Specifikace` in DCAT-AP-CZ, `leg:TermsOfUse` in DCAT-AP-SK).
@@ -582,9 +582,9 @@ pub struct Distribution {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub access_services: Vec<DataService>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issued: Option<DateTime<Utc>>,
+    pub issued: Option<TimestampTz>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub modified: Option<DateTime<Utc>>,
+    pub modified: Option<TimestampTz>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub extras: BTreeMap<String, Value>,
 }
@@ -683,8 +683,8 @@ pub struct Dataset {
     /// Principals granted read access when `visibility == Restricted`.
     #[serde(default)]
     pub restricted_grants: Vec<String>,
-    pub issued: DateTime<Utc>,
-    pub modified: DateTime<Utc>,
+    pub issued: TimestampTz,
+    pub modified: TimestampTz,
 }
 
 fn default_dataset_type() -> String {
@@ -875,7 +875,7 @@ pub struct HarvestSource {
     /// the one listed first keeps the record (ODP-14).
     #[serde(default)]
     pub position: u32,
-    pub modified: DateTime<Utc>,
+    pub modified: TimestampTz,
 }
 
 /// A harvest run's budget (ODP-13): records gathered and bytes of the records kept.
@@ -930,7 +930,7 @@ impl HarvestRunState {
 
 /// Marks a Running run a stopped process left behind as failed (the stores' harvest lock).
 pub fn abandon_run(run: &mut HarvestRun) {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     run.state = HarvestRunState::Failed;
     run.finished_at = Some(now);
     run.error = Some("abandoned: still running after the harvest deadline".into());
@@ -955,7 +955,7 @@ pub struct HarvestSkippedItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarvestLogLine {
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub level: String,
     pub fingerprint: String,
     pub message: String,
@@ -970,9 +970,9 @@ pub struct HarvestRun {
     pub id: String,
     pub source_id: String,
     pub state: HarvestRunState,
-    pub started_at: DateTime<Utc>,
+    pub started_at: TimestampTz,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub finished_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<TimestampTz>,
     pub created_count: usize,
     pub updated_count: usize,
     pub unchanged_count: usize,
@@ -992,7 +992,7 @@ pub struct ActivityRow {
     pub org_id: OrgId,
     pub catalogue_id: CatalogueId,
     pub id: String,
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub actor: String,
     pub operation: String,
     pub object_type: String,
@@ -1051,7 +1051,7 @@ pub struct ShaclValidationReport {
     pub violation_count: usize,
     pub warning_count: usize,
     pub findings: Vec<ShaclFinding>,
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: TimestampTz,
 }
 
 /// Form field layout derived from a profile's SHACL shapes (C17).
@@ -1115,7 +1115,7 @@ pub struct StaticPage {
     pub lang: String,
     pub title: String,
     pub markdown: String,
-    pub modified: DateTime<Utc>,
+    pub modified: TimestampTz,
 }
 
 /// Installed WASM or built-in plugin record (`cat_plugin`, C10).
@@ -1132,5 +1132,5 @@ pub struct CataloguePlugin {
     pub allowed_hosts: Vec<String>,
     #[serde(default)]
     pub config: Value,
-    pub modified: DateTime<Utc>,
+    pub modified: TimestampTz,
 }
