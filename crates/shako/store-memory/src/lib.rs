@@ -176,9 +176,12 @@ impl Store for MemoryStore {
                 .tenants
                 .entry((repo.instance_id, repo.org_id))
                 .or_default();
-            if !t.repos.contains_key(&repo.id) {
+            let Some(stored) = t.repos.get(&repo.id) else {
                 return Err(ShakoError::NotFound("repository not found".into()));
-            }
+            };
+            // Pull request numbers only move forward: a record read before a number was
+            // allocated must not hand that number out again.
+            repo.next_pr_number = repo.next_pr_number.max(stored.next_pr_number);
             repo.updated_at = TimestampTz::now();
             t.repos.insert(repo.id, repo.clone());
             Ok(repo)
@@ -395,6 +398,12 @@ impl Store for MemoryStore {
                 .tenants
                 .entry((pr.instance_id, pr.org_id))
                 .or_default();
+            if t.pull_requests.contains_key(&(pr.repo_id, pr.number)) {
+                return Err(ShakoError::Conflict(format!(
+                    "pull request #{} already exists",
+                    pr.number
+                )));
+            }
             t.pull_requests.insert((pr.repo_id, pr.number), pr.clone());
             Ok(pr)
         })

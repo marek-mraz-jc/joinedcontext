@@ -1072,6 +1072,52 @@ async fn the_expiry_sweep_stays_index_shaped() {
     );
 }
 
+/// T-7275, S5-34: current-state retention reads its type through the two
+/// leakproof type indexes as the broker's role, never the whole Tenant: a
+/// first-type rule (T0) and a rule on the type only multi-type Entities name
+/// second (`https://x/M`).
+#[tokio::test]
+async fn current_state_retention_reads_its_type_through_an_index_under_rls() {
+    use antares_sql::store::pg::maintenance::RETAIN_CURRENT_ROWS;
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    seed_rls(&pool).await;
+    for ty in ["https://x/T0", "https://x/M"] {
+        let binds = [
+            format!("'{RLS_A}'"),
+            format!("ARRAY['{ty}']"),
+            "'2999-01-01T00:00:00Z'".to_owned(),
+            "1000".to_owned(),
+        ];
+        // the dry run's count: the keys come from the type indexes alone
+        let count = inline(
+            &format!("SELECT count(*) FROM ({RETAIN_CURRENT_ROWS}) r"),
+            &binds,
+        );
+        let plan = plan_as(&pool, RLS_A, true, &count).await;
+        assert!(
+            plan.contains("i_entities_first_type_id")
+                && (plan.contains("i_entities_multi_type_id")
+                    || plan.contains("i_entities_types_multi")),
+            "{ty}: retention left the type indexes — plan:\n{plan}"
+        );
+        assert!(
+            !plan.contains("Seq Scan on entities") && !plan.contains("entities_pkey"),
+            "{ty}: retention reads the whole Tenant — plan:\n{plan}"
+        );
+        // the delete finds each of those keys by the primary key
+        let delete = inline(
+            &format!("DELETE FROM entities WHERE (tenant_id, id) IN ({RETAIN_CURRENT_ROWS})"),
+            &binds,
+        );
+        let plan = plan_as(&pool, RLS_A, true, &delete).await;
+        assert!(
+            plan.contains("i_entities_first_type_id") && !plan.contains("Seq Scan on entities"),
+            "{ty}: the retention delete reads the whole Tenant — plan:\n{plan}"
+        );
+    }
+}
+
 /// 5.12 registration matching must be index-shaped: the whole point of
 /// narrowing candidates through `csource_index` is to stop reading every
 /// registration of the tenant per federated request. The type dimension has to

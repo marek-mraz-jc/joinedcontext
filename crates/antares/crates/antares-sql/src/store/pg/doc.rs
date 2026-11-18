@@ -384,15 +384,35 @@ impl PgDocStore {
         self
     }
 
-    fn opened(
+    /// `doc` of one row with its credentials opened. A value that does not
+    /// open under the row's Tenant was sealed before a rename (T-7274): it is
+    /// tried under the names `tenant_seal_alias` records, read only then, and
+    /// [`Self::seal_plaintext`] reseals the row at the next boot.
+    async fn opened(
         &self,
         kind: DocKind,
         tenant: &TenantId,
         id: &str,
         mut doc: Value,
     ) -> Result<Value, sqlx::Error> {
-        super::seal::open(self.key.as_deref(), seal_row(kind, tenant, id), &mut doc)?;
+        let row = seal_row(kind, tenant, id);
+        if super::seal::open(self.key.as_deref(), row, &mut doc).is_ok() {
+            return Ok(doc);
+        }
+        // the values the first try opened are plaintext now and pass
+        let former = self.former_names(tenant).await?;
+        if super::seal::open_renamed(self.key.as_deref(), row, &former, &mut doc)? {
+            super::seal::rename_tenant_header(kind, &mut doc, &former, tenant.as_str());
+        }
         Ok(doc)
+    }
+
+    /// The names a rename moved `tenant` away from (migration 0038).
+    async fn former_names(&self, tenant: &TenantId) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar("SELECT former FROM tenant_seal_alias WHERE tenant = $1 ORDER BY former")
+            .bind(tenant.as_str())
+            .fetch_all(&self.pool)
+            .await
     }
 
     fn sealed<'a>(
@@ -406,15 +426,20 @@ impl PgDocStore {
     }
 
     /// Rows of `SELECT {doc}, id`, each credential opened for its own row.
-    fn opened_all(
+    async fn opened_all(
         &self,
         kind: DocKind,
         tenant: &TenantId,
         rows: Vec<sqlx::postgres::PgRow>,
     ) -> Result<Vec<Value>, sqlx::Error> {
-        rows.into_iter()
-            .map(|r| self.opened(kind, tenant, &r.get::<String, _>(1), r.get::<Value, _>(0)))
-            .collect()
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(
+                self.opened(kind, tenant, &r.get::<String, _>(1), r.get::<Value, _>(0))
+                    .await?,
+            );
+        }
+        Ok(out)
     }
 
     pub fn pool(&self) -> &PgPool {
@@ -514,8 +539,10 @@ impl PgDocStore {
             .fetch_optional(&mut *tx)
             .await?;
         tx.commit().await?;
-        row.map(|r| self.opened(kind, tenant, id, r.get::<Value, _>(0)))
-            .transpose()
+        match row {
+            Some(r) => Ok(Some(self.opened(kind, tenant, id, r.get(0)).await?)),
+            None => Ok(None),
+        }
     }
 
     /// Read-modify-write in ONE transaction under the row lock (the entity
@@ -615,13 +642,13 @@ impl PgDocStore {
             .fetch_all(&mut *tx)
             .await?;
         tx.commit().await?;
-        rows.into_iter()
-            .map(|r| {
-                let id = r.get::<String, _>(0);
-                let doc = self.opened(kind, tenant, &id, r.get(1))?;
-                Ok((id, (doc, r.get(2))))
-            })
-            .collect()
+        let mut out = std::collections::HashMap::with_capacity(rows.len());
+        for r in rows {
+            let id = r.get::<String, _>(0);
+            let doc = self.opened(kind, tenant, &id, r.get(1)).await?;
+            out.insert(id, (doc, r.get(2)));
+        }
+        Ok(out)
     }
 
     /// `antares_store::record_failure_via_mutate` in ONE statement (T-6606):
@@ -675,8 +702,10 @@ impl PgDocStore {
             .fetch_optional(&mut *tx)
             .await?;
         tx.commit().await?;
-        row.map(|r| self.opened(kind, tenant, id, r.get(0)))
-            .transpose()
+        match row {
+            Some(r) => Ok(Some(self.opened(kind, tenant, id, r.get(0)).await?)),
+            None => Ok(None),
+        }
     }
 
     pub async fn mutate<T, E>(
@@ -712,7 +741,7 @@ impl PgDocStore {
             let Some(row) = row else {
                 return Ok(None);
             };
-            let mut doc = self.opened(kind, tenant, id, row.get(0))?;
+            let mut doc = self.opened(kind, tenant, id, row.get(0)).await?;
             // The match rows are a pure function of the document, so the
             // rows this write would produce can be compared with the ones
             // already stored before deciding to touch them.
@@ -820,7 +849,7 @@ impl PgDocStore {
             .fetch_all(&mut *tx)
             .await?;
         tx.commit().await?;
-        self.opened_all(kind, tenant, rows)
+        self.opened_all(kind, tenant, rows).await
     }
 
     /// One id-ordered window of docs and the size of the whole set:
@@ -858,7 +887,7 @@ impl PgDocStore {
             .fetch_all(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok((self.opened_all(kind, tenant, rows)?, total))
+        Ok((self.opened_all(kind, tenant, rows).await?, total))
     }
 
     /// Every doc's id and the first 64 bits of the md5 of its text, under
@@ -890,14 +919,15 @@ impl PgDocStore {
     pub async fn list(&self, tenant: &TenantId, kind: DocKind) -> Result<Vec<Value>, sqlx::Error> {
         let select = format!("{}, id", kind.doc_column());
         let rows = self.every_row(tenant, kind, &select).await?;
-        self.opened_all(kind, tenant, rows)
+        self.opened_all(kind, tenant, rows).await
     }
 
     /// Seal every notification credential still stored in plaintext (rows
     /// written before `ANTARES_SECRET_KEY` was set; T-5838). Run at boot;
     /// without a key it seals nothing. Each row is rewritten through
     /// [`Self::mutate`], under its row lock, so a concurrent write is never
-    /// lost. Answers how many rows it sealed.
+    /// lost. Then it reseals the rows of a renamed Tenant
+    /// ([`Self::reseal_renamed`]). Answers how many rows it sealed.
     pub async fn seal_plaintext(&self) -> Result<u64, sqlx::Error> {
         if self.key.is_none() {
             return Ok(0);
@@ -945,6 +975,58 @@ impl PgDocStore {
                     sealed = sealed.saturating_add(u64::from(written.is_some()));
                 }
             }
+        }
+        Ok(sealed.saturating_add(self.reseal_renamed().await?))
+    }
+
+    /// Reseal under its Tenant's own name every row that holds a sealed
+    /// credential and belongs to a renamed Tenant (T-7274): [`Self::mutate`]
+    /// opens it by a former name and writes it back sealed under the current
+    /// one. Then those former names are forgotten, since no row is left
+    /// sealed under them; a name a later rename adds meanwhile stays.
+    async fn reseal_renamed(&self) -> Result<u64, sqlx::Error> {
+        let renamed: Vec<String> =
+            sqlx::query_scalar("SELECT DISTINCT tenant FROM tenant_seal_alias ORDER BY tenant")
+                .fetch_all(&self.pool)
+                .await?;
+        let mut sealed = 0u64;
+        for raw in renamed {
+            let tenant =
+                TenantId::try_from(raw).map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+            let former = self.former_names(&tenant).await?;
+            for kind in [
+                DocKind::Subscription,
+                DocKind::CSourceSubscription,
+                DocKind::DeadLetter,
+            ] {
+                // literals from DocKind
+                let sql = format!(
+                    "SELECT id FROM {} WHERE tenant_id = $1 AND {}::text LIKE '%\"{}%' ORDER BY id",
+                    kind.table(),
+                    kind.doc_column(),
+                    super::seal::PREFIX
+                );
+                let mut tx = super::begin(&self.pool).await?;
+                crate::store::pg::set_tenant(&mut tx, &tenant).await?;
+                let ids: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                    .bind(tenant.as_str())
+                    .fetch_all(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                for id in ids {
+                    let written = self
+                        .mutate(&tenant, kind, &id, |_| {
+                            Ok::<(), std::convert::Infallible>(())
+                        })
+                        .await?;
+                    sealed = sealed.saturating_add(u64::from(written.is_some()));
+                }
+            }
+            sqlx::query("DELETE FROM tenant_seal_alias WHERE tenant = $1 AND former = ANY($2)")
+                .bind(tenant.as_str())
+                .bind(&former)
+                .execute(&self.pool)
+                .await?;
         }
         Ok(sealed)
     }

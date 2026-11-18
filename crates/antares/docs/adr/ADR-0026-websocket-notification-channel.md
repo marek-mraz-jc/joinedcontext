@@ -286,8 +286,9 @@ appears in a stored Subscription only if that connection created it
 tenant with the connection's. Under `bus = nats` the notification may be
 matched on another pod than the one holding the socket: the sink then
 publishes the rendered message as a NATS core request on
-`antares.ws.<connection-id>` (the subject is the random id, so no
-wildcard of another tenant names it); the holding pod answers `queued`,
+`antares.ws.<tenant>.<connection-id>` (the Tenant is a token of its own
+and the holding pod checks the notification's Tenant against it, T-7275;
+the connection id is random); the holding pod answers `queued`,
 `overflow` or nothing, and nothing counts as a failed delivery.
 
 ### 10. Bounds and admission

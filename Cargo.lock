@@ -12569,7 +12569,6 @@ dependencies = [
  "flate2",
  "gix",
  "gix-hash",
- "gix-merge",
  "gix-object",
  "gix-odb",
  "gix-pack",
@@ -12614,6 +12613,7 @@ dependencies = [
  "jc-router",
  "jc-time",
  "parking_lot",
+ "percent-encoding",
  "serde",
  "serde_json",
  "shako-api",
@@ -12622,6 +12622,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "tracing",
  "uuid",
 ]
 

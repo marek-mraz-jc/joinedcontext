@@ -22,7 +22,9 @@ async fn main() {
     }
 
     // `joinedcontext-portal migrate`: bring `JC_PORTAL_DATABASE_URL` up to this release's schema
-    // (as the role of `JC_PORTAL_MIGRATION_DATABASE_URL` where it is set, granting the serving role)
+    // (as the role of `JC_PORTAL_MIGRATION_DATABASE_URL` where it is set, granting the serving role;
+    // a database from before the project registry keys its rows under
+    // `JC_PORTAL_INSTALLATION_ORGANIZATION` of `JC_PORTAL_ORGANIZATION_HOSTS`, T-7264)
     // and exit, without the rest of the configuration. The upgrade drill runs the next release's
     // image this way against a copy of the database (T-2802, OPS-12).
     if std::env::args().nth(1).as_deref() == Some("migrate") {
@@ -64,7 +66,21 @@ async fn migrate() -> i32 {
     let migration = std::env::var("JC_PORTAL_MIGRATION_DATABASE_URL")
         .ok()
         .filter(|url| !url.trim().is_empty());
-    match joinedcontext_portal::db::connect_as(&url, migration.as_deref()).await {
+    let installation =
+        match joinedcontext_portal::config::installation_organization(|k| std::env::var(k).ok()) {
+            Ok(installation) => installation,
+            Err(err) => {
+                eprintln!("migrate: {err}");
+                return 1;
+            }
+        };
+    match joinedcontext_portal::db::connect_upgrading(
+        &url,
+        migration.as_deref(),
+        installation.as_ref(),
+    )
+    .await
+    {
         Ok(_) => {
             tracing::info!("the database is at this release's schema");
             0

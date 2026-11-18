@@ -4,7 +4,6 @@
 //! Rows 6–11 (Actions) return 404 with Gitea error JSON `{"message":"actions are not served by this forge yet","url":...}`
 //! per `00-task.md` section 1.
 
-use crate::outbox::emit_and_dispatch_event;
 use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, repo_to_gitea_json,
@@ -21,6 +20,7 @@ use jc_router::Mount;
 use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use shako_core::ObjectTarget;
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
     PullRequestRecord, RepoRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
@@ -468,43 +468,21 @@ async fn compat_get_user_org_permissions(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let _ = emit_and_dispatch_event(
-        &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:org_permissions:{}", uuid::Uuid::now_v7()),
-        json!({"route": "users/{login}/orgs/{org}/permissions", "note": "permissions come from jc-auth RoleBindings"}),
-    )
-    .await;
+    let target = ObjectTarget::Instance {
+        instance_id: ctx.instance_id,
+        org_id: ctx.org_id,
+    };
+    let holds = |action| state.authorizer.check(&ctx, action, &target).allowed;
     (
         StatusCode::OK,
         Json(json!({
             "is_owner": false,
-            "is_admin": false,
-            "can_write": true,
-            "can_read": true
+            "is_admin": holds(Action::Admin),
+            "can_write": holds(Action::Write),
+            "can_read": holds(Action::Read)
         })),
     )
         .into_response()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateTeamReq {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub permission: Option<String>,
-    #[serde(default)]
-    pub includes_all_repositories: bool,
-    #[serde(default)]
-    pub can_create_org_repo: bool,
-    #[serde(default)]
-    pub units: Vec<String>,
-    #[serde(default)]
-    pub units_map: serde_json::Map<String, Value>,
 }
 
 async fn compat_list_org_teams(
@@ -512,19 +490,9 @@ async fn compat_list_org_teams(
     headers: HeaderMap,
     Path(org): Path<String>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&org), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let _ = emit_and_dispatch_event(
-        &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:list_teams:{}", uuid::Uuid::now_v7()),
-        json!({"route": "orgs/{org}/teams"}),
-    )
-    .await;
+    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+        return gitea_error_response(&state, &e);
+    }
     (StatusCode::OK, Json(json!([]))).into_response()
 }
 
@@ -532,30 +500,17 @@ async fn compat_create_org_team(
     State(state): State<ShakoState>,
     headers: HeaderMap,
     Path(org): Path<String>,
-    Json(req): Json<CreateTeamReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&org), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let _ = emit_and_dispatch_event(
+    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+        return gitea_error_response(&state, &e);
+    }
+    gitea_error_response(
         &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:create_team:{}", uuid::Uuid::now_v7()),
-        json!({"route": "orgs/{org}/teams", "team": req.name}),
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
     )
-    .await;
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": 1,
-            "name": req.name,
-            "description": req.description,
-        })),
-    )
-        .into_response()
 }
 
 async fn compat_delete_team(
@@ -566,7 +521,13 @@ async fn compat_delete_team(
     if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
         return gitea_error_response(&state, &e);
     }
-    StatusCode::NO_CONTENT.into_response()
+    gitea_error_response(
+        &state,
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
+    )
 }
 
 async fn compat_list_team_repos(
@@ -588,42 +549,30 @@ async fn compat_put_or_delete_team_repo(
     if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
         return gitea_error_response(&state, &e);
     }
-    StatusCode::NO_CONTENT.into_response()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CollaboratorReq {
-    #[serde(default)]
-    pub permission: Option<String>,
+    gitea_error_response(
+        &state,
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
+    )
 }
 
 async fn compat_put_collaborator(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path((owner, repo_name, reader)): Path<(String, String, String)>,
-    body: Option<Json<CollaboratorReq>>,
+    Path((owner, _repo, _reader)): Path<(String, String, String)>,
 ) -> Response {
-    let _ = body;
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Write).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let _ = emit_and_dispatch_event(
+    if let Err(e) = authenticate_request(&state, &headers, Some(&owner), "shako") {
+        return gitea_error_response(&state, &e);
+    }
+    gitea_error_response(
         &state,
-        repo.org_id,
-        Some(repo.id),
-        "transition.warning",
-        format!("warn:collaborator:{}:{reader}", repo.id),
-        json!({"route": "collaborators", "collaborator": reader}),
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
     )
-    .await;
-    StatusCode::NO_CONTENT.into_response()
 }
 
 // =========================================================================
@@ -701,114 +650,19 @@ async fn compat_create_branch_protection(
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PatchBranchProtectionReq {
-    #[serde(default)]
-    pub rule_name: Option<String>,
-    #[serde(default = "default_true")]
-    pub enable_push: bool,
-    #[serde(default)]
-    pub enable_push_whitelist: bool,
-    #[serde(default)]
-    pub push_whitelist_usernames: Vec<String>,
-    #[serde(default)]
-    pub push_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub push_whitelist_deploy_keys: bool,
-    #[serde(default)]
-    pub enable_force_push: bool,
-    #[serde(default)]
-    pub enable_force_push_allowlist: bool,
-    #[serde(default)]
-    pub force_push_allowlist_usernames: Vec<String>,
-    #[serde(default)]
-    pub force_push_allowlist_teams: Vec<String>,
-    #[serde(default)]
-    pub force_push_allowlist_deploy_keys: bool,
-    #[serde(default)]
-    pub enable_merge_whitelist: bool,
-    #[serde(default)]
-    pub merge_whitelist_usernames: Vec<String>,
-    #[serde(default)]
-    pub merge_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub enable_status_check: bool,
-    #[serde(default, alias = "required_status_checks")]
-    pub status_check_contexts: Vec<String>,
-    #[serde(default)]
-    pub required_approvals: u64,
-    #[serde(default)]
-    pub enable_approvals_whitelist: bool,
-    #[serde(default)]
-    pub approvals_whitelist_username: Vec<String>,
-    #[serde(default)]
-    pub approvals_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub block_on_rejected_reviews: bool,
-    #[serde(default)]
-    pub block_on_official_review_requests: bool,
-    #[serde(default)]
-    pub block_on_outdated_branch: bool,
-    #[serde(default)]
-    pub dismiss_stale_approvals: bool,
-    #[serde(default)]
-    pub ignore_stale_approvals: bool,
-    #[serde(default)]
-    pub require_signed_commits: bool,
-    #[serde(default)]
-    pub protected_file_patterns: String,
-    #[serde(default)]
-    pub unprotected_file_patterns: String,
-    #[serde(default = "default_true")]
-    pub block_admin_merge_override: bool,
-    #[serde(default)]
-    pub enable_bypass_allowlist: bool,
-}
-
 async fn compat_patch_branch_protection(
     State(state): State<ShakoState>,
     headers: HeaderMap,
     Path((owner, repo_name, rule_name)): Path<(String, String, String)>,
-    Json(req): Json<PatchBranchProtectionReq>,
+    Json(patch): Json<serde_json::Map<String, Value>>,
 ) -> Response {
-    let rule = BranchProtectionRule {
-        rule_name: req.rule_name.unwrap_or(rule_name),
-        enable_push: req.enable_push,
-        enable_push_whitelist: req.enable_push_whitelist,
-        push_whitelist_usernames: req.push_whitelist_usernames,
-        push_whitelist_teams: req.push_whitelist_teams,
-        push_whitelist_deploy_keys: req.push_whitelist_deploy_keys,
-        enable_force_push: req.enable_force_push,
-        enable_force_push_allowlist: req.enable_force_push_allowlist,
-        force_push_allowlist_usernames: req.force_push_allowlist_usernames,
-        force_push_allowlist_teams: req.force_push_allowlist_teams,
-        force_push_allowlist_deploy_keys: req.force_push_allowlist_deploy_keys,
-        enable_merge_whitelist: req.enable_merge_whitelist,
-        merge_whitelist_usernames: req.merge_whitelist_usernames,
-        merge_whitelist_teams: req.merge_whitelist_teams,
-        enable_status_check: req.enable_status_check,
-        status_check_contexts: req.status_check_contexts,
-        required_approvals: req.required_approvals,
-        enable_approvals_whitelist: req.enable_approvals_whitelist,
-        approvals_whitelist_username: req.approvals_whitelist_username,
-        approvals_whitelist_teams: req.approvals_whitelist_teams,
-        block_on_rejected_reviews: req.block_on_rejected_reviews,
-        block_on_official_review_requests: req.block_on_official_review_requests,
-        block_on_outdated_branch: req.block_on_outdated_branch,
-        dismiss_stale_approvals: req.dismiss_stale_approvals,
-        ignore_stale_approvals: req.ignore_stale_approvals,
-        require_signed_commits: req.require_signed_commits,
-        protected_file_patterns: req.protected_file_patterns,
-        unprotected_file_patterns: req.unprotected_file_patterns,
-        block_admin_merge_override: req.block_admin_merge_override,
-        enable_bypass_allowlist: req.enable_bypass_allowlist,
-    };
     let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    match service::protect_branch(&state, &ctx, &owner, &repo_name, rule).await {
+    match service::patch_branch_protection(&state, &ctx, &owner, &repo_name, &rule_name, patch)
+        .await
+    {
         Ok(saved) => (StatusCode::OK, Json(saved.rule)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -1008,6 +862,9 @@ pub struct CreateCommitStatusReq {
     pub target_url: Option<String>,
 }
 
+/// The commit states a status may carry (Gitea's set).
+const COMMIT_STATES: &[&str] = &["pending", "success", "error", "failure", "warning"];
+
 async fn compat_post_commit_status(
     State(state): State<ShakoState>,
     headers: HeaderMap,
@@ -1023,6 +880,27 @@ async fn compat_post_commit_status(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
+    if !COMMIT_STATES.contains(&req.state.as_str()) {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(format!(
+                "state must be one of {}",
+                COMMIT_STATES.join(", ")
+            )),
+        );
+    }
+    let is_hex = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    if !matches!(sha.len(), 40 | 64) || !is_hex(&sha) {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(
+                "sha must be a full lowercase commit id (40 or 64 hex digits)".into(),
+            ),
+        );
+    }
     let rec = CommitStatusRecord {
         id: uuid::Uuid::now_v7(),
         instance_id: repo.instance_id,
@@ -1125,6 +1003,25 @@ pub struct PutFileReq {
     pub committer: Option<AuthorDto>,
 }
 
+/// The branch a contents write goes on: with `new_branch`, that branch cut from `branch` (the
+/// default branch when unset) first, as Gitea does; otherwise `branch`.
+async fn cut_new_branch(
+    state: &ShakoState,
+    ctx: &shako_core::RequestCtx,
+    owner: &str,
+    repo: &str,
+    new_branch: Option<String>,
+    branch: Option<String>,
+) -> ShakoResult<Option<String>> {
+    match new_branch.filter(|b| !b.is_empty()) {
+        Some(new) => {
+            service::create_branch(state, ctx, owner, repo, &new, branch).await?;
+            Ok(Some(new))
+        }
+        None => Ok(branch),
+    }
+}
+
 async fn compat_put_contents(
     State(state): State<ShakoState>,
     headers: HeaderMap,
@@ -1140,8 +1037,13 @@ async fn compat_put_contents(
         Err(e) => return gitea_error_response(&state, &e),
     };
     let is_create = req.sha.as_deref().is_none_or(str::is_empty);
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),
@@ -1208,8 +1110,13 @@ async fn compat_delete_contents(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),
@@ -1269,8 +1176,13 @@ async fn compat_post_contents_multi(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
+    let branch =
+        match cut_new_branch(&state, &ctx, &owner, &repo_name, req.new_branch, req.branch).await {
+            Ok(b) => b,
+            Err(e) => return gitea_error_response(&state, &e),
+        };
     let commit = service::CommitRequest {
-        branch: req.new_branch.or(req.branch),
+        branch,
         message: req.message,
         author: author_of(req.author),
         committer: author_of(req.committer),
@@ -1338,14 +1250,36 @@ async fn compat_list_commits(
         };
     let git_ref = q.sha.unwrap_or(repo.default_branch);
     let limit = q.limit.unwrap_or(30).clamp(1, 1000);
+    // Pages count from 1 and reach as far as the history walk does (10 000 commits).
+    let skip = q
+        .page
+        .unwrap_or(1)
+        .max(1)
+        .saturating_sub(1)
+        .saturating_mul(limit);
+    if skip >= 10_000 {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(
+                "page reaches past the newest 10000 commits; narrow it with sha or path".into(),
+            ),
+        );
+    }
     let path_filter = q.path;
 
     let res = tokio::task::spawn_blocking(move || {
-        list_commits(&disk_path, &git_ref, path_filter.as_deref(), limit, 10_000)
+        list_commits(
+            &disk_path,
+            &git_ref,
+            path_filter.as_deref(),
+            skip + limit,
+            10_000,
+        )
     })
     .await
     .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
+    .and_then(|r| r)
+    .map(|commits| commits.into_iter().skip(skip).collect::<Vec<_>>());
 
     match res {
         Ok(commits) => {

@@ -207,7 +207,7 @@ fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> TokenBindin
 
 /// Tokens: `tok-admin` (Admin on the catalogue), `tok-editor` (editor of publisher `city`),
 /// `tok-member` (member, no grants), `tok-proposer` (Propose on the catalogue, no Approve),
-/// `tok-reader` (a read-only connector).
+/// `tok-reader` (a read-only connector), `tok-outsider` (signed in, another Organization).
 /// The catalogue on an installation whose platform domain is `city.test`.
 async fn world() -> World {
     world_with(|s| {
@@ -299,6 +299,12 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
         instance("tok-beta", "beta"),
         binding("tok-editor", "eva", org, &["city-editors"]),
         binding("tok-member", "mo", org, &[]),
+        binding(
+            "tok-outsider",
+            "otto",
+            OrgId::from_uuid(uuid::Uuid::now_v7()),
+            &[],
+        ),
         binding("tok-proposer", "pat", org, &[]),
         reader,
     ]);
@@ -815,17 +821,18 @@ async fn ckan_site_and_listing_actions() {
         "{tags:?}"
     );
     assert!(
-        !tags.contains(&"inner") && !tags.contains(&"retired"),
+        !tags.contains(&"inner") && !tags.contains(&"retired") && !tags.contains(&"veiled"),
         "{tags:?}"
     );
 
-    // package_list: public, active, of an active publisher; offset/limit as numbers or text.
+    // package_list: public, active, not held by the publish gate, of an active publisher;
+    // offset/limit as numbers or text.
     let a = get(app, "/api/3/action/package_list", None).await;
-    assert_eq!(a.json()["result"], json!(["open", "second", "veiled"]));
+    assert_eq!(a.json()["result"], json!(["open", "second"]));
     let a = get(app, "/api/3/action/package_list?offset=1&limit=1", None).await;
     assert_eq!(a.json()["result"], json!(["second"]));
-    let a = ckan(app, "package_list", None, json!({"offset": 2, "limit": 5})).await;
-    assert_eq!(a.json()["result"], json!(["veiled"]));
+    let a = ckan(app, "package_list", None, json!({"offset": 1, "limit": 5})).await;
+    assert_eq!(a.json()["result"], json!(["second"]));
 
     // organization_list: active publishers, names or full records (bool or text flag).
     let a = get(app, "/api/3/action/organization_list", None).await;
@@ -842,9 +849,10 @@ async fn ckan_site_and_listing_actions() {
     let a = ckan(app, "organization_list", None, json!({"all_fields": true})).await;
     assert_eq!(a.json()["result"][0]["type"], "organization");
 
-    // organization_show: package count of public active datasets; withdrawn hidden from anonymous.
+    // organization_show: package count of public active datasets the publish gate does not hold;
+    // withdrawn hidden from anonymous.
     let a = get(app, "/api/3/action/organization_show?id=city", None).await;
-    assert_eq!(a.json()["result"]["package_count"], 3, "{}", a.body);
+    assert_eq!(a.json()["result"]["package_count"], 2, "{}", a.body);
     let a = get(app, "/api/3/action/organization_show?id=gone", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
     let a = get(
@@ -1067,6 +1075,7 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
     ] {
         for (tok, expect) in [
             (None, anon),
+            (Some("tok-outsider"), anon),
             (Some("tok-member"), member),
             (Some("tok-editor"), editor),
         ] {
@@ -1193,6 +1202,18 @@ async fn ckan_dataset_and_resource_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.body);
+    // A name the caller cannot see answers like a free one: the refusal, never "in use".
+    for name in ["secret", "veiled", "inner"] {
+        let a = ckan(
+            app,
+            "package_create",
+            None,
+            json!({"name": name, "owner_org": "city"}),
+        )
+        .await;
+        assert_eq!(a.status, StatusCode::FORBIDDEN, "{name}: {}", a.body);
+        assert!(!a.body.contains("already in use"), "{name}: {}", a.body);
+    }
 
     // package_update: by id or name; unknown is not found.
     let a = ckan(
@@ -1617,6 +1638,22 @@ async fn ckan_organization_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    // `old` was merged into `city`: deleting by the old name never withdraws `city`.
+    let a = ckan(
+        app,
+        "organization_delete",
+        Some("tok-admin"),
+        json!({"id": "old"}),
+    )
+    .await;
+    assert!(ckan_error(&a)["id"][0].as_str().is_some(), "{}", a.body);
+    let city = w
+        .store
+        .get_publisher(&w.admin_ctx(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(city.state, dataroom_core::RecordState::Active);
     let a = ckan(
         app,
         "organization_delete",
@@ -3728,6 +3765,13 @@ async fn edge_answers_of_feeds_odata_pages_and_ckan() {
     .await;
     assert_eq!(a.status, StatusCode::OK);
     assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    // `?lang=` picks an offered language; any other value leaves the default in place.
+    let a = get(app, "/about?lang=en", None).await;
+    assert!(a.body.contains("lang=\"en\""), "{}", &a.body[..400]);
+    let a = get(app, "/about?lang=xx%26scheme%3Ddark", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert!(a.body.contains("lang=\"sk\""), "{}", &a.body[..400]);
+    assert!(!a.body.contains("xx&"), "the value never reaches the page");
 }
 
 #[tokio::test]

@@ -13,7 +13,6 @@ jc-time = { path = "../../shared/jc-time" }
 flate2 = "1.1"
 gix = "0.90"
 gix-hash = "0.28"
-gix-merge = "0.23"
 gix-object = "0.66"
 gix-odb = "0.87"
 gix-pack = "0.77"

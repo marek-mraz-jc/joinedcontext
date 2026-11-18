@@ -464,6 +464,28 @@ async fn a_write_is_refused_without_the_permission_or_with_a_bad_body() -> Resul
 }
 
 #[tokio::test]
+async fn a_write_to_the_set_without_filter_is_refused_and_changes_nothing() -> Result<(), String> {
+    for (source, table, _) in sources("unfiltered").await? {
+        let app = app(table.clone(), scope());
+        let before = everything(table.as_ref()).await?;
+        for (method, uri, body) in [
+            ("DELETE", "/odata/Things", None),
+            ("DELETE", "/odata/Things?dryRun=true", None),
+            ("PATCH", "/odata/Things", Some(json!({"name": "x"}))),
+        ] {
+            let (status, body) = call(&app, method, uri, body).await?;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{source}: {method} {uri}");
+            assert!(
+                body.to_string().contains("needs $filter"),
+                "{source}: {body}"
+            );
+        }
+        assert_eq!(everything(table.as_ref()).await?, before, "{source}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_source_refuses_a_batch_whose_rows_moved_and_changes_nothing() -> Result<(), String> {
     for (source, table, _) in sources("moved").await? {
         let before = everything(table.as_ref()).await?;

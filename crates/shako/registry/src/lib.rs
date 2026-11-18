@@ -175,26 +175,39 @@ async fn oci_v2_ping(
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OciTokenQuery {
-    #[serde(default)]
-    pub service: Option<String>,
-    #[serde(default)]
-    pub scope: Option<String>,
-    #[serde(default)]
-    pub account: Option<String>,
-    #[serde(default)]
-    pub client_id: Option<String>,
-    #[serde(default)]
-    pub offline_token: Option<String>,
+/// The `scope` values of a token request (`scope` may repeat: a cross-repository mount asks
+/// for the target and the source); the other known parameters are accepted and unused.
+fn token_scopes(raw: Option<&str>) -> Result<Vec<String>, String> {
+    let mut scopes = Vec::new();
+    for pair in raw.unwrap_or_default().split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        let plus_as_space = value.replace('+', " ");
+        let value = percent_encoding::percent_decode_str(&plus_as_space)
+            .decode_utf8()
+            .map_err(|_| "token request parameters must be UTF-8".to_owned())?;
+        match key {
+            "scope" => scopes.extend(
+                value
+                    .split(' ')
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_owned),
+            ),
+            "service" | "account" | "client_id" | "offline_token" => {}
+            other => return Err(format!("unknown token request parameter '{other}'")),
+        }
+    }
+    Ok(scopes)
 }
 
 async fn oci_get_token(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Query(q): Query<OciTokenQuery>,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
 ) -> Response {
+    let requested = match token_scopes(raw.as_deref()) {
+        Ok(s) => s,
+        Err(why) => return oci_error_response(StatusCode::BAD_REQUEST, "UNSUPPORTED", &why, None),
+    };
     let auth_hdr = match headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -229,57 +242,60 @@ async fn oci_get_token(
         }
     };
 
-    let scope = q.scope.unwrap_or_default();
-    let mut granted_scope = String::new();
+    let mut granted = Vec::new();
     let mut target_org = subject
         .organizations
         .first()
         .copied()
         .unwrap_or(state.default_org_id);
 
-    // Validate requested scope `repository:{owner}/{image}:{actions}` against Authorizer (T4)
-    if let Some(rest) = scope.strip_prefix("repository:")
-        && let Some((repo_part, actions_part)) = rest.rsplit_once(':')
-        && let Some((owner, image)) = repo_part.split_once('/')
-    {
-        target_org = state.resolve_org_for_owner(owner, &subject);
-        let ctx = RequestCtx::new(state.default_instance_id, target_org, subject.clone());
+    // Each requested `repository:{owner}/{image}:{actions}` is checked against the Authorizer
+    // (T4); the token carries the granted ones, space separated.
+    for (idx, scope) in requested.iter().enumerate() {
+        let Some(rest) = scope.strip_prefix("repository:") else {
+            continue;
+        };
+        let Some((repo_part, actions_part)) = rest.rsplit_once(':') else {
+            continue;
+        };
+        let Some((owner, image)) = repo_part.split_once('/') else {
+            continue;
+        };
+        let org = state.resolve_org_for_owner(owner, &subject);
+        if idx == 0 {
+            target_org = org;
+        } else if org != target_org {
+            continue;
+        }
+        let ctx = RequestCtx::new(state.default_instance_id, org, subject.clone());
         let mut allowed_actions = Vec::new();
         for act in actions_part.split(',') {
-            match act.trim() {
-                "pull" => {
-                    if authorize_package(&state, &ctx, owner, "container", image, Action::Read)
-                        .is_ok()
-                    {
-                        allowed_actions.push("pull");
-                    }
-                }
-                "push"
-                    if authorize_package(
-                        &state,
-                        &ctx,
-                        owner,
-                        "container",
-                        image,
-                        Action::Publish,
-                    )
-                    .is_ok() =>
-                {
-                    allowed_actions.push("push");
-                }
-                _ => {}
+            let action = match act.trim() {
+                "pull" => Action::Read,
+                "push" => Action::Publish,
+                _ => continue,
+            };
+            if authorize_package(&state, &ctx, owner, "container", image, action).is_ok() {
+                allowed_actions.push(act.trim());
             }
         }
-        if allowed_actions.is_empty() {
-            return oci_error_response(
-                StatusCode::FORBIDDEN,
-                "DENIED",
-                "requested access to the resource is denied",
-                None,
-            );
+        if !allowed_actions.is_empty() {
+            granted.push(format!(
+                "repository:{owner}/{image}:{}",
+                allowed_actions.join(",")
+            ));
         }
-        granted_scope = format!("repository:{owner}/{image}:{}", allowed_actions.join(","));
     }
+    let asked_repository = requested.iter().any(|s| s.starts_with("repository:"));
+    if asked_repository && granted.is_empty() {
+        return oci_error_response(
+            StatusCode::FORBIDDEN,
+            "DENIED",
+            "requested access to the resource is denied",
+            None,
+        );
+    }
+    let granted_scope = granted.join(" ");
 
     match state
         .signing_key()
@@ -445,9 +461,9 @@ async fn oci_post_blob_upload(
                 None,
             );
         };
-        let from_owner = from_repo
+        let (from_owner, from_image) = from_repo
             .split_once('/')
-            .map_or(owner.as_str(), |(fo, _)| fo);
+            .unwrap_or((owner.as_str(), from_repo.as_str()));
         if from_owner != owner {
             return oci_error_response(
                 StatusCode::FORBIDDEN,
@@ -456,10 +472,21 @@ async fn oci_post_blob_upload(
                 None,
             );
         }
-        if let Ok(Some(existing)) = state
-            .store()
-            .get_blob(ctx.instance_id, target_org, &owner, None, &clean_digest)
-            .await
+        // A layer is linked from the named image only, and only for a caller who may pull it;
+        // otherwise the client uploads the blob as usual.
+        let may_pull_source =
+            authorize_package(&state, &ctx, &owner, "container", from_image, Action::Read).is_ok();
+        if may_pull_source
+            && let Ok(Some(existing)) = state
+                .store()
+                .get_blob(
+                    ctx.instance_id,
+                    target_org,
+                    &owner,
+                    Some(from_image),
+                    &clean_digest,
+                )
+                .await
         {
             let mounted = BlobRecord {
                 id: uuid::Uuid::now_v7(),
@@ -781,11 +808,21 @@ async fn finish_blob_store(
         size_bytes: bytes.len() as u64,
         created_at: TimestampTz::now(),
     };
-    let _ = state.store().upsert_blob(rec).await;
-    let _ = state
+    if state.store().upsert_blob(rec).await.is_err() {
+        return oci_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "UNKNOWN",
+            "storage write failed",
+            None,
+        );
+    }
+    if let Err(e) = state
         .store()
         .adjust_quota_usage(instance_id, org_id, 0, 0, bytes.len() as i64)
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "package storage quota not adjusted after a blob upload");
+    }
 
     let loc = format!("/v2/{owner}/{image}/blobs/{computed}");
     (
@@ -918,15 +955,16 @@ async fn oci_put_manifest(
         subject_digest,
         artifact_type,
         size_bytes: manifest_bytes.len() as u64,
-        signed: true,
+        signed: false,
         created_at: now,
     };
-    let _ = state.store().upsert_package_version(ver_rec).await;
 
     // Contract S13: automatically sign the image digest with the installation ECDSA P-256 key
-    // in cosign simple-signing format and store it as tag `sha256-<hex>.sig`!
+    // in cosign simple-signing format and store it as tag `sha256-<hex>.sig`. A version reads
+    // as signed only when that signature was stored; a pushed signature is not itself signed.
+    let mut ver_rec = ver_rec;
     if !reference.ends_with(".sig") {
-        let _ = store_cosign_signature_tag(
+        match store_cosign_signature_tag(
             &state,
             ctx.instance_id,
             target_org,
@@ -935,7 +973,21 @@ async fn oci_put_manifest(
             &image,
             &computed_digest,
         )
-        .await;
+        .await
+        {
+            Ok(_) => ver_rec.signed = true,
+            Err(e) => {
+                tracing::warn!(error = %e, "image manifest stored without the forge signature")
+            }
+        }
+    }
+    if state.store().upsert_package_version(ver_rec).await.is_err() {
+        return oci_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "UNKNOWN",
+            "storage write failed",
+            None,
+        );
     }
 
     let _ = emit_and_dispatch_event(
@@ -1260,9 +1312,7 @@ async fn generic_put_file(
         Ok(b) => b,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    match service::publish_generic_file(&state, &ctx, &owner, &pkg, &ver, &file, bytes.to_vec())
-        .await
-    {
+    match service::publish_generic_file(&state, &ctx, &owner, &pkg, &ver, &file, bytes).await {
         Ok(saved) => (StatusCode::CREATED, Json(saved)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -1328,6 +1378,29 @@ pub fn oci_v2_routes() -> Router<ShakoState> {
             "/api/packages/{owner}/generic/{pkg}/{ver}/{file}",
             put(generic_put_file).get(generic_get_file),
         )
+        .layer(axum::middleware::from_fn(registry_challenge))
+}
+
+/// Gives every 401 of the registry the token challenge the ping sends, so a client whose token
+/// ran out during a long push can fetch a new one (distribution spec token flow).
+async fn registry_challenge(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    let realm = req
+        .extensions()
+        .get::<Mount>()
+        .map(|m| format!("{}://{}/v2/token", m.scheme, m.host));
+    let mut resp = next.run(req).await;
+    if resp.status() == StatusCode::UNAUTHORIZED
+        && !resp.headers().contains_key(header::WWW_AUTHENTICATE)
+        && let Some(value) = realm.and_then(|r| {
+            header::HeaderValue::from_str(&format!(
+                "Bearer realm=\"{r}\",service=\"container_registry\""
+            ))
+            .ok()
+        })
+    {
+        resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
+    }
+    resp
 }
 
 /// Stripped-prefix `/v2` router mounted at `MountSpec { path_prefix: Some("/v2") }` in `bins/jc` (Contract S1).
@@ -1360,6 +1433,7 @@ pub fn stripped_v2_registry_routes() -> Router<ShakoState> {
             get(oci_list_referrers),
         )
         .merge(oci_v2_routes())
+        .layer(axum::middleware::from_fn(registry_challenge))
 }
 
 #[cfg(test)]
