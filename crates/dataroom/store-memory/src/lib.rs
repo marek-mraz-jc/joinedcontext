@@ -893,6 +893,12 @@ impl Store for MemoryStore {
                 "entity set '{set_name}' not found"
             )))));
         };
+        if !dataroom_core::odata_defs::set_readable(ctx, set_name) {
+            let table = MemoryTable::new(info, Vec::new())
+                .map(|t| Arc::new(t) as Arc<dyn Table>)
+                .map_err(DataroomError::from);
+            return Box::pin(std::future::ready(table));
+        }
         let guard = self.read_inner();
         let default_lang = guard
             .catalogues
