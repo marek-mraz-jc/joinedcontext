@@ -869,8 +869,30 @@ pub async fn list_people(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Json<PersonPage>, ApiError> {
-    let identity = &user.0.identity;
-    let organizations = listed_organizations(&state, identity)?;
+    people_page(&state, &user.0.identity, &query, None)
+        .await
+        .map(Json)
+}
+
+/// [`list_people`]'s page; `project`, when named (the MCP tool's argument), keeps a shared
+/// realm's list to that project's Organization and refuses a caller without Person read there,
+/// so a question about another Organization's project never answers with other people (T-7220).
+pub(crate) async fn people_page(
+    state: &AppState,
+    identity: &Identity,
+    query: &HashMap<String, String>,
+    project: Option<&str>,
+) -> Result<PersonPage, ApiError> {
+    let mut organizations = listed_organizations(state, identity)?;
+    if let (Some(project), Some(held)) = (project, organizations.as_mut()) {
+        let within = crate::permissions::organization_of(&state.mirror, project);
+        held.retain(|organization| within.as_deref() == Some(organization.as_str()));
+        if held.is_empty() {
+            return Err(ApiError::Denied(format!(
+                "no read on Person in the Organization of project {project} (PF-91)"
+            )));
+        }
+    }
     if let Some(unknown) = query
         .keys()
         .find(|key| !matches!(key.as_str(), "search" | "first" | "max"))
@@ -896,12 +918,12 @@ pub async fn list_people(
             "search is at most 255 characters".into(),
         ));
     }
-    let people = people(&state)?;
+    let people = people(state)?;
     let admin = people.admin().await?;
     let mut users = match organizations {
         None => admin.list(search, first, max + 1).await?,
         Some(organizations) => {
-            organization_page(&state, &admin, &organizations, search, first, max + 1).await?
+            organization_page(state, &admin, &organizations, search, first, max + 1).await?
         }
     };
     let next = (users.len() > max as usize).then(|| first + max);
@@ -909,10 +931,10 @@ pub async fn list_people(
     let seen = last_seen_of(&admin, &users).await;
     let mut items = Vec::with_capacity(users.len());
     for (user, seen) in users.iter().zip(seen) {
-        items.push(person(user, seen, pending(&state, &user.id).await));
+        items.push(person(user, seen, pending(state, &user.id).await));
     }
-    with_invitations(&state, &mut items).await;
-    Ok(Json(PersonPage { items, next }))
+    with_invitations(state, &mut items).await;
+    Ok(PersonPage { items, next })
 }
 
 #[utoipa::path(

@@ -1000,6 +1000,45 @@ async fn another_organizations_admin_lists_its_own_people_alone() {
         .filter(|r| !r.url.query_pairs().any(|(key, _)| key == "email"))
         .count();
     assert_eq!(realm_wide, 0, "the realm-wide list was never asked for");
+
+    // The MCP tool names a project: its own Organization's project lists the same people;
+    // another Organization's project is refused, even to a reader there, and names nobody.
+    for (project, organization) in [("helsinki", "hel"), ("ctl-a-city", "ctl-a")] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "cara-reads-helsinki",
+        "helsinki",
+        json!({ "subjects": [{ "user": "cara@hel.fi" }], "role": "pipeline-reader" }),
+    ));
+    let tool = |project: &str| format!("/api/v1/projects/{project}/ops/jc_person_list");
+    let own = send(
+        &state,
+        person("cara"),
+        "POST",
+        &tool("ctl-a-city"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(own.status, StatusCode::OK, "{}", own.text);
+    assert_eq!(emails(&own.text).len(), 4, "{}", own.text);
+    let foreign = send(
+        &state,
+        person("cara"),
+        "POST",
+        &tool("helsinki"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(foreign.status, StatusCode::FORBIDDEN, "{}", foreign.text);
+    assert!(foreign.text.contains("helsinki"), "{}", foreign.text);
+    assert!(!foreign.text.contains("@ctl-a.example"), "{}", foreign.text);
 }
 
 /// PF-93, PF-03: nobody disables or deletes themselves, or the last Organization Administrator.

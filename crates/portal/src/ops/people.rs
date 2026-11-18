@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use axum::body::Bytes;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -21,7 +21,7 @@ use super::bounds::{text, ID, TITLE};
 use super::runs::as_user;
 use super::{annotations, parse_input, Operation};
 use crate::api::people::{
-    disable_person, edit_person, enable_person, get_person, list_people, sign_out_person,
+    disable_person, edit_person, enable_person, get_person, people_page, sign_out_person,
 };
 use crate::change::Lane;
 use crate::permissions::{binding_project, ORG_NAMESPACE};
@@ -379,7 +379,7 @@ pub fn operations() -> Vec<Operation> {
             verb: None,
             lane: Lane::Green,
             validate: |val| parse_input::<ListInput>(val.clone()).map(|_| ()),
-            run: |caller, state, _project, val| {
+            run: |caller, state, project, val| {
                 Box::pin(async move {
                     let input: ListInput = parse_input(val)?;
                     let mut query = HashMap::new();
@@ -392,8 +392,8 @@ pub fn operations() -> Vec<Operation> {
                     if let Some(max) = input.max {
                         query.insert("max".to_owned(), max.to_string());
                     }
-                    let axum::Json(page) =
-                        list_people(as_user(caller), State(state.clone()), Query(query)).await?;
+                    let named = Some(project).filter(|p| *p != ORG_NAMESPACE);
+                    let page = people_page(state, &caller.identity, &query, named).await?;
                     Ok(serde_json::to_value(page)?)
                 })
             },
