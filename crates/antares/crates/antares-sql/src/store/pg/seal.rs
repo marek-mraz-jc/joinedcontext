@@ -194,13 +194,16 @@ impl Row<'_> {
 /// `doc` as it is stored: every credential sealed under `key` for `row`. A
 /// value the client sent already starting with `enc:v1:` is sealed like any
 /// other text, so it reads back as that literal text, never decrypted. No
-/// key, or nothing to seal, writes the doc as it came.
+/// key, or nothing to seal, writes the doc as it came, except that a
+/// subscription's value starting with `enc:v1:` is refused (400): stored
+/// as it came, every read would take it for a sealed value and fail.
 pub(crate) fn sealed<'a>(
     key: Option<&SecretKey>,
     row: Row<'_>,
     doc: &'a Value,
-) -> Result<std::borrow::Cow<'a, Value>, Unreadable> {
+) -> Result<std::borrow::Cow<'a, Value>, sqlx::Error> {
     let Some(key) = key.filter(|_| holds_credentials(row.kind)) else {
+        refuse_prefixed(row.kind, doc)?;
         return Ok(std::borrow::Cow::Borrowed(doc));
     };
     let aad = row.aad();
@@ -211,6 +214,32 @@ pub(crate) fn sealed<'a>(
         }
     }
     Ok(std::borrow::Cow::Owned(out))
+}
+
+/// Without a key, a client-written subscription whose credential starts
+/// with [`PREFIX`]. Dead letters are the broker's own copies and pass.
+fn refuse_prefixed(kind: DocKind, doc: &Value) -> Result<(), sqlx::Error> {
+    if !matches!(kind, DocKind::Subscription | DocKind::CSourceSubscription) {
+        return Ok(());
+    }
+    let prefixed = doc
+        .pointer("/notification/endpoint/receiverInfo")
+        .and_then(Value::as_array)
+        .is_some_and(|pairs| {
+            pairs.iter().any(|p| {
+                p.get("value")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| s.starts_with(PREFIX))
+            })
+        });
+    if prefixed {
+        return Err(sqlx::Error::Configuration(Box::new(
+            antares_model::NgsiError::BadRequestData(format!(
+                "a notification receiverInfo value must not start with {PREFIX:?}"
+            )),
+        )));
+    }
+    Ok(())
 }
 
 /// Open every sealed credential of the stored `doc` of `row` in place;
@@ -366,6 +395,38 @@ mod tests {
             *last ^= 1;
         }
         assert!(k.open(&B64.encode(raw), &aad).is_err());
+    }
+
+    /// Without a key the store cannot tell a client's `enc:v1:` text from
+    /// a sealed value on the way back, so it refuses the text on the way in
+    /// instead of storing a row no read can open.
+    #[test]
+    fn without_a_key_a_value_carrying_the_seal_prefix_is_refused() {
+        for kind in [DocKind::Subscription, DocKind::CSourceSubscription] {
+            let err = sealed(None, row(kind), &sub("enc:v1:abc")).expect_err("prefix stored");
+            let sqlx::Error::Configuration(b) = err else {
+                panic!("not an NGSI-LD error: {err:?}")
+            };
+            assert!(
+                matches!(
+                    b.downcast_ref::<antares_model::NgsiError>(),
+                    Some(antares_model::NgsiError::BadRequestData(_))
+                ),
+                "{b:?}"
+            );
+        }
+        // an ordinary value and a key-holding store are unaffected
+        assert!(sealed(None, row(DocKind::Subscription), &sub("Bearer t")).is_ok());
+        let stored = sealed(
+            Some(&key(5)),
+            row(DocKind::Subscription),
+            &sub("enc:v1:abc"),
+        )
+        .expect("sealed under a key")
+        .into_owned();
+        let mut back = stored.clone();
+        open(Some(&key(5)), row(DocKind::Subscription), &mut back).expect("open");
+        assert_eq!(back, sub("enc:v1:abc"));
     }
 
     #[test]
