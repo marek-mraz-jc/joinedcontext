@@ -421,33 +421,7 @@ fn host_table(cfg: &Config, plans: &[MountPlan]) -> Result<Option<HostTable>, Ro
             table = table.shared(host)?;
         }
     }
-    let deployment = deployment_paths(plans);
-    let deployment: Vec<&str> = deployment.iter().map(String::as_str).collect();
-    Ok(Some(table.deployment_paths(&deployment)?))
-}
-
-/// What a shared host answers without an Organization once jc.toml lists Organizations
-/// (RTE-03, S1-03), beside `/-` and `/.well-known`: sign-in (kaisatsu and its old slug) and the
-/// kubelet's probes of components/jc values/server (the Portal's `/api/v1/health`, ekiben's
-/// `/ping`). Every other path there answers `404`.
-fn deployment_paths(plans: &[MountPlan]) -> Vec<String> {
-    let mut paths = vec![format!("/{}", Module::KAISATSU_OLD_SLUG)];
-    for plan in plans {
-        for spec in plan.specs() {
-            let prefix = spec
-                .path_prefix
-                .as_deref()
-                .unwrap_or("")
-                .trim_end_matches('/');
-            match plan.module {
-                Module::Kaisatsu if !prefix.is_empty() => paths.push(prefix.to_owned()),
-                Module::Portal => paths.push(format!("{prefix}/api/v1/health")),
-                Module::Ekiben => paths.push(format!("{prefix}/ping")),
-                _ => {}
-            }
-        }
-    }
-    paths
+    Ok(Some(table))
 }
 
 /// The entries of `module` on the `[[organizations]]` hosts (`OrganizationHosts::by_module`):
@@ -849,7 +823,6 @@ pub async fn build_router(
                 apps = Some(modules::gateway::apps_router(
                     &cfg.scheme,
                     &cfg.base_host,
-                    &cfg.organizations,
                     router.clone(),
                 )?);
             }
@@ -2397,20 +2370,10 @@ mod tests {
                 "/alpha/opendata/dataset/x",
                 "200 dataroom alpha https://city.test/alpha/opendata /dataset/x",
             ),
-            // S1-03: with Organizations, a shared host's path that names none is no module's,
-            // except sign-in and the kubelet's probes.
-            ("city.test", "/opendata/dataset/x", "404 unmounted path"),
-            ("city.test", "/api/endpoints", "404 unmounted path"),
-            ("city.test", "/portal/api/v1/projects", "404 unmounted path"),
             (
                 "city.test",
-                "/login/realms/jc",
-                "200 kaisatsu - https://city.test/login /realms/jc",
-            ),
-            (
-                "city.test",
-                "/portal/api/v1/health",
-                "200 portal - https://city.test/portal /api/v1/health",
+                "/opendata/dataset/x",
+                "200 dataroom - https://city.test/opendata /dataset/x",
             ),
             (
                 "localhost:42301",

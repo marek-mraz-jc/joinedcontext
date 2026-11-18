@@ -1378,11 +1378,7 @@ mod tests {
             ok("gateway|zilina")
         );
         assert_eq!(get("smartcity.bbsk.sk", "/x").await, ok("bbsk|bbsk"));
-        // A shared host's path that names no Organization is none of the deployment's (S1-03).
-        assert_eq!(
-            get("city.example", "/").await,
-            (StatusCode::NOT_FOUND, "unmounted path".to_owned())
-        );
+        assert_eq!(get("city.example", "/").await, ok("shared|"));
         let twice = [
             spec("portal", Some("smartcity.zilina.sk"), None),
             spec("gateway", Some("smartcity.zilina.sk"), Some("/")),
@@ -1401,10 +1397,7 @@ mod tests {
             get("smartcity.bbsk.sk", "/").await.0,
             StatusCode::MISDIRECTED_REQUEST
         );
-        assert_eq!(
-            get("city.example", "/bbsk/x").await,
-            (StatusCode::NOT_FOUND, "unmounted path".to_owned())
-        );
+        assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|"));
         assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
     }
 
@@ -1833,8 +1826,7 @@ mod tests {
             get("api.zilina.sk").await.0,
             StatusCode::MISDIRECTED_REQUEST
         );
-        // The shared host's root names no Organization (S1-03).
-        assert_eq!(get("city.example").await.0, StatusCode::NOT_FOUND);
+        assert_eq!(get("city.example").await.0, StatusCode::OK);
         // An Organization named like a mount's first segment, and a host that is no host name:
         // each build fails and the table of the last good build answers.
         for broken in [

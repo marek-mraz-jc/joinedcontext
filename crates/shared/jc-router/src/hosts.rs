@@ -177,13 +177,7 @@ pub struct HostTable {
     reserved: BTreeSet<String>,
     roles: BTreeMap<String, HostRole>,
     moves: BTreeMap<String, Vec<PageMove>>,
-    /// The path prefixes a shared host answers without an Organization once the deployment has
-    /// one (RTE-03): `/-`, `/.well-known` and what [`HostTable::deployment_paths`] adds.
-    deployment: BTreeSet<String>,
 }
-
-/// The deployment's own prefixes on every table: its pages and discovery documents.
-const DEPLOYMENT_PATHS: [&str; 2] = ["/-", "/.well-known"];
 
 /// The value of a host keyed map: exact first, then a wildcard one label under it.
 fn lookup<'a, V>(
@@ -266,39 +260,6 @@ impl HostTable {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Path prefixes a shared host still answers without an Organization once the deployment
-    /// has Organizations (RTE-03), beside `/-` and `/.well-known`: sign-in and the kubelet's
-    /// probes. Each matches itself and whole segments below it.
-    pub fn deployment_paths(mut self, prefixes: &[&str]) -> Result<Self, RouterError> {
-        for prefix in prefixes {
-            // `/` would answer every path without an Organization.
-            match normalize_prefix(prefix)? {
-                root if root.is_empty() => {
-                    return Err(RouterError::InvalidPrefix((*prefix).to_owned()));
-                }
-                prefix => self.deployment.insert(prefix),
-            };
-        }
-        Ok(self)
-    }
-
-    /// Whether a shared host answers `path` without an Organization: always while the deployment
-    /// has none, else only a deployment path, any path of a sign-in host, and any path of an
-    /// Apps host (`{app}--{org}.{apps-base}`: the Portal reads the Organization from that
-    /// label). Nothing else reaches a module without its Organization, since a module answers
-    /// such a request for every Organization (S1-03).
-    fn organization_less(&self, host_with_port: &str, host_only: &str, path: &str) -> bool {
-        self.organizations.is_empty()
-            || DEPLOYMENT_PATHS
-                .into_iter()
-                .chain(self.deployment.iter().map(String::as_str))
-                .any(|prefix| under(path, prefix).is_some())
-            || matches!(
-                self.role_of(host_with_port, host_only),
-                Some(HostRole::SignIn | HostRole::Apps)
-            )
     }
 
     /// The names no Organization may take (jc passes jc-core's `RESERVED_LABELS`, T-6974):
@@ -575,14 +536,11 @@ impl HostTable {
                 via: Via::Prefixed(first.to_owned()),
             },
             HostRow::Shared if id_shaped(first) => Placed::NotFound,
-            HostRow::Shared if self.organization_less(host_with_port, host_only, path) => {
-                Placed::Route {
-                    path: path.to_owned(),
-                    organization: None,
-                    via: Via::Plain,
-                }
-            }
-            HostRow::Shared => Placed::NotFound,
+            HostRow::Shared => Placed::Route {
+                path: path.to_owned(),
+                organization: None,
+                via: Via::Plain,
+            },
             HostRow::Bound { organization, root }
                 if named.is_some_and(|(name, _)| name == organization) =>
             {
@@ -706,98 +664,18 @@ mod tests {
                     .into()
             )
         );
-        // A wildcard row covers one label under it.
+        // A path that names no Organization is the deployment's own.
         assert_eq!(
-            call(&jc, "a.apps.city.example", "/com_example/api/x", API)
-                .await
-                .0,
-            StatusCode::OK
-        );
-    }
-
-    /// S1-03: once the deployment has Organizations, a shared host's path that names none reaches
-    /// only the deployment's own paths, sign-in and the probes jc names; any other path, a
-    /// module's API included, is the 404 of an unknown path.
-    #[tokio::test]
-    async fn a_path_without_an_organization_reaches_only_deployment_paths() {
-        let module = |name: &str| {
-            (
-                MountSpec {
-                    module: name.into(),
-                    host: None,
-                    path_prefix: Some(format!("/{name}")),
-                },
-                Router::new().fallback(any(echo)),
-            )
-        };
-        let routes = |table: HostTable| {
-            let mut b = JcRouterBuilder::new("https", "city.example").hosts(table);
-            for name in ["data", "api", "login", "-", ".well-known", "streams"] {
-                let (spec, router) = module(name);
-                b = b.mount(spec, router);
-            }
-            b.build().expect("router")
-        };
-        let table = HostTable::new()
-            .shared("city.example")
-            .and_then(|t| t.shared("idm.city.example"))
-            .and_then(|t| t.role("idm.city.example", HostRole::SignIn))
-            .and_then(|t| t.shared("*.apps.city.example"))
-            .and_then(|t| t.role("*.apps.city.example", HostRole::Apps))
-            .and_then(|t| t.organization("com_example"))
-            .and_then(|t| t.deployment_paths(&["/login", "/streams/ping"]))
-            .expect("rows");
-        let jc = routes(table.clone());
-        for path in [
-            "/data/dataset/x",
-            "/api/endpoint/air/ngsi-ld/v1/entities",
-            "/api",
-            "/streams/x",
-            "/loginx",
-            "/-x",
-            "/",
-        ] {
-            assert_eq!(
-                call(&jc, "city.example", path, API).await,
-                (StatusCode::NOT_FOUND, "unmounted path".into()),
-                "{path}"
-            );
-        }
-        for path in [
-            "/-/chooser",
-            "/.well-known/openid-configuration",
-            "/login/realms/jc",
-            "/streams/ping",
-        ] {
-            let (status, body) = call(&jc, "city.example", path, API).await;
-            assert_eq!(status, StatusCode::OK, "{path}");
-            assert!(body.contains(" org=- "), "{path}: {body}");
-        }
-        assert_eq!(
-            call(&jc, "idm.city.example", "/api/x", API).await.0,
-            StatusCode::OK
-        );
-        assert_eq!(
-            call(&jc, "a--com_example.apps.city.example", "/api/x", API)
-                .await
-                .0,
-            StatusCode::OK
-        );
-        // The Organization's own path still answers.
-        assert_eq!(
-            call(&jc, "city.example", "/com_example/api/x", API).await.0,
-            StatusCode::OK
-        );
-        // `/` as a deployment path would open every path.
-        assert!(HostTable::new().deployment_paths(&["/"]).is_err());
-        // A deployment without Organizations keeps the shared host's paths.
-        let single = routes(HostTable::new().shared("city.example").expect("row"));
-        assert_eq!(
-            call(&single, "city.example", "/api/endpoint/air", API).await,
+            call(&jc, "city.example", "/data/dataset/x", API).await,
             (
                 StatusCode::OK,
-                "api org=- base=https://city.example/api path=/endpoint/air".into()
+                "data org=- base=https://city.example/data path=/dataset/x".into()
             )
+        );
+        // A wildcard row covers one label under it.
+        assert_eq!(
+            call(&jc, "a.apps.city.example", "/api/x", API).await.0,
+            StatusCode::OK
         );
     }
 
@@ -846,9 +724,7 @@ mod tests {
         );
         // A port does not make a registered host another one; a deeper label is not a wildcard's.
         assert_eq!(
-            call(&jc, "city.example:8443", "/com_example/data/", API)
-                .await
-                .0,
+            call(&jc, "city.example:8443", "/data/", API).await.0,
             StatusCode::OK
         );
         assert_eq!(
