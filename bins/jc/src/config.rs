@@ -1101,14 +1101,44 @@ pub struct RemoteSection {
     pub modules: BTreeMap<String, String>,
 }
 
+/// `[gateway]`: the gateway in a `jc` without the Portal, the data plane of a role split
+/// (T-7226: gateway and Antares together, scaled apart from the Portal). The gateway reads the
+/// Portal's internal listener over the network (revocations, connectors, usage) with its own
+/// `context-gateway` token of audience `portal-internal`, which the Portal checks per route
+/// (`auth::internal`); it verifies persons against kaisatsu's realm at `kaisatsu`. Every
+/// replica gives the same client secret and OAuth key, so a token or a client one replica issued
+/// holds on the others.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewaySection {
+    /// The Portal's internal listener as this container reaches it, e.g.
+    /// `http://jc-core-internal:9090` (the Portal's container sets `JC_INTERNAL_BIND`).
+    pub portal_internal: String,
+    /// kaisatsu's public base: the issuer is `{kaisatsu}/realms/{realm}`, e.g.
+    /// `https://idm.city.example`.
+    pub kaisatsu: String,
+    /// Where this container reads kaisatsu's keys when not at `kaisatsu`, e.g.
+    /// `http://jc-core:8080` (host mode: the cluster address of the same listener).
+    pub kaisatsu_internal: Option<String>,
+    /// File of the `context-gateway` client secret (or `JCBIN_GATEWAY_CLIENT_SECRET[_FILE]`):
+    /// the Portal's container gives kaisatsu the same one.
+    pub client_secret_file: Option<PathBuf>,
+    /// File of the key the gateway's OAuth server signs with (or
+    /// `JCBIN_GATEWAY_OAUTH_KEY[_FILE]`): one for every replica.
+    pub oauth_key_file: Option<PathBuf>,
+}
+
 /// The modules a role split may place behind a [`DoorSection`] or a [`RemoteSection`]: those
-/// the Portal calls with a service credential.
-pub const SPLIT_MODULES: [Module; 5] = [
+/// the Portal calls with a service credential, and the gateway, which the Portal names as a
+/// remote module (`[remote.modules] gateway`) so kaisatsu keeps its client and the internal
+/// listener admits its token.
+pub const SPLIT_MODULES: [Module; 6] = [
     Module::Shako,
     Module::Ekiben,
     Module::Daiya,
     Module::Dataroom,
     Module::Antares,
+    Module::Gateway,
 ];
 
 /// The TOML file. Unknown keys are refused so a typo never silently keeps a default.
@@ -1153,6 +1183,7 @@ pub struct FileConfig {
     pub identity: IdentitySection,
     pub door: Option<DoorSection>,
     pub remote: Option<RemoteSection>,
+    pub gateway: Option<GatewaySection>,
     #[serde(default)]
     pub organizations: Vec<OrganizationSection>,
     #[serde(default)]
@@ -1204,6 +1235,8 @@ pub enum ConfigError {
     ModelKeyValue(&'static str),
     #[error("[remote]: {0}")]
     Remote(String),
+    #[error("[gateway]: {0}")]
+    Gateway(String),
     #[error("[ekiben] client_secrets_dir: {0}")]
     ClientSecrets(String),
     #[error("[{module}.database]: {message}")]
@@ -1254,6 +1287,8 @@ pub struct Config {
     pub remote: Option<RemoteSection>,
     /// `[remote.modules]`, parsed: each module and the base it is called at.
     pub remote_modules: BTreeMap<Module, String>,
+    /// `[gateway]`, checked: set exactly when the gateway runs here without the Portal.
+    pub gateway: Option<GatewaySection>,
     /// `[[organizations]]`, checked: each Organization on its own hosts.
     pub organizations: Vec<OrganizationSection>,
     /// `[[hosts]]`, checked: further hosts bound to one of the `organizations`.
@@ -1488,6 +1523,8 @@ impl Config {
             Some(remote) => remote_modules(remote, &roles)?,
             None => BTreeMap::new(),
         };
+        let portal_siblings = cli.portal_siblings.or(file.portal_siblings).unwrap_or(true);
+        let gateway = gateway_section(file.gateway, &roles, portal_siblings)?;
         Ok(Self {
             roles,
             listen: cli.listen.or(file.listen).unwrap_or_else(|| {
@@ -1509,7 +1546,7 @@ impl Config {
                 .state_dir
                 .or(file.state_dir)
                 .unwrap_or_else(|| PathBuf::from(Self::DEFAULT_STATE_DIR)),
-            portal_siblings: cli.portal_siblings.or(file.portal_siblings).unwrap_or(true),
+            portal_siblings,
             mounts,
             kaisatsu,
             dataroom,
@@ -1523,6 +1560,7 @@ impl Config {
             door: file.door,
             remote: file.remote,
             remote_modules,
+            gateway,
             organizations,
             hosts,
             login_host,
@@ -1530,14 +1568,60 @@ impl Config {
     }
 }
 
-/// `[remote.modules]` checked: a split module, not also run here, at an http(s) base.
+/// `[gateway]` checked: required where the gateway runs without the Portal and jc wires its
+/// siblings (no other way to the Portal's revocations), refused anywhere else.
+fn gateway_section(
+    section: Option<GatewaySection>,
+    roles: &[Module],
+    portal_siblings: bool,
+) -> Result<Option<GatewaySection>, ConfigError> {
+    let bad = |m: &str| Err(ConfigError::Gateway(m.to_owned()));
+    let data_plane = roles.contains(&Module::Gateway) && !roles.contains(&Module::Portal);
+    let Some(section) = section else {
+        if data_plane && portal_siblings {
+            return bad(
+                "the gateway runs here without the Portal: name the Portal's internal listener \
+                 (portal_internal) and kaisatsu (kaisatsu), or a disabled person keeps access \
+                 until the token expires",
+            );
+        }
+        return Ok(None);
+    };
+    if !data_plane {
+        return bad("only a jc running the gateway without the Portal takes [gateway]");
+    }
+    if roles.contains(&Module::Kaisatsu) {
+        return bad(
+            "kaisatsu runs here without the Portal: run kaisatsu in the Portal's container",
+        );
+    }
+    let urls = [
+        ("portal_internal", Some(&section.portal_internal)),
+        ("kaisatsu", Some(&section.kaisatsu)),
+        ("kaisatsu_internal", section.kaisatsu_internal.as_ref()),
+    ];
+    for (key, url) in urls {
+        if let Some(url) = url
+            && !crate::siblings::is_base_url(url)
+        {
+            return Err(ConfigError::Gateway(format!(
+                "{key}: '{url}' is not a base URL (http(s)://host[:port][/path], no trailing slash)"
+            )));
+        }
+    }
+    Ok(Some(section))
+}
+
+/// `[remote.modules]` checked: a split module, not also run here, at an http(s) base. A
+/// gateway without the Portal calls shako alone (it follows the forge read-only).
 fn remote_modules(
     remote: &RemoteSection,
     roles: &[Module],
 ) -> Result<BTreeMap<Module, String>, ConfigError> {
     let bad = |m: String| Err(ConfigError::Remote(m));
-    if !roles.contains(&Module::Portal) {
-        return bad("only a jc running the Portal calls remote modules".into());
+    let runs_portal = roles.contains(&Module::Portal);
+    if !runs_portal && !roles.contains(&Module::Gateway) {
+        return bad("only a jc running the Portal or the gateway calls remote modules".into());
     }
     let web = |url: &str| url.starts_with("https://") || url.starts_with("http://");
     if !web(&remote.token_url) {
@@ -1553,6 +1637,11 @@ fn remote_modules(
         }
         if roles.contains(&module) {
             return bad(format!("{module} runs in this jc and in another container"));
+        }
+        if !runs_portal && module != Module::Shako {
+            return bad(format!(
+                "a gateway without the Portal calls shako alone, not {module}"
+            ));
         }
         if !web(url) {
             return bad(format!("{module}: '{url}' is not an http(s) URL"));
@@ -1765,6 +1854,42 @@ impl Secrets {
                 source: jc_secret::Source::File,
                 path: Some(path.clone()),
             });
+        }
+        let gateway_file = |key: Option<&PathBuf>, name: &str| {
+            key.cloned()
+                .or_else(|| env.get(&format!("{name}_FILE")).map(PathBuf::from))
+        };
+        // The gateway's client secret, when the gateway and the Portal (with kaisatsu) run in two
+        // containers: kaisatsu's client and the gateway's token must agree, so both are given
+        // the one value rather than each generating its own.
+        if cfg.gateway.is_some() || cfg.remote_modules.contains_key(&Module::Gateway) {
+            let name = "JCBIN_GATEWAY_CLIENT_SECRET";
+            let file = gateway_file(
+                cfg.gateway
+                    .as_ref()
+                    .and_then(|g| g.client_secret_file.as_ref()),
+                name,
+            );
+            let Some(g) = given(name, file.as_deref())? else {
+                return Err(ConfigError::Gateway(
+                    "the gateway and the Portal's container share the gateway's client secret: \
+                     set JCBIN_GATEWAY_CLIENT_SECRET_FILE (or [gateway] client_secret_file) in both"
+                        .into(),
+                ));
+            };
+            out.module.insert(S::GatewayClientSecret, g);
+        }
+        if let Some(gateway) = &cfg.gateway {
+            let name = "JCBIN_GATEWAY_OAUTH_KEY";
+            let file = gateway_file(gateway.oauth_key_file.as_ref(), name);
+            let Some(g) = given(name, file.as_deref())? else {
+                return Err(ConfigError::Gateway(
+                    "every replica signs OAuth clients with one key: set \
+                     JCBIN_GATEWAY_OAUTH_KEY_FILE (or [gateway] oauth_key_file)"
+                        .into(),
+                ));
+            };
+            out.module.insert(S::GatewayOauthKey, g);
         }
         if let Some(remote) = &cfg.remote {
             let file = remote.client_secret_file.clone().or_else(|| {
@@ -2164,7 +2289,7 @@ path_prefix = "/api/endpoint"
 "#,
         )
         .unwrap();
-        let merged = Config::merge(cli(&["--role", "gateway"]), many).unwrap();
+        let merged = Config::merge(cli(&["--role", "gateway,portal"]), many).unwrap();
         assert_eq!(
             merged.mounts[&Module::Gateway],
             vec![
@@ -2322,9 +2447,9 @@ path_prefix = "/api/endpoint"
             Config::merge(cli(&["--role", "daiya"]), file.clone()),
             Err(ConfigError::AppsListen)
         ));
-        let cfg = Config::merge(cli(&["--role", "gateway"]), file).unwrap();
+        let cfg = Config::merge(cli(&["--role", "gateway,portal"]), file).unwrap();
         assert_eq!(cfg.apps_listen, Some("0.0.0.0:8083".parse().unwrap()));
-        let off = Config::merge(cli(&["--role", "gateway"]), FileConfig::default()).unwrap();
+        let off = Config::merge(cli(&["--role", "gateway,portal"]), FileConfig::default()).unwrap();
         assert_eq!(off.apps_listen, None);
     }
 
@@ -2639,6 +2764,121 @@ path_prefix = "/api/endpoint"
         assert_eq!(
             secrets.remote_client_secret.unwrap().source,
             jc_secret::Source::Env
+        );
+    }
+
+    /// T-7226: the gateway apart from the Portal (the data plane, with Antares) must name the
+    /// Portal's internal listener and kaisatsu, or a disabled person kept access until the token
+    /// expired; it calls shako alone through `[remote]`, and both sides take the one client
+    /// secret, every replica the one OAuth key.
+    #[test]
+    fn a_gateway_without_the_portal_needs_the_portals_door_and_shared_secrets() {
+        let parse = |toml: &str| Config::parse_file(Path::new("jc.toml"), toml).unwrap();
+        let merge = |role: &str, toml: &str| Config::merge(cli(&["--role", role]), parse(toml));
+        let gateway = "[gateway]\nportal_internal = \"http://jc-core-internal:9090\"\n\
+                       kaisatsu = \"https://idm.city.test\"\n\
+                       kaisatsu_internal = \"http://jc-core:8080\"\n";
+        let err = merge("gateway,antares", "").unwrap_err().to_string();
+        assert!(err.contains("portal_internal"), "{err}");
+        // jc wiring nothing: the operator names every gateway key in the environment.
+        let off = merge("gateway,antares", "portal_siblings = false\n").unwrap();
+        assert_eq!(off.gateway, None);
+        let cfg = merge("gateway,antares", gateway).unwrap();
+        let section = cfg.gateway.as_ref().unwrap();
+        assert_eq!(section.portal_internal, "http://jc-core-internal:9090");
+        for (role, toml, said) in [
+            (
+                "portal,gateway",
+                gateway,
+                "only a jc running the gateway without",
+            ),
+            ("antares", gateway, "only a jc running the gateway without"),
+            ("gateway,kaisatsu", gateway, "kaisatsu runs here"),
+            (
+                "gateway",
+                &gateway.replace("http://jc-core-internal:9090", "jc-core:9090"),
+                "portal_internal: 'jc-core:9090' is not a base URL",
+            ),
+            (
+                "gateway",
+                &gateway.replace("https://idm.city.test", "https://idm.city.test/"),
+                "kaisatsu: ",
+            ),
+        ] {
+            let err = merge(role, toml).unwrap_err().to_string();
+            assert!(err.contains(said), "{role}: {err}");
+        }
+        let remote = "[remote]\ntoken_url = \"http://id/token\"\nclient_id = \"data-remote\"\n\
+                      [remote.modules]\n";
+        let shako = merge(
+            "gateway,antares",
+            &format!("{remote}shako = \"https://city.test/git\"\n{gateway}"),
+        )
+        .unwrap();
+        assert_eq!(
+            shako.remote_modules[&Module::Shako],
+            "https://city.test/git"
+        );
+        let err = merge(
+            "gateway,antares",
+            &format!("{remote}daiya = \"https://city.test/dashboards\"\n{gateway}"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("shako alone, not daiya"), "{err}");
+        // Secrets: the client secret on both sides, the OAuth key on the data plane.
+        let err = Secrets::load_from(&cfg, &BTreeMap::new()).unwrap_err();
+        assert!(
+            err.to_string().contains("JCBIN_GATEWAY_CLIENT_SECRET_FILE"),
+            "{err}"
+        );
+        let client = (
+            "JCBIN_GATEWAY_CLIENT_SECRET".to_owned(),
+            "c-0123456789".to_owned(),
+        );
+        let err = Secrets::load_from(&cfg, &BTreeMap::from([client.clone()])).unwrap_err();
+        assert!(
+            err.to_string().contains("JCBIN_GATEWAY_OAUTH_KEY_FILE"),
+            "{err}"
+        );
+        let both = BTreeMap::from([
+            client.clone(),
+            (
+                "JCBIN_GATEWAY_OAUTH_KEY".to_owned(),
+                "k-0123456789".to_owned(),
+            ),
+        ]);
+        let secrets = Secrets::load_from(&cfg, &both).unwrap();
+        let held = |s: crate::setup::Secret| secrets.module[&s].secret.expose().to_owned();
+        assert_eq!(
+            held(crate::setup::Secret::GatewayClientSecret),
+            "c-0123456789"
+        );
+        assert_eq!(held(crate::setup::Secret::GatewayOauthKey), "k-0123456789");
+        // The Portal's side names the gateway as a remote module and needs the same secret.
+        let core = merge(
+            "portal,kaisatsu",
+            &format!("{remote}gateway = \"http://jc-data:8080\"\n"),
+        )
+        .unwrap();
+        assert_eq!(core.remote_modules[&Module::Gateway], "http://jc-data:8080");
+        let core_env = BTreeMap::from([
+            (
+                "JCBIN_REMOTE_CLIENT_SECRET".to_owned(),
+                "r-0123456789".to_owned(),
+            ),
+            client,
+        ]);
+        let secrets = Secrets::load_from(&core, &core_env).unwrap();
+        assert!(
+            secrets
+                .module
+                .contains_key(&crate::setup::Secret::GatewayClientSecret)
+        );
+        assert!(
+            !secrets
+                .module
+                .contains_key(&crate::setup::Secret::GatewayOauthKey)
         );
     }
 
