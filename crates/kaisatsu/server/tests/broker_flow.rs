@@ -282,7 +282,15 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_ok, StatusCode::SEE_OTHER);
     assert!(signs_in(&app, &h_ok, &auth_cookie).await);
 
-    // 6. Existing local account (`demo.orgmember@hel.fi`) requires link confirmation + local password.
+    // 6. Existing local account (`demo.orgmember@hel.fi`, a person of the IdP's Organization)
+    // requires link confirmation + local password.
+    let mut member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    member.org_id = Some("helsinki".into());
+    store.update_user(member).await.unwrap();
     let (s2, ck2) = start_auth_session(&app).await;
     let (_, h2, _) = get_with_ck(
         &app,

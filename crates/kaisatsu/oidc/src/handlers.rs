@@ -282,6 +282,10 @@ pub async fn resolve_or_fetch_client(
 /// The scope that takes every write right from a token (jc-core `READ_ONLY_SCOPE`, T-5955).
 const READ_ONLY_SCOPE: &str = "jc:read-only";
 
+/// The longest access-token lifetime a client attribute sets, in seconds, unless the realm's own
+/// lifetime is longer.
+const MAX_CLIENT_ACCESS_TTL: i64 = 3600;
+
 /// The granted scopes the request named (an `organization:` alias in its canonical case): what
 /// a stored consent must cover.
 fn asked_scope(granted_scope: &str, requested: &str) -> String {
@@ -1742,11 +1746,15 @@ async fn mint_tokens_for_principal(
         &with_group_roles(state.store.as_ref(), &realm.id, user, &user_groups, client).await?;
 
     let now = Utc::now().timestamp();
+    // A client may shorten its tokens' lifetime, or lengthen it up to an hour (or the realm's own
+    // longer lifetime): the lifetime is the revocation window of a token verified offline.
+    let realm_ttl = realm.access_token_lifespan.max(60);
     let access_ttl = client
         .attributes
         .get("access.token.lifespan")
         .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(realm.access_token_lifespan.max(60));
+        .filter(|ttl| *ttl > 0)
+        .map_or(realm_ttl, |ttl| ttl.min(realm_ttl.max(MAX_CLIENT_ACCESS_TTL)));
     let access_exp = now + access_ttl;
     // The family this grant's refresh token belongs to, named in the access token's `jti` so a
     // revoked family takes its access tokens with it (introspection, userinfo, token exchange).
@@ -2237,6 +2245,13 @@ async fn handle_authorization_code_grant(
         KaisatsuError::invalid_grant("Code not valid or belongs to another realm")
     })?;
 
+    // Regression checks for FerrisKey GHSA-v2hq-9v44-43ff (cross-client / cross-realm): judged
+    // before the replay rule, so only the code's own authenticated client can trigger it.
+    if code_rec.realm_id != realm.id || code_rec.client_id != client.client_id {
+        return Err(KaisatsuError::invalid_grant(
+            "Code was not issued to this client or realm",
+        ));
+    }
     // W12: Second use of an authorization code revokes the tokens/session issued from it!
     if already_consumed {
         state
@@ -2257,13 +2272,7 @@ async fn handle_authorization_code_grant(
     if code_rec.expires_at <= Utc::now() {
         return Err(KaisatsuError::invalid_grant("Code is expired"));
     }
-    // Regression checks for FerrisKey GHSA-v2hq-9v44-43ff (cross-client / cross-realm) and
     // Rauthy GHSA-55g7-fq48-7mr4 (redirect_uri binding)
-    if code_rec.realm_id != realm.id || code_rec.client_id != client.client_id {
-        return Err(KaisatsuError::invalid_grant(
-            "Code was not issued to this client or realm",
-        ));
-    }
     if code_rec.redirect_uri != *redirect_uri {
         return Err(KaisatsuError::invalid_grant("redirect_uri does not match"));
     }

@@ -1721,6 +1721,11 @@ impl Store for PgStore {
                     .map_err(storage)?,
                     None => None,
                 };
+                // A client mapping for a client that does not exist is refused, never stored as
+                // a realm role of the same name.
+                if mapping.client_uuid.is_some() && client_id.is_none() {
+                    return Err(KaisatsuError::NotFound("client not found".into()));
+                }
                 if let Some(cid) = client_id {
                     let list = u.client_roles.entry(cid).or_default();
                     if !list.contains(&mapping.role_name) {
@@ -1788,6 +1793,9 @@ impl Store for PgStore {
                     .map_err(storage)?,
                     None => None,
                 };
+                if client_uuid.is_some() && client_id.is_none() {
+                    return Err(KaisatsuError::NotFound("client not found".into()));
+                }
                 if let Some(cid) = client_id {
                     if let Some(list) = u.client_roles.get_mut(&cid) {
                         list.retain(|r| r != role_name);

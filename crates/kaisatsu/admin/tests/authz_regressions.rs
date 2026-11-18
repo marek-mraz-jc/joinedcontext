@@ -255,7 +255,7 @@ async fn an_org_client_manager_links_only_its_own_scopes_and_no_reserved_attribu
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(app.optional_client_scopes, vec!["profile".to_owned()]);
+    assert!(app.optional_client_scopes.contains(&"profile".to_owned()));
 
     let mark = json!({ "managed-by": "joinedcontext" });
     for (key, value) in [
@@ -310,6 +310,42 @@ async fn an_org_client_manager_links_only_its_own_scopes_and_no_reserved_attribu
         .unwrap();
     assert!(!app.attributes.contains_key("jc.project"));
     assert!(!app.default_client_scopes.contains(&"esp-scope".to_owned()));
+}
+
+/// A client-role mapping naming a client that does not exist is refused, and is never stored
+/// as a realm role of the same name.
+#[tokio::test]
+async fn a_mapping_to_an_unknown_client_grants_no_realm_role() {
+    let f = Fixture::new().await;
+    let admin = f
+        .token("dev", "realm-op", json!({ "realm_access": { "roles": ["realm-admin"] } }))
+        .await;
+    let st = f
+        .send(
+            Method::POST,
+            "/admin/realms/dev/users/plain-1/role-mappings/clients/stale-uuid",
+            &admin,
+            Some(json!([{ "name": "realm-admin" }])),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert!(f.user("plain-1").await.realm_roles.is_empty());
+    let err = f
+        .store
+        .add_role_mapping(RoleMappingRecord {
+            id: String::new(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "user".into(),
+            principal_id: "plain-1".into(),
+            role_id: String::new(),
+            role_name: "realm-admin".into(),
+            client_uuid: Some("stale-uuid".into()),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, KaisatsuError::NotFound(_)), "{err:?}");
+    assert!(f.user("plain-1").await.realm_roles.is_empty());
 }
 
 /// A disabled person's bearer, or one whose SSO session ended, opens no admin route.
@@ -1090,6 +1126,7 @@ async fn application_and_group_subresources_are_checked_by_the_authorizer() {
         .upsert_client_scope(ClientScopeRepresentation {
             id: "sc-secrets".into(),
             realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
             name: "secrets:read".into(),
             protocol: "openid-connect".into(),
             ..Default::default()

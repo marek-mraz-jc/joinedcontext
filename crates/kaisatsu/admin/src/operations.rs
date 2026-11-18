@@ -409,14 +409,32 @@ pub async fn execute(
                 .into_iter()
                 .filter(|c| c.credential_type.starts_with("password"))
                 .collect();
-            kaisatsu_crypto::check_password_policy(
-                &realm_cfg.password_policy,
-                value,
-                &user.username,
-                user.email.as_deref(),
-                &history,
-            )?;
-            let phc = kaisatsu_crypto::hash_password(value)?;
+            if value.is_empty() {
+                return Err(KaisatsuError::BadRequest(
+                    "give the new password in `value`".into(),
+                ));
+            }
+            // Argon2 (the history check and the hash) runs on the password pool, off the async
+            // workers, as the sign-in pages do.
+            let phc = {
+                let (policy, value, username, email) = (
+                    realm_cfg.password_policy.clone(),
+                    value.to_owned(),
+                    user.username.clone(),
+                    user.email.clone(),
+                );
+                kaisatsu_oidc::password_work(move || {
+                    kaisatsu_crypto::check_password_policy(
+                        &policy,
+                        &value,
+                        &username,
+                        email.as_deref(),
+                        &history,
+                    )?;
+                    kaisatsu_crypto::hash_password(&value)
+                })
+                .await??
+            };
             store
                 .upsert_credential(CredentialRecord {
                     id: uuid::Uuid::now_v7().to_string(),

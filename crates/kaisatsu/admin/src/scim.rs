@@ -151,8 +151,9 @@ fn split_top_level_and(s: &str) -> Result<Option<(&str, &str)>> {
                 paren_depth -= 1;
             }
             b' ' if !in_quotes && paren_depth == 0 && i + 5 <= bytes.len() => {
-                let slice = &s[i..i + 5];
-                if slice.eq_ignore_ascii_case(" and ") {
+                // Bytes, not a str slice: `i + 5` may fall inside a multi-byte character; once
+                // the five ASCII bytes match, `i` and `i + 5` are character boundaries.
+                if bytes[i..i + 5].eq_ignore_ascii_case(b" and ") {
                     return Ok(Some((&s[..i], &s[i + 5..])));
                 }
             }
@@ -1747,5 +1748,19 @@ mod tests {
         let deep = format!("{}userName eq \"a\"{}", "(".repeat(200), ")".repeat(200));
         let err = parse_scim_filter(&deep).expect_err("deep filter must be refused");
         assert_eq!(err.status_code(), 400);
+    }
+
+    #[test]
+    fn a_filter_with_multi_byte_characters_after_a_space_parses_without_panicking() {
+        for filter in ["userName eq é", "userName eq \"x\" and é", "a éé and b"] {
+            let _ = parse_scim_filter(filter);
+        }
+        let f = parse_scim_filter(r#"userName eq "žofia" and id eq "u1""#).unwrap();
+        let u = UserRepresentation {
+            id: "u1".into(),
+            username: "žofia".into(),
+            ..Default::default()
+        };
+        assert!(eval_scim_user(&f, &u));
     }
 }

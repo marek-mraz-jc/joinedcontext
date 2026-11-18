@@ -3501,8 +3501,16 @@ async fn compat_clear_brute_force(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn native_list_operations(State(state): State<AdminState>) -> Json<Vec<OperationDef>> {
-    Json(state.registry.operations().to_vec())
+async fn native_list_operations(
+    State(state): State<AdminState>,
+    Path(realm): Path<String>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<Json<Vec<OperationDef>>> {
+    // The management surface is described to an authenticated caller of an existing realm only.
+    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    Ok(Json(state.registry.operations().to_vec()))
 }
 
 /// `GET /api/v1/realms/{realm}/allowed?op=<op>&kind=<kind>&id=<id>` (W5):
