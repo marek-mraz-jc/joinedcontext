@@ -23,8 +23,8 @@
 
 use std::sync::Arc;
 
-/// What /q/metrics renders through — exporter type erased so `main` builds
-/// identically with and without the `telemetry` feature.
+/// What /q/metrics renders through — exporter type erased so the router is
+/// the same whether `ANTARES_TELEMETRY` installs the exporter or not.
 pub type MetricsRender = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// Is the observability stack switched on for this process? The default is

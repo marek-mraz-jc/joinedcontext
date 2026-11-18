@@ -1193,9 +1193,6 @@ fn warn_if_not_mount_point(dir: &std::path::Path) {
 #[cfg(not(unix))]
 fn warn_if_not_mount_point(_dir: &std::path::Path) {}
 
-// Every parameter is one config value `main` parsed fatally before the
-// runtime started; a struct would only rename the same ten values.
-#[allow(clippy::too_many_arguments)]
 /// A broker whose state is built and not yet served: what
 /// [`spawn_background`] wires and [`router`] turns into the served app.
 pub struct Broker {

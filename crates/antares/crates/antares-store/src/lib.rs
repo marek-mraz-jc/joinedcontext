@@ -917,7 +917,6 @@ pub trait CurrentStateDriver: Send + Sync {
     /// Delete a stored @context document; `false` if it was absent or owned
     /// by another Tenant.
     async fn context_delete(&self, tenant: Option<&TenantId>, id: &str) -> Result<bool, NgsiError>;
-    /// Every stored @context document.
     /// Every stored `@context` row WITHOUT its `body` member — the url,
     /// localId, kind, owner and usage counters, and not the document.
     ///

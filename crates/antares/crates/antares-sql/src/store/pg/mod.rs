@@ -513,17 +513,33 @@ pub async fn claim_tenant(
     // finds its row re-inserted here. `DO NOTHING` takes no row lock and
     // writes nothing for a tenant that exists; a concurrent first write
     // waits on the winner's uncommitted index entry, then does nothing.
-    sqlx::query(
-        "INSERT INTO tenants (tenant_id, organization_id) \
-         SELECT $1, $2 FROM (SELECT pg_advisory_xact_lock_shared(\
-             hashtext('antares.tenant'), hashtext($1))) AS fence \
-         ON CONFLICT (tenant_id) DO NOTHING",
+    //
+    // A name a rename moved away (0037's tombstone) is not created again:
+    // the write is refused as an unknown Tenant, whatever the request door's
+    // Organization switch says, so the rename's rollback finds it empty.
+    let renamed_away: bool = sqlx::query_scalar(
+        "WITH fence AS (SELECT pg_advisory_xact_lock_shared(\
+             hashtext('antares.tenant'), hashtext($1))), \
+         gone AS (SELECT EXISTS (SELECT 1 FROM tenant_rename WHERE old = $1) AS gone \
+             FROM fence), \
+         claim AS (INSERT INTO tenants (tenant_id, organization_id) \
+             SELECT $1, $2 FROM gone WHERE NOT gone.gone \
+             ON CONFLICT (tenant_id) DO NOTHING) \
+         SELECT gone FROM gone",
     )
     .bind(tenant.as_str())
     .bind(TenantId::organization_of(tenant.as_str()))
-    .execute(&mut **tx)
-    .await
-    .map(|_| ())
+    .fetch_one(&mut **tx)
+    .await?;
+    if renamed_away {
+        return Err(sqlx::Error::Configuration(Box::new(
+            antares_model::NgsiError::NonexistentTenant(format!(
+                "Tenant {} was renamed",
+                tenant.as_str()
+            )),
+        )));
+    }
+    Ok(())
 }
 
 /// The same claim outside a document transaction, for the callers that have
