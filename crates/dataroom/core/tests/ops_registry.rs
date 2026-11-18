@@ -409,6 +409,66 @@ async fn cross_publisher_id_collision_cannot_overwrite_dataset() {
 }
 
 #[tokio::test]
+async fn a_withdraw_lands_on_the_record_it_was_authorized_for() {
+    let w = world().await;
+    // city's dataset "victim" (id sorting first) and dept's dataset whose id is that name.
+    let mut victim = dataset("victim", "city", "public", json!({}));
+    victim.id = "a-victim".into();
+    w.store.upsert_dataset(&w.admin(), victim).await.unwrap();
+    let mut own = dataset("dept-own", "dept", "public", json!({}));
+    own.id = "victim".into();
+    w.store.upsert_dataset(&w.admin(), own).await.unwrap();
+    w.run(
+        &w.dept_editor(),
+        "dataset.withdraw",
+        json!({"id": "victim"}),
+    )
+    .await
+    .unwrap();
+    let city = w
+        .store
+        .get_dataset(&w.admin(), "a-victim")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        city.state,
+        RecordState::Active,
+        "city's dataset stays published"
+    );
+    let own = w
+        .store
+        .get_dataset(&w.admin(), "victim")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (own.name.as_str(), own.state),
+        ("dept-own", RecordState::Withdrawn)
+    );
+    // A resource id another dataset holds is refused, so a resource names one dataset.
+    let mut squat = dataset("squat", "dept", "public", json!({}));
+    squat.distributions[0].id = city.distributions[0].id.clone();
+    let r = w.store.upsert_dataset(&w.admin(), squat).await;
+    assert!(
+        matches!(&r, Err(DataroomError::Validation { fields, .. }) if fields.contains_key("resources")),
+        "{r:?}"
+    );
+    // A publisher whose uri equals another publisher's name does not answer for that name.
+    let mut shadow = publisher("shadow", &["dept-editor"]);
+    shadow.uri = "city".into();
+    shadow.id = "a-shadow".into();
+    w.store.upsert_publisher(&w.admin(), shadow).await.unwrap();
+    let got = w
+        .store
+        .get_publisher(&w.admin(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.name, "city");
+}
+
+#[tokio::test]
 async fn dataset_search_shows_each_caller_what_it_may_read() {
     let w = world().await;
     let anon = w
