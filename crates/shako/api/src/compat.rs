@@ -650,114 +650,19 @@ async fn compat_create_branch_protection(
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PatchBranchProtectionReq {
-    #[serde(default)]
-    pub rule_name: Option<String>,
-    #[serde(default = "default_true")]
-    pub enable_push: bool,
-    #[serde(default)]
-    pub enable_push_whitelist: bool,
-    #[serde(default)]
-    pub push_whitelist_usernames: Vec<String>,
-    #[serde(default)]
-    pub push_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub push_whitelist_deploy_keys: bool,
-    #[serde(default)]
-    pub enable_force_push: bool,
-    #[serde(default)]
-    pub enable_force_push_allowlist: bool,
-    #[serde(default)]
-    pub force_push_allowlist_usernames: Vec<String>,
-    #[serde(default)]
-    pub force_push_allowlist_teams: Vec<String>,
-    #[serde(default)]
-    pub force_push_allowlist_deploy_keys: bool,
-    #[serde(default)]
-    pub enable_merge_whitelist: bool,
-    #[serde(default)]
-    pub merge_whitelist_usernames: Vec<String>,
-    #[serde(default)]
-    pub merge_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub enable_status_check: bool,
-    #[serde(default, alias = "required_status_checks")]
-    pub status_check_contexts: Vec<String>,
-    #[serde(default)]
-    pub required_approvals: u64,
-    #[serde(default)]
-    pub enable_approvals_whitelist: bool,
-    #[serde(default)]
-    pub approvals_whitelist_username: Vec<String>,
-    #[serde(default)]
-    pub approvals_whitelist_teams: Vec<String>,
-    #[serde(default)]
-    pub block_on_rejected_reviews: bool,
-    #[serde(default)]
-    pub block_on_official_review_requests: bool,
-    #[serde(default)]
-    pub block_on_outdated_branch: bool,
-    #[serde(default)]
-    pub dismiss_stale_approvals: bool,
-    #[serde(default)]
-    pub ignore_stale_approvals: bool,
-    #[serde(default)]
-    pub require_signed_commits: bool,
-    #[serde(default)]
-    pub protected_file_patterns: String,
-    #[serde(default)]
-    pub unprotected_file_patterns: String,
-    #[serde(default = "default_true")]
-    pub block_admin_merge_override: bool,
-    #[serde(default)]
-    pub enable_bypass_allowlist: bool,
-}
-
 async fn compat_patch_branch_protection(
     State(state): State<ShakoState>,
     headers: HeaderMap,
     Path((owner, repo_name, rule_name)): Path<(String, String, String)>,
-    Json(req): Json<PatchBranchProtectionReq>,
+    Json(patch): Json<serde_json::Map<String, Value>>,
 ) -> Response {
-    let rule = BranchProtectionRule {
-        rule_name: req.rule_name.unwrap_or(rule_name),
-        enable_push: req.enable_push,
-        enable_push_whitelist: req.enable_push_whitelist,
-        push_whitelist_usernames: req.push_whitelist_usernames,
-        push_whitelist_teams: req.push_whitelist_teams,
-        push_whitelist_deploy_keys: req.push_whitelist_deploy_keys,
-        enable_force_push: req.enable_force_push,
-        enable_force_push_allowlist: req.enable_force_push_allowlist,
-        force_push_allowlist_usernames: req.force_push_allowlist_usernames,
-        force_push_allowlist_teams: req.force_push_allowlist_teams,
-        force_push_allowlist_deploy_keys: req.force_push_allowlist_deploy_keys,
-        enable_merge_whitelist: req.enable_merge_whitelist,
-        merge_whitelist_usernames: req.merge_whitelist_usernames,
-        merge_whitelist_teams: req.merge_whitelist_teams,
-        enable_status_check: req.enable_status_check,
-        status_check_contexts: req.status_check_contexts,
-        required_approvals: req.required_approvals,
-        enable_approvals_whitelist: req.enable_approvals_whitelist,
-        approvals_whitelist_username: req.approvals_whitelist_username,
-        approvals_whitelist_teams: req.approvals_whitelist_teams,
-        block_on_rejected_reviews: req.block_on_rejected_reviews,
-        block_on_official_review_requests: req.block_on_official_review_requests,
-        block_on_outdated_branch: req.block_on_outdated_branch,
-        dismiss_stale_approvals: req.dismiss_stale_approvals,
-        ignore_stale_approvals: req.ignore_stale_approvals,
-        require_signed_commits: req.require_signed_commits,
-        protected_file_patterns: req.protected_file_patterns,
-        unprotected_file_patterns: req.unprotected_file_patterns,
-        block_admin_merge_override: req.block_admin_merge_override,
-        enable_bypass_allowlist: req.enable_bypass_allowlist,
-    };
     let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    match service::protect_branch(&state, &ctx, &owner, &repo_name, rule).await {
+    match service::patch_branch_protection(&state, &ctx, &owner, &repo_name, &rule_name, patch)
+        .await
+    {
         Ok(saved) => (StatusCode::OK, Json(saved.rule)).into_response(),
         Err(e) => gitea_error_response(&state, &e),
     }
@@ -1311,14 +1216,36 @@ async fn compat_list_commits(
         };
     let git_ref = q.sha.unwrap_or(repo.default_branch);
     let limit = q.limit.unwrap_or(30).clamp(1, 1000);
+    // Pages count from 1 and reach as far as the history walk does (10 000 commits).
+    let skip = q
+        .page
+        .unwrap_or(1)
+        .max(1)
+        .saturating_sub(1)
+        .saturating_mul(limit);
+    if skip >= 10_000 {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(
+                "page reaches past the newest 10000 commits; narrow it with sha or path".into(),
+            ),
+        );
+    }
     let path_filter = q.path;
 
     let res = tokio::task::spawn_blocking(move || {
-        list_commits(&disk_path, &git_ref, path_filter.as_deref(), limit, 10_000)
+        list_commits(
+            &disk_path,
+            &git_ref,
+            path_filter.as_deref(),
+            skip + limit,
+            10_000,
+        )
     })
     .await
     .map_err(|e| ShakoError::Internal(e.to_string()))
-    .and_then(|r| r);
+    .and_then(|r| r)
+    .map(|commits| commits.into_iter().skip(skip).collect::<Vec<_>>());
 
     match res {
         Ok(commits) => {

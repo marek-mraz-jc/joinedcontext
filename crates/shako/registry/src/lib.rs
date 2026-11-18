@@ -445,9 +445,9 @@ async fn oci_post_blob_upload(
                 None,
             );
         };
-        let from_owner = from_repo
+        let (from_owner, from_image) = from_repo
             .split_once('/')
-            .map_or(owner.as_str(), |(fo, _)| fo);
+            .unwrap_or((owner.as_str(), from_repo.as_str()));
         if from_owner != owner {
             return oci_error_response(
                 StatusCode::FORBIDDEN,
@@ -456,10 +456,21 @@ async fn oci_post_blob_upload(
                 None,
             );
         }
-        if let Ok(Some(existing)) = state
-            .store()
-            .get_blob(ctx.instance_id, target_org, &owner, None, &clean_digest)
-            .await
+        // A layer is linked from the named image only, and only for a caller who may pull it;
+        // otherwise the client uploads the blob as usual.
+        let may_pull_source =
+            authorize_package(&state, &ctx, &owner, "container", from_image, Action::Read).is_ok();
+        if may_pull_source
+            && let Ok(Some(existing)) = state
+                .store()
+                .get_blob(
+                    ctx.instance_id,
+                    target_org,
+                    &owner,
+                    Some(from_image),
+                    &clean_digest,
+                )
+                .await
         {
             let mounted = BlobRecord {
                 id: uuid::Uuid::now_v7(),

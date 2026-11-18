@@ -540,6 +540,41 @@ pub async fn protect_branch(
         .await
 }
 
+/// Changes the fields `patch` names on a stored branch rule and keeps every other field as
+/// stored (PATCH); the rule is saved through [`protect_branch`], so its checks and the
+/// loosening guard apply.
+pub async fn patch_branch_protection(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    owner: &str,
+    name: &str,
+    rule_name: &str,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> ShakoResult<ProtectionRuleRecord> {
+    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    let stored = state
+        .store()
+        .get_protection_rule(repo.instance_id, repo.org_id, repo.id, rule_name)
+        .await?
+        .ok_or_else(|| ShakoError::NotFound("branch protection rule not found".into()))?;
+    if patch
+        .get("rule_name")
+        .is_some_and(|v| v.as_str() != Some(rule_name))
+    {
+        return Err(ShakoError::Unprocessable(
+            "rule_name cannot change in a PATCH; create the new rule and delete this one".into(),
+        ));
+    }
+    let mut merged =
+        serde_json::to_value(&stored.rule).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    if let Some(fields) = merged.as_object_mut() {
+        fields.extend(patch);
+    }
+    let rule: BranchProtectionRule = serde_json::from_value(merged)
+        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch rule: {e}")))?;
+    protect_branch(state, ctx, owner, name, rule).await
+}
+
 /// Removes a branch protection rule by its name (Admin); answers whether one was there.
 pub async fn unprotect_branch(
     state: &ShakoState,
