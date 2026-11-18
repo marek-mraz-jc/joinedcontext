@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, PlanBundle, check_dashboards_offline,
 };
-use daiya_model::{CrError, DataSourceInfo, InputLimits};
+use daiya_model::{CrError, InputLimits};
 use daiya_server::config::{
     DaiyaConfig, build_state, cli_ctx, provisioning_vars_from, standalone_router,
 };
@@ -242,16 +242,10 @@ async fn main() {
         }
         Commands::Check { file, format } => match load_dashboard_inputs(&file).await {
             Ok(inputs) => {
-                let ds = vec![DataSourceInfo {
-                    uid: "prometheus".into(),
-                    name: "Prometheus".into(),
-                    ds_type: "prometheus".into(),
-                    api_version: String::new(),
-                    is_default: true,
-                }];
+                // Offline: no datasource list, so the missing-datasource check is skipped.
                 match check_dashboards_offline(
                     &inputs,
-                    &ds,
+                    &[],
                     &BTreeSet::new(),
                     &InputLimits::default(),
                 ) {
@@ -289,7 +283,10 @@ async fn main() {
                     "import",
                     json!({
                         "dryRun": dry_run,
-                        "dashboards": inputs,
+                        "dashboards": inputs
+                            .into_iter()
+                            .map(|i| json!({ "rawJson": i.raw_json, "folderUid": i.folder_uid }))
+                            .collect::<Vec<_>>(),
                     }),
                 )
                 .await

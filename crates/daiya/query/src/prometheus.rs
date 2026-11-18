@@ -145,6 +145,10 @@ fn quote_context(expr: &str) -> Vec<Option<char>> {
 static VARIABLE_RE: LazyLock<Option<Regex>> =
     LazyLock::new(|| Regex::new(r"\$\{(\w+)(?::[^}]*)?\}|\[\[(\w+)(?::\w+)?\]\]|\$(\w+)").ok());
 
+/// A legend template's label reference: `{{ label }}`.
+static LEGEND_RE: LazyLock<Option<Regex>> =
+    LazyLock::new(|| Regex::new(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}").ok());
+
 /// Interpolates Grafana built-in interval/range variables and dashboard template variables
 /// (`query.go:349-396`) in one pass: a substituted value is never read again as a variable,
 /// `$job` never matches inside `$jobname`, and an unknown variable stays as written. Answers
@@ -225,7 +229,7 @@ pub fn format_legend(
     };
 
     let mut result = tpl.to_owned();
-    let Ok(re) = Regex::new(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}") else {
+    let Some(re) = LEGEND_RE.as_ref() else {
         return result;
     };
     result = re

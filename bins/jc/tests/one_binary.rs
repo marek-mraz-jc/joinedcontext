@@ -95,7 +95,7 @@ fn probe(module: Module) -> (&'static str, &'static str) {
     match module {
         Module::Kaisatsu => ("/realms/jc/.well-known/openid-configuration", "\"issuer\""),
         Module::Dataroom => ("/api/3/action/status_show", "\"success\""),
-        Module::Daiya => ("/api/health", "\"database\""),
+        Module::Daiya => ("/api/health", "\"commit\":\"daiya\""),
         Module::Ekiben => ("/ping", "pong"),
         // The broker's data routes answer only the gateway's subjects or its admin token, as on
         // dev (the joinedcontext engine); health stays open.
@@ -533,7 +533,7 @@ async fn host_mode_answers_every_dev_row_from_its_module() {
             "city.test",
             "/grafana/api/health",
             StatusCode::OK,
-            "\"database\"",
+            "\"commit\":\"daiya\"",
         ),
         (
             "city.test",

@@ -469,7 +469,13 @@ async fn ws_a_tenant_mismatch_is_never_written() -> Result<(), String> {
         rendered: rendered(&text(&made, "/body/id"), 1),
     };
     let payload = serde_json::to_vec(&n).map_err(|e| e.to_string())?;
-    let answer: Answer = serde_json::from_slice(&b.hub.answer(&c.connection, &payload))
+    // on its own Tenant's subject it reaches the connection, which compares
+    let answer: Answer =
+        serde_json::from_slice(&b.hub.answer("elsewhere", &c.connection, &payload))
+            .map_err(|e| e.to_string())?;
+    assert_eq!(answer, Answer::Unknown);
+    // on the connection's subject the hub refuses it before that (T-7275)
+    let answer: Answer = serde_json::from_slice(&b.hub.answer("city", &c.connection, &payload))
         .map_err(|e| e.to_string())?;
     assert_eq!(answer, Answer::Unknown);
     // the same notification of its own Tenant is written
@@ -478,7 +484,7 @@ async fn ws_a_tenant_mismatch_is_never_written() -> Result<(), String> {
         ..n
     };
     let payload = serde_json::to_vec(&own).map_err(|e| e.to_string())?;
-    let answer: Answer = serde_json::from_slice(&b.hub.answer(&c.connection, &payload))
+    let answer: Answer = serde_json::from_slice(&b.hub.answer("city", &c.connection, &payload))
         .map_err(|e| e.to_string())?;
     assert_eq!(answer, Answer::Queued);
     assert_eq!(
