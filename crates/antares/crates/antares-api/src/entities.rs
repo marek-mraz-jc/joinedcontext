@@ -2431,6 +2431,7 @@ async fn purge_locally(
             0
         } else if prune {
             let mut changed = 0usize;
+            let ts = crate::state::now_iso();
             st.store
                 .batch_mutate(tenant, &ids, |_, doc| {
                     let target = antares_store::stored_object(doc)?;
@@ -2448,6 +2449,8 @@ async fn purge_locally(
                         }
                     }
                     if target.len() != before {
+                        // 4.8: a removed Attribute modifies the Entity
+                        target.insert("modifiedAt".into(), Value::String(ts.clone()));
                         changed = changed.saturating_add(1);
                     }
                     Ok::<(), NgsiError>(())
@@ -4277,6 +4280,72 @@ mod clause_4_5_23_bounds {
 /// 5.6.6.4 / 5.6.17.4 / 5.6.18.4 / 5.6.21.4: "matching input data is
 /// forwarded to the Registration endpoint" — the forward may narrow what the
 /// peer does, never widen it.
+#[cfg(test)]
+mod purge_prune {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    async fn send(st: &AppState, method: &str, uri: &str, body: Option<Value>) -> StatusCode {
+        let bytes = body.map(|b| b.to_string()).unwrap_or_default();
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(axum::http::header::CONTENT_LENGTH, bytes.len().to_string());
+        if !bytes.is_empty() {
+            req = req.header(axum::http::header::CONTENT_TYPE, "application/json");
+        }
+        crate::router(st.clone())
+            .oneshot(req.body(Body::from(bytes)).expect("request"))
+            .await
+            .expect("response")
+            .status()
+    }
+
+    /// 4.8: a purge that removes an Attribute (`drop`) modifies the Entity it
+    /// keeps, as every other Attribute delete does.
+    #[tokio::test]
+    async fn a_pruned_entity_carries_a_new_modified_at() {
+        let st = AppState::new("me".into());
+        let id = "urn:ngsi-ld:Vehicle:prune";
+        let entity = json!({"id": id, "type": "Vehicle",
+                            "speed": {"type": "Property", "value": 1},
+                            "name": {"type": "Property", "value": "a"}});
+        assert_eq!(
+            send(&st, "POST", "/ngsi-ld/v1/entities", Some(entity)).await,
+            StatusCode::CREATED
+        );
+        let read = || async {
+            st.store
+                .get(&TenantId::default(), Kind::Entity, id)
+                .await
+                .expect("store")
+                .expect("the entity is kept")
+        };
+        let before = read().await["modifiedAt"].clone();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert_eq!(
+            send(
+                &st,
+                "DELETE",
+                "/ngsi-ld/v1/entities?type=Vehicle&drop=speed",
+                None
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        let after = read().await;
+        assert!(
+            after
+                .get("https://uri.etsi.org/ngsi-ld/default-context/speed")
+                .is_none(),
+            "{after}"
+        );
+        assert_ne!(after["modifiedAt"], before, "{after}");
+    }
+}
+
 #[cfg(test)]
 mod forwarded_input_data {
     use super::*;

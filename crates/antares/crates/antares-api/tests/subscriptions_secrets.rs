@@ -154,6 +154,113 @@ async fn a_masked_value_does_not_follow_a_new_uri() {
     assert_eq!(stored_receiver_info(&st).await[0]["value"], json!(TOKEN));
 }
 
+/// Clause 4.3.6, item 5: a Registration's contextSourceInfo carries the Authorization
+/// material for the Context Source. A read answers it masked; the keys item 6
+/// gives a processing meaning and the `urn:ngsi-ld:request` placeholder stay
+/// readable, a masked value written back keeps the stored one, and it does
+/// not follow a new endpoint.
+#[tokio::test]
+async fn context_source_info_is_masked_like_receiver_info() {
+    let st = AppState::new("antares-registration-secrets".into());
+    let id = "urn:ngsi-ld:ContextSourceRegistration:csi-mask";
+    let csi = json!([
+        {"key": "Authorization", "value": TOKEN},
+        {"key": "jsonldContext", "value": "https://example.org/ctx.jsonld"},
+        {"key": "X-Caller", "value": "urn:ngsi-ld:request"}
+    ]);
+    let (status, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/csourceRegistrations",
+        Some(json!({"id": id, "type": "ContextSourceRegistration",
+                    "information": [{"entities": [{"type": "Building"}]}],
+                    "endpoint": "http://localhost:18099", "contextSourceInfo": csi})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let path = format!("/ngsi-ld/v1/csourceRegistrations/{id}");
+    let (status, read) = send(&st, "GET", &path, None).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert!(!read.to_string().contains("the-webhook-token"), "{read}");
+    assert_eq!(
+        read["contextSourceInfo"],
+        json!([
+            {"key": "Authorization", "value": "***"},
+            {"key": "jsonldContext", "value": "https://example.org/ctx.jsonld"},
+            {"key": "X-Caller", "value": "urn:ngsi-ld:request"}
+        ])
+    );
+    let stored = || async {
+        st.store
+            .get(&TenantId::default(), Kind::Registration, id)
+            .await
+            .expect("store")
+            .expect("the registration is stored")
+    };
+    // what was read, written back beside a new endpoint: refused, nothing written
+    let (status, body) = send(
+        &st,
+        "PATCH",
+        &path,
+        Some(json!({"endpoint": "http://localhost:18098",
+                    "contextSourceInfo": read["contextSourceInfo"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("contextSourceInfo"), "{body}");
+    assert_eq!(stored().await["contextSourceInfo"], csi);
+    // ... and on the stored endpoint: the credential stays
+    let mut written = read["contextSourceInfo"].clone();
+    written[2]["value"] = json!("someone");
+    let (status, body) = send(
+        &st,
+        "PATCH",
+        &path,
+        Some(json!({ "contextSourceInfo": written })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let held = stored().await["contextSourceInfo"].clone();
+    assert_eq!(held[0]["value"], json!(TOKEN));
+    assert_eq!(held[2]["value"], json!("someone"));
+}
+
+/// 5.16.6 sends a Snapshot's receiverInfo as headers: a read answers it
+/// masked, as a Subscription's.
+#[tokio::test]
+async fn snapshot_receiver_info_is_never_answered() {
+    let st = AppState::new("antares-snapshot-secrets".into());
+    let (status, created) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/snapshots",
+        Some(
+            json!({"type": "Snapshot", "endpoint": "http://127.0.0.1:9/n",
+                    "receiverInfo": [{"key": "Authorization", "value": TOKEN}],
+                    "snapshotQueries": [{"type": "Query", "entities": [{"type": "V"}]}]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let listed = st
+        .store
+        .list(&TenantId::default(), Kind::Snapshot)
+        .await
+        .expect("store");
+    let id = listed
+        .iter()
+        .find(|m| m.get("receiverInfo").is_some())
+        .and_then(|m| m["id"].as_str())
+        .expect("the snapshot is stored");
+    let (status, read) = send(&st, "GET", &format!("/ngsi-ld/v1/snapshots/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(
+        read["receiverInfo"],
+        json!([{"key": "Authorization", "value": "***"}]),
+        "{read}"
+    );
+}
+
 /// 32 zero bytes in base64: a test key that is plainly not a secret.
 const TEST_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
