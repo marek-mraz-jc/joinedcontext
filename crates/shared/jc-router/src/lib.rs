@@ -1401,9 +1401,10 @@ mod tests {
             get("smartcity.bbsk.sk", "/").await.0,
             StatusCode::MISDIRECTED_REQUEST
         );
-        // With jc.toml's last Organization removed only the registry's remain, and they leave the
-        // shared host's paths open (T-7271): `/bbsk/x` is a path of the deployment's own.
-        assert_eq!(get("city.example", "/bbsk/x").await, ok("shared|"));
+        assert_eq!(
+            get("city.example", "/bbsk/x").await,
+            (StatusCode::NOT_FOUND, "unmounted path".to_owned())
+        );
         assert_eq!(get("smartcity.zilina.sk", "/").await, ok("portal|zilina"));
     }
 
