@@ -53,6 +53,40 @@ impl MemoryStore {
 
 /// A deleted catalogue's rows stay gone: a harvest run still going when its catalogue was
 /// deleted cannot write them back (the tombstone outlives a re-create only until it clears).
+type Key = (OrgId, CatalogueId, String);
+
+/// The key of the record `id_or_name` names in the request's catalogue, as PgStore resolves it:
+/// an id match wins over a name match, which wins over any `alt` match (a publisher's `uri`).
+/// Reads and writes resolve through this one rule, so a write lands on the record checked.
+fn resolve_key<T>(
+    map: &BTreeMap<Key, T>,
+    ctx: &RequestCtx,
+    id_or_name: &str,
+    name: impl Fn(&T) -> &str,
+    alt: impl Fn(&T) -> Option<&str>,
+) -> Option<Key> {
+    let id_key = (ctx.org_id, ctx.catalogue_id, id_or_name.to_owned());
+    if map.contains_key(&id_key) {
+        return Some(id_key);
+    }
+    let mine = || {
+        map.iter()
+            .filter(|((oid, cid, _), _)| *oid == ctx.org_id && *cid == ctx.catalogue_id)
+    };
+    mine()
+        .find(|(_, v)| name(v) == id_or_name)
+        .or_else(|| mine().find(|(_, v)| alt(v) == Some(id_or_name)))
+        .map(|(k, _)| k.clone())
+}
+
+fn dataset_key(inner: &Inner, ctx: &RequestCtx, id_or_name: &str) -> Option<Key> {
+    resolve_key(&inner.datasets, ctx, id_or_name, |d| &d.name, |_| None)
+}
+
+fn publisher_key(inner: &Inner, ctx: &RequestCtx, id_or_name: &str) -> Option<Key> {
+    resolve_key(&inner.publishers, ctx, id_or_name, |p| &p.name, |_| None)
+}
+
 fn refuse_deleted(inner: &Inner, ctx: &RequestCtx) -> Result<()> {
     match inner.catalogues.get(&(ctx.org_id, ctx.catalogue_id)) {
         Some(c) if c.deleted.is_some() => Err(DataroomError::Gone(format!(
@@ -184,15 +218,14 @@ impl Store for MemoryStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<Publisher>>> {
         let guard = self.read_inner();
-        let mut current = guard
-            .publishers
-            .iter()
-            .find(|((oid, cid, _), p)| {
-                *oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && (p.id == id_or_name || p.name == id_or_name || p.uri == id_or_name)
-            })
-            .map(|(_, p)| p.clone());
+        let mut current = resolve_key(
+            &guard.publishers,
+            ctx,
+            id_or_name,
+            |p| &p.name,
+            |p| Some(p.uri.as_str()),
+        )
+        .and_then(|k| guard.publishers.get(&k).cloned());
 
         // Follow publisher merge redirect (up to 4 hops, C16).
         for _ in 0..4 {
@@ -257,24 +290,10 @@ impl Store for MemoryStore {
         target_id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Publisher>> {
         let mut guard = self.write_inner();
-        let source = guard
-            .publishers
-            .values()
-            .find(|p| {
-                p.org_id == ctx.org_id
-                    && p.catalogue_id == ctx.catalogue_id
-                    && (p.id == source_id_or_name || p.name == source_id_or_name)
-            })
-            .cloned();
-        let target = guard
-            .publishers
-            .values()
-            .find(|p| {
-                p.org_id == ctx.org_id
-                    && p.catalogue_id == ctx.catalogue_id
-                    && (p.id == target_id_or_name || p.name == target_id_or_name)
-            })
-            .cloned();
+        let source = publisher_key(&guard, ctx, source_id_or_name)
+            .and_then(|k| guard.publishers.get(&k).cloned());
+        let target = publisher_key(&guard, ctx, target_id_or_name)
+            .and_then(|k| guard.publishers.get(&k).cloned());
 
         let (Some(mut source), Some(target)) = (source, target) else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(
@@ -315,11 +334,8 @@ impl Store for MemoryStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Publisher>> {
         let mut guard = self.write_inner();
-        let found = guard.publishers.values_mut().find(|p| {
-            p.org_id == ctx.org_id
-                && p.catalogue_id == ctx.catalogue_id
-                && (p.id == id_or_name || p.name == id_or_name)
-        });
+        let key = publisher_key(&guard, ctx, id_or_name);
+        let found = key.and_then(|k| guard.publishers.get_mut(&k));
         let Some(p) = found else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
                 "publisher '{id_or_name}' not found"
@@ -350,17 +366,8 @@ impl Store for MemoryStore {
     ) -> BoxFuture<'a, Result<Option<Dataset>>> {
         // An id names its record before a name does: another dataset's name may equal an id.
         let inner = self.read_inner();
-        let mine = || {
-            inner
-                .datasets
-                .iter()
-                .filter(|((oid, cid, _), _)| *oid == ctx.org_id && *cid == ctx.catalogue_id)
-                .map(|(_, d)| d)
-        };
-        let found = mine()
-            .find(|d| d.id == id_or_name)
-            .or_else(|| mine().find(|d| d.name == id_or_name))
-            .cloned();
+        let found =
+            dataset_key(&inner, ctx, id_or_name).and_then(|k| inner.datasets.get(&k).cloned());
         Box::pin(std::future::ready(Ok(found)))
     }
 
@@ -396,6 +403,21 @@ impl Store for MemoryStore {
                 "That URL is already in use.",
             ))));
         }
+        // A distribution id is unique in the catalogue, as PgStore's primary key holds it.
+        let taken = guard.datasets.iter().any(|((oid, cid, _), d)| {
+            *oid == ctx.org_id
+                && *cid == ctx.catalogue_id
+                && d.id != dataset.id
+                && d.distributions
+                    .iter()
+                    .any(|r| dataset.distributions.iter().any(|n| n.id == r.id))
+        });
+        if taken {
+            return Box::pin(std::future::ready(Err(DataroomError::field_error(
+                "resources",
+                "A resource id is already used by another dataset.",
+            ))));
+        }
         guard.datasets.insert(
             (ctx.org_id, ctx.catalogue_id, dataset.id.clone()),
             dataset.clone(),
@@ -409,11 +431,8 @@ impl Store for MemoryStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Dataset>> {
         let mut guard = self.write_inner();
-        let found = guard.datasets.values_mut().find(|d| {
-            d.org_id == ctx.org_id
-                && d.catalogue_id == ctx.catalogue_id
-                && (d.id == id_or_name || d.name == id_or_name)
-        });
+        let key = dataset_key(&guard, ctx, id_or_name);
+        let found = key.and_then(|k| guard.datasets.get_mut(&k));
         let Some(d) = found else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
                 "dataset '{id_or_name}' not found"
@@ -431,15 +450,7 @@ impl Store for MemoryStore {
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<()>> {
         let mut guard = self.write_inner();
-        let key = guard
-            .datasets
-            .iter()
-            .find(|((oid, cid, _), d)| {
-                *oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && (d.id == id_or_name || d.name == id_or_name)
-            })
-            .map(|(k, _)| k.clone());
+        let key = dataset_key(&guard, ctx, id_or_name);
         let Some(key) = key else {
             return Box::pin(std::future::ready(Err(DataroomError::NotFound(format!(
                 "dataset '{id_or_name}' not found"
@@ -558,16 +569,15 @@ impl Store for MemoryStore {
         ctx: &'a RequestCtx,
         id_or_name: &'a str,
     ) -> BoxFuture<'a, Result<Option<HarvestSource>>> {
-        let found = self
-            .read_inner()
-            .harvest_sources
-            .iter()
-            .find(|((oid, cid, _), s)| {
-                *oid == ctx.org_id
-                    && *cid == ctx.catalogue_id
-                    && (s.id == id_or_name || s.name == id_or_name)
-            })
-            .map(|(_, s)| s.clone());
+        let inner = self.read_inner();
+        let found = resolve_key(
+            &inner.harvest_sources,
+            ctx,
+            id_or_name,
+            |s| &s.name,
+            |_| None,
+        )
+        .and_then(|k| inner.harvest_sources.get(&k).cloned());
         Box::pin(std::future::ready(Ok(found)))
     }
 
@@ -599,13 +609,19 @@ impl Store for MemoryStore {
     ) -> BoxFuture<'a, Result<bool>> {
         let mut inner = self.write_inner();
         let (org, cat) = (ctx.org_id, ctx.catalogue_id);
-        let found = inner
-            .harvest_sources
-            .iter()
-            .find(|((o, c, _), s)| {
-                *o == org && *c == cat && (s.id == id_or_name || s.name == id_or_name)
-            })
-            .map(|(k, s)| (k.clone(), s.id.clone()));
+        let found = resolve_key(
+            &inner.harvest_sources,
+            ctx,
+            id_or_name,
+            |s| &s.name,
+            |_| None,
+        )
+        .and_then(|k| {
+            inner
+                .harvest_sources
+                .get(&k)
+                .map(|s| (k.clone(), s.id.clone()))
+        });
         let Some((key, id)) = found else {
             return Box::pin(std::future::ready(Ok(false)));
         };
@@ -877,6 +893,12 @@ impl Store for MemoryStore {
                 "entity set '{set_name}' not found"
             )))));
         };
+        if !dataroom_core::odata_defs::set_readable(ctx, set_name) {
+            let table = MemoryTable::new(info, Vec::new())
+                .map(|t| Arc::new(t) as Arc<dyn Table>)
+                .map_err(DataroomError::from);
+            return Box::pin(std::future::ready(table));
+        }
         let guard = self.read_inner();
         let default_lang = guard
             .catalogues

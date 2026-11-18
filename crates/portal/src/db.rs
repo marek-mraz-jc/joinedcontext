@@ -16,6 +16,24 @@ use time::OffsetDateTime;
 /// Connects and brings the schema up to date. Migrations are embedded, so a fresh database
 /// needs no step outside the binary; running them twice is a no-op.
 pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
+    connect_with(url, None).await
+}
+
+/// The migration that creates the project id registry (0066, T-7190): a database whose schema is
+/// older never ran the release whose backfill keys its project rows.
+const PROJECT_REGISTRY: i64 = 66;
+/// The migration that refuses an unkeyed project row and forces the key (0080, T-7201).
+const KEY_FORCED: i64 = 80;
+
+/// [`connect`], keying the project rows of a database from before the project registry under
+/// `installation` before migration 0080 forces the key (T-7264). Such a database (jc-prod ran
+/// release 56) gets 0057-0079 and 0080 in one start, so no release ever ran the per-minute
+/// [`crate::project_ids::backfill`] on it and 0080 would refuse every row; every project it holds
+/// predates the Organizations, so it is the installation Organization's.
+pub async fn connect_with(
+    url: &str,
+    installation: Option<&crate::host_registry::SeedOrganization>,
+) -> Result<PgPool, sqlx::Error> {
     let pool = pool_options().connect(url).await?;
     let mut migrator = sqlx::migrate!("./migrations");
     let newest = migrator.iter().map(|m| m.version).max().unwrap_or(0);
@@ -26,6 +44,39 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
              serving it as a rollback; roll forward again before another schema change"
         );
         migrator.set_ignore_missing(true);
+    }
+    let applied = applied_newest(&pool).await?;
+    if (1..KEY_FORCED).contains(&applied) {
+        migrator.run_to(KEY_FORCED - 1, &pool).await?;
+        // Also on a start after one that stopped between 0079 and 0080: the registry then holds
+        // the installation Organization alone, as no release with the registry ran.
+        let pre_registry = match installation {
+            Some(organization) => {
+                applied < PROJECT_REGISTRY || registry_holds_only(&pool, &organization.name).await?
+            }
+            None => false,
+        };
+        match installation {
+            Some(organization) if pre_registry => {
+                let keyed = crate::project_ids::key_under_installation(&pool, organization).await?;
+                tracing::info!(
+                    schema = applied,
+                    rows = keyed,
+                    organization = %organization.name,
+                    "project rows of a database from before the project registry keyed under the \
+                     installation Organization"
+                );
+            }
+            None if applied < PROJECT_REGISTRY => tracing::warn!(
+                schema = applied,
+                "the database is from before the project registry and \
+                 JC_PORTAL_INSTALLATION_ORGANIZATION is not set: migration 0080 refuses its \
+                 unkeyed project rows; set it to the [[organizations]] entry every existing \
+                 project belongs to and start again"
+            ),
+            // A release with the registry ran: its backfill keys the rows from the mirror.
+            _ => {}
+        }
     }
     migrator.run(&pool).await?;
     let set_aside: i64 = sqlx::query_scalar(
@@ -49,13 +100,22 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
 /// nor drop its triggers. Without `migration` the one role migrates and serves, as before T-7179,
 /// and the boot says so: that role owns the tables and could drop the audit's triggers.
 pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool, sqlx::Error> {
+    connect_upgrading(serving, migration, None).await
+}
+
+/// [`connect_as`] with [`connect_with`]'s `installation` (T-7264).
+pub async fn connect_upgrading(
+    serving: &str,
+    migration: Option<&str>,
+    installation: Option<&crate::host_registry::SeedOrganization>,
+) -> Result<PgPool, sqlx::Error> {
     let Some(migration) = migration else {
         tracing::warn!(
             "JC_PORTAL_MIGRATION_DATABASE_URL is not set: the Portal migrates and serves as one \
              role, which owns its tables and could drop the operators' audit triggers; set it to \
              the owning role and JC_PORTAL_DATABASE_URL to a role that owns nothing"
         );
-        return connect(serving).await;
+        return connect_with(serving, installation).await;
     };
     let role = sqlx::postgres::PgConnectOptions::from_str(serving)?
         .get_username()
@@ -70,7 +130,7 @@ pub async fn connect_as(serving: &str, migration: Option<&str>) -> Result<PgPool
             .into(),
         ));
     }
-    let owner = connect(migration).await?;
+    let owner = connect_with(migration, installation).await?;
     grant_serving_role(&owner, &role).await?;
     owner.close().await;
     let pool = pool_options().connect(serving).await?;
@@ -149,6 +209,26 @@ fn pool_options() -> PgPoolOptions {
         .min_connections(0)
         .idle_timeout(Duration::from_secs(60))
         .acquire_timeout(Duration::from_secs(5))
+}
+
+/// Whether the Organization registry holds no row but `organization`'s (any state): no release
+/// with the registry seeded or added another Organization (T-7264).
+async fn registry_holds_only(pool: &PgPool, organization: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM organizations WHERE name <> $1)")
+        .bind(organization)
+        .fetch_one(pool)
+        .await
+}
+
+/// The newest applied migration, 0 for a database never migrated.
+async fn applied_newest(pool: &PgPool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT coalesce(max(version), 0) FROM _sqlx_migrations WHERE success")
+        .fetch_one(pool)
+        .await
+        .or_else(|e| match &e {
+            sqlx::Error::Database(d) if d.code().as_deref() == Some("42P01") => Ok(0),
+            _ => Err(e),
+        })
 }
 
 /// Version and description of each applied migration above `newest`.

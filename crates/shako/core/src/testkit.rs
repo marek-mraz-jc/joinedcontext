@@ -156,6 +156,35 @@ pub async fn run_isolation_suite(store: &dyn Store) {
         .expect("create pr");
     assert_eq!(pr_a.number, 1);
 
+    // A record read before those numbers were allocated, written back whole, does not hand a
+    // number out again; a number already taken is never overwritten.
+    store
+        .update_repo(updated.clone())
+        .await
+        .expect("write back a record read earlier");
+    let n3 = store
+        .allocate_pr_number(inst, org_a, repo_a_id)
+        .await
+        .expect("pr 3");
+    assert_eq!(n3, 3);
+    let taken = store
+        .create_pull_request(PullRequestRecord {
+            id: uuid::Uuid::now_v7(),
+            title: "Another change".into(),
+            ..pr_a.clone()
+        })
+        .await
+        .expect_err("pull request number 1 is taken");
+    assert!(matches!(taken, crate::error::ShakoError::Conflict(_)));
+    assert_eq!(
+        store
+            .get_pull_request(inst, org_a, repo_a_id, 1)
+            .await
+            .expect("pr 1")
+            .map(|p| p.title),
+        Some("Add space".into())
+    );
+
     // Org B cannot see Org A's pull request
     assert!(
         store

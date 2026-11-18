@@ -189,7 +189,7 @@ fn decided(
     if !read && touches(op, &withheld) {
         return Decision::Deny(PROHIBITED.into());
     }
-    let metadata = passed(&applying, op.clause);
+    let metadata = passed(&applying, op.clause, &types);
     let grants: Vec<&Policy> = applying.into_iter().filter(|p| !p.prohibit).collect();
     if grants.is_empty() {
         return Decision::Deny(NOT_GRANTED.into());
@@ -232,17 +232,26 @@ const METADATA_READS: [&str; 6] = ["5.7.1", "5.7.2", "5.7.3", "5.7.4", "5.14.4",
 /// version answer reaches a caller only through the platform gateway's
 /// `JC-Read-Versions`, and the gateway strips its `modifiedBy` and
 /// `provenance` (DM-140, DM-151).
-fn passed(applying: &[&Policy], clause: &str) -> Option<Box<Metadata>> {
+fn passed(applying: &[&Policy], clause: &str, types: &[String]) -> Option<Box<Metadata>> {
     if !METADATA_READS.contains(&clause) {
         return None;
     }
     let of = |m: &Metadata, name: Option<&str>| -> BTreeSet<String> {
         name.and_then(|n| m.named.get(n)).unwrap_or(&m.rest).clone()
     };
+    // a permission passes members only of what it selects itself: a permission on another
+    // type, or on other Attributes of the type, widens nothing (grants never combine)
+    let selects = |p: &Policy, name: Option<&str>| {
+        p.selectors.is_empty()
+            || p.selectors.iter().any(|s| {
+                (types.is_empty() || s.types.iter().any(|t| types.contains(t)))
+                    && name.is_none_or(|n| s.every_attribute || s.attributes.iter().any(|a| a == n))
+            })
+    };
     let at = |name: Option<&str>| -> BTreeSet<String> {
         let mut out: BTreeSet<String> = applying
             .iter()
-            .filter(|p| !p.prohibit)
+            .filter(|p| !p.prohibit && selects(p, name))
             .flat_map(|p| of(&p.metadata, name))
             .collect();
         for p in applying.iter().filter(|p| p.prohibit) {
@@ -251,9 +260,19 @@ fn passed(applying: &[&Policy], clause: &str) -> Option<Box<Metadata>> {
         }
         out
     };
+    // every Attribute a permission selects by name is judged on its own, so `rest` of one
+    // permission never reaches an Attribute only another one selects
     let names: BTreeSet<&str> = applying
         .iter()
-        .flat_map(|p| p.metadata.named.keys().map(String::as_str))
+        .flat_map(|p| {
+            p.metadata.named.keys().map(String::as_str).chain(
+                (!p.prohibit)
+                    .then_some(&p.selectors)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|s| s.attributes.iter().map(String::as_str)),
+            )
+        })
         .collect();
     let out = Metadata {
         named: names
@@ -1438,6 +1457,27 @@ mod tests {
         Ok(())
     }
 
+    /// A merge adds an Attribute the Entity lacks, so it needs `append` beside `update`.
+    #[test]
+    fn a_merge_needs_update_and_append() -> Result<(), String> {
+        let types = car();
+        let speed = vec![iri("speed")];
+        let body = json!({ (iri("speed")): [] });
+        for (kinds, allowed) in [
+            (json!(["update"]), false),
+            (json!(["update", "append"]), true),
+        ] {
+            let t = table(&json!({"operations": ["5.6.17", "5.6.20"],
+                "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"],
+                                 "attributes": {"speed": {"write": kinds}}}]}))?;
+            for clause in ["5.6.17", "5.6.20"] {
+                let d = with(&t, clause, &types, &speed, Some(&body), false);
+                assert_eq!(d == Decision::Allow, allowed, "{clause} {kinds} {d:?}");
+            }
+        }
+        Ok(())
+    }
+
     /// ADR-N-066 2.4: a block passes per Attribute the members it lists, else `*`'s, else
     /// the audience defaults; a prohibition takes back what it lists; no block narrows none.
     #[test]
@@ -1480,6 +1520,31 @@ mod tests {
                               "attributes": {"*": {"metadata": ["unitCode"]}}}]}]}))?;
         let got = members(on(&with_prohibition, "5.7.2", None))?.ok_or("no members")?;
         assert!(!got.rest.contains("unitCode") && got.rest.contains("observedAt"));
+        Ok(())
+    }
+
+    /// A permission on another type, or on other Attributes of the type, leaves the members
+    /// one permission narrows for its own Attribute as they are.
+    #[test]
+    fn metadata_narrowed_by_one_permission_is_not_widened_by_another() -> Result<(), String> {
+        let narrow = json!({"id": "a", "assignee": {"kind": "role", "id": "r"},
+            "operations": ["5.7.2"],
+            "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"],
+                             "attributes": {"speed": {"metadata": ["observedAt"]}}}]});
+        let only = BTreeSet::from(["observedAt".to_owned()]);
+        for other in [
+            json!([{"entities": [{"type": "Bike"}]}]),
+            json!([{"entities": [{"type": "Car"}], "propertyNames": ["colour"]}]),
+        ] {
+            let t = compile(&json!({"policies": [narrow.clone(),
+                {"id": "b", "assignee": {"kind": "role", "id": "r"}, "operations": ["5.7.2"],
+                 "information": other}]}))?;
+            let got = match on(&t, "5.7.2", None) {
+                Decision::Filter(f) => f.metadata.clone().ok_or("no members")?,
+                other => return Err(format!("{other:?}")),
+            };
+            assert_eq!(got.named.get(&iri("speed")), Some(&only), "{got:?}");
+        }
         Ok(())
     }
 

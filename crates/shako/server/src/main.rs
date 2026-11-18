@@ -6,8 +6,8 @@ use clap::{Parser, Subcommand};
 use jc_router::Mount;
 use shako_core::{Action, LocalAuthorizer, OrgId, RoleBinding, StaticTokenBinding, Subject};
 use shako_server::{
-    ShakoManifestBundle, ShakoState, apply_manifest_bundle, check_manifest_bundle,
-    compact_all_repositories, fsck_all_repositories, router,
+    ShakoManifestBundle, ShakoState, check_manifest_bundle, compact_all_repositories,
+    fsck_all_repositories, router,
 };
 use shako_store_memory::MemoryStore;
 use shako_store_pg::PgStore;
@@ -54,7 +54,7 @@ enum Commands {
         #[arg(short = 'f', long)]
         file: PathBuf,
     },
-    /// Idempotently apply a declarative ForgeManifest file.
+    /// Refused: the standalone store cannot keep an applied manifest (apply it in jc).
     Apply {
         #[arg(short = 'f', long)]
         file: PathBuf,
@@ -75,6 +75,9 @@ enum Commands {
 
 /// Why `compact` and `fsck` of the standalone binary refuse: its store starts empty, so a
 /// success would claim a check that never ran.
+const NO_STORE: &str = "the standalone binary has no persistent store, so an applied manifest \
+would be lost at exit; apply it in jc, where the forge keeps its records in Postgres";
+
 const NO_REPOSITORIES: &str = "found no repository to work on: the standalone store starts \
 empty and lists none; run the check in jc, where the store lists the repositories";
 
@@ -211,29 +214,11 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Apply { file, repo_root } => {
-            let (state, org_id) = match build_standalone_state(repo_root, None) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("shako: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let Ok(text) = std::fs::read_to_string(&file) else {
-                eprintln!("shako: cannot read {}", file.display());
-                return ExitCode::from(2);
-            };
-            let Ok(bundle) = serde_json::from_str::<ShakoManifestBundle>(&text) else {
-                eprintln!("shako: invalid manifest JSON in {}", file.display());
-                return ExitCode::from(2);
-            };
-            match apply_manifest_bundle(&state, org_id, &bundle).await {
-                Ok(_) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("shako apply failed: {e}");
-                    ExitCode::FAILURE
-                }
-            }
+        Commands::Apply { .. } => {
+            // The standalone store ends with the process: applying would create bare
+            // repositories on disk that no record names after exit, and report success.
+            eprintln!("shako apply: {NO_STORE}");
+            ExitCode::FAILURE
         }
         Commands::Compact { repo_root } => {
             let (state, org_id) = match build_standalone_state(repo_root, None) {

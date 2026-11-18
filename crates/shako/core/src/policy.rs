@@ -31,10 +31,21 @@ fn glob_matches(pattern: &str, candidate: &str) -> bool {
     if pattern == candidate {
         return true;
     }
-    Glob::new(pattern)
-        .ok()
-        .map(|g| g.compile_matcher().is_match(candidate))
-        .unwrap_or(false)
+    // A pattern that does not compile (saved before rules were checked) protects every ref.
+    Glob::new(pattern).map_or(true, |g| g.compile_matcher().is_match(candidate))
+}
+
+/// Refuses a protection pattern list with an entry that does not compile: a broken entry
+/// would match nothing and protect nothing.
+fn check_glob_list(field: &str, patterns: &str) -> ShakoResult<()> {
+    for pat in patterns.split([';', ',', '\n']).map(str::trim) {
+        if !pat.is_empty() && Glob::new(pat).is_err() {
+            return Err(ShakoError::Unprocessable(format!(
+                "{field}: '{pat}' is not a valid glob pattern (example: main or release/*)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn compile_glob_list(patterns_semicolon_or_comma: &str) -> Option<GlobSet> {
@@ -98,36 +109,51 @@ impl RefPolicy {
                 "deploy keys and bypass allowlists are not supported (must be false)".into(),
             ));
         }
+        // Fields the policy does not evaluate are refused, so a saved rule never claims a
+        // protection it does not give.
+        let unenforced = [
+            ("require_signed_commits", rule.require_signed_commits),
+            (
+                "block_on_official_review_requests",
+                rule.block_on_official_review_requests,
+            ),
+            ("ignore_stale_approvals", rule.ignore_stale_approvals),
+            (
+                "push_whitelist_teams",
+                !rule.push_whitelist_teams.is_empty(),
+            ),
+            (
+                "force_push_allowlist_teams",
+                !rule.force_push_allowlist_teams.is_empty(),
+            ),
+            (
+                "merge_whitelist_teams",
+                !rule.merge_whitelist_teams.is_empty(),
+            ),
+            (
+                "approvals_whitelist_teams",
+                !rule.approvals_whitelist_teams.is_empty(),
+            ),
+        ];
+        if let Some((field, _)) = unenforced.iter().find(|(_, set)| *set) {
+            return Err(ShakoError::Unprocessable(format!(
+                "{field} is not supported: leave it unset (teams are not served; name users instead)"
+            )));
+        }
+        if Glob::new(&rule.rule_name).is_err() {
+            return Err(ShakoError::Unprocessable(format!(
+                "rule_name: '{}' is not a valid glob pattern (example: main or release/*)",
+                rule.rule_name
+            )));
+        }
+        check_glob_list("protected_file_patterns", &rule.protected_file_patterns)?;
+        check_glob_list("unprotected_file_patterns", &rule.unprotected_file_patterns)?;
         for subject in rule
             .push_whitelist_usernames
             .iter()
             .chain(rule.merge_whitelist_usernames.iter())
             .chain(rule.force_push_allowlist_usernames.iter())
         {
-            if !authorizer.principal_has_write(instance_id, org_id, owner, repo, subject) {
-                return Err(ShakoError::Unprocessable(format!(
-                    "whitelisted subject '{subject}' does not have write access on {owner}/{repo}"
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    /// Validates a `TagProtectionRule` before saving it.
-    pub fn validate_tag_rule_for_repo(
-        rule: &TagProtectionRule,
-        authorizer: &dyn Authorizer,
-        instance_id: InstanceId,
-        org_id: OrgId,
-        owner: &str,
-        repo: &str,
-    ) -> ShakoResult<()> {
-        if rule.name_pattern.trim().is_empty() {
-            return Err(ShakoError::Unprocessable(
-                "tag protection name_pattern must not be empty".into(),
-            ));
-        }
-        for subject in &rule.whitelist_usernames {
             if !authorizer.principal_has_write(instance_id, org_id, owner, repo, subject) {
                 return Err(ShakoError::Unprocessable(format!(
                     "whitelisted subject '{subject}' does not have write access on {owner}/{repo}"

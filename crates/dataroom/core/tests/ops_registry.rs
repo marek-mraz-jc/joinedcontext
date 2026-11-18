@@ -409,6 +409,66 @@ async fn cross_publisher_id_collision_cannot_overwrite_dataset() {
 }
 
 #[tokio::test]
+async fn a_withdraw_lands_on_the_record_it_was_authorized_for() {
+    let w = world().await;
+    // city's dataset "victim" (id sorting first) and dept's dataset whose id is that name.
+    let mut victim = dataset("victim", "city", "public", json!({}));
+    victim.id = "a-victim".into();
+    w.store.upsert_dataset(&w.admin(), victim).await.unwrap();
+    let mut own = dataset("dept-own", "dept", "public", json!({}));
+    own.id = "victim".into();
+    w.store.upsert_dataset(&w.admin(), own).await.unwrap();
+    w.run(
+        &w.dept_editor(),
+        "dataset.withdraw",
+        json!({"id": "victim"}),
+    )
+    .await
+    .unwrap();
+    let city = w
+        .store
+        .get_dataset(&w.admin(), "a-victim")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        city.state,
+        RecordState::Active,
+        "city's dataset stays published"
+    );
+    let own = w
+        .store
+        .get_dataset(&w.admin(), "victim")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (own.name.as_str(), own.state),
+        ("dept-own", RecordState::Withdrawn)
+    );
+    // A resource id another dataset holds is refused, so a resource names one dataset.
+    let mut squat = dataset("squat", "dept", "public", json!({}));
+    squat.distributions[0].id = city.distributions[0].id.clone();
+    let r = w.store.upsert_dataset(&w.admin(), squat).await;
+    assert!(
+        matches!(&r, Err(DataroomError::Validation { fields, .. }) if fields.contains_key("resources")),
+        "{r:?}"
+    );
+    // A publisher whose uri equals another publisher's name does not answer for that name.
+    let mut shadow = publisher("shadow", &["dept-editor"]);
+    shadow.uri = "city".into();
+    shadow.id = "a-shadow".into();
+    w.store.upsert_publisher(&w.admin(), shadow).await.unwrap();
+    let got = w
+        .store
+        .get_publisher(&w.admin(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.name, "city");
+}
+
+#[tokio::test]
 async fn dataset_search_shows_each_caller_what_it_may_read() {
     let w = world().await;
     let anon = w
@@ -518,6 +578,25 @@ async fn dataset_get_hides_what_the_caller_may_not_read() {
             .await;
         assert!(r.is_ok(), "admin {name}: {r:?}");
     }
+    // Being signed in is not being a member: a subject of another Organization sees neither
+    // drafts nor withdrawn records; a member of the Organization does.
+    w.store
+        .upsert_dataset(
+            &w.admin(),
+            dataset("unpublished", "city", "public", json!({"state": "draft"})),
+        )
+        .await
+        .unwrap();
+    for name in ["retired", "orphaned", "unpublished"] {
+        let r = w
+            .run(&w.outsider(), "dataset.get", json!({"name": name}))
+            .await;
+        assert!(is_not_found(&r), "outsider {name}: {r:?}");
+        for (who, ctx) in [("member", w.member()), ("admin", w.admin())] {
+            let r = w.run(&ctx, "dataset.get", json!({"name": name})).await;
+            assert!(r.is_ok(), "{who} {name}: {r:?}");
+        }
+    }
     // A resource with views says so, as CKAN's has_views does.
     let admin = w.admin();
     w.store
@@ -596,12 +675,41 @@ async fn dataset_propose_authorizes_validates_and_records() {
     assert!(is_forbidden(&r), "member without a grant: {r:?}");
     let r = w.run(&w.outsider(), "dataset.propose", ckan.clone()).await;
     assert!(is_forbidden(&r), "outsider: {r:?}");
+    // A name the caller cannot see answers as a free one does: forbidden, never not found.
+    for caller in [w.outsider(), w.anonymous()] {
+        let r = w
+            .run(
+                &caller,
+                "dataset.propose",
+                json!({"name": "internal", "owner_org": "city"}),
+            )
+            .await;
+        assert!(is_forbidden(&r), "existing hidden name: {r:?}");
+    }
     let created = w
         .run(&w.admin(), "dataset.propose", json!({"dataset": ckan}))
         .await
         .unwrap();
     assert_eq!(created["name"], "new-ckan");
     assert!(w.activity_ops().await.contains(&"dataset.propose".into()));
+    // A visibility word outside public, internal, restricted is refused, never read as public.
+    for word in ["private", "Internal", "publik"] {
+        let r = w
+            .run(
+                &w.admin(),
+                "dataset.propose",
+                json!({"dataset": {"name": "new-ckan", "owner_org": "city", "visibility": word}}),
+            )
+            .await;
+        assert!(field(&r, "visibility"), "{word}: {r:?}");
+    }
+    let kept = w
+        .store
+        .get_dataset(&w.admin(), "new-ckan")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.visibility, dataroom_core::Visibility::Internal);
 
     // The native shape (publisherId) and the publisher canonicalised to its name.
     let mut native =
@@ -1009,6 +1117,23 @@ async fn publisher_merge_and_withdraw() {
         )
         .await;
     assert!(is_forbidden(&r), "{r:?}");
+    // The merged name resolves to its target, and withdrawing by it is refused.
+    assert!(field(
+        &w.run(
+            &w.admin(),
+            "publisher.withdraw",
+            json!({"publisher": "dept"})
+        )
+        .await,
+        "publisher"
+    ));
+    let city = w
+        .store
+        .get_publisher(&w.admin(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(city.state, RecordState::Active);
     let done = w
         .run(
             &w.admin(),

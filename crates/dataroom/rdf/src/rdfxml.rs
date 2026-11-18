@@ -74,7 +74,9 @@ fn check_xml_nesting_depth(bytes: &[u8], max_depth: usize) -> Result<()> {
             } else {
                 gt + 1
             };
-            if rest[..end].contains("<!ENTITY") {
+            // A quoted `>` can end the doctype scan early and leave a declaration to be read
+            // as a construct of its own, so a bare `!ENTITY` start is refused as well.
+            if rest.starts_with("!ENTITY") || rest[..end].contains("<!ENTITY") {
                 return Err(limit(
                     "entities",
                     "RDF/XML entity declarations are refused (entity expansion guard)".into(),
@@ -495,6 +497,13 @@ mod tests {
              </rdf:Description></rdf:RDF>"
         );
         assert_eq!(refused_kind(&doc).as_deref(), Some("entities"));
+        // A quoted `>` before the internal subset does not hide the declarations.
+        let quoted = doc.replacen(
+            "<!DOCTYPE rdf:RDF [",
+            "<!DOCTYPE rdf:RDF SYSTEM \"a>b\" [",
+            1,
+        );
+        assert_eq!(refused_kind(&quoted).as_deref(), Some("entities"));
 
         // A doctype without an internal subset, or with one but no entities, is accepted.
         for doctype in [

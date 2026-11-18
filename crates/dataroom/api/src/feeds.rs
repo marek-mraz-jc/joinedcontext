@@ -107,7 +107,7 @@ async fn public_feed_datasets(
 
     let stacked_shapes = state
         .profiles
-        .stacked_shapes(profile.id(), None)
+        .stacked_shapes((cat.org_id, cat.id), profile.id(), None)
         .ok()
         .map(|(_, sg)| sg);
     let shapes_key = stacked_shapes

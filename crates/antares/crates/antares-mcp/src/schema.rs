@@ -157,7 +157,8 @@ impl Names {
 
 fn is_type_name(s: &str) -> bool {
     let mut chars = s.chars();
-    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+    s.len() <= 256
+        && chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
@@ -628,7 +629,12 @@ mod tests {
         assert_eq!(n.types, ["Car"]);
         assert_eq!(n.attributes, ["speed", "https://example.org/odd"]);
         let edge = Names::new(
-            vec![String::new(), "1Car".into(), "Fire-Truck_2".into()],
+            vec![
+                String::new(),
+                "1Car".into(),
+                "Fire-Truck_2".into(),
+                format!("C{}", "a".repeat(256)),
+            ],
             vec![
                 String::new(),
                 "9lives".into(),
