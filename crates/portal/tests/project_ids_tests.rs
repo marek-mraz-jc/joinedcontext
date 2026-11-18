@@ -999,6 +999,62 @@ async fn a_release_56_database_keys_every_project_under_the_installation_in_one_
     assert!(forced);
 }
 
+/// T-7264: a start that stopped between 0079 and 0080 leaves the registry holding the
+/// installation Organization alone; the next start keys the rows as the first would have, while a
+/// database whose registry holds another Organization keeps the backfill's way (0080 decides).
+#[tokio::test]
+async fn a_start_after_one_stopped_before_0080_keys_the_rows_again() {
+    let smartcity = joinedcontext_portal::host_registry::SeedOrganization {
+        name: "smartcity".to_owned(),
+        organization_id: None,
+        host: "portal.smartcity.example".to_owned(),
+        catalogue_id: None,
+    };
+    for (other, keyed) in [(None, true), (Some("bbsk"), false)] {
+        let (pool, url) = migrated_before_at(80, "pkresume").await;
+        joinedcontext_portal::host_registry::seed_organizations(
+            &pool,
+            std::slice::from_ref(&smartcity),
+        )
+        .await
+        .expect("seeded before the stop");
+        if let Some(other) = other {
+            sqlx::query(
+                "INSERT INTO organizations (name, host, state, created_by) \
+                 VALUES ($1, $1 || '.example', 'active', 'test')",
+            )
+            .bind(other)
+            .execute(&pool)
+            .await
+            .expect("another Organization");
+        }
+        sqlx::query(
+            "INSERT INTO activity (time, project, kind, source, summary, severity) \
+             VALUES (now(), 'bratislava', 'config.applied', 'portal', 'Applied.', 'info')",
+        )
+        .execute(&pool)
+        .await
+        .expect("an unkeyed row");
+        pool.close().await;
+        let started = joinedcontext_portal::db::connect_with(&url, Some(&smartcity)).await;
+        if keyed {
+            let pool = started.expect("keyed, then 0080");
+            let unkeyed: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM activity WHERE org_id IS NULL OR project_id IS NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+            assert_eq!(unkeyed, 0);
+        } else {
+            let err = started
+                .expect_err("0080 refuses: the registry was in use")
+                .to_string();
+            assert!(err.contains("project rows without a key"), "{err}");
+        }
+    }
+}
+
 /// A row of each table of T-7197 for `project`, written as before the key: what the backfill
 /// finds on a database of today. `$1` is the project.
 const ALERTS_HEALTH_ROWS: &[(&str, &str)] = &[

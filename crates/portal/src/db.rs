@@ -46,10 +46,18 @@ pub async fn connect_with(
         migrator.set_ignore_missing(true);
     }
     let applied = applied_newest(&pool).await?;
-    if (1..PROJECT_REGISTRY).contains(&applied) {
+    if (1..KEY_FORCED).contains(&applied) {
         migrator.run_to(KEY_FORCED - 1, &pool).await?;
-        match installation {
+        // Also on a start after one that stopped between 0079 and 0080: the registry then holds
+        // the installation Organization alone, as no release with the registry ran.
+        let pre_registry = match installation {
             Some(organization) => {
+                applied < PROJECT_REGISTRY || registry_holds_only(&pool, &organization.name).await?
+            }
+            None => false,
+        };
+        match installation {
+            Some(organization) if pre_registry => {
                 let keyed = crate::project_ids::key_under_installation(&pool, organization).await?;
                 tracing::info!(
                     schema = applied,
@@ -59,13 +67,15 @@ pub async fn connect_with(
                      installation Organization"
                 );
             }
-            None => tracing::warn!(
+            None if applied < PROJECT_REGISTRY => tracing::warn!(
                 schema = applied,
                 "the database is from before the project registry and \
                  JC_PORTAL_INSTALLATION_ORGANIZATION is not set: migration 0080 refuses its \
                  unkeyed project rows; set it to the [[organizations]] entry every existing \
                  project belongs to and start again"
             ),
+            // A release with the registry ran: its backfill keys the rows from the mirror.
+            _ => {}
         }
     }
     migrator.run(&pool).await?;
@@ -199,6 +209,15 @@ fn pool_options() -> PgPoolOptions {
         .min_connections(0)
         .idle_timeout(Duration::from_secs(60))
         .acquire_timeout(Duration::from_secs(5))
+}
+
+/// Whether the Organization registry holds no row but `organization`'s (any state): no release
+/// with the registry seeded or added another Organization (T-7264).
+async fn registry_holds_only(pool: &PgPool, organization: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM organizations WHERE name <> $1)")
+        .bind(organization)
+        .fetch_one(pool)
+        .await
 }
 
 /// The newest applied migration, 0 for a database never migrated.
