@@ -14,7 +14,7 @@ async fn health_answers_without_a_credential() {
     let w = world();
     let (st, body) = w.call("GET", "/api/health", None, None).await;
     assert_eq!(st, StatusCode::OK);
-    assert_eq!(body["database"], "ok");
+    assert!(body.get("database").is_none(), "{body}");
 }
 
 #[tokio::test]

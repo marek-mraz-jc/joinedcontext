@@ -46,9 +46,9 @@ use std::collections::BTreeMap;
 async fn compat_health() -> Response {
     (
         StatusCode::OK,
+        // Liveness only: the store is not probed, so no `database` state is claimed.
         Json(json!({
             "commit": "daiya",
-            "database": "ok",
             "version": "12.4.14"
         })),
     )
