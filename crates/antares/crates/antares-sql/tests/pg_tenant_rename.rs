@@ -288,6 +288,57 @@ async fn a_tenant_moves_whole_and_rolls_back() {
     db.drop().await;
 }
 
+/// TEN-15: the renamed-away name answers as an unknown Tenant to the store
+/// itself, whatever the request door is set to: a write under it is refused
+/// instead of re-creating the name, so the rollback stays open.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_under_a_renamed_away_name_is_refused_and_the_rollback_stays_open() {
+    use antares_store::{CurrentStateDriver, Kind};
+    let db = own_db!("tomb");
+    let pool = db.pool.clone();
+    let n = run_id();
+    let old = format!("tomb{n}-air");
+    let t = TenantId::new(&old).expect("tenant");
+    seed(&pool, &t).await;
+    let new = keyed(n, "air");
+    sqlx::query("SELECT antares_tenant_rename($1, $2)")
+        .bind(&old)
+        .bind(&new)
+        .execute(&pool)
+        .await
+        .expect("renamed");
+
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let doc = serde_json::json!({"id": "urn:x:late", "type": "Test"});
+    let late = CurrentStateDriver::create(&store, &t, Kind::Entity, "urn:x:late", doc).await;
+    assert!(
+        matches!(late, Err(antares_model::NgsiError::NonexistentTenant(_))),
+        "a write re-created the renamed-away name: {late:?}"
+    );
+    let ctx = CurrentStateDriver::context_put(
+        &store,
+        Some(&t),
+        "ctx-late",
+        serde_json::json!({"localId": "ctx-late", "kind": "Hosted", "owner": old,
+                           "body": {"@context": {"n": "https://x/n"}}}),
+    )
+    .await;
+    assert!(
+        matches!(ctx, Err(antares_model::NgsiError::NonexistentTenant(_))),
+        "a hosted @context re-created the renamed-away name: {ctx:?}"
+    );
+    assert_eq!(rows_of(&pool, &old).await, 0);
+
+    sqlx::query("SELECT antares_tenant_rename_rollback($1)")
+        .bind(&new)
+        .execute(&pool)
+        .await
+        .expect("the rollback finds the old name empty");
+    db.drop().await;
+}
+
 /// The rename refuses a target holding rows, a tombstoned or reserved name,
 /// the default Tenant, and a rollback nobody recorded; nothing moves.
 #[tokio::test(flavor = "multi_thread")]
