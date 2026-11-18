@@ -258,7 +258,7 @@ async fn keyed_with(
         .await
         .map_err(db)?
     {
-        Some(key) => crate::db::tenant_tx(pool, key)
+        Some(key) => crate::db::bulk_tenant_tx(pool, key)
             .await
             .map(|tx| Some((key, tx)))
             .map_err(db),

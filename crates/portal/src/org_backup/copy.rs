@@ -318,7 +318,7 @@ pub async fn copy(
 
     // The source's erasures are read in its own key (T-7202) before the transaction enters the
     // copy's: row-level security shows each project its own rows only.
-    let mut tx = crate::db::tenant_tx(&pool, source_key)
+    let mut tx = crate::db::bulk_tenant_tx(&pool, source_key)
         .await
         .map_err(failed)?;
     let erasures = crate::erasure::approved_in(&mut tx, std::slice::from_ref(&source_name))
