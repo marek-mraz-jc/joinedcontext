@@ -99,13 +99,20 @@ struct Tokens {
     session_state: Option<String>,
 }
 
+/// A realm the proxy asks: its token endpoint and, for an Organization's own realm, the
+/// Organization, whose realm holds the proxy's client under a secret of its own (S1-04).
+#[derive(Clone)]
+struct RealmAt {
+    token_url: String,
+    organization: Option<String>,
+}
+
 /// A held grant with the realm session it belongs to, which every refresh keeps.
 #[derive(Clone)]
 struct Held {
     session: Option<String>,
-    /// The token endpoint of the realm that issued the person's token: the grant is refreshed
-    /// and revoked there alone.
-    token_url: String,
+    /// The realm that issued the person's token: the grant is refreshed and revoked there alone.
+    realm: RealmAt,
     grant: Arc<Mutex<Grant>>,
 }
 
@@ -131,16 +138,23 @@ impl Grants {
     }
 
     async fn introspect(&self, token: &str) -> Result<Introspection, String> {
-        self.introspect_at(&self.config.token_url(), token).await
+        self.introspect_at(&self.installation(), token).await
     }
 
-    /// RFC 7662 at the realm whose token endpoint is `token_url`.
-    async fn introspect_at(&self, token_url: &str, token: &str) -> Result<Introspection, String> {
-        let mut form = self.config.client_auth()?;
+    fn installation(&self) -> RealmAt {
+        RealmAt {
+            token_url: self.config.token_url(),
+            organization: None,
+        }
+    }
+
+    /// RFC 7662 at `realm`.
+    async fn introspect_at(&self, realm: &RealmAt, token: &str) -> Result<Introspection, String> {
+        let mut form = self.config.client_auth_in(realm.organization.as_deref())?;
         form.push(("token", token.to_owned()));
         let response = self
             .http
-            .post(format!("{token_url}/introspect"))
+            .post(format!("{}/introspect", realm.token_url))
             .form(&form)
             .send()
             .await
@@ -191,9 +205,9 @@ impl Grants {
     /// held is replaced: revoked when it came from another session, dropped when it shares this
     /// one's, since a revocation would end the new grant as well.
     pub async fn bind(&self, run: &RunContext, subject_token: &str) -> Result<(), BindError> {
-        let token_url = self.realm_of(run, subject_token)?;
+        let realm = self.realm_of(run, subject_token)?;
         let seen = self
-            .introspect_at(&token_url, subject_token)
+            .introspect_at(&realm, subject_token)
             .await
             .map_err(BindError::Transport)?;
         let theirs = seen
@@ -203,7 +217,10 @@ impl Grants {
             return Err(BindError::NotTheRunsPerson);
         }
 
-        let mut form = self.config.client_auth().map_err(BindError::Transport)?;
+        let mut form = self
+            .config
+            .client_auth_in(realm.organization.as_deref())
+            .map_err(BindError::Transport)?;
         form.extend([
             ("grant_type", TOKEN_EXCHANGE.to_owned()),
             ("subject_token", subject_token.to_owned()),
@@ -213,7 +230,7 @@ impl Grants {
         ]);
         let response = self
             .http
-            .post(&token_url)
+            .post(&realm.token_url)
             .form(&form)
             .send()
             .await
@@ -239,7 +256,7 @@ impl Grants {
 
         let held = Held {
             session: tokens.session_state,
-            token_url,
+            realm,
             grant: Arc::new(Mutex::new(grant)),
         };
         let replaced = self.held.lock().await.insert(run.id.clone(), held);
@@ -254,18 +271,21 @@ impl Grants {
     /// realm only for a run of that Organization's project, never another's; the installation's
     /// for every other token, as before Organizations had realms. The issuer is read unverified
     /// to pick the realm alone: that realm's introspection then decides.
-    fn realm_of(&self, run: &RunContext, subject_token: &str) -> Result<String, BindError> {
+    fn realm_of(&self, run: &RunContext, subject_token: &str) -> Result<RealmAt, BindError> {
         let Some(issuer) = issuer_of(subject_token) else {
-            return Ok(self.config.token_url());
+            return Ok(self.installation());
         };
         let held = self.config.organization_realms.current();
         let mut realms = held
             .iter()
             .filter(|realm| realm.issuer.trim_end_matches('/') == issuer);
         match realms.next() {
-            None => Ok(self.config.token_url()),
+            None => Ok(self.installation()),
             Some(realm) if run.organization.as_deref() == Some(realm.organization.as_str()) => {
-                Ok(realm.token_url())
+                Ok(RealmAt {
+                    token_url: realm.token_url(),
+                    organization: Some(realm.organization.clone()),
+                })
             }
             Some(_) => Err(BindError::NotTheRunsPerson),
         }
@@ -276,9 +296,7 @@ impl Grants {
     /// A refused refresh ends the grant: the person's session is over, and the run's next read
     /// is a `401` rather than a retry against a realm that already said no.
     pub async fn token(&self, run_id: &str) -> Result<String, GrantError> {
-        let Held {
-            grant, token_url, ..
-        } = self
+        let Held { grant, realm, .. } = self
             .held
             .lock()
             .await
@@ -290,14 +308,17 @@ impl Grants {
             return Ok(grant.access.clone());
         }
 
-        let mut form = self.config.client_auth().map_err(GrantError::Transport)?;
+        let mut form = self
+            .config
+            .client_auth_in(realm.organization.as_deref())
+            .map_err(GrantError::Transport)?;
         form.extend([
             ("grant_type", "refresh_token".to_owned()),
             ("refresh_token", grant.refresh.clone()),
         ]);
         let response = self
             .http
-            .post(&token_url)
+            .post(&realm.token_url)
             .form(&form)
             .send()
             .await
@@ -348,11 +369,11 @@ impl Grants {
             return;
         }
         let refresh = retired.grant.lock().await.refresh.clone();
-        self.revoke(run_id, &retired.token_url, &refresh).await;
+        self.revoke(run_id, &retired.realm, &refresh).await;
     }
 
-    async fn revoke(&self, run_id: &str, token_url: &str, refresh: &str) {
-        let mut form = match self.config.client_auth() {
+    async fn revoke(&self, run_id: &str, realm: &RealmAt, refresh: &str) {
+        let mut form = match self.config.client_auth_in(realm.organization.as_deref()) {
             Ok(form) => form,
             Err(error) => {
                 tracing::warn!(run = %run_id, %error, "the run's grant could not be revoked");
@@ -365,7 +386,7 @@ impl Grants {
         ]);
         let sent = self
             .http
-            .post(revocation_url(token_url))
+            .post(revocation_url(&realm.token_url))
             .form(&form)
             .send()
             .await;

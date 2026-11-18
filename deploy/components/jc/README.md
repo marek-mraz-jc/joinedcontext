@@ -41,7 +41,7 @@ Postgres comes from CloudNativePG through `databases.yaml`: `jc_portal` (role `j
 all three.
 
 Secrets (`secrets.yaml`, generated once by the secrets component and kept, never in Git):
-`jc-setup` (11 keys, one per file of the state directory), `jc-admin-token` and one
+`jc-setup` (12 keys, one per file of the state directory), `jc-admin-token` and one
 `db-jc-*` login per database role.
 
 ## 2. Edge

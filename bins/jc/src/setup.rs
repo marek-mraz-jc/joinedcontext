@@ -527,7 +527,7 @@ pub fn realm_env(setup: &Setup) -> BTreeMap<String, String> {
 
 /// The importer variables of an Organization's own `realm` (S1-04), from the installation
 /// realm's ([`realm_env`]): each client's secret is its
-/// own to that realm ([`jc_secret::Secret::for_realm`] of the installation's), so a secret read
+/// own to that realm ([`jc_core::Secret::for_realm`] of the installation's), so a secret read
 /// in one realm signs in nowhere else; the Portal derives the same value
 /// (`auth::realms::OrganizationRealm`). No first administrator's password: such a realm seeds
 /// none (`organization_realm_files`).
@@ -540,7 +540,7 @@ pub fn organization_realm_env(
         .iter()
         .filter_map(|(name, client, _)| Some((name, client, installation.get(*name)?)))
         .map(|(name, client, value)| {
-            let own = jc_secret::Secret::new(value.clone()).for_realm(realm.as_str(), client);
+            let own = jc_core::Secret::new(value.as_str()).for_realm(realm.as_str(), client);
             ((*name).to_owned(), own.expose().to_owned())
         })
         .collect()
