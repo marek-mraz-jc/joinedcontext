@@ -714,9 +714,15 @@ pub fn at_root(router: Router) -> Router {
 /// listener serves it, mounted at `/api/endpoint` alone on any host and for `GET` and `HEAD`
 /// alone (any other method is 405 before the gateway sees it). It trusts no proxy, so a pod's
 /// `X-Forwarded-*` headers are dropped and its own address is the client's.
+///
+/// With Organizations in jc.toml a read names its Organization as the shared host does,
+/// `/{org}/api/endpoint/...`, and one that names none is `404` (S1-03): the gateway would
+/// answer it for every Organization. The pod's Host header is replaced by `base_host`, since
+/// the in-cluster name it calls is in no host table.
 pub fn apps_router(
     scheme: &str,
     base_host: &str,
+    orgs: &[crate::config::OrganizationSection],
     router: Router,
 ) -> Result<Router, jc_router::RouterError> {
     use axum::http::{Method, StatusCode, header};
@@ -740,10 +746,32 @@ pub fn apps_router(
         host: None,
         path_prefix: Some("/api/endpoint".to_owned()),
     };
-    Ok(jc_router::JcRouterBuilder::new(scheme, base_host)
-        .mount(spec, crate::access::layer(name, reads))
-        .build()?
-        .into_axum_router())
+    let mut builder = jc_router::JcRouterBuilder::new(scheme, base_host)
+        .mount(spec, crate::access::layer(name, reads));
+    if orgs.is_empty() {
+        return Ok(builder.build()?.into_axum_router());
+    }
+    let mut table = jc_router::HostTable::new()
+        .reserving(jc_core::names::RESERVED_LABELS)
+        .shared(base_host)?;
+    for org in orgs {
+        table = match &org.id {
+            Some(id) => table.organization_id(&org.name, id.as_str())?,
+            None => table.organization(&org.name)?,
+        };
+    }
+    builder = builder.hosts(table);
+    let jc = builder.build()?;
+    let host = header::HeaderValue::from_str(base_host)
+        .map_err(|_| jc_router::RouterError::InvalidHostRow(base_host.to_owned()))?;
+    Ok(Router::new().fallback(move |mut req: Request| {
+        let jc = jc.clone();
+        let host = host.clone();
+        async move {
+            req.headers_mut().insert(header::HOST, host);
+            jc.dispatch(req, None).await
+        }
+    }))
 }
 
 /// `router` with the Organization `jc-router` decided for each request
@@ -805,6 +833,15 @@ pub fn by_organization(
                     return axum::response::IntoResponse::into_response((
                         axum::http::StatusCode::MISDIRECTED_REQUEST,
                         "this host is not served here",
+                    ));
+                }
+                // Once the deployment has Organizations, a request the router placed in none
+                // (the App pods' listener, a path a later router change lets through) reaches no
+                // Endpoint: the gateway would answer it for every Organization (S1-03).
+                if decided.is_none() && !(links.is_empty() && registry_links().is_empty()) {
+                    return axum::response::IntoResponse::into_response((
+                        axum::http::StatusCode::NOT_FOUND,
+                        "unmounted path",
                     ));
                 }
                 if let Some((org, link)) = org {
@@ -1251,7 +1288,7 @@ mod tests {
                 req.headers().contains_key("x-forwarded-for")
             )
         });
-        let app = apps_router("https", "city.example", inner).unwrap();
+        let app = apps_router("https", "city.example", &[], inner).unwrap();
         let send = |method: &str, path: &str| {
             let req = HttpRequest::builder()
                 .method(method)
@@ -1294,6 +1331,50 @@ mod tests {
             assert_eq!(res.status(), StatusCode::NOT_FOUND, "{path}");
             assert_eq!(text(res).await, "unmounted path", "{path}");
         }
+    }
+
+    /// S1-03: with Organizations in jc.toml the App pods' listener reads an Endpoint only under
+    /// its Organization's path; a read that names none reaches no gateway, since the gateway
+    /// would answer it for every Organization.
+    #[tokio::test]
+    async fn the_apps_listener_reads_only_under_an_organization() {
+        use axum::http::{Request as HttpRequest, StatusCode};
+        use tower::ServiceExt;
+        let text = "portal_siblings = false\nbase_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            host = \"auto\"\n";
+        let file = JcConfig::parse_file(Path::new("jc.toml"), text).unwrap();
+        let cli = Cli {
+            role: Some("gateway".into()),
+            ..Cli::default()
+        };
+        let cfg = JcConfig::merge(cli, file).unwrap();
+        let inner = Router::new().fallback(
+            |org: Option<axum::Extension<jc_router::Organization>>, req: Request| async move {
+                let org = org.map_or_else(|| "-".to_owned(), |o| o.0.0);
+                format!("{org} {}", req.uri())
+            },
+        );
+        let app = apps_router("https", "city.example", &cfg.organizations, inner).unwrap();
+        let get = |path: &str| {
+            let req = HttpRequest::builder()
+                .uri(path)
+                .header("host", "jc.jc-prod.svc.cluster.local:8083")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        let read = "/api/endpoint/sv4ibpm/ngsi-ld/v1/entities?type=Alert";
+        let res = get(read).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let res = get(&format!("/bbsk{read}")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), format!("bbsk {read}"));
+        let res = get(&format!("/zilina{read}")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
     /// T-7226: on a data plane apart from the Portal a Portal page's same-origin read of an
