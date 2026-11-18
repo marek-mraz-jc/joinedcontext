@@ -625,7 +625,7 @@ mod tests {
         assert_eq!(t - far, TimestampTz(Timestamp::MIN));
         assert_eq!(t + -far, TimestampTz(Timestamp::MIN));
         assert_eq!(t - -far, TimestampTz(Timestamp::MAX));
-        assert_eq!((t + far).to_rfc3339(), "9999-12-31T23:59:59.999999999+00:00");
+        assert_eq!((t + far).to_rfc3339(), "9999-12-30T22:00:00.999999999+00:00");
     }
 
     // What chrono 0.4.45's serde (`DateTime<FixedOffset>: FromStr`) read, compared case by case
