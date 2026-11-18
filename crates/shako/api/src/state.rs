@@ -73,7 +73,7 @@ impl ShakoState {
             memory_budget: MemoryBudget::default(),
             repo_locks: RepoLocks::new(),
             outbox_locks: RepoLocks::new(),
-            registry: Arc::new(OperationRegistry::new()),
+            registry: OperationRegistry::shared(),
             owner_to_org: Arc::new(RwLock::new(BTreeMap::new())),
             event_bus: tx,
             subscribers: Arc::new(RwLock::new(Vec::new())),

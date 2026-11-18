@@ -6,6 +6,7 @@ use crate::auth::{Action, Authorizer, Decision, ObjectTarget, RequestCtx};
 use odata_table::{EntityDef, Field, FieldKind, Operation, Rule, Scope, Service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 pub const ODATA_NAMESPACE: &str = "Shako";
 
@@ -489,7 +490,14 @@ pub fn scope_for_context(ctx: &RequestCtx, authorizer: &dyn Authorizer) -> Scope
 pub struct OperationRegistry {
     pub service: Service,
     ops: Vec<OperationDef>,
+    /// The CSDL model of `service`, built once: every OData request reads it.
+    model: Arc<odata_csdl::Model>,
+    /// `$metadata`, rendered once: it is the same for every caller.
+    metadata: Result<String, String>,
 }
+
+static SHARED_REGISTRY: std::sync::LazyLock<Arc<OperationRegistry>> =
+    std::sync::LazyLock::new(|| Arc::new(OperationRegistry::new()));
 
 impl Default for OperationRegistry {
     fn default() -> Self {
@@ -1429,7 +1437,15 @@ impl OperationRegistry {
         ];
 
         ops.extend(decls);
-        Self { service, ops }
+        let model = Arc::new(service.model());
+        let mut reg = Self {
+            service,
+            ops,
+            model,
+            metadata: Ok(String::new()),
+        };
+        reg.metadata = reg.render_csdl();
+        reg
     }
 
     #[must_use]
@@ -1476,8 +1492,24 @@ impl OperationRegistry {
         }
     }
 
-    /// Renders the complete OData 4.01 CSDL `$metadata` XML document (S9).
+    /// The one registry of the process: its leaked titles and its model are built once.
+    #[must_use]
+    pub fn shared() -> Arc<Self> {
+        Arc::clone(&SHARED_REGISTRY)
+    }
+
+    /// The CSDL model of the service.
+    #[must_use]
+    pub fn model(&self) -> Arc<odata_csdl::Model> {
+        Arc::clone(&self.model)
+    }
+
+    /// The complete OData 4.01 CSDL `$metadata` XML document (S9), rendered once.
     pub fn csdl_xml(&self) -> Result<String, String> {
+        self.metadata.clone()
+    }
+
+    fn render_csdl(&self) -> Result<String, String> {
         let csdl = self.service.model();
         let mut xml = Vec::new();
         odata_csdl::write_xml(&csdl, &odata_csdl::Limits::strict(), &mut xml)

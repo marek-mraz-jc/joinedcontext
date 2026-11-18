@@ -1545,6 +1545,33 @@ async fn advertised_forge_tools_answer() {
     );
 }
 
+/// The repository of a Branches read comes from a top-level `and` of the parsed filter only.
+#[tokio::test]
+async fn a_repository_under_or_in_a_filter_selects_nothing() {
+    let world = setup_world();
+    create_repo(&world, "filtered").await;
+    let id = world
+        .state
+        .store()
+        .get_repo_by_name(
+            InstanceId::from_u128(1),
+            world.org_a,
+            "joinedcontext",
+            "filtered",
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let plain = format!("/odata/Branches?$filter=RepoId%20eq%20%27{id}%27");
+    let (st, body) = send_json(&world.app, "GET", &plain, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let under_or =
+        format!("/odata/Branches?$filter=Name%20eq%20%27x%27%20or%20RepoId%20eq%20%27{id}%27");
+    let (st, body) = send_json(&world.app, "GET", &under_or, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+}
+
 #[test]
 fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
     let root = tempfile::tempdir().unwrap();
