@@ -781,11 +781,21 @@ async fn finish_blob_store(
         size_bytes: bytes.len() as u64,
         created_at: TimestampTz::now(),
     };
-    let _ = state.store().upsert_blob(rec).await;
-    let _ = state
+    if state.store().upsert_blob(rec).await.is_err() {
+        return oci_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "UNKNOWN",
+            "storage write failed",
+            None,
+        );
+    }
+    if let Err(e) = state
         .store()
         .adjust_quota_usage(instance_id, org_id, 0, 0, bytes.len() as i64)
-        .await;
+        .await
+    {
+        tracing::warn!(error = %e, "package storage quota not adjusted after a blob upload");
+    }
 
     let loc = format!("/v2/{owner}/{image}/blobs/{computed}");
     (
@@ -918,15 +928,16 @@ async fn oci_put_manifest(
         subject_digest,
         artifact_type,
         size_bytes: manifest_bytes.len() as u64,
-        signed: true,
+        signed: false,
         created_at: now,
     };
-    let _ = state.store().upsert_package_version(ver_rec).await;
 
     // Contract S13: automatically sign the image digest with the installation ECDSA P-256 key
-    // in cosign simple-signing format and store it as tag `sha256-<hex>.sig`!
+    // in cosign simple-signing format and store it as tag `sha256-<hex>.sig`. A version reads
+    // as signed only when that signature was stored; a pushed signature is not itself signed.
+    let mut ver_rec = ver_rec;
     if !reference.ends_with(".sig") {
-        let _ = store_cosign_signature_tag(
+        match store_cosign_signature_tag(
             &state,
             ctx.instance_id,
             target_org,
@@ -935,7 +946,21 @@ async fn oci_put_manifest(
             &image,
             &computed_digest,
         )
-        .await;
+        .await
+        {
+            Ok(_) => ver_rec.signed = true,
+            Err(e) => {
+                tracing::warn!(error = %e, "image manifest stored without the forge signature")
+            }
+        }
+    }
+    if state.store().upsert_package_version(ver_rec).await.is_err() {
+        return oci_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "UNKNOWN",
+            "storage write failed",
+            None,
+        );
     }
 
     let _ = emit_and_dispatch_event(

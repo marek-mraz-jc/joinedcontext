@@ -6,6 +6,13 @@ use crate::error::{ShakoError, ShakoResult};
 use gix_validate::path::component::Options as ComponentOptions;
 use std::path::{Component, Path, PathBuf};
 
+/// Owner names taken by the forge's routes (`/api`, `/mcp`, `/odata`, `/user`, `/v2`).
+pub const RESERVED_OWNER_NAMES: &[&str] = &["api", "mcp", "odata", "user", "v2"];
+
+/// Deepest directory nesting a tree may have; a path with more segments is refused before it
+/// is written, so the tree stays readable.
+pub const MAX_TREE_DEPTH: usize = 256;
+
 /// Validates an organization/owner or repository name against `^[A-Za-z0-9._-]{1,100}$`
 /// without leading `.`, trailing `.git` or `.lock`, `..`, NUL, backslash, or Windows device names (T1).
 pub fn validate_repo_or_owner_name(name: &str, what: &str) -> ShakoResult<()> {
@@ -26,6 +33,13 @@ pub fn validate_repo_or_owner_name(name: &str, what: &str) -> ShakoResult<()> {
     if name.contains("..") {
         return Err(ShakoError::Unprocessable(format!(
             "invalid {what} name '{name}': '..' is forbidden"
+        )));
+    }
+    // The forge's own route prefixes: a repository under such an owner could not be reached.
+    if what == "owner" && RESERVED_OWNER_NAMES.contains(&name.to_ascii_lowercase().as_str()) {
+        return Err(ShakoError::Unprocessable(format!(
+            "invalid owner name '{name}': reserved for the forge's own routes ({})",
+            RESERVED_OWNER_NAMES.join(", ")
         )));
     }
     if !name
@@ -163,6 +177,12 @@ pub fn validate_tree_path(path: &str) -> ShakoResult<String> {
         protect_ntfs: true,
     };
     let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() > MAX_TREE_DEPTH {
+        return Err(ShakoError::Unprocessable(format!(
+            "file path has {} segments; at most {MAX_TREE_DEPTH} are allowed",
+            parts.len()
+        )));
+    }
     for part in &parts {
         if part.is_empty() || *part == "." || *part == ".." {
             return Err(ShakoError::Unprocessable(format!(

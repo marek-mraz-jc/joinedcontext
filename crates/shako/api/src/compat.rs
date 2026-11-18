@@ -4,7 +4,6 @@
 //! Rows 6–11 (Actions) return 404 with Gitea error JSON `{"message":"actions are not served by this forge yet","url":...}`
 //! per `00-task.md` section 1.
 
-use crate::outbox::emit_and_dispatch_event;
 use crate::service;
 use crate::state::{
     ShakoState, authenticate_request, gitea_error_response, repo_to_gitea_json,
@@ -21,6 +20,7 @@ use jc_router::Mount;
 use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use shako_core::ObjectTarget;
 use shako_core::{
     ARCHIVE_OPERATION_WEIGHT_BYTES, Action, BranchProtectionRule, CommitStatusRecord,
     PullRequestRecord, RepoRecord, ReviewVerdict, ShakoError, ShakoResult, WebhookFormat,
@@ -468,43 +468,21 @@ async fn compat_get_user_org_permissions(
         Ok(c) => c,
         Err(e) => return gitea_error_response(&state, &e),
     };
-    let _ = emit_and_dispatch_event(
-        &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:org_permissions:{}", uuid::Uuid::now_v7()),
-        json!({"route": "users/{login}/orgs/{org}/permissions", "note": "permissions come from jc-auth RoleBindings"}),
-    )
-    .await;
+    let target = ObjectTarget::Instance {
+        instance_id: ctx.instance_id,
+        org_id: ctx.org_id,
+    };
+    let holds = |action| state.authorizer.check(&ctx, action, &target).allowed;
     (
         StatusCode::OK,
         Json(json!({
             "is_owner": false,
-            "is_admin": false,
-            "can_write": true,
-            "can_read": true
+            "is_admin": holds(Action::Admin),
+            "can_write": holds(Action::Write),
+            "can_read": holds(Action::Read)
         })),
     )
         .into_response()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CreateTeamReq {
-    pub name: String,
-    #[serde(default)]
-    pub description: String,
-    #[serde(default)]
-    pub permission: Option<String>,
-    #[serde(default)]
-    pub includes_all_repositories: bool,
-    #[serde(default)]
-    pub can_create_org_repo: bool,
-    #[serde(default)]
-    pub units: Vec<String>,
-    #[serde(default)]
-    pub units_map: serde_json::Map<String, Value>,
 }
 
 async fn compat_list_org_teams(
@@ -512,19 +490,9 @@ async fn compat_list_org_teams(
     headers: HeaderMap,
     Path(org): Path<String>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&org), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let _ = emit_and_dispatch_event(
-        &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:list_teams:{}", uuid::Uuid::now_v7()),
-        json!({"route": "orgs/{org}/teams"}),
-    )
-    .await;
+    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+        return gitea_error_response(&state, &e);
+    }
     (StatusCode::OK, Json(json!([]))).into_response()
 }
 
@@ -532,30 +500,17 @@ async fn compat_create_org_team(
     State(state): State<ShakoState>,
     headers: HeaderMap,
     Path(org): Path<String>,
-    Json(req): Json<CreateTeamReq>,
 ) -> Response {
-    let ctx = match authenticate_request(&state, &headers, Some(&org), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let _ = emit_and_dispatch_event(
+    if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
+        return gitea_error_response(&state, &e);
+    }
+    gitea_error_response(
         &state,
-        ctx.org_id,
-        None,
-        "transition.warning",
-        format!("warn:create_team:{}", uuid::Uuid::now_v7()),
-        json!({"route": "orgs/{org}/teams", "team": req.name}),
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
     )
-    .await;
-    (
-        StatusCode::CREATED,
-        Json(json!({
-            "id": 1,
-            "name": req.name,
-            "description": req.description,
-        })),
-    )
-        .into_response()
 }
 
 async fn compat_delete_team(
@@ -566,7 +521,13 @@ async fn compat_delete_team(
     if let Err(e) = authenticate_request(&state, &headers, None, "shako") {
         return gitea_error_response(&state, &e);
     }
-    StatusCode::NO_CONTENT.into_response()
+    gitea_error_response(
+        &state,
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
+    )
 }
 
 async fn compat_list_team_repos(
@@ -588,42 +549,30 @@ async fn compat_put_or_delete_team_repo(
     if let Err(e) = authenticate_request(&state, &headers, Some(&org), "shako") {
         return gitea_error_response(&state, &e);
     }
-    StatusCode::NO_CONTENT.into_response()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CollaboratorReq {
-    #[serde(default)]
-    pub permission: Option<String>,
+    gitea_error_response(
+        &state,
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
+    )
 }
 
 async fn compat_put_collaborator(
     State(state): State<ShakoState>,
     headers: HeaderMap,
-    Path((owner, repo_name, reader)): Path<(String, String, String)>,
-    body: Option<Json<CollaboratorReq>>,
+    Path((owner, _repo, _reader)): Path<(String, String, String)>,
 ) -> Response {
-    let _ = body;
-    let ctx = match authenticate_request(&state, &headers, Some(&owner), "shako") {
-        Ok(c) => c,
-        Err(e) => return gitea_error_response(&state, &e),
-    };
-    let (repo, _) =
-        match resolve_and_authorize_repo(&state, &ctx, &owner, &repo_name, Action::Write).await {
-            Ok(r) => r,
-            Err(e) => return gitea_error_response(&state, &e),
-        };
-    let _ = emit_and_dispatch_event(
+    if let Err(e) = authenticate_request(&state, &headers, Some(&owner), "shako") {
+        return gitea_error_response(&state, &e);
+    }
+    gitea_error_response(
         &state,
-        repo.org_id,
-        Some(repo.id),
-        "transition.warning",
-        format!("warn:collaborator:{}:{reader}", repo.id),
-        json!({"route": "collaborators", "collaborator": reader}),
+        &ShakoError::NotImplemented(
+            "teams and collaborators are not served; rights come from the Organization's role bindings"
+                .into(),
+        ),
     )
-    .await;
-    StatusCode::NO_CONTENT.into_response()
 }
 
 // =========================================================================
@@ -1008,6 +957,9 @@ pub struct CreateCommitStatusReq {
     pub target_url: Option<String>,
 }
 
+/// The commit states a status may carry (Gitea's set).
+const COMMIT_STATES: &[&str] = &["pending", "success", "error", "failure", "warning"];
+
 async fn compat_post_commit_status(
     State(state): State<ShakoState>,
     headers: HeaderMap,
@@ -1023,6 +975,27 @@ async fn compat_post_commit_status(
             Ok(r) => r,
             Err(e) => return gitea_error_response(&state, &e),
         };
+    if !COMMIT_STATES.contains(&req.state.as_str()) {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(format!(
+                "state must be one of {}",
+                COMMIT_STATES.join(", ")
+            )),
+        );
+    }
+    let is_hex = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    if !matches!(sha.len(), 40 | 64) || !is_hex(&sha) {
+        return gitea_error_response(
+            &state,
+            &ShakoError::Unprocessable(
+                "sha must be a full lowercase commit id (40 or 64 hex digits)".into(),
+            ),
+        );
+    }
     let rec = CommitStatusRecord {
         id: uuid::Uuid::now_v7(),
         instance_id: repo.instance_id,

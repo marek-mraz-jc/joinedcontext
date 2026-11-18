@@ -5,7 +5,7 @@
 
 use crate::repo::{
     CommitAuthor, build_nested_trees, collect_tree_blobs, is_ancestor, open_isolated,
-    resolve_commit_oid, write_objects_as_pack,
+    resolve_commit_oid, sanitize_actor_field, write_objects_as_pack,
 };
 use bstr::BString;
 use gix_hash::ObjectId;
@@ -305,13 +305,13 @@ pub fn execute_pr_merge(
     let now_secs = jc_time::TimestampTz::now().as_second();
     let time = gix::date::Time::new(now_secs, 0);
     let author_sig = gix::actor::Signature {
-        name: BString::from(author.name.as_str()),
-        email: BString::from(author.email.as_str()),
+        name: BString::from(sanitize_actor_field(&author.name, "shako")),
+        email: BString::from(sanitize_actor_field(&author.email, "shako@local")),
         time,
     };
     let committer_sig = gix::actor::Signature {
-        name: BString::from(committer.name.as_str()),
-        email: BString::from(committer.email.as_str()),
+        name: BString::from(sanitize_actor_field(&committer.name, "shako")),
+        email: BString::from(sanitize_actor_field(&committer.email, "shako@local")),
         time,
     };
 

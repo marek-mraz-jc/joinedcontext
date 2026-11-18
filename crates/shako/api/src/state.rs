@@ -96,10 +96,7 @@ impl ShakoState {
     }
 
     pub fn register_owner_org(&self, owner: impl Into<String>, org_id: OrgId) {
-        let owner_s = owner.into();
-        self.token_verifier
-            .register_org_alias(owner_s.clone(), org_id);
-        self.owner_to_org.write().insert(owner_s, org_id);
+        self.owner_to_org.write().insert(owner.into(), org_id);
     }
 
     /// The Organization an owner name is bound to, if any.
@@ -214,6 +211,11 @@ pub fn authenticate_request(
             .copied()
             .unwrap_or(state.default_org_id),
     };
+    // Every handler acts inside `active_org`, so a caller outside it stops here; the answer is
+    // the one a missing repository gets (S12).
+    if !subject.is_member_of(active_org) {
+        return Err(ShakoError::NotFound("repository not found".into()));
+    }
 
     Ok(RequestCtx::new(
         state.default_instance_id,

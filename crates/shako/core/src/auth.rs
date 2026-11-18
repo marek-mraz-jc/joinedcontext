@@ -751,7 +751,6 @@ pub struct TokenVerifier {
     jwks: Arc<RwLock<JwksCacheState>>,
     fetcher: Option<JwksFetcher>,
     static_tokens: Arc<Vec<StaticTokenBinding>>,
-    org_aliases: Arc<RwLock<BTreeMap<String, OrgId>>>,
     signing_key: ShakoSigningKey,
 }
 
@@ -767,7 +766,6 @@ impl TokenVerifier {
             })),
             fetcher: None,
             static_tokens: Arc::new(Vec::new()),
-            org_aliases: Arc::new(RwLock::new(BTreeMap::new())),
             signing_key,
         }
     }
@@ -804,10 +802,6 @@ impl TokenVerifier {
             state.keys.remove(&first_key);
         }
         state.keys.insert(kid.into(), jwk);
-    }
-
-    pub fn register_org_alias(&self, alias: impl Into<String>, org_id: OrgId) {
-        self.org_aliases.write().insert(alias.into(), org_id);
     }
 
     /// Extracts the raw credential from `Authorization: Bearer <t>`, `Authorization: token <t>`,
@@ -898,14 +892,9 @@ impl TokenVerifier {
                 OrgClaim::Single(s) => vec![s],
                 OrgClaim::Multiple(v) => v,
             };
-            let aliases = self.org_aliases.read();
-            for raw in raw_orgs {
-                if let Ok(uuid_org) = raw.parse::<OrgId>() {
-                    organizations.push(uuid_org);
-                } else if let Some(&mapped) = aliases.get(&raw) {
-                    organizations.push(mapped);
-                }
-            }
+            // Only an Organization id names an Organization; a name a tenant can choose (a
+            // repository owner, a slug) never does.
+            organizations.extend(raw_orgs.iter().filter_map(|raw| raw.parse::<OrgId>().ok()));
         }
 
         let username = claims

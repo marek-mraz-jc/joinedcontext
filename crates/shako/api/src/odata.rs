@@ -1548,10 +1548,21 @@ pub async fn find_visible_repo_by_key(
         .store()
         .list_repos(ctx.instance_id, ctx.org_id)
         .await?;
-    let Some(repo) = repos.into_iter().find(|r| r.name == key) else {
-        return Err(ShakoError::NotFound("repository not found".into()));
-    };
-    resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Read).await
+    // A bare name stands for a repository only when exactly one the caller sees carries it.
+    let mut found = None;
+    for repo in repos.into_iter().filter(|r| r.name == key) {
+        if let Ok(visible) =
+            resolve_and_authorize_repo(state, ctx, &repo.owner, &repo.name, Action::Read).await
+        {
+            if found.is_some() {
+                return Err(ShakoError::Unprocessable(format!(
+                    "repository name '{key}' is held by more than one owner: name it as owner/{key} or by its id"
+                )));
+            }
+            found = Some(visible);
+        }
+    }
+    found.ok_or_else(|| ShakoError::NotFound("repository not found".into()))
 }
 
 async fn exec_bound_repo_tree(

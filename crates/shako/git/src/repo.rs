@@ -603,7 +603,7 @@ pub fn commit_file_changes(
     Ok(commit_oid.to_hex().to_string())
 }
 
-fn sanitize_actor_field(s: &str, fallback: &str) -> String {
+pub(crate) fn sanitize_actor_field(s: &str, fallback: &str) -> String {
     let cleaned: String = s
         .chars()
         .filter(|c| !matches!(c, '<' | '>' | '\n' | '\r' | '\0'))
@@ -618,7 +618,7 @@ fn sanitize_actor_field(s: &str, fallback: &str) -> String {
 
 /// Deepest tree nesting a walk follows (Git's own `core.maxTreeDepth` defaults to 2048 and real
 /// repositories stay far below 100).
-pub(crate) const MAX_TREE_DEPTH: usize = 256;
+pub(crate) use shako_core::MAX_TREE_DEPTH;
 /// Most tree entries one walk visits: a tree naming one subtree many times grows the path count
 /// exponentially from a pack of a few KB.
 pub(crate) const MAX_TREE_ENTRIES: usize = 500_000;
