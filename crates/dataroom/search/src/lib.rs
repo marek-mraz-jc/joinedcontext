@@ -11,8 +11,8 @@
 
 use dataroom_core::vocab::{find_licence, theme_code, theme_label};
 use dataroom_core::{
-    text_in_lang, Action, Authorizer, DataroomError, Dataset, DatasetFilter, ObjectTarget,
-    Publisher, RecordState, RequestCtx, Result, Visibility,
+    text_in_lang, Authorizer, DataroomError, Dataset, DatasetFilter, Publisher, RecordState,
+    RequestCtx, Result, Visibility,
 };
 use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
@@ -629,12 +629,9 @@ pub fn search_datasets(
             _ => continue,
         }
         let pub_rec = pub_map.get(&ds.publisher_id);
-        // The flags widen a member's search only: an anonymous caller never sees a draft, a
-        // withdrawn record or a withdrawn publisher's dataset, whatever it asks (as `package_show`).
-        if ctx.subject.is_anonymous()
-            && (ds.state != RecordState::Active
-                || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn))
-        {
+        // The flags widen an editor's search only: a caller who may not propose the dataset never
+        // sees a draft, a withdrawn record or a withdrawn publisher's dataset (as `package_show`).
+        if !dataroom_core::dataset_visible(authorizer, ctx, ds, pub_rec, false) {
             continue;
         }
         // Withdrawn publisher's datasets leave public feeds/listings unless include_private is requested (C16).
@@ -646,10 +643,6 @@ pub fn search_datasets(
             if ctx.subject.is_anonymous() {
                 continue;
             }
-        }
-        let target = ObjectTarget::from_dataset(ds, pub_rec);
-        if !authorizer.check(ctx, Action::Read, &target).allowed {
-            continue;
         }
         if let Some(ref hs) = filter.harvest_source {
             let ds_hs = ds

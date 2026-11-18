@@ -568,8 +568,8 @@ pub(crate) fn decision_error(decision: dataroom_core::Decision) -> DataroomError
 }
 
 /// Whether `ds` is shown to the caller, by the rules of `package_show` (D2, G2): the caller may
-/// read it; a dataset hidden by the publish gate (`jc_hide`) only to its editors; a withdrawn
-/// dataset or one of a withdrawn publisher not to anonymous callers. Every surface that shows a
+/// read it; a draft, a withdrawn dataset, one of a withdrawn publisher or one hidden by the
+/// publish gate (`jc_hide`) only to its editors ([`dataroom_core::dataset_visible`]). Every surface that shows a
 /// dataset or a part of it (resource, view, map, OData row, sample validation) asks this.
 pub(crate) fn dataset_shown(
     state: &DataroomState,
@@ -578,22 +578,13 @@ pub(crate) fn dataset_shown(
     ds: &Dataset,
     pub_rec: Option<&Publisher>,
 ) -> bool {
-    let target = ObjectTarget::from_dataset(ds, pub_rec);
-    if !state.authorizer.check(ctx, Action::Read, &target).allowed {
-        return false;
-    }
-    if cat.hidden_datasets.contains_key(&ds.name)
-        && (ctx.subject.is_anonymous()
-            || !state
-                .authorizer
-                .check(ctx, Action::Propose, &target)
-                .allowed)
-    {
-        return false;
-    }
-    !(ctx.subject.is_anonymous()
-        && (ds.state != RecordState::Active
-            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn)))
+    dataroom_core::dataset_visible(
+        state.authorizer.as_ref(),
+        ctx,
+        ds,
+        pub_rec,
+        cat.hidden_datasets.contains_key(&ds.name),
+    )
 }
 
 /// Mounts dataroom under `prefix` (G1): a router the host app merges beside its own routes.
@@ -2159,7 +2150,7 @@ async fn dispatch_ui_route(
                     "publisher '{name}' not found"
                 )));
             };
-            if pub_rec.state == RecordState::Withdrawn && ctx.subject.is_anonymous() {
+            if pub_rec.state == RecordState::Withdrawn && !ctx.subject.is_member_of(ctx.org_id) {
                 return problem_response(DataroomError::NotFound(format!(
                     "publisher '{name}' not found"
                 )));

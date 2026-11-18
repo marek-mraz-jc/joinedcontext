@@ -207,7 +207,7 @@ fn binding(token: &str, actor: &str, org: OrgId, groups: &[&str]) -> TokenBindin
 
 /// Tokens: `tok-admin` (Admin on the catalogue), `tok-editor` (editor of publisher `city`),
 /// `tok-member` (member, no grants), `tok-proposer` (Propose on the catalogue, no Approve),
-/// `tok-reader` (a read-only connector).
+/// `tok-reader` (a read-only connector), `tok-outsider` (signed in, another Organization).
 /// The catalogue on an installation whose platform domain is `city.test`.
 async fn world() -> World {
     world_with(|s| {
@@ -299,6 +299,12 @@ async fn world_with(build: impl FnOnce(DataroomState) -> Router) -> World {
         instance("tok-beta", "beta"),
         binding("tok-editor", "eva", org, &["city-editors"]),
         binding("tok-member", "mo", org, &[]),
+        binding(
+            "tok-outsider",
+            "otto",
+            OrgId::from_uuid(uuid::Uuid::now_v7()),
+            &[],
+        ),
         binding("tok-proposer", "pat", org, &[]),
         reader,
     ]);
@@ -1067,6 +1073,7 @@ async fn ckan_package_show_and_search_hide_what_the_caller_may_not_read() {
     ] {
         for (tok, expect) in [
             (None, anon),
+            (Some("tok-outsider"), anon),
             (Some("tok-member"), member),
             (Some("tok-editor"), editor),
         ] {

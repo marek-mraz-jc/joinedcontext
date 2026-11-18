@@ -1100,7 +1100,7 @@ async fn answer_ckan_action(
             }) else {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             };
-            if pub_rec.state == RecordState::Withdrawn && ctx.subject.is_anonymous() {
+            if pub_rec.state == RecordState::Withdrawn && !ctx.subject.is_member_of(ctx.org_id) {
                 return ckan_err(&base, &action, DataroomError::NotFound("Not found".into()));
             }
             let datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();

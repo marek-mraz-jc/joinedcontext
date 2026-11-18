@@ -518,6 +518,25 @@ async fn dataset_get_hides_what_the_caller_may_not_read() {
             .await;
         assert!(r.is_ok(), "admin {name}: {r:?}");
     }
+    // Being signed in is not being a member: a subject of another Organization sees neither
+    // drafts nor withdrawn records; a member of the Organization does.
+    w.store
+        .upsert_dataset(
+            &w.admin(),
+            dataset("unpublished", "city", "public", json!({"state": "draft"})),
+        )
+        .await
+        .unwrap();
+    for name in ["retired", "orphaned", "unpublished"] {
+        let r = w
+            .run(&w.outsider(), "dataset.get", json!({"name": name}))
+            .await;
+        assert!(is_not_found(&r), "outsider {name}: {r:?}");
+        for (who, ctx) in [("member", w.member()), ("admin", w.admin())] {
+            let r = w.run(&ctx, "dataset.get", json!({"name": name})).await;
+            assert!(r.is_ok(), "{who} {name}: {r:?}");
+        }
+    }
     // A resource with views says so, as CKAN's has_views does.
     let admin = w.admin();
     w.store

@@ -512,38 +512,26 @@ fn enforce_decision(decision: Decision) -> Result<()> {
 }
 
 /// Whether `dataset.get` (and `allowed` about it) shows `ds` to the caller: the caller may read
-/// it, and, as `package_show` does, a withdrawn dataset or one of a withdrawn publisher is not
-/// shown to anonymous callers, and a dataset hidden by the publish gate only to its editors.
+/// it, and, as `package_show` does, a draft, a withdrawn dataset, one of a withdrawn publisher
+/// or one hidden by the publish gate only to its editors ([`crate::auth::dataset_visible`]).
 async fn dataset_shown(
     op_ctx: &OpContext,
     req_ctx: &RequestCtx,
     ds: &Dataset,
     pub_rec: Option<&Publisher>,
 ) -> Result<bool> {
-    let target = ObjectTarget::from_dataset(ds, pub_rec);
-    if !op_ctx
-        .authorizer
-        .check(req_ctx, Action::Read, &target)
-        .allowed
-    {
-        return Ok(false);
-    }
-    if req_ctx.subject.is_anonymous()
-        && (ds.state != RecordState::Active
-            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn))
-    {
-        return Ok(false);
-    }
     let hidden = op_ctx
         .store
         .get_catalogue(req_ctx.org_id, req_ctx.catalogue_id)
         .await?
         .is_some_and(|c| c.hidden_datasets.contains_key(&ds.name));
-    Ok(!hidden
-        || op_ctx
-            .authorizer
-            .check(req_ctx, Action::Propose, &target)
-            .allowed)
+    Ok(crate::auth::dataset_visible(
+        op_ctx.authorizer.as_ref(),
+        req_ctx,
+        ds,
+        pub_rec,
+        hidden,
+    ))
 }
 
 /// The catalogue as `req_ctx` may read it: the publish gate's hidden datasets (names and
