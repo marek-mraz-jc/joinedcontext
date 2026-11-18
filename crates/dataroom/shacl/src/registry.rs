@@ -5,8 +5,8 @@
 use crate::validator::{parse_shapes_graph, validate_graph_against_shapes, PathExpr, ShapesGraph};
 use dataroom_core::ops::DatasetValidator;
 use dataroom_core::{
-    Catalogue, DataroomError, Dataset, FormFieldLayout, OrgId, ProfileDryRunReport, ProfilePin,
-    ProfileRecord, Publisher, Result, ShaclValidationReport,
+    Catalogue, CatalogueId, DataroomError, Dataset, FormFieldLayout, OrgId, ProfileDryRunReport,
+    ProfilePin, ProfileRecord, Publisher, Result, ShaclValidationReport,
 };
 use dataroom_rdf::jsonld::{CZ_CATALOG_CONTEXT_IRI, SK_CATALOG_CONTEXT_IRI};
 use dataroom_rdf::{catalogue_to_graph, dataset_to_graph, DcatProfileKind, RdfLimits};
@@ -233,24 +233,47 @@ pub fn built_in_profiles() -> Vec<ProfileRecord> {
     ]
 }
 
-type ProfileMap = BTreeMap<(String, String), (ProfileRecord, ShapesGraph)>;
+/// The catalogue an uploaded profile belongs to; built-in profiles carry `None` and serve every
+/// catalogue.
+pub type ProfileScope = (OrgId, CatalogueId);
 
-/// The record an unpinned reference to `id` means: the built-in profile when one exists, else
-/// the latest uploaded version. The registry serves every catalogue, so "latest" alone let one
-/// catalogue's upload of a new version of a built-in id (any editor may upload) change what every
-/// other catalogue validates against.
-fn unpinned<'a>(map: &'a ProfileMap, id: &str) -> Option<&'a (ProfileRecord, ShapesGraph)> {
-    let of_id: Vec<_> = map
-        .iter()
-        .filter(|((pid, _), _)| pid == id)
-        .map(|(_, v)| v)
-        .collect();
-    of_id
-        .iter()
-        .rev()
-        .find(|(rec, _)| rec.built_in)
-        .or(of_id.last())
-        .copied()
+type ProfileKey = (Option<ProfileScope>, String, String);
+type ProfileMap = BTreeMap<ProfileKey, (ProfileRecord, ShapesGraph)>;
+
+fn scope_of(catalogue: &Catalogue) -> ProfileScope {
+    (catalogue.org_id, catalogue.id)
+}
+
+/// The record an unpinned reference to `id` means in `scope`: the built-in profile when one
+/// exists, else the latest version `scope` uploaded. Another catalogue's upload never answers.
+fn unpinned<'a>(
+    map: &'a ProfileMap,
+    scope: ProfileScope,
+    id: &str,
+) -> Option<&'a (ProfileRecord, ShapesGraph)> {
+    let latest = |owner: Option<ProfileScope>| {
+        map.iter()
+            .filter(|((o, pid, _), _)| *o == owner && pid == id)
+            .map(|(_, v)| v)
+            .next_back()
+    };
+    latest(None).or_else(|| latest(Some(scope)))
+}
+
+/// The record `(id, version)` names in `scope` (built-in or this catalogue's upload), falling
+/// back to the unpinned one when that version is unknown.
+fn resolve<'a>(
+    map: &'a ProfileMap,
+    scope: ProfileScope,
+    id: &str,
+    version: Option<&str>,
+) -> Option<&'a (ProfileRecord, ShapesGraph)> {
+    version
+        .and_then(|v| {
+            map.get(&(None, id.to_owned(), v.to_owned()))
+                .or_else(|| map.get(&(Some(scope), id.to_owned(), v.to_owned())))
+        })
+        .or_else(|| unpinned(map, scope, id))
 }
 
 /// Thread-safe registry of built-in and uploaded DCAT-AP profiles (C17).
@@ -269,7 +292,7 @@ impl ProfileRegistry {
         let mut map = BTreeMap::new();
         for p in built_in_profiles() {
             if let Ok(sg) = parse_shapes_graph(&p.shapes_turtle, &RdfLimits::default()) {
-                map.insert((p.id.clone(), p.version.clone()), (p, sg));
+                map.insert((None, p.id.clone(), p.version.clone()), (p, sg));
             }
         }
         Self {
@@ -277,43 +300,56 @@ impl ProfileRegistry {
         }
     }
 
-    /// Lists all registered profile records across all versions.
-    pub fn list(&self) -> Vec<ProfileRecord> {
+    /// Lists the built-in profiles and `scope`'s own uploads, every version.
+    pub fn list(&self, scope: ProfileScope) -> Vec<ProfileRecord> {
         self.profiles
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .map(|(p, _)| p.clone())
+            .iter()
+            .filter(|((o, _, _), _)| o.is_none_or(|o| o == scope))
+            .map(|(_, (p, _))| p.clone())
             .collect()
     }
 
-    /// Resolves a profile by `id` and optional `version` (choosing the latest version when `None`).
-    pub fn get(&self, id: &str, version: Option<&str>) -> Option<ProfileRecord> {
+    /// Resolves a profile by `id` and optional `version` in `scope` (choosing the built-in or
+    /// the latest version when `None`).
+    pub fn get(
+        &self,
+        scope: ProfileScope,
+        id: &str,
+        version: Option<&str>,
+    ) -> Option<ProfileRecord> {
         let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(v) = version {
-            if let Some((rec, _)) = guard.get(&(id.to_owned(), v.to_owned())) {
-                return Some(rec.clone());
+        resolve(&guard, scope, id, version).map(|(rec, _)| rec.clone())
+    }
+
+    /// Loads `scope`'s stored uploads the registry does not hold yet (after a restart, or on
+    /// another replica), so a pinned uploaded profile keeps validating. A stored record whose
+    /// shapes no longer parse stays out and its pin answers "not found".
+    pub fn load_stored(&self, scope: ProfileScope, stored: &[ProfileRecord]) {
+        let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
+        for rec in stored.iter().filter(|r| !r.built_in) {
+            let key = (Some(scope), rec.id.clone(), rec.version.clone());
+            if guard.contains_key(&key) {
+                continue;
+            }
+            if let Ok(sg) = parse_shapes_graph(&rec.shapes_turtle, &RdfLimits::uploaded_shapes()) {
+                guard.insert(key, (rec.clone(), sg));
             }
         }
-        unpinned(&guard, id).map(|(rec, _)| rec.clone())
     }
 
     /// Resolves the stacked [`ShapesGraph`] for `(id, version)` including its `base_profile` chain (C17).
     pub fn stacked_shapes(
         &self,
+        scope: ProfileScope,
         id: &str,
         version: Option<&str>,
     ) -> Result<(ProfileRecord, ShapesGraph)> {
         let guard = self.profiles.read().unwrap_or_else(|e| e.into_inner());
-        let (target_rec, target_sg) = if let Some(v) = version {
-            guard
-                .get(&(id.to_owned(), v.to_owned()))
-                .or_else(|| unpinned(&guard, id))
-                .cloned()
-        } else {
-            unpinned(&guard, id).cloned()
-        }
-        .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
+        let (target_rec, target_sg) = resolve(&guard, scope, id, version)
+            .cloned()
+            .ok_or_else(|| DataroomError::NotFound(format!("profile '{id}' not found")))?;
 
         // Collect ancestor chain (`base_profile`).
         let mut chain = vec![target_sg];
@@ -322,8 +358,8 @@ impl ProfileRegistry {
             let Some(ref base_id) = curr_base else {
                 break;
             };
-            let found =
-                unpinned(&guard, base_id).map(|(r, sg)| (r.base_profile.clone(), sg.clone()));
+            let found = unpinned(&guard, scope, base_id)
+                .map(|(r, sg)| (r.base_profile.clone(), sg.clone()));
             if let Some((next_base, sg)) = found {
                 chain.push(sg);
                 curr_base = next_base;
@@ -351,23 +387,20 @@ impl ProfileRegistry {
     ) -> Result<(ProfileRecord, ProfileDryRunReport)> {
         let sg = parse_shapes_graph(&record.shapes_turtle, &RdfLimits::uploaded_shapes())?;
         record.built_in = false;
+        let scope = scope_of(catalogue);
+        let key = (Some(scope), record.id.clone(), record.version.clone());
 
-        // Register in memory so stacked_shapes can resolve it.
+        // Register in memory, under the uploading catalogue only, so stacked_shapes resolves it.
         {
             let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            guard.insert(
-                (record.id.clone(), record.version.clone()),
-                (record.clone(), sg),
-            );
+            guard.insert(key.clone(), (record.clone(), sg));
         }
 
-        let (_, stacked) = self.stacked_shapes(&record.id, Some(&record.version))?;
+        let (_, stacked) = self.stacked_shapes(scope, &record.id, Some(&record.version))?;
         record.form_fields = derive_form_layout(&stacked, "http://www.w3.org/ns/dcat#Dataset");
         {
             let mut guard = self.profiles.write().unwrap_or_else(|e| e.into_inner());
-            if let Some((stored_rec, _)) =
-                guard.get_mut(&(record.id.clone(), record.version.clone()))
-            {
+            if let Some((stored_rec, _)) = guard.get_mut(&key) {
                 stored_rec.form_fields.clone_from(&record.form_fields);
             }
         }
@@ -392,7 +425,7 @@ impl ProfileRegistry {
         existing_datasets: &[Dataset],
         publishers: &BTreeMap<String, Publisher>,
     ) -> Result<ProfileDryRunReport> {
-        let (_, stacked) = self.stacked_shapes(profile_id, Some(version))?;
+        let (_, stacked) = self.stacked_shapes(scope_of(catalogue), profile_id, Some(version))?;
         let kind = DcatProfileKind::from_token(profile_id).unwrap_or(DcatProfileKind::Eu301);
 
         let mut reports = Vec::new();
@@ -457,6 +490,10 @@ impl ProfileRegistry {
 }
 
 impl DatasetValidator for ProfileRegistry {
+    fn load_stored_profiles(&self, catalogue: &Catalogue, stored: &[ProfileRecord]) {
+        self.load_stored(scope_of(catalogue), stored);
+    }
+
     fn validate_dataset(
         &self,
         catalogue: &Catalogue,
@@ -477,7 +514,7 @@ impl DatasetValidator for ProfileRegistry {
         let mut reports = Vec::new();
         for pin in pins {
             let ver = (!pin.version.is_empty()).then_some(pin.version.as_str());
-            let (rec, stacked) = self.stacked_shapes(&pin.profile_id, ver)?;
+            let (rec, stacked) = self.stacked_shapes(scope_of(catalogue), &pin.profile_id, ver)?;
             let kind = DcatProfileKind::from_token(&rec.id).unwrap_or(DcatProfileKind::Eu301);
             let data = dataset_to_graph(dataset, catalogue, publisher, kind);
             let report = validate_graph_against_shapes(
@@ -502,7 +539,7 @@ impl DatasetValidator for ProfileRegistry {
         profile_id: Option<&str>,
     ) -> Result<Value> {
         let pid = profile_id.unwrap_or(&catalogue.main_profile);
-        let (rec, stacked) = self.stacked_shapes(pid, None)?;
+        let (rec, stacked) = self.stacked_shapes(scope_of(catalogue), pid, None)?;
         let kind = DcatProfileKind::from_token(&rec.id).unwrap_or(DcatProfileKind::Eu301);
 
         let mut valid_datasets = Vec::new();
@@ -579,10 +616,10 @@ mod tests {
 
         // 1. Validate specs/dcat-ap-cz/priklady-katalog examples against DCAT-AP-CZ shapes
         let (_, cz_shapes) = registry
-            .stacked_shapes("dcat-ap-cz", None)
+            .stacked_shapes(test_ids(), "dcat-ap-cz", None)
             .expect("cz shapes");
         let (_, cz_lkod_shapes) = registry
-            .stacked_shapes("dcat-ap-cz-lkod", None)
+            .stacked_shapes(test_ids(), "dcat-ap-cz-lkod", None)
             .expect("cz lkod shapes");
 
         for (name, ttl, shapes) in [
@@ -641,7 +678,7 @@ mod tests {
 
         // 2. Validate specs/dcat-ap-sk/príklady examples against DCAT-AP-SK 2.0 shapes
         let (_, sk_shapes) = registry
-            .stacked_shapes("dcat-ap-sk-2.0", None)
+            .stacked_shapes(test_ids(), "dcat-ap-sk-2.0", None)
             .expect("sk shapes");
 
         for (name, content, fmt) in [
@@ -1249,11 +1286,15 @@ mod tests {
             "an empty upload must not wave the dataset through"
         );
         assert_eq!(
-            registry.get("dcat-ap-3.0.1", None).map(|p| p.built_in),
+            registry
+                .get(test_ids(), "dcat-ap-3.0.1", None)
+                .map(|p| p.built_in),
             Some(true)
         );
         // A catalogue that pins the uploaded version gets it.
-        let pinned = registry.get("dcat-ap-3.0.1", Some("9.9")).unwrap();
+        let pinned = registry
+            .get(test_ids(), "dcat-ap-3.0.1", Some("9.9"))
+            .unwrap();
         assert_eq!(pinned.version, "9.9");
         let mut pinning = small_catalogue("dcat-ap-3.0.1");
         pinning.active_profiles = vec![ProfilePin {
@@ -1268,14 +1309,14 @@ mod tests {
     #[test]
     fn custom_profiles_stack_on_their_base_and_report() {
         let registry = ProfileRegistry::new();
-        assert!(registry.list().len() >= 7);
-        assert!(registry.get("nope", None).is_none());
+        assert!(registry.list(test_ids()).len() >= 7);
+        assert!(registry.get(test_ids(), "nope", None).is_none());
         assert!(matches!(
-            registry.stacked_shapes("nope", None),
+            registry.stacked_shapes(test_ids(), "nope", None),
             Err(DataroomError::NotFound(_))
         ));
         assert!(matches!(
-            registry.stacked_shapes("nope", Some("1")),
+            registry.stacked_shapes(test_ids(), "nope", Some("1")),
             Err(DataroomError::NotFound(_))
         ));
         assert!(registry
@@ -1303,7 +1344,9 @@ mod tests {
         assert_eq!((dry.total_datasets, dry.failing_datasets), (1, 1));
         assert_eq!(dry.newly_failing_datasets, ["ok"]);
         assert_eq!(
-            registry.get("city-ext", Some("missing")).map(|p| p.version),
+            registry
+                .get(test_ids(), "city-ext", Some("missing"))
+                .map(|p| p.version),
             Some("1".into()),
             "an unknown version falls back"
         );
@@ -1339,9 +1382,47 @@ mod tests {
             .upload_and_dry_run(broken, &cat, &[], &BTreeMap::new())
             .is_err());
         assert!(
-            registry.get("broken", None).is_none(),
+            registry.get(test_ids(), "broken", None).is_none(),
             "a refused upload is not registered"
         );
+    }
+
+    #[test]
+    fn an_upload_serves_its_own_catalogue_and_survives_a_restart() {
+        let registry = ProfileRegistry::new();
+        let cat = small_catalogue("city-ext");
+        let (saved, _) = registry
+            .upload_and_dry_run(
+                profile("city-ext", "1", Some("dcat-ap-3.0.1"), NEEDS_KEYWORD),
+                &cat,
+                &[],
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        // Another catalogue neither resolves nor lists it, pinned or not.
+        let mut other = small_catalogue("city-ext");
+        other.id = CatalogueId::from_uuid(Uuid::from_u128(11));
+        let other_scope = (other.org_id, other.id);
+        assert!(registry.get(other_scope, "city-ext", Some("1")).is_none());
+        assert!(registry.get(other_scope, "city-ext", None).is_none());
+        assert!(!registry
+            .list(other_scope)
+            .iter()
+            .any(|p| p.id == "city-ext"));
+        assert!(registry
+            .validate_dataset(&other, &small_dataset("ok", true), None)
+            .is_err());
+        // A fresh process holds only the built-ins until the store's records are loaded.
+        let restarted = ProfileRegistry::new();
+        assert!(restarted
+            .validate_dataset(&cat, &small_dataset("ok", true), None)
+            .is_err());
+        restarted.load_stored(test_ids(), std::slice::from_ref(&saved));
+        let reports = restarted
+            .validate_dataset(&cat, &small_dataset("ok", true), None)
+            .unwrap();
+        assert_eq!(reports[0].profile_id, "city-ext");
+        assert!(restarted.get(other_scope, "city-ext", None).is_none());
     }
 
     #[test]
@@ -1378,8 +1459,11 @@ mod tests {
         assert!(crashed.is_err());
         assert!(registry.profiles.is_poisoned());
 
-        assert!(registry.list().iter().any(|p| p.id == "dcat-ap-3.0.1"));
-        assert!(registry.get("dcat-ap-3.0.1", None).is_some());
+        assert!(registry
+            .list(test_ids())
+            .iter()
+            .any(|p| p.id == "dcat-ap-3.0.1"));
+        assert!(registry.get(test_ids(), "dcat-ap-3.0.1", None).is_some());
 
         let states = r#"
             @prefix sh: <http://www.w3.org/ns/shacl#> .
@@ -1404,10 +1488,12 @@ mod tests {
         assert_eq!(field.allowed_values, ["open", "closed"]);
 
         // A catalogue pinned to a version that is gone validates against the unpinned record.
-        let (rec, _) = registry.stacked_shapes("states", Some("9")).unwrap();
+        let (rec, _) = registry
+            .stacked_shapes(test_ids(), "states", Some("9"))
+            .unwrap();
         assert_eq!(rec.version, "1");
         assert!(matches!(
-            registry.stacked_shapes("nobody", Some("1")),
+            registry.stacked_shapes(test_ids(), "nobody", Some("1")),
             Err(DataroomError::NotFound(_))
         ));
     }

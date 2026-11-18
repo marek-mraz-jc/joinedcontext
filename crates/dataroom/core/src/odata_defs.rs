@@ -415,6 +415,20 @@ pub fn shacl_report_to_row(r: &ShaclValidationReport) -> Value {
 
 /// Builds the `odata_table::Scope` for `ctx` and `set_name`, enforcing tenant isolation
 /// (`org_id`, `catalogue_id`), dataset visibility, and held permissions before `$filter`.
+/// Sets only members of the catalogue's Organization read (harvest state, the activity log,
+/// SHACL reports): the stores answer them empty to anyone else without reading a row.
+pub const MEMBERS_ONLY_SETS: [&str; 4] = [
+    "HarvestSources",
+    "HarvestRuns",
+    "ActivityRows",
+    "ShaclResults",
+];
+
+/// Whether `ctx` may read rows of `set_name` at all ([`MEMBERS_ONLY_SETS`]).
+pub fn set_readable(ctx: &RequestCtx, set_name: &str) -> bool {
+    !MEMBERS_ONLY_SETS.contains(&set_name) || ctx.subject.is_member_of(ctx.org_id)
+}
+
 pub fn scope_for_context(
     ctx: &RequestCtx,
     authorizer: &dyn Authorizer,
@@ -483,11 +497,7 @@ pub fn scope_for_context(
 
     // Harvest state, the activity log and SHACL reports are for members of the organization, as
     // the `harvest.*` and `catalogue.activity` operations and the editor's SHACL panel are.
-    if matches!(
-        set_name,
-        "HarvestSources" | "HarvestRuns" | "ActivityRows" | "ShaclResults"
-    ) && !ctx.subject.is_member_of(ctx.org_id)
-    {
+    if !set_readable(ctx, set_name) {
         scope = scope.and(&["id"], Vec::new());
     }
     // Harvest sources and runs need the Read `harvest_source.list` needs.
