@@ -937,6 +937,55 @@ async fn odata_bind_keeps_the_engines_refusal_of_its_target() {
     );
 }
 
+/// Once armed, refuses Retrieve Entity of a Car: a caller who may create Cars but not read them.
+#[derive(Default)]
+struct NoCarReads(Mutex<bool>);
+
+impl PolicyEngine for NoCarReads {
+    fn name(&self) -> &'static str {
+        "no-car-reads"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let armed = *self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let car = op.types.iter().any(|t| *t == format!("{CITY}Car"));
+        Box::pin(std::future::ready(
+            if armed && op.clause == "5.7.1" && car {
+                Decision::Deny("no Car reads".into())
+            } else {
+                Decision::Allow
+            },
+        ))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// A create the caller may not read back still answers that it was written: 204 with its
+/// `Location` and `OData-EntityId`, so a client does not retry a write that committed.
+#[tokio::test(flavor = "multi_thread")]
+async fn odata_a_create_the_caller_may_not_read_answers_204_with_its_location() {
+    let engine = Arc::new(NoCarReads::default());
+    std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, "65536");
+    let b = TestBroker::new()
+        .await
+        .expect("broker")
+        .with_policy(engine.clone());
+    let (_b, app) = city_on(b).await.expect("city");
+    *engine.0.lock().unwrap_or_else(PoisonError::into_inner) = true;
+    let body = r#"{"id": "urn:ngsi-ld:Car:13", "speed": 4, "scope": ["/a"]}"#;
+    let (status, location, entity_id, answer) = create(&app, body, false).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    assert!(location.contains("urn:ngsi-ld:Car:13"), "{location:?}");
+    assert_eq!(location, entity_id);
+    *engine.0.lock().unwrap_or_else(PoisonError::into_inner) = false;
+    assert_eq!(
+        stored(&app, "urn:ngsi-ld:Car:13").await.0,
+        StatusCode::OK,
+        "it was written"
+    );
+}
+
 /// A client that names no OData version (4.0) writes an `Edm.Untyped` member as a 4.01
 /// client does: the 4.0 document serves it as a dynamic property of an open type.
 #[tokio::test(flavor = "multi_thread")]

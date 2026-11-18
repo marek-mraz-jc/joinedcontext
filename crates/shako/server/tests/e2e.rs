@@ -1040,6 +1040,554 @@ async fn update_branch_obeys_the_head_branch_rules_and_needs_an_open_pull_reques
     assert_eq!(st, StatusCode::CONFLICT);
 }
 
+/// Creates repository `joinedcontext/{name}` (main, one commit) as the Portal.
+async fn create_repo(world: &TestWorld, name: &str) {
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/repos",
+        Some("portal-token"),
+        Some(json!({ "name": name, "auto_init": true, "default_branch": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "create {name}");
+}
+
+/// The Organization routes act only for a member of the Organization the owner names, never
+/// write tenant data, and report rights the caller holds.
+#[tokio::test]
+async fn organization_routes_refuse_outsiders_and_report_real_rights() {
+    let world = setup_world();
+    let inst = InstanceId::from_u128(1);
+    for (method, uri) in [
+        ("GET", "/api/v1/orgs/joinedcontext/teams"),
+        ("POST", "/api/v1/orgs/joinedcontext/teams"),
+        (
+            "GET",
+            "/api/v1/users/admin-b/orgs/joinedcontext/permissions",
+        ),
+    ] {
+        let (st, _) = send_json(
+            &world.app,
+            method,
+            uri,
+            Some("org-b-token"),
+            Some(json!({ "name": "intruders" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/orgs/joinedcontext/teams",
+        Some("portal-token"),
+        Some(json!({ "name": "writers" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_IMPLEMENTED);
+    let (st, body) = send_json(
+        &world.app,
+        "GET",
+        "/api/v1/users/reader-bob/orgs/joinedcontext/permissions",
+        Some("bob-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body["can_read"], json!(true));
+    assert_eq!(body["can_write"], json!(false));
+    for org in [world.org_a, world.org_b] {
+        let events = world
+            .state
+            .store()
+            .list_outbox_events(inst, org)
+            .await
+            .unwrap();
+        assert!(events.is_empty(), "no event in {org}: {events:?}");
+    }
+}
+
+/// A repository owner name is a label inside one Organization: a token naming it in `jc_org`
+/// is a member of no Organization.
+#[tokio::test]
+async fn an_owner_name_in_a_token_names_no_organization() {
+    let world = setup_world();
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/orgs/bbsk/repos",
+        Some("org-b-token"),
+        Some(json!({ "name": "budget", "auto_init": true, "default_branch": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+
+    use p256::pkcs8::EncodePrivateKey as _;
+    let secret = p256::SecretKey::random(&mut rand_core::OsRng);
+    let mut jwk: Value = serde_json::from_str(&secret.public_key().to_jwk_string()).unwrap();
+    jwk["kid"] = json!("owner-name-test");
+    jwk["alg"] = json!("ES256");
+    world
+        .state
+        .token_verifier
+        .insert_jwk("owner-name-test", jwk);
+    let now = jc_time::TimestampTz::now().as_second();
+    let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+    header.kid = Some("owner-name-test".into());
+    let token = jsonwebtoken::encode(
+        &header,
+        &json!({
+            "sub": "admin-b",
+            "preferred_username": "admin-b",
+            "aud": "shako",
+            "exp": now + 300,
+            "iat": now,
+            "jc_org": "bbsk",
+        }),
+        &jsonwebtoken::EncodingKey::from_ec_der(secret.to_pkcs8_der().unwrap().as_bytes()),
+    )
+    .unwrap();
+    let (st, _) = send_json(
+        &world.app,
+        "GET",
+        "/api/v1/repos/bbsk/budget",
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+/// Every path that deletes a branch asks the branch rules, and the default branch is never
+/// deleted.
+#[tokio::test]
+async fn deleting_a_branch_after_a_merge_obeys_the_branch_rules() {
+    let world = setup_world();
+    let repo = "/api/v1/repos/joinedcontext/guarded";
+    create_repo(&world, "guarded").await;
+    for branch in ["release", "feature"] {
+        let (st, _) = send_json(
+            &world.app,
+            "POST",
+            &format!("{repo}/branches"),
+            Some("alice-token"),
+            Some(json!({ "new_branch_name": branch, "old_branch_name": "main" })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::CREATED);
+    }
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "release",
+            "message": "Release notes",
+            "files": [{ "operation": "create", "path": "notes.md", "content": STANDARD.encode("v1\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({ "rule_name": "release", "enable_push": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls"),
+        Some("alice-token"),
+        Some(json!({ "head": "release", "base": "feature", "title": "Release into feature" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/pulls/1/merge"),
+        Some("alice-token"),
+        Some(json!({ "Do": "merge", "delete_branch_after_merge": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _) = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/branches/release"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "the protected head branch stays");
+    let (st, _) = send_json(
+        &world.app,
+        "DELETE",
+        &format!("{repo}/branches/main"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "the default branch stays");
+}
+
+/// A branch rule claims only what the policy enforces, its patterns compile, and a guarding
+/// rule gains no writer through the API.
+#[tokio::test]
+async fn branch_rules_are_refused_when_they_would_not_protect() {
+    let world = setup_world();
+    let repo = "/api/v1/repos/joinedcontext/ruled";
+    create_repo(&world, "ruled").await;
+    for (rule, field) in [
+        (
+            json!({ "rule_name": "main", "require_signed_commits": true }),
+            "require_signed_commits",
+        ),
+        (
+            json!({ "rule_name": "main", "push_whitelist_teams": ["ops"] }),
+            "push_whitelist_teams",
+        ),
+        (
+            json!({ "rule_name": "release/[", "enable_push": false }),
+            "rule_name",
+        ),
+        (
+            json!({ "rule_name": "main", "protected_file_patterns": "src/{a" }),
+            "protected_file_patterns",
+        ),
+    ] {
+        let (st, body) = send_json(
+            &world.app,
+            "POST",
+            &format!("{repo}/branch_protections"),
+            Some("portal-token"),
+            Some(rule),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{field}: {body}");
+        assert!(
+            body["message"].as_str().unwrap_or_default().contains(field),
+            "{body}"
+        );
+    }
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({
+            "rule_name": "main",
+            "enable_push": true,
+            "enable_push_whitelist": true,
+            "push_whitelist_usernames": ["jc-portal"]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({
+            "rule_name": "main",
+            "enable_push": true,
+            "enable_push_whitelist": true,
+            "push_whitelist_usernames": ["jc-portal", "writer-alice"]
+        })),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "a name added to a guarding allow-list"
+    );
+}
+
+/// A hook or mirror names only its own repository's forge-kept secrets.
+#[tokio::test]
+async fn a_secret_ref_never_reaches_another_repositorys_secret() {
+    let world = setup_world();
+    create_repo(&world, "first").await;
+    create_repo(&world, "second").await;
+    let first = world
+        .state
+        .store()
+        .get_repo_by_name(
+            InstanceId::from_u128(1),
+            world.org_a,
+            "joinedcontext",
+            "first",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    for secret_ref in [
+        format!("repo:{}:webhook-0", first.id),
+        format!("mirror:{}:mirror-0", first.id),
+        "webhook-0".to_owned(),
+    ] {
+        let (st, _) = send_json(
+            &world.app,
+            "POST",
+            "/api/v1/repos/joinedcontext/second/hooks",
+            Some("portal-token"),
+            Some(json!({ "url": "https://portal.city.example/api/v1/webhooks/shako", "secret_ref": secret_ref })),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{secret_ref}");
+    }
+}
+
+/// A commit status names a known state and a full commit id; an unknown state never reads as
+/// green.
+#[tokio::test]
+async fn commit_statuses_take_known_states_only() {
+    let world = setup_world();
+    create_repo(&world, "checked").await;
+    let sha = "a".repeat(40);
+    let uri = format!("/api/v1/repos/joinedcontext/checked/statuses/{sha}");
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &uri,
+        Some("portal-token"),
+        Some(json!({ "state": "passed", "context": "ci" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/repos/joinedcontext/checked/statuses/main",
+        Some("portal-token"),
+        Some(json!({ "state": "success", "context": "ci" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &uri,
+        Some("portal-token"),
+        Some(json!({ "state": "success", "context": "ci" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+}
+
+/// A PATCH keeps the stored rule's other fields; a contents write on `new_branch` cuts that
+/// branch from `branch`; commit pages move.
+#[tokio::test]
+async fn compat_writes_keep_what_the_client_did_not_send() {
+    let world = setup_world();
+    let repo = "/api/v1/repos/joinedcontext/kept";
+    create_repo(&world, "kept").await;
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/branch_protections"),
+        Some("portal-token"),
+        Some(json!({ "rule_name": "main", "enable_push": true, "required_approvals": 2 })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, rule) = send_json(
+        &world.app,
+        "PATCH",
+        &format!("{repo}/branch_protections/main"),
+        Some("portal-token"),
+        Some(json!({ "block_on_outdated_branch": true })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{rule}");
+    assert_eq!(rule["required_approvals"], json!(2));
+    assert_eq!(rule["block_on_outdated_branch"], json!(true));
+
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "main",
+            "new_branch": "topic",
+            "message": "Add on a new branch",
+            "files": [{ "operation": "create", "path": "t.txt", "content": STANDARD.encode("t\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, commits) = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/commits?sha=topic&limit=1&page=2"),
+        Some("portal-token"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    // Page 2 of one is the initial commit of main: the new branch carries main's history.
+    let main_head = send_json(
+        &world.app,
+        "GET",
+        &format!("{repo}/branches/main"),
+        Some("portal-token"),
+        None,
+    )
+    .await
+    .1["commit"]["id"]
+        .clone();
+    assert_eq!(commits[0]["sha"], main_head, "{commits}");
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        &format!("{repo}/contents"),
+        Some("alice-token"),
+        Some(json!({
+            "branch": "no-such-branch",
+            "message": "Lost",
+            "files": [{ "operation": "create", "path": "x.txt", "content": STANDARD.encode("x\n") }]
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "no orphan branch");
+}
+
+/// Every registry 401 names where a token comes from.
+#[tokio::test]
+async fn every_registry_401_carries_the_token_challenge() {
+    let world = setup_world();
+    let resp = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/v2/joinedcontext/img/blobs/sha256:{}",
+                    "0".repeat(64)
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let challenge = resp.headers()[axum::http::header::WWW_AUTHENTICATE]
+        .to_str()
+        .unwrap();
+    assert!(challenge.contains("/v2/token"), "{challenge}");
+
+    // A cross-repository mount asks for the target and the source in one token request.
+    let basic = STANDARD.encode("joinedcontext:portal-token");
+    let resp = world
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v2/token?service=container_registry&scope=repository%3Ajoinedcontext%2Ftarget%3Apush%2Cpull&scope=repository%3Ajoinedcontext%2Fsource%3Apull")
+                .header("authorization", format!("Basic {basic}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// The mergeable and link tools answer, and list tools narrow by the repository they name.
+#[tokio::test]
+async fn advertised_forge_tools_answer() {
+    let world = setup_world();
+    create_repo(&world, "tooled").await;
+    create_repo(&world, "other").await;
+    let ctx = RequestCtx::new(
+        InstanceId::from_u128(1),
+        world.org_a,
+        Subject::authenticated("jc-portal", "jc-portal", vec![world.org_a], vec![]),
+    );
+    let mount = Mount::default();
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/repos/joinedcontext/tooled/branches",
+        Some("alice-token"),
+        Some(json!({ "new_branch_name": "f", "old_branch_name": "main" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (st, _) = send_json(
+        &world.app,
+        "POST",
+        "/api/v1/repos/joinedcontext/tooled/pulls",
+        Some("alice-token"),
+        Some(json!({ "head": "f", "base": "main", "title": "Same" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let call = |tool: &'static str, args: Value| {
+        let (state, ctx, mount) = (world.state.clone(), ctx.clone(), mount.clone());
+        async move { call_mcp_tool(&state, &ctx, &mount, tool, args).await }
+    };
+    call(
+        "jc_forge_mergeable",
+        json!({ "repo": "joinedcontext/tooled", "number": 1 }),
+    )
+    .await
+    .expect("mergeable");
+    let link = call(
+        "jc_forge_archive_link",
+        json!({ "repo": "joinedcontext/tooled", "ref": "main" }),
+    )
+    .await
+    .expect("archive link");
+    assert!(link.to_string().contains("archive/main.zip"), "{link}");
+    let branches = call(
+        "jc_forge_branches_list",
+        json!({ "repo": "joinedcontext/tooled" }),
+    )
+    .await
+    .expect("branches");
+    assert_eq!(
+        branches["result"]["value"].as_array().map(Vec::len),
+        Some(2),
+        "{branches}"
+    );
+}
+
+/// The repository of a Branches read comes from a top-level `and` of the parsed filter only.
+#[tokio::test]
+async fn a_repository_under_or_in_a_filter_selects_nothing() {
+    let world = setup_world();
+    create_repo(&world, "filtered").await;
+    let id = world
+        .state
+        .store()
+        .get_repo_by_name(
+            InstanceId::from_u128(1),
+            world.org_a,
+            "joinedcontext",
+            "filtered",
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    let plain = format!("/odata/Branches?$filter=RepoId%20eq%20%27{id}%27");
+    let (st, body) = send_json(&world.app, "GET", &plain, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let under_or =
+        format!("/odata/Branches?$filter=Name%20eq%20%27x%27%20or%20RepoId%20eq%20%27{id}%27");
+    let (st, body) = send_json(&world.app, "GET", &under_or, Some("portal-token"), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+}
+
 #[test]
 fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
     let root = tempfile::tempdir().unwrap();

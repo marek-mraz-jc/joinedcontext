@@ -568,8 +568,8 @@ pub(crate) fn decision_error(decision: dataroom_core::Decision) -> DataroomError
 }
 
 /// Whether `ds` is shown to the caller, by the rules of `package_show` (D2, G2): the caller may
-/// read it; a dataset hidden by the publish gate (`jc_hide`) only to its editors; a withdrawn
-/// dataset or one of a withdrawn publisher not to anonymous callers. Every surface that shows a
+/// read it; a draft, a withdrawn dataset, one of a withdrawn publisher or one hidden by the
+/// publish gate (`jc_hide`) only to its editors ([`dataroom_core::dataset_visible`]). Every surface that shows a
 /// dataset or a part of it (resource, view, map, OData row, sample validation) asks this.
 pub(crate) fn dataset_shown(
     state: &DataroomState,
@@ -578,22 +578,13 @@ pub(crate) fn dataset_shown(
     ds: &Dataset,
     pub_rec: Option<&Publisher>,
 ) -> bool {
-    let target = ObjectTarget::from_dataset(ds, pub_rec);
-    if !state.authorizer.check(ctx, Action::Read, &target).allowed {
-        return false;
-    }
-    if cat.hidden_datasets.contains_key(&ds.name)
-        && (ctx.subject.is_anonymous()
-            || !state
-                .authorizer
-                .check(ctx, Action::Propose, &target)
-                .allowed)
-    {
-        return false;
-    }
-    !(ctx.subject.is_anonymous()
-        && (ds.state != RecordState::Active
-            || pub_rec.is_some_and(|p| p.state == RecordState::Withdrawn)))
+    dataroom_core::dataset_visible(
+        state.authorizer.as_ref(),
+        ctx,
+        ds,
+        pub_rec,
+        cat.hidden_datasets.contains_key(&ds.name),
+    )
 }
 
 /// Mounts dataroom under `prefix` (G1): a router the host app merges beside its own routes.
@@ -869,7 +860,7 @@ async fn handle_list_profiles(State(state): State<DataroomState>, headers: Heade
     // uploads from the store, never another catalogue's.
     let mut profiles: Vec<ProfileRecord> = state
         .profiles
-        .list()
+        .list((ctx.org_id, ctx.catalogue_id))
         .into_iter()
         .filter(|p| p.built_in)
         .collect();
@@ -920,12 +911,17 @@ async fn handle_upload_profile(
         }
     }
 
-    // A published version is immutable (C17: catalogues pin versions). The registry serves
-    // every catalogue, so replacing a pair would change what another catalogue (or a built-in
-    // profile) validates against.
+    // A published version is immutable (C17: catalogues pin versions): neither a built-in
+    // profile nor this catalogue's stored upload (loaded first, whatever this process saw) is
+    // replaced.
+    let scope = (ctx.org_id, ctx.catalogue_id);
+    match state.store.list_profiles(&ctx).await {
+        Ok(stored) => state.profiles.load_stored(scope, &stored),
+        Err(e) => return problem_response(e),
+    }
     if state
         .profiles
-        .list()
+        .list(scope)
         .iter()
         .any(|p| p.id == req.profile.id && p.version == req.profile.version)
     {
@@ -1018,6 +1014,12 @@ async fn handle_activate_profile(
         .flat_map(|p| [(p.id.clone(), p.clone()), (p.name.clone(), p)])
         .collect();
 
+    match state.store.list_profiles(&ctx).await {
+        Ok(stored) => state
+            .profiles
+            .load_stored((ctx.org_id, ctx.catalogue_id), &stored),
+        Err(e) => return problem_response(e),
+    }
     let dry_run = match state
         .profiles
         .dry_run(&id, &body.version, &cat, &datasets, &pub_map)
@@ -1755,10 +1757,11 @@ async fn dispatch_ui_route(
             stripped_path,
             had_url_prefix,
         } => {
+            // `?lang=` picks only a language the catalogue offers; any other value is ignored.
             let chosen = q_params
                 .get("lang")
-                .cloned()
-                .filter(|_| !had_url_prefix)
+                .map(|l| dataroom_web::i18n::normalize_lang_code(l))
+                .filter(|l| !had_url_prefix && branding.languages.offered.contains(l))
                 .unwrap_or(lang);
             (chosen, stripped_path, had_url_prefix)
         }
@@ -2159,7 +2162,7 @@ async fn dispatch_ui_route(
                     "publisher '{name}' not found"
                 )));
             };
-            if pub_rec.state == RecordState::Withdrawn && ctx.subject.is_anonymous() {
+            if pub_rec.state == RecordState::Withdrawn && !ctx.subject.is_member_of(ctx.org_id) {
                 return problem_response(DataroomError::NotFound(format!(
                     "publisher '{name}' not found"
                 )));

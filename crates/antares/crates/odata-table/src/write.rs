@@ -94,6 +94,12 @@ pub async fn write<T: Table + ?Sized>(
             "a write takes $filter only, e.g. $filter=org eq 'a'".into(),
         ));
     }
+    // a write to the whole set is never implied by a missing query string
+    if only.filter.is_none() {
+        return Err(TableError::BadRequest(
+            "a write to the set needs $filter, e.g. $filter=org eq 'a'".into(),
+        ));
+    }
     let info = table.info();
     if let Change::Update(patch) = &change {
         checked(info, patch)?;
