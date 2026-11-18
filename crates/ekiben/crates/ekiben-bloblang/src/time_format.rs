@@ -1,5 +1,8 @@
-use crate::iana::Zone as Tz;
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDateTime, TimeZone, Timelike, Utc};
+use jiff::civil::{self, Weekday};
+use jiff::tz::{AmbiguousOffset, Offset, TimeZone, TimeZoneDatabase};
+use jiff::{SignedDuration, Timestamp, Zoned};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Translates a Go `time` reference layout (`Mon Jan 2 15:04:05 -0700 MST 2006`)
 /// into tokens and formats or parses timestamps accordingly.
@@ -19,33 +22,91 @@ use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDateTime, TimeZone,
 /// - `RFC3339` / `RFC3339Nano` (`2006-01-02T15:04:05.999999999Z07:00`)
 pub const GO_RFC3339_NANO: &str = "2006-01-02T15:04:05.999999999Z07:00";
 
-pub fn resolve_tz_offset(tz_name: &str, utc_dt: DateTime<Utc>) -> Result<FixedOffset, String> {
-    if tz_name.eq_ignore_ascii_case("UTC") || tz_name == "Z" {
-        return Ok(FixedOffset::east_opt(0).unwrap());
+/// An IANA time zone by its exact name (`Europe/Bratislava`), from jiff's bundled database and
+/// never the host's: /usr/share/zoneinfo differs between images (Debian moves `US/Eastern` and
+/// the other backward links to tzdata-legacy). Names are case-sensitive, as in chrono-tz (jiff
+/// itself matches them case-insensitively). ponytail: the kept set is bounded by the database
+/// (about 600 names, and only names that resolve are kept).
+pub fn zone(name: &str) -> Result<TimeZone, String> {
+    static KEPT: OnceLock<Mutex<HashMap<String, TimeZone>>> = OnceLock::new();
+    static BUNDLED: OnceLock<TimeZoneDatabase> = OnceLock::new();
+    let mut kept = KEPT
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(tz) = kept.get(name) {
+        return Ok(tz.clone());
     }
-    if tz_name.eq_ignore_ascii_case("Local") {
-        return Ok(FixedOffset::east_opt(0).unwrap());
+    let unknown = || format!("unknown time zone {name}");
+    let tz = BUNDLED
+        .get_or_init(TimeZoneDatabase::bundled)
+        .get(name)
+        .map_err(|_| unknown())?;
+    if tz.iana_name() != Some(name) {
+        return Err(unknown());
     }
-    let tz: Tz = tz_name.parse().map_err(|_| {
-        format!("failed to parse timezone location name: unknown time zone {tz_name}")
-    })?;
-    use chrono::Offset;
-    let zoned = utc_dt.with_timezone(&tz);
-    Ok(zoned.offset().fix())
+    kept.insert(name.to_owned(), tz.clone());
+    Ok(tz)
 }
 
-pub fn apply_timezone(
-    dt: DateTime<FixedOffset>,
-    tz_name: Option<&str>,
-) -> Result<DateTime<FixedOffset>, String> {
+/// `ts` in the fixed offset `offset_secs`, as chrono's `DateTime<FixedOffset>` held it (an
+/// offset of a day or more is refused, as chrono's `FixedOffset` refused it).
+pub fn fixed(ts: Timestamp, offset_secs: i32) -> Result<Zoned, String> {
+    let offset = Offset::from_seconds(offset_secs)
+        .ok()
+        .filter(|_| offset_secs.abs() < 86_400)
+        .ok_or_else(|| format!("invalid timezone offset {offset_secs}"))?;
+    Ok(ts.to_zoned(TimeZone::fixed(offset)))
+}
+
+/// `ts` in UTC.
+pub fn utc(ts: Timestamp) -> Zoned {
+    ts.to_zoned(TimeZone::fixed(Offset::UTC))
+}
+
+/// The civil date-time `dt` read in the fixed offset `offset_secs`.
+fn fixed_civil(dt: civil::DateTime, offset_secs: i32) -> Result<Zoned, String> {
+    let ts = Offset::from_seconds(offset_secs)
+        .and_then(|o| o.to_timestamp(dt))
+        .map_err(|_| format!("invalid timezone offset {offset_secs}"))?;
+    fixed(ts, offset_secs)
+}
+
+/// The earliest instant the wall time `dt` names in `tz` (`None` in a gap the zone skips), as
+/// chrono's `from_local_datetime(..).earliest()`.
+pub fn earliest_local(tz: &TimeZone, dt: civil::DateTime) -> Option<Zoned> {
+    let offset = match tz.to_ambiguous_timestamp(dt).offset() {
+        AmbiguousOffset::Unambiguous { offset } => offset,
+        AmbiguousOffset::Gap { .. } => return None,
+        AmbiguousOffset::Fold { before, .. } => before,
+    };
+    offset
+        .to_timestamp(dt)
+        .ok()
+        .map(|ts| ts.to_zoned(tz.clone()))
+}
+
+/// The offset in seconds `tz_name` has at `ts`; `UTC`, `Z` and `Local` are UTC.
+pub fn resolve_tz_offset(tz_name: &str, ts: Timestamp) -> Result<i32, String> {
+    if tz_name.eq_ignore_ascii_case("UTC")
+        || tz_name == "Z"
+        || tz_name.eq_ignore_ascii_case("Local")
+    {
+        return Ok(0);
+    }
+    let tz = zone(tz_name).map_err(|e| format!("failed to parse timezone location name: {e}"))?;
+    Ok(tz.to_offset(ts).seconds())
+}
+
+pub fn apply_timezone(dt: Zoned, tz_name: Option<&str>) -> Result<Zoned, String> {
     let Some(tz_str) = tz_name else {
         return Ok(dt);
     };
-    let offset = resolve_tz_offset(tz_str, dt.with_timezone(&Utc))?;
-    Ok(dt.with_timezone(&offset))
+    let offset = resolve_tz_offset(tz_str, dt.timestamp())?;
+    fixed(dt.timestamp(), offset)
 }
 
-pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
+pub fn format_go_layout(dt: &Zoned, layout: &str) -> String {
     if layout == GO_RFC3339_NANO {
         return format_rfc3339_nano(dt);
     }
@@ -99,7 +160,7 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
             || rem.starts_with(".999")
         {
             let dots = rem[1..].bytes().take_while(|b| *b == b'9').count();
-            let nanos = dt.nanosecond() % 1_000_000_000;
+            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
             if nanos > 0 {
                 let s = format!("{:09}", nanos);
                 let trimmed = s[..dots.min(9)].trim_end_matches('0');
@@ -114,13 +175,13 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
             || rem.starts_with(".000")
         {
             let zeros = rem[1..].bytes().take_while(|b| *b == b'0').count();
-            let nanos = dt.nanosecond() % 1_000_000_000;
+            let nanos = dt.subsec_nanosecond() % 1_000_000_000;
             let s = format!("{:09}", nanos);
             out.push('.');
             out.push_str(&s[..zeros.min(9)]);
             i += 1 + zeros;
         } else if rem.starts_with("Z07:00") {
-            let secs = dt.offset().local_minus_utc();
+            let secs = dt.offset().seconds();
             if secs == 0 {
                 out.push('Z');
             } else {
@@ -128,7 +189,7 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
             }
             i += 6;
         } else if rem.starts_with("Z0700") {
-            let secs = dt.offset().local_minus_utc();
+            let secs = dt.offset().seconds();
             if secs == 0 {
                 out.push('Z');
             } else {
@@ -136,14 +197,14 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
             }
             i += 5;
         } else if rem.starts_with("-07:00") {
-            out.push_str(&format_offset_colon(dt.offset().local_minus_utc()));
+            out.push_str(&format_offset_colon(dt.offset().seconds()));
             i += 6;
         } else if rem.starts_with("-0700") {
-            out.push_str(&format_offset_nocolon(dt.offset().local_minus_utc()));
+            out.push_str(&format_offset_nocolon(dt.offset().seconds()));
             i += 5;
         } else if rem.starts_with("Z07") || rem.starts_with("-07") {
             // Go's stdNumShortTZ (`-07`, an hour offset) and stdISO8601ShortTZ (`Z07`, `Z` at UTC).
-            let secs = dt.offset().local_minus_utc();
+            let secs = dt.offset().seconds();
             if secs == 0 && rem.starts_with('Z') {
                 out.push('Z');
             } else {
@@ -151,10 +212,10 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
             }
             i += 3;
         } else if rem.starts_with("MST") {
-            if dt.offset().local_minus_utc() == 0 {
+            if dt.offset().seconds() == 0 {
                 out.push_str("UTC");
             } else {
-                out.push_str(&format_offset_colon(dt.offset().local_minus_utc()));
+                out.push_str(&format_offset_colon(dt.offset().seconds()));
             }
             i += 3;
         } else if rem.starts_with("PM") {
@@ -181,7 +242,7 @@ pub fn format_go_layout(dt: DateTime<FixedOffset>, layout: &str) -> String {
     out
 }
 
-pub fn format_rfc3339_nano(dt: DateTime<FixedOffset>) -> String {
+pub fn format_rfc3339_nano(dt: &Zoned) -> String {
     let base = format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
         dt.year(),
@@ -191,20 +252,68 @@ pub fn format_rfc3339_nano(dt: DateTime<FixedOffset>) -> String {
         dt.minute(),
         dt.second()
     );
-    let nanos = dt.nanosecond() % 1_000_000_000;
+    let nanos = dt.subsec_nanosecond() % 1_000_000_000;
     let frac = if nanos > 0 {
         let s = format!("{:09}", nanos);
         format!(".{}", s.trim_end_matches('0'))
     } else {
         String::new()
     };
-    let secs = dt.offset().local_minus_utc();
+    let secs = dt.offset().seconds();
     let tz = if secs == 0 {
         "Z".to_string()
     } else {
         format_offset_colon(secs)
     };
     format!("{base}{frac}{tz}")
+}
+
+/// Whole `unit_nanos` since the Unix epoch, rounded down as chrono's `timestamp()`,
+/// `timestamp_millis()` and `timestamp_micros()` did (jiff's `as_*` truncate toward zero).
+/// `None` when the count does not fit an i64 (only nanoseconds can overflow).
+pub fn unix_floor(ts: Timestamp, unit_nanos: i128) -> Option<i64> {
+    i64::try_from(ts.as_nanosecond().div_euclid(unit_nanos)).ok()
+}
+
+/// Rounds `dt` to a multiple of `span_nanos` of its wall time, a half up, as chrono's
+/// `duration_round` on a `DateTime<FixedOffset>` did (errors in its words).
+pub fn round_local(dt: &Zoned, span_nanos: i64) -> Result<Zoned, String> {
+    if span_nanos <= 0 {
+        return Err("duration exceeds num_nanoseconds limit".to_string());
+    }
+    let local = dt.timestamp().as_nanosecond() + i128::from(dt.offset().seconds()) * 1_000_000_000;
+    let stamp =
+        i64::try_from(local).map_err(|_| "timestamp exceeds num_nanoseconds limit".to_string())?;
+    let delta_down = stamp % span_nanos;
+    if delta_down == 0 {
+        return Ok(dt.clone());
+    }
+    let (up, down) = if delta_down < 0 {
+        (delta_down.abs(), span_nanos - delta_down.abs())
+    } else {
+        (span_nanos - delta_down, delta_down)
+    };
+    let shift = if up <= down { up } else { -down };
+    dt.timestamp()
+        .checked_add(SignedDuration::from_nanos(shift))
+        .map(|ts| ts.to_zoned(dt.time_zone().clone()))
+        .map_err(|e| e.to_string())
+}
+
+/// RFC 3339 with 0, 3, 6 or 9 fraction digits, as chrono's `to_rfc3339_opts(SecondsFormat::AutoSi,
+/// use_z)` printed it: `Z` for a zero offset when `use_z`, else `+00:00` (chrono's `to_rfc3339()`).
+pub fn format_rfc3339_auto_si(dt: &Zoned, use_z: bool) -> String {
+    let digits = match dt.subsec_nanosecond() {
+        0 => 0,
+        n if n % 1_000_000 == 0 => 3,
+        n if n % 1_000 == 0 => 6,
+        _ => 9,
+    };
+    let printer = jiff::fmt::temporal::DateTimePrinter::new().precision(Some(digits));
+    match dt.offset() {
+        Offset::UTC if use_z => printer.timestamp_to_string(&dt.timestamp()),
+        offset => printer.timestamp_with_offset_to_string(&dt.timestamp(), offset),
+    }
 }
 
 fn format_offset_colon(secs: i32) -> String {
@@ -223,7 +332,7 @@ fn format_offset_nocolon(secs: i32) -> String {
     format!("{sign}{h:02}{m:02}")
 }
 
-fn month_short_name(m: u32) -> &'static str {
+fn month_short_name(m: i8) -> &'static str {
     match m {
         1 => "Jan",
         2 => "Feb",
@@ -241,7 +350,7 @@ fn month_short_name(m: u32) -> &'static str {
     }
 }
 
-fn month_long_name(m: u32) -> &'static str {
+fn month_long_name(m: i8) -> &'static str {
     match m {
         1 => "January",
         2 => "February",
@@ -259,27 +368,27 @@ fn month_long_name(m: u32) -> &'static str {
     }
 }
 
-fn weekday_short_name(w: chrono::Weekday) -> &'static str {
+fn weekday_short_name(w: Weekday) -> &'static str {
     match w {
-        chrono::Weekday::Mon => "Mon",
-        chrono::Weekday::Tue => "Tue",
-        chrono::Weekday::Wed => "Wed",
-        chrono::Weekday::Thu => "Thu",
-        chrono::Weekday::Fri => "Fri",
-        chrono::Weekday::Sat => "Sat",
-        chrono::Weekday::Sun => "Sun",
+        Weekday::Monday => "Mon",
+        Weekday::Tuesday => "Tue",
+        Weekday::Wednesday => "Wed",
+        Weekday::Thursday => "Thu",
+        Weekday::Friday => "Fri",
+        Weekday::Saturday => "Sat",
+        Weekday::Sunday => "Sun",
     }
 }
 
-fn weekday_long_name(w: chrono::Weekday) -> &'static str {
+fn weekday_long_name(w: Weekday) -> &'static str {
     match w {
-        chrono::Weekday::Mon => "Monday",
-        chrono::Weekday::Tue => "Tuesday",
-        chrono::Weekday::Wed => "Wednesday",
-        chrono::Weekday::Thu => "Thursday",
-        chrono::Weekday::Fri => "Friday",
-        chrono::Weekday::Sat => "Saturday",
-        chrono::Weekday::Sun => "Sunday",
+        Weekday::Monday => "Monday",
+        Weekday::Tuesday => "Tuesday",
+        Weekday::Wednesday => "Wednesday",
+        Weekday::Thursday => "Thursday",
+        Weekday::Friday => "Friday",
+        Weekday::Saturday => "Saturday",
+        Weekday::Sunday => "Sunday",
     }
 }
 
@@ -318,7 +427,7 @@ fn parse_month_name(s: &str) -> Option<(u32, usize)> {
 }
 
 /// Parses a timestamp string according to a Go `time.Parse` layout.
-pub fn parse_go_layout(input: &str, layout: &str) -> Result<DateTime<FixedOffset>, String> {
+pub fn parse_go_layout(input: &str, layout: &str) -> Result<Zoned, String> {
     let mut year: i32 = 0;
     let mut month: u32 = 1;
     let mut day: u32 = 1;
@@ -509,21 +618,18 @@ pub fn parse_go_layout(input: &str, layout: &str) -> Result<DateTime<FixedOffset
         }
     }
 
-    let offset = FixedOffset::east_opt(offset_secs)
-        .ok_or_else(|| format!("invalid timezone offset {offset_secs}"))?;
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| format!("invalid date {year:04}-{month:02}-{day:02}"))?;
-    let time = chrono::NaiveTime::from_hms_nano_opt(hour, minute, second, nanosecond)
-        .ok_or_else(|| format!("invalid time {hour:02}:{minute:02}:{second:02}"))?;
-    offset
-        .from_local_datetime(&NaiveDateTime::new(date, time))
-        .single()
-        .ok_or_else(|| "ambiguous local datetime".to_string())
+    // take_digits reads at most 4 digits for a year and 2 for the rest: the casts are exact
+    fixed(Timestamp::UNIX_EPOCH, offset_secs)?;
+    let date = civil::Date::new(year as i16, month as i8, day as i8)
+        .map_err(|_| format!("invalid date {year:04}-{month:02}-{day:02}"))?;
+    let time = civil::Time::new(hour as i8, minute as i8, second as i8, nanosecond as i32)
+        .map_err(|_| format!("invalid time {hour:02}:{minute:02}:{second:02}"))?;
+    fixed_civil(date.to_datetime(time), offset_secs)
 }
 
 /// Parses a timestamp string using `strptime` specifiers, matching `itchyny/timefmt-go`
 /// including day rollover (e.g. `31.02.2026` -> `2026-03-03` as noted in PART B traps!).
-pub fn parse_strptime(input: &str, format: &str) -> Result<DateTime<FixedOffset>, String> {
+pub fn parse_strptime(input: &str, format: &str) -> Result<Zoned, String> {
     let mut year: i32 = 1970;
     let mut month: i32 = 1;
     let mut day: i32 = 1;
@@ -694,21 +800,20 @@ pub fn parse_strptime(input: &str, format: &str) -> Result<DateTime<FixedOffset>
 
     // Match Go's `time.Date(year, month, day, ...)` rollover behavior!
     // In Go, `time.Date(2026, 2, 31, 0, 0, 0, 0, UTC)` adds `(day - 1)` days to the 1st of the month.
-    let first_of_month = chrono::NaiveDate::from_ymd_opt(year, month as u32, 1)
-        .ok_or_else(|| format!("invalid year/month {year}-{month}"))?;
-    let rolled_date = first_of_month + Duration::days((day - 1) as i64);
-    let time = chrono::NaiveTime::from_hms_nano_opt(hour, minute, second, nanosecond)
-        .ok_or_else(|| "invalid time".to_string())?;
-    let offset =
-        FixedOffset::east_opt(offset_secs).unwrap_or_else(|| FixedOffset::east_opt(0).unwrap());
-    offset
-        .from_local_datetime(&NaiveDateTime::new(rolled_date, time))
-        .single()
-        .ok_or_else(|| "ambiguous datetime".to_string())
+    // the fields are range-checked above (a year has at most 4 digits): the casts are exact
+    let first_of_month = civil::Date::new(year as i16, month as i8, 1)
+        .map_err(|_| format!("invalid year/month {year}-{month}"))?;
+    let rolled_date = first_of_month
+        .checked_add(SignedDuration::from_hours(i64::from(day - 1) * 24))
+        .map_err(|_| format!("invalid year/month {year}-{month}"))?;
+    let time = civil::Time::new(hour as i8, minute as i8, second as i8, nanosecond as i32)
+        .map_err(|_| "invalid time".to_string())?;
+    let dt = rolled_date.to_datetime(time);
+    fixed_civil(dt, offset_secs).or_else(|_| fixed_civil(dt, 0))
 }
 
 /// Formats a timestamp using `strftime` specifiers (`itchyny/timefmt-go` compatible, including `%f` for 6-digit microseconds).
-pub fn format_strftime(dt: DateTime<FixedOffset>, format: &str) -> String {
+pub fn format_strftime(dt: &Zoned, format: &str) -> String {
     let mut out = String::with_capacity(format.len() + 16);
     let bytes = format.as_bytes();
     let mut i = 0usize;
@@ -735,22 +840,22 @@ pub fn format_strftime(dt: DateTime<FixedOffset>, format: &str) -> String {
                 'M' => out.push_str(&format!("{:02}", dt.minute())),
                 'S' => out.push_str(&format!("{:02}", dt.second())),
                 'f' => {
-                    let micros = (dt.nanosecond() % 1_000_000_000) / 1_000;
+                    let micros = (dt.subsec_nanosecond() % 1_000_000_000) / 1_000;
                     out.push_str(&format!("{:06}", micros));
                 }
                 'a' => out.push_str(weekday_short_name(dt.weekday())),
                 'A' => out.push_str(weekday_long_name(dt.weekday())),
                 'p' => out.push_str(if dt.hour() >= 12 { "PM" } else { "AM" }),
                 'P' => out.push_str(if dt.hour() >= 12 { "pm" } else { "am" }),
-                'z' => out.push_str(&format_offset_nocolon(dt.offset().local_minus_utc())),
+                'z' => out.push_str(&format_offset_nocolon(dt.offset().seconds())),
                 'Z' => {
-                    if dt.offset().local_minus_utc() == 0 {
+                    if dt.offset().seconds() == 0 {
                         out.push_str("UTC");
                     } else {
-                        out.push_str(&format_offset_colon(dt.offset().local_minus_utc()));
+                        out.push_str(&format_offset_colon(dt.offset().seconds()));
                     }
                 }
-                's' => out.push_str(&dt.timestamp().to_string()),
+                's' => out.push_str(&dt.timestamp().as_second().to_string()),
                 'F' => out.push_str(&format!(
                     "{:04}-{:02}-{:02}",
                     dt.year(),
@@ -1001,23 +1106,27 @@ impl Iso8601Period {
         year_nanos + month_nanos + week_nanos + day_nanos + self.nanos
     }
 
-    pub fn add_to(&self, dt: DateTime<FixedOffset>) -> DateTime<FixedOffset> {
-        let mut total_months =
-            (dt.year() * 12 + (dt.month() as i32 - 1)) + self.years * 12 + self.months;
+    pub fn add_to(&self, dt: &Zoned) -> Zoned {
+        let mut total_months = (i32::from(dt.year()) * 12 + (i32::from(dt.month()) - 1))
+            + self.years * 12
+            + self.months;
         let new_year = total_months.div_euclid(12);
         total_months = total_months.rem_euclid(12);
         let new_month = (total_months + 1) as u32;
         let max_day = days_in_month(new_year, new_month);
-        let new_day = dt.day().min(max_day);
-        let base_date = chrono::NaiveDate::from_ymd_opt(new_year, new_month, new_day)
-            .unwrap_or_else(|| dt.date_naive());
-        let naive = NaiveDateTime::new(base_date, dt.time())
-            + Duration::days(self.weeks * 7 + self.days)
-            + Duration::nanoseconds(self.nanos);
-        dt.offset()
-            .from_local_datetime(&naive)
-            .single()
-            .unwrap_or(dt)
+        let new_day = (dt.day() as u32).min(max_day);
+        let base_date = i16::try_from(new_year)
+            .ok()
+            .and_then(|y| civil::Date::new(y, new_month as i8, new_day as i8).ok())
+            .unwrap_or_else(|| dt.date());
+        let days = self.weeks.saturating_mul(7).saturating_add(self.days);
+        base_date
+            .to_datetime(dt.time())
+            .checked_add(SignedDuration::from_secs(days.saturating_mul(86_400)))
+            .and_then(|t| t.checked_add(SignedDuration::from_nanos(self.nanos)))
+            .ok()
+            .and_then(|t| fixed_civil(t, dt.offset().seconds()).ok())
+            .unwrap_or_else(|| dt.clone())
     }
 }
 
@@ -1042,11 +1151,7 @@ mod zone_tests {
 
     #[test]
     fn zone_offsets_change_at_the_dst_instant_in_bratislava_and_helsinki() {
-        let utc = |s: &str| {
-            DateTime::parse_from_rfc3339(s)
-                .map(|t| t.with_timezone(&Utc))
-                .map_err(|e| e.to_string())
-        };
+        let utc = |s: &str| jc_time::parse_rfc3339(s).ok_or_else(|| s.to_string());
         for (tz, winter, summer) in [
             ("Europe/Bratislava", 3600, 7200),
             ("Europe/Helsinki", 7200, 10800),
@@ -1058,9 +1163,50 @@ mod zone_tests {
                 ("2026-10-25T01:00:00Z", winter),
             ] {
                 let got = utc(at).and_then(|t| resolve_tz_offset(tz, t));
-                assert_eq!(got.map(|o| o.local_minus_utc()), Ok(want), "{tz} at {at}");
+                assert_eq!(got, Ok(want), "{tz} at {at}");
             }
         }
-        assert!(resolve_tz_offset("Nowhere/Town", Utc::now()).is_err());
+        assert!(resolve_tz_offset("Nowhere/Town", Timestamp::now()).is_err());
+        assert!(
+            zone("europe/bratislava").is_err(),
+            "names are case-sensitive"
+        );
+        assert_eq!(
+            zone("US/Eastern").map(|z| z.iana_name().map(str::to_owned)),
+            Ok(Some("US/Eastern".to_owned()))
+        );
+    }
+
+    #[test]
+    fn local_wall_times_in_a_dst_gap_and_fold() -> Result<(), String> {
+        for (name, gap, fold, winter, summer) in [
+            (
+                "Europe/Bratislava",
+                "2026-03-29T02:30:00",
+                "2026-10-25T02:30:00",
+                3600,
+                7200,
+            ),
+            (
+                "Europe/Helsinki",
+                "2026-03-29T03:30:00",
+                "2026-10-25T03:30:00",
+                7200,
+                10800,
+            ),
+        ] {
+            let tz = zone(name)?;
+            let civil = |s: &str| s.parse::<civil::DateTime>().map_err(|e| e.to_string());
+            assert_eq!(earliest_local(&tz, civil(gap)?), None, "{name} gap");
+            let early = earliest_local(&tz, civil(fold)?).ok_or("fold")?;
+            assert_eq!(
+                early.offset().seconds(),
+                summer,
+                "{name} fold takes the earlier"
+            );
+            let jan = earliest_local(&tz, civil("2026-01-15T12:00:00")?).ok_or("jan")?;
+            assert_eq!(jan.offset().seconds(), winter, "{name} January");
+        }
+        Ok(())
     }
 }

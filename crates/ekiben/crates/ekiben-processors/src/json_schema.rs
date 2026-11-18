@@ -772,7 +772,8 @@ fn go_date(s: &str) -> Option<&str> {
     let (year, rest) = digits(s, 4)?;
     let (month, rest) = digits(rest.strip_prefix('-')?, 2)?;
     let (day, rest) = digits(rest.strip_prefix('-')?, 2)?;
-    chrono::NaiveDate::from_ymd_opt(year as i32, month, day)?;
+    // at most 4 and 2 digits: the casts are exact
+    jiff::civil::Date::new(year as i16, month as i8, day as i8).ok()?;
     Some(rest)
 }
 

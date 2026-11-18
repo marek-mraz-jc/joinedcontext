@@ -110,9 +110,7 @@ impl Input for S3Input {
                     .to_string()
             };
             let modified = header("last-modified");
-            let modified_unix = chrono::DateTime::parse_from_rfc2822(&modified)
-                .map(|t| t.timestamp().to_string())
-                .unwrap_or_default();
+            let modified_unix = last_modified_unix(&modified);
             for p in &mut parts {
                 p.meta_set_str("s3_key", key.clone());
                 p.meta_set_str("s3_bucket", self.conn.bucket.clone());
@@ -152,4 +150,58 @@ impl Input for S3Input {
             return Ok((parts, ack));
         }
     }
+}
+/// `s3_last_modified_unix`: the `Last-Modified` header (RFC 2822) as unix seconds, empty when
+/// the header is no RFC 2822 date.
+fn last_modified_unix(header: &str) -> String {
+    jiff::fmt::rfc2822::parse(header)
+        .ok()
+        .and_then(|t| ekiben_bloblang::time_format::unix_floor(t.timestamp(), 1_000_000_000))
+        .map(|secs| secs.to_string())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn last_modified_reads_as_the_chrono_build_did() {
+        let got: Vec<String> = [
+            "Fri, 24 May 2013 00:00:00 GMT",
+            "Fri, 24 May 2013 02:00:00 +0200",
+            "24 May 2013 00:00:00 UT",
+            "Fri, 24 May 2013 00:00 EST",
+            "Fri, 24 May 13 00:00:00 GMT",
+            "Fri, 24 May 2013 00:00:00 Z",
+            "Fri, 24 May 2013 00:00:00 -0000 (comment)",
+            "Thu, 24 May 2013 00:00:00 GMT",
+            "Fri, 1 Jan 1960 00:00:00 GMT",
+            "2013-05-24T00:00:00Z",
+            "",
+        ]
+        .iter()
+        .map(|s| format!("{s} => {}", last_modified_unix(s)))
+        .collect();
+        assert_eq!(
+            got.join("\n").trim(),
+            LAST_MODIFIED.trim(),
+            "\n{}",
+            got.join("\n")
+        );
+    }
+
+    const LAST_MODIFIED: &str = r#"
+Fri, 24 May 2013 00:00:00 GMT => 1369353600
+Fri, 24 May 2013 02:00:00 +0200 => 1369353600
+24 May 2013 00:00:00 UT => 1369353600
+Fri, 24 May 2013 00:00 EST => 1369371600
+Fri, 24 May 13 00:00:00 GMT => 1369353600
+Fri, 24 May 2013 00:00:00 Z => 1369353600
+Fri, 24 May 2013 00:00:00 -0000 (comment) => 1369353600
+Thu, 24 May 2013 00:00:00 GMT => 
+Fri, 1 Jan 1960 00:00:00 GMT => -315619200
+2013-05-24T00:00:00Z => 
+ => 
+"#;
 }

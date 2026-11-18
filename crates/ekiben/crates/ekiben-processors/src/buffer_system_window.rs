@@ -62,8 +62,7 @@ fn fire(ack: &SharedAck, err: Option<BatchError>) {
 }
 
 fn system_now() -> Nanos {
-    let now = chrono::Utc::now();
-    Nanos::from(now.timestamp()) * SECOND + Nanos::from(now.timestamp_subsec_nanos())
+    jiff::Timestamp::now().as_nanosecond()
 }
 
 /// Go's `time.Time.Round(d)`: the nearest multiple of `d` since the zero time, halves rounded up.
@@ -83,11 +82,13 @@ fn go_round(t: Nanos, d: Nanos) -> Nanos {
 pub(crate) fn format_rfc3339_nano(t: Nanos) -> String {
     let secs = t.div_euclid(SECOND);
     let nanos = t.rem_euclid(SECOND);
+    // ponytail: jiff holds the years -9999 to 9999; a time outside them prints as 1970, as an
+    // instant chrono could not hold did
     let dt = i64::try_from(secs)
         .ok()
-        .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
-        .unwrap_or_default();
-    let mut out = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+        .and_then(|s| jiff::Timestamp::from_second(s).ok())
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    let mut out = dt.strftime("%Y-%m-%dT%H:%M:%S").to_string();
     if nanos > 0 {
         let frac = format!(".{nanos:09}");
         out.push_str(frac.trim_end_matches('0'));
@@ -288,7 +289,7 @@ impl SystemWindowBuffer {
         let ts = value.to_timestamp_coerced().map_err(|e| {
             format!("unable to parse result of timestamp mapping as timestamp: {e}")
         })?;
-        Ok(Nanos::from(ts.timestamp()) * SECOND + Nanos::from(ts.timestamp_subsec_nanos()))
+        Ok(ts.timestamp().as_nanosecond())
     }
 
     /// Bento's `WriteBatch`. On a mapping error the input's ack is answered with it.
@@ -469,8 +470,9 @@ mod tests {
     const HOUR: Nanos = 60 * MIN;
 
     fn at(rfc3339: &str) -> Nanos {
-        let t = chrono::DateTime::parse_from_rfc3339(rfc3339).expect("a time");
-        Nanos::from(t.timestamp()) * SECOND + Nanos::from(t.timestamp_subsec_nanos())
+        jc_time::parse_rfc3339(rfc3339)
+            .expect("a time")
+            .as_nanosecond()
     }
 
     fn unix(secs: i64, nanos: i64) -> Nanos {

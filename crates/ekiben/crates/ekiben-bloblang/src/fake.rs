@@ -5,7 +5,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::fake_data::*;
 use crate::gorand::GoRand;
@@ -161,12 +161,13 @@ impl Faker {
 
     /// `rand.Int63n(time.Now().Unix())`, read in UTC.
     fn unix_time(&mut self) -> i64 {
-        self.rng.int63n(Utc::now().timestamp().max(1))
+        self.rng.int63n(Timestamp::now().as_second().max(1))
     }
 
     fn time(&mut self, fmt: &str) -> String {
-        let t = DateTime::from_timestamp(self.unix_time(), 0).unwrap_or_default();
-        t.format(fmt).to_string()
+        // `fmt` is one of the fixed formats below, each of which jiff prints for any instant
+        let t = Timestamp::from_second(self.unix_time()).unwrap_or(Timestamp::UNIX_EPOCH);
+        t.strftime(fmt).to_string()
     }
 
     fn sentence(&mut self) -> String {
@@ -439,7 +440,7 @@ mod tests {
                 (Ok(Value::Float(lat)), Ok(Value::Float(lon)), Ok(Value::Int(t))) => {
                     assert!((-90.0..90.0).contains(&lat), "{lat}");
                     assert!((-180.0..180.0).contains(&lon), "{lon}");
-                    assert!((0..Utc::now().timestamp()).contains(&t), "{t}");
+                    assert!((0..Timestamp::now().as_second()).contains(&t), "{t}");
                 }
                 other => panic!("{other:?}"),
             }

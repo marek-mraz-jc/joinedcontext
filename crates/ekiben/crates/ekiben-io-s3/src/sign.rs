@@ -1,9 +1,9 @@
 //! AWS Signature Version 4 for S3 requests (docs.aws.amazon.com, "Authenticating Requests:
 //! Using the Authorization Header"), on the hmac and sha2 crates the workspace already carries.
 
-use chrono::{DateTime, Utc};
 use ekiben_core::{CoreError, SecretString};
 use hmac::{Hmac, KeyInit, Mac};
+use jiff::Timestamp;
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -67,10 +67,10 @@ pub fn sign(
     payload_sha256: &str,
     creds: &Credentials,
     region: &str,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<(), CoreError> {
-    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = now.format("%Y%m%d").to_string();
+    let amz_date = now.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let date = now.strftime("%Y%m%d").to_string();
     headers.push(("x-amz-date".into(), amz_date.clone()));
     headers.push(("x-amz-content-sha256".into(), payload_sha256.into()));
     if let Some(t) = &creds.token {
@@ -125,7 +125,6 @@ pub fn sign(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     /// The example key of the AWS documentation, assembled so no scanner reads it as a leak.
     fn example() -> Credentials {
@@ -149,7 +148,7 @@ mod tests {
     fn get_object_signs_as_the_aws_example() {
         let url = Url::parse("https://examplebucket.s3.amazonaws.com/test.txt").unwrap();
         let mut h = vec![("range".to_string(), "bytes=0-9".to_string())];
-        let now = Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap();
+        let now: Timestamp = "2013-05-24T00:00:00Z".parse().unwrap();
         sign(
             "GET",
             &url,
@@ -183,7 +182,7 @@ mod tests {
                 "REDUCED_REDUNDANCY".to_string(),
             ),
         ];
-        let now = Utc.with_ymd_and_hms(2013, 5, 24, 0, 0, 0).unwrap();
+        let now: Timestamp = "2013-05-24T00:00:00Z".parse().unwrap();
         sign(
             "PUT",
             &url,

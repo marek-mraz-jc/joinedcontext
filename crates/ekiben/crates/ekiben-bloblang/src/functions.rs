@@ -1,24 +1,25 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Mutex, PoisonError};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::ast::{ArgList, Expr};
 use crate::executor::EvalContext;
+use crate::time_format::unix_floor;
 use crate::value::Value;
 
-static FROZEN_CLOCK: std::sync::OnceLock<DateTime<Utc>> = std::sync::OnceLock::new();
+static FROZEN_CLOCK: std::sync::OnceLock<Timestamp> = std::sync::OnceLock::new();
 
 /// Stops `now()` and the `timestamp_unix*` functions at `at` for the rest of the process, so
 /// `ekiben run --clock` replays a recorded run on the clock it ran on. Token expiry checks keep
 /// the real clock. False when a clock was frozen already.
-pub fn freeze_clock(at: DateTime<Utc>) -> bool {
+pub fn freeze_clock(at: Timestamp) -> bool {
     FROZEN_CLOCK.set(at).is_ok()
 }
 
-fn clock() -> DateTime<Utc> {
-    FROZEN_CLOCK.get().copied().unwrap_or_else(Utc::now)
+fn clock() -> Timestamp {
+    FROZEN_CLOCK.get().copied().unwrap_or_else(Timestamp::now)
 }
 
 pub fn known_functions() -> HashSet<String> {
@@ -110,18 +111,20 @@ pub(crate) fn eval_function(
             None => Ok(Value::Null),
         },
         "now" => {
-            let now = clock().fixed_offset();
+            let now = crate::time_format::utc(clock());
             Ok(Value::String(crate::time_format::format_go_layout(
-                now,
+                &now,
                 crate::time_format::GO_RFC3339_NANO,
             )))
         }
-        "timestamp_unix" => Ok(Value::Int(clock().timestamp())),
-        "timestamp_unix_milli" => Ok(Value::Int(clock().timestamp_millis())),
-        "timestamp_unix_micro" => Ok(Value::Int(clock().timestamp_micros())),
-        "timestamp_unix_nano" => Ok(Value::Int(
-            clock().timestamp_nanos_opt().unwrap_or_default(),
+        "timestamp_unix" => Ok(Value::Int(
+            unix_floor(clock(), 1_000_000_000).unwrap_or_default(),
         )),
+        "timestamp_unix_milli" => Ok(Value::Int(
+            unix_floor(clock(), 1_000_000).unwrap_or_default(),
+        )),
+        "timestamp_unix_micro" => Ok(Value::Int(unix_floor(clock(), 1_000).unwrap_or_default())),
+        "timestamp_unix_nano" => Ok(Value::Int(unix_floor(clock(), 1).unwrap_or_default())),
         "uuid_v4" => Ok(Value::String(Uuid::new_v4().to_string())),
         "uuid_v7" => Ok(Value::String(Uuid::now_v7().to_string())),
         "pi" => Ok(Value::Float(std::f64::consts::PI)),
@@ -478,7 +481,7 @@ fn eval_random_int_fn(
                 .eval_expr(e)?
                 .get_int()
                 .map_err(|e| format!("failed to seed random number generator: {e}"))?,
-            None => clock().timestamp_nanos_opt().unwrap_or_default(),
+            None => unix_floor(clock(), 1).unwrap_or_default(),
         };
         ctx.rng_states
             .lock()
@@ -665,7 +668,8 @@ fn crockford(v: u128) -> String {
 /// one millisecond (or a clock that went back) the entropy grows by one, so ids keep their order.
 fn ulid() -> Result<u128, String> {
     const ENTROPY_MAX: u128 = (1 << 80) - 1;
-    let ms = u64::try_from(clock().timestamp_millis()).unwrap_or(0) & ((1 << 48) - 1);
+    let ms = u64::try_from(unix_floor(clock(), 1_000_000).unwrap_or_default()).unwrap_or(0)
+        & ((1 << 48) - 1);
     let mut st = ULID_STATE.lock().unwrap_or_else(PoisonError::into_inner);
     if ms > st.0 {
         let entropy = random12()[..10]
@@ -682,7 +686,7 @@ fn ulid() -> Result<u128, String> {
 
 /// segmentio/ksuid: 4-byte seconds since its epoch and 16 random bytes, 27 base62 characters.
 fn ksuid() -> String {
-    let ts = u32::try_from(clock().timestamp() - KSUID_EPOCH).unwrap_or(0);
+    let ts = u32::try_from(clock().as_second() - KSUID_EPOCH).unwrap_or(0);
     let mut num = [0u8; 20];
     num[..4].copy_from_slice(&ts.to_be_bytes());
     num[4..16].copy_from_slice(&random12());
@@ -709,7 +713,7 @@ fn eval_snowflake_fn(args: &ArgList, ctx: &mut EvalContext<'_, '_>) -> Result<Va
     if !(0..=1023).contains(&node) {
         return Err(format!("node_id {node} must be between 0 and 1023"));
     }
-    let now = clock().timestamp_millis() - SNOWFLAKE_EPOCH_MS;
+    let now = unix_floor(clock(), 1_000_000).unwrap_or_default() - SNOWFLAKE_EPOCH_MS;
     let mut st = SNOWFLAKE_STATE
         .lock()
         .unwrap_or_else(PoisonError::into_inner);

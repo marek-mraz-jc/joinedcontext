@@ -333,7 +333,12 @@ pub fn to_val(v: &Value) -> Result<Val, String> {
         Value::Number(s) => number_val(s),
         Value::String(s) => Val::from(s.clone()),
         Value::Bytes(_) => return Err("invalid type: []uint8".to_string()),
-        Value::Timestamp(t) => return Err(format!("invalid type: time.Time ({})", t.to_rfc3339())),
+        Value::Timestamp(t) => {
+            return Err(format!(
+                "invalid type: time.Time ({})",
+                ekiben_bloblang::time_format::format_rfc3339_auto_si(t, false)
+            ))
+        }
         Value::Array(a) => a.iter().map(to_val).collect::<Result<Val, String>>()?,
         Value::Object(m) => {
             let mut o = jaq_json::Map::default();

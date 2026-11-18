@@ -14,7 +14,6 @@ use std::alloc::{Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use chrono::{TimeZone, Utc};
 use ekiben_core::{OrgId, ResourceManager, StreamConfig};
 use ekiben_server::{
     build_router, run_stream_once, CronSchedule, Scheduler, ServerAuthConfig, ServerState,
@@ -92,53 +91,36 @@ output:
         .contains("downstream database offline: fail_me"));
 }
 
+/// The instant of a UTC wall time.
+fn utc(year: i16, month: i8, day: i8, hour: i8, min: i8, sec: i8) -> jiff::Timestamp {
+    jiff::civil::date(year, month, day)
+        .at(hour, min, sec, 0)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .unwrap()
+        .timestamp()
+}
+
 #[test]
 fn cron_parsing_dst_day_end_of_month_and_every() {
     // 1. `@every 15m`
     let every = CronSchedule::parse("@every 15m", None).unwrap();
-    let t0 = Utc
-        .with_ymd_and_hms(2026, 11, 7, 10, 0, 0)
-        .single()
-        .unwrap();
-    assert_eq!(
-        every.next_after(t0).unwrap(),
-        Utc.with_ymd_and_hms(2026, 11, 7, 10, 15, 0)
-            .single()
-            .unwrap()
-    );
+    let t0 = utc(2026, 11, 7, 10, 0, 0);
+    assert_eq!(every.next_after(t0).unwrap(), utc(2026, 11, 7, 10, 15, 0));
 
     // 2. End of month (`0 12 31 * *`): skips February and April, lands on Jan 31, Mar 31, May 31!
     let eom = CronSchedule::parse("0 12 31 * *", Some("UTC")).unwrap();
-    let jan_31 = Utc
-        .with_ymd_and_hms(2026, 1, 31, 12, 0, 0)
-        .single()
-        .unwrap();
+    let jan_31 = utc(2026, 1, 31, 12, 0, 0);
     let next_mar_31 = eom.next_after(jan_31).unwrap();
-    assert_eq!(
-        next_mar_31,
-        Utc.with_ymd_and_hms(2026, 3, 31, 12, 0, 0)
-            .single()
-            .unwrap()
-    );
+    assert_eq!(next_mar_31, utc(2026, 3, 31, 12, 0, 0));
     let next_may_31 = eom.next_after(next_mar_31).unwrap();
-    assert_eq!(
-        next_may_31,
-        Utc.with_ymd_and_hms(2026, 5, 31, 12, 0, 0)
-            .single()
-            .unwrap()
-    );
+    assert_eq!(next_may_31, utc(2026, 5, 31, 12, 0, 0));
 
     // 3. DST spring-forward day in `Europe/Bratislava` (2026-03-29: 02:00 CET jumps to 03:00 CEST = UTC+2):
     // A cron scheduled for `30 3 * * *` in `Europe/Bratislava` on 2026-03-29 fires at 01:30 UTC!
     let dst_cron = CronSchedule::parse("30 3 * * *", Some("Europe/Bratislava")).unwrap();
-    let before_dst = Utc.with_ymd_and_hms(2026, 3, 29, 0, 0, 0).single().unwrap();
+    let before_dst = utc(2026, 3, 29, 0, 0, 0);
     let fired_utc = dst_cron.next_after(before_dst).unwrap();
-    assert_eq!(
-        fired_utc,
-        Utc.with_ymd_and_hms(2026, 3, 29, 1, 30, 0)
-            .single()
-            .unwrap()
-    );
+    assert_eq!(fired_utc, utc(2026, 3, 29, 1, 30, 0));
 }
 
 #[tokio::test]
@@ -169,18 +151,18 @@ output:
         .unwrap();
 
     // At 12:00:05, not due yet
-    clock.advance(chrono::Duration::seconds(5));
+    clock.advance(jiff::SignedDuration::from_secs(5));
     let summaries = scheduler.tick_and_wait(clock.now()).await;
     assert!(summaries.is_empty());
 
     // At 12:00:10, fires on time!
-    clock.advance(chrono::Duration::seconds(5));
+    clock.advance(jiff::SignedDuration::from_secs(5));
     let summaries = scheduler.tick_and_wait(clock.now()).await;
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].messages_out, 3);
 
     // Pause for 5 minutes (30 missed 10s intervals!): advancing clock by 300s must run ONCE, not 30 times!
-    clock.advance(chrono::Duration::seconds(300));
+    clock.advance(jiff::SignedDuration::from_secs(300));
     let summaries_after_pause = scheduler.tick_and_wait(clock.now()).await;
     assert_eq!(summaries_after_pause.len(), 1);
     let entry = scheduler.get_entry("fast_stream").unwrap();
@@ -213,12 +195,12 @@ output:
         .unwrap();
 
     // Advance 10s and trigger non-blocking run 1
-    clock.advance(chrono::Duration::seconds(10));
+    clock.advance(jiff::SignedDuration::from_secs(10));
     let triggered1 = scheduler.trigger_due(clock.now());
     assert!(triggered1.contains(&"slow_stream".to_string()));
 
     // Advance another 10s while slow_stream is still sleeping: must skip the overlapping run!
-    clock.advance(chrono::Duration::seconds(10));
+    clock.advance(jiff::SignedDuration::from_secs(10));
     let triggered2 = scheduler.trigger_due(clock.now());
     assert!(
         !triggered2.contains(&"slow_stream".to_string()),

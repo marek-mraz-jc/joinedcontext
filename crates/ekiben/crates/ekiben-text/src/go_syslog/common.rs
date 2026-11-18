@@ -3,15 +3,14 @@
 //! and `Time.Format(time.RFC3339Nano)`. The grammars have already checked each timestamp's shape, so
 //! only Go's range checks remain to be reproduced, with Go's error texts.
 
-use std::str::FromStr;
+use ekiben_bloblang::time_format::{fixed, utc as utc_zoned, zone};
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{SignedDuration, Timestamp, Zoned};
 
-use chrono::{
-    DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, Offset, TimeZone, Timelike,
-};
-use ekiben_bloblang::iana::Zone as Tz;
-
-/// A Go `time.Time` reduced to what the machines keep: the instant and the zone offset it reads in.
-pub type GoTime = DateTime<FixedOffset>;
+/// A Go `time.Time` reduced to what the machines keep: the instant and the zone offset it reads in
+/// (a fixed-offset [`Zoned`]).
+pub type GoTime = Zoned;
 
 /// `common.UnsafeUTF8DecimalCodePointsToInt`.
 pub fn decimal(chars: &[u8]) -> i64 {
@@ -80,8 +79,27 @@ fn at(text: &[u8], a: usize, b: usize) -> u32 {
     num(text.get(a..b).unwrap_or_default())
 }
 
-fn date(text: &[u8], year: i32, month: u32, day: u32) -> Result<NaiveDate, String> {
-    NaiveDate::from_ymd_opt(year, month, day).ok_or_else(|| day_out_of_range(text))
+fn date(text: &[u8], year: i32, month: u32, day: u32) -> Result<Date, String> {
+    let small = |n: u32| i8::try_from(n).ok();
+    i16::try_from(year)
+        .ok()
+        .zip(small(month).zip(small(day)))
+        .and_then(|(y, (m, d))| Date::new(y, m, d).ok())
+        .ok_or_else(|| day_out_of_range(text))
+}
+
+/// The wall time `hour:minute:second.nanos` on `d`, as chrono's `and_hms_nano_opt` (`None` when a
+/// field is out of range).
+fn wall(d: Date, hour: u32, minute: u32, second: u32, nanos: u32) -> Option<DateTime> {
+    let small = |n: u32| i8::try_from(n).ok();
+    let t = Time::new(
+        small(hour)?,
+        small(minute)?,
+        small(second)?,
+        i32::try_from(nanos).ok()?,
+    )
+    .ok()?;
+    Some(d.to_datetime(t))
 }
 
 /// `time.Parse(time.Stamp, ..)` on `Jan _2 15:04:05`, which reads as year 0 in UTC.
@@ -97,15 +115,21 @@ pub fn parse_stamp(text: &[u8]) -> Result<GoTime, String> {
         .unwrap_or(1);
     let day = num(text.get(4..6).unwrap_or(b"01").trim_ascii_start());
     let d = date(text, 0, month, day)?;
-    Ok(utc(d.and_hms_opt(
+    Ok(utc(wall(
+        d,
         at(text, 7, 9),
         at(text, 10, 12),
         at(text, 13, 15),
+        0,
     )))
 }
 
-fn utc(t: Option<NaiveDateTime>) -> GoTime {
-    t.unwrap_or_default().and_utc().fixed_offset()
+/// `t` read in UTC; 1970-01-01 when there is none, as chrono's default wall time was.
+fn utc(t: Option<DateTime>) -> GoTime {
+    utc_zoned(
+        t.and_then(|t| Offset::UTC.to_timestamp(t).ok())
+            .unwrap_or(Timestamp::UNIX_EPOCH),
+    )
 }
 
 /// `time.Parse(time.RFC3339, ..)` and `time.Parse("2006-01-02T15:04:05.999999Z07:00", ..)`.
@@ -123,9 +147,14 @@ pub fn parse_rfc3339(text: &[u8]) -> Result<GoTime, String> {
         nanos = at(text, i + 1, i + 1 + digits) * 10u32.pow(9 - digits.min(9) as u32);
         i += 1 + digits;
     }
-    let naive = d
-        .and_hms_nano_opt(at(text, 11, 13), at(text, 14, 16), at(text, 17, 19), nanos)
-        .unwrap_or_default();
+    let naive = wall(
+        d,
+        at(text, 11, 13),
+        at(text, 14, 16),
+        at(text, 17, 19),
+        nanos,
+    )
+    .unwrap_or(jiff::civil::date(1970, 1, 1).at(0, 0, 0, 0));
     let offset = match text.get(i) {
         Some(b'+' | b'-') => {
             let secs = (at(text, i + 1, i + 3) * 3600 + at(text, i + 4, i + 6) * 60) as i32;
@@ -137,27 +166,39 @@ pub fn parse_rfc3339(text: &[u8]) -> Result<GoTime, String> {
         }
         _ => 0,
     };
-    let tz = FixedOffset::east_opt(offset).unwrap_or(chrono::Utc.fix());
-    Ok(tz.from_utc_datetime(&(naive - chrono::Duration::seconds(i64::from(offset)))))
+    // an offset of a day or more falls back to UTC, still taken off the wall time, as before
+    let ts = naive
+        .checked_sub(SignedDuration::from_secs(i64::from(offset)))
+        .ok()
+        .and_then(|t| Offset::UTC.to_timestamp(t).ok())
+        .ok_or_else(|| day_out_of_range(text))?;
+    Ok(fixed(ts, offset).unwrap_or_else(|_| utc_zoned(ts)))
 }
 
 /// `Time.AddDate(years, 0, 0)`: Go normalises Feb 29 in a common year to Mar 1.
 pub fn add_years(t: GoTime, years: i64) -> GoTime {
-    let y = i64::from(t.year()) + years;
-    let y = i32::try_from(y).unwrap_or(i32::MAX);
-    let n = t.naive_local();
-    let d = NaiveDate::from_ymd_opt(y, n.month(), n.day())
-        .or_else(|| NaiveDate::from_ymd_opt(y, 3, 1))
+    let n = t.datetime();
+    let d = i16::try_from(i64::from(t.year()).saturating_add(years))
+        .ok()
+        .and_then(|y| {
+            Date::new(y, n.month(), n.day())
+                .or_else(|_| Date::new(y, 3, 1))
+                .ok()
+        })
         .unwrap_or(n.date());
-    let naive = d.and_time(n.time());
-    t.offset().from_local_datetime(&naive).single().unwrap_or(t)
+    let offset = t.offset();
+    offset
+        .to_timestamp(d.to_datetime(n.time()))
+        .ok()
+        .and_then(|ts| fixed(ts, offset.seconds()).ok())
+        .unwrap_or(t)
 }
 
 /// A location `time.LoadLocation` returned.
 #[derive(Clone, Debug)]
 pub enum Location {
     Utc,
-    Zone(Tz),
+    Zone(TimeZone),
 }
 
 /// `time.LoadLocation`. `Local` reads as UTC: ekiben's container runs in UTC.
@@ -169,7 +210,7 @@ pub fn load_location(name: &str) -> Result<Location, String> {
     if name.contains("..") || name.starts_with('/') || name.starts_with('\\') {
         return Err("time: invalid location name".to_string());
     }
-    Tz::from_str(name)
+    zone(name)
         .map(Location::Zone)
         .map_err(|_| format!("unknown time zone {name}"))
 }
@@ -177,8 +218,11 @@ pub fn load_location(name: &str) -> Result<Location, String> {
 /// `Time.In(loc)`.
 pub fn in_location(t: GoTime, loc: &Location) -> GoTime {
     match loc {
-        Location::Utc => t.with_timezone(&chrono::Utc).fixed_offset(),
-        Location::Zone(tz) => t.with_timezone(tz).fixed_offset(),
+        Location::Utc => utc_zoned(t.timestamp()),
+        Location::Zone(tz) => {
+            let ts = t.timestamp();
+            fixed(ts, tz.to_offset(ts).seconds()).unwrap_or(t)
+        }
     }
 }
 
@@ -198,13 +242,13 @@ pub fn format_rfc3339_nano(t: &GoTime) -> String {
         t.minute(),
         t.second()
     ));
-    let ns = t.nanosecond();
+    let ns = t.subsec_nanosecond();
     if ns != 0 {
         let frac = format!("{ns:09}");
         s.push('.');
         s.push_str(frac.trim_end_matches('0'));
     }
-    let off = t.offset().local_minus_utc();
+    let off = t.offset().seconds();
     if off == 0 {
         s.push('Z');
     } else {
@@ -236,8 +280,8 @@ mod tests {
             ),
         ] {
             let loc = load_location(name).unwrap();
-            assert_eq!(format_rfc3339_nano(&in_location(winter, &loc)), w);
-            assert_eq!(format_rfc3339_nano(&in_location(summer, &loc)), s);
+            assert_eq!(format_rfc3339_nano(&in_location(winter.clone(), &loc)), w);
+            assert_eq!(format_rfc3339_nano(&in_location(summer.clone(), &loc)), s);
         }
         assert_eq!(
             load_location("Nowhere/Town").unwrap_err(),
@@ -255,14 +299,14 @@ mod tests {
         );
         let s = parse_stamp(b"Feb 29 01:02:03").unwrap();
         assert_eq!(
-            format_rfc3339_nano(&add_years(s, 2023)),
+            format_rfc3339_nano(&add_years(s.clone(), 2023)),
             "2023-03-01T01:02:03Z"
         );
         assert_eq!(format_rfc3339_nano(&s), "0000-02-29T01:02:03Z");
         assert!(parse_stamp(b"Feb 30 01:02:03").is_err());
         let z = load_location("Europe/Bratislava").unwrap();
         assert_eq!(
-            format_rfc3339_nano(&in_location(add_years(s, 2024), &z)),
+            format_rfc3339_nano(&in_location(add_years(s.clone(), 2024), &z)),
             "2024-02-29T02:02:03+01:00"
         );
         assert_eq!(

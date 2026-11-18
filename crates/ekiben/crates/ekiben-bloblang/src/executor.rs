@@ -994,7 +994,7 @@ fn icompare(l: &Value, r: &Value) -> bool {
     let as_string = |v: &Value| match v {
         Value::String(s) => Some(s.clone()),
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-        Value::Timestamp(ts) => Some(ts.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)),
+        Value::Timestamp(ts) => Some(crate::time_format::format_rfc3339_auto_si(ts, true)),
         _ => None,
     };
     match l {

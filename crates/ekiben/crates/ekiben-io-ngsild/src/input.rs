@@ -18,11 +18,12 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, SecondsFormat, Utc};
 use ekiben_bloblang::Value;
 use ekiben_core::{
     AckResponder, Batch, Cache, ComponentConfig, CoreError, Input, Part, Registry, StreamContext,
 };
+use jc_time::{format_rfc3339, parse_rfc3339, SecondsFormat};
+use jiff::Timestamp;
 use reqwest::header::LINK;
 use reqwest::Method;
 use serde_json::Value as JsonValue;
@@ -671,14 +672,14 @@ impl QueryReader {
 /// output nacked holds every later page's `observedAt` back and the next pass reads it again.
 #[derive(Default)]
 struct Watermark {
-    committed: Option<DateTime<Utc>>,
-    pages: BTreeMap<u64, (Option<DateTime<Utc>>, Option<bool>)>,
+    committed: Option<Timestamp>,
+    pages: BTreeMap<u64, (Option<Timestamp>, Option<bool>)>,
     next_commit: u64,
     next_seq: u64,
 }
 
 impl Watermark {
-    fn open(&mut self, newest: Option<DateTime<Utc>>) -> u64 {
+    fn open(&mut self, newest: Option<Timestamp>) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
         self.pages.insert(seq, (newest, None));
@@ -709,17 +710,15 @@ impl Watermark {
 
 /// The newest `observedAt` in a temporal answer: instances (`[{"value":..,"observedAt":..}]`)
 /// and the aggregated `values` (`[[value, time], ..]`) form.
-fn newest_observed(entities: &[Value]) -> Option<DateTime<Utc>> {
-    fn parse(s: &str) -> Option<DateTime<Utc>> {
-        DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|d| d.with_timezone(&Utc))
+fn newest_observed(entities: &[Value]) -> Option<Timestamp> {
+    fn parse(s: &str) -> Option<Timestamp> {
+        parse_rfc3339(s)
     }
-    fn walk(v: &Value, depth: usize, best: &mut Option<DateTime<Utc>>) {
+    fn walk(v: &Value, depth: usize, best: &mut Option<Timestamp>) {
         if depth > 6 {
             return;
         }
-        let mut see = |d: Option<DateTime<Utc>>| {
+        let mut see = |d: Option<Timestamp>| {
             if let Some(d) = d {
                 if best.is_none_or(|b| d > b) {
                     *best = Some(d);
@@ -774,8 +773,8 @@ pub struct TemporalReader {
     base: BrokerUrl,
     head: String,
     timerel: TimeRel,
-    time_at: Option<DateTime<Utc>>,
-    end_time_at: Option<DateTime<Utc>>,
+    time_at: Option<Timestamp>,
+    end_time_at: Option<Timestamp>,
     max_pages: u64,
     interval: Option<Duration>,
     watermark: Arc<Mutex<Watermark>>,
@@ -805,12 +804,12 @@ impl TemporalReader {
         if sel.head.is_empty() && sel.tail.is_empty() {
             return Err(f.err("a temporal query needs type, id, attrs, q or geo_q"));
         }
-        let time = |k: &str| -> Result<Option<DateTime<Utc>>, CoreError> {
+        let time = |k: &str| -> Result<Option<Timestamp>, CoreError> {
             match f.str(k)?.filter(|s| !s.is_empty()) {
                 None => Ok(None),
-                Some(s) => DateTime::parse_from_rfc3339(s)
-                    .map(|d| Some(d.with_timezone(&Utc)))
-                    .map_err(|_| f.err(format!("{k} must be an RFC 3339 date-time"))),
+                Some(s) => parse_rfc3339(s)
+                    .map(Some)
+                    .ok_or_else(|| f.err(format!("{k} must be an RFC 3339 date-time"))),
             }
         };
         let time_at = time("time_at")?;
@@ -884,8 +883,8 @@ impl TemporalReader {
         })
     }
 
-    fn fmt_time(t: DateTime<Utc>) -> String {
-        t.to_rfc3339_opts(SecondsFormat::Millis, true)
+    fn fmt_time(t: Timestamp) -> String {
+        format_rfc3339(t, SecondsFormat::Millis, true)
     }
 
     /// The first URL of a pass: `timeAt` is the configured one, or the committed watermark.
@@ -1077,11 +1076,7 @@ mod tests {
 
     #[test]
     fn watermark_commits_in_order() {
-        let t = |s: &str| {
-            DateTime::parse_from_rfc3339(s)
-                .expect("t")
-                .with_timezone(&Utc)
-        };
+        let t = |s: &str| parse_rfc3339(s).expect("t");
         let mut w = Watermark::default();
         let a = w.open(Some(t("2026-01-01T00:00:00Z")));
         let b = w.open(Some(t("2026-01-02T00:00:00Z")));
@@ -1118,7 +1113,7 @@ mod tests {
         let items: Vec<Value> = items.iter().cloned().collect();
         let n = newest_observed(&items).expect("found");
         assert_eq!(
-            n.to_rfc3339_opts(SecondsFormat::Secs, true),
+            format_rfc3339(n, SecondsFormat::Secs, true),
             "2026-01-01T00:10:00Z"
         );
     }

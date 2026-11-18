@@ -168,7 +168,7 @@ impl S3Conn {
                 &hash,
                 creds,
                 &self.region,
-                chrono::Utc::now(),
+                jiff::Timestamp::now(),
             )?;
         }
         let mut map = HeaderMap::new();

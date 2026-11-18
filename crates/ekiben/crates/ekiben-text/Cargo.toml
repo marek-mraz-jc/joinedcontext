@@ -18,7 +18,7 @@ jaq-json = "=2.0.3"
 jmespath = { version = "=0.5.0", features = ["sync"] }
 regex = { workspace = true }
 ekiben-io-file = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use chrono::{DateTime, FixedOffset, TimeZone, Utc};
+use jiff::{Timestamp, Zoned};
 use smallvec::SmallVec;
 
 /// An array or object body shared between clones and copied on the first write, as Go shares
@@ -92,7 +92,7 @@ pub enum Value {
     Number(String),
     String(String),
     Bytes(Vec<u8>),
-    Timestamp(DateTime<FixedOffset>),
+    Timestamp(Zoned),
     Array(Shared<Vec<Value>>),
     Object(Shared<BTreeMap<String, Value>>),
     /// Returned by `deleted()`: deletes the target field, element, or message.
@@ -390,39 +390,46 @@ impl Value {
         }
     }
 
-    pub fn to_timestamp_coerced(&self) -> Result<DateTime<FixedOffset>, String> {
+    pub fn to_timestamp_coerced(&self) -> Result<Zoned, String> {
+        use crate::time_format::{fixed, utc};
+        let unix = |secs: i64, nanos: i32| Timestamp::new(secs, nanos).ok().map(utc);
         match self {
             Value::Number(_) => self.sanitized().to_timestamp_coerced(),
-            Value::Timestamp(ts) => Ok(*ts),
-            Value::Int(secs) => Utc
-                .timestamp_opt(*secs, 0)
-                .single()
-                .map(|dt| dt.fixed_offset())
-                .ok_or_else(|| format!("invalid unix timestamp: {secs}")),
-            Value::Uint(secs) => Utc
-                .timestamp_opt(*secs as i64, 0)
-                .single()
-                .map(|dt| dt.fixed_offset())
+            Value::Timestamp(ts) => Ok(ts.clone()),
+            Value::Int(secs) => {
+                unix(*secs, 0).ok_or_else(|| format!("invalid unix timestamp: {secs}"))
+            }
+            Value::Uint(secs) => i64::try_from(*secs)
+                .ok()
+                .and_then(|s| unix(s, 0))
                 .ok_or_else(|| format!("invalid unix timestamp: {secs}")),
             Value::Float(secs) => {
                 let whole = secs.trunc() as i64;
                 let nanos = ((secs - (whole as f64)) * 1e9).round() as i64;
                 let (whole, nanos) = if nanos < 0 {
-                    (whole - 1, (1_000_000_000 + nanos) as u32)
+                    (whole.saturating_sub(1), 1_000_000_000 + nanos)
                 } else {
-                    (whole, nanos as u32)
+                    (whole, nanos)
                 };
-                Utc.timestamp_opt(whole, nanos)
-                    .single()
-                    .map(|dt| dt.fixed_offset())
+                // a fraction that rounds up to a whole second carries into it
+                let (whole, nanos) = if nanos >= 1_000_000_000 {
+                    (whole.saturating_add(1), nanos - 1_000_000_000)
+                } else {
+                    (whole, nanos)
+                };
+                i32::try_from(nanos)
+                    .ok()
+                    .and_then(|n| unix(whole, n))
                     .ok_or_else(|| format!("invalid unix float timestamp: {secs}"))
             }
-            Value::String(s) => DateTime::parse_from_rfc3339(s)
-                .map_err(|e| format!("failed to parse RFC3339 timestamp '{s}': {e}")),
+            Value::String(s) => jc_time::parse_rfc3339_offset(s)
+                .and_then(|(ts, off)| fixed(ts, off.seconds()).ok())
+                .ok_or_else(|| format!("failed to parse RFC3339 timestamp '{s}': not RFC 3339")),
             Value::Bytes(b) => {
                 let s = String::from_utf8_lossy(b);
-                DateTime::parse_from_rfc3339(&s)
-                    .map_err(|e| format!("failed to parse RFC3339 timestamp '{s}': {e}"))
+                jc_time::parse_rfc3339_offset(&s)
+                    .and_then(|(ts, off)| fixed(ts, off.seconds()).ok())
+                    .ok_or_else(|| format!("failed to parse RFC3339 timestamp '{s}': not RFC 3339"))
             }
             _ => Err(format!(
                 "expected timestamp, number, or string, got {}",
@@ -718,21 +725,8 @@ pub fn escape_quoted_path_segment(seg: &str) -> String {
 
 /// Formats a timestamp as Go's `time.RFC3339Nano` does: fraction digits without trailing zeros,
 /// `Z` for UTC.
-pub fn format_rfc3339_nano<Tz: chrono::TimeZone>(ts: &chrono::DateTime<Tz>) -> String
-where
-    Tz::Offset: std::fmt::Display,
-{
-    let full = ts.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
-    // `...:SS.nnnnnnnnn<offset>`: drop trailing zeros of the fraction, and the dot when none remain.
-    match full.find('.') {
-        Some(dot) => {
-            let end = dot + 10;
-            let frac = full[dot + 1..end].trim_end_matches('0');
-            let sep = if frac.is_empty() { "" } else { "." };
-            format!("{}{sep}{frac}{}", &full[..dot], &full[end..])
-        }
-        None => full,
-    }
+pub fn format_rfc3339_nano(ts: &Zoned) -> String {
+    crate::time_format::format_rfc3339_nano(ts)
 }
 
 /// Formats a float64 the way Go's `strconv.FormatFloat(f, 'g', -1, 64)` does.
@@ -902,11 +896,30 @@ pub fn format_go_v(v: &Value) -> String {
             "[{}]",
             b.iter().map(u8::to_string).collect::<Vec<_>>().join(" ")
         ),
-        // ponytail: Go trims the fraction to its last non-zero digit; chrono prints 3, 6 or 9 digits.
-        Value::Timestamp(ts) if ts.offset().local_minus_utc() == 0 => {
-            ts.format("%Y-%m-%d %H:%M:%S%.f +0000 UTC").to_string()
+        // ponytail: Go trims the fraction to its last non-zero digit; this prints 3, 6 or 9 digits
+        // as the chrono build did (`%.f`).
+        Value::Timestamp(ts) => {
+            let nanos = ts.subsec_nanosecond();
+            let frac = match nanos {
+                0 => String::new(),
+                n if n % 1_000_000 == 0 => format!(".{:03}", n / 1_000_000),
+                n if n % 1_000 == 0 => format!(".{:06}", n / 1_000),
+                n => format!(".{n:09}"),
+            };
+            let zone = match ts.offset().seconds() {
+                0 => "+0000 UTC".to_string(),
+                secs => {
+                    let z = format!(
+                        "{}{:02}{:02}",
+                        if secs < 0 { '-' } else { '+' },
+                        secs.abs() / 3600,
+                        secs.abs() % 3600 / 60
+                    );
+                    format!("{z} {z}")
+                }
+            };
+            format!("{}{frac} {zone}", ts.strftime("%Y-%m-%d %H:%M:%S"))
         }
-        Value::Timestamp(ts) => ts.format("%Y-%m-%d %H:%M:%S%.f %z %z").to_string(),
         Value::Array(a) => format!(
             "[{}]",
             a.iter().map(format_go_v).collect::<Vec<_>>().join(" ")

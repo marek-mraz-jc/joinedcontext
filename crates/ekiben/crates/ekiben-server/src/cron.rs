@@ -1,9 +1,10 @@
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
-use ekiben_bloblang::iana::Zone as Tz;
+use ekiben_bloblang::time_format::{unix_floor, zone};
 use ekiben_core::config::parse_duration_str;
 use ekiben_core::CoreError;
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 
 /// Parsed schedule supporting standard 5-field cron expressions (`min hour dom month dow`),
 /// `@every <duration>`, `@hourly`, `@daily`, `@weekly`, `@monthly`, and optional IANA timezones (`Section 6`).
@@ -18,7 +19,7 @@ pub enum CronSchedule {
         days_of_week: u8,   // bits 0..=6 (0 = Sunday)
         dom_wildcard: bool,
         dow_wildcard: bool,
-        tz: Option<Tz>,
+        tz: Option<TimeZone>,
     },
 }
 
@@ -27,8 +28,7 @@ impl CronSchedule {
         let trimmed = expr.trim();
         let tz = match tz_name.filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("UTC")) {
             Some(name) => Some(
-                name.parse::<Tz>()
-                    .map_err(|_| CoreError::config(format!("unknown timezone '{name}'")))?,
+                zone(name).map_err(|_| CoreError::config(format!("unknown timezone '{name}'")))?,
             ),
             None => None,
         };
@@ -113,11 +113,11 @@ impl CronSchedule {
     }
 
     /// Computes the next scheduled fire time strictly after `after`.
-    pub fn next_after(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    pub fn next_after(&self, after: Timestamp) -> Option<Timestamp> {
         match self {
             CronSchedule::Every(dur) => {
-                let delta = chrono::Duration::from_std(*dur).ok()?;
-                Some(after + delta)
+                let delta = SignedDuration::try_from(*dur).ok()?;
+                after.checked_add(delta).ok()
             }
             CronSchedule::Fields {
                 minutes,
@@ -130,34 +130,27 @@ impl CronSchedule {
                 tz,
             } => {
                 // Start at the next whole minute strictly after `after`
-                let base_ts = after.timestamp() - (after.timestamp().rem_euclid(60)) + 60;
-                let mut candidate = chrono::TimeZone::timestamp_opt(&Utc, base_ts, 0).single()?;
+                let secs = unix_floor(after, 1_000_000_000)?;
+                let base_ts = secs - secs.rem_euclid(60) + 60;
+                let mut candidate = Timestamp::from_second(base_ts).ok()?;
+                let zone = tz.clone().unwrap_or(TimeZone::UTC);
+                let plus =
+                    |t: Timestamp, mins: i64| t.checked_add(SignedDuration::from_mins(mins)).ok();
 
                 // Search up to 5 years ahead (2,629,440 minutes)
                 for _ in 0..(366 * 5 * 24 * 60) {
-                    let (m, d, h, min, dow) = match tz {
-                        Some(zone) => {
-                            let z = candidate.with_timezone(zone);
-                            (
-                                z.month(),
-                                z.day(),
-                                z.hour(),
-                                z.minute(),
-                                z.weekday().num_days_from_sunday(),
-                            )
-                        }
-                        None => (
-                            candidate.month(),
-                            candidate.day(),
-                            candidate.hour(),
-                            candidate.minute(),
-                            candidate.weekday().num_days_from_sunday(),
-                        ),
-                    };
+                    let z = candidate.to_zoned(zone.clone());
+                    let (m, d, h, min, dow) = (
+                        z.month(),
+                        z.day(),
+                        z.hour(),
+                        z.minute(),
+                        z.weekday().to_sunday_zero_offset(),
+                    );
 
                     if (months & (1 << m)) == 0 {
                         // Advance to the next hour to skip non-matching months quickly
-                        candidate += chrono::Duration::minutes((60 - min as i64).max(1));
+                        candidate = plus(candidate, (60 - i64::from(min)).max(1))?;
                         continue;
                     }
 
@@ -172,12 +165,12 @@ impl CronSchedule {
                     };
 
                     if !day_ok {
-                        candidate += chrono::Duration::minutes((60 - min as i64).max(1));
+                        candidate = plus(candidate, (60 - i64::from(min)).max(1))?;
                         continue;
                     }
 
                     if (hours & (1 << h)) == 0 {
-                        candidate += chrono::Duration::minutes((60 - min as i64).max(1));
+                        candidate = plus(candidate, (60 - i64::from(min)).max(1))?;
                         continue;
                     }
 
@@ -185,7 +178,7 @@ impl CronSchedule {
                         return Some(candidate);
                     }
 
-                    candidate += chrono::Duration::minutes(1);
+                    candidate = plus(candidate, 1)?;
                 }
                 None
             }
@@ -269,9 +262,9 @@ mod tests {
     use super::*;
 
     fn next(expr: &str, tz: &str, from: &str) -> Option<String> {
-        let after = DateTime::parse_from_rfc3339(from).ok()?.with_timezone(&Utc);
+        let after = jc_time::parse_rfc3339(from)?;
         let schedule = CronSchedule::parse(expr, Some(tz)).ok()?;
-        Some(schedule.next_after(after)?.to_rfc3339())
+        Some(jc_time::TimestampTz(schedule.next_after(after)?).to_rfc3339())
     }
 
     #[test]

@@ -2,17 +2,17 @@ use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use chrono::{DateTime, Utc};
 use ekiben_bloblang::{Executor, Value};
 use ekiben_core::config::{parse_duration_str, BatchPolicyConfig};
 use ekiben_core::{
     AckResponder, Batch, Batcher, ComponentConfig, CoreError, Input, Part, PartMetaAdapter,
     PartsView, Registry, StreamContext,
 };
+use jiff::Timestamp;
 use serde_json::Value as JsonValue;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -174,11 +174,11 @@ impl GenerateInput {
             GenerateTimer::Every(_) if self.first_run => return Ok(()),
             GenerateTimer::Every(iv) => *iv,
             GenerateTimer::Cron(s) => {
-                let now = Utc::now();
+                let now = Timestamp::now();
                 let at = s.next(now).ok_or_else(|| {
                     CoreError::other("generate input: the cron interval never fires again")
                 })?;
-                (at - now).to_std().unwrap_or_default()
+                at.duration_since(now).unsigned_abs()
             }
         };
         tokio::select! {
@@ -446,12 +446,8 @@ impl FileInput {
             let metadata = file.metadata().map_err(|e| {
                 CoreError::other(format!("failed to stat '{}': {e}", for_read.display()))
             })?;
-            let mod_time: DateTime<Utc> = metadata
-                .modified()
-                .map(DateTime::<Utc>::from)
-                .unwrap_or_else(|_| Utc::now());
-            let mod_unix = mod_time.timestamp();
-            let mod_rfc3339 = mod_time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let (mod_unix, mod_rfc3339) =
+                mod_time_meta(metadata.modified().unwrap_or_else(|_| SystemTime::now()));
             let path_str = for_read.to_string_lossy().into_owned();
             let annotate: Box<dyn Fn(&mut Part) + Send> = Box::new(move |p: &mut Part| {
                 p.meta_set_str("path", path_str.clone());
@@ -1234,9 +1230,34 @@ impl Input for EmptyInput {
     }
 }
 
+/// `mod_time_unix` and `mod_time` of a file modified at `t` (whole seconds, rounded down).
+fn mod_time_meta(t: SystemTime) -> (i64, String) {
+    let t = Timestamp::try_from(t).unwrap_or_else(|_| Timestamp::now());
+    (
+        ekiben_bloblang::time_format::unix_floor(t, 1_000_000_000).unwrap_or_default(),
+        jc_time::format_rfc3339(t, jc_time::SecondsFormat::Secs, true),
+    )
+}
+
 #[cfg(test)]
 mod scanner_config_tests {
     use super::*;
+
+    #[test]
+    fn mod_time_is_whole_seconds_rounded_down_as_the_chrono_build_wrote_it() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let got = [
+            mod_time_meta(UNIX_EPOCH + Duration::from_millis(1_771_628_400_999)),
+            mod_time_meta(UNIX_EPOCH - Duration::from_millis(500)),
+        ];
+        assert_eq!(
+            got,
+            [
+                (1_771_628_400, "2026-02-20T23:00:00Z".to_string()),
+                (-1, "1969-12-31T23:59:59Z".to_string()),
+            ]
+        );
+    }
 
     fn scanner(conf: serde_json::Value) -> Result<FileScannerKind, CoreError> {
         parse_scanner_config(conf.as_object().expect("an object"))

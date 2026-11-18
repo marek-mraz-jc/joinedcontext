@@ -1517,7 +1517,7 @@ pub(super) fn exec(m: &mut Machine<'_>, out: &mut Output) {
                     Ok(t) => {
                         out.timestamp = Some(add_years(t, m.yyyy));
                         if let Some(loc) = &m.loc {
-                            out.timestamp = out.timestamp.map(|t| in_location(t, loc));
+                            out.timestamp = out.timestamp.take().map(|t| in_location(t, loc));
                         }
                         out.timestamp_set = true;
                     }

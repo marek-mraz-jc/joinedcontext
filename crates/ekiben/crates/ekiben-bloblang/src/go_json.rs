@@ -68,7 +68,7 @@ fn write_value(
             &base64::engine::general_purpose::STANDARD.encode(b),
             html,
         ),
-        Value::Timestamp(ts) => write_string(out, &format_rfc3339_nano(*ts), html),
+        Value::Timestamp(ts) => write_string(out, &format_rfc3339_nano(ts), html),
         Value::Array(items) => {
             let items: Vec<&Value> = items
                 .iter()

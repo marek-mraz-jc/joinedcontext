@@ -38,7 +38,7 @@ fn bento_ids(project: &str, name: &str) -> Option<BTreeSet<String>> {
 /// The latest time Bento ran a parity case (`bento.started`, unix seconds): the recorded sources
 /// answered as of then, and a mapping that judges their age by `now()` (the Bratislava counters
 /// refuse rows older than three days) must replay on that clock, or the test expires with them.
-fn recorded_at() -> chrono::DateTime<chrono::Utc> {
+fn recorded_at() -> jiff::Timestamp {
     let dir = portal_contract_common::root().join("tests/e2e-parity");
     let latest = std::fs::read_dir(dir)
         .expect("e2e-parity")
@@ -46,7 +46,7 @@ fn recorded_at() -> chrono::DateTime<chrono::Utc> {
         .filter_map(|text| serde_json::from_str::<Value>(&text).ok()?["bento"]["started"].as_f64())
         .fold(0.0, f64::max);
     assert!(latest > 0.0, "no parity case names when Bento ran");
-    chrono::DateTime::from_timestamp(latest as i64, 0).expect("a unix time")
+    jiff::Timestamp::from_second(latest as i64).expect("a unix time")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

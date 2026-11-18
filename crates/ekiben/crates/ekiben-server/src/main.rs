@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use clap::{Parser, Subcommand};
 use ekiben_bloblang::Environment;
 use ekiben_core::{EnvAccess, MetricsRegistry, OrgId, OrgQuotas, ResourceManager, StreamConfig};
@@ -46,7 +45,7 @@ enum Commands {
         /// Run every `now()` and `timestamp_unix*` at this RFC 3339 instant, to replay a recorded
         /// run on its own clock (example: 2026-11-07T09:16:19Z)
         #[arg(long, value_parser = parse_clock)]
-        clock: Option<chrono::DateTime<chrono::Utc>>,
+        clock: Option<jiff::Timestamp>,
         /// Let `${VAR}` and Bloblang env() read the whole process environment (Bento's
         /// behaviour); without it they read only EKIBEN_VAR_* variables
         #[arg(long, default_value_t = false)]
@@ -388,12 +387,12 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "scheduled".to_string());
                 scheduler
-                    .add_stream(id, conf, Utc::now())
+                    .add_stream(id, conf, jiff::Timestamp::now())
                     .map_err(|e| e.to_string())?;
             }
 
             loop {
-                let _ = scheduler.trigger_due(Utc::now());
+                let _ = scheduler.trigger_due(jiff::Timestamp::now());
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
@@ -492,10 +491,9 @@ async fn run_cli(cli: Cli) -> Result<i32, String> {
     }
 }
 
-fn parse_clock(text: &str) -> Result<chrono::DateTime<chrono::Utc>, String> {
-    chrono::DateTime::parse_from_rfc3339(text)
-        .map(|t| t.with_timezone(&chrono::Utc))
-        .map_err(|e| format!("not an RFC 3339 time such as 2026-11-07T09:16:19Z: {e}"))
+fn parse_clock(text: &str) -> Result<jiff::Timestamp, String> {
+    jc_time::parse_rfc3339(text)
+        .ok_or_else(|| "not an RFC 3339 time such as 2026-11-07T09:16:19Z".to_string())
 }
 
 #[cfg(test)]

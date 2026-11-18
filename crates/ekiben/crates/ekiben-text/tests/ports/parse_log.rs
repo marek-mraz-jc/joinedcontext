@@ -1,13 +1,12 @@
 // Rust twins of Bento 1.22.0's processor_parse_log_test.go: same case names, same inputs.
 
 use crate::common::{build_yaml, bytes, run};
-use chrono::Datelike;
 
 // processor_parse_log_test.go
 
 #[tokio::test]
 async fn test_parse_log_cases() {
-    let year = chrono::Utc::now().year();
+    let year = ekiben_bloblang::time_format::utc(jiff::Timestamp::now()).year();
     let cases = [
         (
             "valid syslog_rfc5424 input, valid json output",
