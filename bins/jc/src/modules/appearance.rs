@@ -56,6 +56,7 @@ pub(crate) fn installation() -> Option<OrganizationAppearance> {
 
 /// Calls `apply` with the installation's look at the first look and whenever it changes, until
 /// `shutdown`.
+#[cfg(feature = "kaisatsu")]
 pub(crate) fn follow_installation<F, Fut>(
     shutdown: &CancellationToken,
     tasks: &TaskTracker,

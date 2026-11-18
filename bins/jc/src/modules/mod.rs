@@ -32,7 +32,7 @@ pub(crate) static PORTAL_STATE: std::sync::OnceLock<joinedcontext_portal::state:
 
 #[cfg(feature = "antares")]
 pub mod antares;
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", any(feature = "kaisatsu", feature = "dataroom")))]
 pub(crate) mod appearance;
 #[cfg(feature = "assistant")]
 pub mod assistant;
