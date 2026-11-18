@@ -278,6 +278,25 @@ fn set_cookie_values(response: &axum::response::Response) -> Vec<String> {
         .collect()
 }
 
+/// The CSRF token `/auth/me` hands the session `cookies` carry, `None` without a session: a
+/// signed-in mutation echoes its session's own token (RTE-12, SEC-10).
+async fn own_csrf(app: axum::Router, cookies: &str) -> Option<String> {
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header(header::COOKIE, cookies)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    set_cookie_values(&response).iter().find_map(|cookie| {
+        let value = cookie.strip_prefix("__Host-jc_csrf=")?.split(';').next()?;
+        Some(value.to_owned())
+    })
+}
+
 #[tokio::test]
 async fn login_hands_the_portal_s_language_to_the_realm_and_drops_anything_else() {
     // T-4199: a Slovak Portal led to an English sign-in page.
@@ -992,8 +1011,11 @@ async fn a_refused_refresh_inside_the_leeway_lets_the_live_token_serve_the_reque
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    // The session's own CSRF token may be handed out (RTE-12); no session cookie moves.
     assert!(
-        set_cookie_values(&response).is_empty(),
+        set_cookie_values(&response)
+            .iter()
+            .all(|cookie| cookie.starts_with("__Host-jc_csrf=") && !cookie.contains("Max-Age=0")),
         "nothing rotates and nothing is cleared while the access token still stands"
     );
 }
@@ -1761,6 +1783,7 @@ async fn me_answers_the_identity_and_never_a_token() {
     let app = app_with_realm(&realm).await;
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v1/auth/me")
@@ -1771,8 +1794,25 @@ async fn me_answers_the_identity_and_never_a_token() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    // A read needs no double-submit token, and answering one does not mint a cookie for a Portal
-    // session — that is the edge session's case, above.
+    // A Portal session without its own double-submit token gets it (RTE-12); one that holds it
+    // gets no new cookie.
+    let own = own_csrf(app.clone(), &session_cookies(300))
+        .await
+        .expect("a Portal session without its token gets one");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/me")
+                .header(
+                    header::COOKIE,
+                    format!("{}; __Host-jc_csrf={own}", session_cookies(300)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert!(
         set_cookie_values(&response)
             .iter()
@@ -1821,6 +1861,14 @@ async fn logout_clears_the_cookies_without_a_session_and_hints_at_no_token() {
             let state = state_behind(realm_ref, false).await;
             state.keep_session_claims(signed_in);
             let app = server::app(state);
+            // A signed-in session echoes its own token, an anonymous caller the double submit.
+            let token = own_csrf(app.clone(), &cookie)
+                .await
+                .unwrap_or_else(|| token.to_owned());
+            let cookie = match cookie.as_str() {
+                "" => format!("__Host-jc_csrf={token}"),
+                session => format!("{session}; __Host-jc_csrf={token}"),
+            };
             let response = app
                 .oneshot(
                     Request::builder()
@@ -1842,7 +1890,7 @@ async fn logout_clears_the_cookies_without_a_session_and_hints_at_no_token() {
     };
 
     // Nobody signed in: the cookies still go, and the end-session URL hints at no token.
-    let (status, cookies, target) = out(format!("__Host-jc_csrf={token}")).await;
+    let (status, cookies, target) = out(String::new()).await;
     assert_eq!(status, StatusCode::OK, "{target}");
     for name in ["__Host-jc_session", "__Host-jc_refresh", "__Host-jc_csrf"] {
         assert!(
@@ -1873,7 +1921,7 @@ async fn logout_clears_the_cookies_without_a_session_and_hints_at_no_token() {
         .filter_map(|c| c.split(';').next().map(str::to_string))
         .collect::<Vec<_>>()
         .join("; ");
-    let (status, _cookies, target) = out(format!("{cookie}; __Host-jc_csrf={token}")).await;
+    let (status, _cookies, target) = out(cookie).await;
     assert_eq!(status, StatusCode::OK, "{target}");
     let url = target["endSessionUrl"].as_str().unwrap_or_default();
     assert!(
@@ -2058,15 +2106,15 @@ async fn without_a_provider_the_token_doors_are_shut_before_the_token_is_read() 
 const LOGOUT_CSRF: &str = "logout-double-submit-token";
 
 async fn logout_with(app: axum::Router, cookies: &str) -> StatusCode {
+    let token = own_csrf(app.clone(), cookies)
+        .await
+        .unwrap_or_else(|| LOGOUT_CSRF.to_owned());
     app.oneshot(
         Request::builder()
             .method("POST")
             .uri("/api/v1/auth/logout")
-            .header(
-                header::COOKIE,
-                format!("{cookies}; __Host-jc_csrf={LOGOUT_CSRF}"),
-            )
-            .header("x-csrf-token", LOGOUT_CSRF)
+            .header(header::COOKIE, format!("{cookies}; __Host-jc_csrf={token}"))
+            .header("x-csrf-token", token)
             .body(Body::empty())
             .unwrap(),
     )

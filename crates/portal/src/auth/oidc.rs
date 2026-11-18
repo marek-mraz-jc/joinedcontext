@@ -1050,7 +1050,11 @@ pub async fn callback(
     let jar = session::store_in(jar, &session, realm.as_deref())?;
     state.keep_session_claims(&session);
     state.keep_access_token(&session, token_response.access_token().secret().clone());
-    let (cookies, _token) = csrf::issue(cookies);
+    let bound = csrf::Bound {
+        session: &session,
+        config: &state.config,
+    };
+    let (cookies, _token) = csrf::issue(cookies, Some(bound));
     Ok((jar, cookies, Redirect::to(&flow.redirect_to)).into_response())
 }
 
@@ -1146,12 +1150,17 @@ pub struct Me {
     )
 )]
 pub async fn me(
+    State(state): State<AppState>,
     user: crate::auth::CurrentUser,
     front: session::Front,
     jar: CookieJar,
 ) -> (CookieJar, Json<Me>) {
+    let bound = csrf::Bound {
+        session: &user.0,
+        config: &state.config,
+    };
     (
-        csrf_for_edge(front, jar),
+        csrf_for_session(front, jar, bound),
         Json(Me {
             identity: user.0.identity,
             front,
@@ -1159,12 +1168,14 @@ pub async fn me(
     )
 }
 
-/// An edge session never passes the Portal's callback, the one place the double-submit cookie is
-/// minted, so the first `/auth/me` of such a session issues it; the check on every mutation stays
-/// the same for every front (ADR-N-019, AP-28, PF-50).
-fn csrf_for_edge(front: session::Front, jar: CookieJar) -> CookieJar {
-    if front == session::Front::Edge && jar.get(csrf::CSRF_COOKIE).is_none() {
-        csrf::issue(jar).0
+/// An edge session never passes the Portal's callback, where the double-submit cookie is minted,
+/// so the first `/auth/me` of such a session issues it. Any cookie session whose token is not its
+/// own (minted before tokens were bound to the session, RTE-12, or for an earlier session) gets
+/// its own on its next `/auth/me`; the check on every mutation stays the same for every front
+/// (ADR-N-019, AP-28, PF-50).
+fn csrf_for_session(front: session::Front, jar: CookieJar, bound: csrf::Bound<'_>) -> CookieJar {
+    if front != session::Front::Bearer && csrf::needs_token(&jar, Some(bound)) {
+        csrf::issue(jar, Some(bound)).0
     } else {
         jar
     }

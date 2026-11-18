@@ -916,6 +916,8 @@ fn session_cookie(subject: &str) -> String {
         access_expires_at: now + 3600,
         refresh_token: None,
     };
+    // The session's own double-submit token (RTE-12), minted for the host pinned now.
+    let token = joinedcontext_portal::auth::csrf::Token::bound(&key, &session);
     let jar = session::store(PrivateCookieJar::new(key), &session).expect("store session");
     let response = (jar, StatusCode::OK).into_response();
     let mut parts: Vec<String> = response
@@ -926,10 +928,20 @@ fn session_cookie(subject: &str) -> String {
         .map(|raw| raw.split(';').next().unwrap_or_default().to_string())
         .collect();
     parts.push(format!(
-        "{}=csrf-mcp-elicitations",
-        joinedcontext_portal::auth::csrf::CSRF_COOKIE
+        "{}={}",
+        joinedcontext_portal::auth::csrf::CSRF_COOKIE,
+        token.as_str()
     ));
     parts.join("; ")
+}
+
+/// The double-submit token a [`session_cookie`] carries.
+fn csrf_of(cookie: &str) -> &str {
+    let name = format!("{}=", joinedcontext_portal::auth::csrf::CSRF_COOKIE);
+    cookie
+        .split("; ")
+        .find_map(|part| part.strip_prefix(name.as_str()))
+        .unwrap_or_default()
 }
 
 /// One request to the question's page route, with a session cookie or a bearer token.
@@ -949,7 +961,7 @@ async fn decide(
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(
                     joinedcontext_portal::auth::csrf::CSRF_HEADER,
-                    "csrf-mcp-elicitations",
+                    csrf_of(credential.1),
                 );
             Body::from(json!({ "decision": decision }).to_string())
         }
@@ -985,17 +997,9 @@ async fn decide_door(
         base: "https://hel.example".parse().unwrap(),
     };
     let (cookie, token) = scope(host(), async {
-        let token = joinedcontext_portal::auth::csrf::Token::mint();
-        let session = session_cookie(subject);
-        let session = session
-            .rsplit_once("; ")
-            .map_or(session.as_str(), |(s, _)| s);
-        let cookie = format!(
-            "{session}; {}={}",
-            joinedcontext_portal::auth::csrf::CSRF_COOKIE,
-            token.as_str()
-        );
-        (cookie, token.as_str().to_owned())
+        let cookie = session_cookie(subject);
+        let token = csrf_of(&cookie).to_owned();
+        (cookie, token)
     })
     .await;
     let (method, uri, body) = match decision {

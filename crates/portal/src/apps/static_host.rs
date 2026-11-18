@@ -37,10 +37,20 @@ async fn serve_index(
     uri: Uri,
     name: Path<String>,
 ) -> Response {
-    let needs_csrf = super::roles::presented(&state, &headers).is_some()
-        && axum_extra::extract::cookie::CookieJar::from_headers(&headers)
-            .get(crate::auth::csrf::CSRF_COOKIE)
-            .is_none();
+    let session = match super::roles::presented(&state, &headers) {
+        Some(_) => crate::auth::csrf::session_of(&state, &headers).await,
+        None => None,
+    };
+    let bound = session.as_ref().map(|session| crate::auth::csrf::Bound {
+        session,
+        config: &state.config,
+    });
+    let token = (super::roles::presented(&state, &headers).is_some()
+        && crate::auth::csrf::needs_token(
+            &axum_extra::extract::cookie::CookieJar::from_headers(&headers),
+            bound,
+        ))
+    .then(|| bound.map_or_else(crate::auth::csrf::Token::mint, |bound| bound.token()));
     let mut response = serve(
         state,
         headers,
@@ -48,8 +58,7 @@ async fn serve_index(
         Path((name.0, "index.html".to_string())),
     )
     .await;
-    if needs_csrf && response.status().is_success() {
-        let token = crate::auth::csrf::Token::mint();
+    if let Some(token) = token.filter(|_| response.status().is_success()) {
         for cookie in [
             crate::auth::csrf::cookie(&token),
             crate::auth::csrf::legacy_app_cookie(&token),
