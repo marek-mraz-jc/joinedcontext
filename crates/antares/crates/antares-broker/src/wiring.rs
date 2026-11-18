@@ -911,7 +911,7 @@ mod tests {
     async fn a_store_fault_resolving_a_claim_check_leaves_the_change_for_redelivery() {
         let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_secs(1))
-            .connect_lazy("postgres://nobody@127.0.0.1:1/antares_no_such_db")
+            .connect_lazy("postgres://nobody@localhost:1/antares_no_such_db")
             .expect("lazy pool");
         let st = AppState::with_store(
             "antares".into(),
