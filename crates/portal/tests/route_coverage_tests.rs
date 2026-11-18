@@ -78,6 +78,7 @@ const ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
 ("GET", "/internal/domain-verifications", "the gateway's read of each Organization's domain state, authenticated as a workload"),
 ("GET", "/internal/previews", "the gateway's read of the running previews, authenticated as a workload"),
 ("GET", "/internal/revocations", "the gateway's read of the revoked subjects, authenticated as a workload"),
+("POST", "/internal/endpoint-token", "a gateway apart from the Portal turns a Portal page's session cookie into the person's token for one Endpoint, authenticated as a workload (T-7226)"),
 ("GET", "/internal/connectors/{sub}", "the gateway's read of one person's MCP connectors, authenticated as a workload (EP-123)"),
 ("POST", "/internal/usage", "the gateway replicas post their call counts per Endpoint and surface, authenticated as a workload (T-5118)"),
 ("GET", "/mcp", "the MCP door itself, which dispatches this registry"),

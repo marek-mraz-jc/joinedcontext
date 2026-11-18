@@ -74,6 +74,12 @@ prod: the same with `prod 42102 55442`. A clean rebuild removes `$REHEARSAL_HOME
   only on the in-process hop and checks persons only with kaisatsu and the Portal beside it
   (split.sh header). Import on the one-process layout first (`import.sh`), then restart split
   on the same data; host mode (`REHEARSAL_JC_TOML_EXTRA`) is refused there.
+  `REHEARSAL_DATA_REPLICAS=1`..`9` (T-7226) moves the gateway and Antares out of core into that
+  many `--role gateway,antares` processes (the data plane, `[gateway]` in `split/data.toml`, a
+  state dir each, one broker admin token): the front sends the gateway's root paths and `/broker`
+  to them in turn, core's Portal reaches the broker through `[remote]` and the data plane reads
+  revocations, connectors, usage and Portal sessions on core replica 1's internal listener with
+  its `context-gateway` token. Driver and run lines: `/workspace/evidence/T-7226/rehearse.sh`.
   `notify_once.py --base <replica 1> --base <replica 2>` (on allow-all, with
   `ANTARES_EGRESS_ALLOW_PRIVATE=true`) writes to both replicas in turn and counts each
   notification at a loopback receiver.

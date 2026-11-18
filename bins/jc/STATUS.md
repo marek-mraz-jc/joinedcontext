@@ -590,6 +590,9 @@ person in no group gets the exchanged token and is still refused by the gateway'
   siblings (`portal_siblings = false` leaves every key to the environment). The gateway reads revocations,
   connectors and usage over the network with its own `context-gateway` token of audience `portal-internal`, which
   the Portal checks per route (`crates/portal/tests/internal_listener_tests.rs`); revocations keep their 10 s poll.
+  A Portal page's same-origin read of a closed Endpoint reaches the data plane with the session cookie alone: the
+  gateway posts the cookie to the Portal's `/internal/endpoint-token` with that token and reads as the person (200
+  or 403, as in one jc); a cookie that names nobody or an unreachable Portal leaves the read anonymous.
   It follows the forge read-only through `[remote.modules] shako` (header `token <credential>`, which the forwarder
   swaps) and provisions nothing there. Core names the gateway as `[remote.modules] gateway = <base>` (no forwarder:
   kaisatsu keeps the `context-gateway` client, the Portal sets `JC_PORTAL_GATEWAY_URL` and `_CLIENT_ID`). Both sides
@@ -600,10 +603,10 @@ person in no group gets the exchanged token and is still refused by the gateway'
   `config::tests::a_gateway_without_the_portal_needs_the_portals_door_and_shared_secrets`,
   `app::tests::both_sides_of_a_split_gateway_hold_the_given_client_secret`,
   `modules::gateway::tests::the_data_plane_reads_the_portal_over_the_network_with_its_own_client`,
-  `modules::gateway::tests::the_forge_credential_is_the_one_a_remote_forwarder_swaps`.
-  Known limit: the Portal's own pages read a closed Endpoint with the person's session only where the Portal runs
-  (`session_reads` takes the token from the Portal in the same process); on the data plane such a read stays
-  anonymous, so a closed Endpoint answers 401 there until the session exchange crosses the internal listener.
+  `modules::gateway::tests::the_forge_credential_is_the_one_a_remote_forwarder_swaps`,
+  `modules::gateway::tests::a_data_plane_reads_a_portal_session_through_the_portals_internal_listener`,
+  `api::internal::endpoint_tokens::tests` and `internal_listener_tests::the_session_endpoint_token_answers_the_gateways_token_alone`
+  (Portal). Rehearsal: `REHEARSAL_DATA_REPLICAS` in `deploy/rehearsal/split.sh`.
 - kaisatsu: one client scope per module with an `oidc-audience-mapper` to the module's name, as optional scopes of
   the caller's service-account client (`tests/split_role.rs` builds that realm).
 

@@ -184,6 +184,33 @@ async fn the_revocation_list_answers_the_gateways_token_alone() {
     );
 }
 
+/// T-7226: a gateway apart from the Portal turns a page's session cookie into the person's
+/// Endpoint token here; nobody else may, and a cookie that names nobody gets `204`, never a token.
+#[tokio::test]
+async fn the_session_endpoint_token_answers_the_gateways_token_alone() {
+    let (app, signer, issuer) = listener(Some(GATEWAY_CLIENT)).await;
+    let (uri, body) = ("/internal/endpoint-token", r#"{"slug":"closedslug"}"#);
+    assert_eq!(
+        call(&app, "POST", uri, body, None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let other = token(&signer, &issuer, INTERNAL_AUDIENCE, PROXY_CLIENT);
+    assert_eq!(
+        call(&app, "POST", uri, body, Some(&other)).await,
+        StatusCode::UNAUTHORIZED
+    );
+    let gateway = token(&signer, &issuer, INTERNAL_AUDIENCE, GATEWAY_CLIENT);
+    assert_eq!(
+        call(&app, "POST", uri, body, Some(&gateway)).await,
+        StatusCode::NO_CONTENT
+    );
+    let bad = r#"{"slug":"../admin"}"#;
+    assert_eq!(
+        call(&app, "POST", uri, bad, Some(&gateway)).await,
+        StatusCode::BAD_REQUEST
+    );
+}
+
 /// A Portal that was not told whose token to expect refuses every call rather than falling back
 /// to the NetworkPolicy: configuration is fail-closed here as everywhere else.
 #[tokio::test]
