@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use chrono_tz::Tz;
+use ekiben_bloblang::iana::Zone as Tz;
 use ekiben_core::config::parse_duration_str;
 use ekiben_core::CoreError;
 
@@ -262,4 +262,42 @@ fn parse_cron_atom(s: &str, min: u32, max: u32, names: &[(&str, u32)]) -> Result
         )));
     }
     Ok(val)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn next(expr: &str, tz: &str, from: &str) -> Option<String> {
+        let after = DateTime::parse_from_rfc3339(from).ok()?.with_timezone(&Utc);
+        let schedule = CronSchedule::parse(expr, Some(tz)).ok()?;
+        Some(schedule.next_after(after)?.to_rfc3339())
+    }
+
+    #[test]
+    fn a_zoned_schedule_follows_dst_in_bratislava_and_helsinki() {
+        // Daily 09:00 local: 08:00Z in CET, 07:00Z in CEST; 07:00Z in EET, 06:00Z in EEST.
+        for (tz, winter, summer) in [
+            (
+                "Europe/Bratislava",
+                "2026-03-28T08:00:00+00:00",
+                "2026-03-30T07:00:00+00:00",
+            ),
+            (
+                "Europe/Helsinki",
+                "2026-03-28T07:00:00+00:00",
+                "2026-03-30T06:00:00+00:00",
+            ),
+        ] {
+            assert_eq!(
+                next("0 9 * * *", tz, "2026-03-28T00:00:00Z").as_deref(),
+                Some(winter)
+            );
+            assert_eq!(
+                next("0 9 * * *", tz, "2026-03-29T12:00:00Z").as_deref(),
+                Some(summer)
+            );
+        }
+        assert!(CronSchedule::parse("0 9 * * *", Some("Mars/Olympus")).is_err());
+    }
 }

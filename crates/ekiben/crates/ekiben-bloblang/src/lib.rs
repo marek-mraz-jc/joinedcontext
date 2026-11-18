@@ -19,6 +19,7 @@ pub mod go_json;
 pub mod go_sort;
 mod gorand;
 mod html_entities;
+pub mod iana;
 pub mod json_schema;
 pub mod methods;
 pub mod methods_crypto;

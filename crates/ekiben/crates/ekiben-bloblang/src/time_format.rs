@@ -1,5 +1,5 @@
+use crate::iana::Zone as Tz;
 use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDateTime, TimeZone, Timelike, Utc};
-use chrono_tz::Tz;
 
 /// Translates a Go `time` reference layout (`Mon Jan 2 15:04:05 -0700 MST 2006`)
 /// into tokens and formats or parses timestamps accordingly.
@@ -1033,5 +1033,34 @@ fn days_in_month(year: i32, month: u32) -> u32 {
             }
         }
         _ => 30,
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+
+    #[test]
+    fn zone_offsets_change_at_the_dst_instant_in_bratislava_and_helsinki() {
+        let utc = |s: &str| {
+            DateTime::parse_from_rfc3339(s)
+                .map(|t| t.with_timezone(&Utc))
+                .map_err(|e| e.to_string())
+        };
+        for (tz, winter, summer) in [
+            ("Europe/Bratislava", 3600, 7200),
+            ("Europe/Helsinki", 7200, 10800),
+        ] {
+            for (at, want) in [
+                ("2026-03-29T00:59:59Z", winter),
+                ("2026-03-29T01:00:00Z", summer),
+                ("2026-10-25T00:59:59Z", summer),
+                ("2026-10-25T01:00:00Z", winter),
+            ] {
+                let got = utc(at).and_then(|t| resolve_tz_offset(tz, t));
+                assert_eq!(got.map(|o| o.local_minus_utc()), Ok(want), "{tz} at {at}");
+            }
+        }
+        assert!(resolve_tz_offset("Nowhere/Town", Utc::now()).is_err());
     }
 }

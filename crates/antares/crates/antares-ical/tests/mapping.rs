@@ -180,7 +180,7 @@ fn without_start_or_name_there_is_no_event() {
 fn the_window_keeps_what_overlaps_it_and_its_last_day_inclusive() {
     // the 21st in Bratislava (CEST): 2026-10-20T22:00Z to 2026-10-21T22:00Z
     let day = When::parse("2026-10-21");
-    let w = Window::read(day, day, antares_ical::mapping::DEFAULT_ZONE);
+    let w = Window::read(day, day, antares_ical::mapping::default_zone());
     let multi = event(&[("endDate", prop(json!("2026-10-22")))]);
     assert!(matches!(vevent(&multi, &w, now()), Outcome::Event(_)));
     // one day, the 20th: over before the 21st
@@ -193,7 +193,7 @@ fn the_window_keeps_what_overlaps_it_and_its_last_day_inclusive() {
     let evening = Window::read(
         When::parse("2026-10-21T20:00:00"),
         None,
-        antares_ical::mapping::DEFAULT_ZONE,
+        antares_ical::mapping::default_zone(),
     );
     let at_19 = event(&[("startDate", prop(json!("2026-10-21T17:00:00Z")))]);
     assert_eq!(vevent(&at_19, &evening, now()), Outcome::Outside);

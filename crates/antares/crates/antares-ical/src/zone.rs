@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: EUPL-1.2
-//! The `VTIMEZONE` of a feed's zone (RFC 5545 3.6.5), read from the IANA database chrono-tz
-//! carries: every offset change from the year before `year` to three years after it, each as
+//! The `VTIMEZONE` of a feed's zone (RFC 5545 3.6.5), read from the IANA database jiff
+//! bundles: every offset change from the year before `year` to three years after it, each as
 //! the `DTSTART` or an `RDATE` of its `STANDARD` or `DAYLIGHT` observance. A zone without a
 //! change in that span is one `STANDARD` from 1970. The feed writes its instants in UTC, so the
 //! block names the zone a calendar shows them in (`X-WR-TIMEZONE` says the same to the clients
 //! that read only that) and keeps an empty calendar a valid iCalendar object (3.4: one
 //! component at least).
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Offset as _, TimeZone as _, Utc};
-use chrono_tz::{OffsetComponents as _, OffsetName as _, Tz};
+use crate::iana::Zone as Tz;
+use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, Utc};
 use std::collections::BTreeMap;
 
 /// One observance: its kind, its offsets before and after, and its name.
@@ -16,11 +16,13 @@ type Observance = (&'static str, i32, i32, String);
 
 /// What is in force at `t`: the offset in seconds, the daylight flag and the abbreviation.
 fn state(zone: Tz, t: NaiveDateTime) -> (i32, bool, String) {
-    let o = zone.offset_from_utc_datetime(&t);
+    let instant =
+        jiff::Timestamp::new(t.and_utc().timestamp(), 0).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    let o = zone.jiff().to_offset_info(instant);
     (
-        o.fix().local_minus_utc(),
-        o.dst_offset() != Duration::zero(),
-        o.abbreviation().unwrap_or_default().to_owned(),
+        o.offset().seconds(),
+        o.dst().is_dst(),
+        o.abbreviation().to_owned(),
     )
 }
 
@@ -102,7 +104,7 @@ pub fn vtimezone(zone: Tz, year: i32) -> Vec<String> {
         }
         lines.push(format!("TZOFFSETFROM:{}", offset(*from)));
         lines.push(format!("TZOFFSETTO:{}", offset(*to)));
-        // chrono-tz names every offset (`CET`, `+03`)
+        // the IANA database names every offset (`CET`, `+03`)
         lines.push(format!("TZNAME:{}", crate::mapping::escape(name)));
         lines.push(format!("END:{kind}"));
     }
@@ -123,7 +125,10 @@ mod tests {
 
     #[test]
     fn bratislava_changes_twice_a_year_on_the_last_sundays() {
-        let lines = vtimezone(chrono_tz::Europe::Bratislava, 2026);
+        let lines = vtimezone(
+            "Europe/Bratislava".parse().unwrap_or_else(|_| Tz::utc()),
+            2026,
+        );
         let text = lines.join("\n");
         assert!(text.contains("TZID:Europe/Bratislava"), "{text}");
         // 2026-03-29 01:00Z: 02:00 CET becomes 03:00 CEST
@@ -142,7 +147,7 @@ mod tests {
 
     #[test]
     fn a_zone_without_changes_is_one_standard_observance() {
-        let lines = vtimezone(chrono_tz::UTC, 2026);
+        let lines = vtimezone(Tz::utc(), 2026);
         assert_eq!(
             lines,
             [

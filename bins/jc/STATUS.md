@@ -781,11 +781,13 @@ Still red, with no fixed release to take:
   `crates/portal/src/auth/bearer.rs:1106` inside `#[cfg(test)]`. The vulnerable path is unreachable; the
   advisory stays red until openidconnect moves to rsa 0.10 or drops it. kaisatsu keeps openidconnect out for
   this reason (`crates/kaisatsu/server/Cargo.toml:51`).
-- RUSTSEC-2026-0543 `chrono 0.4.45` and RUSTSEC-2026-0555 `chrono-tz 0.10.4` (both unmaintained, no
-  vulnerability, no safe upgrade): chrono is a direct dependency of 76 Cargo.toml files, chrono-tz of antares-ical
-  and the ekiben crates. Ignored by owner decision 2026-11-18 in the root, antares, ekiben and portal deny.toml
-  until 2027-02-18 or the jiff migration T-7233, whichever is first; `.github/scripts/deny-ignore-dates.py`
-  (ci.yml) turns red once a `remove by` date has passed. cargo audit only warns on them.
+- RUSTSEC-2026-0543 `chrono 0.4.45` (unmaintained, no vulnerability, no safe upgrade): a direct dependency of
+  76 Cargo.toml files, and of openidconnect, oauth2, async-imap, calamine, parquet, lopdf, russh-sftp, suppaftp,
+  rmcp, kreuzberg-pdfium-render and (through our features) sqlx and schemars. Ignored by owner decision
+  2026-11-18 in the root, antares, ekiben and portal deny.toml until 2027-02-18 or the jiff migration (T-7233,
+  slices T-7234..T-7256); `.github/scripts/deny-ignore-dates.py` (ci.yml) turns red once a `remove by` date has
+  passed. cargo audit only warns on it. chrono-tz (RUSTSEC-2026-0555) is gone: IANA zones come from jiff
+  (T-7233).
 - `cargo audit` also warns on `atomic-polyfill` (unmaintained, RUSTSEC-2023-0089) from a `heapless 0.7.17` lock
   entry that no target of the graph builds (`cargo tree -i heapless@0.7.17 --target all` prints nothing); a
   warning, not a failure.
