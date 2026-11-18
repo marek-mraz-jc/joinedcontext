@@ -125,6 +125,11 @@ async fn security_and_mount_headers(
     headers
         .entry("referrer-policy")
         .or_insert_with(|| HeaderValue::from_static("strict-origin-when-cross-origin"));
+    // Tenant answers and new public-dashboard tokens are never stored by an intermediary
+    // unless a handler says otherwise.
+    headers
+        .entry(axum::http::header::CACHE_CONTROL)
+        .or_insert_with(|| HeaderValue::from_static("private, no-store"));
     if let Ok(hv) = HeaderValue::from_str(&public_base) {
         headers.insert("x-daiya-public-base", hv);
     }

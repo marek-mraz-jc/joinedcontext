@@ -473,6 +473,50 @@ async fn mcp_initialize_and_discover() {
     assert!(disc_res["result"]["tools"]["count"].as_u64().unwrap() > 0);
 }
 
+/// The project door's handshake answers a caller who may not read the project as it answers an
+/// unknown project (TEN-13): 404, nothing about the project.
+#[tokio::test]
+async fn the_project_door_handshake_tells_a_stranger_nothing() {
+    let (app, issuer, signer, kid) = setup_app_and_keys().await;
+    let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"protocolVersion": "2026-07-28", "capabilities": {}}});
+    for (subject, groups, expected) in [
+        ("stranger.user", &[][..], StatusCode::NOT_FOUND),
+        ("steward.user", &["platform-admins"][..], StatusCode::OK),
+    ] {
+        let token = sign_token(
+            &signer,
+            &kid,
+            &issuer,
+            PORTAL_AUDIENCE,
+            subject,
+            &[],
+            groups,
+        );
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/projects/ovzdusie/mcp")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(serde_json::to_vec(&init).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected, "{subject}");
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let answer: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            answer["result"].is_null(),
+            expected != StatusCode::OK,
+            "{answer}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn mcp_tools_list_filtered_by_caller() {
     let (app, issuer, signer, kid) = setup_app_and_keys().await;

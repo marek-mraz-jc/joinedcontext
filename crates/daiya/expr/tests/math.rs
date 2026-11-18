@@ -139,6 +139,19 @@ fn the_parser_refuses_bad_grammar_and_unknown_functions() {
             .to_string();
         assert!(err.contains("maximum nesting depth of 2"), "{expr}: {err}");
     }
+    // Each binary operator in a flat chain counts one level too, so the tree the
+    // evaluator recurses over stays as shallow as the cap.
+    for op in ["+", "*", "**", "==", "&&", "||"] {
+        let three = ["$A"; 3].join(op);
+        assert!(MathExpr::parse_with_max_depth(&three, 2).is_ok(), "{three}");
+        let four = ["$A"; 4].join(op);
+        let err = MathExpr::parse_with_max_depth(&four, 2)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("maximum nesting depth of 2"), "{four}: {err}");
+    }
+    let long_chain = ["1"; 200_000].join("+");
+    assert!(parse_err(&long_chain).contains("maximum nesting depth of 100"));
 }
 
 #[test]

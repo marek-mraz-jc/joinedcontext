@@ -256,13 +256,8 @@ pub async fn build_with_writer(
     let live = crate::siblings::live_addresses(&cfg.addresses, siblings);
     let mut by_catalogue = BTreeMap::new();
     for org in organizations {
+        // Distinct from the default catalogue: checked in the loop above.
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| err(&e))?;
-        if id == catalogue_id {
-            return Err(err(&format!(
-                "[[organizations]] {}: catalogue {id} is the [dataroom] default catalogue",
-                org.name
-            )));
-        }
         let tenant = own_org[&org.name];
         let host = bare_host(org.hosts.opendata_host());
         dataroom_server::ensure_catalogue(store.as_ref(), tenant, id, &org.name, host)

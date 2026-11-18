@@ -968,6 +968,16 @@ pub fn validate_readonly_select(
                         match toks.get(j) {
                             Some(SqlTok::Open) => {
                                 // Derived table: its own FROM clauses are checked when the scan reaches them.
+                                // A parenthesised join would hide its relations from this check.
+                                if !matches!(
+                                    word_at(&toks, j + 1),
+                                    Some("select" | "with" | "values")
+                                ) {
+                                    return Err(sql_refuse(
+                                        ref_id,
+                                        "a parenthesised join in FROM is refused; write the joins without parentheses",
+                                    ));
+                                }
                                 j = skip_group(&toks, j);
                             }
                             Some(tok @ (SqlTok::Word(_) | SqlTok::Quoted(_))) => {

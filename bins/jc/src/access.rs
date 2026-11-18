@@ -59,9 +59,7 @@ fn take_mark(req: &mut Request) -> bool {
     let Some(sent) = req.headers_mut().remove(&PROBE_HEADER) else {
         return false;
     };
-    let mark = probe_mark().as_bytes();
-    let sent = sent.as_bytes();
-    sent.len() == mark.len() && sent.iter().zip(mark).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+    jc_secret::constant_time_eq(sent.as_bytes(), probe_mark().as_bytes())
 }
 
 fn probes() -> std::sync::MutexGuard<'static, Vec<(String, Option<Instant>)>> {

@@ -394,7 +394,7 @@ pub async fn import_dashboards(
                 created_at: now,
                 updated_at: now,
             };
-            store.upsert_dashboard(record, "imported", true).await?;
+            rep.uid = store.upsert_dashboard(record, "imported", true).await?.uid;
         }
 
         dash_reports.push(rep);

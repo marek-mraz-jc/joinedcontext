@@ -158,6 +158,16 @@ fn the_checker_refuses_malformed_and_foreign_sql_with_a_reason() {
             "TABLE is refused",
         ),
         ("SELECT * FROM (TABLE other) s", "TABLE is refused"),
+        // A parenthesised join hides its relations from the FROM-item check.
+        (
+            "SELECT * FROM (other x CROSS JOIN metrics y)",
+            "parenthesised join",
+        ),
+        (
+            "SELECT * FROM metrics m JOIN (pg_authid a JOIN metrics n ON true) ON true",
+            "parenthesised join",
+        ),
+        ("SELECT * FROM ((SELECT 1) s)", "parenthesised join"),
     ] {
         let err = validate_readonly_select("A", sql, &v).unwrap_err();
         assert!(
@@ -172,6 +182,7 @@ fn the_checker_refuses_malformed_and_foreign_sql_with_a_reason() {
         "SELECT * FROM MIXED",
         "SELECT * FROM ONLY metrics m",
         "WITH RECURSIVE x AS MATERIALIZED (SELECT 1) SELECT * FROM x",
+        "SELECT * FROM (SELECT * FROM metrics) s JOIN LATERAL (SELECT 1) t ON true",
     ] {
         assert!(validate_readonly_select("A", ok, &v).is_ok(), "{ok}");
     }

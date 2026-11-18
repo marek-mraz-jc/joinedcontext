@@ -1203,6 +1203,33 @@ async fn the_installation_look_waits_for_a_second_operator_and_then_shows_on_eve
     assert_ne!(body(&shown.text)["instanceName"], json!(name));
 }
 
+/// Row-level security does not apply to a SUPERUSER or BYPASSRLS role, so the Portal refuses to
+/// serve as one: its forced tenancy walls would hold nothing.
+#[tokio::test]
+async fn a_serving_role_that_bypasses_row_level_security_is_refused() {
+    let owner_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let owner = joinedcontext_portal::db::connect(&owner_url)
+        .await
+        .expect("connect + migrate");
+    let role = run("bypass");
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE \"{role}\" LOGIN BYPASSRLS PASSWORD 'bypass-pw'"
+    )))
+    .execute(&owner)
+    .await
+    .expect("a role with BYPASSRLS");
+    let mut serving_url = url::Url::parse(&owner_url).expect("the test URL");
+    serving_url.set_username(&role).expect("a user");
+    serving_url
+        .set_password(Some("bypass-pw"))
+        .expect("a password");
+    let refused = joinedcontext_portal::db::connect_as(serving_url.as_str(), Some(&owner_url))
+        .await
+        .expect_err("a role that bypasses row-level security");
+    assert!(refused.to_string().contains("BYPASSRLS"), "{refused}");
+}
+
 /// The running Portal serves as a role apart from the one that migrates (T-7179): that role
 /// appends to the audit and reads it, and changes, deletes, truncates or drops the triggers of
 /// none of it. The Portal boots and serves with both URLs; one role named in both is refused.

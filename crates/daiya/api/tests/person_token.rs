@@ -276,7 +276,8 @@ async fn a_token_for_another_endpoint_or_on_another_credential_goes_nowhere() {
         seen.lock()
     );
 
-    // On an API credential that is not the server administrator's the header is ignored.
+    // On an API credential that is not the server administrator's the header is ignored, and
+    // the API credential itself is not passed on: the Endpoint is read with no Authorization.
     let scoped = jwt("sub-pia", "endpoint:closedslug");
     let (_, view) = w
         .send(
@@ -287,9 +288,9 @@ async fn a_token_for_another_endpoint_or_on_another_credential_goes_nowhere() {
             None,
         )
         .await;
-    assert!(readings(&view).is_empty(), "{view}");
+    assert_eq!(readings(&view), vec![json!(0)], "{view}");
     assert!(
-        seen.lock().iter().all(|head| !head.contains(&scoped)),
+        seen.lock().iter().all(|head| bearer_of(head).is_none()),
         "{:?}",
         seen.lock()
     );

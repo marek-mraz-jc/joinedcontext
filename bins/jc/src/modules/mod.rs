@@ -103,7 +103,8 @@ pub struct BuildCtx<'a> {
     pub portal_internal: Option<&'a std::sync::Arc<std::net::TcpListener>>,
 }
 
-/// Builds the router of `module` mounted at `mount`.
+/// Builds the router of `module` mounted at `mount`. Antares, the gateway, the Portal and shako
+/// are built by `app::build_router` itself, never here.
 pub async fn build(
     module: Module,
     cfg: &Config,
@@ -155,59 +156,6 @@ pub async fn build(
                 cfg.roles.contains(&Module::Portal),
             )
             .await
-        }
-        #[cfg(feature = "antares")]
-        Module::Antares => antares::build(&cfg.antares, ctx.setup, None, shutdown)
-            .await
-            .map(|built| built.router),
-        #[cfg(feature = "gateway")]
-        Module::Gateway => gateway::build(
-            ctx,
-            &cfg.organizations,
-            cfg.portal_siblings,
-            mount,
-            None,
-            None,
-            cfg.gateway.as_ref().map(|g| g.portal_internal.as_str()),
-        )
-        .await
-        .map(gateway::at_root),
-        #[cfg(feature = "portal")]
-        Module::Portal => {
-            let mut organizations = portal::organization_vars(cfg, ctx.siblings.listener);
-            organizations.extend(portal::apps_vars(cfg));
-            organizations.extend(portal::ingest_vars(cfg));
-            organizations.extend(portal::limits_vars(cfg));
-            organizations.extend(portal::backup_vars(cfg));
-            portal::build(
-                ctx,
-                cfg.portal_siblings,
-                &cfg.organizations,
-                organizations,
-                // build_router builds the Portal in its late slot, which keeps the host table on
-                // the registry; a Portal built here has no router to swap.
-                portal::HostRegistry {
-                    organizations: portal::organization_seed(cfg),
-                    seed: portal::registry_seed(cfg),
-                    roles: cfg.roles.clone(),
-                    hosts: None,
-                    project_addresses: cfg.portal.project_addresses,
-                },
-                mount,
-                shutdown,
-            )
-            .await
-            .map(|(router, _)| router)
-        }
-        #[cfg(feature = "shako")]
-        Module::Shako => {
-            let state = shako::build_state(&cfg.shako, ctx.setup).await?;
-            Ok(shako::build(
-                state,
-                mount,
-                &ctx.siblings.portal_base().unwrap_or_default(),
-            )
-            .0)
         }
         #[cfg(feature = "viz")]
         Module::Viz => Ok(viz::build(
