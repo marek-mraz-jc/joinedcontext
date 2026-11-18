@@ -896,6 +896,109 @@ async fn rows_no_project_can_key_are_set_aside_and_the_key_forced() {
     assert!(forced);
 }
 
+/// T-7264 (jc-prod 2026-11-18): a release-56 database gets 0057-0080 in one start, so no release
+/// ran the backfill on it and 0080 refused its 5299 activity rows and 3 drafts. The start that is
+/// told the installation Organization keys every project's rows under it before 0080, the
+/// Organization's own rows (`org`) under its reserved project, a project named like another
+/// Organization included, and 0080 sets aside nothing.
+#[tokio::test]
+async fn a_release_56_database_keys_every_project_under_the_installation_in_one_start() {
+    let (pool, url) = migrated_before_at(57, "pk56").await;
+    for (project, kind) in [
+        ("bratislava", "config.applied"),
+        ("bratislava", "pipeline.run"),
+        ("bbsk", "config.applied"),
+        ("org", "person.invited"),
+    ] {
+        sqlx::query(
+            "INSERT INTO activity (time, project, kind, source, summary, severity) \
+             VALUES (now(), $1, $2, 'portal', 'Applied.', 'info')",
+        )
+        .bind(project)
+        .bind(kind)
+        .execute(&pool)
+        .await
+        .expect("a release-56 activity row");
+    }
+    for project in ["bratislava", "bbsk", "org"] {
+        sqlx::query(
+            "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+             VALUES ($1, 'Endpoint', 'air', '{}', 'anna', 'human')",
+        )
+        .bind(project)
+        .execute(&pool)
+        .await
+        .expect("a release-56 draft");
+    }
+    pool.close().await;
+
+    let smartcity = joinedcontext_portal::host_registry::SeedOrganization {
+        name: "smartcity".to_owned(),
+        organization_id: None,
+        host: "portal.smartcity.example".to_owned(),
+        catalogue_id: None,
+    };
+    let pool = joinedcontext_portal::db::connect_with(&url, Some(&smartcity))
+        .await
+        .expect("0057-0080 in one start: every row keyed before 0080");
+
+    let unkeyed: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM activity WHERE org_id IS NULL OR project_id IS NULL) \
+         + (SELECT count(*) FROM drafts WHERE org_id IS NULL OR project_id IS NULL) \
+         + (SELECT count(*) FROM project_rows_set_aside)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(unkeyed, 0, "every row keyed, none set aside");
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM activity) + (SELECT count(*) FROM drafts)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(rows, 7, "no row lost");
+    let organizations: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM organizations ORDER BY name")
+            .fetch_all(&pool)
+            .await
+            .expect("registry");
+    assert_eq!(
+        organizations,
+        ["smartcity"],
+        "no Organization made from a project name"
+    );
+    let foreign: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM (SELECT org_id FROM activity UNION ALL SELECT org_id FROM drafts) r \
+         WHERE r.org_id <> (SELECT key FROM organizations WHERE name = 'smartcity')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(foreign, 0, "every row under the installation Organization");
+    let placed: Vec<(String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT DISTINCT a.project, p.organization, p.reserved FROM activity a \
+         JOIN project_ids p ON p.id = a.project_id ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("placed");
+    assert_eq!(
+        placed,
+        vec![
+            ("bbsk".to_owned(), Some("smartcity".to_owned()), false),
+            ("bratislava".to_owned(), Some("smartcity".to_owned()), false),
+            ("org".to_owned(), Some("smartcity".to_owned()), true),
+        ]
+    );
+    let forced: bool =
+        sqlx::query_scalar("SELECT relforcerowsecurity FROM pg_class WHERE relname = 'activity'")
+            .fetch_one(&pool)
+            .await
+            .expect("forced");
+    assert!(forced);
+}
+
 /// A row of each table of T-7197 for `project`, written as before the key: what the backfill
 /// finds on a database of today. `$1` is the project.
 const ALERTS_HEALTH_ROWS: &[(&str, &str)] = &[
@@ -996,6 +1099,12 @@ async fn alerts_health_and_quality_rows_are_keyed_and_read_only_under_their_key(
 /// A fresh database migrated up to `before` (excluded), as an installation running the release
 /// before that migration holds it; dropped by nothing: each run's name is its own.
 async fn migrated_before(before: i64, test: &str) -> sqlx::PgPool {
+    migrated_before_at(before, test).await.0
+}
+
+/// [`migrated_before`] with the fresh database's URL, for a start that migrates it the way the
+/// Portal does.
+async fn migrated_before_at(before: i64, test: &str) -> (sqlx::PgPool, String) {
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL");
     let name = format!("{test}_{}", ProjectId::mint().path_segment());
     let admin = sqlx::PgPool::connect(&url)
@@ -1018,7 +1127,7 @@ async fn migrated_before(before: i64, test: &str) -> sqlx::PgPool {
         .collect::<Vec<_>>()
         .into();
     migrator.run(&pool).await.expect("migrated");
-    pool
+    (pool, own.to_string())
 }
 
 /// Applies every migration this release ships, the forcing migration 0080 (T-7201) included.
