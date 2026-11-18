@@ -48,6 +48,7 @@ impl<T: PartialEq> Published<T> {
     }
 
     /// Hands `set` to every follower when it differs from the last one; `true` when it did.
+    #[cfg(feature = "portal")]
     pub fn publish(&self, set: T) -> bool {
         let mut held = self.held();
         if held.last.as_ref() == Some(&set) {
@@ -66,12 +67,14 @@ impl<T: PartialEq> Published<T> {
 /// while the row has none), and every `removed` row's name, jc.toml's included. A module that
 /// sets an Organization up at start (dataroom's catalogue, the Portal's catalogue entry) sets up
 /// the run-time ones from here and takes a removed one out.
+#[cfg(feature = "portal")]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Organizations {
     pub run_time: Vec<crate::config::OrganizationSection>,
     pub removed: Vec<String>,
 }
 
+#[cfg(feature = "portal")]
 pub static ORGANIZATIONS: Published<Organizations> = Published::new();
 
 /// The token the Portal publishes into a run-time Organization's catalogue with (T-7185):

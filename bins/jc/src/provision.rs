@@ -101,7 +101,7 @@ async fn migrate_harvest_seeds(
     .await;
 }
 
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", feature = "dataroom"))]
 async fn migrate_seeds(
     client: &reqwest::Client,
     auth: &str,
@@ -155,7 +155,7 @@ async fn migrate_seeds(
     }
 }
 
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", feature = "dataroom"))]
 async fn migrate_one(
     client: &reqwest::Client,
     auth: &str,
@@ -191,7 +191,7 @@ async fn migrate_one(
 
 /// The path of a manifest under `portals/` that already holds `organization`'s default Portal,
 /// under whatever name, so the migration never files it twice.
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", feature = "dataroom"))]
 async fn default_portal_filed(
     client: &reqwest::Client,
     auth: &str,
@@ -233,7 +233,7 @@ async fn default_portal_filed(
     Ok(None)
 }
 
-#[cfg(not(feature = "portal"))]
+#[cfg(not(all(feature = "portal", feature = "dataroom")))]
 async fn migrate_seeds(
     _: &reqwest::Client,
     _: &str,
@@ -244,7 +244,7 @@ async fn migrate_seeds(
 }
 
 /// The installation Organization's name, `metadata.name` of the repository's `org.yaml`.
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", feature = "dataroom"))]
 async fn installation_name(
     client: &reqwest::Client,
     auth: &str,
@@ -257,7 +257,7 @@ async fn installation_name(
 }
 
 /// The text of the repository's file `path` on `main`.
-#[cfg(feature = "portal")]
+#[cfg(all(feature = "portal", feature = "dataroom"))]
 async fn file_text(
     client: &reqwest::Client,
     auth: &str,
@@ -386,7 +386,7 @@ mod tests {
     }
 
     /// A shako holding `files` (path -> text) that records each file PUT to it.
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     async fn shako(
         files: Vec<(&'static str, String)>,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
@@ -425,7 +425,7 @@ mod tests {
         (base, written)
     }
 
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     fn prod_dataroom() -> crate::config::DataroomSection {
         let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
         crate::config::Config::read_file(&docs.join("harvest-sources.toml"))
@@ -434,7 +434,7 @@ mod tests {
             .unwrap()
     }
 
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     async fn migrated(
         files: Vec<(&'static str, String)>,
         dataroom: &crate::config::DataroomSection,
@@ -444,7 +444,7 @@ mod tests {
         put.lock().unwrap().clone()
     }
 
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     #[tokio::test]
     async fn the_seeds_move_into_the_installation_default_portal() {
         let org = ("org.yaml", organization_manifest("city.example"));
@@ -456,7 +456,7 @@ mod tests {
     }
 
     /// A migration that cannot run never stops jc from starting: the seeds keep harvesting.
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     #[tokio::test]
     async fn a_seed_migration_that_fails_is_skipped_and_jc_starts() {
         let org = ("org.yaml", organization_manifest("city.example"));
@@ -466,7 +466,7 @@ mod tests {
         assert!(migrated(Vec::new(), &prod_dataroom()).await.is_empty());
     }
 
-    #[cfg(feature = "portal")]
+    #[cfg(all(feature = "portal", feature = "dataroom"))]
     #[tokio::test]
     async fn a_default_portal_filed_under_another_name_is_not_filed_twice() {
         let org = ("org.yaml", organization_manifest("city.example"));

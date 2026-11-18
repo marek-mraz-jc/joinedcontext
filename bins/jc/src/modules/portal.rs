@@ -858,6 +858,10 @@ fn run_time_entries(
 /// installation (each project's daiya organization derives from it) and each Organization's
 /// dataroom OrgId and catalogue. Empty when none of them runs here; an environment value still
 /// wins.
+#[cfg_attr(
+    not(any(feature = "shako", feature = "daiya", feature = "dataroom")),
+    allow(unused_mut, unused_variables)
+)]
 pub(crate) fn backup_vars(cfg: &crate::config::Config) -> BTreeMap<String, String> {
     let mut tenants = serde_json::Map::new();
     #[cfg(feature = "shako")]
