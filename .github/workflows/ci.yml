@@ -90,6 +90,8 @@ jobs:
       # (stdlib, seconds).
       - run: python3 .github/scripts/security-review-tests.py --selftest && python3 .github/scripts/security-review-tests.py
       - run: python3 crates/antares/dev/threat-tests.py --self-test && python3 crates/antares/dev/threat-tests.py
+      # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
+      - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py
       - if: steps.paths.outputs.workflows == 'true'
         run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'

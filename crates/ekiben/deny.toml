@@ -10,6 +10,8 @@ exceptions = [{ allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys" }]
 yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2026-0441", reason = "pin-utils 0.1.1 unmaintained (no vulnerability; std::pin::pin! replaces it): only via async-imap 0.12.0 (newest) -> ekiben-io-remote, the imap input (T-7087). Drop when async-imap releases without pin-utils" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 unmaintained (no vulnerability, no safe upgrade): a direct dependency of 76 Cargo.toml files (timestamps, RFC 3339 wire formats, sqlx timestamptz). Owner 2026-11-18 dated ignore; remove by 2027-02-18 or when the migration task T-7233 (to jiff) lands, whichever is first" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz 0.10.4 unmaintained (no vulnerability, no safe upgrade): IANA zones for antares-ical (RRULE expansion) and ekiben-bloblang with the ekiben crates over it (ekiben, ekiben-io-file, ekiben-text, ekiben-server). Owner 2026-11-18 dated ignore; remove by 2027-02-18 or when the migration task T-7233 (to jiff) lands, whichever is first" },
 ]
 
 [bans]
