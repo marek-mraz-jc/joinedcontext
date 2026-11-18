@@ -14,6 +14,7 @@ use crate::state::AppState;
 pub mod agent_runs;
 pub mod connectors;
 pub mod domain_verifications;
+pub mod endpoint_tokens;
 pub mod model_key;
 pub mod pipeline_rejected;
 pub mod pipeline_tests;
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .merge(pipeline_rejected::router())
         .merge(previews::router())
         .merge(revocations::router())
+        .merge(endpoint_tokens::router())
         .merge(domain_verifications::router())
         .merge(model_key::router())
         .merge(connectors::router())

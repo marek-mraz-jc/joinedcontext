@@ -965,6 +965,10 @@ pub async fn build(
         tracing::info!(tree = %tree.display(), "gateway: the forge checkout read");
         tokio::spawn(follow_forge(forge, repo, token, work));
     }
+    let remote_sessions = remote_portal
+        .map(|url| RemoteSessions::new(url, &config))
+        .transpose()?
+        .flatten();
     let mut broker = context_gateway::serve::broker_of(&config).map_err(err)?;
     if let (Some(hop), true) = (&hop, filled.contains_key("JC_GATEWAY_BROKER_URL")) {
         let value = HeaderValue::from_str(&hop.secret).map_err(err)?;
@@ -989,10 +993,15 @@ pub async fn build(
     if let (Some(bind), Some(internal)) = (config.internal_bind, built.internal) {
         serve_internal(bind, internal).await?;
     }
-    #[cfg(feature = "portal")]
-    let app = built.app.layer(axum::middleware::from_fn(session_reads));
-    #[cfg(not(feature = "portal"))]
-    let app = built.app;
+    let app = match remote_sessions {
+        Some(remote) => built.app.layer(axum::middleware::from_fn(move |req, next| {
+            remote_session_reads(remote.clone(), req, next)
+        })),
+        #[cfg(feature = "portal")]
+        None => built.app.layer(axum::middleware::from_fn(session_reads)),
+        #[cfg(not(feature = "portal"))]
+        None => built.app,
+    };
     Ok(app.layer(axum::middleware::from_fn(opaque_reads)))
 }
 
@@ -1025,12 +1034,106 @@ async fn session_reads(mut req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+/// The Portal's internal listener in another process (`[gateway] portal_internal`, T-7226), where
+/// a Portal page's session cookie is turned into the person's token for one Endpoint, and the
+/// gateway's own workload token that alone opens that route.
+#[derive(Clone)]
+struct RemoteSessions {
+    url: String,
+    token: std::sync::Arc<context_gateway::previews::WorkloadToken>,
+    http: reqwest::Client,
+}
+
+impl RemoteSessions {
+    /// `None` when the gateway has no client of its own: then it reads no revocations either,
+    /// and verifies no token at all.
+    fn new(internal: &str, config: &Config) -> Result<Option<Self>, StartError> {
+        let (Some(token_url), Some((id, credential))) =
+            (config.token_url(), config.oidc_client.as_ref())
+        else {
+            return Ok(None);
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(err)?;
+        Ok(Some(Self {
+            url: format!("{}/internal/endpoint-token", internal.trim_end_matches('/')),
+            token: std::sync::Arc::new(context_gateway::previews::WorkloadToken::with_credential(
+                token_url,
+                id.clone(),
+                credential.clone(),
+            )),
+            http,
+        }))
+    }
+
+    /// The person's token for `slug`, `Ok(None)` when the cookie names nobody. The cookie and the
+    /// host the browser sent go to the Portal, nothing else of the request.
+    async fn token_for(&self, req: &Request, slug: &str) -> Result<Option<String>, String> {
+        use axum::http::{StatusCode, header};
+        #[derive(serde::Deserialize)]
+        struct Answer {
+            token: String,
+        }
+        let host = req
+            .headers()
+            .get(header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .or_else(|| req.uri().authority().map(|a| a.as_str()));
+        let mut ask = self
+            .http
+            .post(&self.url)
+            .bearer_auth(self.token.get().await?)
+            .json(&serde_json::json!({ "slug": slug, "host": host }));
+        for cookie in req.headers().get_all(header::COOKIE) {
+            ask = ask.header(header::COOKIE, cookie.clone());
+        }
+        let answer = ask
+            .send()
+            .await
+            .map_err(|why| format!("the Portal's internal listener: {why}"))?;
+        match answer.status() {
+            StatusCode::NO_CONTENT => Ok(None),
+            StatusCode::OK => answer
+                .json::<Answer>()
+                .await
+                .map(|a| Some(a.token))
+                .map_err(|why| format!("the Portal's Endpoint token: {why}")),
+            status => Err(format!("the Portal's internal listener answered {status}")),
+        }
+    }
+}
+
+/// [`session_reads`] for a gateway apart from the Portal (T-7226): the same request
+/// ([`session_slug`]) gets the person's token from the Portal's internal listener, so a Portal
+/// page reads a closed Endpoint on the data plane as it does in one jc; a failure leaves the read
+/// anonymous, never wider.
+async fn remote_session_reads(remote: RemoteSessions, mut req: Request, next: Next) -> Response {
+    if let Some(slug) = session_slug(&req) {
+        match remote.token_for(&req, &slug).await {
+            Ok(Some(token)) => {
+                if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                    value.set_sensitive(true);
+                    req.headers_mut()
+                        .insert(axum::http::header::AUTHORIZATION, value);
+                }
+            }
+            Ok(None) => {}
+            Err(reason) => {
+                tracing::info!(slug, %reason, "gateway: no Endpoint token from the Portal")
+            }
+        }
+    }
+    next.run(req).await
+}
+
 /// The Endpoint a Portal session may read as the person: a `GET` or `HEAD` under
 /// `/api/endpoint/{slug}`, a cookie, no `Authorization` of its own, and `Sec-Fetch-Site:
 /// same-origin`, which the browser alone sets. A write never borrows the session: the cookie is
 /// no credential for changing data. A cross-site form or an App on a sibling host (`same-site`)
 /// gets no token, so the cookie never acts for the person outside the Portal's pages.
-#[cfg(feature = "portal")]
 fn session_slug(req: &Request) -> Option<String> {
     use axum::http::{Method, header};
     let headers = req.headers();
@@ -1181,9 +1284,96 @@ mod tests {
         }
     }
 
+    /// T-7226: on a data plane apart from the Portal a Portal page's same-origin read of an
+    /// Endpoint carries the person's token the Portal's internal listener hands back for the
+    /// forwarded cookie, asked with the gateway's own token; a cookie that names nobody and a
+    /// Portal that cannot be reached leave the read anonymous.
+    #[tokio::test]
+    async fn a_data_plane_reads_a_portal_session_through_the_portals_internal_listener() {
+        use axum::http::{HeaderMap, StatusCode, header};
+        use axum::response::IntoResponse;
+        use axum::routing::{get, post};
+        let portal = Router::new()
+            .route(
+                "/token",
+                post(|| async {
+                    axum::Json(serde_json::json!({"access_token": "gw-7226", "expires_in": 300}))
+                }),
+            )
+            .route(
+                "/internal/endpoint-token",
+                post(
+                    |headers: HeaderMap, body: axum::Json<serde_json::Value>| async move {
+                        let by_gateway = headers
+                            .get(header::AUTHORIZATION)
+                            .is_some_and(|v| v == "Bearer gw-7226");
+                        let cookie = headers.get(header::COOKIE).and_then(|v| v.to_str().ok());
+                        let ask = (by_gateway, cookie, &body.0["slug"], &body.0["host"]);
+                        match ask {
+                            (false, ..) => StatusCode::UNAUTHORIZED.into_response(),
+                            (true, Some("__Host-jc_session=pia"), slug, host)
+                                if slug == "closedslug" && host == "portal.test" =>
+                            {
+                                axum::Json(serde_json::json!({"token": "pia-for-closedslug"}))
+                                    .into_response()
+                            }
+                            _ => StatusCode::NO_CONTENT.into_response(),
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, portal).await });
+        let remote = |internal: &str| RemoteSessions {
+            url: format!("{internal}/internal/endpoint-token"),
+            token: std::sync::Arc::new(context_gateway::previews::WorkloadToken::new(
+                format!("{base}/token"),
+                "context-gateway".into(),
+                "s".into(),
+            )),
+            http: reqwest::Client::new(),
+        };
+        let echo = |remote: RemoteSessions| {
+            Router::new()
+                .route(
+                    "/api/endpoint/{slug}",
+                    get(|headers: HeaderMap| async move {
+                        headers
+                            .get(header::AUTHORIZATION)
+                            .map_or("anonymous".to_owned(), |v| v.to_str().unwrap().to_owned())
+                    }),
+                )
+                .layer(axum::middleware::from_fn(move |req, next| {
+                    remote_session_reads(remote.clone(), req, next)
+                }))
+        };
+        let read = |app: Router, cookie: &'static str| async move {
+            let req = axum::http::Request::get("/api/endpoint/closedslug")
+                .header(header::HOST, "portal.test")
+                .header("sec-fetch-site", "same-origin")
+                .header(header::COOKIE, cookie)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = tower::ServiceExt::oneshot(app, req).await.unwrap();
+            let body = axum::body::to_bytes(res.into_body(), 4096).await.unwrap();
+            String::from_utf8(body.to_vec()).unwrap()
+        };
+        let app = echo(remote(&base));
+        assert_eq!(
+            read(app.clone(), "__Host-jc_session=pia").await,
+            "Bearer pia-for-closedslug"
+        );
+        assert_eq!(read(app, "__Host-jc_session=gone").await, "anonymous");
+        let unreachable = echo(remote("http://127.0.0.1:9"));
+        assert_eq!(
+            read(unreachable, "__Host-jc_session=pia").await,
+            "anonymous"
+        );
+    }
+
     /// T-6783: only a same-origin browser `GET`/`HEAD` under `/api/endpoint/{slug}` with a cookie
     /// and no credential of its own is read as the Portal session's person; no write is.
-    #[cfg(feature = "portal")]
     #[test]
     fn only_a_same_origin_cookie_request_names_an_endpoint_for_the_session() {
         use axum::http::header;
