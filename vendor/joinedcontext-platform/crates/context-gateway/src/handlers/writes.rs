@@ -525,41 +525,39 @@ const MAX_DELETE_IDS: usize = 1_000;
 /// The broker keeps no relationship rules (the owner's decision of 2026-09-25), so the rules run
 /// here as the gateway's own writes: every entity that points at what is deleted is read, the
 /// delete is refused while one of them keeps it (`restrict`, or a rule that would empty a
-/// required end, or an entity the caller may not change), and otherwise the entities are changed
-/// or deleted first and the entity itself last. Nothing is changed until every rule has passed;
-/// a reference written after the read is the race window Architecture/11 §1.2 names.
+/// required end, or an entity the caller may not change), and otherwise the changes are planned.
+/// They are made by [`after_delete`] once the broker deleted the entity itself, so a delete the
+/// broker refuses changes nothing; a reference written after the read is the race window
+/// Architecture/11 §1.2 names.
 pub(crate) struct HeldDelete<'a> {
     pub(crate) gateway: &'a Gateway,
     pub(crate) subject: &'a Subject,
     pub(crate) endpoint: &'a Endpoint,
     pub(crate) headers: &'a HeaderMap,
     pub(crate) rules: &'a crate::relationships::RelationshipRules,
-    /// Whether the planned changes are made: an MCP call the person has not confirmed yet
-    /// plans them, so a refusal is told at once, and changes nothing.
-    pub(crate) apply: bool,
 }
 
+/// The changes the rules of a delete make, per deleted id, for [`after_delete`].
+pub(crate) type Planned = Vec<(String, Vec<Unlinking>)>;
+
 impl HeldDelete<'_> {
-    /// Runs the rules of a delete of one entity; the entity itself is the forwarded delete's.
-    pub(crate) async fn entity(&self, id: &str) -> Result<(), Box<Response<Body>>> {
+    /// Plans the rules of a delete of one entity; the entity itself is the forwarded delete's.
+    pub(crate) async fn entity(&self, id: &str) -> Result<Planned, Box<Response<Body>>> {
         let answer = |problem: Box<ProblemDetails>| Box::new(problem.into_response());
         let steps = self.plan(id).await.map_err(answer)?;
-        if !self.apply {
-            return Ok(());
-        }
-        self.apply(id, &steps).await.map_err(answer)
+        Ok(planned_of(vec![(id.to_owned(), steps)]))
     }
 
-    /// Runs the rules of a batch delete per id: an id the rules keep is refused in the batch's
-    /// answer (207), the others go on. Answers whether `sent` was rewritten.
+    /// Plans the rules of a batch delete per id: an id the rules keep is refused in the batch's
+    /// answer (207), the others go on.
     pub(crate) async fn batch(
         &self,
         sent: &mut Vec<u8>,
         divided: &mut Option<(Vec<String>, Refused)>,
-    ) -> Result<bool, Box<Response<Body>>> {
+    ) -> Result<Planned, Box<Response<Body>>> {
         let answer = |problem: Box<ProblemDetails>| Box::new(problem.into_response());
         let Ok(Value::Array(entries)) = serde_json::from_slice::<Value>(sent) else {
-            return Ok(false);
+            return Ok(Vec::new());
         };
         // Each id costs a relationship plan of broker reads, so the ids are counted before any
         // is planned (F-SEC1-016); the broker refuses a larger batch anyway.
@@ -587,11 +585,9 @@ impl HeldDelete<'_> {
                 Err(problem) => return Err(answer(problem)),
             }
         }
-        for (id, steps) in plans.iter().filter(|_| self.apply) {
-            self.apply(id, steps).await.map_err(answer)?;
-        }
+        let plans = planned_of(plans);
         if refused.is_empty() {
-            return Ok(false);
+            return Ok(plans);
         }
         let ids: Vec<String> = permitted.iter().filter_map(batch_entry_id).collect();
         divide(divided, ids, refused, permitted.is_empty())?;
@@ -599,12 +595,12 @@ impl HeldDelete<'_> {
             tracing::error!(%error, "the ids a delete's rules kept do not serialize");
             answer(Box::new(ProblemDetails::internal()))
         })?;
-        Ok(true)
+        Ok(plans)
     }
 
     /// What the rules of a delete of `root` change, in the order they are applied: the
     /// attributes and links first, then the entities deleted with it, farthest first, so a stop
-    /// part way never leaves a reference to something already gone. Reads only.
+    /// part way leaves no reference to an entity the rules deleted. Reads only.
     pub(crate) async fn plan(&self, root: &str) -> Result<Vec<Unlinking>, Box<ProblemDetails>> {
         use crate::relationships::{unlink, Unlink};
         let mut edits = Vec::new();
@@ -864,90 +860,139 @@ impl HeldDelete<'_> {
             .map(|id| Value::String(id.to_owned()))
             .collect()
     }
+}
 
-    /// Applies the planned changes in order. A step the broker refuses stops the delete with the
-    /// entity still in place, and the answer says how many changes were already made.
-    pub(crate) async fn apply(
-        &self,
-        root: &str,
-        steps: &[Unlinking],
-    ) -> Result<(), Box<ProblemDetails>> {
-        for (done, step) in steps.iter().enumerate() {
-            let entity = |id: &str| format!("/ngsi-ld/v1/entities/{}", query::encode(id));
-            let attribute =
-                |id: &str, slot: &str| format!("{}/attrs/{}", entity(id), query::encode(slot));
-            let (method, target, body) = match step {
-                Unlinking::Delete(id) => (Method::DELETE, entity(id), None),
-                Unlinking::DeleteAttribute { id, slot } => {
-                    (Method::DELETE, attribute(id, slot), None)
-                }
-                Unlinking::DeleteInstance { id, slot, dataset } => {
-                    let target = match dataset {
-                        Some(dataset) => format!(
-                            "{}?datasetId={}",
-                            attribute(id, slot),
-                            query::encode(dataset)
-                        ),
-                        None => attribute(id, slot),
-                    };
-                    (Method::DELETE, target, None)
-                }
-                Unlinking::Rewrite {
-                    id,
-                    slot,
-                    dataset,
-                    objects,
-                } => {
-                    let mut value =
-                        serde_json::json!({ "type": "Relationship", "object": objects });
-                    if let Some(dataset) = dataset {
-                        value["datasetId"] = Value::String(dataset.clone());
-                    }
-                    (Method::PATCH, attribute(id, slot), Some(value.to_string()))
-                }
-            };
-            let mut headers = HeaderMap::new();
-            tenancy::copy_tenant(self.headers, &mut headers);
-            tenancy::as_gateway(&mut headers);
-            tenancy::keep_provenance(self.headers, &mut headers);
-            if body.is_some() {
-                headers.insert(
-                    axum::http::header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/json"),
-                );
-            }
-            let body = body.map_or_else(Body::empty, Body::from);
-            let status = match self
-                .gateway
-                .broker
-                .send(method, &target, headers, body)
-                .await
-            {
-                Ok(answer) => answer.status(),
-                Err(error) => {
-                    tracing::error!(%error, "the broker did not take a delete rule's change");
-                    StatusCode::BAD_GATEWAY
-                }
-            };
-            // An entity another delete already took is gone either way; a link or an attribute
-            // that is not found was not removed by this delete, so it stops like any refusal.
-            let gone = status == StatusCode::NOT_FOUND && matches!(step, Unlinking::Delete(_));
-            if !status.is_success() && !gone {
-                tracing::error!(%status, %target, "the broker refused a delete rule's change");
-                return Err(Box::new(
-                    ProblemDetails::new(502, "upstream-unavailable", "Broker Unavailable")
-                        .with_detail(format!(
-                            "`{root}` is not deleted: the broker refused change {} of {} its \
-                             delete rules make, after {done} were made (DM-71)",
-                            done + 1,
-                            steps.len()
-                        ))
-                        .with_extension("changed", Value::from(done)),
-                ));
-            }
-        }
-        Ok(())
+/// The planned changes without the ids whose rules change nothing.
+fn planned_of(plans: Planned) -> Planned {
+    plans
+        .into_iter()
+        .filter(|(_, steps)| !steps.is_empty())
+        .collect()
+}
+
+/// Makes the planned changes of a delete the broker answered: all of them when it deleted
+/// everything, those of the ids a 207 lists as deleted, none on a refusal (DM-71). The answer is
+/// passed on as the broker gave it, or replaced by the refusal of a change.
+pub(crate) async fn after_delete(
+    gateway: &Gateway,
+    headers: &HeaderMap,
+    planned: &Planned,
+    answer: Response<Body>,
+) -> Result<Response<Body>, Box<Response<Body>>> {
+    let refused = |problem: Box<ProblemDetails>| Box::new(problem.into_response());
+    if planned.is_empty() || !answer.status().is_success() {
+        return Ok(answer);
     }
+    if answer.status() != StatusCode::MULTI_STATUS {
+        apply_planned(gateway, headers, planned, |_| true)
+            .await
+            .map_err(refused)?;
+        return Ok(answer);
+    }
+    let (parts, body) = answer.into_parts();
+    let held = axum::body::to_bytes(body, MAX_BODY)
+        .await
+        .unwrap_or_default();
+    let deleted: BTreeSet<String> = serde_json::from_slice::<Value>(&held)
+        .ok()
+        .and_then(|answer| answer.get("success").cloned())
+        .and_then(|success| serde_json::from_value(success).ok())
+        .unwrap_or_default();
+    apply_planned(gateway, headers, planned, |id| deleted.contains(id))
+        .await
+        .map_err(refused)?;
+    Ok(crate::proxy::with_body(parts, held))
+}
+
+/// [`apply_steps`] for each planned id `deleted` names.
+pub(crate) async fn apply_planned(
+    gateway: &Gateway,
+    headers: &HeaderMap,
+    planned: &Planned,
+    deleted: impl Fn(&str) -> bool,
+) -> Result<(), Box<ProblemDetails>> {
+    for (root, steps) in planned.iter().filter(|(root, _)| deleted(root)) {
+        apply_steps(gateway, headers, root, steps).await?;
+    }
+    Ok(())
+}
+
+/// Applies the planned changes of a delete of `root` in order, as the gateway's own writes. A
+/// step the broker refuses stops the rest, and the answer says how many were already made.
+async fn apply_steps(
+    gateway: &Gateway,
+    caller: &HeaderMap,
+    root: &str,
+    steps: &[Unlinking],
+) -> Result<(), Box<ProblemDetails>> {
+    for (done, step) in steps.iter().enumerate() {
+        let entity = |id: &str| format!("/ngsi-ld/v1/entities/{}", query::encode(id));
+        let attribute =
+            |id: &str, slot: &str| format!("{}/attrs/{}", entity(id), query::encode(slot));
+        let (method, target, body) = match step {
+            Unlinking::Delete(id) => (Method::DELETE, entity(id), None),
+            Unlinking::DeleteAttribute { id, slot } => (Method::DELETE, attribute(id, slot), None),
+            Unlinking::DeleteInstance { id, slot, dataset } => {
+                let target = match dataset {
+                    Some(dataset) => format!(
+                        "{}?datasetId={}",
+                        attribute(id, slot),
+                        query::encode(dataset)
+                    ),
+                    None => attribute(id, slot),
+                };
+                (Method::DELETE, target, None)
+            }
+            Unlinking::Rewrite {
+                id,
+                slot,
+                dataset,
+                objects,
+            } => {
+                let mut value = serde_json::json!({ "type": "Relationship", "object": objects });
+                if let Some(dataset) = dataset {
+                    value["datasetId"] = Value::String(dataset.clone());
+                }
+                (Method::PATCH, attribute(id, slot), Some(value.to_string()))
+            }
+        };
+        let mut hop = HeaderMap::new();
+        tenancy::copy_tenant(caller, &mut hop);
+        tenancy::as_gateway(&mut hop);
+        tenancy::keep_provenance(caller, &mut hop);
+        if body.is_some() {
+            hop.insert(
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            );
+        }
+        let body = body.map_or_else(Body::empty, Body::from);
+        let status = match gateway.broker.send(method, &target, hop, body).await {
+            Ok(answer) => answer.status(),
+            Err(error) => {
+                tracing::error!(%error, "the broker did not take a delete rule's change");
+                StatusCode::BAD_GATEWAY
+            }
+        };
+        // An entity another delete already took is gone either way; a link or an attribute
+        // that is not found was not removed by this delete, so it stops like any refusal.
+        let gone = status == StatusCode::NOT_FOUND && matches!(step, Unlinking::Delete(_));
+        if !status.is_success() && !gone {
+            tracing::error!(%status, %target, "the broker refused a delete rule's change");
+            return Err(Box::new(
+                ProblemDetails::new(502, "upstream-unavailable", "Broker Unavailable")
+                    .with_detail(format!(
+                        "`{root}` is deleted, but the broker refused change {} of {} its \
+                             delete rules make, after {done} were made; make the rest by hand \
+                             (DM-71)",
+                        done + 1,
+                        steps.len()
+                    ))
+                    .with_extension("changed", Value::from(done)),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// 409 for a delete whose rules reach more entities than one delete may change.

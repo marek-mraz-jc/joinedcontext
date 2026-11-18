@@ -201,6 +201,55 @@ async fn query_csource_subscriptions_lists_only_the_callers_own() {
     lists_only_the_callers_own("/ngsi-ld/v1/csourceSubscriptions", "Subscription").await;
 }
 
+/// Refuses any Registration create or update that covers a `Secret` type.
+struct NoSecretRegistrations;
+
+impl PolicyEngine for NoSecretRegistrations {
+    fn name(&self) -> &str {
+        "no-secret-registrations"
+    }
+
+    fn decide<'a>(&'a self, _s: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let secret = matches!(op.clause, "5.9.2" | "5.9.3")
+            && op.types.iter().any(|t| t.ends_with("Secret"));
+        let answer = if secret {
+            Decision::Deny("no Registration covers Secret".into())
+        } else {
+            Decision::Allow
+        };
+        Box::pin(std::future::ready(answer))
+    }
+
+    fn pre_notify(&self, _s: &Subject, _sub: &Value, _n: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// Update Registration is decided on the Registration as the patch leaves
+/// it, as create is: a patch cannot move a permitted Registration onto a type
+/// the engine refuses, and nothing of it is written.
+#[tokio::test]
+async fn an_update_cannot_move_a_registration_onto_a_refused_type() {
+    let st = state(Arc::new(NoSecretRegistrations));
+    let id = "urn:ngsi-ld:ContextSourceRegistration:moved";
+    let reg = json!({"id": id, "type": "ContextSourceRegistration",
+                     "information": [{"entities": [{"type": "Car"}]}],
+                     "endpoint": "http://127.0.0.1:1"});
+    let path = "/ngsi-ld/v1/csourceRegistrations";
+    let (code, _, body) = send(&st, "alice", "POST", path, Some(reg)).await;
+    assert_eq!(code, StatusCode::CREATED, "{body}");
+    let one = format!("{path}/{id}");
+    let patch = json!({"information": [{"entities": [{"type": "Secret"}]}]});
+    let (code, _, body) = send(&st, "alice", "PATCH", &one, Some(patch)).await;
+    assert_eq!(code, StatusCode::FORBIDDEN, "{body}");
+    let (code, _, body) = send(&st, "alice", "GET", &one, None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["information"][0]["entities"][0]["type"], "Car",
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn query_registrations_lists_only_what_the_filter_selects() {
     let st = state(Arc::new(Owner(false)));

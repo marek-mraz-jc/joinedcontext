@@ -199,6 +199,41 @@ fn a_preview_never_writes_outside_its_directory_and_a_bad_one_is_left_out() {
     assert_eq!(names, vec!["ws-air-".to_owned()]);
 }
 
+/// One preview that cannot be written (a directory where its access file goes) is withdrawn,
+/// and neither the previews after it nor the removal of a withdrawn one stop.
+#[test]
+fn a_preview_that_cannot_be_written_is_withdrawn_and_the_others_go_on() {
+    let previews = scratch("unwritable");
+    let mut mirror = Mirror::new(&previews);
+    let preview = |prefix: &str, files: BTreeMap<String, String>| Preview {
+        prefix: prefix.to_owned(),
+        files,
+        ..Default::default()
+    };
+    mirror
+        .apply(vec![
+            preview("ws-old-", files()),
+            preview("ws-bad-", files()),
+        ])
+        .unwrap();
+    assert!(previews.join("ws-bad-/space.yaml").exists());
+
+    let mut blocking = files();
+    blocking.insert("access.json/x.yaml".to_owned(), "x".to_owned());
+    mirror
+        .apply(vec![
+            preview("ws-bad-", blocking),
+            preview("ws-air-", files()),
+        ])
+        .expect("one preview failing fails no pass");
+    assert!(
+        !previews.join("ws-bad-").exists(),
+        "the stale preview is withdrawn"
+    );
+    assert!(previews.join("ws-air-/space.yaml").exists());
+    assert!(!previews.join("ws-old-").exists(), "the removal still ran");
+}
+
 #[test]
 fn a_preview_that_does_not_render_leaves_main_serving() {
     let main = main_repo("broken");

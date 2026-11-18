@@ -2503,7 +2503,8 @@ async fn reset_credentials_post(
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+// A redirect back from another party: providers add their own parameters (`iss`,
+// `session_state`, a mail tracker's), which are ignored, not refused.
 struct ActionTokenQuery {
     #[serde(default)]
     key: String,
@@ -2683,6 +2684,9 @@ async fn action_token_post(
         .store
         .get_auth_session_by_id(&realm.id, session_code)
         .await?
+        // Only a session an e-mailed action link opened carries actions: a sign-in session's
+        // OAuth scope is never read as an action list.
+        .filter(|s| s.response_type == "action")
     else {
         return render_expired_session_page(
             &state,

@@ -1372,7 +1372,7 @@ async fn groups_clients_roles_mappers_and_scopes_lifecycle() {
             None,
         )
         .await;
-        assert_eq!(st, StatusCode::NO_CONTENT);
+        assert_eq!(st, StatusCode::NOT_FOUND, "an unknown scope is not linked");
         let (st, _, linked) = call(
             &f.app,
             &Method::GET,
@@ -1389,7 +1389,7 @@ async fn groups_clients_roles_mappers_and_scopes_lifecycle() {
             .filter_map(|s| s["name"].as_str())
             .collect();
         assert!(names.contains(&"endpoint:x"), "{kind}: {names:?}");
-        assert!(names.contains(&"unknown-scope"), "{kind}: {names:?}");
+        assert!(!names.contains(&"unknown-scope"), "{kind}: {names:?}");
         for id in [sid.as_str(), "unknown-scope"] {
             let (st, _, _) = call(
                 &f.app,
@@ -1587,11 +1587,26 @@ async fn realm_partial_import_and_native_routes() {
     let (st, _, _) = call(&f.app, &Method::POST, &format!("{R}/partialImport"), a, Some(&json!({ "ifResourceExists": "MERGE", "users": [{ "id": "pi-1", "username": "pi.one" }] }))).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
 
+    for realm in ["dev", "no-such-realm"] {
+        let (st, _, _) = call(
+            &f.app,
+            &Method::GET,
+            &format!("/api/v1/realms/{realm}/operations"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(
+            st,
+            StatusCode::UNAUTHORIZED,
+            "the operations need a bearer: {realm}"
+        );
+    }
     let (st, _, ops) = call(
         &f.app,
         &Method::GET,
         "/api/v1/realms/dev/operations",
-        None,
+        a,
         None,
     )
     .await;

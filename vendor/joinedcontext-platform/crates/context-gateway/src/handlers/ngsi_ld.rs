@@ -18,10 +18,10 @@ use crate::auth::subject::{admit, admit_space, principal_of};
 use crate::handlers::respond::json_response;
 use crate::handlers::schema;
 use crate::handlers::writes::{
-    accepted_payload, batch_entry_id, batch_result, body_length, empty_space, filled_units,
-    foreign_owners, hidden_refusal, judge_write, merged_batch, names_no_tenant, owned_guarded,
-    owner_refusal, quality_judged, refusal_entries, refused, unsupported_media_type,
-    with_filled_units, write_share, HeldDelete, HeldWrite, Judged, Refused,
+    accepted_payload, after_delete, batch_entry_id, batch_result, body_length, empty_space,
+    filled_units, foreign_owners, hidden_refusal, judge_write, merged_batch, names_no_tenant,
+    owned_guarded, owner_refusal, quality_judged, refusal_entries, refused, unsupported_media_type,
+    with_filled_units, write_share, HeldDelete, HeldWrite, Judged, Planned, Refused,
 };
 use crate::middleware::response::RESULTS_RESTRICTED;
 use crate::pdp::evaluator::Constraints;
@@ -463,10 +463,6 @@ pub(crate) async fn serve_ngsi_ld_view(
     if let Err(answer) = answered_here(&endpoint, operation, &view, &params, passed.as_ref()) {
         return *answer;
     }
-    let _share = match write_share(gateway, &endpoint, operation, body_length(&request)).await {
-        Ok(share) => share,
-        Err(answer) => return *answer,
-    };
     // The audit line names the principal the gateway established (PF-46); the decision is the
     // broker's, and its answer says what it was.
     tracing::info!(
@@ -482,6 +478,11 @@ pub(crate) async fn serve_ngsi_ld_view(
         Ok(()) => {}
         Err(answer) => return *answer,
     }
+    // Authorized first, so a refused write never waits in line for the write budget (PRF-03).
+    let _share = match write_share(gateway, &endpoint, operation, body_length(&request)).await {
+        Ok(share) => share,
+        Err(answer) => return *answer,
+    };
 
     let (mut parts, body) = request.into_parts();
     let mut sent = match read_body(gateway, body).await {
@@ -489,6 +490,7 @@ pub(crate) async fn serve_ngsi_ld_view(
         Err(answer) => return *answer,
     };
     let mut divided: Option<(Vec<String>, Refused)> = None;
+    let mut planned = Planned::new();
     // A view of another model takes no write (the broker's 405, `mapping::READS`), so no body is
     // judged against the source model first (T-3799).
     let mapped_write = endpoint.view_mapping.is_some() && operation.is_write();
@@ -502,7 +504,7 @@ pub(crate) async fn serve_ngsi_ld_view(
             &mut parts.headers,
             &mut sent,
             &mut divided,
-            true,
+            &mut planned,
         )
         .await
     };
@@ -512,12 +514,22 @@ pub(crate) async fn serve_ngsi_ld_view(
     };
 
     let target = view_target(&view, &path, uri.query());
+    // The delete rules' changes speak as the caller's hop did (its tenant and provenance).
+    let hop = if planned.is_empty() {
+        HeaderMap::new()
+    } else {
+        parts.headers.clone()
+    };
     let request = Request::from_parts(parts, Body::from(sent));
     let answer =
         match send_reserved(gateway, &endpoint, &subject, operation, &target, request).await {
             Ok(answer) => answer,
             Err(answer) => return *answer,
         };
+    let answer = match after_delete(gateway, &hop, &planned, answer).await {
+        Ok(answer) => answer,
+        Err(answer) => return *answer,
+    };
     let answer = match map_view_answer(answer, operation).await {
         Ok(answer) => answer,
         Err(answer) => return *answer,
@@ -1222,7 +1234,7 @@ fn subscription_target_refusal(sent: &[u8], private_hosts: &[String]) -> Option<
 /// core context (T-3287), a form's minted id and one entity per create (EP-97), the model's
 /// units (DM-06) and relationships (DM-70, DM-71). Returns the units it filled; a batch the
 /// relationships divide leaves its refused members in `divided`. A delete's relationship changes
-/// are made only when `apply_deletes`.
+/// are planned into `planned`, for [`after_delete`] once the broker deleted the entity.
 pub(crate) async fn view_payload(
     gateway: &Gateway,
     (endpoint, subject): (&Endpoint, &Subject),
@@ -1230,7 +1242,7 @@ pub(crate) async fn view_payload(
     headers: &mut HeaderMap,
     sent: &mut Vec<u8>,
     divided: &mut Option<(Vec<String>, Refused)>,
-    apply_deletes: bool,
+    planned: &mut Planned,
 ) -> Result<Vec<String>, Box<Response<Body>>> {
     let answer = |problem: ProblemDetails| Box::new(problem.into_response());
     if operation.is_write() && !sent.is_empty() && !accepted_payload(headers) {
@@ -1314,11 +1326,11 @@ pub(crate) async fn view_payload(
         .map(|declared| &declared.relationships)
         .filter(|rules| !rules.is_empty())
     {
-        relationships_held(
+        *planned = relationships_held(
             gateway,
             (endpoint, subject),
             (path, params, operation),
-            (&*headers, rules, apply_deletes),
+            (&*headers, rules),
             sent,
             divided,
         )
@@ -1473,10 +1485,10 @@ async fn relationships_held(
     gateway: &Gateway,
     (endpoint, subject): (&Endpoint, &Subject),
     (path, params, operation): (&str, &[(String, String)], Operation),
-    (headers, rules, apply): (&HeaderMap, &crate::relationships::RelationshipRules, bool),
+    (headers, rules): (&HeaderMap, &crate::relationships::RelationshipRules),
     sent: &mut Vec<u8>,
     divided: &mut Option<(Vec<String>, Refused)>,
-) -> Result<(), Box<Response<Body>>> {
+) -> Result<Planned, Box<Response<Body>>> {
     if operation.is_write() {
         let held = HeldWrite {
             gateway,
@@ -1493,7 +1505,7 @@ async fn relationships_held(
         })?;
     }
     if !matches!(operation, Operation::DeleteEntity | Operation::DeleteBatch) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let held = HeldDelete {
         gateway,
@@ -1501,15 +1513,14 @@ async fn relationships_held(
         endpoint,
         headers,
         rules,
-        apply,
     };
     let refused = if operation == Operation::DeleteEntity {
         match operations::addressed_entity(path).map(query::decode_path) {
             Some(id) => held.entity(&id).await,
-            None => Ok(()),
+            None => Ok(Vec::new()),
         }
     } else {
-        held.batch(sent, divided).await.map(|_| ())
+        held.batch(sent, divided).await
     };
     refused.inspect_err(|_| {
         tracing::info!(slug = %endpoint.slug, "delete refused: a relationship keeps it");

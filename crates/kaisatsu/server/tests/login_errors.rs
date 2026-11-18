@@ -564,6 +564,30 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let (st, _, _) = send(&app, Method::POST, ACTION, Some(&form), Some(&cookie), None).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
 
+    // A sign-in session (not opened by an action link) whose scope names UPDATE_PASSWORD sets
+    // no password.
+    let link = mint(&store, &member.id, &["UPDATE_PASSWORD"]).await;
+    let (cookie, csrf, session) = open(link).await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.response_type = "code".into();
+    store.put_auth_session(s).await.unwrap();
+    let before = store.list_credentials("dev", &member.id).await.unwrap();
+    let form = [
+        ("csrf_token", csrf.as_str()),
+        ("session_code", session.as_str()),
+        ("new_password", "Fresh-Member-Pass-77!q"),
+    ];
+    let (st, _, _) = send(&app, Method::POST, ACTION, Some(&form), Some(&cookie), None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        store.list_credentials("dev", &member.id).await.unwrap(),
+        before
+    );
+
     // A password form whose person was deleted meanwhile.
     let link = mint(&store, &member.id, &["UPDATE_PASSWORD"]).await;
     let (cookie, csrf, session) = open(link).await;

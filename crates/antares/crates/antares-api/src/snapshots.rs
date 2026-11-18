@@ -280,6 +280,11 @@ fn purge_data_bg(st: &AppState, meta: &Value) {
 fn present(meta: &Value) -> Value {
     let mut out = meta.clone();
     crate::policy::strip_internal(&mut out);
+    // 5.16.6 sends each receiverInfo pair as a header: a read answers that
+    // a credential is set, as a Subscription read does (5.2.15).
+    if let Some(ri) = out.get_mut("receiverInfo") {
+        crate::subscriptions::mask_pairs(ri, |_, _| false);
+    }
     out
 }
 
@@ -411,6 +416,18 @@ fn validate(body: &Value, mode: Mode) -> Result<Map<String, Value>, NgsiError> {
             {
                 return Err(bad(format!(
                     "receiverInfo entry {kv} is not a valid HTTP header (RFC 7230, 6.3.8)"
+                )));
+            }
+            // The HTTP client owns framing and connection headers, as on a
+            // Subscription's receiverInfo (RFC 7230 3.3, 5.4, 6.1).
+            if let Some(k) = k.filter(|k| {
+                crate::subscriptions::CLIENT_OWNED_HEADERS
+                    .iter()
+                    .any(|o| o.eq_ignore_ascii_case(k))
+            }) {
+                return Err(bad(format!(
+                    "receiverInfo may not set the {k} header: the HTTP client sets it \
+                     (RFC 7230, 6.3.8)"
                 )));
             }
         }
@@ -1064,8 +1081,7 @@ pub async fn purge_snapshots(
         let victims: Vec<Value> = st
             .store
             .list(&tenant, Kind::Snapshot)
-            .await
-            .unwrap_or_default()
+            .await?
             .into_iter()
             .filter(|meta| is_snapshot(meta) && crate::registry::csf_matches(&ast, meta, &ctx))
             .collect();
@@ -1141,6 +1157,10 @@ pub async fn update_snapshot(
         let mut meta = snap_get(&st, &tenant, &id)
             .await
             .ok_or_else(|| NgsiError::ResourceNotFound(format!("snapshot {id} not found")))?;
+        // read before the merge below writes the new endpoint
+        let moved = frag
+            .get("endpoint")
+            .is_some_and(|e| Some(e) != meta.get("endpoint"));
         if let Some(o) = meta.as_object_mut() {
             // 5.16.4.4 / 5.5.8 merge of the updatable members
             for k in [
@@ -1155,7 +1175,11 @@ pub async fn update_snapshot(
                         o.remove(k);
                     }
                     Some(v) => {
-                        o.insert(k.into(), v.clone());
+                        let mut v = v.clone();
+                        if k == "receiverInfo" {
+                            crate::subscriptions::unmask_pairs(k, &mut v, o.get(k), moved)?;
+                        }
+                        o.insert(k.into(), v);
                     }
                 }
             }

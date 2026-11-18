@@ -114,10 +114,12 @@ pub(crate) struct Class {
 }
 
 impl Class {
-    pub(crate) fn of(request: &Request) -> Self {
+    /// The class of `request`; `signed_in` when its token verified, since a bearer string
+    /// alone signs nobody in.
+    pub(crate) fn of(request: &Request, signed_in: bool) -> Self {
         let method = request.method();
         Self {
-            anonymous: !jc_core::auth::token::presents(request.headers()),
+            anonymous: !signed_in,
             read: method == Method::GET || method == Method::HEAD || method == Method::OPTIONS,
             loadtest: false,
         }
@@ -419,7 +421,7 @@ fn caller_of(gateway: &Gateway, request: &Request) -> Result<(String, Class), Bo
         Some(claims) => rate_limit::subject_key(claims),
         None => rate_limit::address_key(request.headers()),
     };
-    let mut class = Class::of(request);
+    let mut class = Class::of(request, claims.is_some());
     if is_loadtest(gateway, claims.as_ref()) {
         if !class.read {
             tracing::info!(path = %request.uri().path(), "answered 403: the load generator only reads");
@@ -630,15 +632,32 @@ mod tests {
             }
             builder.body(Body::empty()).expect("a request")
         };
-        assert_eq!(Class::of(&request(Method::GET, false)), ANONYMOUS_READ);
-        assert_eq!(Class::of(&request(Method::POST, true)), SIGNED_WRITE);
-        assert_eq!(Class::of(&request(Method::HEAD, true)), SIGNED_READ);
-        let basic = Request::builder()
-            .method(Method::GET)
-            .header(header::AUTHORIZATION, "Basic YTpi")
-            .body(Body::empty())
-            .expect("a request");
-        assert_eq!(Class::of(&basic), ANONYMOUS_READ, "only a bearer signs in");
+        assert_eq!(
+            Class::of(&request(Method::GET, false), false),
+            ANONYMOUS_READ
+        );
+        assert_eq!(Class::of(&request(Method::POST, true), true), SIGNED_WRITE);
+        assert_eq!(Class::of(&request(Method::HEAD, true), true), SIGNED_READ);
+    }
+
+    /// LIM-06: a bearer string that does not verify keeps the request in the anonymous share.
+    #[test]
+    fn a_token_that_does_not_verify_stays_anonymous() {
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new("http://localhost:1".to_owned()),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        for authorization in ["Bearer x.y.z", "Basic YTpi"] {
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/catalog.jsonld")
+                .header(header::AUTHORIZATION, authorization)
+                .body(Body::empty())
+                .expect("a request");
+            let (_, class) = caller_of(&gateway, &request).expect("a class");
+            assert_eq!(class, ANONYMOUS_READ, "{authorization}");
+        }
     }
 
     /// An App shows this detail to a visitor as it stands (T-6503): it names no header.
