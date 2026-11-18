@@ -402,11 +402,7 @@ impl PgDocStore {
         id: &str,
         doc: &'a Value,
     ) -> Result<std::borrow::Cow<'a, Value>, sqlx::Error> {
-        Ok(super::seal::sealed(
-            self.key.as_deref(),
-            seal_row(kind, tenant, id),
-            doc,
-        )?)
+        super::seal::sealed(self.key.as_deref(), seal_row(kind, tenant, id), doc)
     }
 
     /// Rows of `SELECT {doc}, id`, each credential opened for its own row.
