@@ -384,6 +384,18 @@ pub fn tx_filter_by_value(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
     }
     let include = options.get("type").and_then(Value::as_str) != Some("exclude");
     let match_all = options.get("match").and_then(Value::as_str) == Some("all");
+    // Each filter's pattern is compiled once, not once per row.
+    let patterns: Vec<Option<Regex>> = filters
+        .iter()
+        .map(|filter| {
+            let cfg = filter.get("config")?;
+            if cfg.get("id").and_then(Value::as_str) != Some("regex") {
+                return None;
+            }
+            let opts = cfg.get("options").unwrap_or(&Value::Null);
+            Regex::new(opts.get("value").unwrap_or(opts).as_str().unwrap_or("")).ok()
+        })
+        .collect();
 
     frames
         .into_iter()
@@ -393,7 +405,7 @@ pub fn tx_filter_by_value(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
 
             for r in 0..row_cnt {
                 let mut matched = match_all;
-                for filter in filters {
+                for (filter, pattern) in filters.iter().zip(&patterns) {
                     let field_name = filter
                         .get("fieldName")
                         .and_then(Value::as_str)
@@ -406,7 +418,9 @@ pub fn tx_filter_by_value(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
                         .fields
                         .iter()
                         .find(|f| f.name == field_name || f.effective_name() == field_name)
-                        .is_some_and(|col| eval_value_matcher(col, r, m_id, m_opts));
+                        .is_some_and(|col| {
+                            eval_value_matcher(col, r, m_id, m_opts, pattern.as_ref())
+                        });
 
                     if match_all && !field_hit {
                         matched = false;
@@ -433,7 +447,13 @@ pub fn tx_filter_by_value(frames: Vec<Frame>, options: &Value) -> Vec<Frame> {
         .collect()
 }
 
-fn eval_value_matcher(col: &FieldColumn, row: usize, id: &str, opts: &Value) -> bool {
+fn eval_value_matcher(
+    col: &FieldColumn,
+    row: usize,
+    id: &str,
+    opts: &Value,
+    pattern: Option<&Regex>,
+) -> bool {
     let cell = col.values.get(row).unwrap_or(&Value::Null);
     let target_val = opts.get("value").unwrap_or(opts);
     match id {
@@ -470,10 +490,7 @@ fn eval_value_matcher(col: &FieldColumn, row: usize, id: &str, opts: &Value) -> 
                 .zip(to)
                 .is_some_and(|((v, lo), hi)| v >= lo && v <= hi)
         }
-        "regex" => {
-            let pat = target_val.as_str().unwrap_or("");
-            Regex::new(pat).is_ok_and(|re| re.is_match(&value_to_str(cell)))
-        }
+        "regex" => pattern.is_some_and(|re| re.is_match(&value_to_str(cell))),
         _ => false,
     }
 }

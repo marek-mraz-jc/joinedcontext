@@ -96,6 +96,21 @@ fn check_reports_a_file_and_a_directory_in_json_and_markdown() {
 }
 
 #[test]
+fn check_without_a_datasource_list_does_not_refuse_a_datasource_uid() {
+    let scratch = Scratch::new();
+    let mut board = dashboard("own");
+    board["panels"][0]["datasource"] = json!({ "type": "prometheus", "uid": "city-metrics" });
+    let file = scratch.write("own.json", &board.to_string());
+    let out = daiya(&["check", "-f", &file]);
+    let report: Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert!(matches!(out.status.code(), Some(0 | 2)), "{report}");
+    assert!(
+        !report.to_string().contains("datasource.missing"),
+        "{report}"
+    );
+}
+
+#[test]
 fn check_and_import_refuse_invalid_json_with_1_and_missing_files_with_4() {
     let scratch = Scratch::new();
     let broken = scratch.write("broken.json", "{ \"uid\": ");

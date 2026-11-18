@@ -46,9 +46,9 @@ use std::collections::BTreeMap;
 async fn compat_health() -> Response {
     (
         StatusCode::OK,
+        // Liveness only: the store is not probed, so no `database` state is claimed.
         Json(json!({
             "commit": "daiya",
-            "database": "ok",
             "version": "12.4.14"
         })),
     )
@@ -258,8 +258,9 @@ struct UpsertDatasourceReq {
     is_default: bool,
     #[serde(default = "empty_object")]
     json_data: Value,
+    /// Omitted on an update: the stored references stay.
     #[serde(default)]
-    secret_refs: BTreeMap<String, String>,
+    secret_refs: Option<BTreeMap<String, String>>,
     #[serde(default)]
     allow_hosts: Vec<String>,
     #[serde(default)]
@@ -302,7 +303,7 @@ impl UpsertDatasourceReq {
             is_default: self.is_default,
             read_only: false,
             json_data: self.json_data,
-            secret_refs: self.secret_refs,
+            secret_refs: self.secret_refs.unwrap_or_default(),
             allow_hosts,
             wasm_digest: self.wasm_digest,
             version: 1,
@@ -453,7 +454,7 @@ async fn update_datasource(
     state: &DaiyaState,
     ctx: &RequestCtx,
     uid: String,
-    req: UpsertDatasourceReq,
+    mut req: UpsertDatasourceReq,
 ) -> CrResult<Value> {
     state
         .authorizer
@@ -483,6 +484,7 @@ async fn update_datasource(
             "Cannot update read-only data source".into(),
         ));
     }
+    req.secret_refs.get_or_insert(existing.secret_refs);
     let record = req.into_record(state, ctx, uid);
     state.check_datasource_url(&record)?;
     let saved = state.store.upsert_datasource(record).await?;
@@ -730,23 +732,27 @@ async fn compat_post_dashboard(
     };
     match exec_odata_import(&state, &ctx, imp_body).await {
         Ok(rep) => {
-            let first = &rep["dashboards"][0];
-            let uid = first["uid"].as_str().unwrap_or("");
-            let title = first["title"].as_str().unwrap_or("");
-            let slug = title.to_ascii_lowercase().replace(' ', "-");
-            (
-                StatusCode::OK,
-                Json(json!({
-                    "status": "success",
-                    "slug": slug,
-                    "version": 1,
-                    "id": 1,
-                    "uid": uid,
-                    "url": format!("/d/{uid}/{slug}"),
-                    "folderUid": folder_uid.unwrap_or_default(),
-                })),
-            )
-                .into_response()
+            // Answer from the stored record: the generated uid, its slug and version.
+            let uid = rep["dashboards"][0]["uid"].as_str().unwrap_or_default();
+            match state.store.get_dashboard(ctx.org_id, uid).await {
+                Ok(Some(saved)) => (
+                    StatusCode::OK,
+                    Json(json!({
+                        "status": "success",
+                        "slug": saved.slug,
+                        "version": saved.version,
+                        "id": 1,
+                        "uid": saved.uid,
+                        "url": format!("/d/{}/{}", saved.uid, saved.slug),
+                        "folderUid": folder_uid.unwrap_or_default(),
+                    })),
+                )
+                    .into_response(),
+                Ok(None) => error_response(&CrError::Internal(format!(
+                    "dashboard '{uid}' was not found after saving it"
+                ))),
+                Err(e) => error_response(&e),
+            }
         }
         Err(e) => error_response(&e),
     }

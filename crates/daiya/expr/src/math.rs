@@ -482,114 +482,78 @@ impl Parser {
         self.depth = self.depth.saturating_sub(1);
     }
 
-    // O -> A { "||" A }
-    fn parse_or(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_and()?;
-        while matches!(self.peek(), Some(Token::Or)) {
+    /// Parses `next { op next }` left-associatively. Each operator counts one
+    /// level against `max_depth`, as the tree it builds is one level deeper and
+    /// evaluation recurses once per level.
+    fn parse_binary(
+        &mut self,
+        next: fn(&mut Self) -> CrResult<AstNode>,
+        op_of: fn(&Token) -> Option<&'static str>,
+    ) -> CrResult<AstNode> {
+        let mut left = next(self)?;
+        let mut levels = 0;
+        while let Some(op) = self.peek().and_then(op_of) {
             self.next();
-            let right = self.parse_and()?;
+            self.enter_depth()?;
+            levels += 1;
+            let right = next(self)?;
             left = AstNode::Binary {
-                op: "||".into(),
+                op: op.into(),
                 left: Box::new(left),
                 right: Box::new(right),
             };
         }
+        self.depth -= levels;
         Ok(left)
+    }
+
+    // O -> A { "||" A }
+    fn parse_or(&mut self) -> CrResult<AstNode> {
+        self.parse_binary(Self::parse_and, |t| matches!(t, Token::Or).then_some("||"))
     }
 
     // A -> C { "&&" C }
     fn parse_and(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_cmp()?;
-        while matches!(self.peek(), Some(Token::And)) {
-            self.next();
-            let right = self.parse_cmp()?;
-            left = AstNode::Binary {
-                op: "&&".into(),
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
+        self.parse_binary(Self::parse_cmp, |t| matches!(t, Token::And).then_some("&&"))
     }
 
     // C -> P { ("==" | "!=" | ">" | ">=" | "<" | "<=") P }
     fn parse_cmp(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_add()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::Eq) => "==",
-                Some(Token::Ne) => "!=",
-                Some(Token::Gt) => ">",
-                Some(Token::Ge) => ">=",
-                Some(Token::Lt) => "<",
-                Some(Token::Le) => "<=",
-                _ => break,
-            };
-            self.next();
-            let right = self.parse_add()?;
-            left = AstNode::Binary {
-                op: op.into(),
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
+        self.parse_binary(Self::parse_add, |t| match t {
+            Token::Eq => Some("=="),
+            Token::Ne => Some("!="),
+            Token::Gt => Some(">"),
+            Token::Ge => Some(">="),
+            Token::Lt => Some("<"),
+            Token::Le => Some("<="),
+            _ => None,
+        })
     }
 
     // P -> M { ("+" | "-") M }
     fn parse_add(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_mul()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::Plus) => "+",
-                Some(Token::Minus) => "-",
-                _ => break,
-            };
-            self.next();
-            let right = self.parse_mul()?;
-            left = AstNode::Binary {
-                op: op.into(),
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
+        self.parse_binary(Self::parse_mul, |t| match t {
+            Token::Plus => Some("+"),
+            Token::Minus => Some("-"),
+            _ => None,
+        })
     }
 
     // M -> E { ("*" | "/" | "%") E }
     fn parse_mul(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_pow()?;
-        loop {
-            let op = match self.peek() {
-                Some(Token::Mul) => "*",
-                Some(Token::Div) => "/",
-                Some(Token::Mod) => "%",
-                _ => break,
-            };
-            self.next();
-            let right = self.parse_pow()?;
-            left = AstNode::Binary {
-                op: op.into(),
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
+        self.parse_binary(Self::parse_pow, |t| match t {
+            Token::Mul => Some("*"),
+            Token::Div => Some("/"),
+            Token::Mod => Some("%"),
+            _ => None,
+        })
     }
 
     // E -> F { "**" F }
     fn parse_pow(&mut self) -> CrResult<AstNode> {
-        let mut left = self.parse_factor()?;
-        while matches!(self.peek(), Some(Token::Pow)) {
-            self.next();
-            let right = self.parse_factor()?;
-            left = AstNode::Binary {
-                op: "**".into(),
-                left: Box::new(left),
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
+        self.parse_binary(Self::parse_factor, |t| {
+            matches!(t, Token::Pow).then_some("**")
+        })
     }
 
     // F -> v | "(" O ")" | "!" F | "-" F

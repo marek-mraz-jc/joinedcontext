@@ -121,8 +121,8 @@ fn identity_comes_only_from_the_resolver_or_a_hashed_credential() {
         Some("admin")
     );
     let ctx = resolve_request_ctx(&w.state, &headers(&[("authorization", "Bearer admin")]));
-    assert_eq!(ctx.subject.bearer_token.as_deref(), Some("admin"));
-    // Basic carries the credential but never becomes a token to pass on.
+    // A daiya API credential, Bearer or Basic, never becomes a token to pass on.
+    assert!(ctx.subject.bearer_token.is_none());
     let basic = resolve_request_ctx(&w.state, &headers(&[("authorization", "basic viewer")]));
     assert_eq!(basic.subject.actor_id.as_deref(), Some("viewer"));
     assert!(basic.subject.bearer_token.is_none());
@@ -306,6 +306,15 @@ fn time_strings_parse_as_grafana_writes_them() {
         parse_time_str_ms(Some("1700000000000"), 0),
         1_700_000_000_000
     );
+    // A time outside the years 0..=9999 is clamped to them, so no range arithmetic
+    // downstream can overflow.
+    for (wild, want) in [
+        ("9223372036854775807", 253_402_300_799_999),
+        ("-9223372036854775808", -62_167_219_200_000),
+        ("now-99999999999999w", -62_167_219_200_000),
+    ] {
+        assert_eq!(parse_time_str_ms(Some(wild), 0), want, "{wild}");
+    }
     assert_eq!(
         parse_time_str_ms(Some("2023-11-14T22:13:20Z"), 0),
         1_700_000_000_000
@@ -522,24 +531,23 @@ async fn an_unreadable_panel_source_is_a_named_empty_state() {
         .unwrap();
     assert_eq!(
         view.access_denied_message.as_deref(),
-        Some("You cannot read the source of this panel: Prom named")
+        Some("You cannot read the source of this panel: named")
     );
     assert!(view.frame_sets.is_empty());
     assert!(view.html_table.contains("No data"));
 
-    // A source the caller cannot read and the store does not hold is named by its uid.
+    // The message names only the uid the dashboard already shows, never the stored name, and
+    // reads the same whether or not the store holds the source.
     w.store.inner.delete_datasource(ORG, "named").await.unwrap();
+    w.store.fail("get_datasource");
     let view = panel_view(&w.state, &who, ORG, "fx", 4, PanelTimeRange::default())
         .await
         .unwrap();
+    w.store.heal();
     assert_eq!(
         view.access_denied_message.as_deref(),
         Some("You cannot read the source of this panel: named")
     );
-    w.store.fail("get_datasource");
-    let failed = panel_view(&w.state, &who, ORG, "fx", 4, PanelTimeRange::default()).await;
-    w.store.heal();
-    assert_eq!(failed.unwrap_err().status_code(), 500);
 }
 
 #[tokio::test]
@@ -603,6 +611,19 @@ async fn query_requests_are_bounded_and_named() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+    // A caller with no identity is refused before any target is parsed or evaluated,
+    // also when the request names no datasource at all.
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/ds/query",
+            None,
+            Some(q(
+                json!([{ "refId": "A", "datasource": { "uid": "__expr__" }, "type": "math", "expression": "1 + 1" }]),
+            )),
+        )
+        .await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "{body}");
 }
 
 #[tokio::test]

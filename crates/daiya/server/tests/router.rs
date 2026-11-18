@@ -69,6 +69,8 @@ async fn mcp_over_http_lists_tools_and_calls_them_as_the_caller() {
     );
     assert_eq!(headers["x-content-type-options"], "nosniff");
     assert_eq!(headers["x-frame-options"], "SAMEORIGIN");
+    // Every answer defaults to not being stored by an intermediary.
+    assert_eq!(headers["cache-control"], "private, no-store");
     assert_eq!(
         headers["referrer-policy"],
         "strict-origin-when-cross-origin"

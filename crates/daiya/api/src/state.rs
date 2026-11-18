@@ -273,8 +273,7 @@ impl DaiyaState {
         if credential.is_empty() {
             return None;
         }
-        let is_bearer = scheme.eq_ignore_ascii_case("bearer");
-        if !is_bearer && !scheme.eq_ignore_ascii_case("basic") {
+        if !scheme.eq_ignore_ascii_case("bearer") && !scheme.eq_ignore_ascii_case("basic") {
             return None;
         }
         let digest = sha256_hex(credential.as_bytes());
@@ -284,11 +283,8 @@ impl DaiyaState {
                 found = Some(binding);
             }
         }
-        let mut subject = found?.subject.clone();
-        if is_bearer {
-            subject.bearer_token = Some(credential.to_owned());
-        }
-        Some(subject)
+        // A daiya API credential is never a token to pass on to an Endpoint or an exchanger.
+        Some(found?.subject.clone())
     }
 
     /// Registers a runtime [`Datasource`] implementation for `(org_id, uid)`.
@@ -453,8 +449,14 @@ fn on_behalf_of(mut admin: Subject, headers: &HeaderMap) -> Subject {
 /// Organization, so a panel, a datasource query or a datasource resource it reads must name a
 /// person ([`PERSON_TOKEN_HEADER`]) or the public ([`READ_AS_HEADER`]). The server-administration
 /// routes (organizations, datasource and dashboard records, folders, search, health, public
-/// dashboard settings) read no data and stay open to it.
+/// dashboard settings) read no data and stay open to it. A caller with no identity reads
+/// nothing either, so no target is parsed or evaluated for it.
 pub(crate) fn reads_for_someone(subject: &Subject) -> CrResult<()> {
+    if subject.is_anonymous() {
+        return Err(CrError::Unauthorized(
+            "sign in to read data: the request carries no accepted credential".into(),
+        ));
+    }
     if subject.actor_id.as_deref() == Some(SERVER_ADMIN_ACTOR) && subject.on_behalf_of.is_none() {
         return Err(CrError::Unauthorized(format!(
             "the server administrator reads data only for a person ({PERSON_TOKEN_HEADER}) \

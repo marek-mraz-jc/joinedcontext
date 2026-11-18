@@ -493,7 +493,8 @@ async fn e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_
     );
 
     // 5. Render panel 3 of `project-helsinki` (NGSI-LD entity table + `organize` transformation!)
-    // Verify the caller's token is exchanged for the Endpoint's audience (`jtjnhkaau64zmzz5csmcwem52icvufy2`)
+    // A daiya API credential is never passed on: the Endpoint is asked with no Authorization.
+    *last_auth.lock() = None;
     let (st, _, pv_ngsi) = send_req(
         &app,
         Request::builder()
@@ -504,6 +505,21 @@ async fn e2e_import_9_dashboards_odata_service_and_mocked_prometheus_and_ngsild_
     )
     .await;
     assert_eq!(st, StatusCode::OK);
+    assert_eq!(last_auth.lock().as_deref(), None);
+    // A person's token (set by the host's resolver) is exchanged for the Endpoint's audience
+    // (`jtjnhkaau64zmzz5csmcwem52icvufy2`).
+    let person =
+        Subject::authenticated("admin", vec![org_a], vec![]).with_bearer_token("user-alice-jwt");
+    panel_view(
+        &state,
+        &person,
+        org_a,
+        "project-helsinki",
+        3,
+        PanelTimeRange::default(),
+    )
+    .await
+    .expect("person panel_view");
     assert_eq!(
         last_auth.lock().as_deref(),
         Some("Bearer exchanged:jtjnhkaau64zmzz5csmcwem52icvufy2:user-alice-jwt"),
