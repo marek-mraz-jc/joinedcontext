@@ -883,7 +883,7 @@ pub(crate) async fn people_page(
     query: &HashMap<String, String>,
     project: Option<&str>,
 ) -> Result<PersonPage, ApiError> {
-    let mut organizations = listed_organizations(&state, identity)?;
+    let mut organizations = listed_organizations(state, identity)?;
     if let (Some(project), Some(held)) = (project, organizations.as_mut()) {
         let within = crate::permissions::organization_of(&state.mirror, project);
         held.retain(|organization| within.as_deref() == Some(organization.as_str()));
@@ -918,12 +918,12 @@ pub(crate) async fn people_page(
             "search is at most 255 characters".into(),
         ));
     }
-    let people = people(&state)?;
+    let people = people(state)?;
     let admin = people.admin().await?;
     let mut users = match organizations {
         None => admin.list(search, first, max + 1).await?,
         Some(organizations) => {
-            organization_page(&state, &admin, &organizations, search, first, max + 1).await?
+            organization_page(state, &admin, &organizations, search, first, max + 1).await?
         }
     };
     let next = (users.len() > max as usize).then(|| first + max);
@@ -931,9 +931,9 @@ pub(crate) async fn people_page(
     let seen = last_seen_of(&admin, &users).await;
     let mut items = Vec::with_capacity(users.len());
     for (user, seen) in users.iter().zip(seen) {
-        items.push(person(user, seen, pending(&state, &user.id).await));
+        items.push(person(user, seen, pending(state, &user.id).await));
     }
-    with_invitations(&state, &mut items).await;
+    with_invitations(state, &mut items).await;
     Ok(PersonPage { items, next })
 }
 
