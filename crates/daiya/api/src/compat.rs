@@ -258,8 +258,9 @@ struct UpsertDatasourceReq {
     is_default: bool,
     #[serde(default = "empty_object")]
     json_data: Value,
+    /// Omitted on an update: the stored references stay.
     #[serde(default)]
-    secret_refs: BTreeMap<String, String>,
+    secret_refs: Option<BTreeMap<String, String>>,
     #[serde(default)]
     allow_hosts: Vec<String>,
     #[serde(default)]
@@ -302,7 +303,7 @@ impl UpsertDatasourceReq {
             is_default: self.is_default,
             read_only: false,
             json_data: self.json_data,
-            secret_refs: self.secret_refs,
+            secret_refs: self.secret_refs.unwrap_or_default(),
             allow_hosts,
             wasm_digest: self.wasm_digest,
             version: 1,
@@ -453,7 +454,7 @@ async fn update_datasource(
     state: &DaiyaState,
     ctx: &RequestCtx,
     uid: String,
-    req: UpsertDatasourceReq,
+    mut req: UpsertDatasourceReq,
 ) -> CrResult<Value> {
     state
         .authorizer
@@ -483,6 +484,7 @@ async fn update_datasource(
             "Cannot update read-only data source".into(),
         ));
     }
+    req.secret_refs.get_or_insert(existing.secret_refs);
     let record = req.into_record(state, ctx, uid);
     state.check_datasource_url(&record)?;
     let saved = state.store.upsert_datasource(record).await?;

@@ -173,6 +173,10 @@ async fn datasource_crud_answers_as_grafana() {
     assert_eq!(updated["message"], "Datasource updated");
     assert_eq!(updated["datasource"]["access"], "direct");
     assert_eq!(updated["datasource"]["version"], 2);
+    // An update that does not resend `secretRefs` keeps the stored ones, as Grafana keeps
+    // secure fields a client cannot read back.
+    let got = w.ok("GET", "/api/datasources/uid/prom", None).await;
+    assert_eq!(got["secureJsonFields"]["basicAuthPassword"], true, "{got}");
     let (st, _) = w
         .call(
             "PUT",
