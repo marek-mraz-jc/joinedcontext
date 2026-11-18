@@ -11,6 +11,27 @@ use serde_json::{Value, json};
 
 const ID: &str = "https://claude.ai/oauth/meta";
 
+/// A realm whose client policies allow CIMD clients of `claude.ai`.
+fn cimd_realm() -> RealmConfig {
+    RealmConfig {
+        cimd_allowed_client_domains: vec!["claude.ai".into()],
+        cimd_allowed_redirect_domains: vec![
+            "claude.ai".into(),
+            "localhost".into(),
+            "127.0.0.1".into(),
+        ],
+        ..RealmConfig::default()
+    }
+}
+
+#[test]
+fn a_realm_that_never_turned_cimd_on_refuses_every_cimd_client() {
+    let e = validate_and_build_cimd_client(&RealmConfig::default(), ID, doc(json!({})))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not permitted"), "{e}");
+}
+
 fn doc(patch: Value) -> CimdMetadata {
     let mut d = json!({ "client_id": ID, "redirect_uris": ["https://claude.ai/cb"] });
     for (k, v) in patch.as_object().unwrap() {
@@ -21,7 +42,7 @@ fn doc(patch: Value) -> CimdMetadata {
 
 #[test]
 fn every_rule_refuses_its_violation() {
-    let realm = RealmConfig::default();
+    let realm = cimd_realm();
     let cases = [
         (
             ID,
@@ -106,7 +127,7 @@ fn every_rule_refuses_its_violation() {
 
 #[tokio::test]
 async fn fetching_goes_through_the_guard_and_its_allow_list() {
-    let realm = RealmConfig::default();
+    let realm = cimd_realm();
     let guard = OutboundGuard::default();
     guard.insert_mock(
         ID,

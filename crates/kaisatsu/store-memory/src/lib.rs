@@ -1214,6 +1214,16 @@ impl Store for MemoryStore {
                 mapping.id = uuid::Uuid::now_v7().to_string();
             }
             let mut st = self.inner.write();
+            // A client mapping for a client that does not exist is refused, never stored as a
+            // realm role of the same name.
+            if let Some(uuid) = &mapping.client_uuid
+                && !st
+                    .clients
+                    .iter()
+                    .any(|c| c.realm_id == mapping.realm_id && &c.id == uuid)
+            {
+                return Err(KaisatsuError::NotFound("client not found".into()));
+            }
             st.role_mappings.retain(|rm| {
                 !(rm.realm_id == mapping.realm_id
                     && rm.principal_kind == mapping.principal_kind
@@ -1259,6 +1269,14 @@ impl Store for MemoryStore {
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
             let mut st = self.inner.write();
+            if let Some(uuid) = client_uuid
+                && !st
+                    .clients
+                    .iter()
+                    .any(|c| c.realm_id == realm_id && c.id == uuid)
+            {
+                return Err(KaisatsuError::NotFound("client not found".into()));
+            }
             st.role_mappings.retain(|rm| {
                 !(rm.realm_id == realm_id
                     && rm.principal_kind == principal_kind

@@ -282,7 +282,15 @@ async fn k12_upstream_oidc_broker_happy_path_pkce_state_nonce_and_link_confirmat
     assert_eq!(st_ok, StatusCode::SEE_OTHER);
     assert!(signs_in(&app, &h_ok, &auth_cookie).await);
 
-    // 6. Existing local account (`demo.orgmember@hel.fi`) requires link confirmation + local password.
+    // 6. Existing local account (`demo.orgmember@hel.fi`, a person of the IdP's Organization)
+    // requires link confirmation + local password.
+    let mut member = store
+        .get_user_by_username_or_email("dev", None, "demo.orgmember@hel.fi")
+        .await
+        .unwrap()
+        .unwrap();
+    member.org_id = Some("helsinki".into());
+    store.update_user(member).await.unwrap();
     let (s2, ck2) = start_auth_session(&app).await;
     let (_, h2, _) = get_with_ck(
         &app,
@@ -440,6 +448,26 @@ async fn upstream_sign_in(
     sub: &str,
     email: &str,
 ) -> (String, String) {
+    let (st, h, auth_cookie) = upstream_callback(app, up_issuer, up_state, sub, email).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let next = h[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(
+        !next.contains("?code=") && !next.contains("&code="),
+        "{next}"
+    );
+    assert!(next.contains("/login-actions/authenticate"), "{next}");
+    (next, auth_cookie)
+}
+
+/// The broker endpoint's answer to an upstream sign-in as `sub` with `email`, and the auth
+/// session cookie.
+async fn upstream_callback(
+    app: &Router,
+    up_issuer: &str,
+    up_state: &FakeUpstreamState,
+    sub: &str,
+    email: &str,
+) -> (StatusCode, HeaderMap, String) {
     let (session_code, auth_cookie) = start_auth_session(app).await;
     let (_, hdrs, _) = get_with_ck(
         app,
@@ -463,20 +491,61 @@ async fn upstream_sign_in(
     let (st, h, _) = get_with_ck(
         app,
         &format!(
-            "/realms/dev/broker/entra/endpoint?code=c1&state={}",
+            "/realms/dev/broker/entra/endpoint?code=c1&state={}&session_state=upstream-sid",
             qp["state"]
         ),
         &auth_cookie,
     )
     .await;
-    assert_eq!(st, StatusCode::SEE_OTHER);
-    let next = h[header::LOCATION].to_str().unwrap().to_owned();
-    assert!(
-        !next.contains("?code=") && !next.contains("&code="),
-        "{next}"
-    );
-    assert!(next.contains("/login-actions/authenticate"), "{next}");
-    (next, auth_cookie)
+    (st, h, auth_cookie)
+}
+
+/// An upstream e-mail matching a local account links it only when the account proves itself
+/// with its password and belongs to the identity provider's Organization.
+#[tokio::test]
+async fn an_upstream_email_alone_links_no_passwordless_or_foreign_account() {
+    let (app, store, up_issuer, up_state) = broker_world(false).await;
+    store
+        .create_user(UserRepresentation {
+            id: "nopw-1".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            username: "no.password@hel.fi".into(),
+            email: Some("no.password@hel.fi".into()),
+            enabled: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, _) = upstream_callback(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-nopw",
+        "no.password@hel.fi",
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let person = store
+        .get_user_by_id("dev", None, "nopw-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(person.attributes.is_empty(), "{:?}", person.attributes);
+
+    // The demo member has a password but is not a person of this IdP's Organization.
+    let mut idp = store.get_idp("dev", "entra").await.unwrap().unwrap();
+    idp.org_id = Some("another-org".into());
+    store.upsert_idp(idp).await.unwrap();
+    let (st, _, _) = upstream_callback(
+        &app,
+        &up_issuer,
+        &up_state,
+        "entra-sub-foreign",
+        "demo.orgmember@hel.fi",
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
 }
 
 fn page_id(html: &str) -> &str {

@@ -461,7 +461,7 @@ async fn broker_signs_in_linked_and_attribute_linked_people() {
 #[tokio::test]
 async fn broker_link_confirmation_refusals_and_escaping() {
     let (app, store, up) = setup().await;
-    // An existing account whose name holds markup and which has no password.
+    // An existing account whose name holds markup; it proves itself with its password.
     store
         .create_user(UserRepresentation {
             id: "markup-user".into(),
@@ -469,6 +469,17 @@ async fn broker_link_confirmation_refusals_and_escaping() {
             username: "<i>link</i>".into(),
             email: Some("markup@hel.fi".into()),
             enabled: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_credential(CredentialRecord {
+            id: "markup-pw".into(),
+            realm_id: "dev".into(),
+            user_id: "markup-user".into(),
+            credential_type: "password".into(),
+            secret_data: hash_password("Markup-pass-123").unwrap(),
             ..Default::default()
         })
         .await
@@ -487,8 +498,8 @@ async fn broker_link_confirmation_refusals_and_escaping() {
     assert!(html.contains("&lt;i&gt;link&lt;/i&gt;"), "{html}");
     assert!(!html.contains("<i>link</i>"), "the account name is escaped");
     assert!(
-        !html.contains(r#"name="password""#),
-        "no password to re-enter"
+        html.contains(r#"name="password""#),
+        "the password is asked for"
     );
     let csrf = extract_hidden_input(&html, "csrf_token");
     let ep = "/realms/dev/broker/entra/endpoint";
@@ -573,9 +584,32 @@ async fn broker_link_confirmation_refusals_and_escaping() {
             .is_none(),
         "nothing linked by a refused confirmation"
     );
-    // The saved pending state confirms without a password (the account has none).
+    // An account without a password is never linked by the confirmation.
     pend(&store, &s, json!(saved)).await;
-    let (st, h, body) = post_form(&app, ep, &form, Some(&ck)).await;
+    assert!(
+        store
+            .delete_credential("dev", "markup-user", "markup-pw")
+            .await
+            .unwrap()
+    );
+    let (st, _, body) = post_form(&app, ep, &form, Some(&ck)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+    store
+        .upsert_credential(CredentialRecord {
+            id: "markup-pw".into(),
+            realm_id: "dev".into(),
+            user_id: "markup-user".into(),
+            credential_type: "password".into(),
+            secret_data: hash_password("Markup-pass-123").unwrap(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    // The saved pending state confirms with the account's password.
+    pend(&store, &s, json!(saved)).await;
+    let mut with_password = form.to_vec();
+    with_password.push(("password", "Markup-pass-123"));
+    let (st, h, body) = post_form(&app, ep, &with_password, Some(&ck)).await;
     assert_eq!(st, StatusCode::SEE_OTHER, "{body}");
     assert!(h[header::LOCATION].to_str().unwrap().contains("code="));
     assert!(

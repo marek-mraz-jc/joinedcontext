@@ -129,7 +129,12 @@ impl SmtpWrite {
                 ));
             }
             Some(p) if !p.is_empty() => p,
-            _ => stored.map(|s| s.password.clone()).unwrap_or_default(),
+            // The stored password goes only to the server it was given for: a new host or user
+            // needs it typed again.
+            _ => stored
+                .filter(|s| s.host == host && s.user == user)
+                .map(|s| s.password.clone())
+                .unwrap_or_default(),
         };
         if !user.is_empty() && password.is_empty() {
             return Err(invalid("password", "a user needs its password"));

@@ -176,9 +176,16 @@ async fn only_manage_smtp_or_a_realm_applier_reads_and_sets_it() {
         "{events}"
     );
 
-    // A save without a password keeps the stored one; a bad field is named.
-    let mut again = settings("smtp2.example.org");
+    // A save without a password keeps the stored one for the same server only: the stored
+    // password never goes to another host. A bad field is named.
+    let mut elsewhere = settings("smtp2.example.org");
+    elsewhere.as_object_mut().unwrap().remove("password");
+    let (status, problem) = f.call(Method::PUT, "", &reconciler, Some(elsewhere)).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(problem.to_string().contains("password"), "{problem}");
+    let mut again = settings("smtp.example.org");
     again.as_object_mut().unwrap().remove("password");
+    again["from"] = json!("mail@example.org");
     assert_eq!(
         f.call(Method::PUT, "", &reconciler, Some(again)).await.0,
         StatusCode::NO_CONTENT
@@ -192,8 +199,8 @@ async fn only_manage_smtp_or_a_realm_applier_reads_and_sets_it() {
         .smtp_server
         .unwrap();
     assert_eq!(
-        (stored.host.as_str(), stored.password.as_str()),
-        ("smtp2.example.org", "smtp-s3cret")
+        (stored.from.as_str(), stored.password.as_str()),
+        ("mail@example.org", "smtp-s3cret")
     );
     let (status, problem) = f
         .call(Method::PUT, "", &reconciler, Some(settings("10.43.0.1")))

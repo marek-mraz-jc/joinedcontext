@@ -535,6 +535,28 @@ async fn authorization_code_grant_refusals() {
     f[2].1 = "grafana-secret-123".into();
     let (_, _, body) = send(f).await;
     assert_eq!(err(&body), "invalid_grant");
+    // A used code replayed by another client is refused without ending the person's session:
+    // the tokens edge got from it keep working.
+    let code = browser_code(&app).await;
+    let (st, _, body) = send(base(&code)).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let tokens: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let mut replay = base(&code);
+    replay[1].1 = "grafana".into();
+    replay[2].1 = "grafana-secret-123".into();
+    let (_, _, body) = send(replay).await;
+    assert_eq!(err(&body), "invalid_grant");
+    let (st, _, body) = send(vec![
+        ("grant_type", "refresh_token".into()),
+        ("client_id", "edge".into()),
+        ("client_secret", "edge-secret-123".into()),
+        (
+            "refresh_token",
+            tokens["refresh_token"].as_str().unwrap().to_owned(),
+        ),
+    ])
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
     // A disabled person gets nothing for a fresh code.
     let code = browser_code(&app).await;
     let mut u = store

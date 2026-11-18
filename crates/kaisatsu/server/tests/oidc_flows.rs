@@ -494,6 +494,14 @@ async fn sso_session_prompt_max_age_step_up_and_response_modes() {
     let (st, h, _) = get(&app, &auth_query("&prompt=none"), Some(&sso), None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert!(query_param(&location(&h), "code").is_some());
+    // Consent to `openid` alone does not cover a wider scope: no silent code for it.
+    let wider = auth_query("&prompt=none").replace("scope=openid&", "scope=openid%20email&");
+    let (st, h, _) = get(&app, &wider, Some(&sso), None).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert_eq!(
+        query_param(&location(&h), "error").as_deref(),
+        Some("consent_required")
+    );
     let (st, h, _) = get(&app, &auth_query(""), Some(&sso), None).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert!(location(&h).starts_with(CALLBACK));

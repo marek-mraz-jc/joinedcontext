@@ -176,14 +176,10 @@ impl Default for RealmConfig {
             attributes,
             default_optional_client_scopes: vec!["connector".into(), "offline_access".into()],
             default_groups: vec!["/platform-readers".into()],
-            cimd_allowed_client_domains: vec!["claude.ai".into(), "vscode.dev".into()],
-            cimd_allowed_redirect_domains: vec![
-                "claude.ai".into(),
-                "vscode.dev".into(),
-                "code.visualstudio.com".into(),
-                "localhost".into(),
-                "127.0.0.1".into(),
-            ],
+            // CIMD registration is off unless the realm turns it on (its client policies at
+            // apply, or these fields set explicitly): a missing value never opens it.
+            cimd_allowed_client_domains: Vec::new(),
+            cimd_allowed_redirect_domains: Vec::new(),
             cimd_optional_client_scopes: vec!["mcp:portal".into(), "offline_access".into()],
             smtp_server: None,
             apply_checksum: None,
