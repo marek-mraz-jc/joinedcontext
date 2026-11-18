@@ -135,14 +135,31 @@ pub async fn record_repo_size(
     repo: &mut RepoRecord,
     disk_path: &std::path::Path,
 ) {
-    let new_size = compute_repo_size_bytes(disk_path);
-    let delta = new_size as i64 - repo.size_bytes as i64;
-    repo.size_bytes = new_size;
-    let _ = state.store().update_repo(repo.clone()).await;
-    let _ = state
+    let path = disk_path.to_path_buf();
+    let Ok(new_size) = blocking(move || Ok(compute_repo_size_bytes(&path))).await else {
+        return;
+    };
+    // `repo` was read before the write; a pull request opened or a rename or archive made
+    // since then lives only in the stored record, so only its size changes here.
+    let Ok(Some(mut current)) = state
+        .store()
+        .get_repo_by_id(repo.instance_id, repo.org_id, repo.id)
+        .await
+    else {
+        return;
+    };
+    let delta = new_size as i64 - current.size_bytes as i64;
+    current.size_bytes = new_size;
+    if let Ok(saved) = state.store().update_repo(current).await {
+        *repo = saved;
+    }
+    if let Err(e) = state
         .store()
         .adjust_quota_usage(repo.instance_id, repo.org_id, 0, delta, 0)
-        .await;
+        .await
+    {
+        tracing::warn!(repo = %repo.id, error = %e, "storage quota not adjusted after a write");
+    }
 }
 
 /// Creates a repository; one of the same owner and name already there is `Conflict` (409).
@@ -241,6 +258,8 @@ pub async fn import_repository(
     let inst_id = ctx.instance_id;
     let def_branch = origin.default_branch.clone();
     let desc = req.description.clone().unwrap_or_default();
+    // A push or compaction on the source must not add or drop packs while they are copied.
+    let _source_guard = state.repo_locks.lock(origin.id).await;
     let dest = blocking(move || {
         let dest = init_bare_repo(&root, inst_id, new_id, &def_branch, false, &desc)?;
         copy_bare_repo(&origin_disk, &dest, &def_branch)?;
@@ -439,6 +458,30 @@ pub async fn delete_branch(
     let policy = state
         .ref_policy_for(repo.instance_id, repo.org_id, repo.id)
         .await?;
+    check_branch_delete(state, ctx, &repo, &policy, branch)?;
+    let _guard = state.repo_locks.lock(repo.id).await;
+    let b = branch.to_owned();
+    if blocking(move || git_delete_branch(&disk_path, &b)).await? {
+        Ok(())
+    } else {
+        Err(ShakoError::NotFound("branch does not exist".into()))
+    }
+}
+
+/// The one decision on deleting a branch, for every path that deletes one: the default branch
+/// is never deleted, and the branch rules decide the rest.
+fn check_branch_delete(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    repo: &RepoRecord,
+    policy: &RefPolicy,
+    branch: &str,
+) -> ShakoResult<()> {
+    if branch == repo.default_branch {
+        return Err(ShakoError::Forbidden(format!(
+            "branch '{branch}' is the repository's default branch and cannot be deleted"
+        )));
+    }
     policy.check_ref_update(
         ctx,
         state.authorizer.as_ref(),
@@ -451,14 +494,7 @@ pub async fn delete_branch(
             is_fast_forward: true,
             changed_paths: &[],
         },
-    )?;
-    let _guard = state.repo_locks.lock(repo.id).await;
-    let b = branch.to_owned();
-    if blocking(move || git_delete_branch(&disk_path, &b)).await? {
-        Ok(())
-    } else {
-        Err(ShakoError::NotFound("branch does not exist".into()))
-    }
+    )
 }
 
 /// Creates or replaces a branch protection rule (Admin).
@@ -504,6 +540,41 @@ pub async fn protect_branch(
         .await
 }
 
+/// Changes the fields `patch` names on a stored branch rule and keeps every other field as
+/// stored (PATCH); the rule is saved through [`protect_branch`], so its checks and the
+/// loosening guard apply.
+pub async fn patch_branch_protection(
+    state: &ShakoState,
+    ctx: &RequestCtx,
+    owner: &str,
+    name: &str,
+    rule_name: &str,
+    patch: serde_json::Map<String, serde_json::Value>,
+) -> ShakoResult<ProtectionRuleRecord> {
+    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Admin).await?;
+    let stored = state
+        .store()
+        .get_protection_rule(repo.instance_id, repo.org_id, repo.id, rule_name)
+        .await?
+        .ok_or_else(|| ShakoError::NotFound("branch protection rule not found".into()))?;
+    if patch
+        .get("rule_name")
+        .is_some_and(|v| v.as_str() != Some(rule_name))
+    {
+        return Err(ShakoError::Unprocessable(
+            "rule_name cannot change in a PATCH; create the new rule and delete this one".into(),
+        ));
+    }
+    let mut merged =
+        serde_json::to_value(&stored.rule).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    if let Some(fields) = merged.as_object_mut() {
+        fields.extend(patch);
+    }
+    let rule: BranchProtectionRule = serde_json::from_value(merged)
+        .map_err(|e| ShakoError::Unprocessable(format!("invalid branch rule: {e}")))?;
+    protect_branch(state, ctx, owner, name, rule).await
+}
+
 /// Removes a branch protection rule by its name (Admin); answers whether one was there.
 pub async fn unprotect_branch(
     state: &ShakoState,
@@ -537,9 +608,48 @@ fn guards_writers(rule: &BranchProtectionRule) -> bool {
     !rule.enable_push || rule.enable_push_whitelist || rule.enable_merge_whitelist
 }
 
-/// Whether `next` lets someone write or merge whom `stored` kept out (P-24). The allow-lists'
-/// names may change; dropping a guard may not.
+/// Whether `next` lets someone write or merge whom `stored` kept out, or merges with fewer
+/// checks (P-24): a guard dropped, a name added to an allow-list, fewer approvals, a status
+/// check or protected path removed. Removing names and adding checks is allowed.
 fn loosens(stored: &BranchProtectionRule, next: &BranchProtectionRule) -> bool {
+    let adds = |was: &[String], now: &[String]| now.iter().any(|n| !was.contains(n));
+    let drops = |was: bool, now: bool| was && !now;
+    // A rule that guards no writer can be removed and saved again, so only a guarding rule
+    // holds its checks here.
+    let weakens_guarding_rule = guards_writers(stored)
+        && (adds(
+            &stored.push_whitelist_usernames,
+            &next.push_whitelist_usernames,
+        ) || adds(
+            &stored.force_push_allowlist_usernames,
+            &next.force_push_allowlist_usernames,
+        ) || adds(
+            &stored.merge_whitelist_usernames,
+            &next.merge_whitelist_usernames,
+        ) || adds(
+            &stored.approvals_whitelist_username,
+            &next.approvals_whitelist_username,
+        ) || next.required_approvals < stored.required_approvals
+            || drops(stored.enable_status_check, next.enable_status_check)
+            || adds(&next.status_check_contexts, &stored.status_check_contexts)
+            || drops(
+                stored.block_on_rejected_reviews,
+                next.block_on_rejected_reviews,
+            )
+            || drops(
+                stored.block_on_outdated_branch,
+                next.block_on_outdated_branch,
+            )
+            || drops(stored.dismiss_stale_approvals, next.dismiss_stale_approvals)
+            || (!stored.protected_file_patterns.trim().is_empty()
+                && next.protected_file_patterns != stored.protected_file_patterns)
+            || (!next.unprotected_file_patterns.trim().is_empty()
+                && next.unprotected_file_patterns != stored.unprotected_file_patterns));
+    weakens_guarding_rule || drops_guard(stored, next)
+}
+
+/// Whether `next` switches off a guard `stored` had (the flags of the rule).
+fn drops_guard(stored: &BranchProtectionRule, next: &BranchProtectionRule) -> bool {
     let opens = |was_on: bool, was_listed: bool, on: bool, listed: bool| {
         (!was_on && on) || (was_listed && on && !listed)
     };
@@ -653,8 +763,29 @@ pub async fn commit_files(
 
     let guard = state.repo_locks.lock(repo.id).await;
     let (disk, b, msg) = (disk_path.clone(), branch.clone(), req.message);
-    let commit_sha =
-        blocking(move || commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)).await?;
+    // Only the default branch may start without history (the first commit of an empty
+    // repository); any other branch is cut first, so a commit never makes an orphan branch.
+    let may_start = branch == repo.default_branch;
+    let commit_sha = blocking(move || {
+        if !may_start {
+            let full_ref = format!("refs/heads/{b}");
+            let partial: &gix_ref::PartialNameRef = full_ref
+                .as_str()
+                .try_into()
+                .map_err(|_| ShakoError::NotFound(format!("branch '{b}' does not exist")))?;
+            if open_isolated(&disk)?
+                .try_find_reference(partial)
+                .map_err(|e| ShakoError::Git(e.to_string()))?
+                .is_none()
+            {
+                return Err(ShakoError::NotFound(format!(
+                    "branch '{b}' does not exist; create it first or name new_branch with branch as its base"
+                )));
+            }
+        }
+        commit_file_changes(&disk, &b, &msg, &author, &committer, &ops)
+    })
+    .await?;
     record_repo_size(state, &mut repo, &disk_path).await;
     drop(guard);
 
@@ -697,10 +828,14 @@ pub async fn commit_status(
         "error"
     } else if statuses.iter().any(|s| s.state == "failure") {
         "failure"
-    } else if statuses.iter().any(|s| s.state == "pending") {
-        "pending"
-    } else {
+    } else if statuses
+        .iter()
+        .all(|s| matches!(s.state.as_str(), "success" | "warning"))
+    {
         "success"
+    } else {
+        // A state the forge does not know never reads as green.
+        "pending"
     };
     Ok((combined.to_owned(), statuses))
 }
@@ -810,24 +945,6 @@ pub async fn open_pull_request(
     Ok((repo, saved))
 }
 
-/// The pull requests of a repository, optionally of one state (`open`, `closed`; `all` or
-/// `None` for every one), newest number first.
-pub async fn list_pull_requests(
-    state: &ShakoState,
-    ctx: &RequestCtx,
-    owner: &str,
-    name: &str,
-    pr_state: Option<&str>,
-) -> ShakoResult<(RepoRecord, Vec<PullRequestRecord>)> {
-    let (repo, _) = resolve_and_authorize_repo(state, ctx, owner, name, Action::Read).await?;
-    let wanted = pr_state.filter(|s| *s != "all");
-    let prs = state
-        .store()
-        .list_pull_requests(repo.instance_id, repo.org_id, Some(repo.id), wanted)
-        .await?;
-    Ok((repo, prs))
-}
-
 /// One pull request; an open one has its mergeability refreshed against the branches.
 pub async fn get_pull_request(
     state: &ShakoState,
@@ -842,11 +959,18 @@ pub async fn get_pull_request(
     if pr.state == "open" {
         let (b, h) = (pr.base_ref.clone(), pr.head_ref.clone());
         if let Ok(m) = blocking(move || check_mergeability(&disk_path, &b, &h)).await {
+            // A read stores the refreshed state only when a ref moved since the last one.
+            let changed = pr.head_sha != m.head_sha
+                || pr.base_sha != m.base_sha
+                || pr.merge_base != m.merge_base
+                || pr.mergeable != Some(m.mergeable);
             pr.head_sha = m.head_sha;
             pr.base_sha = m.base_sha;
             pr.merge_base = m.merge_base;
             pr.mergeable = Some(m.mergeable);
-            let _ = state.store().update_pull_request(pr.clone()).await;
+            if changed && let Err(e) = state.store().update_pull_request(pr.clone()).await {
+                tracing::warn!(repo = %repo.id, error = %e, "pull request state not refreshed");
+            }
         }
     }
     Ok((repo, pr))
@@ -1133,6 +1257,11 @@ pub async fn merge_pull_request(
             statuses: &statuses,
         },
     )?;
+    // The head branch goes only when deleting it is allowed on its own; asked and refused, the
+    // merge does not start.
+    if req.delete_branch_after_merge {
+        check_branch_delete(state, ctx, &repo, &policy, &pr.head_ref)?;
+    }
     let message = req
         .message
         .filter(|s| !s.trim().is_empty())
@@ -1163,7 +1292,9 @@ pub async fn merge_pull_request(
     .await?;
     if req.delete_branch_after_merge {
         let (d, h) = (disk_path.clone(), pr.head_ref.clone());
-        let _ = blocking(move || git_delete_branch(&d, &h)).await;
+        if let Err(e) = blocking(move || git_delete_branch(&d, &h)).await {
+            tracing::warn!(repo = %repo.id, error = %e, "head branch not deleted after the merge");
+        }
     }
     pr.state = "closed".into();
     pr.merged = true;
@@ -1222,6 +1353,23 @@ pub async fn list_push_mirrors(
 }
 
 /// Adds a push mirror to an allow-listed HTTPS host (Admin, Threat T3).
+/// The secret-store prefix of the secrets the forge keeps for one repository's hooks and
+/// mirrors.
+fn repo_secret_prefix(repo: &RepoRecord) -> String {
+    format!("repo:{}:", repo.id)
+}
+
+/// Checks a secret reference a caller names for `repo`: a key-shaped name, and never a key the
+/// forge keeps for another repository (answered as not found).
+fn check_caller_secret_ref(field: &str, r: &str, repo: &RepoRecord) -> ShakoResult<()> {
+    shako_core::check_secret_ref(field, r)?;
+    let generated = r.starts_with("repo:") || r.starts_with("webhook-") || r.starts_with("mirror:");
+    if generated && !r.starts_with(&repo_secret_prefix(repo)) {
+        return Err(ShakoError::NotFound(format!("{field}: secret not found")));
+    }
+    Ok(())
+}
+
 pub async fn add_push_mirror(
     state: &ShakoState,
     ctx: &RequestCtx,
@@ -1234,7 +1382,7 @@ pub async fn add_push_mirror(
         .outbound_guard
         .validate_url(&req.remote_address, None)?;
     if let Some(r) = &req.secret_ref {
-        shako_core::check_secret_ref("secretRef", r)?;
+        check_caller_secret_ref("secretRef", r, &repo)?;
     }
     if let Some(b) = &req.branch {
         shako_core::validate_branch_name(b)?;
@@ -1245,7 +1393,7 @@ pub async fn add_push_mirror(
     );
     let secret_ref = req
         .secret_ref
-        .unwrap_or_else(|| format!("mirror:{}:{}", repo.id, remote_name));
+        .unwrap_or_else(|| format!("{}mirror:{remote_name}", repo_secret_prefix(&repo)));
     if let Some(pw) = req.password.as_deref().filter(|p| !p.is_empty()) {
         // A caller-named reference may hold another hook's or mirror's secret: a password never
         // overwrites one that is already there.
@@ -1316,7 +1464,7 @@ pub async fn sync_push_mirrors(
 /// Where a webhook's signing secret comes from.
 #[derive(Debug, Clone)]
 pub enum HookSecret {
-    /// Given inline; stored in the secret store under `webhook-{id}` and never answered.
+    /// Given inline; stored in the secret store under `repo:{repo id}:webhook-{id}` and never answered.
     Inline(String),
     /// Already in the secret store under this reference.
     Ref(String),
@@ -1352,12 +1500,12 @@ pub async fn add_webhook(
                     "a hook needs a secret to sign its deliveries".into(),
                 ));
             }
-            let r = format!("webhook-{id}");
+            let r = format!("{}webhook-{id}", repo_secret_prefix(&repo));
             state.secret_store.put_secret(repo.org_id, &r, &secret);
             r
         }
         HookSecret::Ref(r) if !r.trim().is_empty() => {
-            shako_core::check_secret_ref("secretRef", &r)?;
+            check_caller_secret_ref("secretRef", &r, &repo)?;
             r
         }
         HookSecret::Ref(_) => {
@@ -1367,7 +1515,7 @@ pub async fn add_webhook(
         }
     };
     if let Some(r) = &req.previous_secret_ref {
-        shako_core::check_secret_ref("previousSecretRef", r)?;
+        check_caller_secret_ref("previousSecretRef", r, &repo)?;
     }
     state
         .store()
@@ -1517,27 +1665,38 @@ pub async fn publish_generic_file(
             created_at: now,
         })
         .await?;
-    let ver_rec = state
+    // A version holds several files: the first file creates it, later files join it, so the
+    // files already stored keep a version id that exists.
+    let existing = state
         .store()
-        .upsert_package_version(PackageVersionRecord {
-            id: uuid::Uuid::now_v7(),
-            instance_id: ctx.instance_id,
-            org_id: target_org,
-            package_id: pkg_rec.id,
-            owner: owner.to_owned(),
-            package_type: "generic".into(),
-            package_name: pkg.to_owned(),
-            version: ver.to_owned(),
-            digest: format!("sha256:{sha256}"),
-            media_type: "application/octet-stream".into(),
-            manifest_bytes: Vec::new(),
-            subject_digest: None,
-            artifact_type: None,
-            size_bytes: bytes.len() as u64,
-            signed: false,
-            created_at: now,
-        })
+        .get_package_version(ctx.instance_id, target_org, owner, "generic", pkg, ver)
         .await?;
+    let ver_rec = match existing {
+        Some(v) => v,
+        None => {
+            state
+                .store()
+                .upsert_package_version(PackageVersionRecord {
+                    id: uuid::Uuid::now_v7(),
+                    instance_id: ctx.instance_id,
+                    org_id: target_org,
+                    package_id: pkg_rec.id,
+                    owner: owner.to_owned(),
+                    package_type: "generic".into(),
+                    package_name: pkg.to_owned(),
+                    version: ver.to_owned(),
+                    digest: format!("sha256:{sha256}"),
+                    media_type: "application/octet-stream".into(),
+                    manifest_bytes: Vec::new(),
+                    subject_digest: None,
+                    artifact_type: None,
+                    size_bytes: bytes.len() as u64,
+                    signed: false,
+                    created_at: now,
+                })
+                .await?
+        }
+    };
     let saved = state
         .store()
         .insert_package_file(PackageFileRecord {

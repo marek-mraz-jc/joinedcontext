@@ -13,7 +13,7 @@
 
 use crate::pktline::{
     MAX_SIDEBAND_1K_DATA, MAX_SIDEBAND_64K_DATA, PktLine, parse_all_pkt_lines, write_delim,
-    write_err_line, write_flush, write_sideband_chunks, write_text_line,
+    write_flush, write_sideband_chunks, write_text_line,
 };
 use crate::repo::open_isolated;
 use bstr::ByteSlice;
@@ -476,8 +476,6 @@ fn handle_v2_fetch(repo_path: &Path, args: &[String]) -> ShakoResult<Vec<u8>> {
     let reachable_pool = collect_reachable_objects_for_check(&repo, &params.wants)?;
     for w in &params.wants {
         if !repo.has_object(*w) || !reachable_pool.contains(w) {
-            let mut err_out = Vec::new();
-            write_err_line(&mut err_out, &format!("upload-pack: not our ref {w}"))?;
             return Err(ShakoError::BadRequest(format!(
                 "upload-pack: want {w} is not reachable"
             )));

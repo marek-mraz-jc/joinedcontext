@@ -57,6 +57,8 @@ pub fn create_archive(
 
     let mut files = BTreeMap::new();
     collect_tree_blobs(&repo, &tree, "", &mut files)?;
+    // A submodule's content is in another repository; the archive leaves it out, as git does.
+    files.retain(|_, (kind, _)| *kind != EntryKind::Commit);
 
     match format {
         ArchiveFormat::Zip => {

@@ -49,8 +49,13 @@ pub async fn push_mirror_over_https(
         .await
         .map_err(|e| scrub_secret(&e, password))?;
     if !(200..300).contains(&status) {
-        return Err(ShakoError::Git(format!(
-            "remote info/refs answered HTTP {status}"
+        return Err(remote_answer(format!(
+            "the remote answered HTTP {status} to the ref listing{}",
+            if matches!(status, 401 | 403) {
+                ": check the mirror's credential"
+            } else {
+                ""
+            }
         )));
     }
 
@@ -95,8 +100,8 @@ pub async fn push_mirror_over_https(
         .map_err(|e| scrub_secret(&e, password))?;
 
     if !(200..300).contains(&post_status) {
-        return Err(ShakoError::Git(format!(
-            "remote git-receive-pack answered HTTP {post_status}"
+        return Err(remote_answer(format!(
+            "the remote answered HTTP {post_status} to the push"
         )));
     }
 
@@ -114,6 +119,13 @@ fn diverged_error(diverged: &[String]) -> ShakoResult<()> {
          reconcile the remote by hand",
         diverged.join(", ")
     )))
+}
+
+/// What the remote answered, kept readable in the mirror's LastError (a Git error answers only
+/// that something failed). It carries no secret of ours; the remote's own text is cut at 200
+/// characters.
+fn remote_answer(text: String) -> ShakoError {
+    ShakoError::Conflict(text.chars().take(200).collect())
 }
 
 fn scrub_secret(err: &ShakoError, secret: &str) -> ShakoError {
@@ -240,10 +252,12 @@ fn verify_remote_report_status(resp: &[u8]) -> ShakoResult<()> {
         if let Some(reason) = text.strip_prefix("unpack ")
             && reason.trim() != "ok"
         {
-            return Err(ShakoError::Git(format!("remote unpack failed: {reason}")));
+            return Err(remote_answer(format!(
+                "the remote could not unpack the push: {reason}"
+            )));
         }
         if let Some(ng) = text.strip_prefix("ng ") {
-            return Err(ShakoError::Git(format!("remote rejected ref: {ng}")));
+            return Err(remote_answer(format!("the remote refused the ref: {ng}")));
         }
     }
     Ok(())
