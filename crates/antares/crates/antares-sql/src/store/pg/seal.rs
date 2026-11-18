@@ -249,13 +249,71 @@ pub(crate) fn open(
     row: Row<'_>,
     doc: &mut Value,
 ) -> Result<(), Unreadable> {
-    let aad = row.aad();
+    open_renamed(key, row, &[], doc).map(|_| ())
+}
+
+/// [`open`] for a row whose Tenant was renamed (T-7274): a value that does
+/// not open under the row's Tenant is tried under each name in `former`,
+/// the names the rename moved the row away from (`tenant_seal_alias`), since
+/// the rename runs in SQL and cannot reseal. Answers whether any value
+/// needed a former name, so the caller reseals the row under its own.
+pub(crate) fn open_renamed(
+    key: Option<&SecretKey>,
+    row: Row<'_>,
+    former: &[String],
+    doc: &mut Value,
+) -> Result<bool, Unreadable> {
+    let aads: Vec<Vec<u8>> = std::iter::once(row.aad())
+        .chain(former.iter().map(|tenant| Row { tenant, ..row }.aad()))
+        .collect();
+    let mut renamed = false;
     for v in credentials(row.kind, doc) {
         if let Some(body) = v.as_str().and_then(|s| s.strip_prefix(PREFIX)) {
-            *v = Value::String(key.ok_or(Unreadable)?.open(body, &aad)?);
+            let key = key.ok_or(Unreadable)?;
+            let (at, plain) = aads
+                .iter()
+                .enumerate()
+                .find_map(|(i, aad)| key.open(body, aad).ok().map(|p| (i, p)))
+                .ok_or(Unreadable)?;
+            renamed |= at > 0;
+            *v = Value::String(plain);
         }
     }
-    Ok(())
+    Ok(renamed)
+}
+
+/// The `NGSILD-Tenant` receiverInfo header of a subscription that names a
+/// former name of its Tenant now names `tenant`: what the rename does in SQL
+/// to a plaintext header (0038 `tenant_contract`), done here for the sealed
+/// ones it cannot read.
+pub(crate) fn rename_tenant_header(
+    kind: DocKind,
+    doc: &mut Value,
+    former: &[String],
+    tenant: &str,
+) {
+    if !matches!(kind, DocKind::Subscription | DocKind::CSourceSubscription) {
+        return;
+    }
+    let Some(pairs) = doc
+        .pointer_mut("/notification/endpoint/receiverInfo")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for p in pairs {
+        let header = p
+            .get("key")
+            .and_then(Value::as_str)
+            .is_some_and(|k| k.eq_ignore_ascii_case("NGSILD-Tenant"));
+        let named = p
+            .get("value")
+            .and_then(Value::as_str)
+            .is_some_and(|v| former.iter().any(|f| f == v));
+        if header && named {
+            p["value"] = Value::String(tenant.to_owned());
+        }
+    }
 }
 
 /// The jsonpath that finds a row still holding a plaintext credential of
@@ -320,6 +378,42 @@ mod tests {
         let mut back = again.clone();
         open(Some(&k), row(DocKind::Subscription), &mut back).expect("open");
         assert_eq!(value_of(&back), pasted);
+    }
+
+    /// T-7274: a value sealed before its Tenant was renamed opens under a
+    /// former name and says so; a name that never held the row opens nothing.
+    #[test]
+    fn a_value_sealed_under_a_former_tenant_name_opens_by_it() {
+        let k = key(8);
+        let before = Row {
+            tenant: "old",
+            ..row(DocKind::Subscription)
+        };
+        let mut doc = sub("Bearer t");
+        doc["notification"]["endpoint"]["receiverInfo"]
+            .as_array_mut()
+            .expect("pairs")
+            .push(json!({"key": "ngsild-tenant", "value": "old"}));
+        let stored = sealed(Some(&k), before, &doc).expect("seal").into_owned();
+        let after = Row {
+            tenant: "new",
+            ..before
+        };
+        assert!(open(Some(&k), after, &mut stored.clone()).is_err());
+        assert!(open_renamed(Some(&k), after, &["other".into()], &mut stored.clone()).is_err());
+        let mut back = stored.clone();
+        let former = ["other".to_owned(), "old".to_owned()];
+        assert!(open_renamed(Some(&k), after, &former, &mut back).expect("open"));
+        assert_eq!(value_of(&back), "Bearer t");
+        rename_tenant_header(DocKind::Subscription, &mut back, &former, "new");
+        assert_eq!(
+            back["notification"]["endpoint"]["receiverInfo"][1]["value"],
+            "new"
+        );
+        assert_eq!(value_of(&back), "Bearer t");
+        // a row sealed under its own name needs no former one
+        let own = sealed(Some(&k), after, &doc).expect("seal").into_owned();
+        assert!(!open_renamed(Some(&k), after, &former, &mut own.clone()).expect("open"));
     }
 
     fn value_of(doc: &Value) -> String {

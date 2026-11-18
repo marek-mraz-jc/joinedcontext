@@ -156,3 +156,7 @@ note = "adds tenants.organization_id and tenant_rename; an older release writes 
 [0037]
 rollback = "compatible"
 note = "adds the rename functions, nothing calls them, and recreates the csource_index foreign key ON UPDATE CASCADE; an older release never renames and reads the same tables"
+
+[0038]
+rollback = "compatible"
+note = "adds tenant_seal_alias and the tenant_pairs/tenant_contract functions and replaces tenant_rename_apply and antares_tenant_digest; an older release never renames, reads none of them, and opens only rows sealed under their current Tenant name"
