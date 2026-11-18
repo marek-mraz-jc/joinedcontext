@@ -150,12 +150,14 @@ fn split_top_level_and(s: &str) -> Result<Option<(&str, &str)>> {
                 }
                 paren_depth -= 1;
             }
-            b' ' if !in_quotes && paren_depth == 0 && i + 5 <= bytes.len() => {
-                // Bytes, not a str slice: `i + 5` may fall inside a multi-byte character; once
-                // the five ASCII bytes match, `i` and `i + 5` are character boundaries.
-                if bytes[i..i + 5].eq_ignore_ascii_case(b" and ") {
-                    return Ok(Some((&s[..i], &s[i + 5..])));
-                }
+            // Bytes, not a str slice: `i + 5` may fall inside a multi-byte character; once the
+            // five ASCII bytes match, `i` and `i + 5` are character boundaries.
+            b' ' if !in_quotes
+                && paren_depth == 0
+                && i + 5 <= bytes.len()
+                && bytes[i..i + 5].eq_ignore_ascii_case(b" and ") =>
+            {
+                return Ok(Some((&s[..i], &s[i + 5..])));
             }
             _ => {}
         }
