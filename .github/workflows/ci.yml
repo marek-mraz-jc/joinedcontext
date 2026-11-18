@@ -375,6 +375,8 @@ jobs:
       DATAROOM_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/dataroom
       DAIYA_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/daiya
       SHAKO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/shako
+      # jc-time's Postgres round trip (timestamptz, timestamp, date) needs no database of its own.
+      JC_TIME_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       # The assistant's store wants pgvector: the server the step below starts.
       JC_ASSISTANT_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5433/postgres
     steps:
