@@ -264,7 +264,10 @@ async fn answer_ckan_action(
             };
             let mut tags = std::collections::BTreeSet::new();
             for ds in datasets {
-                if ds.state == RecordState::Active && ds.visibility == Visibility::Public {
+                if ds.state == RecordState::Active
+                    && ds.visibility == Visibility::Public
+                    && !cat.hidden_datasets.contains_key(&ds.name)
+                {
                     for t in ds.tags {
                         tags.insert(t);
                     }
@@ -289,6 +292,7 @@ async fn answer_ckan_action(
                 .filter(|d| {
                     d.state == RecordState::Active
                         && d.visibility == Visibility::Public
+                        && !cat.hidden_datasets.contains_key(&d.name)
                         && !pub_map
                             .get(&d.publisher_id)
                             .is_some_and(|p| p.state == RecordState::Withdrawn)
@@ -1109,6 +1113,7 @@ async fn answer_ckan_action(
                 .filter(|d| {
                     d.state == RecordState::Active
                         && d.visibility == Visibility::Public
+                        && !cat.hidden_datasets.contains_key(&d.name)
                         && (d.publisher_id == pub_rec.name || d.publisher_id == pub_rec.id)
                 })
                 .count();

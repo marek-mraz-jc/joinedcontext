@@ -821,17 +821,18 @@ async fn ckan_site_and_listing_actions() {
         "{tags:?}"
     );
     assert!(
-        !tags.contains(&"inner") && !tags.contains(&"retired"),
+        !tags.contains(&"inner") && !tags.contains(&"retired") && !tags.contains(&"veiled"),
         "{tags:?}"
     );
 
-    // package_list: public, active, of an active publisher; offset/limit as numbers or text.
+    // package_list: public, active, not held by the publish gate, of an active publisher;
+    // offset/limit as numbers or text.
     let a = get(app, "/api/3/action/package_list", None).await;
-    assert_eq!(a.json()["result"], json!(["open", "second", "veiled"]));
+    assert_eq!(a.json()["result"], json!(["open", "second"]));
     let a = get(app, "/api/3/action/package_list?offset=1&limit=1", None).await;
     assert_eq!(a.json()["result"], json!(["second"]));
-    let a = ckan(app, "package_list", None, json!({"offset": 2, "limit": 5})).await;
-    assert_eq!(a.json()["result"], json!(["veiled"]));
+    let a = ckan(app, "package_list", None, json!({"offset": 1, "limit": 5})).await;
+    assert_eq!(a.json()["result"], json!(["second"]));
 
     // organization_list: active publishers, names or full records (bool or text flag).
     let a = get(app, "/api/3/action/organization_list", None).await;
@@ -848,9 +849,10 @@ async fn ckan_site_and_listing_actions() {
     let a = ckan(app, "organization_list", None, json!({"all_fields": true})).await;
     assert_eq!(a.json()["result"][0]["type"], "organization");
 
-    // organization_show: package count of public active datasets; withdrawn hidden from anonymous.
+    // organization_show: package count of public active datasets the publish gate does not hold;
+    // withdrawn hidden from anonymous.
     let a = get(app, "/api/3/action/organization_show?id=city", None).await;
-    assert_eq!(a.json()["result"]["package_count"], 3, "{}", a.body);
+    assert_eq!(a.json()["result"]["package_count"], 2, "{}", a.body);
     let a = get(app, "/api/3/action/organization_show?id=gone", None).await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
     let a = get(
