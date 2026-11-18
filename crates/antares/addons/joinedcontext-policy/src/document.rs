@@ -198,11 +198,12 @@ impl Need {
         match clause {
             "5.7.5" | "5.7.6" | "5.7.7" | "5.7.8" | "5.7.9" | "5.7.10" => Self::Schema,
             "5.7.3" | "5.7.4" | "5.14.5" => Self::History,
-            "5.6.2" | "5.6.4" | "5.6.9" | "5.6.14" | "5.6.17" | "5.6.19" | "5.6.20" => U,
+            "5.6.2" | "5.6.4" | "5.6.9" | "5.6.14" | "5.6.19" => U,
             "5.6.1" | "5.6.3" | "5.6.7" | "5.6.12" => A,
             "5.6.5" | "5.6.6" | "5.6.10" | "5.6.13" | "5.6.15" | "5.6.16" | "5.6.21" => D,
-            // an upsert may add or change; any other write, a replace among them, may do all
-            "5.6.8" | "5.6.11" => Self::Write(true, true, false),
+            // an upsert or a merge may add or change; any other write, a replace among them,
+            // may do all
+            "5.6.8" | "5.6.11" | "5.6.17" | "5.6.20" => Self::Write(true, true, false),
             c if c.starts_with("5.6.") => Self::Write(true, true, true),
             _ => Self::Read,
         }
@@ -486,6 +487,13 @@ fn policy(p: PolicyDoc) -> Result<Vec<Policy>, String> {
     // scope query `/a/b/#`, which matches `/a/b` and below, never `/a/bc`
     let scope_q = match p.scope_q.as_deref() {
         None => None,
+        // only alternatives (`|`, `,`) keep their meaning once the paths are joined with `,`;
+        // an AND (`;`) or a group would be widened to an OR, so it is refused
+        Some(s) if s.contains([';', '(', ')']) => {
+            return Err(why(format!(
+                "scopeQ {s:?}: only paths joined by | or , are allowed, e.g. /a/b|/c"
+            )));
+        }
         Some(s) => {
             let tree: Vec<String> = scope_paths(s).map(|p| format!("{p}/#")).collect();
             if tree.is_empty() {
@@ -1116,6 +1124,14 @@ mod tests {
             (
                 json!({"policies": [with("scopeQ", json!("nope"))]}),
                 "names no scope path",
+            ),
+            (
+                json!({"policies": [with("scopeQ", json!("/a;/b"))]}),
+                "only paths joined by | or ,",
+            ),
+            (
+                json!({"policies": [with("scopeQ", json!("(/a|/b);/c"))]}),
+                "only paths joined by | or ,",
             ),
             (
                 json!({"policies": [with("information", json!([{"entities": []}]))]}),
