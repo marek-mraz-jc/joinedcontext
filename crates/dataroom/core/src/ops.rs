@@ -1674,6 +1674,15 @@ pub async fn execute_operation(
                 })?;
             let target = ObjectTarget::from_publisher(&pub_rec);
             enforce_decision(op_ctx.authorizer.check(req_ctx, Action::Delete, &target))?;
+            if !pub_rec.named_by(pub_id) {
+                return Err(DataroomError::field_error(
+                    "publisher",
+                    format!(
+                        "'{pub_id}' was merged into '{}': withdraw that publisher by its own name",
+                        pub_rec.name
+                    ),
+                ));
+            }
             let withdrawn = op_ctx
                 .store
                 .withdraw_publisher(req_ctx, &pub_rec.id)

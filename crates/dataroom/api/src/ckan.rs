@@ -1352,6 +1352,16 @@ async fn answer_ckan_action(
             if !dec.allowed {
                 return ckan_err(&base, &action, decision_error(dec));
             }
+            if !existing.named_by(ident) {
+                return ckan_err(
+                    &base,
+                    &action,
+                    DataroomError::field_error(
+                        "id",
+                        format!("'{ident}' was merged into '{}'", existing.name),
+                    ),
+                );
+            }
             match state.store.withdraw_publisher(&ctx, &existing.id).await {
                 Ok(_) => ckan_ok(&base, &action, json!({}), false),
                 Err(e) => ckan_err(&base, &action, e),

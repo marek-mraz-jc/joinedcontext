@@ -1638,6 +1638,22 @@ async fn ckan_organization_writes() {
     )
     .await;
     assert_eq!(a.status, StatusCode::NOT_FOUND);
+    // `old` was merged into `city`: deleting by the old name never withdraws `city`.
+    let a = ckan(
+        app,
+        "organization_delete",
+        Some("tok-admin"),
+        json!({"id": "old"}),
+    )
+    .await;
+    assert!(ckan_error(&a)["id"][0].as_str().is_some(), "{}", a.body);
+    let city = w
+        .store
+        .get_publisher(&w.admin_ctx(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(city.state, dataroom_core::RecordState::Active);
     let a = ckan(
         app,
         "organization_delete",

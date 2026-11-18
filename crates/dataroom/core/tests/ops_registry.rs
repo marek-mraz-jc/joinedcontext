@@ -1117,6 +1117,23 @@ async fn publisher_merge_and_withdraw() {
         )
         .await;
     assert!(is_forbidden(&r), "{r:?}");
+    // The merged name resolves to its target, and withdrawing by it is refused.
+    assert!(field(
+        &w.run(
+            &w.admin(),
+            "publisher.withdraw",
+            json!({"publisher": "dept"})
+        )
+        .await,
+        "publisher"
+    ));
+    let city = w
+        .store
+        .get_publisher(&w.admin(), "city")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(city.state, RecordState::Active);
     let done = w
         .run(
             &w.admin(),
