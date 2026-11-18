@@ -1469,7 +1469,10 @@ async fn every_registry_401_carries_the_token_challenge() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri(format!("/v2/joinedcontext/img/blobs/sha256:{}", "0".repeat(64)))
+                .uri(format!(
+                    "/v2/joinedcontext/img/blobs/sha256:{}",
+                    "0".repeat(64)
+                ))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1516,9 +1519,12 @@ async fn advertised_forge_tools_answer() {
         let (state, ctx, mount) = (world.state.clone(), ctx.clone(), mount.clone());
         async move { call_mcp_tool(&state, &ctx, &mount, tool, args).await }
     };
-    call("jc_forge_mergeable", json!({ "repo": "joinedcontext/tooled", "number": 1 }))
-        .await
-        .expect("mergeable");
+    call(
+        "jc_forge_mergeable",
+        json!({ "repo": "joinedcontext/tooled", "number": 1 }),
+    )
+    .await
+    .expect("mergeable");
     let link = call(
         "jc_forge_archive_link",
         json!({ "repo": "joinedcontext/tooled", "ref": "main" }),
@@ -1526,10 +1532,17 @@ async fn advertised_forge_tools_answer() {
     .await
     .expect("archive link");
     assert!(link.to_string().contains("archive/main.zip"), "{link}");
-    let branches = call("jc_forge_branches_list", json!({ "repo": "joinedcontext/tooled" }))
-        .await
-        .expect("branches");
-    assert_eq!(branches["result"]["value"].as_array().map(Vec::len), Some(2), "{branches}");
+    let branches = call(
+        "jc_forge_branches_list",
+        json!({ "repo": "joinedcontext/tooled" }),
+    )
+    .await
+    .expect("branches");
+    assert_eq!(
+        branches["result"]["value"].as_array().map(Vec::len),
+        Some(2),
+        "{branches}"
+    );
 }
 
 #[test]
