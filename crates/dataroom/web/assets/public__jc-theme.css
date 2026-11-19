@@ -179,6 +179,12 @@ background: var(--jc-n100); color: var(--jc-ink); border: 1px solid var(--jc-bor
 .pagination .page-link { border-color: var(--jc-border); }
 /* ---- Search results and lists ---------------------------------------------------------- */
 .dataset-list, .jc-grid-list { list-style: none; padding: 0; margin: 0; }
+.jc-dataset-table { overflow-x: auto; border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg); background: var(--jc-surface); }
+.jc-dataset-table table { width: 100%; border-collapse: collapse; }
+.jc-dataset-table th, .jc-dataset-table td { padding: .5rem .75rem; text-align: start; vertical-align: top; border-bottom: 1px solid var(--jc-border); }
+.jc-dataset-table thead th { font-size: .875rem; color: var(--jc-muted); font-weight: 600; white-space: nowrap; }
+.jc-dataset-table tbody th { font-weight: 550; }
+.jc-dataset-table tbody tr:last-child > * { border-bottom: 0; }
 .dataset-item {
 background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg);
 padding: 1.125rem 1.25rem; margin-bottom: .75rem; box-shadow: var(--jc-shadow-1); transition: border-color .15s, box-shadow .15s;
@@ -256,6 +262,8 @@ color: var(--jc-primary-fg); padding: clamp(2.5rem, 6vw, 4.5rem) 0 clamp(2.5rem,
 }
 .jc-hero h1 { color: var(--jc-primary-fg); font-size: clamp(2rem, 1.3rem + 2.6vw, 3.25rem); margin-bottom: .75rem; letter-spacing: -.02em; }
 .jc-hero-lead { font-size: clamp(1.0625rem, 1rem + .4vw, 1.3125rem); max-width: 42rem; opacity: .92; margin-bottom: 1.75rem; }
+.jc-hero-lead p:last-child { margin-bottom: 0; }
+.jc-hero-lead a { color: inherit; text-decoration: underline; }
 .jc-hero-search { max-width: 44rem; }
 .jc-hero-search label::after { content: none; }
 .jc-hero-search label { display: block; font-weight: 600; margin-bottom: .5rem; color: var(--jc-primary-fg); }

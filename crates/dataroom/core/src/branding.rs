@@ -147,6 +147,43 @@ pub struct BrandingBlock {
     /// host sets it: serde skips it, so no catalogue override writes it.
     #[serde(skip)]
     pub pages: BTreeMap<(String, String), String>,
+    /// The Organization's layout members (`spec.appearance`, T-7410). Only the host sets it:
+    /// serde skips it, so no catalogue override writes it.
+    #[serde(skip)]
+    pub layout: BrandingLayout,
+}
+
+/// What an Organization's appearance sets of the catalogue's layout beyond colours and fonts,
+/// each value checked by jc-core before the host hands it over (T-7410).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BrandingLayout {
+    /// The corner radius in pixels; `None` keeps the theme's.
+    pub radius_px: Option<u8>,
+    /// The home page heading over the site title.
+    pub hero_title: Option<String>,
+    /// The home page introduction over the site tagline, already rendered to safe HTML.
+    pub hero_intro_html: Option<String>,
+    /// Whether the dataset list is a table instead of cards.
+    pub dataset_table: bool,
+    /// Header links after the built-in ones, each `(href, label)`.
+    pub nav_links: Vec<(String, String)>,
+    /// Footer links after the built-in ones, each `(href, label)`.
+    pub footer_links: Vec<(String, String)>,
+}
+
+impl BrandingLayout {
+    /// The radius custom properties for the page's `:root`, empty when unset; numbers only.
+    #[must_use]
+    pub fn radius_css(&self) -> String {
+        self.radius_px.map_or_else(String::new, |r| {
+            let r = u32::from(r);
+            format!(
+                "--jc-radius-sm: {}px; --jc-radius: {r}px; --jc-radius-lg: {}px;",
+                r * 3 / 4,
+                r * 3 / 2
+            )
+        })
+    }
 }
 
 /// Where the live parts of a catalogue answer (G1), each a base URL without a trailing slash
@@ -304,6 +341,7 @@ impl Default for BrandingBlock {
             addresses: BrandingAddresses::default(),
             publishers: BTreeMap::new(),
             pages: BTreeMap::new(),
+            layout: BrandingLayout::default(),
         }
     }
 }

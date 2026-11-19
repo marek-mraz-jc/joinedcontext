@@ -1473,12 +1473,25 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             .unwrap();
     }
 
-    let app = router(DataroomState::new(
-        store,
-        Arc::new(PolicyAuthorizer::default()),
-        org_a,
-        cat_a,
-    ));
+    // T-7410: host A's Organization sets a layout; host B's never shows it.
+    let mut look_a = dataroom_core::branding::BrandingBlock::default();
+    look_a.layout = dataroom_core::branding::BrandingLayout {
+        radius_px: Some(12),
+        hero_title: Some("Dáta mesta BB".into()),
+        hero_intro_html: Some("<p>Úvod <strong>BB</strong></p>".into()),
+        dataset_table: true,
+        nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
+        footer_links: vec![("/about#api".into(), "API mesta".into())],
+    };
+    let app = router(
+        DataroomState::new(
+            store,
+            Arc::new(PolicyAuthorizer::default()),
+            org_a,
+            cat_a,
+        )
+        .with_catalogue_branding(BTreeMap::from([(cat_a, look_a)])),
+    );
 
     // Host A renders BB look, no noindex meta tag, and only BB's dataset
     let (st, _, html_a) = send_json(
@@ -1497,6 +1510,24 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert!(html_a.contains("Rozpočet BB"));
     assert!(!html_a.contains("Demo senzory"));
     assert!(!html_a.contains("noindex, nofollow"));
+    assert!(html_a.contains("--jc-radius: 12px;"), "its radius");
+    assert!(html_a.contains(">Dáta mesta BB</h1>"), "its hero title");
+    assert!(html_a.contains("<p>Úvod <strong>BB</strong></p>"), "its hero introduction");
+    assert!(html_a.contains(">Mesto BB</a></li>"), "its header link");
+    assert!(html_a.contains(">API mesta</a></li>"), "its footer link");
+    let (st, _, list_a) = send_json(
+        &app,
+        Method::GET,
+        "/dataset/",
+        "data.banskabystrica.sk",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(list_a.contains("class=\"jc-dataset-table\""), "datasets as a table");
+    assert!(!list_a.contains("class=\"dataset-item\""));
 
     let (_, _, robots_a) = send_json(
         &app,
@@ -1528,6 +1559,9 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     assert!(html_b.contains("noindex, nofollow"));
     assert!(html_b.contains("Demo senzory"));
     assert!(!html_b.contains("Rozpočet BB"));
+    for theirs in ["--jc-radius: 12px;", "Dáta mesta BB", "Úvod <strong>BB", "Mesto BB", "API mesta"] {
+        assert!(!html_b.contains(theirs), "host A's {theirs} on host B");
+    }
 
     let (_, _, robots_b) = send_json(
         &app,
