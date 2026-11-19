@@ -15,7 +15,6 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 glob = { workspace = true }
 regex = { workspace = true }
-chrono = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls-pki-types = { workspace = true }

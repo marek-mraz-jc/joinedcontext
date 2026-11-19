@@ -147,18 +147,20 @@ async fn test_jq() {
     let mut m = std::collections::BTreeMap::new();
     m.insert(
         "ts".to_string(),
-        Value::Timestamp(
-            chrono::DateTime::from_timestamp(1000, 0)
-                .unwrap()
-                .fixed_offset(),
-        ),
+        Value::Timestamp(ekiben_bloblang::time_format::utc(
+            jiff::Timestamp::from_second(1000).unwrap(),
+        )),
     );
     let out = p
         .process_batch(&c, vec![Part::from_structured(Value::Object(m.into()))])
         .await
         .unwrap();
     let err = out[0][0].error_get().expect("errored").to_string();
-    assert!(err.contains("invalid type: time.Time"), "{err}");
+    // the time as the chrono build printed it (`to_rfc3339()`: `+00:00`, not `Z`)
+    assert!(
+        err.contains("invalid type: time.Time (1970-01-01T00:16:40+00:00)"),
+        "{err}"
+    );
 }
 
 #[tokio::test]

@@ -3,8 +3,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Duration, TimeZone, Utc};
 use ekiben_core::Registry;
+use jiff::{SignedDuration, Timestamp};
 
 /// Builds a `Registry` with all `ekiben-processors`, `ekiben-io-http`, `ekiben-io-file`,
 /// and `ekiben-io-nats` components registered.
@@ -21,35 +21,37 @@ pub fn full_registry() -> Arc<Registry> {
 /// Mockable clock for deterministic cron and period scheduler testing (`Section 6`).
 #[derive(Clone)]
 pub struct MockClock {
-    now: Arc<Mutex<DateTime<Utc>>>,
+    now: Arc<Mutex<Timestamp>>,
 }
 
 impl MockClock {
-    pub fn new(initial: DateTime<Utc>) -> Self {
+    pub fn new(initial: Timestamp) -> Self {
         Self {
             now: Arc::new(Mutex::new(initial)),
         }
     }
 
-    pub fn from_ymd_hms(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: u32) -> Self {
-        let dt = Utc
-            .with_ymd_and_hms(year, month, day, hour, min, sec)
-            .single()
+    pub fn from_ymd_hms(year: i16, month: i8, day: i8, hour: i8, min: i8, sec: i8) -> Self {
+        let dt = jiff::civil::date(year, month, day)
+            .at(hour, min, sec, 0)
+            .to_zoned(jiff::tz::TimeZone::UTC)
             .expect("valid UTC datetime");
-        Self::new(dt)
+        Self::new(dt.timestamp())
     }
 
-    pub fn now(&self) -> DateTime<Utc> {
+    pub fn now(&self) -> Timestamp {
         *self.now.lock().unwrap()
     }
 
-    pub fn advance(&self, delta: Duration) -> DateTime<Utc> {
+    pub fn advance(&self, delta: SignedDuration) -> Timestamp {
         let mut guard = self.now.lock().unwrap();
-        *guard += delta;
+        *guard = guard
+            .checked_add(delta)
+            .expect("a time within jiff's range");
         *guard
     }
 
-    pub fn set(&self, dt: DateTime<Utc>) {
+    pub fn set(&self, dt: Timestamp) {
         *self.now.lock().unwrap() = dt;
     }
 }

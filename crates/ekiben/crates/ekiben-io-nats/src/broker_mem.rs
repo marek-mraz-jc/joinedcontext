@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
-use chrono::Utc;
 use tokio::sync::{mpsc, Notify};
 
 use crate::connection::subject_matches;
@@ -135,7 +134,7 @@ impl InMemoryNatsCluster {
             headers,
             data,
             stream_seq: 0,
-            timestamp_unix_nano: Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            timestamp_unix_nano: i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0),
         };
         let mut subs = self.core_subs.lock().unwrap();
         subs.retain(|s| !s.tx.is_closed());
@@ -176,7 +175,7 @@ impl InMemoryNatsCluster {
             headers: headers.clone(),
             data: data.clone(),
             stream_seq: seq,
-            timestamp_unix_nano: Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            timestamp_unix_nano: i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or(0),
         };
         log.push(msg);
         drop(log);
@@ -356,7 +355,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValuePutOp",
-            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
+            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
         });
         rev
     }
@@ -411,7 +410,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValueDeleteOp",
-            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
+            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
         });
         rev
     }
@@ -429,7 +428,7 @@ impl InMemoryNatsCluster {
             revision: rev,
             delta: 0,
             operation: "KeyValuePurgeOp",
-            created: crate::kv_backend::go_rfc3339_nano(Utc::now()),
+            created: crate::kv_backend::go_rfc3339_nano(jiff::Timestamp::now()),
         });
         rev
     }

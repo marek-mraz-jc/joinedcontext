@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-calamine = { version = "=0.38.0", features = ["dates"] }
+calamine = { version = "=0.38.0" }
 ekiben-bloblang = { workspace = true }
 ekiben-core = { workspace = true }
 encoding_rs = "0.8"
@@ -15,7 +15,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 quick-xml = { workspace = true }
 csv = { workspace = true }
 zip = { workspace = true }
@@ -27,4 +27,5 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 
 [dev-dependencies]
+jc-time = { workspace = true }
 serde_norway = { workspace = true }

@@ -14,5 +14,5 @@ ekiben-io-file = { workspace = true }
 ekiben-io-nats = { workspace = true }
 ekiben-io-ngsild = { workspace = true }
 tokio = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 serde_json = { workspace = true }

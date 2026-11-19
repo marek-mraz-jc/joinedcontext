@@ -437,7 +437,7 @@ fn parse_notification(body: &[u8]) -> Result<Notification, String> {
     let id = text("id")?;
     let subscription_id = text("subscriptionId")?;
     let notified_at = text("notifiedAt")?;
-    if chrono::DateTime::parse_from_rfc3339(&notified_at).is_err() {
+    if jc_time::parse_rfc3339(&notified_at).is_none() {
         return Err("notifiedAt is not an RFC 3339 date-time".to_string());
     }
     let Some(Value::Array(items)) = m.get("data") else {

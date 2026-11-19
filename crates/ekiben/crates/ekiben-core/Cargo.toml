@@ -13,7 +13,6 @@ serde_json = { workspace = true }
 serde_norway = { workspace = true }
 bytes = { workspace = true }
 regex = { workspace = true }
-chrono = { workspace = true }
 url = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

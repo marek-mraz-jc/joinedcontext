@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Datelike;
 use ekiben_bloblang::Value;
 use ekiben_core::{Batch, ComponentConfig, CoreError, Part, ProcContext, Processor, Registry};
 
@@ -102,7 +101,9 @@ impl ParseLogProcessor {
             },
             "syslog_rfc3164" => {
                 let year = match c.with_year.as_str() {
-                    "current" => i64::from(chrono::Utc::now().year()),
+                    "current" => {
+                        i64::from(ekiben_bloblang::time_format::utc(jiff::Timestamp::now()).year())
+                    }
                     "" => 0,
                     y => go_atoi(y)
                         .map_err(|e| format!("failed to convert year {y} into integer:  {e}"))?,

@@ -1,11 +1,9 @@
-use chrono::{DurationRound, TimeDelta};
-
 use crate::ast::ArgList;
 use crate::executor::EvalContext;
 use crate::methods::{get_first_arg, get_optional_arg};
 use crate::time_format::{
     apply_timezone, format_go_layout, format_strftime, parse_go_duration_nanos, parse_go_layout,
-    parse_strptime, Iso8601Period, GO_RFC3339_NANO,
+    parse_strptime, round_local, unix_floor, Iso8601Period, GO_RFC3339_NANO,
 };
 use crate::value::Value;
 
@@ -23,7 +21,7 @@ pub(crate) fn eval_time_family(
             let s = target_val.get_string()?;
             let dt = parse_go_layout(&s, &layout)?;
             if name == "parse_timestamp" {
-                Ok(Value::String(format_go_layout(dt, GO_RFC3339_NANO)))
+                Ok(Value::String(format_go_layout(&dt, GO_RFC3339_NANO)))
             } else {
                 Ok(Value::Timestamp(dt))
             }
@@ -35,7 +33,7 @@ pub(crate) fn eval_time_family(
             let s = target_val.get_string()?;
             let dt = parse_strptime(&s, &format)?;
             if name == "parse_timestamp_strptime" {
-                Ok(Value::String(format_go_layout(dt, GO_RFC3339_NANO)))
+                Ok(Value::String(format_go_layout(&dt, GO_RFC3339_NANO)))
             } else {
                 Ok(Value::Timestamp(dt))
             }
@@ -51,7 +49,7 @@ pub(crate) fn eval_time_family(
             };
             let dt = target_val.to_timestamp_coerced()?;
             let dt = apply_timezone(dt, tz_opt.as_deref())?;
-            Ok(Value::String(format_go_layout(dt, &layout)))
+            Ok(Value::String(format_go_layout(&dt, &layout)))
         })()),
         "ts_strftime" | "format_timestamp_strftime" => Some((|| {
             let format = ctx
@@ -63,7 +61,7 @@ pub(crate) fn eval_time_family(
             };
             let dt = target_val.to_timestamp_coerced()?;
             let dt = apply_timezone(dt, tz_opt.as_deref())?;
-            Ok(Value::String(format_strftime(dt, &format)))
+            Ok(Value::String(format_strftime(&dt, &format)))
         })()),
         "ts_tz" => Some((|| {
             let tz_str = ctx.eval_expr(get_first_arg(args, "tz")?)?.get_string()?;
@@ -74,26 +72,30 @@ pub(crate) fn eval_time_family(
         "ts_round" => Some((|| {
             let dur_nanos = ctx.eval_expr(get_first_arg(args, "duration")?)?.get_int()?;
             let dt = target_val.to_timestamp_coerced()?;
-            let delta = TimeDelta::nanoseconds(dur_nanos);
-            let rounded = dt.duration_round(delta).map_err(|e| e.to_string())?;
+            let rounded = round_local(&dt, dur_nanos)?;
             Ok(Value::Timestamp(rounded))
         })()),
         "ts_unix" | "format_timestamp_unix" => Some((|| {
             let dt = target_val.to_timestamp_coerced()?;
-            Ok(Value::Int(dt.timestamp()))
+            Ok(Value::Int(
+                unix_floor(dt.timestamp(), 1_000_000_000).unwrap_or_default(),
+            ))
         })()),
         "ts_unix_milli" | "format_timestamp_unix_milli" => Some((|| {
             let dt = target_val.to_timestamp_coerced()?;
-            Ok(Value::Int(dt.timestamp_millis()))
+            Ok(Value::Int(
+                unix_floor(dt.timestamp(), 1_000_000).unwrap_or_default(),
+            ))
         })()),
         "ts_unix_micro" | "format_timestamp_unix_micro" => Some((|| {
             let dt = target_val.to_timestamp_coerced()?;
-            Ok(Value::Int(dt.timestamp_micros()))
+            Ok(Value::Int(
+                unix_floor(dt.timestamp(), 1_000).unwrap_or_default(),
+            ))
         })()),
         "ts_unix_nano" | "format_timestamp_unix_nano" => Some((|| {
             let dt = target_val.to_timestamp_coerced()?;
-            let ns = dt
-                .timestamp_nanos_opt()
+            let ns = unix_floor(dt.timestamp(), 1)
                 .ok_or_else(|| "timestamp out of nanosecond range".to_string())?;
             Ok(Value::Int(ns))
         })()),
@@ -101,9 +103,9 @@ pub(crate) fn eval_time_family(
             let t2_val = ctx.eval_expr(get_first_arg(args, "t2")?)?;
             let t1 = target_val.to_timestamp_coerced()?;
             let t2 = t2_val.to_timestamp_coerced()?;
-            let diff = (t1 - t2)
-                .num_nanoseconds()
-                .ok_or_else(|| "timestamp difference overflows nanoseconds".to_string())?;
+            let diff =
+                i64::try_from(t1.timestamp().as_nanosecond() - t2.timestamp().as_nanosecond())
+                    .map_err(|_| "timestamp difference overflows nanoseconds".to_string())?;
             Ok(Value::Int(diff))
         })()),
         "ts_add_iso8601" => Some((|| {
@@ -112,7 +114,7 @@ pub(crate) fn eval_time_family(
                 .get_string()?;
             let period = Iso8601Period::parse(&dur_str)?;
             let dt = target_val.to_timestamp_coerced()?;
-            Ok(Value::Timestamp(period.add_to(dt)))
+            Ok(Value::Timestamp(period.add_to(&dt)))
         })()),
         "ts_sub_iso8601" => Some((|| {
             let dur_str = ctx
@@ -120,7 +122,7 @@ pub(crate) fn eval_time_family(
                 .get_string()?;
             let period = Iso8601Period::parse(&dur_str)?.negate();
             let dt = target_val.to_timestamp_coerced()?;
-            Ok(Value::Timestamp(period.add_to(dt)))
+            Ok(Value::Timestamp(period.add_to(&dt)))
         })()),
         "parse_duration" => Some((|| {
             let s = target_val.get_string()?;

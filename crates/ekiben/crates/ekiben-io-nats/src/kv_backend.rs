@@ -37,17 +37,21 @@ fn entry(e: kv::Entry) -> KvEntry {
         revision: e.revision,
         delta: e.delta,
         operation: op_name(e.operation),
-        created: go_rfc3339_nano(chrono::DateTime::from_timestamp_nanos(
-            i64::try_from(e.created.unix_timestamp_nanos()).unwrap_or(i64::MAX),
-        )),
+        created: created_text(i64::try_from(e.created.unix_timestamp_nanos()).unwrap_or(i64::MAX)),
     }
+}
+
+/// `created` of an entry made `nanos` after the Unix epoch.
+fn created_text(nanos: i64) -> String {
+    go_rfc3339_nano(jiff::Timestamp::from_nanosecond(i128::from(nanos)).unwrap_or_default())
 }
 
 /// A time as Go's `time.RFC3339Nano` prints it (Bento's `created`): UTC `Z`, trailing zeros of
 /// the fraction dropped.
-pub fn go_rfc3339_nano(t: chrono::DateTime<chrono::Utc>) -> String {
-    let base = t.format("%Y-%m-%dT%H:%M:%S").to_string();
-    let frac = format!("{:09}", t.timestamp_subsec_nanos());
+pub fn go_rfc3339_nano(t: jiff::Timestamp) -> String {
+    let base = t.strftime("%Y-%m-%dT%H:%M:%S").to_string();
+    // before 1970 jiff's fraction is negative; chrono's counted up from the whole second
+    let frac = format!("{:09}", t.subsec_nanosecond().rem_euclid(1_000_000_000));
     let frac = frac.trim_end_matches('0');
     if frac.is_empty() {
         format!("{base}Z")
@@ -227,5 +231,24 @@ impl KvBucket {
                     .collect())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn created_prints_as_the_chrono_build_did() {
+        let got = [1_771_628_400_120_000_000_i64, 0, -1, i64::MAX].map(created_text);
+        assert_eq!(
+            got,
+            [
+                "2026-02-20T23:00:00.12Z",
+                "1970-01-01T00:00:00Z",
+                "1969-12-31T23:59:59.999999999Z",
+                "2262-04-11T23:47:16.854775807Z",
+            ]
+        );
     }
 }

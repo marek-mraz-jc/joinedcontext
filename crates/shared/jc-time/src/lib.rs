@@ -191,6 +191,13 @@ pub fn format_rfc3339(ts: Timestamp, digits: SecondsFormat, use_z: bool) -> Stri
 /// format or an RFC 9557 annotation (all of which jiff accepts), is `None`.
 #[must_use]
 pub fn parse_rfc3339(s: &str) -> Option<Timestamp> {
+    parse_rfc3339_offset(s).map(|(ts, _)| ts)
+}
+
+/// [`parse_rfc3339`] that also returns the offset the text was written in, as chrono's
+/// `DateTime<FixedOffset>` kept it (`Z` is UTC).
+#[must_use]
+pub fn parse_rfc3339_offset(s: &str) -> Option<(Timestamp, Offset)> {
     let b = s.as_bytes();
     let num = |at: usize, len: usize| -> Option<i32> {
         let digits = b.get(at..at + len)?;
@@ -250,11 +257,12 @@ pub fn parse_rfc3339(s: &str) -> Option<Timestamp> {
         nanos,
     )
     .ok()?;
-    let ts = Offset::from_seconds(offset).ok()?.to_timestamp(dt).ok()?;
+    let offset = Offset::from_seconds(offset).ok()?;
+    let ts = offset.to_timestamp(dt).ok()?;
     if leap {
-        ts.checked_add(SignedDuration::from_secs(1)).ok()
+        Some((ts.checked_add(SignedDuration::from_secs(1)).ok()?, offset))
     } else {
-        Some(ts)
+        Some((ts, offset))
     }
 }
 
@@ -853,6 +861,19 @@ mod tests {
         ] {
             assert_eq!(parse_rfc3339(s).map(Timestamp::as_millisecond), want, "{s}");
         }
+    }
+
+    #[test]
+    fn rfc3339_offset_is_the_one_written() {
+        for (s, secs) in [
+            ("2026-11-18T16:20:00Z", 0),
+            ("2026-11-18T16:20:00-05:30", -19_800),
+            ("2016-12-31T23:59:60+02:00", 7_200),
+        ] {
+            let (ts, off) = parse_rfc3339_offset(s).expect(s);
+            assert_eq!((Some(ts), off.seconds()), (parse_rfc3339(s), secs), "{s}");
+        }
+        assert_eq!(parse_rfc3339_offset("2026-11-18T16:20Z"), None);
     }
 
     #[test]

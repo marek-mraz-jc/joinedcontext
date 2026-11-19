@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
 use ekiben_core::{
     CoreError, EnvAccess, OverlapPolicy, Registry, ResourceManager, RunSummary, StreamConfig,
 };
+use jiff::Timestamp;
 
 use crate::cron::CronSchedule;
 use crate::runner::run_stream_once;
@@ -15,7 +15,7 @@ pub struct ScheduledStreamEntry {
     pub config: StreamConfig,
     pub schedule: CronSchedule,
     pub overlap: OverlapPolicy,
-    pub next_run_at: DateTime<Utc>,
+    pub next_run_at: Timestamp,
     pub is_running: bool,
     pub queued_run: bool,
     pub total_runs: u64,
@@ -59,7 +59,7 @@ impl Scheduler {
         &self,
         stream_id: impl Into<String>,
         config: StreamConfig,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Result<(), CoreError> {
         let sid = stream_id.into();
         let sched_cfg = config.schedule.clone().ok_or_else(|| {
@@ -109,7 +109,7 @@ impl Scheduler {
 
     /// Evaluates due streams at `now`, spawning any due runs asynchronously (so slow runs can overlap
     /// with subsequent ticks to test `Skip` vs `Queue` overlap rules).
-    pub fn trigger_due(&self, now: DateTime<Utc>) -> Vec<String> {
+    pub fn trigger_due(&self, now: Timestamp) -> Vec<String> {
         let mut to_spawn = Vec::new();
         {
             let mut guard = self.entries.lock().unwrap();
@@ -147,7 +147,7 @@ impl Scheduler {
     }
 
     /// Synchronous tick helper that triggers all due streams at `now` and waits for their runs to finish.
-    pub async fn tick_and_wait(&self, now: DateTime<Utc>) -> Vec<RunSummary> {
+    pub async fn tick_and_wait(&self, now: Timestamp) -> Vec<RunSummary> {
         let mut to_run = Vec::new();
         {
             let mut guard = self.entries.lock().unwrap();

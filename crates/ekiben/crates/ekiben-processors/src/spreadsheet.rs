@@ -17,8 +17,10 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use calamine::{open_workbook_auto_from_rs, Data, Reader};
+use calamine::{open_workbook_auto_from_rs, Data, ExcelDateTime, ExcelDateTimeType, Reader};
 use ekiben_bloblang::Value;
+use jiff::civil;
+use jiff::Span;
 
 use crate::archive::MAX_ARCHIVE_UNPACKED_BYTES;
 
@@ -69,12 +71,41 @@ fn text(cell: &Data) -> String {
         Data::Int(i) => i.to_string(),
         Data::Float(f) => f.to_string(),
         Data::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
-        Data::DateTime(dt) => match dt.as_datetime() {
-            Some(t) => t.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        Data::DateTime(dt) => match excel_datetime(dt) {
+            Some(t) => t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
             None => dt.as_f64().to_string(),
         },
         Data::Error(e) => e.to_string(),
     }
+}
+
+/// calamine's `as_datetime` (its chrono `dates` feature) on jiff: days since 1899-12-30, a 1904
+/// workbook's 1462 days later, Excel's phantom 1900-02-29 skipped, rounded to the millisecond.
+/// ponytail: jiff ends at 9999-12-31, Excel's own last day; a later serial prints as its number.
+fn excel_datetime(dt: &ExcelDateTime) -> Option<civil::DateTime> {
+    const EPOCH: civil::Date = civil::date(1899, 12, 30);
+    let ty = if dt.is_duration() {
+        ExcelDateTimeType::TimeDelta
+    } else {
+        ExcelDateTimeType::DateTime
+    };
+    // calamine keeps the 1904 flag private: a cell differs from its 1900 twin only when it is set
+    let is_1904 = *dt != ExcelDateTime::new(dt.as_f64(), ty, false);
+    let f = dt.as_f64() + if is_1904 { 1462.0 } else { 0.0 };
+    let f = if f >= 60.0 { f } else { f + 1.0 };
+    let ms = (f * 86_400_000.0).round() as i64;
+    // whole days through a Span: jiff refuses a SignedDuration of more days than it has years for,
+    // even when the sum is in range (9999-12-31 is 2958465 days on)
+    let (days, rem) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
+    let date = EPOCH.checked_add(Span::new().try_days(days).ok()?).ok()?;
+    let time = civil::Time::new(
+        (rem / 3_600_000) as i8,
+        (rem / 60_000 % 60) as i8,
+        (rem / 1000 % 60) as i8,
+        (rem % 1000 * 1_000_000) as i32,
+    )
+    .ok()?;
+    Some(date.to_datetime(time))
 }
 
 /// The rows of `sheet` (the first one when `None`), each its header names to its values.
@@ -134,6 +165,89 @@ pub fn rows(bytes: &[u8], sheet: Option<&str>, max_rows: usize) -> Result<Vec<Va
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excel_times_print_as_the_chrono_build_did() {
+        use calamine::{ExcelDateTime, ExcelDateTimeType};
+        let cell = |v: f64, ty: ExcelDateTimeType, is_1904: bool| {
+            text(&Data::DateTime(ExcelDateTime::new(v, ty, is_1904)))
+        };
+        let mut got = Vec::new();
+        for v in [
+            45943.541,
+            45_943.999_999_99,
+            0.0,
+            1.0,
+            59.0,
+            60.0,
+            61.0,
+            -1.0,
+            0.25,
+            2_958_465.9,
+            3.0e6,
+            1.0e300,
+            f64::NAN,
+        ] {
+            got.push(format!(
+                "{v} {}",
+                cell(v, ExcelDateTimeType::DateTime, false)
+            ));
+            got.push(format!(
+                "{v} 1904 {}",
+                cell(v, ExcelDateTimeType::DateTime, true)
+            ));
+            got.push(format!(
+                "{v} delta {}",
+                cell(v, ExcelDateTimeType::TimeDelta, false)
+            ));
+        }
+        let got = got.join("\n");
+        assert_eq!(got, EXCEL_GOLDEN.trim(), "\n{got}");
+    }
+
+    // Decided (worker-t7243, T-7245): a serial past 9999-12-31 prints as its number; chrono
+    // printed a signed five-digit year (`+10113-09-19T00:00:00Z`) for the four such cells below.
+    const EXCEL_GOLDEN: &str = r#"
+45943.541 2025-10-13T12:59:02Z
+45943.541 1904 2029-10-14T12:59:02Z
+45943.541 delta 2025-10-13T12:59:02Z
+45943.99999999 2025-10-13T23:59:59Z
+45943.99999999 1904 2029-10-14T23:59:59Z
+45943.99999999 delta 2025-10-13T23:59:59Z
+0 1899-12-31T00:00:00Z
+0 1904 1904-01-01T00:00:00Z
+0 delta 1899-12-31T00:00:00Z
+1 1900-01-01T00:00:00Z
+1 1904 1904-01-02T00:00:00Z
+1 delta 1900-01-01T00:00:00Z
+59 1900-02-28T00:00:00Z
+59 1904 1904-02-29T00:00:00Z
+59 delta 1900-02-28T00:00:00Z
+60 1900-02-28T00:00:00Z
+60 1904 1904-03-01T00:00:00Z
+60 delta 1900-02-28T00:00:00Z
+61 1900-03-01T00:00:00Z
+61 1904 1904-03-02T00:00:00Z
+61 delta 1900-03-01T00:00:00Z
+-1 1899-12-30T00:00:00Z
+-1 1904 1903-12-31T00:00:00Z
+-1 delta 1899-12-30T00:00:00Z
+0.25 1899-12-31T06:00:00Z
+0.25 1904 1904-01-01T06:00:00Z
+0.25 delta 1899-12-31T06:00:00Z
+2958465.9 9999-12-31T21:36:00Z
+2958465.9 1904 2958465.9
+2958465.9 delta 9999-12-31T21:36:00Z
+3000000 3000000
+3000000 1904 3000000
+3000000 delta 3000000
+1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 1904 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 delta 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+NaN 1899-12-30T00:00:00Z
+NaN 1904 1899-12-30T00:00:00Z
+NaN delta 1899-12-30T00:00:00Z
+"#;
 
     #[test]
     fn column_letters() {

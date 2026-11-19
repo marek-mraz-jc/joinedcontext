@@ -78,9 +78,9 @@ jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc
 aws-lc-rs = "1.19"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "form", "json", "gzip", "brotli", "stream", "multipart", "http2"] }
 regex = "1.13"
-chrono = { version = "0.4.45", features = ["serde"] }
 # IANA zones, bundled so a container without /usr/share/zoneinfo answers the same (T-7233)
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jc-time = { path = "../shared/jc-time" }
 quick-xml = { version = "0.42", features = ["serialize"] }
 proj4rs = { version = "0.3.0", default-features = false }
 csv = "1.4"
@@ -151,8 +151,8 @@ rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"
 sqlx-core = { version = "=0.9.0", default-features = false, features = ["_rt-tokio", "_tls-rustls-ring-native-roots", "json"] }
 # `offline`: the jc root builds sqlx-core with it (the Portal's macros), and a driver without it
 # then lacks `Executor::describe`.
-sqlx-postgres = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "offline"] }
-sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "offline"] }
+sqlx-postgres = { version = "=0.9.0", default-features = false, features = ["json", "offline"] }
+sqlx-mysql = { version = "=0.9.0", default-features = false, features = ["json", "offline"] }
 
 # jaq-core 3.1.2 and jaq-json 2.0.3 with an evaluation budget (steps, deadline, stack, bytes) for
 # the jq processor (vendor/SOURCES.md at the jc root).

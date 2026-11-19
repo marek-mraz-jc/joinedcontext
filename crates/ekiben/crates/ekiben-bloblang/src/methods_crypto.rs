@@ -406,7 +406,7 @@ fn parse_jwt(alg: Alg, token: &str, secret: &str) -> Result<Value, String> {
             "token is malformed: claims are not an object".to_string(),
         ));
     };
-    let now = chrono::Utc::now().timestamp() as f64;
+    let now = jiff::Timestamp::now().as_second() as f64;
     let num = |k: &str| map.get(k).and_then(serde_json::Value::as_f64);
     if num("exp").is_some_and(|exp| now >= exp) {
         return Err(fail(

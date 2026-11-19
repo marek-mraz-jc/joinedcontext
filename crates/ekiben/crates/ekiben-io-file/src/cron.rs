@@ -5,9 +5,11 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Datelike, NaiveDateTime, TimeDelta, TimeZone, Timelike, Utc};
-use ekiben_bloblang::iana::Zone as Tz;
+use ekiben_bloblang::time_format::{earliest_local, zone};
 use ekiben_core::config::parse_duration_str;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::TimeZone;
+use jiff::{SignedDuration, Timestamp};
 
 const STAR: u64 = 1 << 63;
 
@@ -26,7 +28,7 @@ pub struct Spec {
     dom: u64,
     month: u64,
     dow: u64,
-    tz: Tz,
+    tz: TimeZone,
 }
 
 struct Bounds {
@@ -69,12 +71,11 @@ pub fn parse(expr: &str) -> Result<Schedule, String> {
     let (tz, spec) = match expr.strip_prefix("TZ=") {
         Some(rest) => {
             let (name, spec) = rest.split_once(' ').unwrap_or((rest, ""));
-            let tz = name
-                .parse::<Tz>()
+            let tz = zone(name)
                 .map_err(|_| format!("provided bad location {name}: unknown time zone {name}"))?;
             (tz, spec.trim())
         }
-        None => (Tz::utc(), expr.trim()),
+        None => (TimeZone::UTC, expr.trim()),
     };
     if let Some(desc) = spec.strip_prefix('@') {
         return descriptor(desc, tz);
@@ -101,7 +102,7 @@ pub fn parse(expr: &str) -> Result<Schedule, String> {
     })))
 }
 
-fn descriptor(desc: &str, tz: Tz) -> Result<Schedule, String> {
+fn descriptor(desc: &str, tz: TimeZone) -> Result<Schedule, String> {
     let all = |b: &Bounds| bits(b.min, b.max, 1) | STAR;
     let spec = |dom: u64, month: u64, dow: u64, hour: u64| {
         Ok(Schedule::Spec(Box::new(Spec {
@@ -217,11 +218,15 @@ fn has(set: u64, v: u32) -> bool {
 
 impl Schedule {
     /// The first activation strictly after `now`; `None` when a spec never fires within five years.
-    pub fn next(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    pub fn next(&self, now: Timestamp) -> Option<Timestamp> {
         match self {
             Schedule::Every(d) => {
-                let d = TimeDelta::from_std(*d).ok()?;
-                Some(now + d - TimeDelta::nanoseconds(i64::from(now.nanosecond())))
+                let d = SignedDuration::try_from(*d).ok()?;
+                // the whole second of `now`, rounded down as chrono's `nanosecond()` was
+                let frac = i64::from(now.subsec_nanosecond()).rem_euclid(1_000_000_000);
+                now.checked_add(d)
+                    .and_then(|t| t.checked_sub(SignedDuration::from_nanos(frac)))
+                    .ok()
             }
             Schedule::Spec(s) => s.next(now),
         }
@@ -229,9 +234,9 @@ impl Schedule {
 }
 
 impl Spec {
-    fn day_matches(&self, t: &NaiveDateTime) -> bool {
-        let dom = has(self.dom, t.day());
-        let dow = has(self.dow, t.weekday().num_days_from_sunday());
+    fn day_matches(&self, t: &DateTime) -> bool {
+        let dom = has(self.dom, t.day() as u32);
+        let dow = has(self.dow, t.weekday().to_sunday_zero_offset() as u32);
         if self.dom & STAR != 0 || self.dow & STAR != 0 {
             dom && dow
         } else {
@@ -239,40 +244,41 @@ impl Spec {
         }
     }
 
-    fn next(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let local = now.with_timezone(&self.tz).naive_local();
-        let mut t = local.with_nanosecond(0)? + TimeDelta::seconds(1);
+    fn next(&self, now: Timestamp) -> Option<Timestamp> {
+        let local = now.to_zoned(self.tz.clone()).datetime();
+        let plus = |t: DateTime, secs: i64| t.checked_add(SignedDuration::from_secs(secs)).ok();
+        let mut t = plus(local.with().subsec_nanosecond(0).build().ok()?, 1)?;
         let limit = t.year() + 5;
         while t.year() <= limit {
-            if !has(self.month, t.month()) {
+            if !has(self.month, t.month() as u32) {
                 let (y, m) = if t.month() == 12 {
                     (t.year() + 1, 1)
                 } else {
                     (t.year(), t.month() + 1)
                 };
-                t = chrono::NaiveDate::from_ymd_opt(y, m, 1)?.and_hms_opt(0, 0, 0)?;
+                t = Date::new(y, m, 1).ok()?.to_datetime(Time::midnight());
                 continue;
             }
             if !self.day_matches(&t) {
-                t = t.date().succ_opt()?.and_hms_opt(0, 0, 0)?;
+                t = t.date().tomorrow().ok()?.to_datetime(Time::midnight());
                 continue;
             }
-            if !has(self.hour, t.hour()) {
-                t = t.with_minute(0)?.with_second(0)? + TimeDelta::hours(1);
+            if !has(self.hour, t.hour() as u32) {
+                t = plus(t.with().minute(0).second(0).build().ok()?, 3600)?;
                 continue;
             }
-            if !has(self.minute, t.minute()) {
-                t = t.with_second(0)? + TimeDelta::minutes(1);
+            if !has(self.minute, t.minute() as u32) {
+                t = plus(t.with().second(0).build().ok()?, 60)?;
                 continue;
             }
-            if !has(self.second, t.second()) {
-                t += TimeDelta::seconds(1);
+            if !has(self.second, t.second() as u32) {
+                t = plus(t, 1)?;
                 continue;
             }
             // A local time inside a DST gap does not exist: skip it; a repeated one fires once.
-            match self.tz.from_local_datetime(&t).earliest() {
-                Some(at) if at.with_timezone(&Utc) > now => return Some(at.with_timezone(&Utc)),
-                _ => t += TimeDelta::seconds(1),
+            match earliest_local(&self.tz, t) {
+                Some(at) if at.timestamp() > now => return Some(at.timestamp()),
+                _ => t = plus(t, 1)?,
             }
         }
         None
@@ -283,18 +289,16 @@ impl Spec {
 mod tests {
     use super::*;
 
-    fn at(s: &str) -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339(s)
-            .expect("rfc3339")
-            .with_timezone(&Utc)
+    fn at(s: &str) -> Timestamp {
+        jc_time::parse_rfc3339(s).expect("rfc3339")
     }
 
     fn next(expr: &str, from: &str) -> String {
         parse(expr)
             .expect("parses")
             .next(at(from))
+            .map(|t| jc_time::TimestampTz(t).to_rfc3339())
             .expect("fires")
-            .to_rfc3339()
     }
 
     // Ported from robfig/cron v3 spec_test.go TestActivation and TestNext (UTC rows).

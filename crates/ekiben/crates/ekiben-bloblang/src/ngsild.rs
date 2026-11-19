@@ -8,8 +8,6 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{SecondsFormat, Utc};
-
 use crate::ast::ArgList;
 use crate::executor::EvalContext;
 use crate::methods::get_optional_arg;
@@ -126,16 +124,17 @@ fn opt_time(
     match ctx.eval_expr(expr)? {
         v if is_absent(&v) => Ok(None),
         Value::String(s) if s.is_empty() => Ok(None),
-        Value::String(s) => match chrono::DateTime::parse_from_rfc3339(&s) {
-            Ok(_) => Ok(Some(Value::String(s))),
-            Err(_) => Err(format!(
+        Value::String(s) => match jc_time::parse_rfc3339(&s) {
+            Some(_) => Ok(Some(Value::String(s))),
+            None => Err(format!(
                 "parameter {name}: {s:?} is not an RFC 3339 date-time"
             )),
         },
-        Value::Timestamp(ts) => Ok(Some(Value::String(
-            ts.with_timezone(&Utc)
-                .to_rfc3339_opts(SecondsFormat::AutoSi, true),
-        ))),
+        Value::Timestamp(ts) => Ok(Some(Value::String(jc_time::format_rfc3339(
+            ts.timestamp(),
+            jc_time::SecondsFormat::AutoSi,
+            true,
+        )))),
         other => Err(format!(
             "parameter {name}: expected timestamp value, got {}",
             other.type_name()

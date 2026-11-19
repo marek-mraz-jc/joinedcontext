@@ -6,9 +6,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use ekiben_bloblang::Value;
 use ekiben_core::CoreError;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::fmt::strtime::BrokenDownTime;
+use jiff::tz::TimeZone;
+use jiff::Zoned;
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 use rusqlite::limits::Limit;
 use rusqlite::types::ValueRef;
@@ -155,39 +158,51 @@ fn to_sql(v: &Value) -> rusqlite::types::Value {
 }
 
 /// modernc writes a time.Time as "2006-01-02 15:04:05.999999999-07:00".
-pub fn time_text(t: &DateTime<FixedOffset>) -> String {
-    let mut s = t.format("%Y-%m-%d %H:%M:%S").to_string();
-    let nanos = t.timestamp_subsec_nanos();
+pub fn time_text(t: &Zoned) -> String {
+    let mut s = t.strftime("%Y-%m-%d %H:%M:%S").to_string();
+    let nanos = t.subsec_nanosecond();
     if nanos > 0 {
         s.push('.');
         s.push_str(format!("{nanos:09}").trim_end_matches('0'));
     }
-    s.push_str(&t.format("%:z").to_string());
+    let off = t.offset().seconds();
+    let a = off.abs();
+    let sign = if off < 0 { '-' } else { '+' };
+    s.push_str(&format!("{sign}{:02}:{:02}", a / 3600, a % 3600 / 60));
     s
 }
 
 /// modernc's `parseTime` formats, tried in order.
-pub fn parse_time(s: &str) -> Option<DateTime<FixedOffset>> {
+pub fn parse_time(s: &str) -> Option<Zoned> {
     let s = s.trim_end_matches('Z');
-    for f in ["%Y-%m-%d %H:%M:%S%.f%:z", "%Y-%m-%dT%H:%M:%S%.f%:z"] {
-        if let Ok(t) = DateTime::parse_from_str(s, f) {
+    // chrono's `%:z` read the offset with or without its colon; jiff's `%:z` needs it, `%z` not
+    for f in [
+        "%Y-%m-%d %H:%M:%S%.f%:z",
+        "%Y-%m-%d %H:%M:%S%.f%z",
+        "%Y-%m-%dT%H:%M:%S%.f%:z",
+        "%Y-%m-%dT%H:%M:%S%.f%z",
+    ] {
+        if let Some(t) = BrokenDownTime::parse(f, s)
+            .ok()
+            .and_then(|t| t.to_zoned().ok())
+        {
             return Some(t);
         }
     }
+    let utc = |t: DateTime| t.to_zoned(TimeZone::UTC).ok();
     for f in [
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%d %H:%M",
         "%Y-%m-%dT%H:%M",
     ] {
-        if let Ok(t) = NaiveDateTime::parse_from_str(s, f) {
-            return Some(Utc.from_utc_datetime(&t).fixed_offset());
+        if let Ok(t) = DateTime::strptime(f, s) {
+            return utc(t);
         }
     }
-    NaiveDate::parse_from_str(s, "%Y-%m-%d")
+    Date::strptime("%Y-%m-%d", s)
         .ok()
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .map(|t| Utc.from_utc_datetime(&t).fixed_offset())
+        .and_then(|d| utc(d.to_datetime(Time::midnight())))
 }
 
 /// A column value as modernc decodes it: INTEGER int64, REAL float64, TEXT string, BLOB bytes
@@ -330,7 +345,7 @@ mod tests {
 
     #[test]
     fn sqlite_times() {
-        let t = DateTime::parse_from_rfc3339("2024-01-02T03:04:05Z").unwrap();
+        let t = parse_time("2024-01-02T03:04:05Z").expect("a time");
         assert_eq!(time_text(&t), "2024-01-02 03:04:05+00:00");
         assert!(parse_time("2024-01-02 03:04:05").is_some());
         assert!(parse_time("not a time").is_none());

@@ -86,7 +86,7 @@ fn write(out: &mut Vec<u8>, v: &Value) {
             out.extend(f.to_bits().to_be_bytes());
         }
         Value::String(s) => write_str(out, s),
-        Value::Timestamp(t) => write_str(out, &format_rfc3339_nano(*t)),
+        Value::Timestamp(t) => write_str(out, &format_rfc3339_nano(t)),
         Value::Bytes(b) => {
             len_header(out, b.len(), None, [0xc4, 0xc5, 0xc6]);
             out.extend_from_slice(b);

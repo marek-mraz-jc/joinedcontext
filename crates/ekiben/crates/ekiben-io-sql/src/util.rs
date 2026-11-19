@@ -5,14 +5,18 @@
 
 use std::collections::BTreeMap;
 
+use crate::sqlx::mysql::types::MySqlTime;
 use crate::sqlx::mysql::{MySql, MySqlArguments, MySqlRow};
 use crate::sqlx::postgres::{
     PgArgumentBuffer, PgArguments, PgRow, PgTypeInfo, PgValueFormat, Postgres,
 };
 use crate::sqlx::{Arguments, Column, Decode, Executor, Row, Statement, TypeInfo, ValueRef};
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use ekiben_bloblang::time_format::fixed;
 use ekiben_bloblang::Value;
 use futures::TryStreamExt;
+use jiff::civil::{self, Date, DateTime, Time};
+use jiff::tz::{Offset, TimeZone};
+use jiff::{SignedDuration, Timestamp, Zoned};
 
 use crate::conn_fields::{Db, Driver};
 
@@ -102,15 +106,15 @@ fn pq_text(v: &Value) -> Option<Vec<u8>> {
     })
 }
 
-fn format_pq_ts(t: &DateTime<FixedOffset>) -> String {
-    let mut s = t.format("%Y-%m-%d %H:%M:%S").to_string();
-    let nanos = t.timestamp_subsec_nanos();
+fn format_pq_ts(t: &Zoned) -> String {
+    let mut s = t.strftime("%Y-%m-%d %H:%M:%S").to_string();
+    let nanos = t.subsec_nanosecond();
     if nanos > 0 {
         let frac = format!("{nanos:09}");
         s.push('.');
         s.push_str(frac.trim_end_matches('0'));
     }
-    let off = t.offset().local_minus_utc();
+    let off = t.offset().seconds();
     if off == 0 {
         s.push('Z');
     } else {
@@ -237,10 +241,8 @@ fn pg_text_to_binary(
         }
         1082 => {
             let t = s();
-            let d = NaiveDate::parse_from_str(t.trim().get(..10).unwrap_or(""), "%Y-%m-%d")
-                .map_err(|_| pg_invalid("date", &t))?;
-            let days = (d - pg_epoch().date()).num_days();
-            (days as i32).to_be_bytes().to_vec()
+            let days = pg_date_days(&t).ok_or_else(|| pg_invalid("date", &t))?;
+            days.to_be_bytes().to_vec()
         }
         _ => {
             return Err(format!(
@@ -280,10 +282,19 @@ fn decode_bytea_text(text: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn pg_epoch() -> NaiveDateTime {
-    NaiveDate::from_ymd_opt(2000, 1, 1)
-        .and_then(|d| d.and_hms_opt(0, 0, 0))
-        .unwrap_or_default()
+/// Postgres counts timestamps and dates from 2000-01-01.
+const PG_EPOCH: DateTime = civil::date(2000, 1, 1).at(0, 0, 0, 0);
+
+/// Days since 2000-01-01 of the `YYYY-MM-DD` a postgres date text starts with.
+fn pg_date_days(text: &str) -> Option<i32> {
+    let d = Date::strptime("%Y-%m-%d", text.trim().get(..10)?).ok()?;
+    let days = PG_EPOCH.date().until(d).ok()?.get_days();
+    Some(days)
+}
+
+/// The instant `local` names in UTC.
+fn utc(local: DateTime) -> Option<Timestamp> {
+    Offset::UTC.to_timestamp(local).ok()
 }
 
 /// Microseconds since 2000-01-01 of a postgres timestamp text (ISO forms, `T` or space).
@@ -295,21 +306,46 @@ fn parse_pg_timestamp(text: &str, with_tz: bool) -> Option<i64> {
         _ => {}
     }
     let norm = t.replacen(' ', "T", 1);
-    let utc = if let Ok(dt) = DateTime::parse_from_rfc3339(&norm) {
-        dt.naive_utc()
-    } else if let Ok(dt) = DateTime::parse_from_str(&norm, "%Y-%m-%dT%H:%M:%S%.f%#z") {
-        dt.naive_utc()
-    } else if let Ok(n) = NaiveDateTime::parse_from_str(&norm, "%Y-%m-%dT%H:%M:%S%.f") {
-        n
+    let ts = if let Some(ts) = jc_time::parse_rfc3339(&norm) {
+        ts
+    } else if let Some(ts) = parse_with_offset(&norm, "%Y-%m-%dT%H:%M:%S%.f") {
+        ts
+    } else if let Ok(n) = DateTime::strptime("%Y-%m-%dT%H:%M:%S%.f", &norm) {
+        utc(n)?
     } else {
-        NaiveDate::parse_from_str(&norm, "%Y-%m-%d")
+        utc(Date::strptime("%Y-%m-%d", &norm)
             .ok()?
-            .and_hms_opt(0, 0, 0)?
+            .to_datetime(Time::midnight()))?
     };
     // ponytail: a text without an offset is read as UTC for timestamptz (the session TimeZone of
     // a stock postgres image); a non-UTC session TimeZone is a listed gap.
     let _ = with_tz;
-    (utc - pg_epoch()).num_microseconds()
+    let since = ts.as_nanosecond() - utc(PG_EPOCH)?.as_nanosecond();
+    // whole microseconds, toward zero
+    i64::try_from(since / 1_000).ok()
+}
+
+/// `text` as `format` followed by an offset of `+HH`, `+HHMM` or `+HH:MM` (chrono's `%#z`).
+fn parse_with_offset(text: &str, format: &str) -> Option<Timestamp> {
+    let at = text.rfind(['+', '-']).filter(|i| *i > 10)?;
+    let (local, offset) = text.split_at(at);
+    let digits: String = offset[1..].chars().filter(|c| *c != ':').collect();
+    let colon_ok = matches!(offset.len(), 3 | 5) || offset.as_bytes().get(3) == Some(&b':');
+    if !colon_ok || !matches!(digits.len(), 2 | 4) || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let hours: i32 = digits[..2].parse().ok()?;
+    let minutes: i32 = digits
+        .get(2..)
+        .filter(|m| !m.is_empty())
+        .map_or(Ok(0), str::parse)
+        .ok()?;
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
+    let secs = (hours * 3600 + minutes * 60) * if offset.starts_with('-') { -1 } else { 1 };
+    let local = DateTime::strptime(format, local).ok()?;
+    Offset::from_seconds(secs).ok()?.to_timestamp(local).ok()
 }
 
 /// postgres numeric binary form of a decimal text.
@@ -436,15 +472,53 @@ fn f32_as_go(f: f32) -> f64 {
     format!("{f}").parse().unwrap_or(f as f64)
 }
 
-fn pg_time_of_day(micros: i64) -> Option<NaiveTime> {
-    NaiveTime::from_num_seconds_from_midnight_opt(
-        u32::try_from(micros.div_euclid(1_000_000)).ok()?,
-        u32::try_from(micros.rem_euclid(1_000_000) * 1000).ok()?,
+fn pg_time_of_day(micros: i64) -> Option<Time> {
+    let secs = u32::try_from(micros.div_euclid(1_000_000))
+        .ok()
+        .filter(|s| *s < 86_400)?;
+    let nanos = i32::try_from(micros.rem_euclid(1_000_000) * 1000).ok()?;
+    Time::new(
+        (secs / 3600) as i8,
+        (secs % 3600 / 60) as i8,
+        (secs % 60) as i8,
+        nanos,
+    )
+    .ok()
+}
+
+fn utc_fixed(n: DateTime) -> Option<Value> {
+    utc(n).map(|ts| Value::Timestamp(ts.to_zoned(TimeZone::UTC)))
+}
+
+/// A postgres `timestamp`/`timestamptz` of `micros` since 2000-01-01, in UTC.
+fn pg_timestamp(micros: i64) -> Option<Value> {
+    utc_fixed(
+        PG_EPOCH
+            .checked_add(SignedDuration::from_micros(micros))
+            .ok()?,
     )
 }
 
-fn utc_fixed(n: NaiveDateTime) -> Value {
-    Value::Timestamp(Utc.from_utc_datetime(&n).fixed_offset())
+/// A postgres `date` of `days` since 2000-01-01, at midnight UTC.
+fn pg_date(days: i32) -> Option<Value> {
+    utc_fixed(
+        PG_EPOCH
+            .checked_add(SignedDuration::from_hours(i64::from(days) * 24))
+            .ok()?,
+    )
+}
+
+/// A postgres `time` (`zone` None) or `timetz` (`zone` seconds west of UTC) on 0000-01-01.
+fn pg_time(micros: i64, zone: Option<i32>) -> Option<Value> {
+    let local = civil::date(0, 1, 1).to_datetime(pg_time_of_day(micros)?);
+    match zone {
+        None => utc_fixed(local),
+        Some(west) => {
+            let east = west.checked_neg()?;
+            let ts = Offset::from_seconds(east).ok()?.to_timestamp(local).ok()?;
+            fixed(ts, east).ok().map(Value::Timestamp)
+        }
+    }
 }
 
 /// One postgres column value as lib/pq decodes it (text results, `[]byte` read as a string).
@@ -497,7 +571,7 @@ fn pg_value(row: &PgRow, i: usize) -> Result<Value, String> {
             match m {
                 i64::MAX => Value::String("infinity".into()),
                 i64::MIN => Value::String("-infinity".into()),
-                m => utc_fixed(pg_epoch() + chrono::Duration::microseconds(m)),
+                m => pg_timestamp(m).ok_or_else(bad)?,
             }
         }
         1082 => {
@@ -505,18 +579,10 @@ fn pg_value(row: &PgRow, i: usize) -> Result<Value, String> {
             match d {
                 i32::MAX => Value::String("infinity".into()),
                 i32::MIN => Value::String("-infinity".into()),
-                d => utc_fixed(pg_epoch() + chrono::Duration::days(d as i64)),
+                d => pg_date(d).ok_or_else(bad)?,
             }
         }
-        1083 => {
-            let m = i64::from_be_bytes(be8(&b).ok_or_else(bad)?);
-            let t = pg_time_of_day(m).ok_or_else(bad)?;
-            utc_fixed(
-                NaiveDate::from_ymd_opt(0, 1, 1)
-                    .ok_or_else(bad)?
-                    .and_time(t),
-            )
-        }
+        1083 => pg_time(i64::from_be_bytes(be8(&b).ok_or_else(bad)?), None).ok_or_else(bad)?,
         1266 => {
             let m = i64::from_be_bytes(b.get(..8).and_then(be8).ok_or_else(bad)?);
             let zone = i32::from_be_bytes(
@@ -524,12 +590,7 @@ fn pg_value(row: &PgRow, i: usize) -> Result<Value, String> {
                     .and_then(|x| x.try_into().ok())
                     .ok_or_else(bad)?,
             );
-            let t = pg_time_of_day(m).ok_or_else(bad)?;
-            let off = FixedOffset::west_opt(zone).ok_or_else(bad)?;
-            let local = NaiveDate::from_ymd_opt(0, 1, 1)
-                .ok_or_else(bad)?
-                .and_time(t);
-            Value::Timestamp(off.from_local_datetime(&local).single().ok_or_else(bad)?)
+            pg_time(m, Some(zone)).ok_or_else(bad)?
         }
         // text, varchar, bpchar, name, char, bytea, json, xml, unknown: the bytes as a string.
         25 | 1043 | 1042 | 19 | 18 | 17 | 114 | 142 | 705 => text(b),
@@ -589,36 +650,75 @@ fn mysql_value(
                 Value::Float(<f64 as Decode<MySql>>::decode(raw).map_err(|e| e.to_string())?)
             }
             "DATETIME" | "TIMESTAMP" | "DATE" => {
-                let t = if base == "DATE" {
-                    <NaiveDate as Decode<MySql>>::decode(raw)
-                        .map_err(|e| e.to_string())?
-                        .and_hms_opt(0, 0, 0)
-                        .unwrap_or_default()
-                } else {
-                    <NaiveDateTime as Decode<MySql>>::decode(raw).map_err(|e| e.to_string())?
-                };
+                let t = mysql_binary_datetime(bytes)?;
                 if parse_time {
-                    utc_fixed(t)
+                    utc_fixed(t).ok_or_else(|| format!("{name} {t} is out of range"))?
                 } else if base == "DATE" {
-                    Value::String(t.format("%Y-%m-%d").to_string())
+                    Value::String(t.strftime("%Y-%m-%d").to_string())
                 } else {
                     Value::String(mysql_datetime_text(t))
                 }
             }
-            "TIME" => Value::String(
-                <NaiveTime as Decode<MySql>>::decode(raw)
-                    .map_err(|e| e.to_string())?
-                    .format("%H:%M:%S")
-                    .to_string(),
-            ),
+            "TIME" => {
+                let t = <MySqlTime as Decode<MySql>>::decode(raw).map_err(|e| e.to_string())?;
+                if !t.is_valid_time_of_day() {
+                    return Err(format!("TIME value {t} is not a time of day"));
+                }
+                Value::String(format!(
+                    "{:02}:{:02}:{:02}",
+                    t.hours(),
+                    t.minutes(),
+                    t.seconds()
+                ))
+            }
             _ => text(bytes),
         }),
     }
 }
 
-fn mysql_datetime_text(t: NaiveDateTime) -> String {
-    let base = t.format("%Y-%m-%d %H:%M:%S").to_string();
-    let micros = t.and_utc().timestamp_subsec_micros();
+/// A binary-protocol `DATE`, `DATETIME` or `TIMESTAMP` as sqlx's chrono decoder read it: a length
+/// byte, the year (u16 LE), month and day, then hour, minute, second and microseconds (LE).
+fn mysql_binary_datetime(buf: &[u8]) -> Result<DateTime, String> {
+    let (&len, rest) = buf.split_first().ok_or("empty buffer")?;
+    if rest.is_empty() {
+        return Err("unexpected null".to_string());
+    }
+    let [y0, y1, month, day, time @ ..] = rest else {
+        return Err(format!(
+            "expected at least 4 bytes for date, got {}",
+            rest.len()
+        ));
+    };
+    let year = u16::from_le_bytes([*y0, *y1]);
+    let date = i16::try_from(year)
+        .ok()
+        .and_then(|y| Date::new(y, *month as i8, *day as i8).ok())
+        .ok_or_else(|| format!("server returned invalid date: {year}/{month}/{day}"))?;
+    if len <= 4 {
+        return Ok(date.to_datetime(Time::midnight()));
+    }
+    let [hour, minute, second, micros @ ..] = time else {
+        return Err("expected 3 bytes for time".to_string());
+    };
+    let mut le = [0u8; 8];
+    le[..micros.len().min(8)].copy_from_slice(&micros[..micros.len().min(8)]);
+    let micros = u64::from_le_bytes(le);
+    let invalid = || {
+        format!("server returned invalid time: {hour:02}:{minute:02}:{second:02}; micros: {micros}")
+    };
+    let nanos = i32::try_from(micros)
+        .ok()
+        .filter(|m| *m < 1_000_000)
+        .ok_or_else(invalid)?
+        * 1000;
+    let time =
+        Time::new(*hour as i8, *minute as i8, *second as i8, nanos).map_err(|_| invalid())?;
+    Ok(date.to_datetime(time))
+}
+
+fn mysql_datetime_text(t: DateTime) -> String {
+    let base = t.strftime("%Y-%m-%d %H:%M:%S").to_string();
+    let micros = t.subsec_nanosecond() / 1000;
     if micros == 0 {
         base
     } else {
@@ -628,15 +728,51 @@ fn mysql_datetime_text(t: NaiveDateTime) -> String {
 
 fn mysql_text_time(s: &str) -> Result<Value, String> {
     if s.starts_with("0000-00-00") {
-        return Ok(Value::Timestamp(DateTime::<FixedOffset>::default()));
+        return Ok(Value::Timestamp(
+            Timestamp::UNIX_EPOCH.to_zoned(TimeZone::UTC),
+        ));
     }
-    let t = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
-        .or_else(|_| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .map(|d| d.and_hms_opt(0, 0, 0).unwrap_or_default())
-        })
-        .map_err(|e| format!("parsing time {s:?}: {e}"))?;
-    Ok(utc_fixed(t))
+    let t = DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", s)
+        .or_else(|_| Date::strptime("%Y-%m-%d", s).map(|d| d.to_datetime(Time::midnight())))
+        .map_err(|_| format!("parsing time {s:?}: {}", ymd_error(s)))?;
+    utc_fixed(t).ok_or_else(|| format!("parsing time {s:?}: input is out of range"))
+}
+
+/// Why `s` is no `%Y-%m-%d`, in the words of chrono's parser (go-sql-driver's error text named
+/// it since the chrono build).
+fn ymd_error(s: &str) -> &'static str {
+    let mut rest = s;
+    let mut fields = [0u32; 3];
+    for (i, width) in [4, 2, 2].into_iter().enumerate() {
+        if i > 0 {
+            match rest.strip_prefix('-') {
+                Some(r) => rest = r,
+                None if rest.is_empty() => return "premature end of input",
+                None => return "input contains invalid characters",
+            }
+        }
+        let n = rest
+            .bytes()
+            .take(width)
+            .take_while(u8::is_ascii_digit)
+            .count();
+        if n == 0 {
+            return if rest.is_empty() {
+                "premature end of input"
+            } else {
+                "input contains invalid characters"
+            };
+        }
+        fields[i] = rest[..n].parse().unwrap_or(0);
+        rest = &rest[n..];
+    }
+    if !rest.is_empty() {
+        "trailing input"
+    } else if !(1..=12).contains(&fields[1]) || !(1..=31).contains(&fields[2]) {
+        "input is out of range"
+    } else {
+        "no possible date and time matching input"
+    }
 }
 
 fn row_object<R: Row>(
@@ -677,7 +813,9 @@ fn mysql_args(args: &[Value]) -> Result<MySqlArguments, String> {
             Value::Number(s) | Value::String(s) => a.add(s.clone()),
             Value::Bytes(b) => a.add(b.clone()),
             // go-sql-driver sends a time.Time as text in cfg.Loc (UTC).
-            Value::Timestamp(t) => a.add(mysql_datetime_text(t.naive_utc())),
+            Value::Timestamp(t) => a.add(mysql_datetime_text(
+                t.with_time_zone(TimeZone::UTC).datetime(),
+            )),
             Value::Array(_) | Value::Object(_) => unreachable_arg(),
         };
         r.map_err(|e| e.to_string())?;
@@ -949,9 +1087,170 @@ mod tests {
 
     #[test]
     fn pq_text_formats() {
-        let t = DateTime::parse_from_rfc3339("2024-01-02T03:04:05.5+02:00").unwrap();
+        let t = crate::sqlite::parse_time("2024-01-02T03:04:05.5+02:00").expect("a time");
         assert_eq!(format_pq_ts(&t), "2024-01-02 03:04:05.5+02:00");
         assert_eq!(pq_text(&Value::Float(1.5)).unwrap(), b"1.5");
         assert!(pq_text(&Value::Null).is_none());
     }
+
+    /// The time texts of every driver, pinned from the chrono build before the move to jiff
+    /// (T-7245): the helpers above the loop differ by build, the expected text does not.
+    #[test]
+    fn time_wire_formats_match_the_chrono_build() {
+        let ts = |s: &str| crate::sqlite::parse_time(s).expect("a time");
+        let show = |v: Result<Value, String>| match v {
+            Ok(Value::Timestamp(t)) => ekiben_bloblang::value::format_rfc3339_nano(&t),
+            other => format!("{other:?}"),
+        };
+        let some = |v: Option<Value>| v.ok_or_else(|| "none".to_string());
+        let pg_ts = |m: i64| some(pg_timestamp(m));
+        let pg_date = |d: i32| some(pg_date(d));
+        let pg_time = |m: i64, zone: Option<i32>| some(pg_time(m, zone));
+        let mysql_text =
+            |s: &str| mysql_datetime_text(ts(s).with_time_zone(TimeZone::UTC).datetime());
+        let mut got = Vec::new();
+        for t in [
+            "2024-01-02T03:04:05Z",
+            "2024-01-02T03:04:05.000000001-05:30",
+            "2024-02-29T23:59:59.120+14:00",
+            "0001-01-01T00:00:00.5Z",
+        ] {
+            got.push(format!("pq {}", format_pq_ts(&ts(t))));
+            got.push(format!("sqlite {}", crate::sqlite::time_text(&ts(t))));
+            got.push(format!("mysql {}", mysql_text(t)));
+        }
+        for s in [
+            "2024-01-02 03:04:05.123456+02",
+            "2024-01-02 03:04:05.5-0330",
+            "2024-01-02T03:04:05Z",
+            "2024-01-02 03:04:05+05:30",
+            "2024-01-02 03:04:05",
+            "2024-01-02 03:04",
+            "2024-01-02",
+            "1999-12-31 23:59:59.999999",
+            "INFINITY",
+            "-infinity",
+            "2024-13-02",
+            "junk",
+        ] {
+            got.push(format!("pg {s:?} {:?}", parse_pg_timestamp(s, true)));
+            got.push(format!("pg date {s:?} {:?}", pg_date_days(s)));
+            got.push(format!(
+                "sqlite parse {s:?} {:?}",
+                crate::sqlite::parse_time(s).map(|t| show(Ok(Value::Timestamp(t))))
+            ));
+            got.push(format!("mysql parse {s:?} {}", show(mysql_text_time(s))));
+        }
+        for s in [
+            "2024-01-02 03:04:05.5+02:00",
+            "2024-01-02T03:04:05.5+02:00Z",
+            "2024-01-02T03:04Z",
+            "0000-00-00 00:00:00",
+        ] {
+            got.push(format!(
+                "sqlite parse {s:?} {:?}",
+                crate::sqlite::parse_time(s).map(|t| show(Ok(Value::Timestamp(t))))
+            ));
+            got.push(format!("mysql parse {s:?} {}", show(mysql_text_time(s))));
+        }
+        for m in [0, -1, 1_234_567_890_123_456, -63_082_281_600_000_000] {
+            got.push(format!("pg timestamp {m} {}", show(pg_ts(m))));
+        }
+        for d in [0, -1, 9_000, -730_119] {
+            got.push(format!("pg date {d} {}", show(pg_date(d))));
+        }
+        for (m, z) in [
+            (0, None),
+            (45_296_000_001, None),
+            (45_296_500_000, Some(-7_200)),
+            (1, Some(19_800)),
+        ] {
+            got.push(format!("pg time {m} {z:?} {}", show(pg_time(m, z))));
+        }
+        let got = got.join("\n");
+        assert_eq!(got, TIME_GOLDEN.trim(), "\n{got}");
+    }
+
+    const TIME_GOLDEN: &str = r#"
+pq 2024-01-02 03:04:05Z
+sqlite 2024-01-02 03:04:05+00:00
+mysql 2024-01-02 03:04:05
+pq 2024-01-02 03:04:05.000000001-05:30
+sqlite 2024-01-02 03:04:05.000000001-05:30
+mysql 2024-01-02 08:34:05
+pq 2024-02-29 23:59:59.12+14:00
+sqlite 2024-02-29 23:59:59.12+14:00
+mysql 2024-02-29 09:59:59.120000
+pq 0001-01-01 00:00:00.5Z
+sqlite 0001-01-01 00:00:00.5+00:00
+mysql 0001-01-01 00:00:00.500000
+pg "2024-01-02 03:04:05.123456+02" Some(757472645123456)
+pg date "2024-01-02 03:04:05.123456+02" Some(8767)
+sqlite parse "2024-01-02 03:04:05.123456+02" None
+mysql parse "2024-01-02 03:04:05.123456+02" Err("parsing time \"2024-01-02 03:04:05.123456+02\": trailing input")
+pg "2024-01-02 03:04:05.5-0330" Some(757492445500000)
+pg date "2024-01-02 03:04:05.5-0330" Some(8767)
+sqlite parse "2024-01-02 03:04:05.5-0330" Some("2024-01-02T03:04:05.5-03:30")
+mysql parse "2024-01-02 03:04:05.5-0330" Err("parsing time \"2024-01-02 03:04:05.5-0330\": trailing input")
+pg "2024-01-02T03:04:05Z" Some(757479845000000)
+pg date "2024-01-02T03:04:05Z" Some(8767)
+sqlite parse "2024-01-02T03:04:05Z" Some("2024-01-02T03:04:05Z")
+mysql parse "2024-01-02T03:04:05Z" Err("parsing time \"2024-01-02T03:04:05Z\": trailing input")
+pg "2024-01-02 03:04:05+05:30" Some(757460045000000)
+pg date "2024-01-02 03:04:05+05:30" Some(8767)
+sqlite parse "2024-01-02 03:04:05+05:30" Some("2024-01-02T03:04:05+05:30")
+mysql parse "2024-01-02 03:04:05+05:30" Err("parsing time \"2024-01-02 03:04:05+05:30\": trailing input")
+pg "2024-01-02 03:04:05" Some(757479845000000)
+pg date "2024-01-02 03:04:05" Some(8767)
+sqlite parse "2024-01-02 03:04:05" Some("2024-01-02T03:04:05Z")
+mysql parse "2024-01-02 03:04:05" 2024-01-02T03:04:05Z
+pg "2024-01-02 03:04" None
+pg date "2024-01-02 03:04" Some(8767)
+sqlite parse "2024-01-02 03:04" Some("2024-01-02T03:04:00Z")
+mysql parse "2024-01-02 03:04" Err("parsing time \"2024-01-02 03:04\": trailing input")
+pg "2024-01-02" Some(757468800000000)
+pg date "2024-01-02" Some(8767)
+sqlite parse "2024-01-02" Some("2024-01-02T00:00:00Z")
+mysql parse "2024-01-02" 2024-01-02T00:00:00Z
+pg "1999-12-31 23:59:59.999999" Some(-1)
+pg date "1999-12-31 23:59:59.999999" Some(-1)
+sqlite parse "1999-12-31 23:59:59.999999" Some("1999-12-31T23:59:59.999999Z")
+mysql parse "1999-12-31 23:59:59.999999" 1999-12-31T23:59:59.999999Z
+pg "INFINITY" Some(9223372036854775807)
+pg date "INFINITY" None
+sqlite parse "INFINITY" None
+mysql parse "INFINITY" Err("parsing time \"INFINITY\": input contains invalid characters")
+pg "-infinity" Some(-9223372036854775808)
+pg date "-infinity" None
+sqlite parse "-infinity" None
+mysql parse "-infinity" Err("parsing time \"-infinity\": input contains invalid characters")
+pg "2024-13-02" None
+pg date "2024-13-02" None
+sqlite parse "2024-13-02" None
+mysql parse "2024-13-02" Err("parsing time \"2024-13-02\": input is out of range")
+pg "junk" None
+pg date "junk" None
+sqlite parse "junk" None
+mysql parse "junk" Err("parsing time \"junk\": input contains invalid characters")
+sqlite parse "2024-01-02 03:04:05.5+02:00" Some("2024-01-02T03:04:05.5+02:00")
+mysql parse "2024-01-02 03:04:05.5+02:00" Err("parsing time \"2024-01-02 03:04:05.5+02:00\": trailing input")
+sqlite parse "2024-01-02T03:04:05.5+02:00Z" Some("2024-01-02T03:04:05.5+02:00")
+mysql parse "2024-01-02T03:04:05.5+02:00Z" Err("parsing time \"2024-01-02T03:04:05.5+02:00Z\": trailing input")
+sqlite parse "2024-01-02T03:04Z" Some("2024-01-02T03:04:00Z")
+mysql parse "2024-01-02T03:04Z" Err("parsing time \"2024-01-02T03:04Z\": trailing input")
+sqlite parse "0000-00-00 00:00:00" None
+mysql parse "0000-00-00 00:00:00" 1970-01-01T00:00:00Z
+pg timestamp 0 2000-01-01T00:00:00Z
+pg timestamp -1 1999-12-31T23:59:59.999999Z
+pg timestamp 1234567890123456 2039-02-13T23:31:30.123456Z
+pg timestamp -63082281600000000 0001-01-01T00:00:00Z
+pg date 0 2000-01-01T00:00:00Z
+pg date -1 1999-12-31T00:00:00Z
+pg date 9000 2024-08-22T00:00:00Z
+pg date -730119 0001-01-01T00:00:00Z
+pg time 0 None 0000-01-01T00:00:00Z
+pg time 45296000001 None 0000-01-01T12:34:56.000001Z
+pg time 45296500000 Some(-7200) 0000-01-01T12:34:56.5+02:00
+pg time 1 Some(19800) 0000-01-01T00:00:00.000001-05:30
+"#;
 }
