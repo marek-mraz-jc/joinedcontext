@@ -954,7 +954,9 @@ pub async fn propose(
     let stored = serde_json::to_value(&payload)
         .map_err(|e| ApiError::Internal(format!("operator change: {e}")))?;
     let sealed = secret
-        .map(|secret| crate::org_backup::seal(&state, &secret))
+        .map(|secret| {
+            crate::org_backup::seal(&state, &crate::org_backup::smtp_context(&target), &secret)
+        })
         .transpose()?;
     let mut tx = pool.begin().await.map_err(db)?;
     let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -1284,8 +1286,8 @@ async fn apply_smtp(
         .smtp
         .clone()
         .ok_or_else(|| ApiError::Internal("an SmtpSet Change without smtp".into()))?;
-    let sealed: Option<String> =
-        sqlx::query_scalar("SELECT sealed_secret FROM operator_changes WHERE id = $1::uuid")
+    let (sealed, target): (Option<String>, String) =
+        sqlx::query_as("SELECT sealed_secret, target FROM operator_changes WHERE id = $1::uuid")
             .bind(&found.id)
             .fetch_one(&mut *tx)
             .await
@@ -1296,7 +1298,9 @@ async fn apply_smtp(
         ));
     }
     let password = sealed
-        .map(|sealed| crate::org_backup::unseal(state, &sealed))
+        .map(|sealed| {
+            crate::org_backup::unseal(state, &crate::org_backup::smtp_context(&target), &sealed)
+        })
         .transpose()?;
     let admin = people(state)?.admin().await?;
     let before = admin.smtp_server().await.map_err(no_smtp_door)?;

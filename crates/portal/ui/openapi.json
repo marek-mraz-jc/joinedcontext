@@ -3803,7 +3803,7 @@
           "system"
         ],
         "summary": "Set Configuration Backup Target",
-        "description": "Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).",
+        "description": "Saves the bucket, schedule, retention and the working and recovery age recipients the bundle is encrypted to (a test encryption runs first). The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154, T-7268).",
         "operationId": "organization_backup_save",
         "requestBody": {
           "content": {
@@ -3920,7 +3920,7 @@
           "system"
         ],
         "summary": "Run Configuration Backup Now",
-        "description": "Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).",
+        "description": "Builds the Organization's configuration bundle, encrypts it to the target's two recipients and uploads it as a new version, whether the schedule is on or off (T-7154, T-7268). A target without recipients answers 409 naming workingRecipient.",
         "operationId": "organization_backup_run_now",
         "responses": {
           "200": {
@@ -4024,7 +4024,7 @@
           "system"
         ],
         "summary": "Download Configuration Backup Version",
-        "description": "One version of the Organization's bundle, as the zip that was uploaded (T-7154).",
+        "description": "One version of the Organization's bundle as it was uploaded: age-encrypted to the target's two recipients (T-7268), or the plain zip of a version taken before (T-7154).",
         "operationId": "organization_backup_download",
         "parameters": [
           {
@@ -4039,9 +4039,9 @@
         ],
         "responses": {
           "200": {
-            "description": "The zip",
+            "description": "The encrypted bundle (`.zip.age`), or a plain zip from before T-7268",
             "content": {
-              "application/zip": {}
+              "application/octet-stream": {}
             }
           },
           "403": {
@@ -4073,7 +4073,7 @@
           "system"
         ],
         "summary": "Restore Configuration Backup Version",
-        "description": "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).",
+        "description": "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. The identity opens the encrypted bundle for this request only; a version uploaded unencrypted before T-7268 and a bundle of another Organization are refused (T-7154, T-7268).",
         "operationId": "organization_backup_restore",
         "parameters": [
           {
@@ -4093,7 +4093,8 @@
                 "$ref": "#/components/schemas/RestoreInput"
               },
               "example": {
-                "apply": false
+                "apply": false,
+                "identity": "AGE-SECRET-KEY-1…"
               }
             }
           },
@@ -64496,10 +64497,18 @@
       },
       "RestoreInput": {
         "type": "object",
+        "description": "`Debug` is not derived so no log line can print the identity.",
+        "required": [
+          "identity"
+        ],
         "properties": {
           "apply": {
             "type": "boolean",
             "description": "`false` (the default) plans only; `true` proposes one Change per project, which another\nadministrator approves."
+          },
+          "identity": {
+            "type": "string",
+            "description": "The working or the recovery age identity the bundle was encrypted to, one line, e.g.\n`AGE-SECRET-KEY-1… (the line in your key file)`; used for this request only."
           }
         },
         "additionalProperties": false
@@ -66615,7 +66624,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The age recipients (`age1…`, public keys) a data archive is encrypted to: the working\none first, then the recovery one. Empty for the configuration backup."
+            "description": "The age recipients (`age1…`, public keys) every upload of this target is encrypted to:\nthe working one first, then the recovery one. Empty only on a configuration target saved\nbefore T-7268, which runs again once its administrator sets both."
           },
           "region": {
             "type": "string"
@@ -66673,7 +66682,7 @@
               "string",
               "null"
             ],
-            "description": "The data backup's recovery age recipient, kept offline by another person."
+            "description": "The recovery age recipient, kept offline by another person."
           },
           "region": {
             "type": "string",
@@ -66690,7 +66699,7 @@
               "string",
               "null"
             ],
-            "description": "The data backup's working age recipient, e.g. `age1ql3z7hjy54pw3hyw…`."
+            "description": "The working age recipient every upload is encrypted to, e.g. `age1ql3z7hjy54pw3hyw…`."
           }
         },
         "additionalProperties": false

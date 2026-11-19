@@ -103,12 +103,12 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
       const detail = "bucket: 3 to 63 lower-case letters, digits, '.' and '-', e.g. bb-backups";
       return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "bucket", message: "3 to 63 lower-case letters, digits, '.' and '-', e.g. bb-backups" }] }, 422));
     }
-    if (kind === "data" && !String(input.recoveryRecipient).startsWith("age1")) {
+    if (!String(input.recoveryRecipient).startsWith("age1")) {
       const detail = "recoveryRecipient: an age public key starting with age1, e.g. age1ql3z7hjy54pw3hyw…";
       return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [detail] }, 422));
     }
     const { secretAccessKey: _secret, workingRecipient, recoveryRecipient, ...kept } = input;
-    const recipients = kind === "data" ? [workingRecipient, recoveryRecipient] : [];
+    const recipients = [workingRecipient, recoveryRecipient];
     bucket.target = { ...kept, recipients, organization: "bbsk", kind, updatedBy: "demo.admin", updatedAt: now(), lastRunAt: null };
     return route.fulfill(json(bucket.target));
   }
@@ -141,8 +141,8 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
   if (kind === "data" && rest.endsWith("/restore")) {
     const input = route.request().postDataJSON() as { identity: string; request?: boolean };
     if (!input.identity.startsWith("AGE-SECRET-KEY-1")) {
-      const detail = "identity: an age identity, one line starting with AGE-SECRET-KEY-1";
-      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "an age identity, one line starting with AGE-SECRET-KEY-1" }] }, 422));
+      const detail = "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "not an age identity; paste the one line that starts with AGE-SECRET-KEY-1" }] }, 422));
     }
     log("restore-plan", true, "16 row(s) would be written");
     let request = null;
@@ -163,6 +163,12 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
     return route.fulfill(json(found));
   }
   if (rest.endsWith("/restore")) {
+    // The configuration bundle is encrypted too (T-7268): the identity opens it.
+    const input = route.request().postDataJSON() as { identity: string };
+    if (!input.identity.startsWith("AGE-SECRET-KEY-1")) {
+      const detail = "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "not an age identity; paste the one line that starts with AGE-SECRET-KEY-1" }] }, 422));
+    }
     log("restore-plan", true, "0 change(s) planned");
     return route.fulfill(
       json({
@@ -215,6 +221,8 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       await config.getByLabel("Folder").fill("joinedcontext/");
       await config.getByLabel("Access key id").fill("AKIAIOSFODNN7EXAMPLE");
       await config.getByLabel("Secret access key").fill("not-shown-again");
+      await config.getByLabel("Working key (age public key)").fill(WORKING);
+      await config.getByLabel("Recovery key (age public key)").fill(RECOVERY);
       await config.getByRole("button", { name: "Save" }).click();
       await expect(config.getByText(/3 to 63 lower-case letters/)).toBeVisible();
       await shot(page, `backups-refused-${width}`);
@@ -232,6 +240,19 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       await shot(page, `backups-filled-${width}`);
 
       await config.getByRole("button", { name: "Restore this version" }).click();
+      const restore = page.getByTestId("backup-restore-plan");
+      await expect(restore.getByRole("button", { name: "Check this version" })).toBeDisabled();
+      await restore.getByLabel("Identity that opens the archive").fill("not-a-key");
+      await restore.getByRole("button", { name: "Check this version" }).click();
+      await expect(restore.getByText(/not an age identity; paste the one line that starts with AGE-SECRET-KEY-1/)).toBeVisible();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("aria-invalid", "true");
+      await restore.getByRole("button", { name: "Show the identity" }).click();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("type", "text");
+      await shot(page, `backups-restore-key-${width}`);
+      await restore.getByRole("button", { name: "Hide the identity" }).click();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("type", "password");
+      await restore.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
+      await restore.getByRole("button", { name: "Check this version" }).click();
       await expect(page.getByText("Nothing in the configuration to restore.")).toBeVisible();
       await expect(page.getByText("aino <aino@example.org>")).toBeVisible();
       await expect(page.getByText(/A restore never creates people/)).toBeVisible();
@@ -279,7 +300,7 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       const dialog = page.getByTestId("backup-data-restore");
       await dialog.getByLabel("Identity that opens the archive").fill("not-a-key");
       await dialog.getByRole("button", { name: "Check this version" }).click();
-      await expect(dialog.getByText(/an age identity, one line starting with AGE-SECRET-KEY-1/)).toBeVisible();
+      await expect(dialog.getByText(/not an age identity; paste the one line that starts with AGE-SECRET-KEY-1/)).toBeVisible();
       await dialog.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
       await dialog.getByRole("button", { name: "Check this version" }).click();
       await expect(dialog.getByRole("rowheader", { name: "portal/entity_comments" })).toBeVisible();

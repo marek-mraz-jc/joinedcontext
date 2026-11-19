@@ -7,8 +7,10 @@
 //! - `file` inputs and outputs are confined to one directory (`file_root`), so a stream cannot
 //!   read another module's key file or `/proc/self/environ`;
 //! - with the Portal in the same process, the pipeline credentials its reconciler resolves from
-//!   each project's own SOPS files reach that same map ([`HostRunner`]), in place of the
-//!   Kubernetes Secret the Portal writes for a runner in a cluster;
+//!   each project's own SOPS files reach that project's scope of the organization
+//!   ([`HostRunner`], T-7269), in place of the Kubernetes Secret the Portal writes for a runner
+//!   in a cluster: a stream `{project}.{pipeline}` reads its own project's credentials and
+//!   `JC_CLIENT_SECRET_<PROJECT>` and never another project's;
 //! - the runner variables dev's Deployment sets come from `jc`'s own mounts and files
 //!   ([`runner_defaults`]): `JC_GATEWAY_URL`, `JC_GATEWAY_HOST`, `JC_TOKEN_URL`, `JC_ORG_DOMAIN`,
 //!   `JC_ORG_ID` (the owner segment of a minted id, ADR-N-068), `JC_CLIENT_ID`, and each `JC_CLIENT_SECRET_<PROJECT>` of `[ekiben] client_secrets_dir`
@@ -109,15 +111,16 @@ async fn build_with(
         .chain(secrets.pipeline_client_secrets.keys())
         .collect();
     tracing::info!(variables = ?names, "ekiben runner variables from jc");
+    let (shared, per_project) = scoped_client_secrets(&secrets.pipeline_client_secrets);
     let runner = HostRunner {
         org: resources.get_or_create_org(&OrgId::default()),
-        given: variables(
-            &defaults,
-            &secrets.pipeline_client_secrets,
-            &secrets.ekiben_vars,
-        ),
+        given: variables(&defaults, &shared, &secrets.ekiben_vars),
+        files: per_project,
     };
     runner.org.replace_secrets(runner.given.clone());
+    runner
+        .org
+        .replace_scoped_secrets(runner.scopes(BTreeMap::new()));
     if portal_beside {
         hand_to_portal(runner);
     }
@@ -329,22 +332,38 @@ fn admission(hosts: Vec<PrivateHost>) -> Admission {
     })
 }
 
-/// The default organization's variable map, as the Portal's reconciler sees the runner: what
-/// `jc` was given (`EKIBEN_VAR_*`) plus the pipeline credentials of the last sync. A given name
-/// wins over a pipeline's, so a project cannot replace a variable the operator set.
+/// The default organization's variables, as the Portal's reconciler sees the runner: the
+/// organization's own map holds what `jc` was given (its defaults and `EKIBEN_VAR_*`), which
+/// every stream reads; each project's scope holds that project's `JC_CLIENT_SECRET_<PROJECT>`
+/// file and the pipeline credentials of the last sync, which only that project's streams read
+/// (T-7269). A given name wins over a pipeline's, so a project cannot replace a variable the
+/// operator set.
 pub struct HostRunner {
     org: Arc<OrgContext>,
     given: HashMap<String, String>,
+    /// Each project's client secret file, by project.
+    files: BTreeMap<String, HashMap<String, String>>,
 }
 
 impl HostRunner {
-    /// The variables after a sync handed `resolved`.
-    #[cfg_attr(not(feature = "portal"), allow(dead_code))]
-    fn merged(&self, resolved: BTreeMap<String, String>) -> HashMap<String, String> {
-        let mut out: HashMap<String, String> = resolved.into_iter().collect();
-        for (name, value) in &self.given {
-            if out.insert(name.clone(), value.clone()).is_some() {
-                tracing::warn!(variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+    /// Each project's scope after a sync handed `resolved`, by project.
+    fn scopes(
+        &self,
+        resolved: BTreeMap<String, BTreeMap<String, String>>,
+    ) -> HashMap<String, HashMap<String, String>> {
+        let mut out: HashMap<String, HashMap<String, String>> = self
+            .files
+            .iter()
+            .map(|(project, vars)| (project.clone(), vars.clone()))
+            .collect();
+        for (project, vars) in resolved {
+            let scope = out.entry(project).or_default();
+            for (name, value) in vars {
+                if self.given.contains_key(&name) {
+                    tracing::warn!(variable = %name, "a pipeline credential names a variable jc was given; jc's value is kept");
+                    continue;
+                }
+                scope.insert(name, value);
             }
         }
         out
@@ -353,16 +372,49 @@ impl HostRunner {
 
 #[cfg(feature = "portal")]
 impl joinedcontext_portal::pipeline_secrets::RunnerSecrets for HostRunner {
-    fn replace(&self, values: BTreeMap<String, String>) {
-        self.org.replace_secrets(self.merged(values));
+    fn replace(&self, values: BTreeMap<String, BTreeMap<String, String>>) {
+        self.org.replace_scoped_secrets(self.scopes(values));
     }
 
-    fn credential(&self, name: &str) -> Option<zeroize::Zeroizing<String>> {
+    fn credential(&self, project: &str, name: &str) -> Option<zeroize::Zeroizing<String>> {
         if self.given.contains_key(name) {
             return None;
         }
-        self.org.resolve_secret(name).map(zeroize::Zeroizing::new)
+        self.org
+            .resolve_scoped_secret(project, name)
+            .map(zeroize::Zeroizing::new)
     }
+}
+
+/// The client secret files split into the ones every stream reads (the harness's
+/// `JC_CLIENT_SECRET`) and each project's `JC_CLIENT_SECRET_<PROJECT>`, by project: the project
+/// is read back from the variable as [`crate::config::client_secret_var`] wrote it.
+fn scoped_client_secrets(
+    files: &BTreeMap<String, jc_secret::Secret>,
+) -> (
+    BTreeMap<String, jc_secret::Secret>,
+    BTreeMap<String, HashMap<String, String>>,
+) {
+    let mut shared = BTreeMap::new();
+    let mut per_project: BTreeMap<String, HashMap<String, String>> = BTreeMap::new();
+    for (name, value) in files {
+        let project = name
+            .strip_prefix("JC_CLIENT_SECRET_")
+            .filter(|rest| !rest.is_empty())
+            .map(|rest| rest.to_ascii_lowercase().replace('_', "-"));
+        match project {
+            Some(project) => {
+                per_project
+                    .entry(project)
+                    .or_default()
+                    .insert(name.clone(), value.expose().to_owned());
+            }
+            None => {
+                shared.insert(name.clone(), value.clone());
+            }
+        }
+    }
+    (shared, per_project)
 }
 
 #[cfg(feature = "portal")]
@@ -987,15 +1039,60 @@ mod tests {
         let runner = HostRunner {
             org: resources.get_or_create_org(&OrgId::default()),
             given: HashMap::from([("SHARED".to_owned(), "operator".to_owned())]),
+            files: BTreeMap::new(),
         };
-        let merged = runner.merged(BTreeMap::from([
-            ("SHARED".to_owned(), "pipeline".to_owned()),
-            ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
-        ]));
-        assert_eq!(merged["SHARED"], "operator");
-        assert_eq!(merged["GOLEMIO_KEY"], "k");
+        let scopes = runner.scopes(BTreeMap::from([(
+            "praha".to_owned(),
+            BTreeMap::from([
+                ("SHARED".to_owned(), "pipeline".to_owned()),
+                ("GOLEMIO_KEY".to_owned(), "k".to_owned()),
+            ]),
+        )]));
+        assert!(!scopes["praha"].contains_key("SHARED"));
+        assert_eq!(scopes["praha"]["GOLEMIO_KEY"], "k");
         // A later sync without the credential drops it again.
-        assert_eq!(runner.merged(BTreeMap::new()).len(), 1);
+        assert!(runner.scopes(BTreeMap::new()).is_empty());
+    }
+
+    /// T-7269: a stream of one project reads its own project's credential and client secret, and
+    /// another project's neither by `${VAR}` nor through the Portal's credential door.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_projects_stream_reads_only_its_own_projects_variables() {
+        use joinedcontext_portal::pipeline_secrets::RunnerSecrets;
+        let secret = |v: &str| jc_secret::Secret::new(v.to_owned());
+        let (shared, files) = scoped_client_secrets(&BTreeMap::from([
+            ("JC_CLIENT_SECRET".to_owned(), secret("harness")),
+            (
+                "JC_CLIENT_SECRET_ZILINA_MESTO".to_owned(),
+                secret("zilina-file"),
+            ),
+            ("JC_CLIENT_SECRET_PRAHA".to_owned(), secret("praha-file")),
+        ]));
+        assert_eq!(shared.keys().collect::<Vec<_>>(), ["JC_CLIENT_SECRET"]);
+        let resources = ResourceManager::new();
+        let runner = HostRunner {
+            org: resources.get_or_create_org(&OrgId::default()),
+            given: variables(&BTreeMap::new(), &shared, &BTreeMap::new()),
+            files,
+        };
+        runner.org.replace_secrets(runner.given.clone());
+        runner.replace(BTreeMap::from([(
+            "praha".to_owned(),
+            BTreeMap::from([("GOLEMIO_KEY".to_owned(), "praha-pipeline".to_owned())]),
+        )]));
+        let praha = runner.org.secrets_snapshot_for("praha.vehicles");
+        assert!(praha.contains_key("GOLEMIO_KEY") && praha.contains_key("JC_CLIENT_SECRET_PRAHA"));
+        assert!(praha.contains_key("JC_CLIENT_SECRET"));
+        assert!(!praha.contains_key("JC_CLIENT_SECRET_ZILINA_MESTO"));
+        let zilina = runner.org.secrets_snapshot_for("zilina-mesto.air");
+        assert!(zilina.contains_key("JC_CLIENT_SECRET_ZILINA_MESTO"));
+        assert!(
+            !zilina.contains_key("GOLEMIO_KEY") && !zilina.contains_key("JC_CLIENT_SECRET_PRAHA")
+        );
+        assert!(runner.credential("zilina-mesto", "GOLEMIO_KEY").is_none());
+        assert!(runner.credential("praha", "GOLEMIO_KEY").is_some());
+        assert!(runner.credential("praha", "JC_CLIENT_SECRET").is_none());
     }
 
     /// jc's slug-mode siblings: every module on one listener.
@@ -1158,7 +1255,7 @@ mod tests {
     /// jc names a project's client secret as the Portal's render does, and no stream the Portal
     /// renders for one project names another project's variable (PF-46). The runner's one
     /// environment holds every project's secret in project mode, as on dev's local and
-    /// production profiles: isolation rests on the render alone.
+    /// production profiles; the host runner keeps each to its project's streams (T-7269).
     #[cfg(feature = "portal")]
     #[test]
     fn a_stream_of_one_project_names_only_its_own_client_secret() {

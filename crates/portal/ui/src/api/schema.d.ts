@@ -1167,7 +1167,7 @@ export interface paths {
         get: operations["organization_backup_overview"];
         /**
          * Set Configuration Backup Target
-         * @description Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).
+         * @description Saves the bucket, schedule, retention and the working and recovery age recipients the bundle is encrypted to (a test encryption runs first). The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154, T-7268).
          */
         put: operations["organization_backup_save"];
         post?: never;
@@ -1208,7 +1208,7 @@ export interface paths {
         put?: never;
         /**
          * Run Configuration Backup Now
-         * @description Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).
+         * @description Builds the Organization's configuration bundle, encrypts it to the target's two recipients and uploads it as a new version, whether the schedule is on or off (T-7154, T-7268). A target without recipients answers 409 naming workingRecipient.
          */
         post: operations["organization_backup_run_now"];
         delete?: never;
@@ -1246,7 +1246,7 @@ export interface paths {
         };
         /**
          * Download Configuration Backup Version
-         * @description One version of the Organization's bundle, as the zip that was uploaded (T-7154).
+         * @description One version of the Organization's bundle as it was uploaded: age-encrypted to the target's two recipients (T-7268), or the plain zip of a version taken before (T-7154).
          */
         get: operations["organization_backup_download"];
         put?: never;
@@ -1268,7 +1268,7 @@ export interface paths {
         put?: never;
         /**
          * Restore Configuration Backup Version
-         * @description Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).
+         * @description Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. The identity opens the encrypted bundle for this request only; a version uploaded unencrypted before T-7268 and a bundle of another Organization are refused (T-7154, T-7268).
          */
         post: operations["organization_backup_restore"];
         delete?: never;
@@ -14488,12 +14488,18 @@ export interface components {
             /** Format: int64 */
             update: number;
         };
+        /** @description `Debug` is not derived so no log line can print the identity. */
         RestoreInput: {
             /**
              * @description `false` (the default) plans only; `true` proposes one Change per project, which another
              *     administrator approves.
              */
             apply?: boolean;
+            /**
+             * @description The working or the recovery age identity the bundle was encrypted to, one line, e.g.
+             *     `AGE-SECRET-KEY-1… (the line in your key file)`; used for this request only.
+             */
+            identity: string;
         };
         /**
          * @description What restoring one version would change, per project and for the Organization's own
@@ -15319,8 +15325,9 @@ export interface components {
             /** @description The folder of the bucket every object of this backup lands under, e.g. `jc/`. */
             prefix: string;
             /**
-             * @description The age recipients (`age1…`, public keys) a data archive is encrypted to: the working
-             *     one first, then the recovery one. Empty for the configuration backup.
+             * @description The age recipients (`age1…`, public keys) every upload of this target is encrypted to:
+             *     the working one first, then the recovery one. Empty only on a configuration target saved
+             *     before T-7268, which runs again once its administrator sets both.
              */
             recipients: string[];
             region: string;
@@ -15342,12 +15349,12 @@ export interface components {
             keepDays: number;
             /** @description `joinedcontext/`; empty for the bucket's root. */
             prefix?: string;
-            /** @description The data backup's recovery age recipient, kept offline by another person. */
+            /** @description The recovery age recipient, kept offline by another person. */
             recoveryRecipient?: string | null;
             /** @description `eu-central-1` */
             region: string;
             secretAccessKey?: string | null;
-            /** @description The data backup's working age recipient, e.g. `age1ql3z7hjy54pw3hyw…`. */
+            /** @description The working age recipient every upload is encrypted to, e.g. `age1ql3z7hjy54pw3hyw…`. */
             workingRecipient?: string | null;
         };
         /**
@@ -19068,13 +19075,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The zip */
+            /** @description The encrypted bundle (`.zip.age`), or a plain zip from before T-7268 */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/zip": unknown;
+                    "application/octet-stream": unknown;
                 };
             };
             /** @description Not an administrator of the Organization */
@@ -19111,7 +19118,8 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "apply": false
+                 *       "apply": false,
+                 *       "identity": "AGE-SECRET-KEY-1…"
                  *     }
                  */
                 "application/json": components["schemas"]["RestoreInput"];

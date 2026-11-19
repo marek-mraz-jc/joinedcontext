@@ -108,9 +108,12 @@ pub fn spawn_stream(
 
     // The stream's variables: its organization's map (`--org-vars`, read at start), its
     // `secret_refs`, then the process environment only as `env_access` allows (E1).
-    let mut env_vars: HashMap<String, String> = org_ctx.secrets_snapshot();
+    // A stream reads its own scope's variables beside the organization's (T-7269).
+    let mut env_vars: HashMap<String, String> = org_ctx.secrets_snapshot_for(&stream_id);
     for secret_name in &conf.secret_refs {
-        if let Some(val) = org_ctx.resolve_secret(secret_name) {
+        let scoped = ekiben_core::org::stream_scope(&stream_id)
+            .and_then(|scope| org_ctx.resolve_scoped_secret(scope, secret_name));
+        if let Some(val) = org_ctx.resolve_secret(secret_name).or(scoped) {
             env_vars.insert(secret_name.clone(), val);
         }
     }

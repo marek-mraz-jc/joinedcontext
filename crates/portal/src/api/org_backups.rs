@@ -81,31 +81,18 @@ pub struct TargetInput {
     pub enabled: bool,
     pub every_hours: i32,
     pub keep_days: i32,
-    /// The data backup's working age recipient, e.g. `age1ql3z7hjy54pw3hyw…`.
+    /// The working age recipient every upload is encrypted to, e.g. `age1ql3z7hjy54pw3hyw…`.
     #[serde(default)]
     pub working_recipient: Option<String>,
-    /// The data backup's recovery age recipient, kept offline by another person.
+    /// The recovery age recipient, kept offline by another person.
     #[serde(default)]
     pub recovery_recipient: Option<String>,
 }
 
-/// The recipients a target of `kind` keeps: two for the data backup, none for the configuration
-/// backup (which holds no rows and is not encrypted). A field that is wrong is named.
-fn recipients_of(input: &TargetInput, kind: &str) -> Result<Vec<String>, ApiError> {
+/// The two recipients every target keeps, the configuration one included since its bundle names
+/// the Organization's people (T-7268). A field that is wrong is named.
+fn recipients_of(input: &TargetInput) -> Result<Vec<String>, ApiError> {
     let given = [&input.working_recipient, &input.recovery_recipient];
-    if kind != DATA {
-        return match given.iter().position(|r| r.is_some()) {
-            Some(0) => Err(invalid(
-                "workingRecipient",
-                "only the data backup is encrypted",
-            )),
-            Some(_) => Err(invalid(
-                "recoveryRecipient",
-                "only the data backup is encrypted",
-            )),
-            None => Ok(Vec::new()),
-        };
-    }
     let recipients: Vec<String> = given
         .iter()
         .map(|r| r.as_deref().unwrap_or_default().trim().to_owned())
@@ -265,7 +252,7 @@ async fn overview_of(
     path = "/api/v1/organization/backups/configuration",
     operation_id = "organization_backup_save",
     summary = "Set Configuration Backup Target",
-    description = "Saves the bucket, schedule and retention. The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154).",
+    description = "Saves the bucket, schedule, retention and the working and recovery age recipients the bundle is encrypted to (a test encryption runs first). The bucket must answer GetBucketVersioning with Enabled; the secret key is sealed and never returned (T-7154, T-7268).",
     tag = "system",
     request_body(
         content = TargetInput,
@@ -306,14 +293,18 @@ async fn save_of(
         ));
     }
     let endpoint = well_formed(&input)?;
-    let recipients = recipients_of(&input, kind)?;
+    let recipients = recipients_of(&input)?;
     state
         .org_backup_egress
         .check(&endpoint)
         .map_err(|message| invalid("endpoint", &message))?;
     let saved = state.org_backups.target(&organization, kind).await?;
     let sealed_secret = match (&input.secret_access_key, &saved) {
-        (Some(secret), _) => org_backup::seal(state, secret)?,
+        (Some(secret), _) => org_backup::seal(
+            state,
+            &org_backup::target_context(&organization, kind),
+            secret,
+        )?,
         (None, Some(saved)) => saved.sealed_secret.clone(),
         (None, None) => {
             return Err(invalid(
@@ -375,7 +366,7 @@ async fn saved_target(
     path = "/api/v1/organization/backups/configuration/run",
     operation_id = "organization_backup_run_now",
     summary = "Run Configuration Backup Now",
-    description = "Builds the Organization's configuration bundle and uploads it as a new version, whether the schedule is on or off (T-7154).",
+    description = "Builds the Organization's configuration bundle, encrypts it to the target's two recipients and uploads it as a new version, whether the schedule is on or off (T-7154, T-7268). A target without recipients answers 409 naming workingRecipient.",
     tag = "system",
     responses(
         (status = 200, description = "The run's log entry", body = LogEntry),
@@ -534,13 +525,13 @@ async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u
     path = "/api/v1/organization/backups/configuration/versions/{version}",
     operation_id = "organization_backup_download",
     summary = "Download Configuration Backup Version",
-    description = "One version of the Organization's bundle, as the zip that was uploaded (T-7154).",
+    description = "One version of the Organization's bundle as it was uploaded: age-encrypted to the target's two recipients (T-7268), or the plain zip of a version taken before (T-7154).",
     tag = "system",
     params(
         ("version" = String, Path, description = "S3 version id"),
     ),
     responses(
-        (status = 200, description = "The zip", content_type = "application/zip"),
+        (status = 200, description = "The encrypted bundle (`.zip.age`), or a plain zip from before T-7268", content_type = "application/octet-stream"),
         (status = 403, description = "Not an administrator of the Organization", body = ProblemDetails),
         (status = 404, description = "No such version", body = ProblemDetails),
     )
@@ -562,10 +553,16 @@ async fn download_of(
     let organization = administered(state, &user.0.identity)?;
     let target = saved_target(state, &organization, kind).await?;
     let bytes = fetch(state, &target, version).await?;
+    // A configuration version from before T-7268 is still the plain zip it was uploaded as.
     let (content_type, file) = if kind == DATA {
         (
             "application/octet-stream",
             format!("{organization}-data.zip.age"),
+        )
+    } else if !bytes.starts_with(b"PK\x03\x04") {
+        (
+            "application/octet-stream",
+            format!("{organization}-configuration.zip.age"),
         )
     } else {
         (
@@ -689,6 +686,31 @@ pub struct PlanGroup {
     pub note: Option<String>,
 }
 
+/// The bundle zip inside `sealed`, opened with `identity` (T-7268). A version uploaded as a
+/// plain zip, before configuration backups were encrypted, is refused with its date: it is not
+/// restored, a new run is.
+fn decrypt_bundle(sealed: &[u8], identity: &str) -> Result<Vec<u8>, ApiError> {
+    if sealed.starts_with(b"PK\x03\x04") {
+        let taken = unpack(sealed)
+            .ok()
+            .and_then(|files| {
+                serde_norway::from_slice::<org_backup::Index>(files.get("index.yaml")?).ok()
+            })
+            .map_or_else(|| "an unknown date".to_owned(), |index| index.taken_at);
+        let detail = format!(
+            "version: this version, taken {taken}, was uploaded unencrypted before configuration \
+             backups were encrypted and is not restored; run a backup now and restore the new \
+             version"
+        );
+        return Err(ApiError::Unprocessable {
+            errors: vec![detail.clone()],
+            detail,
+        });
+    }
+    let identity = org_backup::restore::identity_of(&Zeroizing::new(identity.to_owned()))?;
+    org_backup::restore::decrypt_capped(sealed, &identity, s3::MAX_OBJECT_BYTES as u64)
+}
+
 /// The files of a bundle, by path.
 fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
     let unreadable = || ApiError::Unprocessable {
@@ -810,11 +832,12 @@ async fn plan(
     identity: &Identity,
     organization: &str,
     version: &str,
-    apply: bool,
+    input: &RestoreInput,
 ) -> Result<RestorePlan, ApiError> {
+    let apply = input.apply;
     let target = saved_target(state, organization, CONFIGURATION).await?;
-    let bytes = fetch(state, &target, version).await?;
-    let files = unpack(&bytes)?;
+    let sealed = fetch(state, &target, version).await?;
+    let files = unpack(&decrypt_bundle(&sealed, &input.identity)?)?;
     let index: org_backup::Index = files
         .get("index.yaml")
         .and_then(|raw| serde_norway::from_slice(raw).ok())
@@ -961,9 +984,13 @@ async fn plan(
     })
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
+/// `Debug` is not derived so no log line can print the identity.
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RestoreInput {
+    /// The working or the recovery age identity the bundle was encrypted to, one line, e.g.
+    /// `AGE-SECRET-KEY-1… (the line in your key file)`; used for this request only.
+    pub identity: String,
     /// `false` (the default) plans only; `true` proposes one Change per project, which another
     /// administrator approves.
     #[serde(default)]
@@ -975,7 +1002,7 @@ pub struct RestoreInput {
     path = "/api/v1/organization/backups/configuration/versions/{version}/restore",
     operation_id = "organization_backup_restore",
     summary = "Restore Configuration Backup Version",
-    description = "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. A bundle of another Organization is refused (T-7154).",
+    description = "Plans what restoring one version would change in this Organization (the dry run), or with `apply` proposes it as one Change per project for a second administrator to approve. The identity opens the encrypted bundle for this request only; a version uploaded unencrypted before T-7268 and a bundle of another Organization are refused (T-7154, T-7268).",
     tag = "system",
     params(
         ("version" = String, Path, description = "S3 version id"),
@@ -983,7 +1010,7 @@ pub struct RestoreInput {
     request_body(
         content = RestoreInput,
         content_type = "application/json",
-        example = json!({ "apply": false })
+        example = json!({ "identity": "AGE-SECRET-KEY-1…", "apply": false })
     ),
     responses(
         (status = 200, description = "The plan, and the Changes once applied", body = RestorePlan),
@@ -1000,7 +1027,7 @@ pub async fn restore(
 ) -> Result<Json<RestorePlan>, ApiError> {
     let identity = &user.0.identity;
     let organization = administered(&state, identity)?;
-    let outcome = plan(&state, identity, &organization, &version, input.apply).await;
+    let outcome = plan(&state, identity, &organization, &version, &input).await;
     let message = match &outcome {
         Ok(plan) => format!("{} change(s) planned", plan.changes),
         Err(err) => err.to_string(),

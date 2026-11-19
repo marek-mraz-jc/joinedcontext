@@ -1148,6 +1148,38 @@ async fn build_archive(
     Ok((scratch, index))
 }
 
+/// The target's working and recovery recipients, which every run of either kind encrypts to
+/// (T-7268); a target saved without them is refused until an administrator sets both.
+pub(super) fn recipients_of(target: &Target) -> Result<Vec<age::x25519::Recipient>, ApiError> {
+    parse_recipients(&target.recipients)
+        .ok()
+        .filter(|r| r.len() == 2)
+        .ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "workingRecipient: the {} backup has no working and recovery recipient to \
+                 encrypt to: set both on Administration > Backups",
+                target.kind
+            ))
+        })
+}
+
+/// `plain` encrypted to `recipients`, in memory: the configuration bundle, a few megabytes.
+pub(super) fn encrypt_bytes(
+    recipients: &[age::x25519::Recipient],
+    plain: &[u8],
+) -> Result<Vec<u8>, String> {
+    let encryptor =
+        age::Encryptor::with_recipients(recipients.iter().map(|r| r as &dyn age::Recipient))
+            .map_err(|e| e.to_string())?;
+    let mut sealed = Vec::with_capacity(plain.len() + 512);
+    let mut out = encryptor
+        .wrap_output(&mut sealed)
+        .map_err(|e| e.to_string())?;
+    out.write_all(plain).map_err(|e| e.to_string())?;
+    out.finish().map_err(|e| e.to_string())?;
+    Ok(sealed)
+}
+
 /// The run's archive, encrypted to the target's recipients, in a scratch file: the file, its
 /// size and the SHA-256 the run log binds the version by. An archive past one PutObject goes up
 /// in parts ([`super::s3::Bucket::put_file`]).
@@ -1156,16 +1188,7 @@ pub(super) async fn encrypted_archive(
     target: &Target,
     actor: &str,
 ) -> Result<(Scratch, u64, String), ApiError> {
-    let recipients = parse_recipients(&target.recipients)
-        .ok()
-        .filter(|r| r.len() == 2)
-        .ok_or_else(|| {
-            ApiError::Conflict(
-                "the data backup has no working and recovery recipient: set both on \
-                 Administration > Backups"
-                    .into(),
-            )
-        })?;
+    let recipients = recipients_of(target)?;
     let (plain, _index) = build_archive(state, &target.organization, actor).await?;
     let (sealed, file) = Scratch::new(".zip.age")?;
     let plain_path = plain.0.clone();

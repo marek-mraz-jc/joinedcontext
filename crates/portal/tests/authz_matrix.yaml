@@ -367,7 +367,7 @@ routes:
     note: "no target in the fixture: 409 for the administrator (T-7154)"
   - route: POST /organization/backups/configuration/versions/{version}/restore
     rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
-    body: {"apply": false}
+    body: {"identity": "AGE-SECRET-KEY-1", "apply": false}
     expect: [403, 403, 403, 403, 403, allow, 403, 403]
     note: "no target in the fixture: 409 for the administrator; apply proposes a Change a second administrator approves (T-7154)"
   - route: DELETE /organization/backups/configuration/bundle

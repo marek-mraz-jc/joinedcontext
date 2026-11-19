@@ -421,12 +421,44 @@ async fn world_configured(
     }
 }
 
+/// The working and recovery identities every configuration target of these tests encrypts to
+/// (T-7268), one pair for the whole binary so a bundle of one world opens in another.
+fn keys() -> &'static [age::x25519::Identity; 2] {
+    static KEYS: std::sync::OnceLock<[age::x25519::Identity; 2]> = std::sync::OnceLock::new();
+    KEYS.get_or_init(identities)
+}
+
+/// The working identity, as an administrator pastes it into a restore.
+fn identity() -> String {
+    secret_of(&keys()[0])
+}
+
 fn target(endpoint: &str) -> Value {
     json!({
         "endpoint": endpoint, "region": "eu-central-1", "bucket": "backups", "prefix": "jc/",
         "accessKeyId": "AKIDBACKUP", "secretAccessKey": SECRET,
-        "enabled": true, "everyHours": 24, "keepDays": 90
+        "enabled": true, "everyHours": 24, "keepDays": 90,
+        "workingRecipient": keys()[0].to_public().to_string(),
+        "recoveryRecipient": keys()[1].to_public().to_string()
     })
+}
+
+/// A bundle as the bucket holds it, opened with the working identity.
+fn opened(sealed: &[u8]) -> Vec<u8> {
+    decrypt(sealed, &keys()[0])
+}
+
+/// `plain` encrypted to both test recipients, as a run uploads a bundle.
+fn sealed(plain: &[u8]) -> Vec<u8> {
+    let recipients: Vec<_> = keys().iter().map(|k| k.to_public()).collect();
+    let encryptor =
+        age::Encryptor::with_recipients(recipients.iter().map(|r| r as &dyn age::Recipient))
+            .expect("recipients");
+    let mut out = Vec::new();
+    let mut writer = encryptor.wrap_output(&mut out).expect("encrypt");
+    std::io::Write::write_all(&mut writer, plain).expect("write");
+    writer.finish().expect("finish");
+    out
 }
 
 fn body(answer: &common::Answer) -> Value {
@@ -482,10 +514,10 @@ async fn the_bundle_holds_only_its_organization_and_no_secret_or_code() {
     let world = world("alfa", "Enabled").await;
     let run = saved_and_run(&world, "ada").await;
     assert_eq!(run["ok"], true, "{run}");
-    let files = unzip(&latest(
+    let files = unzip(&opened(&latest(
         &world.bucket,
         &key_of(&world, "alfa", "configuration").await,
-    ));
+    )));
 
     for (path, text) in &files {
         for foreign in ["bravo", "bob@", "AKIDBACKUP", SECRET] {
@@ -521,6 +553,267 @@ async fn the_bundle_holds_only_its_organization_and_no_secret_or_code() {
 }
 
 #[tokio::test]
+async fn the_bundle_leaves_the_portal_only_encrypted_to_both_recipients() {
+    let world = world("alfa", "Enabled").await;
+    let run = saved_and_run(&world, "ada").await;
+    assert_eq!(run["ok"], true, "{run}");
+    let raw = latest(
+        &world.bucket,
+        &key_of(&world, "alfa", "configuration").await,
+    );
+    // A zip names its files in clear: none of them, nor the Organization, shows in the object.
+    assert!(zip::ZipArchive::new(std::io::Cursor::new(&raw)).is_err());
+    let text = String::from_utf8_lossy(&raw);
+    for clear in [
+        "index.yaml",
+        "people.yaml",
+        "organization/organizations/alfa.yaml",
+        "alfa-city",
+    ] {
+        assert!(!text.contains(clear), "{clear} in the uploaded bundle");
+    }
+    assert!(raw.starts_with(b"age-encryption.org/v1"));
+    assert_eq!(decrypt(&raw, &keys()[0]), decrypt(&raw, &keys()[1]));
+    assert!(unzip(&opened(&raw)).contains_key("index.yaml"));
+
+    let download = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!(
+            "{DOOR}/versions/{}",
+            run["versionId"].as_str().expect("version")
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(download.status, StatusCode::OK, "{}", download.text);
+}
+
+#[tokio::test]
+async fn a_configuration_target_without_recipients_is_refused_naming_the_field() {
+    let world = world("alfa", "Enabled").await;
+    let mut input = target(&world.endpoint);
+    input
+        .as_object_mut()
+        .expect("object")
+        .remove("workingRecipient");
+    input
+        .as_object_mut()
+        .expect("object")
+        .remove("recoveryRecipient");
+    let refused = send(&world.state, person("ada"), "PUT", DOOR, Some(input)).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.text.contains("workingRecipient"),
+        "{}",
+        refused.text
+    );
+
+    // A target saved before T-7268 holds no recipients: its run is refused, nothing uploads.
+    saved_and_run(&world, "ada").await;
+    let mut old = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    old.recipients.clear();
+    world.state.org_backups.save(&old).await.expect("saved");
+    let key = key_of(&world, "alfa", "configuration").await;
+    let before = world.bucket.lock().expect("bucket").objects[&key].len();
+    let run = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(run.status, StatusCode::CONFLICT, "{}", run.text);
+    assert!(run.text.contains("workingRecipient"), "{}", run.text);
+    assert_eq!(
+        world.bucket.lock().expect("bucket").objects[&key].len(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    let plain = opened(&latest(&world.bucket, &key));
+    let taken = serde_norway::from_str::<Value>(&unzip(&plain)["index.yaml"]).expect("index")
+        ["takenAt"]
+        .as_str()
+        .expect("takenAt")
+        .to_owned();
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .objects
+        .get_mut(&key)
+        .expect("alfa's bundle")
+        .push((
+            "plain".into(),
+            Some(plain),
+            "2026-11-16T11:00:00.000Z".into(),
+        ));
+    let refused = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/versions/plain/restore"),
+        Some(json!({ "identity": identity(), "apply": true })),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(refused.text.contains("unencrypted"), "{}", refused.text);
+    assert!(refused.text.contains(&taken), "{}", refused.text);
+
+    // The wrong identity opens nothing and says which field.
+    let other = secret_of(&age::x25519::Identity::generate());
+    let version = world.bucket.lock().expect("bucket").objects[&key][0]
+        .0
+        .clone();
+    let wrong = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/versions/{version}/restore"),
+        Some(json!({ "identity": other })),
+    )
+    .await;
+    assert_eq!(
+        wrong.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        wrong.text
+    );
+    assert!(
+        wrong.text.contains(r#""path":"identity""#),
+        "{}",
+        wrong.text
+    );
+    assert!(!wrong.text.contains(&other), "the identity is never echoed");
+}
+
+#[tokio::test]
+async fn a_seal_opens_only_for_the_organization_and_kind_it_was_sealed_for() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let alfa = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    assert!(joinedcontext_portal::org_backup::bucket(&world.state, &alfa).is_ok());
+    // alfa's seal copied into bravo's row, or into alfa's data row, opens for neither.
+    for (organization, kind) in [("bravo", "configuration"), ("alfa", "data")] {
+        let copied = joinedcontext_portal::org_backup::Target {
+            organization: organization.into(),
+            kind: kind.into(),
+            ..alfa.clone()
+        };
+        let refused = joinedcontext_portal::org_backup::bucket(&world.state, &copied)
+            .err()
+            .expect("refused");
+        assert!(
+            refused.to_string().contains("not sealed for this record"),
+            "{organization}/{kind}: {refused}"
+        );
+        assert!(!refused.to_string().contains(SECRET));
+    }
+}
+
+/// A secret sealed as the Portal sealed one before T-7268: the bare value, no binding.
+fn unbound_seal(state: &AppState, secret: &str) -> String {
+    let Some(joinedcontext_portal::pipeline_secrets::Backend::Sops { age_key_file }) =
+        &state.config.pipeline_secrets
+    else {
+        panic!("the test Portal has an age key");
+    };
+    let text = std::fs::read_to_string(age_key_file).expect("key file");
+    let own: age::x25519::Identity = text.trim().parse().expect("identity");
+    let recipient = own.to_public();
+    let encryptor =
+        age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
+            .expect("recipient");
+    let mut out = Vec::new();
+    let armor = age::armor::ArmoredWriter::wrap_output(&mut out, age::armor::Format::AsciiArmor)
+        .expect("armor");
+    let mut writer = encryptor.wrap_output(armor).expect("encrypt");
+    std::io::Write::write_all(&mut writer, secret.as_bytes()).expect("write");
+    writer
+        .finish()
+        .and_then(|armor| armor.finish())
+        .expect("finish");
+    String::from_utf8(out).expect("armored")
+}
+
+#[tokio::test]
+async fn a_seal_from_before_the_binding_is_bound_to_its_row_once() {
+    use joinedcontext_portal::org_backup::{rebound, reseal_unbound, target_context, unseal};
+    let db = seeded_portal_db().await;
+    let with_db = db.is_some();
+    let world = world_with("alfa", "Enabled", db).await;
+    saved_and_run(&world, "ada").await;
+    let context = target_context("alfa", "configuration");
+    let legacy = unbound_seal(&world.state, SECRET);
+    assert!(unseal(&world.state, &context, &legacy).is_err());
+    let bound = rebound(&world.state, &context, &legacy)
+        .expect("rebound")
+        .expect("moved");
+    assert_eq!(
+        unseal(&world.state, &context, &bound)
+            .expect("opens")
+            .as_str(),
+        SECRET
+    );
+    assert!(rebound(&world.state, &context, &bound)
+        .expect("rebound")
+        .is_none());
+
+    if !with_db {
+        return;
+    }
+    let mut saved = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    saved.sealed_secret = legacy;
+    world.state.org_backups.save(&saved).await.expect("saved");
+    assert_eq!(reseal_unbound(&world.state).await.expect("moved"), 1);
+    assert_eq!(reseal_unbound(&world.state).await.expect("again"), 0);
+    let moved = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    assert!(joinedcontext_portal::org_backup::bucket(&world.state, &moved).is_ok());
+}
+
+#[tokio::test]
 async fn only_the_organizations_administrators_reach_its_backup() {
     let world = world("alfa", "Enabled").await;
     for (who, http, door, payload) in [
@@ -534,7 +827,7 @@ async fn only_the_organizations_administrators_reach_its_backup() {
             "bob",
             "POST",
             format!("{DOOR}/versions/v1/restore"),
-            Some(json!({})),
+            Some(json!({ "identity": identity() })),
         ),
         ("bob", "DELETE", format!("{DOOR}/bundle"), None),
     ] {
@@ -1388,7 +1681,8 @@ async fn a_recipient_that_is_not_an_age_key_is_refused_naming_the_field() {
     let mut twice = good.clone();
     twice["recoveryRecipient"] = good["workingRecipient"].clone();
     let mut on_configuration = target(&world.endpoint);
-    on_configuration["recoveryRecipient"] = good["recoveryRecipient"].clone();
+    // The configuration bundle is encrypted too since T-7268: it needs both recipients.
+    on_configuration["recoveryRecipient"] = Value::Null;
     for (door, payload, field) in [
         (DATA_DOOR, not_age, "workingRecipient"),
         (DATA_DOOR, missing, "recoveryRecipient"),
@@ -2392,7 +2686,7 @@ async fn a_deleted_bundle_keeps_its_versions_and_restores_with_no_change() {
         person("ada"),
         "POST",
         &format!("{DOOR}/versions/{version}/restore"),
-        Some(json!({})),
+        Some(json!({ "identity": identity() })),
     )
     .await;
     assert_eq!(plan.status, StatusCode::OK, "{}", plan.text);
@@ -2417,7 +2711,7 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
     let world = world("alfa", "Enabled").await;
     saved_and_run(&world, "ada").await;
     let key = key_of(&world, "alfa", "configuration").await;
-    let mut files = unzip(&latest(&world.bucket, &key));
+    let mut files = unzip(&opened(&latest(&world.bucket, &key)));
     // An item in alfa's own project folder that names bravo's Endpoint by namespace.
     let planted = "projects/alfa-city/spaces/transit/endpoints/bravo-bus.yaml";
     files.insert(planted.into(), BRAVO_ENDPOINT.into());
@@ -2446,7 +2740,7 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
         .expect("alfa's bundle")
         .push((
             "crafted".into(),
-            Some(crafted),
+            Some(sealed(&crafted)),
             "2026-11-16T11:00:00.000Z".into(),
         ));
 
@@ -2455,7 +2749,7 @@ async fn a_bundle_item_naming_another_organizations_namespace_is_not_planned() {
         person("ada"),
         "POST",
         &format!("{DOOR}/versions/crafted/restore"),
-        Some(json!({})),
+        Some(json!({ "identity": identity() })),
     )
     .await;
     assert_eq!(
@@ -2501,7 +2795,7 @@ async fn a_bundle_of_another_organization_is_not_restored() {
         person("ada"),
         "POST",
         &format!("{DOOR}/versions/{version}/restore"),
-        Some(json!({ "apply": true })),
+        Some(json!({ "identity": identity(), "apply": true })),
     )
     .await;
     assert_eq!(

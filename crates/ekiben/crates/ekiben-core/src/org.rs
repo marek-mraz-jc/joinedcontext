@@ -235,7 +235,16 @@ pub struct OrgContext {
     msg_rate: std::sync::Mutex<Pacer>,
     http_rate: std::sync::Mutex<Pacer>,
     secrets: RwLock<HashMap<String, SecretString>>,
+    /// Variables of one scope, by scope: a stream whose id is `{scope}.{name}` sees its scope's
+    /// map beside the organization's, and no other scope's (a host serving several projects in
+    /// one organization keeps each project's credentials to that project's streams, T-7269).
+    scoped: RwLock<HashMap<String, HashMap<String, SecretString>>>,
     host_target: Option<Arc<HostTarget>>,
+}
+
+/// The scope of a stream: the part of its id before the first `.`, `None` for an id without one.
+pub fn stream_scope(stream_id: &str) -> Option<&str> {
+    stream_id.split_once('.').map(|(scope, _)| scope)
 }
 
 impl OrgContext {
@@ -259,6 +268,7 @@ impl OrgContext {
             msg_rate: std::sync::Mutex::new(Pacer::new()),
             http_rate: std::sync::Mutex::new(Pacer::new()),
             secrets: RwLock::new(HashMap::new()),
+            scoped: RwLock::new(HashMap::new()),
             host_target,
         })
     }
@@ -311,6 +321,54 @@ impl OrgContext {
             .secrets
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
+
+    /// Replaces every scope's variable map at once; a scope not in `scopes` loses its variables.
+    pub fn replace_scoped_secrets(&self, scopes: HashMap<String, HashMap<String, String>>) {
+        let next = scopes
+            .into_iter()
+            .map(|(scope, vars)| {
+                let vars = vars
+                    .into_iter()
+                    .map(|(k, v)| (k, SecretString::new(v)))
+                    .collect();
+                (scope, vars)
+            })
+            .collect();
+        *self
+            .scoped
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
+
+    /// The variables stream `stream_id` reads: its scope's ([`stream_scope`]), then the
+    /// organization's, which win on a name both hold.
+    pub fn secrets_snapshot_for(&self, stream_id: &str) -> HashMap<String, String> {
+        let mut vars: HashMap<String, String> = stream_scope(stream_id)
+            .and_then(|scope| {
+                self.scoped
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(scope)
+                    .map(|vars| {
+                        vars.iter()
+                            .map(|(k, v)| (k.clone(), v.expose().to_string()))
+                            .collect()
+                    })
+            })
+            .unwrap_or_default();
+        vars.extend(self.secrets_snapshot());
+        vars
+    }
+
+    /// One variable of `scope`'s own map, never the organization's.
+    pub fn resolve_scoped_secret(&self, scope: &str, name: &str) -> Option<String> {
+        self.scoped
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(scope)?
+            .get(name)
+            .map(|s| s.expose().to_string())
     }
 
     /// A copy of the organization's variable map, for `${VAR}` and Bloblang `env()` of its streams.

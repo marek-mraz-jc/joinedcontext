@@ -480,7 +480,7 @@ async fn handle_set_streams(
             return (StatusCode::BAD_REQUEST, e).into_response();
         }
         let val_str = serde_json::to_string(val).unwrap_or_default();
-        match parse_and_lint_stream(&state, &val_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, id, &val_str, chilled, caller_org.as_ref()) {
             Ok((conf, lints, _)) => {
                 for l in lints {
                     all_lints.push(format!("stream '{id}': {l}"));
@@ -559,7 +559,7 @@ async fn handle_create_stream(
     let body_str = String::from_utf8_lossy(&body);
 
     let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &body_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, &id, &body_str, chilled, caller_org.as_ref()) {
             Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
@@ -604,7 +604,7 @@ async fn handle_put_stream(
     let body_str = String::from_utf8_lossy(&body);
 
     let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &body_str, chilled, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, &id, &body_str, chilled, caller_org.as_ref()) {
             Ok(parsed) => parsed,
             Err(resp) => return *resp,
         };
@@ -771,15 +771,16 @@ type ParsedStream = (StreamConfig, Vec<String>, Option<JsonValue>);
 
 fn parse_and_lint_stream(
     state: &ServerState,
+    id: &str,
     body_str: &str,
     chilled: bool,
     caller_org: Option<&OrgId>,
 ) -> Result<ParsedStream, Box<Response>> {
     let mut env_lints = Vec::new();
-    // `${VAR}` comes from the caller's organization's variables, then the process environment
-    // only as the server's `EnvAccess` allows (E1).
+    // `${VAR}` comes from the stream's scope and the caller's organization's variables, then the
+    // process environment only as the server's `EnvAccess` allows (E1, T-7269).
     let vars_org = caller_org.cloned().unwrap_or_default();
-    let interpolated = match state.manager.interpolate(&vars_org, body_str) {
+    let interpolated = match state.manager.interpolate_stream(&vars_org, id, body_str) {
         Ok(s) => s,
         Err(err) => {
             for m in err.missing {

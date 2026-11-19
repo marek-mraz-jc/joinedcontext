@@ -130,16 +130,28 @@ fn unreadable() -> ApiError {
     }
 }
 
+/// Why a pasted identity is refused: a reason, then what to paste instead.
+const IDENTITY_REFUSED: &str =
+    "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+
+/// Why a pasted public key is refused: it encrypts, it never opens.
+const PUBLIC_KEY_PASTED: &str = "identity: this is a public key (age1…), which cannot open a \
+     backup; paste the secret line of the same key file, the one that starts with \
+     AGE-SECRET-KEY-1";
+
 /// The identity an administrator pasted, parsed; the text stays in its zeroizing buffer.
 pub fn identity_of(text: &Zeroizing<String>) -> Result<age::x25519::Identity, ApiError> {
-    text.trim()
-        .parse::<age::x25519::Identity>()
-        .map_err(|_| ApiError::Unprocessable {
-            detail: "identity: an age identity, one line starting with AGE-SECRET-KEY-1".into(),
-            errors: vec![
-                "identity: an age identity, one line starting with AGE-SECRET-KEY-1".into(),
-            ],
-        })
+    let refused = |why: &str| ApiError::Unprocessable {
+        detail: why.into(),
+        errors: vec![why.into()],
+    };
+    let text = text.trim();
+    // The public key sits beside the identity on the page: the likeliest wrong paste.
+    if text.starts_with("age1") {
+        return Err(refused(PUBLIC_KEY_PASTED));
+    }
+    text.parse::<age::x25519::Identity>()
+        .map_err(|_| refused(IDENTITY_REFUSED))
 }
 
 /// The run log's word on `version`: one of this Organization's own data runs wrote it, and the
@@ -228,6 +240,20 @@ pub(super) fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec
         return Err(too_large(what, cap));
     }
     Ok(out)
+}
+
+/// `sealed` decrypted with `identity` into memory, refused once it passes `cap` bytes: the
+/// configuration bundle, which a restore unpacks in memory (T-7268).
+pub fn decrypt_capped(
+    sealed: &[u8],
+    identity: &age::x25519::Identity,
+    cap: u64,
+) -> Result<Vec<u8>, ApiError> {
+    let decryptor = age::Decryptor::new(sealed).map_err(|_| unreadable())?;
+    let reader = decryptor
+        .decrypt(std::iter::once(identity as &dyn age::Identity))
+        .map_err(|_| unreadable())?;
+    read_capped(reader, cap, "the bundle")
 }
 
 /// An opened archive: the decrypted zip in a scratch file, its index, and what it may still
@@ -1052,7 +1078,17 @@ mod tests {
         let Err(refused) = identity_of(&Zeroizing::new("age1notasecret".into())) else {
             panic!("a public key is no identity");
         };
-        assert!(refused.to_string().contains("identity"), "{refused}");
+        assert!(
+            refused.to_string().contains("this is a public key"),
+            "{refused}"
+        );
+        let Err(refused) = identity_of(&Zeroizing::new("not-a-key".into())) else {
+            panic!("a word is no identity");
+        };
+        assert!(
+            refused.to_string().contains("not an age identity"),
+            "{refused}"
+        );
         let id = age::x25519::Identity::generate();
         let text =
             Zeroizing::new(age::secrecy::ExposeSecret::expose_secret(&id.to_string()).to_owned());

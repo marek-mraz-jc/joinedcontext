@@ -131,14 +131,14 @@ pub fn check_age_key_file(path: &Path) -> Result<(), String> {
 /// [`SECRET_NAME`]. Each sync hands the whole environment, an empty one included, so a
 /// credential no pipeline names any more is gone from the runner too.
 pub trait RunnerSecrets: Send + Sync {
-    /// Replaces the runner's variables with `values`. Values are secret: an implementation
-    /// logs names at most.
-    fn replace(&self, values: BTreeMap<String, String>);
+    /// Replaces the runner's variables with `values`, by project: a project's streams read only
+    /// that project's map (T-7269). Values are secret: an implementation logs names at most.
+    fn replace(&self, values: BTreeMap<String, BTreeMap<String, String>>);
 
     /// The value a sync handed under `name`, for the Portal's own call through the runner's
     /// door: the test event a webhook DataSource signs with its credential (PL-122). `None` for
     /// a name the host set itself, which no manifest may borrow, and for an unknown one.
-    fn credential(&self, _name: &str) -> Option<zeroize::Zeroizing<String>> {
+    fn credential(&self, _project: &str, _name: &str) -> Option<zeroize::Zeroizing<String>> {
         None
     }
 }
@@ -349,6 +349,9 @@ impl Resolver {
 #[derive(Debug, Default)]
 pub struct RunnerEnvironment {
     values: Environment,
+    /// The same values by the project whose pipeline resolved them, for a host runner that
+    /// keeps each project's credentials to its own streams (T-7269).
+    by_project: BTreeMap<String, Environment>,
     /// Which pipeline claimed each variable, for the clash message.
     claimed_by: BTreeMap<String, String>,
     /// The pipelines that could not be resolved, by `(project, name)`, with the reason.
@@ -394,6 +397,10 @@ impl RunnerEnvironment {
         }
         for (variable, value) in environment {
             self.claimed_by.insert(variable.clone(), owner.clone());
+            self.by_project
+                .entry(project.to_owned())
+                .or_default()
+                .insert(variable.clone(), value.clone());
             self.values.insert(variable, value);
         }
         self.accepted
@@ -419,9 +426,14 @@ impl RunnerEnvironment {
         self.values.is_empty()
     }
 
-    /// The resolved values, for a host runner ([`RunnerSecrets`]).
+    /// The resolved values, as the one Kubernetes Secret carries them.
     pub fn values(&self) -> &BTreeMap<String, String> {
         &self.values
+    }
+
+    /// The resolved values by project, for a host runner ([`RunnerSecrets`]).
+    pub fn by_project(&self) -> &BTreeMap<String, Environment> {
+        &self.by_project
     }
 
     /// The variables in the Secret, sorted. Names are not secret; values are.

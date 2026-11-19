@@ -168,7 +168,8 @@ describe("Administration → Backups", () => {
     for (const [key, hint] of Object.entries(en.backups.hint))
       if (!key.startsWith("copy")) expect(screen.getAllByText(hint).length).toBeGreaterThan(0);
     expect((await data()).getByText(en.backups.hint.workingRecipient)).toBeInTheDocument();
-    expect((await configuration()).queryByText(en.backups.hint.workingRecipient)).toBeNull();
+    // The configuration bundle is encrypted to the same two keys since T-7268.
+    expect((await configuration()).getByText(en.backups.hint.workingRecipient)).toBeInTheDocument();
     await expectNoAxeViolations(container);
   });
 
@@ -281,6 +282,10 @@ describe("Administration → Backups", () => {
     const { container } = render(ADMIN, TARGET, false, true);
     fireEvent.click(await screen.findByRole("button", { name: en.backups.versions.restore }));
     const plan = await screen.findByTestId("backup-restore-plan");
+    // The bundle opens with the identity, asked first (T-7268).
+    expect(within(plan).getByRole("button", { name: en.backups.data.check })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.change(within(plan).getByLabelText(en.backups.data.identity), { target: { value: "AGE-SECRET-KEY-1TEST" } });
+    fireEvent.click(within(plan).getByRole("button", { name: en.backups.data.check }));
     expect(await screen.findByText(en.backups.restore.people)).toBeInTheDocument();
     expect(screen.getByText("aino <aino@example.org>")).toBeInTheDocument();
     expect(screen.getByText("3 of the 4 people in this version are in the Organization today; 1 to invite by hand")).toBeInTheDocument();

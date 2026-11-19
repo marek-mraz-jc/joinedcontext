@@ -408,6 +408,72 @@ async fn organization_variables_fill_only_their_organizations_configs_and_get_sh
         .is_empty());
 }
 
+/// One organization serving several projects (jc's host runner): a stream `{project}.{name}`
+/// fills `${VAR}` from its project's variables and the organization's, never another project's
+/// (T-7269). The values never appear in an answer.
+#[tokio::test]
+async fn a_streams_variables_are_its_projects_and_the_organizations_only() {
+    let resources = ResourceManager::new();
+    let org = resources.get_or_create_org(&OrgId::default());
+    org.replace_secrets([("SHARED".to_string(), "shared-e1".to_string())].into());
+    org.replace_scoped_secrets(
+        [
+            (
+                "alfa".to_string(),
+                [("MQTT_PASSWORD".to_string(), "alfa-pw-e1".to_string())].into(),
+            ),
+            (
+                "bravo".to_string(),
+                [("BRAVO_TOKEN".to_string(), "bravo-pw-e1".to_string())].into(),
+            ),
+        ]
+        .into(),
+    );
+    let base = serve(ServerAuthConfig::default(), resources.clone()).await;
+    let c = reqwest::Client::new();
+    let conf = |var: &str| {
+        format!(
+            "input:\n  generate:\n    interval: 1h\n    mapping: 'root.v = \"${{{var}}}\"'\noutput:\n  drop: {{}}\n"
+        )
+    };
+    for (id, var) in [("alfa.own", "MQTT_PASSWORD"), ("alfa.shared", "SHARED")] {
+        let res = c
+            .post(format!("{base}/streams/{id}"))
+            .body(conf(var))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "{id}: {}",
+            res.text().await.unwrap()
+        );
+    }
+    // A stream of alfa naming bravo's variable, or a stream of no project naming alfa's.
+    for (id, var) in [("alfa.theft", "BRAVO_TOKEN"), ("loose", "MQTT_PASSWORD")] {
+        let res = c
+            .post(format!("{base}/streams/{id}"))
+            .body(conf(var))
+            .send()
+            .await
+            .unwrap();
+        assert!(!res.status().is_success(), "{id} must not lint");
+        let body = res.text().await.unwrap();
+        assert!(
+            body.contains(&format!("'{var}' was not defined")),
+            "{id}: {body}"
+        );
+        assert!(!body.contains("-pw-e1"), "{id}: {body}");
+    }
+    let alfa = org.secrets_snapshot_for("alfa.own");
+    assert!(alfa.contains_key("MQTT_PASSWORD") && alfa.contains_key("SHARED"));
+    assert!(!alfa.contains_key("BRAVO_TOKEN"));
+    assert!(!org
+        .secrets_snapshot_for("loose")
+        .contains_key("MQTT_PASSWORD"));
+}
+
 #[test]
 fn an_org_vars_file_that_does_not_parse_keeps_the_previous_map_and_shows_no_value() {
     let dir = tempfile::tempdir().unwrap();

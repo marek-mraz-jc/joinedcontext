@@ -13456,7 +13456,7 @@
   "backups": {
     "loading": "Načítá se záloha…",
     "unreadable": "Zálohu se nepodařilo načíst. Zkuste to za minutu.",
-    "lead": "Kopie konfigurace této organizace jako soubory s jejich identifikátory ve vašem vlastním S3 bucketu: její nastavení, role, přiřazení, její lidé (pouze identifikátor, uživatelské jméno a e-mail) a manifesty každého projektu s jejich schématy. Bez dat entit, bez kódu, bez hodnot tajemství. Bucket uchovává každou verzi, takže i smazanou zálohu lze obnovit.",
+    "lead": "Kopie konfigurace této organizace jako soubory s jejich ID ve vašem vlastním bucketu S3: nastavení, role, vazby, její lidé (jen ID, uživatelské jméno a e-mail) a manifesty každého projektu s jejich schématy. Žádná data entit, žádný kód, žádné tajné hodnoty. Každá záloha je zašifrovaná dvěma klíči, které nastavíte níže, takže ji bez jednoho z nich nikdo nepřečte, ani tento portál. Bucket uchovává každou verzi, takže smazanou zálohu lze stále obnovit.",
     "runs": {
       "title": "Běhy",
       "scheduled": "Běží každých {hours} hodin a vždy, když stisknete Spustit nyní.",
@@ -13518,7 +13518,8 @@
       "proposed": "Navrženo jako změna. Jiný správce ji schválí ve Změnách.",
       "propose": "Navrhnout obnovu",
       "close": "Zavřít",
-      "project": "Projekt {project}"
+      "project": "Projekt {project}",
+      "lead": "Verze se otevře vaším klíčem a porovná s organizací dnes. Nic se nezmění, dokud obnovu nenavrhnete a jiný administrátor ji neschválí."
     },
     "form": {
       "title": "Bucket a plán",
@@ -13555,7 +13556,7 @@
       "keepDays": "1 až 3650 dní, například 90",
       "enabled": "Vypnutí ponechá bucket i všechny verze; Spustit nyní funguje dál.",
       "workingRecipient": "Veřejný klíč identity, kterou používají vaši správci, z age-keygen, např. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "Druhý veřejný klíč, který offline uchovává jiná osoba, např. age1syrvza6xvtvsr9f0…. Každý archiv otevře kterýkoli z nich.",
+      "recoveryRecipient": "Druhý veřejný klíč, který offline uchovává jiná osoba, např. age1syrvza6xvtvsr9f0…. Každý z obou klíčů otevře každou zálohu.",
       "copyProject": "Projekty této zálohy, které smíte číst, např. air-quality. Projekt smazaný od zálohy se nezobrazí a nikdy se neobnoví.",
       "copyName": "Malá písmena, číslice a '-', název, který nepoužívá žádný projekt, např. air-quality-restored."
     },
@@ -13571,6 +13572,9 @@
       "recoveryFingerprint": "Otisk záložního klíče",
       "identity": "Identita, která otevře archiv",
       "identityHint": "Vložte pracovní nebo záložní identitu age, jeden řádek, např. AGE-SECRET-KEY-1… (řádek z vašeho souboru s klíčem). Použije se jen pro tento požadavek a nikdy se neuloží.",
+      "identityRefused": "Identita byla odmítnuta: {reason}",
+      "identityShow": "Zobrazit identitu",
+      "identityHide": "Skrýt identitu",
       "identityFirst": "Nejprve vložte identitu",
       "restoreLead": "Nejprve kontrola: archiv se otevře vaším klíčem a porovná s dnešním stavem organizace. Nic se nezapíše, dokud to neschválí druhý správce.",
       "check": "Zkontrolovat tuto verzi",
