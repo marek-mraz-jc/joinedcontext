@@ -11,8 +11,8 @@ use daiya_query::ngsild::{
     build_ngsild_request, extract_ngsi_value, grafana_unit, normalize_query_type, with_variables,
 };
 use daiya_query::{
-    Datasource, DenyTokenExchanger, DsError, HealthState, NgsiLdDatasource,
-    PassthroughAudienceExchanger, Query, ResourceReq,
+    Datasource, DenyTokenExchanger, DsError, EndpointBase, HealthState, NgsiLdDatasource,
+    OutboundGuard, PassthroughAudienceExchanger, Query, ResourceReq,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -380,7 +380,11 @@ async fn temporal_entities_become_one_series_per_attribute_and_method() {
 #[tokio::test]
 async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_tenant() {
     let m = mock(vec![("/", Reply::json(200, &json!([])))]).await;
-    let mut d = driver(&m.base);
+    let mut d = driver(&format!("{}/api/endpoint/air", m.base));
+    // The mock is the host's gateway: its Endpoints are where a caller's token may go.
+    let mut guard = loopback_guard().config().clone();
+    guard.endpoint_bases = vec![EndpointBase::parse(&format!("{}/api/endpoint/", m.base)).unwrap()];
+    d.guard = OutboundGuard::new(guard);
     d.context_url = Some(" https://ctx.example/c.jsonld ".into());
     d.tenant = Some(" city ".into());
     let caller =
@@ -390,7 +394,7 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
         .unwrap();
     let head = m.head(0);
     let lower = head.to_ascii_lowercase();
-    // No slug in the URL: the audience is the datasource uid.
+    // The audience is the Endpoint slug of the URL.
     assert!(
         lower.contains("authorization: bearer exchanged:air:jwt-a"),
         "{head}"
@@ -423,7 +427,7 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
         "air",
         format!("{}/api/endpoint/slug-x", m.base),
         true,
-        loopback_guard(),
+        d.guard.clone(),
         Arc::new(DenyTokenExchanger),
     );
     pass.query(&ctx(Subject::anonymous()), &q(json!({ "entityType": "T" })))
@@ -457,9 +461,9 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
     // With the deny exchanger a caller's token is refused, not forwarded.
     let deny = NgsiLdDatasource::new(
         "air",
-        m.base.clone(),
+        format!("{}/api/endpoint/air", m.base),
         false,
-        loopback_guard(),
+        d.guard.clone(),
         Arc::new(DenyTokenExchanger),
     );
     let caller = Subject::authenticated("c", vec![common::ORG], vec![]).with_bearer_token("jwt-c");

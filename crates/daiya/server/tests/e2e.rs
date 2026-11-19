@@ -23,8 +23,8 @@ use daiya_model::{
     RequestCtx, RoleBinding, Subject,
 };
 use daiya_query::{
-    GuardConfig, MapSecretResolver, NgsiLdDatasource, OutboundGuard, PassthroughAudienceExchanger,
-    PrometheusDatasource,
+    EndpointBase, GuardConfig, MapSecretResolver, NgsiLdDatasource, OutboundGuard,
+    PassthroughAudienceExchanger, PrometheusDatasource,
 };
 use daiya_server::{DaiyaState, execute_cli_command, router};
 use daiya_store_memory::MemoryStore;
@@ -269,10 +269,14 @@ async fn setup_world(upstream_url: &str) -> (DaiyaState, OrgId, OrgId, Router) {
         .host_str()
         .unwrap()
         .to_owned();
+    // The upstream is the host's gateway: its Endpoints are where a person's token may go.
     let guard = OutboundGuard::new(GuardConfig {
         allow_hosts: vec![host_only.clone()],
         allow_http: true,
         allow_loopback_for_tests: true,
+        endpoint_bases: vec![
+            EndpointBase::parse(&format!("{upstream_url}/api/endpoint/")).unwrap(),
+        ],
         ..GuardConfig::default()
     });
 

@@ -6,8 +6,9 @@
 
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, Subject};
 use daiya_query::{
-    DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OperatorReach, OutboundPolicy,
-    PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver, guard_for,
+    DenyTokenExchanger, DriverDeps, DsError, EndpointBase, MapSecretResolver, OpenedNetwork,
+    OperatorReach, OutboundPolicy, PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq,
+    build_driver, guard_for,
 };
 use ipnet::IpNet;
 use jc_time::TimestampTz;
@@ -75,8 +76,28 @@ fn record(uid: &str, kind: &str, url: &str, json_data: Value) -> DatasourceRecor
 fn loopback_policy() -> OutboundPolicy {
     OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["127.0.0.0/8".parse::<IpNet>().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &[
+                "prometheus",
+                "ngsild",
+                "ngsild-grafana-datasource",
+                "odata",
+                "postgres",
+                "grafana-postgresql-datasource",
+            ],
+        )],
         ..OutboundPolicy::default()
+    }
+}
+
+/// [`loopback_policy`] with the mock at `url` as the host's gateway: its Endpoints under
+/// `{url}/api/endpoint/` are the only URLs a caller's token goes to.
+fn gateway_policy(url: &str) -> OutboundPolicy {
+    OutboundPolicy {
+        endpoint_bases: vec![EndpointBase::parse(&format!("{url}/api/endpoint/")).unwrap()],
+        ..loopback_policy()
     }
 }
 
@@ -147,6 +168,61 @@ async fn stored_prometheus_record_queries_the_mock_with_its_secret_ref() {
     assert!(
         head.contains("authorization: bearer the-bearer-value"),
         "{head}"
+    );
+}
+
+/// A network the operator opens reaches only the datasources of the organization and the kinds
+/// it names: another organization's datasource, or another kind of the same organization, on
+/// that network is refused before any request leaves.
+#[tokio::test]
+async fn an_opened_network_reaches_only_its_organizations_datasources_of_its_kinds() {
+    let (url, seen) = mock(vec![(
+        "/api/v1/query",
+        json!({ "status": "success",
+        "data": { "resultType": "vector", "result": [] } }),
+    )])
+    .await;
+    let policy = OutboundPolicy {
+        allow_http: true,
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &["prometheus"],
+        )],
+        ..OutboundPolicy::default()
+    };
+    let query = |rec: DatasourceRecord| {
+        let policy = policy.clone();
+        async move {
+            let driver = build_driver(&rec, &deps(policy, MapSecretResolver::new())).await?;
+            let mut ctx = ctx(Subject::anonymous());
+            ctx.org_id = rec.org_id;
+            driver
+                .query(&ctx, &q(json!({ "expr": "up", "instant": true })))
+                .await
+        }
+    };
+    query(record("prom", "prometheus", &url, json!({})))
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().len(), 1);
+
+    let mut other_org = record("prom", "prometheus", &url, json!({}));
+    other_org.org_id = OrgId::from_u128(7);
+    for (rec, why) in [
+        (other_org, "another organization"),
+        (
+            record("ld", "ngsild", &format!("{url}/api/endpoint/x"), json!({})),
+            "another kind",
+        ),
+    ] {
+        let err = query(rec).await.map(|_| ()).unwrap_err();
+        assert!(matches!(&err, DsError::GuardRefused(_)), "{why}: {err:?}");
+    }
+    assert_eq!(
+        seen.lock().len(),
+        1,
+        "no refused datasource reached the network"
     );
 }
 
@@ -236,7 +312,7 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
         &format!("{url}/api/endpoint/air"),
         json!({ "oauthPassThru": true, "pageSize": 50, "tenant": "city", "contextUrl": "https://ctx.example/c.jsonld" }),
     );
-    let driver = build_driver(&rec, &deps(loopback_policy(), MapSecretResolver::new()))
+    let driver = build_driver(&rec, &deps(gateway_policy(&url), MapSecretResolver::new()))
         .await
         .unwrap();
     assert_eq!(driver.kind(), "ngsild");
@@ -263,7 +339,7 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
     let deny = DriverDeps {
         secrets: Arc::new(MapSecretResolver::new()),
         token_exchanger: Arc::new(DenyTokenExchanger),
-        policy: loopback_policy(),
+        policy: gateway_policy(&url),
     };
     let refused = build_driver(&rec, &deny).await.unwrap();
     let caller = Subject::authenticated("alice", vec![ORG], vec![]).with_bearer_token("alice-jwt");
@@ -281,17 +357,17 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
 #[tokio::test]
 async fn stored_odata_record_queries_with_the_record_audience() {
     let (url, seen) = mock(vec![(
-        "/odata/v4/Datasets",
+        "/api/endpoint/dataroom/odata/v4/Datasets",
         json!({ "value": [ { "name": "a", "count": 3 }, { "name": "b", "count": 4 } ] }),
     )])
     .await;
     let rec = record(
         "catalog",
         "odata",
-        &format!("{url}/odata/v4"),
+        &format!("{url}/api/endpoint/dataroom/odata/v4"),
         json!({ "audience": "dataroom" }),
     );
-    let driver = build_driver(&rec, &deps(loopback_policy(), MapSecretResolver::new()))
+    let driver = build_driver(&rec, &deps(gateway_policy(&url), MapSecretResolver::new()))
         .await
         .unwrap();
     let caller = Subject::authenticated("bob", vec![ORG], vec![]).with_bearer_token("bob-jwt");
@@ -308,7 +384,74 @@ async fn stored_odata_record_queries_with_the_record_audience() {
         head.contains("authorization: bearer exchanged:dataroom:bob-jwt"),
         "{head}"
     );
-    assert!(head.starts_with("get /odata/v4/datasets?$top=2"), "{head}");
+    assert!(
+        head.starts_with("get /api/endpoint/dataroom/odata/v4/datasets?$top=2"),
+        "{head}"
+    );
+}
+
+/// A caller's token goes out only to the host's own gateway, for the Endpoint the URL names
+/// there: a datasource whose author names another host, or an OData audience other than the
+/// Endpoint of its URL, is read with no `Authorization`.
+#[tokio::test]
+async fn a_callers_token_goes_only_to_the_hosts_own_gateway_endpoints() {
+    let (url, seen) = mock(vec![
+        (
+            "/api/endpoint/air/odata/v4/Datasets",
+            json!({ "value": [] }),
+        ),
+        ("/api/endpoint/air/ngsi-ld/v1/entities", json!([])),
+    ])
+    .await;
+    let ngsild = record(
+        "air",
+        "ngsild-grafana-datasource",
+        &format!("{url}/api/endpoint/air"),
+        json!({ "oauthPassThru": true }),
+    );
+    let odata_other = record(
+        "catalog",
+        "odata",
+        &format!("{url}/api/endpoint/air/odata/v4"),
+        json!({ "audience": "dataroom" }),
+    );
+    let elsewhere = OutboundPolicy {
+        endpoint_bases: vec![
+            EndpointBase::parse("https://api.city.example/api/endpoint/").unwrap(),
+        ],
+        ..loopback_policy()
+    };
+    let caller = Subject::authenticated("alice", vec![ORG], vec![]).with_bearer_token("alice-jwt");
+    for (rec, policy, model) in [
+        (
+            &ngsild,
+            loopback_policy(),
+            json!({ "queryType": "entity", "entityType": "T" }),
+        ),
+        (
+            &ngsild,
+            elsewhere,
+            json!({ "queryType": "entity", "entityType": "T" }),
+        ),
+        (
+            &odata_other,
+            gateway_policy(&url),
+            json!({ "entitySet": "Datasets" }),
+        ),
+    ] {
+        let driver = build_driver(rec, &deps(policy, MapSecretResolver::new()))
+            .await
+            .unwrap();
+        driver.query(&ctx(caller.clone()), &q(model)).await.unwrap();
+    }
+    let heads = seen.lock().clone();
+    assert_eq!(heads.len(), 3, "{heads:?}");
+    for head in heads {
+        assert!(
+            !head.to_ascii_lowercase().contains("authorization"),
+            "{head}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -416,7 +559,11 @@ async fn the_guard_of_a_built_driver_refuses_what_the_operator_did_not_open() {
     );
     let link_local = OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["169.254.0.0/16".parse().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "169.254.0.0/16".parse().unwrap(),
+            ORG,
+            &["prometheus"],
+        )],
         ..OutboundPolicy::default()
     };
     let guard = guard_for(&meta, &link_local, 80).unwrap();
@@ -641,7 +788,7 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
         .parse()
         .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
     let policy = OutboundPolicy {
-        allowed_networks: vec![IpNet::from(ip)],
+        allowed_networks: vec![OpenedNetwork::new(IpNet::from(ip), ORG, &["postgres"])],
         ..OutboundPolicy::default()
     };
     let driver = build_driver(&rec, &deps(policy, secrets.clone()))
@@ -694,9 +841,13 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
     overlisted.uid = "pg-over".into();
     overlisted.json_data["allowedViews"] = json!(["daiya_ds_metrics", "daiya_ds_secret"]);
     let ip_policy = OutboundPolicy {
-        allowed_networks: vec![IpNet::from(
-            host.parse::<std::net::IpAddr>()
-                .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+        allowed_networks: vec![OpenedNetwork::new(
+            IpNet::from(
+                host.parse::<std::net::IpAddr>()
+                    .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+            ),
+            ORG,
+            &["postgres"],
         )],
         ..OutboundPolicy::default()
     };

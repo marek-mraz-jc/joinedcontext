@@ -740,6 +740,15 @@ pub(crate) mod tests {
         );
         let siblings = Siblings::new(&plans(mounts, "https"), LISTEN.parse().unwrap());
         assert_eq!(gateway_reach(&siblings), None);
+        // On a host of its own the gateway's Endpoints are still where a person's token goes,
+        // at its public and its internal address, and nowhere else.
+        let gateway = siblings.get(Module::Gateway).unwrap();
+        let bases = crate::modules::daiya::gateway_endpoint_bases(&siblings);
+        for at in [&gateway.public, &gateway.internal] {
+            let base = daiya_server::EndpointBase::parse(&format!("{at}/api/endpoint/")).unwrap();
+            assert!(bases.contains(&base), "{at}: {bases:?}");
+        }
+        assert!(bases.len() <= 2, "{bases:?}");
     }
 
     #[test]

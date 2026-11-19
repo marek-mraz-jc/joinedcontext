@@ -17,7 +17,7 @@ use daiya_server::config::{
     MigrateConfig, StoreConfig, declare_organizations, open_store, provision,
     provisioning_vars_from,
 };
-use daiya_server::{DaiyaState, OperatorReach, OwnReach, router};
+use daiya_server::{DaiyaState, EndpointBase, OperatorReach, OwnReach, router};
 
 use jc_router::Mount;
 
@@ -82,6 +82,22 @@ pub fn gateway_reach(siblings: &Siblings) -> Option<OwnReach> {
     OwnReach::endpoints(&format!("{}/api/endpoint/", gateway.internal)).ok()
 }
 
+/// The gateway's Endpoint bases at each address the Portal may name in a datasource
+/// (`{public}/api/endpoint/` and `{internal}/api/endpoint/`): the only URLs, beside
+/// [`gateway_reach`], a person's token is sent to. Empty when no gateway is known.
+#[must_use]
+pub fn gateway_endpoint_bases(siblings: &Siblings) -> Vec<EndpointBase> {
+    let Some(gateway) = siblings.get(Module::Gateway) else {
+        return Vec::new();
+    };
+    let mut bases: Vec<EndpointBase> = [&gateway.public, &gateway.internal]
+        .into_iter()
+        .filter_map(|at| EndpointBase::parse(&format!("{at}/api/endpoint/")).ok())
+        .collect();
+    bases.dedup();
+    bases
+}
+
 /// daiya's router. With `[daiya] provisioning_dir` the files are loaded. Every NGSI-LD and OData
 /// datasource, file-made or not, may read the gateway's Endpoints on `jc`'s own listener
 /// ([`gateway_reach`]) and nothing else there; organization 1's Prometheus datasources may reach
@@ -100,6 +116,7 @@ pub async fn build(
     }
     declare_organizations(&state, &cfg.organizations).map_err(|e| e.to_string())?;
     state.own_reach = gateway_reach(siblings).into_iter().collect();
+    state.endpoint_bases = gateway_endpoint_bases(siblings);
     if let Some(raw) = &cfg.prometheus_reach {
         let reach = OperatorReach::parse(raw).map_err(|e| e.to_string())?;
         state.outbound_policy.prometheus_reach = Some((state.default_org_id, reach));

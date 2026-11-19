@@ -88,6 +88,10 @@ pub struct DaiyaState {
     /// The host's own gateway Endpoints, reachable by every NGSI-LD and OData datasource that
     /// names one (see [`daiya_query::OwnReach`]); empty by default.
     pub own_reach: Vec<daiya_query::OwnReach>,
+    /// The host's gateway Endpoints at an address of their own (see
+    /// [`daiya_query::EndpointBase`]): with `own_reach`, the only URLs a caller's token is sent
+    /// to. Empty by default.
+    pub endpoint_bases: Vec<daiya_query::EndpointBase>,
 }
 
 /// A host-supplied check that a request comes from the server administrator, e.g. a kaisatsu
@@ -161,6 +165,7 @@ impl DaiyaState {
             built_drivers: Arc::new(RwLock::new(BTreeMap::new())),
             server_admin: Vec::new(),
             own_reach: Vec::new(),
+            endpoint_bases: Vec::new(),
         }
     }
 
@@ -340,6 +345,7 @@ impl DaiyaState {
         }
         let mut policy = self.outbound_policy.clone();
         policy.own_reach.clone_from(&self.own_reach);
+        policy.endpoint_bases.clone_from(&self.endpoint_bases);
         guard_for(record, &policy, 443)
             .and_then(|guard| guard.validate_url(&record.url))
             .map(|_| ())
@@ -370,6 +376,7 @@ impl DaiyaState {
         }
         let mut policy = self.outbound_policy.clone();
         policy.own_reach.clone_from(&self.own_reach);
+        policy.endpoint_bases.clone_from(&self.endpoint_bases);
         let deps = DriverDeps {
             secrets: self.secret_resolver.clone(),
             token_exchanger: self.token_exchanger.clone(),

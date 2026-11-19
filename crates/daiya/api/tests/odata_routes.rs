@@ -302,6 +302,61 @@ async fn actions_query_import_plan_apply_and_rotate() {
     w.ok("POST", "/odata/v4/Apply", Some(json!({ "plan": plan })))
         .await;
     w.ok("GET", "/odata/v4/Dashboards('planned')", None).await;
+
+    // A plan's datasources pass the checks a datasource save runs: a URL the outbound guard
+    // refuses, or a read-only record, is refused at Plan and at Apply, and nothing is written.
+    let source = |uid: &str, url: &str, read_only: bool| {
+        json!({
+            "installationId": "00000000-0000-0000-0000-000000000001",
+            "orgId": ORG.to_string(), "instanceId": "00000000-0000-0000-0000-000000000001",
+            "uid": uid, "name": uid, "type": "prometheus", "access": "proxy", "url": url,
+            "isDefault": false, "readOnly": read_only, "jsonData": {}, "version": 1,
+            "createdAt": "2026-11-19T00:00:00Z", "updatedAt": "2026-11-19T00:00:00Z"
+        })
+    };
+    for (bad, want) in [
+        (
+            source("meta", "http://169.254.169.254/latest", false),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            source("ro", "https://prom.example", true),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+    ] {
+        let bundle = json!({ "datasources": [bad] });
+        let (st, answer) = w
+            .call(
+                "POST",
+                "/odata/v4/Plan",
+                Some("admin"),
+                Some(json!({ "bundle": bundle })),
+            )
+            .await;
+        assert_eq!(st, want, "{answer}");
+        let mut forged = plan.clone();
+        forged["desired"] = bundle;
+        let (st, answer) = w
+            .call(
+                "POST",
+                "/odata/v4/Apply",
+                Some("admin"),
+                Some(json!({ "plan": forged })),
+            )
+            .await;
+        assert_eq!(st, want, "{answer}");
+    }
+    for uid in ["meta", "ro"] {
+        let (st, _) = w
+            .call(
+                "GET",
+                &format!("/api/datasources/uid/{uid}"),
+                Some("admin"),
+                None,
+            )
+            .await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "{uid} was not written");
+    }
     let (st, _) = w
         .call("POST", "/odata/v4/Plan", Some("viewer"), Some(json!({})))
         .await;

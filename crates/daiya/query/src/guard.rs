@@ -45,6 +45,9 @@ pub struct GuardConfig {
     /// whatever their address class ([`OwnReach`]). Anything else on that listener stays
     /// refused like any loopback or private address.
     pub own_reach: Vec<OwnReach>,
+    /// The host's gateway Endpoints at an address of their own ([`EndpointBase`]): with
+    /// [`Self::own_reach`], the only URLs a caller's token is sent to.
+    pub endpoint_bases: Vec<EndpointBase>,
     /// One `host:port` the operator opens on purpose ([`OperatorReach`]): a URL naming exactly
     /// that host and port may use `http` and reach a non-public address. The allow-list still
     /// applies and the cloud metadata addresses stay blocked.
@@ -148,38 +151,78 @@ impl OwnReach {
         self.addr
     }
 
-    /// `raw` as written and `parsed` both start with the base (in either spelling), followed by one slug
-    /// (`[A-Za-z0-9_-]+`) and the end of the path or `/`, and the path holds no encoded dot,
-    /// slash or backslash.
-    fn admits(&self, raw: &str, parsed: &Url) -> bool {
-        let raw = raw.trim();
-        let Some(rest) = raw
-            .strip_prefix(&self.written)
-            .or_else(|| raw.strip_prefix(&self.base))
-        else {
-            return false;
-        };
-        let Some(after) = parsed.as_str().strip_prefix(&self.base) else {
-            return false;
-        };
-        let slug_then_end = |s: &str| {
-            let end = s.find(['/', '?', '#']).unwrap_or(s.len());
-            end > 0
-                && s[..end]
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-        };
-        // The path as written and as parsed: no backslash, no encoded dot, slash or backslash,
-        // no dot segment.
-        let clean = |path: &str| {
-            let path = path.to_ascii_lowercase();
-            !path.contains('\\')
-                && !["%2e", "%2f", "%5c"].iter().any(|bad| path.contains(bad))
-                && !path.split('/').any(|seg| seg == ".." || seg == ".")
-        };
-        let raw_path = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
-        slug_then_end(rest) && slug_then_end(after) && clean(raw_path) && clean(parsed.path())
+    /// The Endpoint slug `raw` names under this base ([`slug_under`]).
+    fn slug<'a>(&self, raw: &str, parsed: &'a Url) -> Option<&'a str> {
+        slug_under(&self.base, &self.written, raw, parsed)
     }
+}
+
+/// The base under which the host's gateway serves its Endpoints at an address of its own, as the
+/// Portal names them in the datasources it makes (`https://api.city.example/api/endpoint/`). A
+/// caller's token goes out only to a URL under such a base or an [`OwnReach`], and only for the
+/// one Endpoint slug the URL names ([`OutboundGuard::token_endpoint`]). The base opens no
+/// address, network or scheme: the request still passes every other check of the guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndpointBase {
+    /// The base as the URL parser writes it.
+    base: String,
+}
+
+impl EndpointBase {
+    /// `base` is `http[s]://<host>[:<port>]/<path>/`: a path ending in `/`, with no query,
+    /// fragment, credentials, encoded character or dot segment.
+    pub fn parse(base: &str) -> Result<Self, DsError> {
+        let refused = |why: &str| DsError::GuardRefused(format!("endpoint base '{base}': {why}"));
+        let url = Url::parse(base.trim()).map_err(|_| refused("not a URL"))?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none_or(str::is_empty)
+            || !url.path().ends_with('/')
+            || ["%", "\\", "/."].iter().any(|bad| base.contains(bad))
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(refused("want http[s]://<host>[:<port>]/<path>/"));
+        }
+        Ok(Self {
+            base: url.as_str().to_owned(),
+        })
+    }
+
+    fn slug<'a>(&self, raw: &str, parsed: &'a Url) -> Option<&'a str> {
+        slug_under(&self.base, &self.base, raw, parsed)
+    }
+}
+
+/// The Endpoint slug of `raw`: `raw` as written and `parsed` both start with `base` (as the URL
+/// parser writes it; `raw` may use the spelling `written`), followed by one slug
+/// (`[A-Za-z0-9_-]+`) and the end of the path or `/`, and neither path holds a backslash, an
+/// encoded dot, slash or backslash, or a dot segment.
+fn slug_under<'a>(base: &str, written: &str, raw: &str, parsed: &'a Url) -> Option<&'a str> {
+    let raw = raw.trim();
+    let rest = raw
+        .strip_prefix(written)
+        .or_else(|| raw.strip_prefix(base))?;
+    let after = parsed.as_str().strip_prefix(base)?;
+    let slug_of = |s: &str| {
+        let end = s.find(['/', '?', '#']).unwrap_or(s.len());
+        (end > 0
+            && s[..end]
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+        .then_some(end)
+    };
+    let clean = |path: &str| {
+        let path = path.to_ascii_lowercase();
+        !path.contains('\\')
+            && !["%2e", "%2f", "%5c"].iter().any(|bad| path.contains(bad))
+            && !path.split('/').any(|seg| seg == ".." || seg == ".")
+    };
+    let raw_path = &rest[..rest.find(['?', '#']).unwrap_or(rest.len())];
+    slug_of(rest)?;
+    let end = slug_of(after)?;
+    (clean(raw_path) && clean(parsed.path())).then(|| &after[..end])
 }
 
 impl Default for GuardConfig {
@@ -192,6 +235,7 @@ impl Default for GuardConfig {
             allow_loopback_for_tests: false,
             allowed_networks: Vec::new(),
             own_reach: Vec::new(),
+            endpoint_bases: Vec::new(),
             operator_reach: None,
         }
     }
@@ -232,6 +276,26 @@ impl OutboundGuard {
         &self.config
     }
 
+    /// The Endpoint slug `raw_url` names when the URL is one of the host's own gateway Endpoints
+    /// (an [`OwnReach`] or an [`EndpointBase`]); `None` for any other URL. A driver sends a
+    /// caller's token only to such a URL, exchanged for that slug: a host or slug the
+    /// datasource's author wrote elsewhere never receives it.
+    #[must_use]
+    pub fn token_endpoint(&self, raw_url: &str) -> Option<String> {
+        let parsed = Url::parse(raw_url.trim()).ok()?;
+        self.config
+            .own_reach
+            .iter()
+            .find_map(|reach| reach.slug(raw_url, &parsed))
+            .or_else(|| {
+                self.config
+                    .endpoint_bases
+                    .iter()
+                    .find_map(|base| base.slug(raw_url, &parsed))
+            })
+            .map(str::to_owned)
+    }
+
     /// Validates a URL and its host against the guard's scheme and allow-list rules (before DNS).
     pub fn validate_url(&self, raw_url: &str) -> Result<(Url, String, u16), DsError> {
         self.validate(raw_url)
@@ -254,7 +318,7 @@ impl OutboundGuard {
             .config
             .own_reach
             .iter()
-            .find(|reach| reach.admits(raw_url, &parsed))
+            .find(|reach| reach.slug(raw_url, &parsed).is_some())
             .map(OwnReach::addr);
         let host = parsed
             .host_str()
@@ -725,6 +789,51 @@ mod tests {
             ],
             ..GuardConfig::default()
         })
+    }
+
+    #[test]
+    fn a_token_goes_only_to_an_endpoint_of_the_hosts_gateway() {
+        let mut guard = own_guard();
+        guard.config.endpoint_bases =
+            vec![EndpointBase::parse("https://api.city.example/api/endpoint/").unwrap()];
+        for (url, slug) in [
+            ("http://127.0.0.1:8080/api/endpoint/air", Some("air")),
+            (
+                "http://127.0.0.1:8080/api/endpoint/air/ngsi-ld/v1",
+                Some("air"),
+            ),
+            ("https://api.city.example/api/endpoint/air", Some("air")),
+            (
+                "https://api.city.example/api/endpoint/air/odata/v4",
+                Some("air"),
+            ),
+            ("https://evil.example/api/endpoint/air", None),
+            (
+                "https://api.city.example.evil.example/api/endpoint/air",
+                None,
+            ),
+            ("https://api.city.example/x/api/endpoint/air", None),
+            ("https://api.city.example/api/endpoint/", None),
+            ("https://api.city.example/api/endpoint/%61ir", None),
+            (
+                "https://api.city.example/api/endpoint/air/../../portal",
+                None,
+            ),
+            ("http://api.city.example/api/endpoint/air", None),
+            ("http://127.0.0.1:8081/api/endpoint/air", None),
+            ("not a url", None),
+        ] {
+            assert_eq!(guard.token_endpoint(url).as_deref(), slug, "{url}");
+        }
+        for bad in [
+            "https://api.city.example/api/endpoint",
+            "ftp://api.city.example/api/endpoint/",
+            "https://u:p@api.city.example/api/endpoint/",
+            "https://api.city.example/api/endpoint/?x=1",
+            "https://api.city.example/api/%65ndpoint/",
+        ] {
+            assert!(EndpointBase::parse(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

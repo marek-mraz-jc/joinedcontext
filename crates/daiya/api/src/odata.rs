@@ -690,6 +690,54 @@ pub async fn exec_odata_import(
     Ok(report.to_json())
 }
 
+/// The datasources a plan writes pass the checks of the compat datasource routes: the
+/// organization's Admin right, no read-only (provisioned) datasource written or overwritten, and a
+/// URL the outbound guard admits ([`DaiyaState::check_datasource_url`]).
+async fn check_plan_datasources(
+    state: &DaiyaState,
+    ctx: &RequestCtx,
+    desired: &DesiredBundle,
+) -> CrResult<()> {
+    if desired.datasources.is_empty() {
+        return Ok(());
+    }
+    state
+        .authorizer
+        .check(
+            ctx,
+            Action::Admin,
+            &ObjectTarget::Organization { org_id: ctx.org_id },
+        )
+        .into_result("Organization not found")?;
+    for ds in &desired.datasources {
+        if ds.read_only {
+            let why = format!(
+                "datasources/{}: readOnly is set by provisioning, never by a plan",
+                ds.uid
+            );
+            return Err(CrError::Unprocessable {
+                detail: why.clone(),
+                errors: vec![format!("/{why}")],
+            });
+        }
+        if state
+            .store
+            .get_datasource(ctx.org_id, &ds.uid)
+            .await?
+            .is_some_and(|existing| existing.read_only)
+        {
+            return Err(CrError::Forbidden(format!(
+                "Cannot update read-only data source '{}'",
+                ds.uid
+            )));
+        }
+        let mut record = ds.clone();
+        record.org_id = ctx.org_id;
+        state.check_datasource_url(&record)?;
+    }
+    Ok(())
+}
+
 pub async fn exec_odata_plan(
     state: &DaiyaState,
     ctx: &RequestCtx,
@@ -701,6 +749,7 @@ pub async fn exec_odata_plan(
         &ObjectTarget::Organization { org_id: ctx.org_id },
     );
     dec.into_result("Organization not found")?;
+    check_plan_datasources(state, ctx, &desired).await?;
 
     let plan = compute_plan(
         state.store.as_ref(),
@@ -726,6 +775,9 @@ pub async fn exec_odata_apply(
         &ObjectTarget::Organization { org_id: ctx.org_id },
     );
     dec.into_result("Organization not found")?;
+    let desired: DesiredBundle = serde_json::from_value(plan.desired.clone())
+        .map_err(|e| CrError::BadRequest(format!("invalid desired state in plan: {e}")))?;
+    check_plan_datasources(state, ctx, &desired).await?;
 
     let report = apply_plan(
         state.store.as_ref(),
