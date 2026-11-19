@@ -285,6 +285,74 @@ async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
     );
 }
 
+/// The anonymous document is built from an allow-list: filters, entity ids, links, library
+/// panel references and unknown members of a panel, a target or a variable never reach it.
+#[tokio::test]
+async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
+    let w = world();
+    let mut d = templated("listed", "prom");
+    d["links"] = json!([{ "title": "Ops", "type": "link", "url": "https://ops.internal.example/a" }]);
+    d["internalNote"] = json!("note-kept-from-viewers");
+    let panel = &mut d["panels"][0];
+    panel["links"] = json!([{ "title": "Runbook", "type": "link", "url": "https://wiki.internal.example/r" }]);
+    panel["libraryPanel"] = json!({ "uid": "lib-hidden", "name": "Shared" });
+    panel["fieldConfig"] = json!({
+        "defaults": { "unit": "short", "links": [{ "url": "https://drill.internal.example" }] },
+        "overrides": [{
+            "matcher": { "id": "byName", "options": "edge" },
+            "properties": [
+                { "id": "links", "value": [{ "url": "https://over.internal.example" }] },
+                { "id": "color", "value": { "mode": "fixed" } }
+            ]
+        }]
+    });
+    let target = &mut panel["targets"][0];
+    target["$filter"] = json!("district eq 'secret-district'");
+    target["entityId"] = json!("urn:ngsi-ld:Sensor:hidden-entity");
+    target["legendFormat"] = json!("legend-{{job}}");
+    d["templating"]["list"][0]["regex"] = json!("/secret-regex/");
+    d["templating"]["list"][0]["allValue"] = json!("all-hidden");
+    w.add_dashboard(d, None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/listed/public-dashboards",
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap();
+    let (st, view) = w
+        .call(
+            "GET",
+            &format!("/api/public/dashboards/{token}"),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{view}");
+    let text = view.to_string();
+    for leaked in [
+        "internal.example",
+        "note-kept-from-viewers",
+        "lib-hidden",
+        "secret-district",
+        "hidden-entity",
+        "legend-",
+        "secret-regex",
+        "all-hidden",
+    ] {
+        assert!(!text.contains(leaked), "{leaked}: {text}");
+    }
+    let panel = &view["dashboard"]["panels"][0];
+    assert_eq!(panel["targets"][0]["refId"], "A", "{panel}");
+    assert_eq!(panel["fieldConfig"]["defaults"]["unit"], "short");
+    assert_eq!(
+        panel["fieldConfig"]["overrides"][0]["properties"][0]["id"],
+        "color"
+    );
+    assert_eq!(view["dashboard"]["templating"]["list"][0]["name"], "job");
+}
+
 /// A public dashboard uid names one public dashboard, and deleting a folder deletes the public
 /// links of its dashboards: a later dashboard of the same uid answers no old link.
 #[tokio::test]

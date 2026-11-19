@@ -353,8 +353,91 @@ pub async fn rotate_public_dashboard_token(
     state.store.upsert_public_dashboard(updated).await
 }
 
-/// Strips all query expressions, datasource UIDs, and internal fields from a dashboard JSON
-/// before returning it to an anonymous public viewer (`sanitizeData` in `GF pkg/services/publicdashboards/service/query.go:380`, R7).
+/// Dashboard members an anonymous viewer needs to draw the dashboard (R7, "frames only").
+const PUBLIC_DASHBOARD_KEYS: &[&str] = &[
+    "uid",
+    "title",
+    "description",
+    "tags",
+    "timezone",
+    "weekStart",
+    "fiscalYearStartMonth",
+    "graphTooltip",
+    "liveNow",
+    "refresh",
+    "schemaVersion",
+    "version",
+    "time",
+    "timepicker",
+    "panels",
+    "templating",
+    "annotations",
+];
+
+/// Panel members needed to lay out and draw a panel from its frames.
+const PUBLIC_PANEL_KEYS: &[&str] = &[
+    "id",
+    "type",
+    "title",
+    "description",
+    "gridPos",
+    "collapsed",
+    "transparent",
+    "repeat",
+    "repeatDirection",
+    "maxPerRow",
+    "interval",
+    "maxDataPoints",
+    "timeFrom",
+    "timeShift",
+    "hideTimeOverride",
+    "pluginVersion",
+    "options",
+    "fieldConfig",
+    "panels",
+    "targets",
+];
+
+/// Variable members: the name, the choice and its options.
+const PUBLIC_VARIABLE_KEYS: &[&str] = &[
+    "name",
+    "label",
+    "type",
+    "description",
+    "hide",
+    "multi",
+    "includeAll",
+    "skipUrlSync",
+    "sort",
+    "current",
+    "options",
+];
+
+/// Annotation members: the name and how it shows.
+const PUBLIC_ANNOTATION_KEYS: &[&str] = &["name", "enable", "hide", "iconColor", "builtIn"];
+
+/// Query members an owner can choose to show (`show_query_text`).
+const QUERY_TEXT_KEYS: &[&str] = &[
+    "expr",
+    "query",
+    "rawSql",
+    "customQuery",
+    "expression",
+    "definition",
+    "target",
+    "format",
+    "legendFormat",
+];
+
+fn keep_only(obj: &mut serde_json::Map<String, Value>, allowed: &[&str]) {
+    obj.retain(|k, _| allowed.contains(&k.as_str()));
+}
+
+/// Builds the document an anonymous public viewer receives from an allow-list: layout, panel
+/// types and drawing options, variable names and choices. Datasources, links, library panel
+/// references, filters, entity ids and any member not listed never reach the viewer; query text
+/// only when the owner enabled `show_query_text` (`sanitizeData` in
+/// `GF pkg/services/publicdashboards/service/query.go:380`, R7).
 #[must_use]
 pub fn sanitize_dashboard_for_public_view(
     raw_dash: &Value,
@@ -365,62 +448,78 @@ pub fn sanitize_dashboard_for_public_view(
     let Some(obj) = dash.as_object_mut() else {
         return dash;
     };
-    obj.remove("id");
+    keep_only(obj, PUBLIC_DASHBOARD_KEYS);
 
     let mut tp = obj
         .get("timepicker")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
+    keep_only(&mut tp, &["refresh_intervals", "time_options", "nowDelay"]);
     tp.insert("hidden".to_owned(), Value::Bool(!time_selection_enabled));
     obj.insert("timepicker".to_owned(), Value::Object(tp));
 
     if let Some(panels) = obj.get_mut("panels").and_then(Value::as_array_mut) {
         sanitize_panels_for_public(panels, show_query_text);
     }
-    // Variables and annotations name a datasource and carry query text too: they keep only
-    // their names, values and options.
-    for section in ["templating", "annotations"] {
-        let Some(list) = obj
-            .get_mut(section)
-            .and_then(|s| s.get_mut("list"))
-            .and_then(Value::as_array_mut)
-        else {
+    for (section, allowed) in [
+        ("templating", PUBLIC_VARIABLE_KEYS),
+        ("annotations", PUBLIC_ANNOTATION_KEYS),
+    ] {
+        let Some(holder) = obj.get_mut(section).and_then(Value::as_object_mut) else {
             continue;
         };
+        keep_only(holder, &["list"]);
+        let Some(list) = holder.get_mut("list").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        list.retain(Value::is_object);
         for entry in list.iter_mut().filter_map(Value::as_object_mut) {
-            entry.remove("datasource");
-            if !show_query_text {
-                for key in ["query", "definition", "expr", "rawSql", "target"] {
-                    entry.remove(key);
-                }
-            }
+            entry.retain(|k, _| {
+                allowed.contains(&k.as_str())
+                    || (show_query_text && QUERY_TEXT_KEYS.contains(&k.as_str()))
+            });
         }
     }
     dash
 }
 
-fn sanitize_panels_for_public(panels: &mut [Value], show_query_text: bool) {
-    for panel in panels {
-        let Some(p_obj) = panel.as_object_mut() else {
-            continue;
-        };
-        p_obj.remove("datasource");
+/// Field config without data links: a link can carry an internal URL or a filter.
+fn sanitize_field_config(fc: &mut Value) {
+    let Some(fc) = fc.as_object_mut() else {
+        return;
+    };
+    keep_only(fc, &["defaults", "overrides"]);
+    if let Some(defaults) = fc.get_mut("defaults").and_then(Value::as_object_mut) {
+        defaults.remove("links");
+    }
+    if let Some(overrides) = fc.get_mut("overrides").and_then(Value::as_array_mut) {
+        for o in overrides.iter_mut().filter_map(Value::as_object_mut) {
+            keep_only(o, &["matcher", "properties"]);
+            if let Some(props) = o.get_mut("properties").and_then(Value::as_array_mut) {
+                props.retain(|p| p.get("id").and_then(Value::as_str) != Some("links"));
+            }
+        }
+    }
+}
+
+fn sanitize_panels_for_public(panels: &mut Vec<Value>, show_query_text: bool) {
+    panels.retain(Value::is_object);
+    for p_obj in panels.iter_mut().filter_map(Value::as_object_mut) {
+        keep_only(p_obj, PUBLIC_PANEL_KEYS);
         if let Some(nested) = p_obj.get_mut("panels").and_then(Value::as_array_mut) {
             sanitize_panels_for_public(nested, show_query_text);
         }
+        if let Some(fc) = p_obj.get_mut("fieldConfig") {
+            sanitize_field_config(fc);
+        }
         if let Some(targets) = p_obj.get_mut("targets").and_then(Value::as_array_mut) {
-            for t in targets {
-                if let Some(t_obj) = t.as_object_mut() {
-                    t_obj.remove("datasource");
-                    if !show_query_text {
-                        t_obj.remove("expr");
-                        t_obj.remove("query");
-                        t_obj.remove("rawSql");
-                        t_obj.remove("customQuery");
-                        t_obj.remove("expression");
-                    }
-                }
+            targets.retain(Value::is_object);
+            for t_obj in targets.iter_mut().filter_map(Value::as_object_mut) {
+                t_obj.retain(|k, _| {
+                    matches!(k.as_str(), "refId" | "hide")
+                        || (show_query_text && QUERY_TEXT_KEYS.contains(&k.as_str()))
+                });
             }
         }
     }
