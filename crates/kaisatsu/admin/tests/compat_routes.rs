@@ -357,6 +357,12 @@ fn routes(
         (Method::PUT, format!("{R}/groups/{group}"), Some(group_body)),
         (Method::DELETE, format!("{R}/groups/{group}"), None),
         (Method::GET, format!("{R}/groups/{group}/members"), None),
+        (Method::GET, format!("{R}/groups/{group}/children"), None),
+        (
+            Method::POST,
+            format!("{R}/groups/{group}/children"),
+            Some(json!({ "name": "y" })),
+        ),
         (
             Method::POST,
             format!("{R}/groups/{group}/role-mappings/clients/{client}"),
