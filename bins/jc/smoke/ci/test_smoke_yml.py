@@ -84,7 +84,9 @@ def test_every_suite_runs_on_exactly_one_shard_and_logs_on_each():
     assert next(m for m in matrix() if m["shard"] == "restore")["only"] == "restore,logs"
     line = next(x for x in gate.splitlines() if x.startswith('args+=(--with "restore='))
     drain = re.search(r"--drain (\d+)", line)
-    assert "--home $home" in line and drain and 0 < int(drain.group(1)) <= 900
+    # 25 min at most: green trains drained after 875-888 s, so 900 s failed on slower runners; the
+    # wait ends as soon as the queue drains and the shard keeps its 60 min job timeout
+    assert "--home $home" in line and drain and 0 < int(drain.group(1)) <= 1500
     assert "sleep" not in next(m for m in matrix() if m["shard"] == "restore").get("with", "")
     ui = [m["with"] for m in matrix() if m["shard"] in ran["ui"]]
     personas = [x for w in ui for x in w.split("--personas ")[1].split()[0].split(",")]
