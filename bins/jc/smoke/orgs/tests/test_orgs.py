@@ -330,11 +330,15 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
         calls.append(args)
         if args[-1].startswith("SELECT"):
             return "SET\n" + json.dumps({"organizations": []} if "organizations" in args[-1] else {"knowledge": []})
-        return "pod/postgres-cluster-1\n" if "get" in args else 'mode = "host"\n'
+        return "pod/postgres-cluster-1\n" if "pod" in args else 'mode = "host"\n'
 
     monkeypatch.setattr(watch, "kubectl", fake)
-    cfg = {"namespace": "jc", "jc_workload": "deploy/jc", "pg_namespace": "pg", "pg_cluster": "postgres-cluster"}
-    _, snap = watch.snapshot(cfg, tmp_path)
+    cfg = {"namespace": "jc", "jc_configmap": "jc", "pg_namespace": "pg", "pg_cluster": "postgres-cluster"}
+    toml, snap = watch.snapshot(cfg, tmp_path)
+    # jc.toml comes from the ConfigMap: the jc image has no shell tools to exec
+    assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
+    assert not any("exec" in c and c[1] == "jc" for c in calls)
+    assert toml.read_text() == 'mode = "host"\n'
     assert json.loads(snap.read_text()) == {"organizations": [], "knowledge": []}
     queries = [c for c in calls if c[-1].startswith("SELECT")]
     assert len(queries) == 2 and all("SET default_transaction_read_only = on" in c for c in queries)
