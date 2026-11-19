@@ -5,7 +5,7 @@
 //! mapped to it (docs/src/gtfsrt.md section 2). What an Entity does not carry stays absent.
 
 use antares_ops::default_instance as attribute;
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use serde_json::{json, Value};
 
 /// `FeedMessage`: the header and one entity per vehicle.
@@ -134,10 +134,10 @@ fn number<'a>(entity: &'a Value, name: &str) -> Option<(f64, Option<&'a str>)> {
 
 /// One vehicle as a `FeedEntity` and the time of its position, or `None` without a point and a
 /// time (`location` and its `observedAt`).
-fn vehicle(entity: &Value) -> Option<(FeedEntity, DateTime<Utc>)> {
+fn vehicle(entity: &Value) -> Option<(FeedEntity, Timestamp)> {
     let id = entity.get("id")?.as_str()?;
     let at = attribute(entity, "location")?.get("observedAt")?.as_str()?;
-    let at = DateTime::parse_from_rfc3339(at).ok()?.with_timezone(&Utc);
+    let at = jc_time::parse_rfc3339(at)?;
     let geometry = antares_ops::geometry_of(entity, None);
     let point = geometry
         .get("type")
@@ -161,7 +161,7 @@ fn vehicle(entity: &Value) -> Option<(FeedEntity, DateTime<Utc>)> {
             bearing: number(entity, "heading").and_then(|(v, _)| single(v)),
             speed,
         }),
-        timestamp: u64::try_from(at.timestamp()).ok(),
+        timestamp: posix(at),
         vehicle: Some(VehicleDescriptor {
             id: Some(text(entity, "fleetVehicleId").unwrap_or_else(|| id.to_owned())),
             license_plate: text(entity, "vehiclePlateIdentifier"),
@@ -175,14 +175,19 @@ fn vehicle(entity: &Value) -> Option<(FeedEntity, DateTime<Utc>)> {
     Some((feed, at))
 }
 
+/// POSIX seconds of `at` (GTFS-RT `timestamp`); `None` before 1970, as the field is unsigned.
+fn posix(at: Timestamp) -> Option<u64> {
+    u64::try_from(at.as_second()).ok()
+}
+
 /// The feed of `vehicles` at `now`: each with a point and a time no older than `window`
 /// seconds, the header's time the newest of theirs (else `now`); and how many were left out.
 #[must_use]
-pub fn message(vehicles: &[Value], now: DateTime<Utc>, window: u32) -> (FeedMessage, usize) {
+pub fn message(vehicles: &[Value], now: Timestamp, window: u32) -> (FeedMessage, usize) {
     let oldest = now
-        .checked_sub_signed(Duration::seconds(i64::from(window)))
+        .checked_sub(SignedDuration::from_secs(i64::from(window)))
         .unwrap_or(now);
-    let kept: Vec<(FeedEntity, DateTime<Utc>)> = vehicles
+    let kept: Vec<(FeedEntity, Timestamp)> = vehicles
         .iter()
         .filter_map(vehicle)
         .filter(|(_, at)| *at >= oldest)
@@ -191,7 +196,7 @@ pub fn message(vehicles: &[Value], now: DateTime<Utc>, window: u32) -> (FeedMess
     let header = FeedHeader {
         gtfs_realtime_version: "2.0".to_owned(),
         incrementality: Some(Incrementality::FullDataset.into()),
-        timestamp: u64::try_from(newest.timestamp()).ok(),
+        timestamp: posix(newest),
     };
     let skipped = vehicles.len().saturating_sub(kept.len());
     let entity = kept.into_iter().map(|(e, _)| e).collect();
@@ -322,11 +327,64 @@ mod tests {
         with(base, extra)
     }
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-10-23T10:05:00Z")
-            .map(|t| t.with_timezone(&Utc))
-            .unwrap_or_default()
+    fn now() -> Timestamp {
+        jc_time::parse_rfc3339("2026-10-23T10:05:00Z").unwrap_or_default()
     }
+
+    /// T-7248: which `observedAt` texts the feed reads and the POSIX seconds it writes, at
+    /// the edge of a 300 s window, pinned before the move from chrono to jiff.
+    #[test]
+    fn observed_at_reads_and_writes_as_the_chrono_build_did() {
+        let got: Vec<String> = [
+            "2026-10-23T10:00:00Z",
+            "2026-10-23T09:59:59.999999999Z",
+            "2026-10-23T10:00:00.999+00:00",
+            "2026-10-23T12:00:00+02:00",
+            "2026-10-23T13:04:59.5+03:00",
+            "2026-10-23t10:01:00z",
+            "2026-10-23 10:02:00Z",
+            "2026-10-23T10:06:00Z",
+            "2026-10-23T10:03Z",
+            "2026-10-23T10:03:00",
+            "1969-12-31T23:59:59Z",
+        ]
+        .iter()
+        .map(|at| {
+            let (m, skipped) = message(&[bus("urn:a", at, &json!({}))], now(), 300);
+            let shown = |t: Option<u64>| t.map(|t| t.to_string()).unwrap_or_default();
+            let vehicle = m
+                .entity
+                .first()
+                .and_then(|e| e.vehicle.as_ref())
+                .map(|v| v.timestamp);
+            format!(
+                "{at} => {skipped} {} {}",
+                shown(m.header.timestamp),
+                shown(vehicle.flatten())
+            )
+        })
+        .collect();
+        assert_eq!(
+            got.join("\n").trim(),
+            OBSERVED.trim(),
+            "\n{}",
+            got.join("\n")
+        );
+    }
+
+    const OBSERVED: &str = r"
+2026-10-23T10:00:00Z => 0 1792749600 1792749600
+2026-10-23T09:59:59.999999999Z => 1 1792749900 
+2026-10-23T10:00:00.999+00:00 => 0 1792749600 1792749600
+2026-10-23T12:00:00+02:00 => 0 1792749600 1792749600
+2026-10-23T13:04:59.5+03:00 => 0 1792749899 1792749899
+2026-10-23t10:01:00z => 0 1792749660 1792749660
+2026-10-23 10:02:00Z => 0 1792749720 1792749720
+2026-10-23T10:06:00Z => 0 1792749960 1792749960
+2026-10-23T10:03Z => 1 1792749900 
+2026-10-23T10:03:00 => 1 1792749900 
+1969-12-31T23:59:59Z => 1 1792749900 
+";
 
     #[test]
     fn a_vehicle_maps_to_its_position_trip_and_descriptor() {

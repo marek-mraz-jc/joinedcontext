@@ -14,7 +14,8 @@ feature = "mcp"
 
 [dependencies]
 antares-ops = { workspace = true }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+jc-time = { workspace = true }
+jiff = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["json"] }
 metrics = { version = "0.24", default-features = false }
 rmcp = { version = "=3.9.0", default-features = false, features = ["request-state", "server", "transport-streamable-http-server"] }

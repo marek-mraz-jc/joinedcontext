@@ -17,8 +17,10 @@
 //! without `DTEND`), a `GEO` off the globe or a `URL` that is not
 //! http(s) is no `VEVENT` at all, and its reason is counted (EP-126).
 
-use crate::iana::Zone as Tz;
-use chrono::{DateTime, Days, NaiveDate, NaiveDateTime, NaiveTime, TimeZone as _, Utc};
+use crate::zone::Zone as Tz;
+use jiff::civil::{Date, DateTime, Time};
+use jiff::tz::Offset;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -33,11 +35,11 @@ pub fn local(name: &str) -> &str {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum When {
     /// A whole day (`2026-10-20`): `VALUE=DATE`.
-    Date(NaiveDate),
-    /// An instant with an offset, kept in UTC (`2026-10-20T18:00:00+02:00`).
-    At(DateTime<Utc>),
+    Date(Date),
+    /// An instant with an offset, kept as its UTC wall time (`2026-10-20T18:00:00+02:00`).
+    At(DateTime),
     /// A wall-clock time without an offset (`2026-10-20T18:00:00`): a floating time.
-    Floating(NaiveDateTime),
+    Floating(DateTime),
 }
 
 impl When {
@@ -45,33 +47,33 @@ impl When {
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
-        if let Ok(t) = DateTime::parse_from_rfc3339(text) {
-            return Some(Self::At(t.with_timezone(&Utc)));
+        if let Some(t) = jc_time::parse_rfc3339(text) {
+            return Some(Self::At(utc_wall(t)));
         }
-        if let Ok(t) = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f") {
+        // as chrono's `NaiveDateTime::parse_from_str`: one-digit fields pass, a missing second
+        // does not
+        if let Ok(t) =
+            jiff::fmt::strtime::parse("%Y-%m-%dT%H:%M:%S%.f", text).and_then(|t| t.to_datetime())
+        {
             return Some(Self::Floating(t));
         }
-        NaiveDate::parse_from_str(text, "%Y-%m-%d")
-            .ok()
-            .map(Self::Date)
+        jc_time::parse_date(text).map(Self::Date)
     }
 
     /// Where it starts as a UTC instant, a date and a floating time read in `zone`.
     #[must_use]
-    pub fn utc_key(self, zone: Tz) -> NaiveDateTime {
+    pub fn utc_key(self, zone: Tz) -> DateTime {
         let wall = match self {
-            Self::At(t) => return t.naive_utc(),
-            Self::Date(d) => d.and_time(NaiveTime::MIN),
+            Self::At(t) => return t,
+            Self::Date(d) => d.to_datetime(Time::midnight()),
             Self::Floating(t) => t,
         };
-        zone.from_local_datetime(&wall)
-            .earliest()
-            .map_or(wall, |t| t.naive_utc())
+        zone.earliest_utc(wall).unwrap_or(wall)
     }
 
     /// Just past what it covers as a UTC instant: a date's next midnight in `zone`.
     #[must_use]
-    pub fn utc_past(self, zone: Tz) -> NaiveDateTime {
+    pub fn utc_past(self, zone: Tz) -> DateTime {
         match self {
             Self::Date(d) => Self::Date(next_day(d)).utc_key(zone),
             other => other.utc_key(zone),
@@ -85,30 +87,24 @@ impl When {
         match (self, end) {
             (Self::Date(_), Self::Date(e)) if inclusive => Self::Date(next_day(e)),
             (Self::Date(_), Self::Date(e)) => Self::Date(e),
-            (Self::Date(_), other) => Self::Date(next_day(
-                other
-                    .utc_key(zone)
-                    .and_utc()
-                    .with_timezone(&zone)
-                    .date_naive(),
-            )),
+            (Self::Date(_), other) => Self::Date(next_day(zone.local(other.utc_key(zone)).date())),
             (_, Self::At(t)) => Self::At(t),
-            (_, other) => Self::At(other.utc_past(zone).and_utc()),
+            (_, other) => Self::At(other.utc_past(zone)),
         }
     }
 
     /// As `mode` asks, a floating time read in `zone`; `None` for a wall time the zone skips.
     fn read(self, mode: DateMode, zone: Tz) -> Option<Self> {
         let wall = match (mode, self) {
-            (DateMode::Datetime, Self::Date(d)) => Self::Floating(d.and_time(NaiveTime::MIN)),
+            (DateMode::Datetime, Self::Date(d)) => Self::Floating(d.to_datetime(Time::midnight())),
             (_, other) => other,
         };
         let zoned = match wall {
-            Self::Floating(t) => Self::At(zone.from_local_datetime(&t).earliest()?.to_utc()),
+            Self::Floating(t) => Self::At(zone.earliest_utc(t)?),
             other => other,
         };
         Some(match (mode, zoned) {
-            (DateMode::Date, Self::At(t)) => Self::Date(t.with_timezone(&zone).date_naive()),
+            (DateMode::Date, Self::At(t)) => Self::Date(zone.local(t).date()),
             (_, other) => other,
         })
     }
@@ -116,18 +112,24 @@ impl When {
     /// The property value, with `;VALUE=DATE` for a date: `DTSTART;VALUE=DATE:20261020`.
     fn property(self, name: &str) -> String {
         match self {
-            Self::Date(d) => format!("{name};VALUE=DATE:{}", d.format("%Y%m%d")),
+            Self::Date(d) => format!("{name};VALUE=DATE:{}", d.strftime("%Y%m%d")),
             // a read value is never floating (`Plan::when` zones it)
             other => format!(
                 "{name}:{}",
-                other.utc_key(Tz::utc()).format("%Y%m%dT%H%M%SZ")
+                other.utc_key(Tz::utc()).strftime("%Y%m%dT%H%M%SZ")
             ),
         }
     }
 }
 
-fn next_day(d: NaiveDate) -> NaiveDate {
-    d.checked_add_days(Days::new(1)).unwrap_or(d)
+fn next_day(d: Date) -> Date {
+    d.tomorrow().unwrap_or(d)
+}
+
+/// The UTC wall time of the instant `t`.
+#[must_use]
+pub fn utc_wall(t: Timestamp) -> DateTime {
+    Offset::UTC.to_datetime(t)
 }
 
 /// The `from`/`to` of a feed, as UTC instants: an Event is in it when it starts before `to`
@@ -135,9 +137,9 @@ fn next_day(d: NaiveDate) -> NaiveDate {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Window {
     /// The first instant served: a date's midnight.
-    pub from: Option<NaiveDateTime>,
+    pub from: Option<DateTime>,
     /// Just past the last instant served: a date's next midnight, so `to` is inclusive.
-    pub to: Option<NaiveDateTime>,
+    pub to: Option<DateTime>,
 }
 
 impl Window {
@@ -659,7 +661,7 @@ impl Plan {
 
     /// Where the Event starts as a UTC instant, for `sort`; `None` when it has no start.
     #[must_use]
-    pub fn start(&self, entity: &Value) -> Option<NaiveDateTime> {
+    pub fn start(&self, entity: &Value) -> Option<DateTime> {
         self.when(entity, Field::Dtstart)
             .ok()
             .flatten()
@@ -1233,7 +1235,7 @@ impl Plan {
     }
 
     /// The latest `modifiedAt` of the attributes the mapping reads, every instance counted.
-    fn revised(&self, entity: &Value) -> Option<DateTime<Utc>> {
+    fn revised(&self, entity: &Value) -> Option<DateTime> {
         let names: std::collections::BTreeSet<&str> = self
             .fields
             .values()
@@ -1249,8 +1251,8 @@ impl Plan {
         let stamp = |i: &Value| {
             i.get("modifiedAt")
                 .and_then(Value::as_str)
-                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-                .map(|t| t.to_utc())
+                .and_then(jc_time::parse_rfc3339)
+                .map(utc_wall)
         };
         entity
             .as_object()?
@@ -1266,8 +1268,8 @@ impl Plan {
     /// The `VEVENT` of one Entity, or why there is none; `now` stamps an Entity without
     /// `modifiedAt`.
     #[must_use]
-    pub fn vevent(&self, entity: &Value, window: &Window, now: DateTime<Utc>) -> Outcome {
-        match self.lines(entity, window, now) {
+    pub fn vevent(&self, entity: &Value, window: &Window, now: Timestamp) -> Outcome {
+        match self.lines(entity, window, utc_wall(now)) {
             Ok(Some(lines)) => {
                 let mut out = String::new();
                 for line in &lines {
@@ -1280,7 +1282,7 @@ impl Plan {
         }
     }
 
-    fn lines(&self, entity: &Value, window: &Window, now: DateTime<Utc>) -> Read<Vec<String>> {
+    fn lines(&self, entity: &Value, window: &Window, now: DateTime) -> Read<Vec<String>> {
         // Every Entity a view answers has an id.
         let uid = entity.get("id").and_then(Value::as_str).unwrap_or_default();
         let start = self
@@ -1305,12 +1307,12 @@ impl Plan {
             entity
                 .get("modifiedAt")
                 .and_then(Value::as_str)
-                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-                .map(|t| t.to_utc())
+                .and_then(jc_time::parse_rfc3339)
+                .map(utc_wall)
         };
         let source = self
             .when(entity, Field::LastModified)?
-            .map(|w| w.utc_key(self.zone).and_utc());
+            .map(|w| w.utc_key(self.zone));
         let revised = source
             .or_else(|| self.revised(entity))
             .or_else(entity_stamp);
@@ -1348,4 +1350,131 @@ impl Plan {
         lines.push("END:VEVENT".to_owned());
         Ok(Some(lines))
     }
+}
+
+#[cfg(test)]
+mod wire_golden {
+    use super::*;
+
+    fn zone(name: &str) -> Tz {
+        name.parse().unwrap_or_else(|_| Tz::utc())
+    }
+
+    /// T-7248: the `DTSTART`/`DTEND` texts a feed writes from what `When::parse` reads, in
+    /// Europe/Bratislava and Europe/Helsinki across both DST changes (a skipped and a doubled
+    /// wall hour), pinned from the chrono build before the move to jiff.
+    #[test]
+    fn date_properties_keep_the_chrono_wire_format() {
+        let texts = [
+            "2026-10-20T18:00:00+02:00",
+            "2026-10-20T18:00:00.123456789Z",
+            "2026-10-20t18:00:00z",
+            " 2026-10-20T18:00:00Z ",
+            "2026-03-29T02:30:00",
+            "2026-03-29T03:30:00",
+            "2026-10-25T02:30:00",
+            "2026-10-25T03:30:00",
+            "2026-10-25T03:30:00.5",
+            "2026-10-25T03:30",
+            "2026-1-5T7:05:00",
+            "2026-10-20",
+            "2026-1-5",
+            "2026-02-29",
+            "2026-12-31",
+            "20261020",
+            "",
+        ];
+        let modes = [DateMode::Auto, DateMode::Date, DateMode::Datetime];
+        let mut got = Vec::new();
+        for name in ["Europe/Bratislava", "Europe/Helsinki"] {
+            let z = zone(name);
+            for text in texts {
+                let row: Vec<String> = modes
+                    .iter()
+                    .map(|mode| {
+                        When::parse(text)
+                            .and_then(|w| w.read(*mode, z))
+                            .map(|w| w.property("DTSTART"))
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                got.push(format!("{name} {text:?} => {}", row.join(" | ")));
+            }
+            for (start, end, inclusive) in [
+                ("2026-10-24", "2026-10-25", true),
+                ("2026-10-24", "2026-10-25", false),
+                ("2026-10-24", "2026-10-25T02:30:00", false),
+                ("2026-10-24", "2026-10-24T23:30:00Z", false),
+                ("2026-03-28T20:00:00", "2026-03-29", false),
+                ("2026-03-28T20:00:00", "2026-03-29T02:30:00", false),
+            ] {
+                let (Some(s), Some(e)) = (When::parse(start), When::parse(end)) else {
+                    got.push(format!("{name} {start} {end} => unread"));
+                    continue;
+                };
+                let w = Window::read(Some(s), Some(e), z);
+                got.push(format!(
+                    "{name} {start} {end} {inclusive} => {} {} {}",
+                    s.end_like(e, inclusive, z).property("DTEND"),
+                    w.holds(s, None, z),
+                    Window::read(Some(e), None, z).holds(s, Some(e), z),
+                ));
+            }
+        }
+        assert_eq!(
+            got.join("\n").trim(),
+            PROPERTIES.trim(),
+            "\n{}",
+            got.join("\n")
+        );
+    }
+
+    const PROPERTIES: &str = r#"
+Europe/Bratislava "2026-10-20T18:00:00+02:00" => DTSTART:20261020T160000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T160000Z
+Europe/Bratislava "2026-10-20T18:00:00.123456789Z" => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Bratislava "2026-10-20t18:00:00z" => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Bratislava " 2026-10-20T18:00:00Z " => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Bratislava "2026-03-29T02:30:00" =>  |  | 
+Europe/Bratislava "2026-03-29T03:30:00" => DTSTART:20260329T013000Z | DTSTART;VALUE=DATE:20260329 | DTSTART:20260329T013000Z
+Europe/Bratislava "2026-10-25T02:30:00" => DTSTART:20261025T003000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261025T003000Z
+Europe/Bratislava "2026-10-25T03:30:00" => DTSTART:20261025T023000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261025T023000Z
+Europe/Bratislava "2026-10-25T03:30:00.5" => DTSTART:20261025T023000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261025T023000Z
+Europe/Bratislava "2026-10-25T03:30" =>  |  | 
+Europe/Bratislava "2026-1-5T7:05:00" => DTSTART:20260105T060500Z | DTSTART;VALUE=DATE:20260105 | DTSTART:20260105T060500Z
+Europe/Bratislava "2026-10-20" => DTSTART;VALUE=DATE:20261020 | DTSTART;VALUE=DATE:20261020 | DTSTART:20261019T220000Z
+Europe/Bratislava "2026-1-5" => DTSTART;VALUE=DATE:20260105 | DTSTART;VALUE=DATE:20260105 | DTSTART:20260104T230000Z
+Europe/Bratislava "2026-02-29" =>  |  | 
+Europe/Bratislava "2026-12-31" => DTSTART;VALUE=DATE:20261231 | DTSTART;VALUE=DATE:20261231 | DTSTART:20261230T230000Z
+Europe/Bratislava "20261020" =>  |  | 
+Europe/Bratislava "" =>  |  | 
+Europe/Bratislava 2026-10-24 2026-10-25 true => DTEND;VALUE=DATE:20261026 true true
+Europe/Bratislava 2026-10-24 2026-10-25 false => DTEND;VALUE=DATE:20261025 true true
+Europe/Bratislava 2026-10-24 2026-10-25T02:30:00 false => DTEND;VALUE=DATE:20261026 true false
+Europe/Bratislava 2026-10-24 2026-10-24T23:30:00Z false => DTEND;VALUE=DATE:20261026 true false
+Europe/Bratislava 2026-03-28T20:00:00 2026-03-29 false => DTEND:20260329T220000Z true true
+Europe/Bratislava 2026-03-28T20:00:00 2026-03-29T02:30:00 false => DTEND:20260329T023000Z true false
+Europe/Helsinki "2026-10-20T18:00:00+02:00" => DTSTART:20261020T160000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T160000Z
+Europe/Helsinki "2026-10-20T18:00:00.123456789Z" => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Helsinki "2026-10-20t18:00:00z" => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Helsinki " 2026-10-20T18:00:00Z " => DTSTART:20261020T180000Z | DTSTART;VALUE=DATE:20261020 | DTSTART:20261020T180000Z
+Europe/Helsinki "2026-03-29T02:30:00" => DTSTART:20260329T003000Z | DTSTART;VALUE=DATE:20260329 | DTSTART:20260329T003000Z
+Europe/Helsinki "2026-03-29T03:30:00" =>  |  | 
+Europe/Helsinki "2026-10-25T02:30:00" => DTSTART:20261024T233000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261024T233000Z
+Europe/Helsinki "2026-10-25T03:30:00" => DTSTART:20261025T003000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261025T003000Z
+Europe/Helsinki "2026-10-25T03:30:00.5" => DTSTART:20261025T003000Z | DTSTART;VALUE=DATE:20261025 | DTSTART:20261025T003000Z
+Europe/Helsinki "2026-10-25T03:30" =>  |  | 
+Europe/Helsinki "2026-1-5T7:05:00" => DTSTART:20260105T050500Z | DTSTART;VALUE=DATE:20260105 | DTSTART:20260105T050500Z
+Europe/Helsinki "2026-10-20" => DTSTART;VALUE=DATE:20261020 | DTSTART;VALUE=DATE:20261020 | DTSTART:20261019T210000Z
+Europe/Helsinki "2026-1-5" => DTSTART;VALUE=DATE:20260105 | DTSTART;VALUE=DATE:20260105 | DTSTART:20260104T220000Z
+Europe/Helsinki "2026-02-29" =>  |  | 
+Europe/Helsinki "2026-12-31" => DTSTART;VALUE=DATE:20261231 | DTSTART;VALUE=DATE:20261231 | DTSTART:20261230T220000Z
+Europe/Helsinki "20261020" =>  |  | 
+Europe/Helsinki "" =>  |  | 
+Europe/Helsinki 2026-10-24 2026-10-25 true => DTEND;VALUE=DATE:20261026 true true
+Europe/Helsinki 2026-10-24 2026-10-25 false => DTEND;VALUE=DATE:20261025 true true
+Europe/Helsinki 2026-10-24 2026-10-25T02:30:00 false => DTEND;VALUE=DATE:20261026 true false
+Europe/Helsinki 2026-10-24 2026-10-24T23:30:00Z false => DTEND;VALUE=DATE:20261026 true false
+Europe/Helsinki 2026-03-28T20:00:00 2026-03-29 false => DTEND:20260329T210000Z true true
+Europe/Helsinki 2026-03-28T20:00:00 2026-03-29T02:30:00 false => DTEND:20260329T003000Z true false
+"#;
 }

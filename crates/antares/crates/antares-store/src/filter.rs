@@ -254,7 +254,7 @@ pub fn expired_at(v: &Value, now: &str) -> bool {
 /// it rather than once per instance (R1-021).
 struct Now<'a> {
     text: &'a str,
-    at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    at: Option<jiff::Timestamp>,
 }
 
 impl<'a> Now<'a> {
@@ -266,8 +266,8 @@ impl<'a> Now<'a> {
     }
 }
 
-fn instant(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-    chrono::DateTime::parse_from_rfc3339(&canonical_datetime(s)).ok()
+fn instant(s: &str) -> Option<jiff::Timestamp> {
+    jc_time::parse_rfc3339(&canonical_datetime(s))
 }
 
 fn expired_by(v: &Value, now: &Now<'_>) -> bool {
@@ -370,6 +370,57 @@ pub struct TemporalOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7247: which `expiresAt` reads as past `now`, pinned before the move from chrono to
+    /// jiff: instants compared across offsets, fraction digits and the 4.6.3 comma, the byte
+    /// fallback only when a stamp does not parse.
+    #[test]
+    fn expiry_reads_as_the_chrono_build_did() {
+        use serde_json::json;
+        let now = "2026-10-25T01:30:00.5+00:00";
+        let got: Vec<String> = [
+            "2026-10-25T01:30:00.499Z",
+            "2026-10-25T01:30:00.5Z",
+            "2026-10-25T01:30:00.500000001Z",
+            "2026-10-25T02:30:00+01:00",
+            "2026-10-25T03:30:00.6+02:00",
+            "2026-10-25T01:30:00,4Z",
+            "2026-10-25t01:30:01z",
+            "2026-10-25 01:30:00Z",
+            "2026-10-25T01:30Z",
+            "2026-10-24",
+            "2026-10-26",
+            "2026-10-25T01:30:00.4999999999999Z",
+        ]
+        .iter()
+        .map(|e| format!("{e} => {}", expired_at(&json!({"expiresAt": e}), now)))
+        .collect();
+        assert_eq!(got.join("\n").trim(), EXPIRY.trim(), "\n{}", got.join("\n"));
+        // a `now` that does not parse: bytes compared, a longer stamp sorts after its prefix
+        assert!(!expired_at(
+            &json!({"expiresAt": "2026-10-25T01:30:00Z"}),
+            "2026-10-25T01:30:00"
+        ));
+        assert!(expired_at(
+            &json!({"expiresAt": "2026-10-25T01:30:00Z"}),
+            "not a time"
+        ));
+    }
+
+    const EXPIRY: &str = r"
+2026-10-25T01:30:00.499Z => true
+2026-10-25T01:30:00.5Z => false
+2026-10-25T01:30:00.500000001Z => false
+2026-10-25T02:30:00+01:00 => true
+2026-10-25T03:30:00.6+02:00 => false
+2026-10-25T01:30:00,4Z => true
+2026-10-25t01:30:01z => false
+2026-10-25 01:30:00Z => true
+2026-10-25T01:30Z => false
+2026-10-24 => true
+2026-10-26 => false
+2026-10-25T01:30:00.4999999999999Z => true
+";
     use serde_json::json;
 
     /// F-R2ANT4-008: an expired sub-Attribute goes from the stored doc too,

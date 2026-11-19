@@ -96,6 +96,7 @@ dependencies = [
  "http-body-util",
  "icu_collator",
  "icu_locale_core",
+ "jiff",
  "metrics",
  "ngsild-jsonld",
  "ngsild-matcher",
@@ -199,8 +200,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "serde",
  "serde_json",
@@ -215,8 +217,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "serde",
  "serde_json",
@@ -243,8 +246,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "prost",
  "serde_json",
@@ -258,9 +262,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
  "icalendar",
+ "jc-time",
  "jiff",
  "metrics",
  "serde",
@@ -321,8 +325,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "rmcp",
  "serde_json",
@@ -378,9 +383,9 @@ dependencies = [
  "antares-ops",
  "axum",
  "bytes",
- "chrono",
  "futures-util",
  "http-body-util",
+ "jc-time",
  "linkml-model",
  "ogc-cql2",
  "parquet",
@@ -401,8 +406,9 @@ dependencies = [
  "antares-ops",
  "antares-sql",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "ngsild-jsonld",
  "ngsild-model",
@@ -443,8 +449,9 @@ dependencies = [
  "antares-store",
  "async-trait",
  "base64 0.23.1",
- "chrono",
  "futures-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "ngsild-jsonld",
  "ngsild-model",
@@ -480,7 +487,8 @@ name = "antares-store"
 version = "0.3.0"
 dependencies = [
  "async-trait",
- "chrono",
+ "jc-time",
+ "jiff",
  "ngsild-jsonld",
  "ngsild-model",
  "ngsild-ql",
@@ -538,12 +546,13 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "data-encoding",
  "futures-util",
  "getrandom 0.3.4",
  "hyper",
  "hyper-util",
+ "jc-time",
+ "jiff",
  "regex",
  "serde",
  "serde-saphyr",
@@ -2244,6 +2253,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jc-time"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "serde",
+ "sqlx",
+]
+
+[[package]]
 name = "jiff"
 version = "0.2.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2351,8 +2369,9 @@ dependencies = [
  "antares-api",
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "ngsild-jsonld",
  "ngsild-model",
  "ngsild-ql",

@@ -37,7 +37,7 @@ use axum::http::{HeaderMap, HeaderName, StatusCode, Uri};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use output::{local, Entry, Plan, MAX_LIMIT, MAX_OUTPUTS};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -126,7 +126,7 @@ async fn serve(ops: &Ops, caller: &Caller, req: Request) -> Response {
 struct Served {
     format: Format,
     body: String,
-    updated: DateTime<Utc>,
+    updated: TimestampTz,
     skipped: usize,
 }
 
@@ -137,15 +137,23 @@ impl Served {
         let mut hasher = std::hash::DefaultHasher::new();
         self.body.hash(&mut hasher);
         let etag = format!("\"{:016x}-{:x}\"", hasher.finish(), self.body.len());
-        let modified = self.updated.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let modified = write::rfc822(self.updated);
         let header = |name| headers.get(name).and_then(|v| v.to_str().ok());
         let fresh = match (header(IF_NONE_MATCH), header(IF_MODIFIED_SINCE)) {
             (Some(tags), _) => tags
                 .split(',')
                 .map(|t| t.trim().trim_start_matches("W/"))
                 .any(|t| t == etag || t == "*"),
-            (None, Some(since)) => DateTime::parse_from_rfc2822(since)
-                .is_ok_and(|since| self.updated.timestamp() <= since.timestamp()),
+            // whole seconds: `updated` floored to its second is at most `since`
+            (None, Some(since)) => jiff::fmt::rfc2822::parse(since)
+                .ok()
+                .and_then(|since| {
+                    since
+                        .timestamp()
+                        .checked_add(jiff::SignedDuration::from_secs(1))
+                        .ok()
+                })
+                .is_some_and(|after| self.updated.0 < after),
             (None, None) => false,
         };
         let validators = [
@@ -457,7 +465,7 @@ async fn page(
         title: in_lang(&plan.title, lang.as_deref()).unwrap_or_else(|| name.clone()),
         description: in_lang(&plan.description, lang.as_deref()),
         lang,
-        updated: all.first().map_or(DateTime::UNIX_EPOCH, |e| e.updated),
+        updated: all.first().map_or(TimestampTz::default(), |e| e.updated),
         this: uri
             .query()
             .map_or_else(|| this.clone(), |q| format!("{this}?{q}")),
@@ -498,6 +506,61 @@ mod tests {
             assert!(!balanced(bad), "{bad}");
         }
     }
+
+    /// T-7247: `If-Modified-Since` (RFC 2822 as chrono read it) against the page's newest
+    /// `updated`, whole seconds: which validators still hold, pinned before the move to jiff.
+    #[test]
+    fn if_modified_since_reads_as_the_chrono_build_did() {
+        let updated = crate::output::instant("2026-10-23T08:00:00.5Z");
+        let got: Vec<String> = [
+            "Fri, 23 Oct 2026 08:00:00 GMT",
+            "Fri, 23 Oct 2026 07:59:59 GMT",
+            "Fri, 23 Oct 2026 10:00:00 +0200",
+            "23 Oct 2026 08:00:00 UT",
+            "Fri, 23 Oct 2026 03:00 EST",
+            "Fri, 23 Oct 26 08:00:00 GMT",
+            "Fri, 23 Oct 2026 08:00:00 -0000 (comment)",
+            "Thu, 23 Oct 2026 09:00:00 GMT",
+            "2026-10-23T09:00:00Z",
+            "",
+        ]
+        .iter()
+        .map(|since| {
+            let page = Served {
+                format: Format::Atom,
+                body: String::new(),
+                updated: updated.unwrap_or_default(),
+                skipped: 0,
+            };
+            let mut headers = HeaderMap::new();
+            if let Ok(v) = since.parse() {
+                headers.insert(IF_MODIFIED_SINCE, v);
+            }
+            let reply = page.reply(&headers);
+            let modified = reply
+                .headers()
+                .get(LAST_MODIFIED)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_owned();
+            format!("{since} => {} {modified}", reply.status().as_u16())
+        })
+        .collect();
+        assert_eq!(got.join("\n").trim(), SINCE.trim(), "\n{}", got.join("\n"));
+    }
+
+    const SINCE: &str = r"
+Fri, 23 Oct 2026 08:00:00 GMT => 304 Fri, 23 Oct 2026 08:00:00 GMT
+Fri, 23 Oct 2026 07:59:59 GMT => 200 Fri, 23 Oct 2026 08:00:00 GMT
+Fri, 23 Oct 2026 10:00:00 +0200 => 304 Fri, 23 Oct 2026 08:00:00 GMT
+23 Oct 2026 08:00:00 UT => 304 Fri, 23 Oct 2026 08:00:00 GMT
+Fri, 23 Oct 2026 03:00 EST => 304 Fri, 23 Oct 2026 08:00:00 GMT
+Fri, 23 Oct 26 08:00:00 GMT => 304 Fri, 23 Oct 2026 08:00:00 GMT
+Fri, 23 Oct 2026 08:00:00 -0000 (comment) => 304 Fri, 23 Oct 2026 08:00:00 GMT
+Thu, 23 Oct 2026 09:00:00 GMT => 200 Fri, 23 Oct 2026 08:00:00 GMT
+2026-10-23T09:00:00Z => 200 Fri, 23 Oct 2026 08:00:00 GMT
+ => 200 Fri, 23 Oct 2026 08:00:00 GMT
+";
 
     #[test]
     fn a_tag_authority_is_the_bare_host() {

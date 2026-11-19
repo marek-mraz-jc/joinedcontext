@@ -19,7 +19,8 @@ antares-model = { workspace = true }
 antares-ops = { workspace = true }
 axum = { workspace = true }
 antares-ql = { workspace = true }
-chrono = { workspace = true }
+jc-time = { workspace = true }
+jiff = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

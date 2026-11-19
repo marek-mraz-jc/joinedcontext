@@ -7,7 +7,7 @@
 //! reason is counted (EP-126). Text is kept as text; the writers escape it.
 
 use antares_ops::outputs::is_name;
-use chrono::{DateTime, NaiveDate, Utc};
+use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -417,9 +417,9 @@ pub struct Entry {
     /// Its http(s) link.
     pub link: Option<String>,
     /// When it last changed.
-    pub updated: DateTime<Utc>,
+    pub updated: TimestampTz,
     /// When it appeared.
-    pub published: Option<DateTime<Utc>>,
+    pub published: Option<TimestampTz>,
     /// Its authors.
     pub authors: Vec<String>,
     /// Its categories.
@@ -443,16 +443,10 @@ pub fn is_http(url: &str) -> bool {
 
 /// An RFC 3339 date-time, or a date read as its midnight in UTC.
 #[must_use]
-pub fn instant(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .map(|t| t.with_timezone(&Utc))
-        .ok()
-        .or_else(|| {
-            NaiveDate::parse_from_str(text, "%Y-%m-%d")
-                .ok()
-                .and_then(|d| d.and_hms_opt(0, 0, 0))
-                .map(|t| t.and_utc())
-        })
+pub fn instant(text: &str) -> Option<TimestampTz> {
+    jc_time::parse_rfc3339(text)
+        .map(TimestampTz)
+        .or_else(|| jc_time::parse_date(text).and_then(TimestampTz::from_date))
 }
 
 /// An attribute's instance: the default instance of a multi-instance one, else the first.

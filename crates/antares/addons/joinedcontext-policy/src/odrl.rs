@@ -380,7 +380,7 @@ mod tests {
     }
     use crate::document::compile;
     use antares_api::policy::Subject;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     const AREA: &str =
         "georel=within;geometry=Polygon;coordinates=[[[0,0],[1,0],[1,1],[0,1],[0,0]]]";
@@ -397,7 +397,7 @@ mod tests {
 
     fn doc(policies: &Value, who: &Caller) -> Result<Value, String> {
         let t = compile(&json!({ "policies": policies }))?;
-        let grants = Grants::of(Some(&t), who, Utc::now());
+        let grants = Grants::of(Some(&t), who, Timestamp::now());
         Ok(policy(
             who,
             &grants,

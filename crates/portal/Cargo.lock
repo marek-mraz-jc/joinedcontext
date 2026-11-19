@@ -2117,9 +2117,9 @@ name = "hsl-transport"
 version = "0.1.0"
 dependencies = [
  "axum",
- "chrono",
  "futures-util",
  "http-body-util",
+ "jiff",
  "mime_guess",
  "reqwest",
  "rust-embed",

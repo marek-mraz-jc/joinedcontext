@@ -34,6 +34,7 @@ futures-util = { workspace = true, features = ["std"] }
 # ADR-0030: the tenant digest.
 sha2 = { workspace = true }
 chrono = { workspace = true }
+jiff = { workspace = true }
 icu_collator = { workspace = true }
 icu_locale_core = { workspace = true }
 uuid = { workspace = true }

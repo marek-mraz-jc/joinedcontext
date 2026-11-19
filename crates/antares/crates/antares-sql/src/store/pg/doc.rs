@@ -927,7 +927,7 @@ impl PgDocStore {
     /// without a key it seals nothing. Each row is rewritten through
     /// [`Self::mutate`], under its row lock, so a concurrent write is never
     /// lost. Then it reseals the rows of a renamed Tenant
-    /// ([`Self::reseal_renamed`]). Answers how many rows it sealed.
+    /// (`reseal_renamed`). Answers how many rows it sealed.
     pub async fn seal_plaintext(&self) -> Result<u64, sqlx::Error> {
         if self.key.is_none() {
             return Ok(0);

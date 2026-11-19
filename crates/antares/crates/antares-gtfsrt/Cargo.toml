@@ -17,7 +17,8 @@ protocols = []
 [dependencies]
 antares-ops = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["query"] }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+jc-time = { workspace = true }
+jiff = { workspace = true }
 metrics = { version = "0.24", default-features = false }
 prost = { version = "0.14", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }

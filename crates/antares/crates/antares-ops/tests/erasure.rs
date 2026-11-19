@@ -198,10 +198,13 @@ where
 
     // A restore brings the old rows back; after the erasure the rider was
     // written again, which stays.
-    let later = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(1))
-        .unwrap_or_default()
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let later = jc_time::format_rfc3339(
+        jiff::Timestamp::now()
+            .checked_add(jiff::SignedDuration::from_hours(24))
+            .unwrap_or_default(),
+        jc_time::SecondsFormat::Secs,
+        true,
+    );
     let (s, b) = send(
         &app,
         Method::PATCH,

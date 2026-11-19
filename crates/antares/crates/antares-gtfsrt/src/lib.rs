@@ -29,7 +29,6 @@ use axum::http::{HeaderName, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
-use chrono::Utc;
 use prost::Message as _;
 use serde_json::{json, Value};
 
@@ -116,7 +115,7 @@ async fn serve(
     let window =
         max_age(asked).map_err(|title| Box::new(problem(StatusCode::BAD_REQUEST, title)))?;
     let vehicles = vehicles(&view, caller).await?;
-    let (message, skipped) = feed::message(&vehicles, Utc::now(), window);
+    let (message, skipped) = feed::message(&vehicles, jiff::Timestamp::now(), window);
     metrics::counter!(SKIPPED, "surface" => "gtfsrt", "reason" => "stale-or-unplaced")
         .increment(u64::try_from(skipped).unwrap_or(u64::MAX));
     let (kind, body) = if protobuf {

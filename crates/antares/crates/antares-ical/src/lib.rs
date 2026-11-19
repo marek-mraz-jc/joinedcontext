@@ -32,7 +32,6 @@
 
 #![forbid(unsafe_code)]
 
-pub mod iana;
 pub mod mapping;
 pub mod zone;
 
@@ -46,7 +45,6 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
-use chrono::Utc;
 use mapping::{fold, local, CompiledOutput, IcalMapping, Outcome, Plan, When, Window};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -230,7 +228,7 @@ fn asked(uri: &axum::http::Uri) -> Result<Asked, Problem> {
         ..Asked::default()
     };
     if let (Some(from), Some(to)) = (out.from, out.to) {
-        if from.utc_key(crate::iana::Zone::utc()) >= to.utc_past(crate::iana::Zone::utc()) {
+        if from.utc_key(zone::Zone::utc()) >= to.utc_past(zone::Zone::utc()) {
             return Err(bad("from is after to".to_owned()));
         }
     }
@@ -405,7 +403,7 @@ async fn feed(
     let plans: Vec<&Plan> = output.plans.iter().collect();
     let pushdown = pushdown(&view, &plans, &output.output.filter, &asked).await?;
     let window = Window::read(asked.from, asked.to, output.zone);
-    let now = Utc::now();
+    let now = jiff::Timestamp::now();
     let mut out = String::new();
     header(&output, &decoded(id).unwrap_or_default(), |l| {
         fold(l, &mut out);
@@ -413,7 +411,7 @@ async fn feed(
     for line in zone::vtimezone(output.zone, zone::year(now)) {
         fold(&line, &mut out);
     }
-    let mut events: Vec<(Option<chrono::NaiveDateTime>, String)> = Vec::new();
+    let mut events: Vec<(Option<jiff::civil::DateTime>, String)> = Vec::new();
     let (mut start, mut skipped) = (0usize, 0usize);
     // ponytail: the window is applied after the read, so a feed reads every Event the query
     // selects up to RESIDUAL_SCAN; a caller narrows with q (startDate>=…) past that.
@@ -563,7 +561,7 @@ async fn previewed(
         whole: false,
     };
     let (entities, _) = page(&view, caller, &pushdown, &refs, first).await?;
-    let now = Utc::now();
+    let now = jiff::Timestamp::now();
     let (mut valid, mut outside) = (0usize, 0usize);
     let mut skipped: BTreeMap<&str, usize> = BTreeMap::new();
     let mut events = Vec::new();

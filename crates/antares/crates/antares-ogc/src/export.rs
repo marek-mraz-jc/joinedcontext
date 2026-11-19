@@ -725,7 +725,8 @@ mod file {
             rows: usize,
         ) -> Vec<(String, String)> {
             let query: Vec<String> = pairs.iter().map(|(n, v)| format!("{n}={v}")).collect();
-            let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let now =
+                jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
             [
                 ("view", self.id.to_owned()),
                 ("collections", collections.join(",")),

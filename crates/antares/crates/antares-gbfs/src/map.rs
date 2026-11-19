@@ -4,7 +4,8 @@
 //! station missing a field GBFS requires is left out of that file and counted.
 
 use antares_ops::default_instance as attribute;
-use chrono::{DateTime, SecondsFormat, Utc};
+use jc_time::SecondsFormat;
+use jiff::Timestamp;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -134,13 +135,11 @@ fn value<'a>(entity: &'a Value, name: &str) -> Option<&'a Value> {
 }
 
 /// When the station last reported its bikes, in UTC.
-fn reported(entity: &Value) -> Option<DateTime<Utc>> {
+fn reported(entity: &Value) -> Option<Timestamp> {
     let at = attribute(entity, "availableBikeNumber")?
         .get("observedAt")?
         .as_str()?;
-    DateTime::parse_from_rfc3339(at)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
+    jc_time::parse_rfc3339(at)
 }
 
 /// A station's name per language: a `LanguageProperty`'s map, or a `Property`'s text in the
@@ -214,8 +213,8 @@ fn status(entity: &Value) -> Option<Value> {
     Some(Value::Object(station))
 }
 
-fn stamp(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::Secs, true)
+fn stamp(at: Timestamp) -> String {
+    jc_time::format_rfc3339(at, SecondsFormat::Secs, true)
 }
 
 /// File `file` (one of [`crate::FILES`]) of `system` over `stations` read through view `view`,
@@ -232,7 +231,7 @@ pub(crate) fn file(
         .iter()
         .filter_map(reported)
         .max()
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(Timestamp::now);
     let records = |f: fn(&Value, &System) -> Option<Value>| {
         let kept: Vec<Value> = stations.iter().filter_map(|s| f(s, system)).collect();
         let skipped = stations.len().saturating_sub(kept.len());
@@ -373,6 +372,31 @@ mod tests {
             "status": {"type": "Property", "value": "working", "observedAt": at},
         });
         with(base, extra)
+    }
+
+    /// T-7247: `last_reported` as the chrono build wrote it (RFC 3339, UTC, `Z`, whole
+    /// seconds, the fraction dropped), pinned before the move to jiff.
+    #[test]
+    fn last_reported_keeps_the_chrono_wire_format() {
+        let cases = [
+            ("2026-10-23T08:00:00Z", Some("2026-10-23T08:00:00Z")),
+            (
+                "2026-10-23T08:00:00.999999999Z",
+                Some("2026-10-23T08:00:00Z"),
+            ),
+            ("2026-03-29T03:30:00.5+03:00", Some("2026-03-29T00:30:00Z")),
+            ("2026-10-25T03:59:59-01:30", Some("2026-10-25T05:29:59Z")),
+            ("2026-10-23t08:00:00z", Some("2026-10-23T08:00:00Z")),
+            ("2026-10-23 08:00:00+00:00", Some("2026-10-23T08:00:00Z")),
+            ("2026-10-23T08:00Z", None),
+            ("2026-10-23T08:00:00", None),
+            ("2026-10-23T08:00:00+0200", None),
+            ("2026-02-30T08:00:00Z", None),
+        ];
+        for (observed, want) in cases {
+            let entity = json!({"availableBikeNumber": {"type": "Property", "value": 1, "observedAt": observed}});
+            assert_eq!(reported(&entity).map(stamp).as_deref(), want, "{observed}");
+        }
     }
 
     #[test]

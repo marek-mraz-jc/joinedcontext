@@ -9,7 +9,7 @@ use antares_api::policy::{
     Decision, Filter, Operation, Rule, StoredImage, Warning, FILTERABLE, NAME_READS, WHOLE_TENANT,
     WRITE_BY_ID,
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -61,7 +61,7 @@ pub fn decide(
     table: Option<&Table>,
     caller: &Caller,
     op: &Operation<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Decision {
     let decision = decided(table, caller, op, now);
     let (Decision::Deny(reason), Caller::Platform(platform), Some(table)) =
@@ -122,12 +122,7 @@ fn probe_types(p: &Policy) -> Vec<String> {
 }
 
 /// [`decide`] before a write by id is answered as absent.
-fn decided(
-    table: Option<&Table>,
-    caller: &Caller,
-    op: &Operation<'_>,
-    now: DateTime<Utc>,
-) -> Decision {
+fn decided(table: Option<&Table>, caller: &Caller, op: &Operation<'_>, now: Timestamp) -> Decision {
     let platform = match caller {
         Caller::Internal => {
             return if ["5.9.", "5.10.", "5.11."]
@@ -313,7 +308,7 @@ pub fn probe(
     table: Option<&Table>,
     caller: &Caller,
     op: &Operation<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Decision {
     let (Caller::Platform(platform), Some(table)) = (caller, table) else {
         return decide(table, caller, op, now);
@@ -362,7 +357,7 @@ pub fn probe(
 pub fn held<'t>(
     table: &'t Table,
     caller: &'t Platform,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> impl Iterator<Item = &'t Policy> {
     table
         .policies
@@ -478,7 +473,7 @@ fn unconditional_whole(p: &Policy) -> bool {
 /// may define a term for any Attribute, so only a caller who may query every
 /// Entity whole, and is prohibited none, sees the tenant's. Anyone else gets
 /// a narrowing with one rule that shows nothing: the core `@context` alone.
-fn names(table: &Table, caller: &Platform, now: DateTime<Utc>) -> Decision {
+fn names(table: &Table, caller: &Platform, now: Timestamp) -> Decision {
     let query = || held(table, caller, now).filter(|p| p.clauses.contains("5.7.2"));
     if !query().any(|p| p.prohibit) && query().any(|p| !p.prohibit && unconditional_whole(p)) {
         return Decision::Allow;
@@ -859,7 +854,7 @@ mod tests {
             body,
             ..Operation::new(clause)
         };
-        decide(Some(table), &caller(), &op, Utc::now())
+        decide(Some(table), &caller(), &op, Timestamp::now())
     }
 
     fn iri(name: &str) -> String {
@@ -887,7 +882,7 @@ mod tests {
             restricted,
             ..Platform::default()
         });
-        decide(Some(table), &caller, &op, Utc::now())
+        decide(Some(table), &caller, &op, Timestamp::now())
     }
 
     /// T-3729: a prohibition naming no type covers a typed operation, and
@@ -922,13 +917,17 @@ mod tests {
                 types: &types,
                 ..Operation::new(clause)
             };
-            let asked = decide(Some(&t), &read_only, &op, Utc::now());
-            let offered = probe(Some(&t), &read_only, &op, Utc::now());
+            let asked = decide(Some(&t), &read_only, &op, Timestamp::now());
+            let offered = probe(Some(&t), &read_only, &op, Timestamp::now());
             if asked == Decision::Deny(READ_ONLY.into()) {
                 assert_eq!(offered, asked, "{clause}");
                 refused.push(clause);
             } else {
-                assert_eq!(asked, decide(Some(&t), &full, &op, Utc::now()), "{clause}");
+                assert_eq!(
+                    asked,
+                    decide(Some(&t), &full, &op, Timestamp::now()),
+                    "{clause}"
+                );
             }
         }
         let read: Vec<&str> = CLAUSES.into_iter().filter(|c| reads(c)).collect();
@@ -941,7 +940,7 @@ mod tests {
         // a read-only caller with no rule document is refused a write for being read-only
         let op = Operation::new("5.6.1");
         assert_eq!(
-            decide(None, &read_only, &op, Utc::now()),
+            decide(None, &read_only, &op, Timestamp::now()),
             Decision::Deny(READ_ONLY.into())
         );
         Ok(())
@@ -1261,7 +1260,7 @@ mod tests {
             q: q.as_ref(),
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Utc::now()) else {
+        let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Timestamp::now()) else {
             return Err("a read by selector is a filter".into());
         };
         Ok(f.warning.as_ref().map(|w| w.texts().join("; ")))
@@ -1324,7 +1323,7 @@ mod tests {
             q: Some(&q),
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = decide(Some(&whole), &caller(), &op, Utc::now()) else {
+        let Decision::Filter(f) = decide(Some(&whole), &caller(), &op, Timestamp::now()) else {
             return Err("a read by selector is a filter".into());
         };
         assert_eq!(f.warning, None);
@@ -1362,7 +1361,7 @@ mod tests {
                 q: Some(&q),
                 ..Operation::new("5.7.2")
             };
-            let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Utc::now()) else {
+            let Decision::Filter(f) = decide(Some(&t), &caller(), &op, Timestamp::now()) else {
                 return Err("a read narrowed by an Attribute is a filter".into());
             };
             assert_eq!(f.omit_by_type.get(&iri("Car")), Some(&vec![iri("colour")]));
@@ -1370,8 +1369,12 @@ mod tests {
             assert_eq!(f.warning.is_some(), warned);
         }
         // a read naming no type loses it too, and is not refused
-        let Decision::Filter(f) = decide(Some(&t), &caller(), &Operation::new("5.7.2"), Utc::now())
-        else {
+        let Decision::Filter(f) = decide(
+            Some(&t),
+            &caller(),
+            &Operation::new("5.7.2"),
+            Timestamp::now(),
+        ) else {
             return Err("an untyped read narrowed by an Attribute is a filter".into());
         };
         assert_eq!(f.omit_by_type.len(), 1);
@@ -1417,7 +1420,7 @@ mod tests {
                 stored,
                 ..Operation::new(clause)
             };
-            let d = decide(Some(&t), &caller(), &op, Utc::now());
+            let d = decide(Some(&t), &caller(), &op, Timestamp::now());
             assert_eq!(d == Decision::Allow, allowed, "{clause} {attrs:?} {d:?}");
         }
         Ok(())
