@@ -199,7 +199,7 @@ impl SpaceRetention {
 fn date(secs: u64) -> String {
     i64::try_from(secs)
         .ok()
-        .and_then(|secs| jc_time::TimestampTz::from_second(secs))
+        .and_then(jc_time::TimestampTz::from_second)
         .map(|at| at.0.strftime("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| secs.to_string())
 }

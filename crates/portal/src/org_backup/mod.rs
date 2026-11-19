@@ -1102,8 +1102,9 @@ async fn prune(
     bucket: &s3::Bucket,
     target: &Target,
 ) -> Result<usize, ApiError> {
-    let cutoff = (jc_time::TimestampTz::now() - jiff::SignedDuration::from_hours(24 * i64::from(target.keep_days)))
-        .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
+    let cutoff = (jc_time::TimestampTz::now()
+        - jiff::SignedDuration::from_hours(24 * i64::from(target.keep_days)))
+    .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
     let unavailable = |e: s3::S3Error| ApiError::Unavailable(e.to_string());
     let current = bucket
         .versions(http, &target.folder()?)

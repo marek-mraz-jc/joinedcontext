@@ -21,7 +21,7 @@ use jc_core::envelope::Kind as _;
 use jc_core::kinds::delegation_policy::{validate_kind_verbs, verbs_allow};
 use jc_core::kinds::{AboveCeiling, ConnectorVerb, DelegationPolicySpec, KindVerbs, Segment};
 
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::error::ApiError;
 use crate::ops::Operation;
 use crate::permissions::ORG_NAMESPACE;
@@ -668,7 +668,9 @@ impl Ceiling {
         if connector.writes && !self.writes() {
             marks.push("writes".to_owned());
         }
-        if connector.expires_at > connector.granted_at + jiff::SignedDuration::from_hours(24 * self.max_days()) {
+        if connector.expires_at
+            > connector.granted_at + jiff::SignedDuration::from_hours(24 * self.max_days())
+        {
             marks.push(format!("expiry: at most {} days", self.max_days()));
         }
         for client in &connector.allowed_clients {
@@ -2195,7 +2197,9 @@ impl ConnectorStore {
                     .0
                     .iter_mut()
                     .find(|r| r.id == id && r.owner == owner && r.revoked_at.is_none());
-                Ok(found.map(|r| r.revoked_at = Some(TimestampTz::now())).is_some())
+                Ok(found
+                    .map(|r| r.revoked_at = Some(TimestampTz::now()))
+                    .is_some())
             }
         }
     }
@@ -2231,7 +2235,7 @@ impl ConnectorStore {
             }
             Inner::Memory(rows) => {
                 let rows = Self::memory(rows);
-                let since = now - jiff::SignedDuration::from_hours(24 * 1);
+                let since = now - jiff::SignedDuration::from_hours(24);
                 let mut records: Vec<&Record> = rows.0.iter().rev().collect();
                 records.sort_by_key(|r| r.revoked_at.is_some());
                 Ok(records
@@ -2427,7 +2431,7 @@ pub(crate) mod tests {
                 kinds: None,
                 writes: false,
                 autonomous: false,
-                expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1),
+                expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
                 allowed_clients: vec![],
                 pending: false,
                 above: vec![],
@@ -3787,11 +3791,15 @@ pub(crate) mod tests {
         // A project the policy does not list is refused at the call.
         assert!(ceiling.admits(&live, get, "skolstvo", &counters).is_err());
         // The door: a client the policy does not list, and a connector older than its maxExpiry.
-        assert!(ceiling.door(&live, "mcp-local", TimestampTz::now()).is_err());
+        assert!(ceiling
+            .door(&live, "mcp-local", TimestampTz::now())
+            .is_err());
         let mut old = live.clone();
         old.created_at = TimestampTz::now() - jiff::SignedDuration::from_hours(24 * 91);
         old.granted_at = old.created_at;
-        let why = ceiling.door(&old, CLAUDE, TimestampTz::now()).expect_err("too old");
+        let why = ceiling
+            .door(&old, CLAUDE, TimestampTz::now())
+            .expect_err("too old");
         assert!(why.contains("90 days"), "{why}");
         // JC2-45: an edit judged against the ceiling today renews it; its age counts from there.
         let mut renewed = old.clone();

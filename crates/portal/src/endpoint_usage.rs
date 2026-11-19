@@ -11,7 +11,6 @@ use jiff::civil;
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -164,7 +163,10 @@ pub struct Stored {
 
 /// The `days` days ending with `to`, oldest first.
 pub fn window(to: civil::Date, days: i64) -> (civil::Date, civil::Date) {
-    (to - jiff::SignedDuration::from_hours(24 * days.clamp(1, MAX_DAYS) - 1), to)
+    (
+        to - jiff::SignedDuration::from_hours(24 * (days.clamp(1, MAX_DAYS) - 1)),
+        to,
+    )
 }
 
 /// The first and last day of `month` (`YYYY-MM`); `None` for anything else.
@@ -256,7 +258,11 @@ impl UsageStore {
 
     /// Adds `rows` and drops what is older than [`KEEP_DAYS`] before `today`, project by project
     /// in its key (STO-07); the calls of a project with no tenancy key are not kept.
-    pub async fn add(&self, rows: BTreeMap<Key, u64>, today: civil::Date) -> Result<(), sqlx::Error> {
+    pub async fn add(
+        &self,
+        rows: BTreeMap<Key, u64>,
+        today: civil::Date,
+    ) -> Result<(), sqlx::Error> {
         let oldest = today - jiff::SignedDuration::from_hours(24 * KEEP_DAYS);
         let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
@@ -577,7 +583,7 @@ mod tests {
                 "person".to_owned(),
             )
         };
-        let old = today - jiff::SignedDuration::from_hours(24 * KEEP_DAYS + 1);
+        let old = today - jiff::SignedDuration::from_hours(24 * (KEEP_DAYS + 1));
         store
             .add(BTreeMap::from([(key(today), 2), (key(old), 9)]), today)
             .await

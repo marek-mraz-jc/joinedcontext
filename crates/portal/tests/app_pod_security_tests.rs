@@ -177,7 +177,7 @@ fn build(class: Class) -> Record {
         requested_by: None,
         state: "pending".into(),
         expires_at: None,
-        created_at: chrono::Utc::now(),
+        created_at: jc_time::TimestampTz::now(),
         started_at: None,
         finished_at: None,
         digest: None,

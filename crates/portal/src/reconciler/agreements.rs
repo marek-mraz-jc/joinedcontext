@@ -23,7 +23,6 @@
 
 use std::collections::BTreeMap;
 
-use jc_time::TimestampTz;
 use jc_core::kinds::{
     AgreementRole, AgreementState, DataAgreementSpec, DataOfferSpec, Operation, OperationGroup,
     OperationRef, PolicySpec, Principal, PrincipalKind, Validity,

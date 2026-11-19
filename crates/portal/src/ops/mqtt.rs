@@ -280,7 +280,6 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
     use crate::api::mqtt_captured::CapturedMessage;
-    use jc_time::TimestampTz;
 
     fn message(payload: &str, encoding: &'static str) -> CapturedMessage {
         CapturedMessage {

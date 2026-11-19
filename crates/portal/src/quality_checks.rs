@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use jc_time::TimestampTz;
 use jc_core::kinds::QualityRule;
+use jc_time::TimestampTz;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -205,8 +205,7 @@ impl Readings {
         }
         let readings = Arc::clone(self);
         tokio::spawn(async move {
-            let mut tick =
-                tokio::time::interval(HOURLY.unsigned_abs());
+            let mut tick = tokio::time::interval(HOURLY.unsigned_abs());
             loop {
                 tick.tick().await;
                 if let Err(err) = readings.read().await {
@@ -325,7 +324,8 @@ mod tests {
     use super::*;
 
     fn at(hours: i64) -> TimestampTz {
-        "2026-10-12T00:00:00Z".parse::<TimestampTz>().unwrap() + jiff::SignedDuration::from_hours(hours)
+        "2026-10-12T00:00:00Z".parse::<TimestampTz>().unwrap()
+            + jiff::SignedDuration::from_hours(hours)
     }
 
     fn reading(hours: i64, counts: &[(&str, &str, &str, f64)]) -> Reading {

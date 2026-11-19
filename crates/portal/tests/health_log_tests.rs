@@ -3,7 +3,7 @@
 //! Runs when `JC_PORTAL_TEST_DATABASE_URL` points at a PostgreSQL the test may write to; skips
 //! otherwise.
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::health_log::{Finding, HealthStore, Kind, Status, Text, KEEP};
 use joinedcontext_portal::state::AppState;
@@ -18,7 +18,7 @@ fn finding(name: &str, status: Status) -> Finding {
     )
 }
 
-fn at(text: &str) -> DateTime<Utc> {
+fn at(text: &str) -> TimestampTz {
     text.parse().expect("a time")
 }
 
@@ -52,9 +52,9 @@ async fn the_postgres_log_keeps_since_recovers_and_bounds_its_history() {
         )
     };
     run(t0, Status::Ok).await.expect("record");
-    let t1 = t0 + Duration::minutes(2);
+    let t1 = t0 + jiff::SignedDuration::from_mins(2);
     run(t1, Status::Error).await.expect("record");
-    let t2 = t1 + Duration::minutes(2);
+    let t2 = t1 + jiff::SignedDuration::from_mins(2);
     store
         .record(t2, vec![finding("events", Status::Error)])
         .await
@@ -81,7 +81,7 @@ async fn the_postgres_log_keeps_since_recovers_and_bounds_its_history() {
         Some("events")
     );
 
-    let t3 = t2 + Duration::minutes(2);
+    let t3 = t2 + jiff::SignedDuration::from_mins(2);
     store
         .record(t3, vec![finding("events", Status::Ok)])
         .await
@@ -93,7 +93,7 @@ async fn the_postgres_log_keeps_since_recovers_and_bounds_its_history() {
     );
     assert_eq!(recovered.history.len(), 3);
 
-    let later = t0 + KEEP + Duration::days(1);
+    let later = t0 + KEEP + jiff::SignedDuration::from_hours(24);
     store
         .record(later, vec![finding("events", Status::Ok)])
         .await

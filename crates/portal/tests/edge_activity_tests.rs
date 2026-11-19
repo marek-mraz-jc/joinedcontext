@@ -22,8 +22,8 @@ use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
-use chrono::{DateTime, Duration, Utc};
 use http_body_util::BodyExt;
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use wiremock::matchers::{method as http_method, path as http_path};
@@ -107,7 +107,7 @@ fn event_at(
     kind: &str,
     severity: &str,
     object: &str,
-    time: DateTime<Utc>,
+    time: TimestampTz,
 ) -> ActivityEvent {
     ActivityEvent {
         time,
@@ -170,7 +170,7 @@ async fn a_caller_who_is_no_member_learns_neither_the_activity_nor_that_the_proj
             "access.denied",
             "error",
             "endpoints/public-air",
-            Utc::now(),
+            TimestampTz::now(),
         )])
         .await
         .expect("appended");
@@ -236,7 +236,7 @@ async fn every_value_the_list_reads_is_this_routes_own_and_the_page_size_is_clam
                 "access.denied",
                 "warning",
                 "endpoints/public-air",
-                Utc::now() - Duration::seconds(n),
+                TimestampTz::now() - jiff::SignedDuration::from_secs(n),
             )
         })
         .collect();
@@ -300,7 +300,7 @@ async fn every_value_the_list_reads_is_this_routes_own_and_the_page_size_is_clam
 async fn a_cursor_pages_only_the_project_it_is_used_on() {
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None).with_mirror(mirror());
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let mut events = Vec::new();
     for (project, kind) in [(PROJECT, "access.denied"), (ELSEWHERE, "pipeline.error")] {
         for n in 0..4 {
@@ -309,7 +309,7 @@ async fn a_cursor_pages_only_the_project_it_is_used_on() {
                 kind,
                 "warning",
                 "endpoints/public-air",
-                now - Duration::seconds(n),
+                now - jiff::SignedDuration::from_secs(n),
             ));
         }
     }
@@ -364,7 +364,7 @@ async fn a_cursor_pages_only_the_project_it_is_used_on() {
 async fn a_walk_through_the_pages_repeats_nothing_and_skips_nothing() {
     let config = Config::for_tests();
     let state = AppState::new(config.clone(), None).with_mirror(mirror());
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let written: Vec<ActivityEvent> = (0..7)
         .map(|n| {
             event_at(
@@ -372,7 +372,7 @@ async fn a_walk_through_the_pages_repeats_nothing_and_skips_nothing() {
                 "access.denied",
                 "warning",
                 &format!("endpoints/e{n}"),
-                now - Duration::seconds(n),
+                now - jiff::SignedDuration::from_secs(n),
             )
         })
         .collect();
@@ -419,7 +419,7 @@ async fn a_walk_through_the_pages_repeats_nothing_and_skips_nothing() {
 #[tokio::test]
 async fn a_list_is_one_projects_events_whatever_the_filter_asks_for() {
     let state = AppState::new(Config::for_tests(), None).with_mirror(mirror());
-    let now = Utc::now();
+    let now = TimestampTz::now();
     state
         .activity
         .append(&[
@@ -452,7 +452,7 @@ async fn a_list_is_one_projects_events_whatever_the_filter_asks_for() {
             ..filter_with(50)
         },
         ActivityFilter {
-            since: Some(now - Duration::days(1)),
+            since: Some(now - jiff::SignedDuration::from_hours(24)),
             ..filter_with(50)
         },
     ] {
@@ -476,8 +476,8 @@ async fn a_list_is_one_projects_events_whatever_the_filter_asks_for() {
 #[tokio::test]
 async fn a_severity_is_a_floor_and_every_other_condition_is_exact() {
     let state = AppState::new(Config::for_tests(), None).with_mirror(mirror());
-    let now = Utc::now();
-    let older = now - Duration::seconds(10);
+    let now = TimestampTz::now();
+    let older = now - jiff::SignedDuration::from_secs(10);
     state
         .activity
         .append(&[
@@ -607,7 +607,7 @@ async fn a_severity_is_a_floor_and_every_other_condition_is_exact() {
     );
     assert_eq!(
         count(ActivityFilter {
-            since: Some(older + Duration::nanoseconds(1)),
+            since: Some(older + jiff::SignedDuration::from_nanos(1)),
             ..filter_with(50)
         })
         .await,
@@ -615,7 +615,7 @@ async fn a_severity_is_a_floor_and_every_other_condition_is_exact() {
     );
     assert_eq!(
         count(ActivityFilter {
-            since: Some(now + Duration::days(1)),
+            since: Some(now + jiff::SignedDuration::from_hours(24)),
             ..filter_with(50)
         })
         .await,
@@ -691,7 +691,7 @@ async fn the_live_tail_is_the_same_door_as_the_list_and_is_never_cached() {
 async fn an_event_of_another_project_never_reaches_this_projects_tail() {
     let state = AppState::new(Config::for_tests(), None).with_mirror(mirror());
     let mut tail = state.activity_events.subscribe(PROJECT).await;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     state
         .activity
         .append(&[
@@ -1078,7 +1078,7 @@ async fn a_reader_bound_to_one_space_follows_only_that_spaces_activity() {
             kind,
             "info",
             "endpoints/x",
-            Utc::now() - Duration::minutes(minutes),
+            TimestampTz::now() - jiff::SignedDuration::from_mins(minutes),
         )
     };
 
@@ -1192,7 +1192,7 @@ async fn a_removed_binding_ends_the_live_tail() {
             "project.changed",
             "info",
             "endpoints/x",
-            Utc::now(),
+            TimestampTz::now(),
         )])
         .await
         .expect("appended");

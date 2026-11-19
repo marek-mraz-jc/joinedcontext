@@ -9,9 +9,9 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use jc_time::TimestampTz;
 use jc_core::kinds::{MqttBrokerSpec, RoleBinding, ServiceAccountSpec};
 use jc_core::mqtt::Grant;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -94,7 +94,7 @@ pub fn access(
             subscribe: held.role.subscribe.clone(),
             legacy: held.legacy,
             bound: held.bound,
-            until: held.until.map(crate::time_shim::utc),
+            until: held.until,
         })
         .collect();
     let names_this_broker = |role: &str| {
@@ -107,16 +107,8 @@ pub fn access(
         .filter(|binding| names_this_broker(&binding.role) && !binding.in_force(now))
         .map(|binding| OutOfWindow {
             grant: binding.role.clone(),
-            not_before: binding
-                .validity
-                .as_ref()
-                .and_then(|v| v.not_before)
-                .map(crate::time_shim::utc),
-            not_after: binding
-                .validity
-                .as_ref()
-                .and_then(|v| v.not_after)
-                .map(crate::time_shim::utc),
+            not_before: binding.validity.as_ref().and_then(|v| v.not_before),
+            not_after: binding.validity.as_ref().and_then(|v| v.not_after),
         })
         .collect();
     Access {

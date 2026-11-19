@@ -124,7 +124,11 @@ pub fn wait_until(day: &[TimestampTz], week: &[TimestampTz]) -> Option<Timestamp
         (held.len() >= limit).then(|| held[held.len() - limit] + window)
     };
     let by_day = free(day, PER_INSTANCE_DAY, jiff::SignedDuration::from_hours(24));
-    let by_week = free(week, PER_DOMAIN_WEEK, jiff::SignedDuration::from_hours(24 * 7));
+    let by_week = free(
+        week,
+        PER_DOMAIN_WEEK,
+        jiff::SignedDuration::from_hours(24 * 7),
+    );
     by_day.max(by_week)
 }
 
@@ -419,7 +423,7 @@ impl OrgHosts {
         .await?;
         let at = |held: Vec<i64>| {
             held.into_iter()
-                .filter_map(|seconds| jc_time::TimestampTz::from_second(seconds))
+                .filter_map(jc_time::TimestampTz::from_second)
                 .collect()
         };
         Ok((at(day), at(week)))

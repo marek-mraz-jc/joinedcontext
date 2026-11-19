@@ -350,7 +350,7 @@ async fn a_queued_build_gets_one_job_its_own_cache_and_a_token_only_its_hash_is_
     assert_eq!(build.state, "running");
     assert!(build
         .expires_at
-        .is_some_and(|at| at > chrono::Utc::now() + chrono::Duration::minutes(20)));
+        .is_some_and(|at| at > jc_time::TimestampTz::now() + jiff::SignedDuration::from_mins(20)));
     only_what_the_role_grants(&server).await;
 }
 
@@ -456,11 +456,15 @@ async fn a_second_build_waits_while_one_runs_and_one_app_never_runs_two() {
     )
     .await
     .expect("queued");
-    assert!(
-        build_records::start(&db, PROJECT, first, "t", chrono::Duration::minutes(25))
-            .await
-            .expect("started")
-    );
+    assert!(build_records::start(
+        &db,
+        PROJECT,
+        first,
+        "t",
+        jiff::SignedDuration::from_mins(25)
+    )
+    .await
+    .expect("started"));
     let waiting = build_records::enqueue(
         &db,
         PROJECT,
@@ -590,9 +594,15 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, PROJECT, failed, "t1", chrono::Duration::minutes(25))
-        .await
-        .expect("s");
+    build_records::start(
+        &db,
+        PROJECT,
+        failed,
+        "t1",
+        jiff::SignedDuration::from_mins(25),
+    )
+    .await
+    .expect("s");
     let expired = build_records::enqueue(
         &db,
         PROJECT,
@@ -604,9 +614,15 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, PROJECT, expired, "t2", chrono::Duration::seconds(-1))
-        .await
-        .expect("s");
+    build_records::start(
+        &db,
+        PROJECT,
+        expired,
+        "t2",
+        jiff::SignedDuration::from_secs(-1),
+    )
+    .await
+    .expect("s");
     // A build the Portal was verifying when it stopped.
     let stuck = build_records::enqueue(
         &db,
@@ -619,9 +635,15 @@ async fn a_build_whose_job_failed_or_whose_token_expired_fails_with_the_reason()
     )
     .await
     .expect("q");
-    build_records::start(&db, PROJECT, stuck, "t3", chrono::Duration::minutes(-31))
-        .await
-        .expect("s");
+    build_records::start(
+        &db,
+        PROJECT,
+        stuck,
+        "t3",
+        jiff::SignedDuration::from_mins(-31),
+    )
+    .await
+    .expect("s");
     assert!(build_records::freeze(&db, PROJECT, stuck)
         .await
         .expect("frozen"));

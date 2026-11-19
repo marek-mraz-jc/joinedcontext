@@ -439,10 +439,7 @@ impl StreamDeployer {
     /// a scheduled one that never did runs on its first plan instead of at its next clock
     /// (T-4421), and one that missed its due time while no Portal held it runs under that time
     /// (T-5778).
-    pub fn ran(
-        &self,
-        ran: std::collections::HashMap<(String, String), jc_time::TimestampTz>,
-    ) {
+    pub fn ran(&self, ran: std::collections::HashMap<(String, String), jc_time::TimestampTz>) {
         self.queue
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -482,7 +479,10 @@ impl StreamDeployer {
         self.queue
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .run_now(&(project.to_owned(), name.to_owned()), jc_time::TimestampTz::now())
+            .run_now(
+                &(project.to_owned(), name.to_owned()),
+                jc_time::TimestampTz::now(),
+            )
     }
 
     /// Renders every stream with its own pipeline's identity (PL-19): set once the runner carries

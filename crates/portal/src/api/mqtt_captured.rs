@@ -11,9 +11,9 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine;
-use jc_time::TimestampTz;
 use jc_core::kinds::mqtt_broker::MqttMode;
 use jc_core::kinds::MqttBrokerSpec;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
@@ -167,7 +167,13 @@ pub(crate) async fn get_captured(
     let (messages, truncated) = if capture.is_some() {
         state
             .mqtt_capture
-            .read(&project, &name, topic.as_deref(), limit, jc_time::TimestampTz::now())
+            .read(
+                &project,
+                &name,
+                topic.as_deref(),
+                limit,
+                jc_time::TimestampTz::now(),
+            )
             .await
             .map_err(unavailable)?
     } else {

@@ -52,7 +52,8 @@ struct Row {
 }
 
 fn utc(at: OffsetDateTime) -> TimestampTz {
-    jiff::Timestamp::from_nanosecond(at.unix_timestamp_nanos()).map_or_else(|_| TimestampTz::default(), TimestampTz)
+    jiff::Timestamp::from_nanosecond(at.unix_timestamp_nanos())
+        .map_or_else(|_| TimestampTz::default(), TimestampTz)
 }
 
 impl From<Row> for Record {

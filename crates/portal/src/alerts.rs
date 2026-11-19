@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::resource::Phase;
 use crate::store::Mirror;
 
@@ -1385,13 +1385,15 @@ impl Evaluator {
         if !digests.is_empty() {
             let day = self
                 .store
-                .incidents_since(Some(now - jiff::SignedDuration::from_hours(24 * 1)))
+                .incidents_since(Some(now - jiff::SignedDuration::from_hours(24)))
                 .await?;
             for held in digests {
                 let muted = held.muted_until.is_some_and(|until| until > now);
                 if !muted {
                     for (incident, recovered) in &day {
-                        let since = held.digest_at.unwrap_or(now - jiff::SignedDuration::from_hours(24 * 1));
+                        let since = held
+                            .digest_at
+                            .unwrap_or(now - jiff::SignedDuration::from_hours(24));
                         let covered = covers_key(&held.subscription, &incident.key, &pipelines);
                         if incident.opened_at > since
                             && covered
@@ -1641,7 +1643,10 @@ mod tests {
             None,
             Default::default(),
         ));
-        let run = agent_run("r1", &rfc3339(TimestampTz::now() - jiff::SignedDuration::from_mins(10)));
+        let run = agent_run(
+            "r1",
+            &rfc3339(TimestampTz::now() - jiff::SignedDuration::from_mins(10)),
+        );
         agents.create_run(&run).await.unwrap();
         for _ in 0..crate::api::agent_activity::REFUSAL_SPIKE {
             agents
@@ -1693,8 +1698,14 @@ mod tests {
                 .expect("kept");
         }
         evaluator.run(now).await.unwrap();
-        evaluator.run(now + jiff::SignedDuration::from_mins(1)).await.unwrap();
-        evaluator.run(now + jiff::SignedDuration::from_hours(2)).await.unwrap();
+        evaluator
+            .run(now + jiff::SignedDuration::from_mins(1))
+            .await
+            .unwrap();
+        evaluator
+            .run(now + jiff::SignedDuration::from_hours(2))
+            .await
+            .unwrap();
 
         let told = store.notices(&["jana".into()]).await.unwrap();
         assert_eq!(

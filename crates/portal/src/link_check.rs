@@ -20,8 +20,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration as StdDuration;
 
-use jc_time::TimestampTz;
 use futures_util::stream::{self, StreamExt};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;

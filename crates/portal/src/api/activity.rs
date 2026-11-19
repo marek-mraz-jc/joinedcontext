@@ -58,14 +58,13 @@ pub struct ActivityQuery {
 impl ActivityQuery {
     /// The filter this query names; the operation `jc_activity_list` builds the same one (T-0840).
     pub fn into_filter(self) -> Result<ActivityFilter, ApiError> {
-        let since = match &self.since {
-            Some(text) => Some(
-                jc_time::parse_rfc3339(text).map(TimestampTz).ok_or_else(|| {
-                    ApiError::BadRequest(format!("'{text}' is not an RFC 3339 instant"))
-                })?,
-            ),
-            None => None,
-        };
+        let since =
+            match &self.since {
+                Some(text) => Some(jc_time::parse_rfc3339(text).map(TimestampTz).ok_or_else(
+                    || ApiError::BadRequest(format!("'{text}' is not an RFC 3339 instant")),
+                )?),
+                None => None,
+            };
         if let Some(severity) = &self.severity {
             if !["info", "warning", "error"].contains(&severity.as_str()) {
                 return Err(ApiError::BadRequest(format!(

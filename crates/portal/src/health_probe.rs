@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
-use jc_time::TimestampTz;
 use futures_util::stream::{self, StreamExt};
+use jc_time::TimestampTz;
 use url::Url;
 
 use crate::health_log::{Finding, Kind, Status, Text};
@@ -585,7 +585,8 @@ mod tests {
         assert_eq!(check(&red, "odata"), Some(Status::Ok));
         assert_eq!(red.len(), 2, "mcp is off: {red:?}");
         ngsi.store(200, Ordering::SeqCst);
-        let (kept, _) = logged(probes.findings(&mirror, t0 + jiff::SignedDuration::from_mins(1))).await;
+        let (kept, _) =
+            logged(probes.findings(&mirror, t0 + jiff::SignedDuration::from_mins(1))).await;
         assert_eq!(
             check(&kept, "ngsi-ld"),
             Some(Status::Error),

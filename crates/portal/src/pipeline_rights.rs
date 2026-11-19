@@ -18,8 +18,8 @@ use crate::error::ApiError;
 use crate::permissions::{effective, Effective};
 use crate::state::AppState;
 use crate::store::Mirror;
-use jc_time::TimestampTz;
 use jc_core::kinds::{PipelineSpec, Verb};
+use jc_time::TimestampTz;
 use serde_json::Value;
 
 /// `Ok` unless `manifest` is a Pipeline of `project` that reads or writes something `identity`
@@ -69,7 +69,13 @@ pub fn missing(
     if manifest.get("kind").and_then(Value::as_str) != Some("Pipeline") {
         return Vec::new();
     }
-    let effective = effective(mirror, bootstrap_group, identity, project, TimestampTz::now());
+    let effective = effective(
+        mirror,
+        bootstrap_group,
+        identity,
+        project,
+        TimestampTz::now(),
+    );
     if effective.bootstrap {
         return Vec::new();
     }

@@ -73,7 +73,8 @@ fn ago(raw: &str) -> Option<jiff::SignedDuration> {
                         'M' => 60,
                         _ => 1,
                     };
-                    total = total.checked_add(jiff::SignedDuration::from_secs(n.checked_mul(unit)?))?;
+                    total =
+                        total.checked_add(jiff::SignedDuration::from_secs(n.checked_mul(unit)?))?;
                     // the range chrono's TimeDelta held (milliseconds in an i64), as the
                     // engine's own reading still refuses past it
                     if total.as_secs() > i64::MAX / 1000 {

@@ -255,7 +255,10 @@ impl Bucket {
             None => self.endpoint.host_str().unwrap_or_default().to_owned(),
         };
         let payload_hash = hex(&Sha256::digest(&body));
-        let amz_date = jc_time::TimestampTz::now().0.strftime("%Y%m%dT%H%M%SZ").to_string();
+        let amz_date = jc_time::TimestampTz::now()
+            .0
+            .strftime("%Y%m%dT%H%M%SZ")
+            .to_string();
         let headers = vec![
             ("host".to_owned(), host),
             ("x-amz-content-sha256".to_owned(), payload_hash.clone()),

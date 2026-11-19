@@ -231,8 +231,14 @@ pub fn records_verdict(
     let pipeline = manifest["metadata"]["name"].as_str()?;
     let record = indicator(kpi_step(&spec)?, &target, project, pipeline)?;
     let records = [record];
-    let checked =
-        crate::record_check::check_records(state, project, manifest, &records, jc_time::TimestampTz::now()).ok()?;
+    let checked = crate::record_check::check_records(
+        state,
+        project,
+        manifest,
+        &records,
+        jc_time::TimestampTz::now(),
+    )
+    .ok()?;
     Some(checked.verdict(manifest, &records))
 }
 

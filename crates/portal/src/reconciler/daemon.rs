@@ -2529,7 +2529,10 @@ impl Syncer {
         let Some(sources) = views.last_sources() else {
             return;
         };
-        let now = jc_time::TimestampTz::now().as_second().try_into().unwrap_or(0);
+        let now = jc_time::TimestampTz::now()
+            .as_second()
+            .try_into()
+            .unwrap_or(0);
         self.space_retention
             .observe(&sources.spaces, &sources.brokers, held, now);
         for (tenant, retained) in self.space_retention.due(now) {
@@ -2579,7 +2582,8 @@ impl Syncer {
         if self.organization_groups.is_empty() {
             return;
         }
-        let generated = super::groups::derived_groups(fresh_mirror, projects, jc_time::TimestampTz::now());
+        let generated =
+            super::groups::derived_groups(fresh_mirror, projects, jc_time::TimestampTz::now());
         for groups in &self.organization_groups {
             for outcome in groups.converge_with(fresh_mirror, &generated).await {
                 if let Some(err) = &outcome.error {
@@ -3272,7 +3276,10 @@ impl Syncer {
             return None;
         }
         let legacy = crate::artifact_store::Legacy::new(organization, project)?;
-        let at = jc_time::TimestampTz::now().0.strftime("%Y%m%dT%H%M%SZ").to_string();
+        let at = jc_time::TimestampTz::now()
+            .0
+            .strftime("%Y%m%dT%H%M%SZ")
+            .to_string();
         match crate::artifact_store::move_artifacts(store, key, &legacy, &at).await {
             Ok(moved) => {
                 if moved.copied + moved.superseded > 0 {
@@ -3327,7 +3334,10 @@ impl Syncer {
                     continue;
                 };
                 let name = envelope.metadata.name.clone();
-                match domains.verify(&name, &domain, jc_time::TimestampTz::now()).await {
+                match domains
+                    .verify(&name, &domain, jc_time::TimestampTz::now())
+                    .await
+                {
                     Ok(verification) => {
                         if let Some(status) = envelope.status.as_mut() {
                             status.domain_verification = Some(verification);

@@ -2246,7 +2246,7 @@ mod tests {
             kinds: None,
             writes: false,
             autonomous: false,
-            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1),
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
             allowed_clients: vec![],
             client_is_boundary: false,
             state: "active".into(),

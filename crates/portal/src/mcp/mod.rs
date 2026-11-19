@@ -1139,12 +1139,8 @@ fn grounding(state: &AppState) -> Value {
     grounding_of(&status, jc_time::TimestampTz::now())
 }
 
-fn grounding_of(
-    status: &crate::reconciler::SyncStatus,
-    now: jc_time::TimestampTz,
-) -> Value {
-    let utc =
-        |at: jc_time::TimestampTz| at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
+fn grounding_of(status: &crate::reconciler::SyncStatus, now: jc_time::TimestampTz) -> Value {
+    let utc = |at: jc_time::TimestampTz| at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     let drift = match (&status.last_sync, &status.last_error) {
         (None, _) => "unsynced",
         (Some(_), Some(_)) => "sync-failed",
@@ -1154,7 +1150,7 @@ fn grounding_of(
         "revision": status.revision,
         "syncedAt": status
             .last_sync
-            .and_then(|secs| jc_time::TimestampTz::from_second(secs))
+            .and_then(jc_time::TimestampTz::from_second)
             .map(utc),
         "evaluatedAt": utc(now),
         "drift": drift,
@@ -2271,8 +2267,7 @@ mod tests {
     /// AG-12: the three states of the mirror an answer can be grounded in, each one word.
     #[test]
     fn drift_says_whether_the_answer_may_be_behind_the_repository() {
-        let now =
-            jc_time::TimestampTz::from_second(1_790_000_000).expect("a time");
+        let now = jc_time::TimestampTz::from_second(1_790_000_000).expect("a time");
         let synced = SyncStatus {
             last_sync: Some(1_789_999_940),
             revision: Some("4f2c1ab".into()),

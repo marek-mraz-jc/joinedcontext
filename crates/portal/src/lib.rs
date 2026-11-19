@@ -105,7 +105,6 @@ pub mod store;
 pub mod sync;
 pub mod telemetry;
 pub mod temporal_audit;
-mod time_shim;
 pub mod tools;
 
 /// Name reported by `/api/v1/health` and the process banner.

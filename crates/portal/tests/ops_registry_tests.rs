@@ -1018,10 +1018,10 @@ async fn an_activity_page_stays_under_its_byte_bound_and_next_reads_the_rest() {
         status: None,
     });
     let state = AppState::new(Config::for_tests(), None).with_mirror(mirror);
-    let start = chrono::Utc::now();
+    let start = jc_time::TimestampTz::now();
     let events: Vec<ActivityEvent> = (0..200)
         .map(|n| ActivityEvent {
-            time: start - chrono::Duration::seconds(n),
+            time: start - jiff::SignedDuration::from_secs(n),
             project: "ovzdusie".into(),
             space: None,
             kind: "pipeline.run".into(),

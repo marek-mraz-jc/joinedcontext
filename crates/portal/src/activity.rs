@@ -692,7 +692,7 @@ mod tests {
 
     fn event(kind: &str, severity: &str, minutes: i64) -> ActivityEvent {
         ActivityEvent {
-            time: DateTime::from_timestamp(1_789_000_000 + minutes * 60, 0).expect("a time"),
+            time: TimestampTz::from_second(1_789_000_000 + minutes * 60).expect("a time"),
             project: "helsinki".into(),
             space: Some("air-quality".into()),
             kind: kind.into(),
@@ -853,7 +853,7 @@ mod tests {
     async fn what_is_past_the_retention_window_is_trimmed() {
         let now = TimestampTz::now();
         let mut old = event("config.applied", "info", 0);
-        old.time = now - jiff::SignedDuration::from_hours(24 * RETENTION_DAYS + 1);
+        old.time = now - jiff::SignedDuration::from_hours(24 * (RETENTION_DAYS + 1));
         let mut fresh = event("config.applied", "info", 0);
         fresh.time = now;
         let store = store_with(vec![old, fresh]).await;
@@ -876,7 +876,7 @@ mod tests {
     async fn the_trim_runs_once_an_hour() {
         let now = TimestampTz::now();
         let mut old = event("config.applied", "info", 0);
-        old.time = now - jiff::SignedDuration::from_hours(24 * RETENTION_DAYS + 1);
+        old.time = now - jiff::SignedDuration::from_hours(24 * (RETENTION_DAYS + 1));
         let store = store_with(vec![old.clone()]).await;
 
         let first = store.trim_if_due(now).await.expect("due").expect("trimmed");

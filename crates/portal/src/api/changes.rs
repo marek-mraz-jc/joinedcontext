@@ -592,7 +592,8 @@ async fn standing(
     }
     // A binding names a person by e-mail, or by their Keycloak id since ADR-N-061.
     let writers =
-        crate::permissions::project_members(&state.mirror, project, jc_time::TimestampTz::now()).writers;
+        crate::permissions::project_members(&state.mirror, project, jc_time::TimestampTz::now())
+            .writers;
     let writer = match pr.author_email.as_deref().map(str::trim) {
         Some(email) if !email.is_empty() => {
             writers.contains(&email.to_ascii_lowercase())

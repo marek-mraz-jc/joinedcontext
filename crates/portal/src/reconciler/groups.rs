@@ -12,8 +12,8 @@
 use crate::config::ClientAuth;
 use std::collections::{BTreeMap, BTreeSet};
 
-use jc_time::TimestampTz;
 use jc_core::kinds::GroupSpec;
+use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

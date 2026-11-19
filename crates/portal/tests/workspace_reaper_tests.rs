@@ -7,8 +7,8 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
 use common::{forge, state_on, REPO};
+use jc_time::TimestampTz;
 use joinedcontext_portal::ops::workspaces::{reap_expired_at, Opening, Scope};
 use joinedcontext_portal::state::AppState;
 use wiremock::matchers::{body_string_contains, method, path};
@@ -64,7 +64,11 @@ async fn deletions(server: &MockServer, name: &str) -> usize {
 #[tokio::test]
 async fn an_expired_workspace_loses_its_branch_and_its_record() {
     let (server, state) = world("old", 204).await;
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(reaped, 1, "nothing was reaped");
     assert_eq!(
         deletions(&server, "old").await,
@@ -81,7 +85,7 @@ async fn an_expired_workspace_loses_its_branch_and_its_record() {
 #[tokio::test]
 async fn a_workspace_that_has_not_expired_is_not_touched() {
     let (server, state) = world("fresh", 204).await;
-    let reaped = reap_expired_at(&state, Utc::now()).await;
+    let reaped = reap_expired_at(&state, TimestampTz::now()).await;
     assert_eq!(reaped, 0, "a live workspace was reaped");
     assert_eq!(
         deletions(&server, "fresh").await,
@@ -96,7 +100,11 @@ async fn a_workspace_that_has_not_expired_is_not_touched() {
 #[tokio::test]
 async fn a_forge_that_cannot_be_reached_keeps_the_record_for_the_next_pass() {
     let (server, state) = world("stuck", 500).await;
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(
         reaped, 0,
         "the record was deleted although the branch stands"
@@ -109,7 +117,11 @@ async fn a_forge_that_cannot_be_reached_keeps_the_record_for_the_next_pass() {
     // The next pass finds it again, and a forge that answers takes both away.
     server.reset().await;
     let server = forge_deleting("stuck", server).await;
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(reaped, 1, "the retry did not finish the expiry");
     assert!(state.workspaces.get("stuck").await.unwrap().is_none());
     assert_eq!(deletions(&server, "stuck").await, 1);
@@ -148,7 +160,11 @@ async fn a_branch_that_is_already_gone_still_finishes_the_expiry() {
         })
         .await
         .expect("the workspace opens");
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(reaped, 1, "a record waits for a branch that does not exist");
     assert!(state.workspaces.get("ghost").await.unwrap().is_none());
 }
@@ -182,7 +198,11 @@ async fn one_pass_reaps_every_expired_workspace() {
             .await
             .expect("the workspace opens");
     }
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(reaped, 3, "the pass stopped early");
     assert!(state.workspaces.list(PROJECT).await.unwrap().is_empty());
 }
@@ -207,7 +227,11 @@ async fn a_reaped_copys_name_is_free_again() {
         .await;
     assert!(taken.is_err(), "the name was free while the copy lived");
 
-    reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     state
         .workspaces
         .create(Opening {
@@ -242,7 +266,11 @@ async fn a_copy_whose_preview_is_running_is_reaped_too_and_its_slot_freed() {
         "the slot is held while the copy lives"
     );
 
-    let reaped = reap_expired_at(&state, Utc::now() + Duration::hours(2)).await;
+    let reaped = reap_expired_at(
+        &state,
+        TimestampTz::now() + jiff::SignedDuration::from_hours(2),
+    )
+    .await;
     assert_eq!(reaped, 1, "a copy with a running preview was skipped");
     assert!(
         state.workspaces.previewing().await.unwrap().is_empty(),

@@ -817,7 +817,12 @@ mod tests {
             .is_none());
         assert!(state
             .plans
-            .peek(&id, &probe.identity.subject, "espoo", jc_time::TimestampTz::now())
+            .peek(
+                &id,
+                &probe.identity.subject,
+                "espoo",
+                jc_time::TimestampTz::now()
+            )
             .is_none());
     }
 

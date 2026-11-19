@@ -6,7 +6,7 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 
 use common::{envelope, person, send};
@@ -59,12 +59,13 @@ async fn state() -> AppState {
         "helsinki",
         broker("ingest"),
     ));
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let message = |topic: &str, client: &str, ago: i64, payload: &[u8]| Message {
         topic: topic.to_owned(),
         client_id: Some(client.to_owned()),
-        received_at: now - Duration::seconds(ago),
-        expires_at: now - Duration::seconds(ago) + Duration::hours(1),
+        received_at: now - jiff::SignedDuration::from_secs(ago),
+        expires_at: now - jiff::SignedDuration::from_secs(ago)
+            + jiff::SignedDuration::from_hours(1),
         payload: payload.to_vec(),
     };
     state

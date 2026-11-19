@@ -16,7 +16,7 @@ use sqlx::Row;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 
 /// The view kinds; `map` places the rows by a GeoProperty (T-4884).
 pub const KINDS: [&str; 7] = [

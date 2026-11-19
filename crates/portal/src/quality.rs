@@ -228,11 +228,7 @@ impl Tally {
         }
     }
 
-    pub fn into_quality(
-        self,
-        observed_at: TimestampTz,
-        freshness: Vec<Freshness>,
-    ) -> SpaceQuality {
+    pub fn into_quality(self, observed_at: TimestampTz, freshness: Vec<Freshness>) -> SpaceQuality {
         let mut rules: Vec<RuleCount> = self
             .rules
             .into_iter()
@@ -270,11 +266,7 @@ impl Tally {
 }
 
 /// One type's report from what the run kept of it.
-fn type_quality(
-    entity_type: String,
-    newest: Option<TimestampTz>,
-    tally: TypeTally,
-) -> TypeQuality {
+fn type_quality(entity_type: String, newest: Option<TimestampTz>, tally: TypeTally) -> TypeQuality {
     let TypeTally {
         ids,
         present,

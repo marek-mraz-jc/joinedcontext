@@ -249,7 +249,7 @@ pub async fn mute(
     let until = match mute.duration.as_deref() {
         None => None,
         Some("1h") => Some(now + jiff::SignedDuration::from_hours(1)),
-        Some("1d") => Some(now + jiff::SignedDuration::from_hours(24 * 1)),
+        Some("1d") => Some(now + jiff::SignedDuration::from_hours(24)),
         Some("7d") => Some(now + jiff::SignedDuration::from_hours(24 * 7)),
         // Far enough that a person who chose "forever" never meets it.
         Some("forever") => Some(now + jiff::SignedDuration::from_hours(24 * 365 * 100)),

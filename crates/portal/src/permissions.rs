@@ -5,10 +5,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use jc_time::TimestampTz;
 use jc_core::kinds::{
     Constraint, RoleBindingSpec, RoleScope, RoleSpec, Rule, ServiceAccountSpec, Verb,
 };
+use jc_time::TimestampTz;
 use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -2390,8 +2390,8 @@ pub fn account_access(
         .map(|(index, granted)| {
             let window = granted.validity.clone().unwrap_or_default();
             let state = match (window.not_before, window.not_after) {
-                (Some(from), _) if now < crate::time_shim::utc(from) => GrantState::Pending,
-                (_, Some(to)) if crate::time_shim::utc(to) < now => GrantState::Expired,
+                (Some(from), _) if now < from => GrantState::Pending,
+                (_, Some(to)) if to < now => GrantState::Expired,
                 _ => GrantState::Active,
             };
             let reach = Reach::of(&granted.scope);
@@ -2421,8 +2421,8 @@ pub fn account_access(
                 index,
                 role: granted.role.clone(),
                 scope: reach.map(|reach| reach.name()).unwrap_or_default(),
-                not_before: window.not_before.map(crate::time_shim::utc),
-                not_after: window.not_after.map(crate::time_shim::utc),
+                not_before: window.not_before,
+                not_after: window.not_after,
                 state,
                 rules,
             }
@@ -2603,7 +2603,13 @@ mod tests {
                 groups: Vec::new(),
                 second_factor: false,
             };
-            let grants = effective(&mirror, "portal-approver", &who, "espoo", TimestampTz::now());
+            let grants = effective(
+                &mirror,
+                "portal-approver",
+                &who,
+                "espoo",
+                TimestampTz::now(),
+            );
             assert_eq!(grants.may_read("Endpoint"), reads, "{scope}");
         }
     }
@@ -2647,7 +2653,13 @@ mod tests {
                 groups: Vec::new(),
                 second_factor: false,
             };
-            let grants = effective(&mirror, "portal-approver", &who, "espoo", TimestampTz::now());
+            let grants = effective(
+                &mirror,
+                "portal-approver",
+                &who,
+                "espoo",
+                TimestampTz::now(),
+            );
             assert_eq!(grants.check_converses("espoo").is_ok(), converses, "{role}");
         }
     }
@@ -2852,7 +2864,8 @@ mod tests {
         let ba = person("ba@x.eu", Vec::new());
         let root = person("root@x.eu", vec!["portal-approver".to_owned()]);
         let reads = |who: &Identity, project: &str| {
-            effective(&mirror, "portal-approver", who, project, TimestampTz::now()).may_read_project()
+            effective(&mirror, "portal-approver", who, project, TimestampTz::now())
+                .may_read_project()
         };
         let host = |name: &str| crate::organization_host::OrganizationHost {
             organization: name.to_owned(),
@@ -2866,11 +2879,23 @@ mod tests {
                 reads(&root, "helsinki"),
                 reads(&both, "bratislava"),
                 reads(&root, "bratislava"),
-                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, TimestampTz::now()).bootstrap,
+                effective(
+                    &mirror,
+                    "portal-approver",
+                    &root,
+                    ORG_NAMESPACE,
+                    TimestampTz::now(),
+                )
+                .bootstrap,
                 {
-                    let grants =
-                        effective(&mirror, "portal-approver", &both, ORG_NAMESPACE, TimestampTz::now())
-                            .grants;
+                    let grants = effective(
+                        &mirror,
+                        "portal-approver",
+                        &both,
+                        ORG_NAMESPACE,
+                        TimestampTz::now(),
+                    )
+                    .grants;
                     !grants.is_empty()
                         && grants
                             .iter()
@@ -2894,7 +2919,14 @@ mod tests {
                 reads(&both, "bratislava"),
                 reads(&root, "bratislava"),
                 reads(&both, "helsinki"),
-                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, TimestampTz::now()).bootstrap,
+                effective(
+                    &mirror,
+                    "portal-approver",
+                    &root,
+                    ORG_NAMESPACE,
+                    TimestampTz::now(),
+                )
+                .bootstrap,
             )
         })
         .await;
@@ -2960,7 +2992,8 @@ mod tests {
             groups: Vec::new(),
             second_factor: false,
         };
-        let at = |project: &str| effective(&mirror, "no-bootstrap", &owner, project, TimestampTz::now());
+        let at =
+            |project: &str| effective(&mirror, "no-bootstrap", &owner, project, TimestampTz::now());
         // `jc_member_list` asks read on RoleBinding: propose implies it, as `may` already says.
         assert!(at("t-full").check("RoleBinding", Verb::Read, None).is_ok());
         assert!(at("t-full").check("Pipeline", Verb::Propose, None).is_ok());
@@ -3020,7 +3053,13 @@ mod tests {
             groups: Vec::new(),
             second_factor: false,
         };
-        let expected = effective(&mirror, "no-bootstrap", &bo, ORG_NAMESPACE, TimestampTz::now());
+        let expected = effective(
+            &mirror,
+            "no-bootstrap",
+            &bo,
+            ORG_NAMESPACE,
+            TimestampTz::now(),
+        );
         let grants_group = |grants: &Effective| {
             grants
                 .grants
@@ -3043,7 +3082,15 @@ mod tests {
         let reader = Arc::clone(&mirror);
         std::thread::spawn(move || {
             let granted = (0..200)
-                .map(|_| effective(&reader, "no-bootstrap", &bo, ORG_NAMESPACE, TimestampTz::now()))
+                .map(|_| {
+                    effective(
+                        &reader,
+                        "no-bootstrap",
+                        &bo,
+                        ORG_NAMESPACE,
+                        TimestampTz::now(),
+                    )
+                })
                 .all(|grants| grants_group(&grants));
             let _ = done.send(granted);
         });

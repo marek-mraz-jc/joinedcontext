@@ -12,10 +12,10 @@
 //! their DelegationPolicy ceiling admits, so a moved connector never names what its owner cannot
 //! see. Neither the start-up nor the gateway's listener knows a person's groups, so neither moves.
 
-use jc_time::TimestampTz;
 use jc_core::kinds::Audience;
 use jc_core::kinds::EndpointSpec;
 use jc_core::reach::EndpointFacts;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -541,9 +541,12 @@ mod tests {
         assert_eq!(new.segments, ["data-read"]);
         assert!(!new.writes);
         assert!(new.scope.iter().all(|i| i.access == ItemAccess::Read));
-        let within =
-            crate::connectors::validate(&new, &Ceiling::of_policies(Vec::new()), TimestampTz::now())
-                .expect("a valid request");
+        let within = crate::connectors::validate(
+            &new,
+            &Ceiling::of_policies(Vec::new()),
+            TimestampTz::now(),
+        )
+        .expect("a valid request");
         assert!(within.is_empty(), "within the default ceiling: {within:?}");
         let none: Old = serde_json::from_value(
             serde_json::json!({"name": "x", "select": {"themes": ["AGRI"]}}),

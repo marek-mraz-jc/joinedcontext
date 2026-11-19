@@ -488,7 +488,11 @@ mod tests {
 
     #[test]
     fn a_month_is_a_started_calendar_month() {
-        let now = jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 10, 22, 1, 0, 0, 0)).expect("an instant"));
+        let now = jc_time::TimestampTz(
+            jiff::tz::Offset::UTC
+                .to_timestamp(jiff::civil::datetime(2026, 10, 22, 1, 0, 0, 0))
+                .expect("an instant"),
+        );
         let (from, to) = month("2026-09", now).expect("September");
         assert_eq!(from.to_rfc3339(), "2026-09-01T00:00:00+00:00");
         assert_eq!(to.to_rfc3339(), "2026-10-01T00:00:00+00:00");
@@ -503,7 +507,11 @@ mod tests {
         }
         assert_eq!(last_month(now), "2026-09");
         assert_eq!(
-            last_month(jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 1, 5, 0, 0, 0, 0)).expect("an instant"))),
+            last_month(jc_time::TimestampTz(
+                jiff::tz::Offset::UTC
+                    .to_timestamp(jiff::civil::datetime(2026, 1, 5, 0, 0, 0, 0))
+                    .expect("an instant")
+            )),
             "2025-12"
         );
     }

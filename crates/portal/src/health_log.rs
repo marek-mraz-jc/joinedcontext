@@ -17,7 +17,7 @@ use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::alerts::{rfc3339, Event, Signal};
 use crate::resource::{Condition, Phase, ResourceEnvelope};
 use crate::store::Mirror;
@@ -1162,7 +1162,9 @@ mod tests {
         let t0 = at("2026-07-01T00:00:00Z");
         for hour in 0..3 {
             for minute in [0, 20, 40] {
-                let now = t0 + jiff::SignedDuration::from_hours(hour) + jiff::SignedDuration::from_mins(minute);
+                let now = t0
+                    + jiff::SignedDuration::from_hours(hour)
+                    + jiff::SignedDuration::from_mins(minute);
                 store
                     .record(now, vec![finding(Status::Ok)])
                     .await
@@ -1176,7 +1178,7 @@ mod tests {
                 "one point an hour"
             );
         }
-        let later = t0 + KEEP + jiff::SignedDuration::from_hours(24 * 1);
+        let later = t0 + KEEP + jiff::SignedDuration::from_hours(24);
         store
             .record(later, vec![finding(Status::Ok)])
             .await
@@ -1196,7 +1198,10 @@ mod tests {
             .await
             .expect("record");
         store
-            .record_due(t0 + jiff::SignedDuration::from_mins(1), vec![finding(Status::Error)])
+            .record_due(
+                t0 + jiff::SignedDuration::from_mins(1),
+                vec![finding(Status::Error)],
+            )
             .await
             .expect("record");
         let list = store.list(None, t0).await.expect("list");

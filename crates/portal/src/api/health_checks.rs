@@ -5,7 +5,6 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use jc_time::TimestampTz;
 use serde::Serialize;
 use utoipa::ToSchema;
 

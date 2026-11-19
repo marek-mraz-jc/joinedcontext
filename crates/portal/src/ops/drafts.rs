@@ -26,7 +26,7 @@ use super::Caller;
 use super::OpError;
 use super::Operation;
 use super::OperationAnnotations;
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::change::Lane;
 use crate::error::ApiError;
 use crate::ops::verdict::Verdict;

@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use jc_time::TimestampTz;
 use jc_core::kinds::data_source::DataSourceType;
+use jc_time::TimestampTz;
 use serde_json::Value;
 
 use super::streams::StreamOutcome;
@@ -222,7 +222,8 @@ impl Cron {
     /// date that never comes, such as 30 February); a field-skipping search if it ever shows.
     fn next_after(&self, t: TimestampTz) -> Option<TimestampTz> {
         let minute = t.as_second().div_euclid(60).checked_mul(60)?;
-        let mut at = TimestampTz::from_second(minute)?.checked_add(jiff::SignedDuration::from_mins(1))?;
+        let mut at =
+            TimestampTz::from_second(minute)?.checked_add(jiff::SignedDuration::from_mins(1))?;
         for _ in 0..366 * 24 * 60 {
             if self.matches(at) {
                 return Some(at);
@@ -404,7 +405,8 @@ impl Entry {
             return;
         }
         self.armed_for = Some(run.to_owned());
-        self.retried.retain(|t| now - *t < jiff::SignedDuration::from_hours(24 * 1));
+        self.retried
+            .retain(|t| now - *t < jiff::SignedDuration::from_hours(24));
         let at = BACKOFF
             .get(self.attempts)
             .map(|wait| now + jiff::SignedDuration::try_from(*wait).unwrap_or_default());
@@ -764,13 +766,17 @@ impl RunQueue {
                     "failed",
                     Some("the runner no longer holds the run".to_owned()),
                 )),
-                RunState::Running if Duration::try_from(now - started).unwrap_or_default() >= cap => Some((
-                    "timeout",
-                    Some(format!(
-                        "it ran past {} min and was stopped",
-                        cap.as_secs() / 60
-                    )),
-                )),
+                RunState::Running
+                    if Duration::try_from(now - started).unwrap_or_default() >= cap =>
+                {
+                    Some((
+                        "timeout",
+                        Some(format!(
+                            "it ran past {} min and was stopped",
+                            cap.as_secs() / 60
+                        )),
+                    ))
+                }
                 RunState::Running => None,
             };
             let Some((label, failure)) = outcome else {
@@ -1147,9 +1153,7 @@ mod tests {
     use std::collections::{BTreeSet, HashMap};
 
     fn at(text: &str) -> TimestampTz {
-        DateTime::parse_from_rfc3339(text)
-            .expect("a time")
-            .with_timezone(&Utc)
+        text.parse().expect("a time")
     }
 
     fn key(name: &str) -> Key {
@@ -1322,9 +1326,9 @@ mod tests {
     /// One run of `a` from start to delete at `due`.
     async fn retried_at(queue: &Mutex<RunQueue>, fake: &Fake, due: TimestampTz) {
         step(queue, fake, due - jiff::SignedDuration::from_mins(1)).await;
-        assert!(fake.log().is_empty(), "nothing runs before {due}");
+        assert!(fake.log().is_empty(), "nothing runs before {due:?}");
         step(queue, fake, due).await;
-        assert_eq!(fake.log(), ["start a"], "the retry runs at {due}");
+        assert_eq!(fake.log(), ["start a"], "the retry runs at {due:?}");
         fake.end("a", RunState::Finished);
         step(queue, fake, due + jiff::SignedDuration::from_mins(1)).await;
         assert_eq!(fake.log(), ["delete a"]);
@@ -1469,7 +1473,7 @@ mod tests {
         for n in 0..RETRIES_PER_DAY {
             pass(&queue, Some(&format!("failed-{n}")), 1, now);
             retried_at(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
-            now += jiff::SignedDuration::from_mins(20);
+            now = now + jiff::SignedDuration::from_mins(20);
             pass(&queue, None, 1, now);
         }
         pass(&queue, Some("failed-again"), 1, now);
@@ -2043,7 +2047,10 @@ mod tests {
                 replace: false,
             },
         );
-        queue.lock().unwrap().plan(changed, now + jiff::SignedDuration::from_hours(1));
+        queue
+            .lock()
+            .unwrap()
+            .plan(changed, now + jiff::SignedDuration::from_hours(1));
         step(&queue, &fake, now + jiff::SignedDuration::from_hours(1)).await;
         assert_eq!(fake.log(), ["start loop"], "a changed stream runs again");
     }

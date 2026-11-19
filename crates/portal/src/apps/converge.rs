@@ -250,7 +250,10 @@ impl Converger {
             // export leaves everything in place, and the next sync tries again.
             if spec.class == jc_core::kinds::AppClass::Wasm {
                 if let Some(wasm) = &self.wasm {
-                    let at = jc_time::TimestampTz::now().0.strftime("%Y%m%dT%H%M%SZ").to_string();
+                    let at = jc_time::TimestampTz::now()
+                        .0
+                        .strftime("%Y%m%dT%H%M%SZ")
+                        .to_string();
                     wasm.retire(&project, &name, &at)
                         .await
                         .map_err(ConvergeError::Wasm)?;

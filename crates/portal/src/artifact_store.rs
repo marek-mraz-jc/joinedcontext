@@ -1330,9 +1330,15 @@ mod tests {
         let t = jc_time::TimestampTz(
             jiff::Timestamp::new(1_763_514_123, 456_789_000).expect("an instant"),
         );
-        assert_eq!(t.0.strftime("%Y%m%dT%H%M%SZ").to_string(), "20251119T010203Z");
+        assert_eq!(
+            t.0.strftime("%Y%m%dT%H%M%SZ").to_string(),
+            "20251119T010203Z"
+        );
         assert_eq!(t.0.strftime("%Y%m%d").to_string(), "20251119");
-        assert_eq!(t.0.strftime("%Y-%m-%d %H:%M UTC").to_string(), "2025-11-19 01:02 UTC");
+        assert_eq!(
+            t.0.strftime("%Y-%m-%d %H:%M UTC").to_string(),
+            "2025-11-19 01:02 UTC"
+        );
         assert_eq!(
             t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
             "2025-11-19T01:02:03Z"
@@ -1343,7 +1349,10 @@ mod tests {
             "\"2025-11-19T01:02:03.456789Z\""
         );
         let day = jc_time::TimestampTz(jiff::Timestamp::new(1_763_510_400, 0).expect("an instant"));
-        assert_eq!(serde_json::to_string(&day).expect("json"), "\"2025-11-19T00:00:00Z\"");
+        assert_eq!(
+            serde_json::to_string(&day).expect("json"),
+            "\"2025-11-19T00:00:00Z\""
+        );
     }
 
     #[test]
@@ -1356,9 +1365,8 @@ mod tests {
             root_access_key: "AKIAIOSFODNN7EXAMPLE".into(),
             root_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
         };
-        let may_24 = jc_time::TimestampTz(
-            jc_time::parse_rfc3339("2013-05-24T00:00:00Z").expect("a date"),
-        );
+        let may_24 =
+            jc_time::TimestampTz(jc_time::parse_rfc3339("2013-05-24T00:00:00Z").expect("a date"));
         assert_eq!(
             presigned(
                 &settings,

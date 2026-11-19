@@ -1446,7 +1446,7 @@ mod tests {
             "boot",
             &person(&["boot"]),
             "helsinki",
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         let found = super::search(
             &state,
@@ -1472,7 +1472,7 @@ mod tests {
             "boot",
             &person(&[]),
             "helsinki",
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         assert!(
             super::search(&state, "helsinki", &nobody, "banska bystrica", None)

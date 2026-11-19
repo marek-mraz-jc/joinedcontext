@@ -4,8 +4,8 @@
 mod common;
 
 use axum::http::StatusCode;
-use chrono::Utc;
 use common::{encode, envelope, forge, person, send, state_on, REPO};
+use jc_time::TimestampTz;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::ops::workspaces::{Opening, Scope};
 use joinedcontext_portal::ops::{self, Caller, OpError, Via};
@@ -657,8 +657,8 @@ async fn an_expired_workspace_is_neither_listed_nor_read() {
         .await
         .unwrap();
     let expired = state.workspaces.get("old").await.unwrap().unwrap();
-    assert!(!expired.expired(Utc::now()));
-    assert!(expired.expired(Utc::now() + chrono::Duration::hours(2)));
+    assert!(!expired.expired(TimestampTz::now()));
+    assert!(expired.expired(TimestampTz::now() + jiff::SignedDuration::from_hours(2)));
     let listed = body(&send(&state, steward(), "GET", WS, None).await.text);
     assert_eq!(listed["items"][0]["name"], "old", "live within its hour");
 }

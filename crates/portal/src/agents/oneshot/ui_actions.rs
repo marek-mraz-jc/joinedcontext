@@ -520,7 +520,12 @@ impl Asker<'_> {
         let items = self
             .state
             .plans
-            .peek(&id, &self.identity.subject, self.project, TimestampTz::now())
+            .peek(
+                &id,
+                &self.identity.subject,
+                self.project,
+                TimestampTz::now(),
+            )
             .ok_or_else(|| {
                 format!(
                     "no plan '{id}' of yours in this project; a plan lives {} minutes, plan the \

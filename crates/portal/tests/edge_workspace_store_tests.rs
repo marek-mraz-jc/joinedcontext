@@ -15,8 +15,8 @@
 
 mod common;
 
-use chrono::{Duration, Utc};
 use common::{envelope, person};
+use jc_time::TimestampTz;
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
 use joinedcontext_portal::ops::workspaces::{
@@ -129,7 +129,7 @@ async fn a_name_or_a_life_outside_its_bounds_is_refused_by_the_store() {
         if let Ok(workspace) = made {
             assert_eq!(
                 workspace.expires_at - workspace.created_at,
-                Duration::hours(hours),
+                jiff::SignedDuration::from_hours(hours),
                 "the life recorded is not the life asked for",
             );
         }
@@ -445,11 +445,11 @@ async fn the_listing_a_caller_reads_hides_what_they_may_not_see_and_what_has_exp
         })
         .await
         .expect("created");
-    assert!(!expiring.expired(Utc::now()));
-    assert!(expiring.expired(Utc::now() + Duration::hours(2)));
+    assert!(!expiring.expired(TimestampTz::now()));
+    assert!(expiring.expired(TimestampTz::now() + jiff::SignedDuration::from_hours(2)));
     let expired_now: Vec<String> = state
         .workspaces
-        .expired(Utc::now() + Duration::hours(2))
+        .expired(TimestampTz::now() + jiff::SignedDuration::from_hours(2))
         .await
         .expect("the expired")
         .into_iter()

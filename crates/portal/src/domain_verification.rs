@@ -448,7 +448,7 @@ impl<L: Lookup> Verifier<L> {
                 DomainVerification {
                     state: State::parse(&state),
                     method: method.as_deref().and_then(Method::parse),
-                    checked_at: checked_at.and_then(|at| jc_time::TimestampTz::from_second(at)),
+                    checked_at: checked_at.and_then(jc_time::TimestampTz::from_second),
                     reason,
                     record: record(domain, &challenge),
                     challenge,
@@ -536,9 +536,7 @@ mod tests {
     const HOST: &str = "portal.hel.fi";
 
     fn now() -> TimestampTz {
-        DateTime::parse_from_rfc3339("2026-09-21T12:00:00Z")
-            .expect("a time")
-            .with_timezone(&Utc)
+        "2026-09-21T12:00:00Z".parse().expect("a time")
     }
 
     /// PF-41: the challenge is 32 random bytes, so no two Organizations share one.
@@ -644,7 +642,7 @@ mod tests {
     fn a_verified_domain_is_rechecked_after_30_days() {
         let at = |state, ago: Duration| {
             DomainVerification {
-                checked_at: Some(now() - jiff::SignedDuration::from_std(ago).expect("a duration")),
+                checked_at: Some(now() - jiff::SignedDuration::try_from(ago).expect("a duration")),
                 ..pending("hel.fi", "abc".to_owned())
             }
             .with_state(state)

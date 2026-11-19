@@ -126,8 +126,13 @@ impl Counter {
     /// broker named `broker` (PF-111, empty when its `brokerRef` resolves to none). `tenant`
     /// must already be a DNS-1123 name: it becomes a path segment.
     pub async fn usage(&self, broker_name: &str, tenant: &str) -> Result<SpaceUsage, String> {
-        self.measured(broker_name, tenant, |kept| current(kept, TimestampTz::now()), true)
-            .await
+        self.measured(
+            broker_name,
+            tenant,
+            |kept| current(kept, TimestampTz::now()),
+            true,
+        )
+        .await
     }
 
     /// One broker read now, for a decision that must not stand on a kept number (a broker move,

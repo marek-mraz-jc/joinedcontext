@@ -7,10 +7,10 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
-use chrono::{TimeZone, Utc};
 use csrf_echo::EchoCsrf;
 use http_body_util::BodyExt;
 use jc_core::kinds::Verb;
+use jc_time::TimestampTz;
 use joinedcontext_portal::auth::csrf::CSRF_COOKIE;
 use joinedcontext_portal::auth::session::{self, Identity, Session};
 use joinedcontext_portal::config::Config;
@@ -321,7 +321,11 @@ async fn deletion_needs_delete_and_the_bootstrap_group_needs_no_repository() {
 
 #[test]
 fn approve_expiry_and_organization_scope_are_decided_by_the_bindings() {
-    let now = Utc.with_ymd_and_hms(2026, 9, 7, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 7, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let approver_role = org(
         "Role",
         "approver",
@@ -755,7 +759,11 @@ async fn permissions_me_names_the_scope_each_grant_was_inherited_from() {
 #[test]
 fn the_janitor_approves_and_deletes_only_what_a_journey_named() {
     // T-2627: the residue sweep's own role, confined by the name a journey gives (PF-49).
-    let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 25, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let mirror = mirror_with(vec![
         org(
             "Role",
@@ -901,7 +909,11 @@ fn a_projects_readers_and_writers_come_from_the_bindings_that_reach_it() {
             Some(json!({ "notAfter": "2026-01-01T00:00:00Z" })),
         ),
     ]);
-    let now = Utc.with_ymd_and_hms(2026, 9, 25, 0, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 25, 0, 0, 0, 0))
+            .expect("an instant"),
+    );
     let members = project_members(&mirror, "ovzdusie", now);
     let set = |people: &[&str]| people.iter().map(|p| (*p).to_owned()).collect();
     assert_eq!(
@@ -1033,7 +1045,11 @@ fn pipeline_admin_role() -> ResourceEnvelope {
 
 #[test]
 fn a_service_accounts_declared_roles_are_in_force_for_its_own_client_and_nobody_else() {
-    let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 25, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let roles = json!([
         { "role": "pipeline-admin", "scope": { "project": "ovzdusie" } },
         // A gateway template: data access through Policies, nothing in the Portal (CC-60).
@@ -1096,7 +1112,11 @@ fn a_service_accounts_declared_roles_are_in_force_for_its_own_client_and_nobody_
 /// names. A client the registry does not hold resolves by its derived id, as before.
 #[test]
 fn an_azp_is_the_account_the_realms_registry_names_old_and_new_names_alike() {
-    let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 25, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let roles = json!([{ "role": "pipeline-admin", "scope": { "project": "ovzdusie" } }]);
     let mirror = mirror_with(vec![
         pipeline_admin_role(),
@@ -1160,7 +1180,11 @@ fn an_azp_is_the_account_the_realms_registry_names_old_and_new_names_alike() {
 
 #[test]
 fn a_service_account_may_propose_and_never_approve() {
-    let now = Utc.with_ymd_and_hms(2026, 9, 25, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 9, 25, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let approve_only = org(
         "Role",
         "pipeline-approver",
@@ -1247,7 +1271,7 @@ fn a_space_binding_holds_only_in_the_project_that_holds_the_space() {
     envelopes.push(space_in("helsinki", "bikes"));
     let mirror = mirror_with(envelopes);
     let steward = identity("steward@ovzdusie.sk", &[]);
-    let now = Utc::now();
+    let now = TimestampTz::now();
 
     let home = effective(&mirror, "", &steward, "ovzdusie", now);
     assert!(home.may_read_project());
@@ -1270,7 +1294,7 @@ fn a_space_name_held_by_two_projects_grants_nothing_in_either() {
     let mirror = mirror_with(envelopes);
     let steward = identity("steward@ovzdusie.sk", &[]);
     for project in ["ovzdusie", "helsinki"] {
-        let granted = effective(&mirror, "", &steward, project, Utc::now());
+        let granted = effective(&mirror, "", &steward, project, TimestampTz::now());
         assert!(granted.grants.is_empty(), "{project}: {:?}", granted.grants);
         assert!(
             !granted.may_in("Entity", Verb::Propose, Some("air")),
@@ -1488,7 +1512,11 @@ async fn a_lifetime_naming_no_slot_of_the_spaces_model_is_refused_before_a_chang
 #[test]
 fn an_account_grant_outside_its_window_grants_nothing() {
     use joinedcontext_portal::permissions::{account_access, GrantState};
-    let until = Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0).unwrap();
+    let until = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 10, 21, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let roles = json!([
         { "role": "pipeline-admin", "scope": { "project": "ovzdusie" },
           "validity": { "notAfter": "2026-10-21T12:00:00Z" } },
@@ -1505,7 +1533,7 @@ fn an_account_grant_outside_its_window_grants_nothing() {
     assert!(at(until)
         .check("Pipeline", Verb::Propose, Some(&target))
         .is_ok());
-    let after = until + chrono::Duration::seconds(1);
+    let after = until + jiff::SignedDuration::from_secs(1);
     assert!(at(after)
         .check("Pipeline", Verb::Propose, Some(&target))
         .is_err());
@@ -1668,7 +1696,11 @@ async fn pf_123_an_organization_admin_proposes_only_in_its_own_organizations_pro
 /// project carries none of them past its approver.
 #[test]
 fn pf_123_approval_and_installation_kinds_end_at_the_organization() {
-    let now = Utc.with_ymd_and_hms(2026, 10, 22, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 10, 22, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let mirror = mirror_with(two_organizations());
     let target = pipeline("aq");
     let at = |who: &str, project: &str| {
@@ -1725,7 +1757,11 @@ fn pf_123_approval_and_installation_kinds_end_at_the_organization() {
 /// still covers every project, whatever name it gives (PF-03).
 #[test]
 fn pf_123_one_organization_covers_every_project_as_before() {
-    let now = Utc.with_ymd_and_hms(2026, 10, 22, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 10, 22, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let mut envelopes = two_organizations();
     envelopes.retain(|env| !(env.kind == "Organization" && env.metadata.name == "zilina"));
     let mirror = mirror_with(envelopes);
@@ -2042,7 +2078,11 @@ async fn an_organization_admin_reaches_no_binding_or_group_of_another_organizati
 /// T-5248: the narrowed grants never make the Žilina administrator one of the installation's.
 #[test]
 fn own_settings_grants_administer_nothing_of_the_installation() {
-    let now = Utc.with_ymd_and_hms(2026, 10, 22, 12, 0, 0).unwrap();
+    let now = jc_time::TimestampTz(
+        jiff::tz::Offset::UTC
+            .to_timestamp(jiff::civil::datetime(2026, 10, 22, 12, 0, 0, 0))
+            .expect("an instant"),
+    );
     let mirror = mirror_with(own_settings_repository());
     let eva = effective(
         &mirror,

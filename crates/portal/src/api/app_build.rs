@@ -160,9 +160,12 @@ fn configuration_url(state: &AppState, user: &CurrentUser, project: &str) -> Opt
     let organization = crate::permissions::for_request(state, identity, ORG_NAMESPACE);
     let reads = organization.administers_organization()
         || if state.mirror.repository_of(project).is_some() {
-            let readers =
-                crate::permissions::project_members(&state.mirror, project, jc_time::TimestampTz::now())
-                    .readers;
+            let readers = crate::permissions::project_members(
+                &state.mirror,
+                project,
+                jc_time::TimestampTz::now(),
+            )
+            .readers;
             [Some(identity.username.as_str()), identity.email.as_deref()]
                 .into_iter()
                 .flatten()
@@ -564,7 +567,10 @@ pub async fn restore(
         )));
     }
     let short = &commit[..commit.len().min(7)];
-    let branch = format!("restore/{short}-{}", jc_time::TimestampTz::now().as_second());
+    let branch = format!(
+        "restore/{short}-{}",
+        jc_time::TimestampTz::now().as_second()
+    );
     repo.create_branch(&branch, &default)
         .await
         .map_err(refused)?;

@@ -12,8 +12,8 @@ use crate::error::ApiError;
 use crate::pipeline_validation::ModelSchemas;
 use crate::state::AppState;
 use crate::store::Mirror;
-use jc_time::TimestampTz;
 use jc_core::kinds::PipelineSpec;
+use jc_time::TimestampTz;
 use jcctl::model_schema::ModelSchema;
 use serde_json::Value;
 
@@ -187,7 +187,11 @@ mod tests {
 
     fn refusals(state: &AppState, spec: &Value) -> Vec<String> {
         let pipeline: PipelineSpec = serde_json::from_value(spec.clone()).expect("a PipelineSpec");
-        let now = jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0)).expect("an instant"));
+        let now = jc_time::TimestampTz(
+            jiff::tz::Offset::UTC
+                .to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0))
+                .expect("an instant"),
+        );
         problems(
             &state.model_schemas,
             &state.mirror,

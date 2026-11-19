@@ -101,7 +101,10 @@ async fn admitted(
             build.state
         )));
     }
-    if build.expires_at.is_none_or(|at| at <= jc_time::TimestampTz::now()) {
+    if build
+        .expires_at
+        .is_none_or(|at| at <= jc_time::TimestampTz::now())
+    {
         return Err(ApiError::Unauthorized);
     }
     Ok((db, settings, build))

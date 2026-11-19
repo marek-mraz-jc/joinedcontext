@@ -870,7 +870,10 @@ mod tests {
     #[test]
     fn a_data_answer_reads_from_today_by_name_and_ends_on_the_grid() {
         let text = section(&[], &[], &[]);
-        let today = jc_time::TimestampTz::now().format("%Y-%m-%d").to_string();
+        let today = jc_time::TimestampTz::now()
+            .0
+            .strftime("%Y-%m-%d")
+            .to_string();
         assert!(
             text.contains(&format!("`endDate>={today}T00:00:00Z`")),
             "{text}"

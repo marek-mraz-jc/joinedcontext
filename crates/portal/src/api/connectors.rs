@@ -1440,7 +1440,7 @@ mod tests {
         let new: NewConnector = serde_json::from_value(json!({
             "name": format!("asks-{access}"), "segments": ["data-read"],
             "scope": [{ "project": "doprava", "access": access }], "writes": writes,
-            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1)).to_rfc3339(),
+            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24)).to_rfc3339(),
         }))
         .expect("request");
         state
@@ -1502,7 +1502,7 @@ mod tests {
                 let new: NewConnector = serde_json::from_value(json!({
                     "name": name, "segments": ["data-read"], "kinds": kinds,
                     "scope": [{ "project": "doprava", "access": "write" }], "writes": true,
-                    "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1)).to_rfc3339(),
+                    "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24)).to_rfc3339(),
                 }))
                 .expect("request");
                 state
@@ -1895,7 +1895,8 @@ mod tests {
             .collect();
         assert_eq!(offered, vec![(CLAUDE_CODE, false), (CLAUDE_AI, true)]);
         // Offering a client grants nothing: create still refuses a realm client the policy omits.
-        let days = (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 5)).to_rfc3339();
+        let days =
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 5)).to_rfc3339();
         let ask = |client: &str| {
             let new: NewConnector = serde_json::from_value(json!({
                 "name": "air", "segments": ["data-read"], "expiresAt": days,
@@ -1903,7 +1904,8 @@ mod tests {
             }))
             .expect("new");
             let ceiling = Ceiling::of(&state.mirror, &user("reader@hel.fi").0.identity);
-            connectors::validate(&new, &ceiling, jc_time::TimestampTz::now()).map(|above| above.len())
+            connectors::validate(&new, &ceiling, jc_time::TimestampTz::now())
+                .map(|above| above.len())
         };
         assert_eq!(ask(CLAUDE_AI).ok(), Some(0));
         assert!(
@@ -1928,7 +1930,8 @@ mod tests {
         );
         assert_eq!(options.ceiling.segments, vec!["data-read"]);
 
-        let expires = (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
+        let expires =
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
         let new: NewConnector = serde_json::from_value(json!({
             "name": "air", "segments": ["data-read"], "expiresAt": expires,
             "scope": [{ "project": "helsinki", "access": "read" }]
@@ -2061,7 +2064,9 @@ mod tests {
             ORG_NAMESPACE,
             json!({ "subjects": [{ "user": "reader@hel.fi" }], "role": "reader", "scope": { "project": "espoo" } }),
         ));
-        let days = |n: i64| (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * n)).to_rfc3339();
+        let days = |n: i64| {
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * n)).to_rfc3339()
+        };
         let new: NewConnector = serde_json::from_value(json!({
             "name": "air", "segments": ["data-read"], "expiresAt": days(5),
             "scope": [{ "project": "helsinki", "access": "read" }]

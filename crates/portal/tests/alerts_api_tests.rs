@@ -233,7 +233,7 @@ async fn a_notice_is_its_subscriber_s_and_goes_quiet_when_they_lose_read() {
         Arc::clone(&state.quality),
         Arc::clone(&state.alerts),
     )
-    .run(chrono::Utc::now())
+    .run(jc_time::TimestampTz::now())
     .await
     .expect("a run");
 
@@ -333,7 +333,7 @@ async fn an_approver_hears_of_an_agent_s_refusal_spike_and_a_reader_may_not_subs
         "promptDigest": "sha256:p", "dataNeeds": [], "allowsWrite": false, "branch": "b",
         "pathPrefix": "p/", "status": "building", "ticketHash": "x", "files": {},
         "steps": 0, "tokensUsed": 0, "createdBy": "jana@hel.fi", "origin": "person",
-        "starter": null, "createdAt": chrono::Utc::now().to_rfc3339(),
+        "starter": null, "createdAt": jc_time::TimestampTz::now().to_rfc3339(),
         "expiresAt": "2099-01-01T00:00:00Z",
     }))
     .expect("a run");
@@ -355,7 +355,7 @@ async fn an_approver_hears_of_an_agent_s_refusal_spike_and_a_reader_may_not_subs
         Arc::clone(&state.alerts),
     )
     .with_agent_runs(Arc::clone(&state.agents))
-    .run(chrono::Utc::now())
+    .run(jc_time::TimestampTz::now())
     .await
     .expect("a run");
 

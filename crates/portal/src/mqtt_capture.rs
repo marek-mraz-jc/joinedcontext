@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use jc_time::TimestampTz;
 use jc_core::kinds::mqtt_broker::{MqttCapture, MqttMode};
+use jc_time::TimestampTz;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, SubscribeFilter};
 
 use crate::reconciler::mqtt_brokers::Broker;
@@ -555,7 +555,7 @@ mod tests {
     use super::*;
 
     fn at(second: i64) -> TimestampTz {
-        DateTime::from_timestamp(1_800_000_000 + second, 0).unwrap_or_default()
+        TimestampTz::from_second(1_800_000_000 + second).unwrap_or_default()
     }
 
     fn message(topic: &str, second: i64, bytes: usize) -> Message {

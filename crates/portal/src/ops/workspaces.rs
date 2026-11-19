@@ -14,7 +14,7 @@ use sqlx::Row;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::activity::{ts_to_odt, odt_to_ts};
+use crate::activity::{odt_to_ts, ts_to_odt};
 
 /// The longest a workspace lives: two weeks, like a sandbox (CC-67, PF-19).
 pub const MAX_TTL_HOURS: i64 = 14 * 24;

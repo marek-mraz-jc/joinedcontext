@@ -111,7 +111,7 @@ async fn recorded(
     )
     .await
     .expect("queued");
-    build_records::start(db, "helsinki", id, "t", chrono::Duration::minutes(25))
+    build_records::start(db, "helsinki", id, "t", jiff::SignedDuration::from_mins(25))
         .await
         .expect("started");
     build_records::finish(db, "helsinki", id, outcome)
@@ -587,9 +587,15 @@ async fn a_build_carries_its_number_and_times_and_the_estimate_of_the_last_succe
     )
     .await
     .expect("queued");
-    build_records::start(&db, "helsinki", running, "t", chrono::Duration::minutes(25))
-        .await
-        .expect("started");
+    build_records::start(
+        &db,
+        "helsinki",
+        running,
+        "t",
+        jiff::SignedDuration::from_mins(25),
+    )
+    .await
+    .expect("started");
     sqlx::query("UPDATE app_builds SET started_at = '2026-10-07T10:00:00Z' WHERE id = $1")
         .bind(running)
         .execute(&db)

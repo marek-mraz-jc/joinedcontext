@@ -16,12 +16,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use jc_time::TimestampTz;
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Constraints, Request, Verdict as Decision};
 use context_gateway::pdp::write_guard::{self, Refusal};
 use jc_core::kinds::pipeline_identity;
 use jc_core::kinds::{Operation, OutputMode, PipelineSpec, PolicySpec};
+use jc_time::TimestampTz;
 use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -661,7 +661,7 @@ fn judge_write(
         &request,
         &write.tenant,
         &write.policies,
-        crate::time_shim::tz(now),
+        now,
     ) {
         // An access request asks for the upsert a pipeline's write grant holds (PL-90); a merge
         // or a backfill is a Policy of the Endpoint's to extend.
@@ -882,10 +882,7 @@ fn judge_lifetime(
         }
     }
     for (field, end) in ends {
-        match end
-            .as_str()
-            .and_then(jc_time::parse_rfc3339)
-        {
+        match end.as_str().and_then(jc_time::parse_rfc3339) {
             None => findings.push(lifetime(
                 "expiresAt",
                 &field,
@@ -970,7 +967,11 @@ mod tests {
     use std::sync::Arc;
 
     fn now() -> TimestampTz {
-        jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0)).expect("an instant"))
+        jc_time::TimestampTz(
+            jiff::tz::Offset::UTC
+                .to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0))
+                .expect("an instant"),
+        )
     }
 
     /// Helsinki's vehicles space: its model's Bus has a date-time `observedOn`, a `speed` and a

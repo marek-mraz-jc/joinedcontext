@@ -264,7 +264,7 @@ async fn the_catalog_and_the_federation_show_the_bound_space_alone() {
 
 fn event(space: &str) -> ActivityEvent {
     ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: PROJECT.to_owned(),
         space: Some(space.to_owned()),
         kind: "config.drifted".to_owned(),
@@ -308,7 +308,7 @@ async fn the_drift_list_shows_the_bound_spaces_entities_alone() {
     store.replace_all(BTreeMap::from([(
         PROJECT.to_owned(),
         Found {
-            observed_at: chrono::Utc::now(),
+            observed_at: jc_time::TimestampTz::now(),
             entities: vec![drifted("air"), drifted("water")],
         },
     )]));
@@ -475,7 +475,7 @@ async fn adopting_drift_reads_the_live_entity_with_the_persons_own_token() {
     store.replace_all(BTreeMap::from([(
         PROJECT.to_owned(),
         Found {
-            observed_at: chrono::Utc::now(),
+            observed_at: jc_time::TimestampTz::now(),
             entities: vec![drifted("air")],
         },
     )]));
