@@ -6187,7 +6187,8 @@
     "first": "Create your first project",
     "noneTitle": "You are in no project yet",
     "noneLead": "Ask your Organization's administrators to add you to a project. Public datasets are open to you in the catalogue.",
-    "toCatalogue": "Open the catalogue"
+    "toCatalogue": "Open the catalogue",
+    "pagesOf": "Pages of {project}"
   },
   "entities": {
     "type": "Entity type",

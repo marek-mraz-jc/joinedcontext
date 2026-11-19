@@ -52,7 +52,7 @@ export function MemberFrame({ children }: { children: ReactNode }): JSX.Element 
       </a>
       <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-surface px-4 py-2">
         <BrandMark short />
-        <nav aria-label={t("member.nav")} className="order-last flex w-full gap-1 overflow-x-auto sm:order-none sm:w-auto">
+        <nav aria-label={t("member.nav")} className="order-last flex w-full flex-wrap gap-1 sm:order-none sm:w-auto">
           {links.map((link) => (
             <Link
               key={link.to}

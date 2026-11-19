@@ -23,7 +23,8 @@ export function ProjectsPage(): JSX.Element {
   const header = (
     <PageHeader
       title={t("projectsPage.title")}
-      description={t("projectsPage.lead")}
+      // The lead explains a list; over an empty state it would repeat the state's own words.
+      description={items.length > 0 ? t("projectsPage.lead") : undefined}
       actions={items.length > 0 ? <NewProjectButton project={ORG_NAMESPACE} /> : undefined}
     />
   );
@@ -67,7 +68,7 @@ export function ProjectsPage(): JSX.Element {
             // In words, not the API's reason: that names verbs and requirement ids (UI judge, T-7380).
             description={t("projectsPage.noneLead")}
             action={
-              <Link to="/catalogue" className={buttonClass("secondary", "md")}>
+              <Link to="/catalogue" className={buttonClass("primary", "md")}>
                 {t("projectsPage.toCatalogue")}
               </Link>
             }
@@ -80,28 +81,42 @@ export function ProjectsPage(): JSX.Element {
   return (
     <div className="space-y-6">
       {header}
-      <ul aria-label={t("projectsPage.title")} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {items.map((name) => (
-          <li key={name}>
-            <Card flush className="h-full">
+      {/* One row per project: its home, and the two pages a newcomer looks for (T-7380). */}
+      <Card flush>
+        <ul aria-label={t("projectsPage.title")} className="divide-y divide-border">
+          {items.map((name) => (
+            <li key={name} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
               <Link
                 to="/projects/$project/home"
                 params={{ project: name }}
-                className="focus-ring flex h-full items-center gap-3 rounded-lg p-4 hover:bg-surface-subtle"
+                className="focus-ring -m-1 flex min-w-0 flex-1 basis-56 items-center gap-3 rounded-md p-1 hover:bg-surface-subtle"
               >
                 <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-primary-soft text-primary-soft-fg">
                   <Icon name="folder" className="size-4" />
                 </span>
                 <span className="flex min-w-0 flex-col">
-                  <span className="truncate font-medium text-fg">{titleOf(name)}</span>
+                  <span className="truncate font-medium">{titleOf(name)}</span>
                   {/* The slug under a title that differs from it, never the same word twice. */}
                   {titleOf(name) === name ? null : <span className="truncate text-caption text-fg-muted">{name}</span>}
                 </span>
               </Link>
-            </Card>
-          </li>
-        ))}
-      </ul>
+              <nav aria-label={t("projectsPage.pagesOf", { project: titleOf(name) })} className="flex flex-wrap gap-1 pl-12 sm:pl-0">
+                {(["spaces", "endpoints"] as const).map((plural) => (
+                  <Link
+                    key={plural}
+                    to="/projects/$project/$plural"
+                    params={{ project: name, plural }}
+                    className={buttonClass("ghost", "sm")}
+                  >
+                    <Icon name={plural} className="size-4" />
+                    {t(`nav.${plural}`)}
+                  </Link>
+                ))}
+              </nav>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </div>
   );
 }

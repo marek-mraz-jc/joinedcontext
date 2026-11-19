@@ -6187,7 +6187,8 @@
     "first": "Erstes Projekt anlegen",
     "noneTitle": "Sie sind noch in keinem Projekt",
     "noneLead": "Bitten Sie die Administratoren Ihrer Organisation, Sie einem Projekt hinzuzufügen. Öffentliche Datensätze stehen Ihnen im Katalog offen.",
-    "toCatalogue": "Katalog öffnen"
+    "toCatalogue": "Katalog öffnen",
+    "pagesOf": "Seiten von {project}"
   },
   "entities": {
     "type": "Entitätstyp",

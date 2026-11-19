@@ -19,6 +19,12 @@ const ORG_ADMIN = {
   rule: { kinds: ["RoleBinding", "Group", "Organization", "Person", "Project"], verbs: ["read", "propose", "approve"] },
 };
 
+// The people routes' own verbs, which org-admin holds (helsinki-role-org-admin.yaml).
+const ORG_ADMIN_PEOPLE = {
+  ...ORG_ADMIN,
+  rule: { kinds: ["Person"], verbs: ["read", "create", "update", "disable", "delete"] },
+};
+
 interface World {
   projects: string[];
   allowed: boolean;
@@ -40,7 +46,7 @@ async function stub(page: Page, world: World): Promise<string[]> {
       return json({
         project: "org",
         bootstrap: false,
-        grants: world.administrator ? [ORG_ADMIN] : [],
+        grants: world.administrator ? [ORG_ADMIN, ORG_ADMIN_PEOPLE] : [],
         projects: { creation: world.allowed ? { allowed: true } : { allowed: false, reason: REFUSED } },
       });
     }

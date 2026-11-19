@@ -6187,7 +6187,8 @@
     "first": "Vytvoriť prvý projekt",
     "noneTitle": "Zatiaľ nie ste v žiadnom projekte",
     "noneLead": "Požiadajte správcov svojej organizácie, aby vás pridali do projektu. Verejné dátové sady máte k dispozícii v katalógu.",
-    "toCatalogue": "Otvoriť katalóg"
+    "toCatalogue": "Otvoriť katalóg",
+    "pagesOf": "Stránky projektu {project}"
   },
   "entities": {
     "type": "Typ entity",

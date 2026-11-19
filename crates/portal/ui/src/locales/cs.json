@@ -6187,7 +6187,8 @@
     "first": "Vytvořit první projekt",
     "noneTitle": "Zatím nejste v žádném projektu",
     "noneLead": "Požádejte správce své organizace, aby vás přidali do projektu. Veřejné datové sady máte k dispozici v katalogu.",
-    "toCatalogue": "Otevřít katalog"
+    "toCatalogue": "Otevřít katalog",
+    "pagesOf": "Stránky projektu {project}"
   },
   "entities": {
     "type": "Typ entity",

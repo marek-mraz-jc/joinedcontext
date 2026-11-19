@@ -158,6 +158,9 @@ describe("the projects page (T-7380)", () => {
     const listed = within(await screen.findByRole("list", { name: en.projectsPage.title }));
     expect(listed.getByRole("link", { name: /ovzdusie/ })).toHaveAttribute("href", "/projects/ovzdusie/home");
     expect(listed.getByRole("link", { name: /doprava/ })).toHaveAttribute("href", "/projects/doprava/home");
+    const pages = within(listed.getByRole("navigation", { name: en.projectsPage.pagesOf.replace("{project}", "doprava") }));
+    expect(pages.getByRole("link", { name: en.nav.spaces })).toHaveAttribute("href", "/projects/doprava/spaces");
+    expect(pages.getByRole("link", { name: en.nav.endpoints })).toHaveAttribute("href", "/projects/doprava/endpoints");
     expect(screen.queryByText(en.app.notFound.title)).toBeNull();
     expect(within(screen.getByRole("main")).getByRole("button", { name: en.projects.new })).toBeInTheDocument();
   });
