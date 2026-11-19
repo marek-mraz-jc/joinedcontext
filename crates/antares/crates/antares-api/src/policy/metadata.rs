@@ -189,6 +189,51 @@ impl Metadata {
         }
     }
 
+    /// Strip the headers of a temporal page that carry instance times
+    /// (6.3.10; TS 104 176 clause 6.4.7, item 3) when some Attribute's `observedAt` is
+    /// not passed: the Content-Range bounds and an interval Link that moves
+    /// the window to a boundary the data set. A Link that only moves
+    /// `offsetN` stays.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn strip_headers(&self, headers: &mut axum::http::HeaderMap, query: &str) {
+        if self.everywhere("observedAt") {
+            return;
+        }
+        headers.remove("content-range");
+        let asked = form_urlencoded(query);
+        let window = |pairs: &[(String, String)]| {
+            let mut w: Vec<(String, String)> = pairs
+                .iter()
+                .filter(|(k, _)| matches!(k.as_str(), "timerel" | "timeAt" | "endTimeAt"))
+                .cloned()
+                .collect();
+            w.sort();
+            w
+        };
+        let own = window(&asked);
+        let links: Vec<_> = headers
+            .get_all(axum::http::header::LINK)
+            .iter()
+            .filter(|v| {
+                let Ok(text) = v.to_str() else { return false };
+                if !text.contains("rel=\"interval") {
+                    return true;
+                }
+                let target = text
+                    .split_once('<')
+                    .and_then(|(_, t)| t.split_once('>'))
+                    .and_then(|(url, _)| url.split_once('?'))
+                    .map_or("", |(_, q)| q);
+                window(&form_urlencoded(target)) == own
+            })
+            .cloned()
+            .collect();
+        headers.remove(axum::http::header::LINK);
+        for v in links {
+            headers.append(axum::http::header::LINK, v);
+        }
+    }
+
     /// Strip one Entity's Attributes.
     pub fn strip_entity(&self, entity: &mut Map<String, Value>, ctx: &Context) {
         entity.retain(|name, value| {
@@ -211,11 +256,41 @@ impl Metadata {
     }
 }
 
-/// Strip one Attribute instance; `false` drops it whole: a temporal
-/// `values` list whose times are `observedAt`, which the caller may not read.
+/// The members of a temporal Attribute whose lists pair each value with its
+/// time: the temporalValues form of every Attribute type (5.2.38) and the
+/// aggregatedValues buckets (5.2.39), whose bounds can come from the data.
+const TIMED_LISTS: [&str; 15] = [
+    "values",
+    "objects",
+    "languageMaps",
+    "vocabs",
+    "jsons",
+    "valueLists",
+    "objectLists",
+    "totalCount",
+    "distinctCount",
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "stddev",
+    "sumsq",
+];
+
+/// Strip one Attribute instance; `false` drops it whole: a temporal list of
+/// `[value, time..]` rows whose times are `observedAt`, which the caller may
+/// not read. A sub-Attribute of the same name is an object, never such a row.
 fn strip_instance(members: &BTreeSet<String>, instance: &mut Map<String, Value>) -> bool {
     let passes = |m: &str| members.contains(m);
-    if instance.contains_key("values") && !passes("observedAt") {
+    let timed = |v: &Value| {
+        v.as_array()
+            .is_some_and(|rows| rows.iter().any(Value::is_array))
+    };
+    if !passes("observedAt")
+        && TIMED_LISTS
+            .iter()
+            .any(|k| instance.get(*k).is_some_and(timed))
+    {
         return false;
     }
     for key in ["observedAt", "unitCode", "createdAt", "modifiedAt"] {
@@ -441,6 +516,7 @@ pub(crate) async fn layer(
         ));
     };
     metadata.strip(&mut doc, &ctx);
+    metadata.strip_headers(&mut parts.headers, &query);
     parts.headers.remove(axum::http::header::CONTENT_LENGTH);
     parts.headers.remove(axum::http::header::ETAG);
     axum::response::Response::from_parts(parts, axum::body::Body::from(doc.to_string()))
@@ -631,6 +707,83 @@ mod tests {
                            "pm10": {"type": "Property", "values": [[41, "2026-11-01T10:00:00Z"]]}});
         no_times.strip(&mut t, core());
         assert!(t.get("pm10").is_none(), "the values list goes whole: {t}");
+    }
+
+    /// Every temporal list form pairs values with `observedAt`: each goes
+    /// whole when that member is not passed, a sub-Attribute named like one
+    /// stays.
+    #[test]
+    fn every_timed_temporal_list_goes_when_observed_at_is_stripped() {
+        let no_times = Metadata {
+            named: BTreeMap::new(),
+            rest: set(&["unitCode"]),
+        };
+        for (kind, member) in [
+            ("Relationship", "objects"),
+            ("LanguageProperty", "languageMaps"),
+            ("VocabProperty", "vocabs"),
+            ("JsonProperty", "jsons"),
+            ("ListProperty", "valueLists"),
+            ("ListRelationship", "objectLists"),
+            ("Property", "avg"),
+            ("Property", "totalCount"),
+        ] {
+            let mut t = json!({"id": "urn:ngsi-ld:A:1", "type": "A",
+                "a": {"type": kind, member: [["x", "2026-11-01T10:00:00Z", "2026-11-02T10:00:00Z"]]}});
+            no_times.strip(&mut t, core());
+            assert!(t.get("a").is_none(), "{member} goes whole: {t}");
+        }
+        let mut sub = json!({"id": "urn:ngsi-ld:A:1", "type": "A",
+            "a": {"type": "Property", "value": 1, "max": {"type": "Property", "value": 9}}});
+        no_times.strip(&mut sub, core());
+        assert_eq!(sub["a"]["max"]["value"], 9, "{sub}");
+        let mut kept = json!({"id": "urn:ngsi-ld:A:1", "type": "A",
+            "a": {"type": "Relationship", "objects": [["urn:ngsi-ld:B:1", "2026-11-01T10:00:00Z"]]}});
+        public().strip(&mut kept, core());
+        assert!(kept.get("a").is_some(), "observedAt passes: {kept}");
+    }
+
+    /// A page's Content-Range and a Link that resumes at a data boundary
+    /// carry instance times; an offsetN Link and the `@context` Link stay.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn page_headers_with_instance_times_go_when_observed_at_is_stripped() {
+        use axum::http::{header, HeaderMap, HeaderValue};
+        let headers = || {
+            let mut h = HeaderMap::new();
+            h.insert(
+                "content-range",
+                HeaderValue::from_static("date-time 2026-11-01T10:00:00Z-2026-11-02T10:00:00Z/*"),
+            );
+            for l in [
+                "<https://x/ctx.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"",
+                "</ngsi-ld/v1/temporal/entities/a?lastN=2&offsetN=2>; rel=\"intervalbefore\"",
+                "</ngsi-ld/v1/temporal/entities/a?timeAt=2026-11-01T10:00:00Z&timerel=after>; rel=\"intervalafter\"",
+            ] {
+                h.append(header::LINK, HeaderValue::from_static(l));
+            }
+            h
+        };
+        let no_times = Metadata {
+            named: BTreeMap::new(),
+            rest: set(&["unitCode"]),
+        };
+        let mut h = headers();
+        no_times.strip_headers(&mut h, "lastN=2");
+        assert!(h.get("content-range").is_none());
+        let links: Vec<_> = h.get_all(header::LINK).iter().collect();
+        assert_eq!(links.len(), 2, "{links:?}");
+        assert!(links
+            .iter()
+            .all(|l| !l.to_str().unwrap_or("").contains("timeAt")));
+        let mut h = headers();
+        let all = Metadata {
+            named: BTreeMap::new(),
+            rest: set(&["observedAt"]),
+        };
+        all.strip_headers(&mut h, "lastN=2");
+        assert!(h.get("content-range").is_some());
+        assert_eq!(h.get_all(header::LINK).iter().count(), 3);
     }
 
     #[test]

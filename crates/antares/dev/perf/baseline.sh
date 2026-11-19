@@ -23,7 +23,7 @@ python3 dev/perf/sink.py 9800 > "$OUT/sink.log" 2>&1 & SINK=$!
 trap 'kill "$SINK" ${B:+"$B"} 2>/dev/null || true' EXIT
 for store in memory ${DATABASE_URL:+postgres}; do
   D=$(mktemp -d)
-  ANTARES_STORE=$store ANTARES_DATA_DIR=$D ANTARES_HTTP_PORT=9472 \
+  ANTARES_STORE=$store ANTARES_DATA_DIR=$D ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT=9472 \
     ANTARES_DATABASE_URL="${DATABASE_URL:-}" ANTARES_ALLOW_SHARED_LOCAL=1 \
     ANTARES_EGRESS_ALLOW_PRIVATE=true "$BIN" > "$OUT/fanout-$store.log" 2>&1 & B=$!
   for _ in $(seq 300); do curl -sf -o /dev/null http://127.0.0.1:9472/q/health && break; sleep 0.1; done

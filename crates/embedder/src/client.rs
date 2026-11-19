@@ -132,6 +132,9 @@ impl Remote {
                 .ok()
                 .and_then(|v| v["error"].as_str().map(str::to_owned))
                 .unwrap_or_default();
+            if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+                return Err(Error::TooLarge(format!("{status} {why}")));
+            }
             return Err(Error::Refused(format!("{status} {why}")));
         }
         let answer: EmbedAnswer = serde_json::from_slice(&body)

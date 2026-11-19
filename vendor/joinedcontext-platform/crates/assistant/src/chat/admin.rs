@@ -411,9 +411,10 @@ async fn sources(
            (SELECT count(*) FROM documents d WHERE d.site_id = s.id) AS documents, \
            (SELECT count(*) FROM chunks c WHERE c.site_id = s.id) AS passages, \
            (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NOT NULL) AS embedded, \
-           (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL) AS pending, \
+           (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL AND c.embed_error IS NULL) AS pending, \
            (SELECT count(*) FROM pages p WHERE p.site_id = s.id AND p.status = 'failed') \
-             + (SELECT count(*) FROM documents d WHERE d.site_id = s.id AND d.status = 'failed') AS failed, \
+             + (SELECT count(*) FROM documents d WHERE d.site_id = s.id AND d.status = 'failed') \
+             + (SELECT count(DISTINCT c.url) FROM chunks c WHERE c.site_id = s.id AND c.embed_error IS NOT NULL) AS failed, \
            (SELECT jsonb_object_agg(l.lang, l.n) FROM (SELECT c.lang, count(*) AS n FROM chunks c \
               WHERE c.site_id = s.id AND c.lang IS NOT NULL GROUP BY c.lang) l) AS languages \
          FROM sites s ORDER BY s.source"
@@ -468,8 +469,8 @@ type JobRow = (String, i32, Option<String>, Option<String>, Option<String>);
 /// The most crawl errors one answer lists (API/05 §3).
 const MAX_ERRORS: i64 = 50;
 
-/// The pages and documents of a source whose last read failed, newest first: the URL and why,
-/// never what they held (T-4197).
+/// The pages and documents of a source whose last read failed, or one of whose passages the
+/// embedder refused (T-7290), newest first: the URL and why, never what they held (T-4197).
 async fn errors(
     State(state): State<Arc<ChatState>>,
     Path((project, source)): Path<(String, String)>,
@@ -492,6 +493,11 @@ async fn errors(
              UNION ALL \
              SELECT d.url, 'document', d.error, d.id FROM documents d \
                WHERE d.site_id = $1 AND d.status = 'failed' \
+             UNION ALL \
+             SELECT c.url, CASE WHEN c.document_id IS NULL THEN 'page' ELSE 'document' END, \
+                 count(*)::text || ' of its passages not embedded: ' || min(c.embed_error), max(c.id) \
+               FROM chunks c WHERE c.site_id = $1 AND c.embed_error IS NOT NULL \
+               GROUP BY c.url, c.document_id IS NULL \
          ) failed ORDER BY at DESC LIMIT $2",
     )
     .bind(site)

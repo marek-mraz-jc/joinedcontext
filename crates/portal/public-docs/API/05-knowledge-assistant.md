@@ -318,14 +318,17 @@ the service's own tables (T-4197):
 | Field of a source | Meaning |
 |---|---|
 | `pages`, `pagesIncluded`, `documents` | what the crawls stored; a `source: upload`'s files are its documents |
-| `passages`, `embedded`, `pending` | its passages, those with an embedding, and those still waiting for one |
-| `failed` | pages and documents whose last read failed |
+| `passages`, `embedded`, `pending` | its passages, those with an embedding, and those still waiting for one (a passage the embedder refused waits no more, T-7290) |
+| `failed` | pages and documents whose last read failed or one of whose passages the embedder refused |
 | `languages` | its passages per language, `{"sk": 23140, "en": 2012}`; passages of no known language are not counted (UI-99) |
 | `lastCrawl` | the end of the last crawl that stored anything |
 | `job` | the last crawl job: `state` (`queued`, `running`, `done`, `failed`), `attempts`, `error`, `startedAt`, `finishedAt` |
 
 `GET …/knowledge/sources/{source}/errors` answers `{"items": [{"url", "kind", "reason"}]}`: at most
 50 pages (`kind: page`) and documents (`kind: document`) whose last read failed, newest first.
+A page or document with passages the embedder refused (each piece is cut to its 8,192-byte cap,
+so this is rare) has `reason` `{n} of its passages not embedded: {the embedder's refusal}`; such a passage
+is sent again only when its page or document changes (T-7290).
 `reason` is `HTTP {status}` or the network error, at most 300 characters; no content of a page is
 in it. A source not crawled yet answers `404`.
 

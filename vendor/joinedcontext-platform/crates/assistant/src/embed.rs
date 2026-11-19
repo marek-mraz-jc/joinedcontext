@@ -36,7 +36,10 @@ enum Engine {
 }
 
 fn model(err: jc_embedder::Error) -> Error {
-    Error::Model(err.to_string())
+    match err {
+        jc_embedder::Error::TooLarge(why) => Error::TooLarge(why),
+        err => Error::Model(err.to_string()),
+    }
 }
 
 impl Embedder {
@@ -142,13 +145,47 @@ impl Embedder {
     }
 }
 
-/// The claim of up to `$1` chunks of the session's project still without a vector, oldest
-/// first; index `chunks_embedding_pending` answers it (T-6547).
-pub const CLAIM_UNEMBEDDED: &str =
-    "SELECT id, text FROM chunks WHERE embedding IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED";
+/// The claim of up to `$1` chunks of the session's project still without a vector and not
+/// refused by the embedder, oldest first; index `chunks_embedding_pending` answers it (T-6547).
+pub const CLAIM_UNEMBEDDED: &str = "SELECT id, text FROM chunks \
+     WHERE embedding IS NULL AND embed_error IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED";
+
+/// The vectors of `texts`, in order, each cut to the embedder's byte cap first (a chunk stored
+/// before passages were split, T-7290; the model reads fewer bytes than the cap anyway). When
+/// the embedder refuses the batch for its texts, each is sent alone: one it refuses alone gets
+/// why instead of a vector; any other failure fails the whole batch, to be tried again.
+async fn vectors(
+    embedder: &Embedder,
+    texts: &[String],
+) -> Result<Vec<Result<Vec<f32>, String>>, Error> {
+    let sent: Vec<String> = texts
+        .iter()
+        .map(|text| text[..crate::extract::cut(text, crate::extract::MAX_TEXT_BYTES)].to_owned())
+        .collect();
+    match embedder.passages(&sent).await {
+        Ok(vectors) => return Ok(vectors.into_iter().map(Ok).collect()),
+        Err(Error::TooLarge(_)) => {}
+        Err(err) => return Err(err),
+    }
+    let mut each = Vec::with_capacity(sent.len());
+    for text in sent {
+        match embedder.passages(std::slice::from_ref(&text)).await {
+            Ok(mut vector) => each.push(
+                vector
+                    .pop()
+                    .ok_or_else(|| Error::Model("the embedder answered no vector".into()))
+                    .map(Ok)?,
+            ),
+            Err(Error::TooLarge(why)) => each.push(Err(why)),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(each)
+}
 
 /// Embeds up to `limit` chunks of `project` that have none yet, [`BATCH`] per round, and
-/// returns how many it embedded. A chunk gets one when it is stored or replaced (its page or
+/// returns how many it took: embedded, or marked with why the embedder refused them, so they
+/// leave the claim (T-7290). A chunk gets a vector when it is stored or replaced (its page or
 /// document changed), so this is the whole of "re-embed on change"; a batch the model fails on
 /// stays without and is tried again on the next call.
 pub async fn embed_missing(
@@ -172,7 +209,7 @@ pub async fn embed_missing(
         // A text the project already has a vector for (a footer, a how-to on every page) takes
         // that vector, and one the batch holds twice is embedded once (T-4749): the model's time
         // goes to text it has not read.
-        let mut literal: HashMap<String, String> = sqlx::query_as(
+        let mut literal: HashMap<String, Result<String, String>> = sqlx::query_as(
             "SELECT DISTINCT ON (text) text, embedding::text FROM chunks \
              WHERE embedding IS NOT NULL AND text = ANY($1)",
         )
@@ -180,6 +217,7 @@ pub async fn embed_missing(
         .fetch_all(&mut *tx)
         .await?
         .into_iter()
+        .map(|(text, vector): (String, String)| (text, Ok(vector)))
         .collect();
         let mut fresh: Vec<String> = Vec::new();
         for text in &texts {
@@ -187,16 +225,34 @@ pub async fn embed_missing(
                 fresh.push(text.clone());
             }
         }
-        let vectors = embedder.passages(&fresh).await?;
-        for (text, vector) in fresh.into_iter().zip(&vectors) {
-            literal.insert(text, vector_literal(vector)?);
+        let vectors = vectors(embedder, &fresh).await?;
+        for (text, vector) in fresh.into_iter().zip(vectors) {
+            let entry = match vector {
+                Ok(vector) => Ok(vector_literal(&vector)?),
+                Err(why) => Err(why),
+            };
+            literal.insert(text, entry);
         }
         for (id, text) in ids.iter().zip(&texts) {
-            sqlx::query("UPDATE chunks SET embedding = $2::vector WHERE id = $1")
-                .bind(id)
-                .bind(literal.get(text))
-                .execute(&mut *tx)
-                .await?;
+            match literal.get(text) {
+                Some(Ok(vector)) => {
+                    sqlx::query("UPDATE chunks SET embedding = $2::vector WHERE id = $1")
+                        .bind(id)
+                        .bind(vector)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                Some(Err(why)) => {
+                    // Its length and id, never its text.
+                    tracing::warn!(project, chunk = id, bytes = text.len(), %why, "passage refused by the embedder, not sent again");
+                    sqlx::query("UPDATE chunks SET embed_error = $2 WHERE id = $1")
+                        .bind(id)
+                        .bind(why)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                None => {}
+            }
         }
         tx.commit().await?;
         done += ids.len();

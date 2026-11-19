@@ -46,6 +46,7 @@ fn q_metrics_off_by_default_costs_nothing_and_404s() {
     let port = free_port();
     let _broker = Broker(
         Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_ADMIN_OPEN", "1")
             .env("ANTARES_HTTP_PORT", port.to_string())
             .spawn()
             .expect("spawn antares"),
@@ -62,11 +63,39 @@ fn q_metrics_off_by_default_costs_nothing_and_404s() {
     );
 }
 
+/// SEC-16: a broker started with no admin credential answers its guarded
+/// `/q` routes 401, keeps health open, and serves them only on an explicit
+/// opt-out.
+#[test]
+fn q_admin_routes_need_a_credential_unless_the_stack_opts_out() {
+    for (open, want) in [(None, "HTTP/1.1 401"), (Some("1"), "HTTP/1.1 200")] {
+        let port = free_port();
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_antares"));
+        cmd.env("ANTARES_HTTP_PORT", port.to_string())
+            .env_remove("ANTARES_ADMIN_TOKEN_FILE")
+            .env_remove("ANTARES_ADMIN_OPEN");
+        if let Some(open) = open {
+            cmd.env("ANTARES_ADMIN_OPEN", open);
+        }
+        let _broker = Broker(cmd.spawn().expect("spawn antares"));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !http(port, "GET", "/q/health", None).starts_with("HTTP/1.1 200") {
+            assert!(Instant::now() < deadline, "broker never got healthy");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        for path in ["/q/tenants", "/q/dead-letters"] {
+            let got = http(port, "GET", path, None);
+            assert!(got.starts_with(want), "{open:?} {path}: {got}");
+        }
+    }
+}
+
 #[test]
 fn q_metrics_serves_prometheus_text_and_counters_move() {
     let port = free_port();
     let _broker = Broker(
         Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_ADMIN_OPEN", "1")
             .env("ANTARES_HTTP_PORT", port.to_string())
             .env("ANTARES_TELEMETRY", "1")
             .spawn()
@@ -151,6 +180,7 @@ fn metrics_port_serves_metrics_only_and_api_port_none() {
     let metrics_port = free_port();
     let _broker = Broker(
         Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_ADMIN_OPEN", "1")
             .env("ANTARES_HTTP_PORT", port.to_string())
             .env("ANTARES_METRICS_PORT", metrics_port.to_string())
             .env("ANTARES_TELEMETRY", "1")
