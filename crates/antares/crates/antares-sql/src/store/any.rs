@@ -1720,6 +1720,8 @@ impl AnyStore {
                         // and owner, so a Cached row's is NULL and this DELETE
                         // takes only what the Tenant stored itself.
                         "jsonld_contexts",
+                        // and its uses of the shared Cached copies (0039)
+                        "jsonld_context_usage",
                     ] {
                         sqlx::query(sqlx::AssertSqlSafe(format!(
                             "DELETE FROM {table} WHERE tenant_id = $1"

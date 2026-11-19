@@ -379,6 +379,62 @@ pub fn context_row_visible(row: &Value, tenant: Option<&TenantId>) -> bool {
     }
 }
 
+/// The usage counters of a stored `@context` row (clause 5.13.3: numberOfHits, lastUsage).
+pub const CONTEXT_COUNTERS: [&str; 2] = ["numberOfHits", "lastUsage"];
+
+/// The member of a stored `Cached` row that holds its counters per Tenant,
+/// `{"<tenant>": {"numberOfHits": n, "lastUsage": t}}`, in a backend that
+/// keeps them inside the row (memory/file); Postgres keeps them in
+/// `jsonld_context_usage` instead.
+pub const CONTEXT_USAGE: &str = "usage";
+
+/// A stored `@context` row as a call acting for `tenant` reads it, with
+/// `used` the counters that Tenant has on the row (`None`: it never used it).
+///
+/// The body of a `Cached` copy is shared, its usage is not: which public
+/// @context URLs a Tenant names, how often and when, is that Tenant's
+/// information (S5-10). So a named Tenant reads a Cached row only once it used
+/// the copy, and then with its own counters; `None`, the boot warm, reads every
+/// copy without counters. Every other kind has one owner and passes through.
+pub fn context_row_view(
+    mut row: Value,
+    tenant: Option<&TenantId>,
+    used: Option<&Value>,
+) -> Option<Value> {
+    if context_row_owner(&row).is_some() {
+        return Some(row);
+    }
+    if tenant.is_some() && used.is_none() {
+        return None;
+    }
+    if let Some(o) = row.as_object_mut() {
+        o.remove(CONTEXT_USAGE);
+        for k in CONTEXT_COUNTERS {
+            o.remove(k);
+        }
+        if let Some(u) = used {
+            o.insert(
+                "numberOfHits".into(),
+                u["numberOfHits"].as_u64().unwrap_or(0).into(),
+            );
+            o.insert(
+                "lastUsage".into(),
+                u.get("lastUsage").cloned().unwrap_or(Value::Null),
+            );
+        }
+    }
+    Some(row)
+}
+
+/// The counters a view of a `Cached` row carries, as one Tenant's usage:
+/// what a put or a mutate stores for the Tenant it acts for.
+pub fn context_row_usage(view: &Value) -> Value {
+    serde_json::json!({
+        "numberOfHits": view["numberOfHits"].as_u64().unwrap_or(0),
+        "lastUsage": view.get("lastUsage").cloned().unwrap_or(Value::Null),
+    })
+}
+
 /// Current-state storage: everything except the temporal evolution.
 ///
 /// Contract carried over from the enum seam it replaces: every mutate is
@@ -890,6 +946,13 @@ pub trait CurrentStateDriver: Send + Sync {
     /// and is reachable with any `tenant`, and every other kind is reachable
     /// only by the Tenant named in its `owner` member. A backend that ignores
     /// the parameter fails the driver contract.
+    ///
+    /// The counters of a `Cached` row are kept per Tenant (S5-10): a get or a
+    /// list answers through [`context_row_view`], so a named Tenant sees a
+    /// Cached row only after it used it, with its own counters, and a put or a
+    /// mutate stores the counters it is handed as the acting Tenant's alone. A
+    /// mutate reaches every Cached row, used or not: a refetch or a first use
+    /// through a warm loader copy is what starts the Tenant's counters.
     async fn context_put(
         &self,
         tenant: Option<&TenantId>,

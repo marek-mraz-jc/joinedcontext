@@ -840,6 +840,17 @@ async fn purge_tenant_empties_every_tenant_table() {
                                "body": {"@context": {"n": "https://x/n"}}}),
         )
         .await.expect("hosted @context");
+        // S5-10: its uses of a shared Cached copy are its rows too (0039)
+        CurrentStateDriver::context_put(
+            &store,
+            Some(t),
+            "ctx-cached",
+            serde_json::json!({"url": "http://c.example/ctx.jsonld", "localId": "ctx-cached",
+                               "kind": "Cached", "createdAt": "2026-08-04T09:00:00Z",
+                               "numberOfHits": 1, "body": {"@context": {}}}),
+        )
+        .await
+        .expect("cached @context");
         TemporalDriver::create(&store, t, "urn:x:1", doc("urn:x:1"))
             .await
             .expect("temporal");
@@ -882,12 +893,13 @@ async fn purge_tenant_empties_every_tenant_table() {
                 .expect(stmt);
         }
     }
-    const TABLES: [&str; 21] = [
+    const TABLES: [&str; 22] = [
         "entities",
         "entity_values",
         "entity_types",
         "entity_attrs",
         "jsonld_contexts",
+        "jsonld_context_usage",
         "subscriptions",
         "csource_subscriptions",
         "csource_registrations",
