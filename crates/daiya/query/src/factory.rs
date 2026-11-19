@@ -22,6 +22,7 @@ use ipnet::IpNet;
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use std::collections::BTreeSet;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -320,26 +321,18 @@ async fn build_postgres(
             "jsonData.allowedViews must name the views granted to the organization",
         ));
     }
-    let ssl_mode = match json_str(record, "sslmode").unwrap_or("prefer") {
-        "disable" => PgSslMode::Disable,
-        "allow" => PgSslMode::Allow,
-        "prefer" => PgSslMode::Prefer,
-        "require" => PgSslMode::Require,
-        other => {
-            return Err(config_error(
-                record,
-                format!("sslmode '{other}' is not supported (disable, allow, prefer, require)"),
-            ));
-        }
-    };
+    let ssl_mode =
+        ssl_mode_of(json_str(record, "sslmode")).map_err(|why| config_error(record, why))?;
 
-    // The guard decides the address; the pool connects to that address, never re-resolving.
+    // The guard decides the address. A pinned address is what the pool connects to; under
+    // `verify-full` the pool connects by the checked name, so the server certificate must match
+    // that name and a name that later resolves elsewhere cannot complete the handshake.
     let addrs = guard.resolve_checked(&host, port).await?;
     let Some(addr) = addrs.first() else {
         return Err(DsError::GuardRefused(format!("no address for '{host}'")));
     };
     let mut opts = PgConnectOptions::new()
-        .host(&addr.ip().to_string())
+        .host(&connect_host(&host, *addr, ssl_mode))
         .port(addr.port())
         .database(database)
         .username(user)
@@ -361,9 +354,59 @@ async fn build_postgres(
     )))
 }
 
+/// The record's `jsonData.sslmode`; without one the server must prove its name (`verify-full`).
+fn ssl_mode_of(sslmode: Option<&str>) -> Result<PgSslMode, String> {
+    Ok(match sslmode.unwrap_or("verify-full") {
+        "disable" => PgSslMode::Disable,
+        "allow" => PgSslMode::Allow,
+        "prefer" => PgSslMode::Prefer,
+        "require" => PgSslMode::Require,
+        "verify-ca" => PgSslMode::VerifyCa,
+        "verify-full" => PgSslMode::VerifyFull,
+        other => {
+            return Err(format!(
+                "sslmode '{other}' is not supported (verify-full, verify-ca, require, prefer, allow, disable)"
+            ));
+        }
+    })
+}
+
+/// The host the pool dials: the checked name under `verify-full` (the certificate is checked
+/// against it), else the guard's pinned address.
+fn connect_host(host: &str, addr: SocketAddr, mode: PgSslMode) -> String {
+    let name = host.trim_matches(['[', ']']);
+    if matches!(mode, PgSslMode::VerifyFull) && name.parse::<IpAddr>().is_err() {
+        name.to_ascii_lowercase()
+    } else {
+        addr.ip().to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn postgres_defaults_to_verify_full_and_dials_the_checked_name() {
+        assert!(matches!(ssl_mode_of(None).unwrap(), PgSslMode::VerifyFull));
+        assert!(matches!(
+            ssl_mode_of(Some("verify-ca")).unwrap(),
+            PgSslMode::VerifyCa
+        ));
+        assert!(ssl_mode_of(Some("sometimes")).is_err());
+        let addr: SocketAddr = "198.51.100.4:5432".parse().unwrap();
+        assert_eq!(
+            connect_host("DB.example", addr, PgSslMode::VerifyFull),
+            "db.example"
+        );
+        assert_eq!(
+            connect_host("[2001:db8::4]", addr, PgSslMode::VerifyFull),
+            "198.51.100.4"
+        );
+        for mode in [PgSslMode::Require, PgSslMode::VerifyCa, PgSslMode::Disable] {
+            assert_eq!(connect_host("db.example", addr, mode), "198.51.100.4");
+        }
+    }
 
     #[test]
     fn intervals_parse_like_grafana_time_interval() {
