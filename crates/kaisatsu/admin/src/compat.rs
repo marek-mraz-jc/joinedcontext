@@ -801,7 +801,7 @@ async fn compat_put_realm(
     Path(realm_name): Path<String>,
     headers: HeaderMap,
     mount_ext: Option<Extension<Mount>>,
-    Json(mut realm): Json<RealmConfig>,
+    Json(body): Json<Value>,
 ) -> Result<StatusCode> {
     let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let ctx = extract_admin_ctx(&state, &mount, &realm_name, &headers).await?;
@@ -812,11 +812,42 @@ async fn compat_put_realm(
             realm_id: realm_name.clone(),
         },
     ))?;
-    realm.id = realm_name.clone();
-    realm.realm = realm_name.clone();
+    let stored = state
+        .oidc
+        .store
+        .get_realm(&realm_name)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
+    let realm = realm_with_update(stored, body)?;
     state.oidc.store.upsert_realm(realm).await?;
     record_admin_write(&state, &ctx, "UPDATE", "REALM", &realm_name, None).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Keycloak's realm update: the keys the body gives replace the stored ones, every other key keeps
+/// its stored value. The realm keeps its id and name (its users and clients are keyed by them),
+/// and the SMTP password, never read back, stays while the body names the same host and user.
+fn realm_with_update(stored: RealmConfig, body: Value) -> Result<RealmConfig> {
+    let Value::Object(update) = body else {
+        return Err(KaisatsuError::BadRequest(
+            "send the realm as a JSON object, for example {\"displayName\": \"City\"}".into(),
+        ));
+    };
+    let mut doc = serde_json::to_value(&stored)
+        .map_err(|e| KaisatsuError::Storage(format!("realm encode: {e}")))?;
+    if let Value::Object(fields) = &mut doc {
+        fields.extend(update);
+    }
+    let mut realm: RealmConfig = serde_json::from_value(doc)
+        .map_err(|e| KaisatsuError::BadRequest(format!("realm body: {e}")))?;
+    realm.id = stored.id;
+    realm.realm = stored.realm;
+    if let (Some(new), Some(old)) = (realm.smtp_server.as_mut(), stored.smtp_server) {
+        if new.password.is_empty() && new.host == old.host && new.user == old.user {
+            new.password = old.password;
+        }
+    }
+    Ok(realm)
 }
 
 #[derive(Debug, Deserialize)]
