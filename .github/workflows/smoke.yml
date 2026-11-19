@@ -277,3 +277,22 @@ jobs:
           name: smoke-all
           path: ${{ runner.temp }}/smoke
           retention-days: 14
+
+  # A green verdict on the merge branch fast-forwards main to the tested commit (T-7420), once ci.yml's
+  # push run on jc-portal-1 at that commit is green too and main is its ancestor; never a force or a
+  # merge commit (.github/scripts/ff-main.sh). The deployer's pin and dev apply follow as before:
+  # the script dispatches ci.yml on main, which ships the commit (a GITHUB_TOKEN push starts no run).
+  # The only job here that writes: contents for the ref, actions for the dispatch. One at a time, so
+  # an older green run never races a newer one (the older then finds main ahead and leaves it).
+  ff-main:
+    needs: verdict
+    if: github.ref == 'refs/heads/jc-portal-1' && github.repository == 'marek-mraz-jc/joinedcontext'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions: { contents: write, actions: write }
+    concurrency: { group: ff-main, cancel-in-progress: false }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false, sparse-checkout: .github/scripts }
+      - env: { SHA: "${{ github.sha }}", GH_TOKEN: "${{ github.token }}" }
+        run: sh .github/scripts/ff-main.sh

@@ -1,5 +1,5 @@
 name: deploy-pin
-# After a green ci of a push to main: pins the jc image that run promoted (built, smoke-tested,
+# After a green ci of a push to main (or of the dispatch smoke.yml ff-main starts after moving it): pins the jc image that run promoted (built, smoke-tested,
 # scanned, signed) in this repository's deploy/components/jc/images.yaml (the deployment code moved
 # here, T-6986), on a branch `pin/jc-<sha>`, and opens a pull request against jc-portal-1 for the
 # deployer. A pin-only change runs no image build (changes.sh: ship=false), so a pin never pins again. dev only: nothing here applies a
@@ -20,7 +20,9 @@ concurrency: { group: deploy-pin, cancel-in-progress: false }
 jobs:
   pin:
     if: >-
-      github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'push' ||
+       (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main')) &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 10
