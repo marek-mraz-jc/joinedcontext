@@ -158,7 +158,7 @@ async fn respond(ops: &Ops, req: Request) -> Response {
         antares_ops::public_base(req.headers())
     );
     let served = if names_the_model {
-        let visible = model_visible(&view, &caller).await;
+        let visible = view.readable(&caller).await;
         assembled(
             &id,
             view.clone(),
@@ -187,7 +187,7 @@ async fn respond(ops: &Ops, req: Request) -> Response {
         // A member reading a model document is shown the narrowed one, as alone; built only
         // when a member asks for one.
         let narrowed = async {
-            let visible = model_visible(&view, &caller).await;
+            let visible = view.readable(&caller).await;
             assembled(&id, view, Some(&visible), version, service_root).map(|s| s.routed)
         };
         let routers = (routed, narrowed);
@@ -409,23 +409,6 @@ type Built = (
     Option<String>,
     Arc<odata_axum::MetadataDocuments>,
 );
-
-/// What the caller may read through `view`: asked as the type details the
-/// LinkML surface asks for its schema documents, else as the reads the model
-/// describes. A view offering none of them, or an engine refusing, leaves
-/// the caller a model that names nothing (fail closed).
-async fn model_visible(view: &ViewOps, caller: &Caller) -> antares_ops::Visible {
-    // a view offering none is refused by `visible` and gets the empty model
-    let op = [
-        OperationId::RetrieveEntityTypeDetails,
-        OperationId::QueryEntities,
-        OperationId::RetrieveEntity,
-    ]
-    .into_iter()
-    .find(|op| view.allows(*op))
-    .unwrap_or(OperationId::RetrieveEntityTypeDetails);
-    view.visible(caller, op, &[], &[]).await.unwrap_or_default()
-}
 
 /// `shown` without the types and Attributes `visible` hides; all of it
 /// without one.
