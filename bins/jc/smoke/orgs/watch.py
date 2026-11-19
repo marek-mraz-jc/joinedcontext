@@ -17,15 +17,15 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
     state = "/workspace/evidence/orgs-smoke/jc-prod"
     board = "/workspace/tasks"       # incidents go here; unset, none are filed
     owner = "prod-deployer"          # the incidents' owner, named @ in each note
-    assistant = ["zilina=zilina"]    # ORG=PUBLICID, optional
+    assistant = ["zilina=zilina@zilina/web"]  # ORG=PUBLICID[@PROJECT[/SOURCE],...], optional; @ what it searches
     app_hosts = []                   # ORG=HOST, optional
 
 Each run:
 1. Snapshot, read-only: jc.toml from the ConfigMap jc's pod mounts (the jc image has no `cat`),
    then one query each on the Portal's and the assistant's databases on the CNPG primary, inside SET default_transaction_read_only (the
    Organizations, their served hosts and catalogue, each project's Organization; each knowledge
-   source's root, last crawl, embedder refusals and up to 12 page titles of its public, embedded
-   pages, sampled anew each run for the assistant's question). Counts, addresses and public page
+   source's root, last crawl, embedder refusals and up to 12 titles of its public, embedded pages and
+   documents, sampled anew each run for the assistant's question). Counts, addresses and public page
    titles only: no passage text, no person.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
@@ -71,11 +71,13 @@ ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_
   'pending', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL{pending}),
   'errors', {errors},
   'titles', (SELECT coalesce(json_agg(json_build_object('title', t.title, 'lang', t.language)), '[]')
-             FROM (SELECT d.title, d.language FROM (SELECT DISTINCT p.title, p.language
-                   FROM chunks c JOIN pages p ON p.id = c.page_id
+             FROM (SELECT u.title, u.language FROM (SELECT DISTINCT coalesce(p.title, d.title) AS title,
+                   coalesce(p.language, c.lang) AS language
+                   FROM chunks c LEFT JOIN pages p ON p.id = c.page_id AND p.included
+                   LEFT JOIN documents d ON d.id = c.document_id AND d.included
                    WHERE c.project = s.project AND c.site_id = s.id AND c.visibility = 'public'
-                     AND c.embedding IS NOT NULL AND s.visibility = 'public' AND p.included
-                     AND length(btrim(p.title)) BETWEEN 3 AND 200) d
+                     AND c.embedding IS NOT NULL AND s.visibility = 'public'
+                     AND length(btrim(coalesce(p.title, d.title))) BETWEEN 3 AND 200) u
                    ORDER BY random() LIMIT 12) t)
 ) ORDER BY s.organization, s.project, s.source), '[]')) FROM sites s"""
 # chunks.embed_error arrives with assistant migration 0025: before it, the errors are unknown (null).

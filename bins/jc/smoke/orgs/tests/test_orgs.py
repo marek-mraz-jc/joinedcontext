@@ -183,6 +183,23 @@ def test_the_question_names_a_page_title_and_never_repeats_the_previous_one():
     assert orgs.previous_questions(None) == {}
 
 
+def test_the_question_comes_from_the_projects_the_assistant_searches(tmp_path, edge, public_sources):
+    doc = snapshot(public_sources)
+    doc["projects"].append({"name": "alpha-news", "organization": "alpha"})
+    doc["knowledge"].append({"domain": "alpha.example", "project": "alpha-news", "source": "site", "root": None,
+                             "titles": [{"title": "Election results", "lang": "en"}]})
+    run(tmp_path, public_sources, "--assistant", "alpha=alpha-chat@alpha-news", snap_doc=doc)
+    asked = [m for k, h, m in edge[1] if k == "ASK"]
+    assert len(asked) == 1 and "Election results" in asked[0]
+    got = orgs.build(orgs.tomllib.loads(TOML.replace("{port}", "1")), doc, {"alpha": ["alpha-chat@a,b/c"]})
+    assert (got["alpha"]["assistant"], got["alpha"]["asks"]) == ("alpha-chat", {"a", "b/c"})
+    # A source the deployment does not search gives no question: the row fails by name.
+    edge[1].clear()
+    _, res = run(tmp_path, public_sources, "--assistant", "alpha=alpha-chat@alpha-web/other", snap_doc=doc)
+    assert {r["id"]: r for r in res["checks"]}["assistant.alpha"]["result"] == "fail"
+    assert not [m for k, h, m in edge[1] if k == "ASK"]
+
+
 @pytest.fixture
 def edge():
     """A loopback edge answering as each Organization's jc would; it records what reached it."""
@@ -327,7 +344,8 @@ def test_an_index_without_a_titled_page_fails_the_assistant_row_by_name(tmp_path
     doc["knowledge"][0]["titles"] = []
     _, res = run(tmp_path, public_sources, snap_doc=doc)
     row = {r["id"]: r for r in res["checks"]}["assistant.alpha"]
-    assert row["result"] == "fail" and "no public, embedded page with a title" in row["reason"]
+    assert row["result"] == "fail" and row["actual"] == "no title in 1 knowledge sources searched"
+    assert "no public, embedded page or document with a title" in row["reason"]
     assert not [m for k, h, m in edge[1] if k == "ASK"]
 
 

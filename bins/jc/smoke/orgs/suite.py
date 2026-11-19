@@ -2,7 +2,7 @@
 anonymous and read-only behind live.py's guard.
 
     bins/jc/smoke/run orgs --jc-config <jc.toml> --deployment <name> --domain <d> --edge <ip>
-        --out <dir> [--snapshot <json>] [--assistant ORG=PUBLICID]... [--app-host ORG=HOST]...
+        --out <dir> [--snapshot <json>] [--assistant ORG=PUBLICID[@PROJECT[/SOURCE],...]]... [--app-host ORG=HOST]...
         [--previous <results.json>] [--max-crawl-hours 48] [--rate 2]
 
 The Organizations are jc.toml's [[organizations]] (the seed) joined with the registry rows of the
@@ -36,7 +36,9 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
 - assistant.O: with --assistant O=<publicId>, one question through the visitor flow takes the
   search route (the `done` event's stagesMs has `search`; `cached` true or no search is a fail
   named `cached` or `direct`), answers (no `error` event, an `answer`) and cites at least one page
-  of O's own crawl roots. The question names one page title of O's public, embedded index, picked
+  of O's own crawl roots. The question names one page title of O's public, embedded index (only
+  the projects or project/source pairs after `@`, the ones the deployment searches, when the flag
+  names them; the manifests that say so live in Git, not in a database the watch reads), picked
   at random each run and never the previous run's question (--previous), so the answer cache
   cannot answer it and the router has to search O's pages.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
@@ -125,7 +127,7 @@ def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | No
 
     def org(name: str) -> dict:
         return orgs.setdefault(name, {"hosts": {}, "catalogue": None, "harvest": [], "crawl": [],
-                                      "assistant": None, "apps": []})
+                                      "assistant": None, "asks": None, "apps": []})
 
     for o in doc.get("organizations") or []:
         if not NAME.fullmatch(o.get("name") or "") or o.get("host") == "auto":
@@ -159,7 +161,9 @@ def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | No
             orgs[owner[k["project"]]]["crawl"].append(k)
     for name, ids in (assistants or {}).items():
         if name in orgs:
-            orgs[name]["assistant"] = ids[0]
+            pid, _, projects = ids[-1].partition("@")  # the last flag wins
+            orgs[name]["assistant"] = pid
+            orgs[name]["asks"] = set(projects.split(",")) - {""} or None
     for name, hosts in (apps or {}).items():
         if name in orgs:
             orgs[name]["apps"] = sorted(set(hosts))
@@ -312,12 +316,15 @@ class Suite:
             self.r.skip(rid, o, "POST /api/v1/d/<publicId>/chat", "an answer citing O's own pages",
                         f"no public assistant named for {o} (watch --assistant {o}=<publicId>)")
             return
-        titles = [t for c in e["crawl"] for t in c.get("titles") or []]
+        asks = e["asks"]
+        searched = [c for c in e["crawl"]
+                    if not asks or c.get("project") in asks or f"{c.get('project')}/{c.get('source')}" in asks]
+        titles = [t for c in searched for t in c.get("titles") or []]
         q = question(titles, self.previous.get(o), self.rng)
         if not q:
             self.r.check(rid, o, "a page title of O's public, embedded index", "a question naming one of O's pages",
-                         f"no titled page in {len(e['crawl'])} knowledge sources", False,
-                         "O's index holds no public, embedded page with a title to ask about")
+                         f"no title in {len(searched)} knowledge sources searched", False,
+                         "the sources it searches hold no public, embedded page or document with a title")
             return
         self.asked[o] = q
         h = self.http(self.assistant_host or e["hosts"]["portal"])
@@ -371,7 +378,7 @@ def main(argv) -> int:
     p.add_argument("--edge-port", type=int, default=443)
     p.add_argument("--scheme", default="https", help=argparse.SUPPRESS)  # http: the tests' loopback edge
     p.add_argument("--snapshot", help="the registry and knowledge snapshot watch.py reads (JSON)")
-    p.add_argument("--assistant", action="append", default=[], help="ORG=PUBLICID of O's public assistant")
+    p.add_argument("--assistant", action="append", default=[], help="ORG=PUBLICID[@PROJECT[/SOURCE],...] of O's public assistant; @ what it searches")
     p.add_argument("--app-host", action="append", default=[], help="ORG=HOST of one of O's Apps")
     p.add_argument("--previous", help="the previous run's results.json: its questions are not asked again")
     p.add_argument("--max-crawl-hours", type=float, default=48)
