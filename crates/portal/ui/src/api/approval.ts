@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, unwrap } from "./client";
+import { door } from "./odata";
 import { allows, type Effective, type Rule, type Verb } from "./permissions";
 import type { components } from "./schema";
 
@@ -174,6 +174,6 @@ export function useApprovalMode(by: { organization: string } | { project: string
     queryKey: ["approval-mode", query],
     enabled: by !== null,
     staleTime: 30_000,
-    queryFn: async () => unwrap(await api.GET("/api/v1/organization/approval-mode", { params: { query } })),
+    queryFn: async () => (await door("portal_approval_mode", query)) as ApprovalMode,
   });
 }

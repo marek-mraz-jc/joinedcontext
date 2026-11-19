@@ -983,6 +983,7 @@ export interface Functions {
   portal_app_checks: Record<string, never>;
   portal_app_dashboard: { name: string };
   portal_app_templates: Record<string, never>;
+  portal_approval_mode: { organization?: string; project?: string };
   portal_assistant_access: Record<string, never>;
   portal_backup_configuration_download: { version: string };
   portal_backup_configuration_get: Record<string, never>;
@@ -1167,6 +1168,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_app_checks: ["Project"],
   portal_app_dashboard: ["Project"],
   portal_app_templates: ["Organization"],
+  portal_approval_mode: ["Organization"],
   portal_assistant_access: ["Project"],
   portal_backup_configuration_download: ["Organization"],
   portal_backup_configuration_get: ["Organization"],
