@@ -8,9 +8,10 @@
 //!   `cr_quota` during write transactions (§5.3).
 
 use daiya_model::{
-    CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
-    FolderRecord, ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord, OrgId,
-    OrgQuotas, PublicDashboardRecord, QueryCacheStatRecord, ShareType, store::StoreFuture,
+    ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, ImportReportRecord, InstallationId, InstanceId,
+    LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord, PublicDashboardRecord,
+    QueryCacheStatRecord, ShareType, org_state_etag, store::StoreFuture,
 };
 use serde_json::Value;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -35,6 +36,7 @@ pub const REQUIRED_RLS_TABLES: &[&str] = &[
     "cr_alert_state",
     "cr_query_cache",
     "cr_import_report",
+    "cr_plan",
 ];
 
 /// Pool configuration for `daiya-store-pg` (R8, R11: passed as a struct, password from secret file).
@@ -376,6 +378,338 @@ impl PgStore {
             min_public_interval_ms: row.get("min_public_interval_ms"),
         })
     }
+
+    async fn list_folders_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        org_id: OrgId,
+    ) -> CrResult<Vec<FolderRecord>> {
+        let rows = sqlx::query(
+            "SELECT installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at
+             FROM cr_folder WHERE org_id = $1 ORDER BY uid",
+        )
+        .bind(org_id.as_uuid())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(row_to_folder).collect())
+    }
+
+    async fn upsert_folder_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        folder: FolderRecord,
+    ) -> CrResult<FolderRecord> {
+        if folder.uid == "general" {
+            return Err(CrError::BadRequest(
+                "cannot create or overwrite reserved folder uid 'general'".into(),
+            ));
+        }
+        // The organization lock every write takes, so an Apply's etag check sees no folder
+        // write land between its read and its commit.
+        Self::lock_org_quotas(
+            tx,
+            folder.installation_id,
+            folder.org_id,
+            folder.instance_id,
+        )
+        .await?;
+        check_folder_parents(tx, folder.org_id, &folder.uid, folder.parent_uid.clone()).await?;
+        let row = sqlx::query(
+            "INSERT INTO cr_folder (installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10)
+             ON CONFLICT (org_id, uid) DO UPDATE SET
+                parent_uid = EXCLUDED.parent_uid,
+                title = EXCLUDED.title,
+                version = cr_folder.version + 1,
+                managed_by = EXCLUDED.managed_by,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = NOW()
+             RETURNING installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at",
+        )
+        .bind(folder.installation_id.as_uuid())
+        .bind(folder.org_id.as_uuid())
+        .bind(folder.instance_id.as_uuid())
+        .bind(&folder.project_id)
+        .bind(&folder.uid)
+        .bind(&folder.parent_uid)
+        .bind(&folder.title)
+        .bind(&folder.managed_by)
+        .bind(&folder.created_by)
+        .bind(&folder.updated_by)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(row_to_folder(row))
+    }
+
+    async fn list_dashboards_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        org_id: OrgId,
+    ) -> CrResult<Vec<DashboardRecord>> {
+        let rows = sqlx::query(
+            "SELECT installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by, created_at, updated_at
+             FROM cr_dashboard WHERE org_id = $1 ORDER BY uid",
+        )
+        .bind(org_id.as_uuid())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(row_to_dashboard).collect())
+    }
+
+    async fn upsert_dashboard_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        mut dashboard: DashboardRecord,
+        msg: &str,
+        overwrite: bool,
+    ) -> CrResult<DashboardRecord> {
+        let quotas = Self::lock_org_quotas(
+            tx,
+            dashboard.installation_id,
+            dashboard.org_id,
+            dashboard.instance_id,
+        )
+        .await?;
+
+        if dashboard.panel_count as u64 > quotas.max_panels_per_dashboard {
+            return Err(CrError::QuotaExceeded {
+                resource: "panels_per_dashboard".into(),
+                limit: quotas.max_panels_per_dashboard,
+            });
+        }
+
+        let existing_row = sqlx::query(
+            "SELECT version, is_provisioned, allow_ui_updates FROM cr_dashboard WHERE org_id = $1 AND uid = $2 FOR UPDATE",
+        )
+        .bind(dashboard.org_id.as_uuid())
+        .bind(&dashboard.uid)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(db_err)?;
+
+        let parent_version = if let Some(ex) = existing_row {
+            let ex_ver: i32 = ex.get("version");
+            let ex_prov: bool = ex.get("is_provisioned");
+            let ex_allow: bool = ex.get("allow_ui_updates");
+            if !overwrite && dashboard.version != ex_ver {
+                return Err(CrError::PreconditionFailed(format!(
+                    "dashboard '{}' version mismatch",
+                    dashboard.uid
+                )));
+            }
+            if ex_prov && !ex_allow && !dashboard.is_provisioned {
+                return Err(CrError::Forbidden(
+                    "cannot update provisioned dashboard when allowUiUpdates is false".into(),
+                ));
+            }
+            dashboard.version = ex_ver + 1;
+            ex_ver
+        } else {
+            let cnt: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM cr_dashboard WHERE org_id = $1")
+                    .bind(dashboard.org_id.as_uuid())
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(db_err)?;
+            if cnt as u64 >= quotas.max_dashboards {
+                return Err(CrError::QuotaExceeded {
+                    resource: "dashboards".into(),
+                    limit: quotas.max_dashboards,
+                });
+            }
+            dashboard.version = 1;
+            0
+        };
+
+        if let Some(obj) = dashboard.data.as_object_mut() {
+            obj.insert("version".to_owned(), Value::from(dashboard.version));
+            obj.insert("uid".to_owned(), Value::String(dashboard.uid.clone()));
+        }
+
+        let tags_json = serde_json::to_value(&dashboard.tags).unwrap_or(Value::Array(vec![]));
+        let ds_json =
+            serde_json::to_value(&dashboard.datasource_uids).unwrap_or(Value::Array(vec![]));
+
+        let saved = sqlx::query(
+            "INSERT INTO cr_dashboard (installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+             ON CONFLICT (org_id, uid) DO UPDATE SET
+                folder_uid = EXCLUDED.folder_uid,
+                title = EXCLUDED.title,
+                slug = EXCLUDED.slug,
+                tags = EXCLUDED.tags,
+                panel_count = EXCLUDED.panel_count,
+                datasource_uids = EXCLUDED.datasource_uids,
+                version = EXCLUDED.version,
+                schema_version = EXCLUDED.schema_version,
+                is_provisioned = EXCLUDED.is_provisioned,
+                provisioned_external_id = EXCLUDED.provisioned_external_id,
+                allow_ui_updates = EXCLUDED.allow_ui_updates,
+                model = EXCLUDED.model,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = NOW()
+             RETURNING installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by, created_at, updated_at",
+        )
+        .bind(dashboard.installation_id.as_uuid())
+        .bind(dashboard.org_id.as_uuid())
+        .bind(dashboard.instance_id.as_uuid())
+        .bind(&dashboard.project_id)
+        .bind(&dashboard.uid)
+        .bind(&dashboard.folder_uid)
+        .bind(&dashboard.title)
+        .bind(&dashboard.slug)
+        .bind(&tags_json)
+        .bind(dashboard.panel_count)
+        .bind(&ds_json)
+        .bind(dashboard.version)
+        .bind(dashboard.schema_version)
+        .bind(dashboard.is_provisioned)
+        .bind(&dashboard.provisioned_external_id)
+        .bind(dashboard.allow_ui_updates)
+        .bind(&dashboard.data)
+        .bind(&dashboard.created_by)
+        .bind(&dashboard.updated_by)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+
+        sqlx::query(
+            "INSERT INTO cr_dashboard_version (installation_id, org_id, instance_id, dashboard_uid, version, parent_version, restored_from, message, model, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9)",
+        )
+        .bind(dashboard.installation_id.as_uuid())
+        .bind(dashboard.org_id.as_uuid())
+        .bind(dashboard.instance_id.as_uuid())
+        .bind(&dashboard.uid)
+        .bind(dashboard.version)
+        .bind(parent_version)
+        .bind(if !msg.is_empty() {
+            msg
+        } else if parent_version == 0 {
+            "Initial save"
+        } else {
+            "Updated dashboard"
+        })
+        .bind(&dashboard.data)
+        .bind(&dashboard.updated_by)
+        .execute(&mut **tx)
+        .await
+        .map_err(db_err)?;
+
+        Ok(row_to_dashboard(saved))
+    }
+
+    async fn list_datasources_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        org_id: OrgId,
+    ) -> CrResult<Vec<DatasourceRecord>> {
+        let rows = sqlx::query(
+            "SELECT installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version, created_at, updated_at
+             FROM cr_datasource WHERE org_id = $1 ORDER BY name",
+        )
+        .bind(org_id.as_uuid())
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(rows.into_iter().map(row_to_datasource).collect())
+    }
+
+    async fn upsert_datasource_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        ds: DatasourceRecord,
+    ) -> CrResult<DatasourceRecord> {
+        let quotas =
+            Self::lock_org_quotas(tx, ds.installation_id, ds.org_id, ds.instance_id).await?;
+
+        let exists: Option<i32> =
+            sqlx::query_scalar("SELECT version FROM cr_datasource WHERE org_id = $1 AND uid = $2")
+                .bind(ds.org_id.as_uuid())
+                .bind(&ds.uid)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(db_err)?;
+
+        if exists.is_none() {
+            let cnt: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1")
+                    .bind(ds.org_id.as_uuid())
+                    .fetch_one(&mut **tx)
+                    .await
+                    .map_err(db_err)?;
+            if cnt as u64 >= quotas.max_datasources {
+                return Err(CrError::QuotaExceeded {
+                    resource: "datasources".into(),
+                    limit: quotas.max_datasources,
+                });
+            }
+            if ds.kind.starts_with("wasm:") {
+                let wasm: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1 AND kind LIKE 'wasm:%'",
+                )
+                .bind(ds.org_id.as_uuid())
+                .fetch_one(&mut **tx)
+                .await
+                .map_err(db_err)?;
+                if wasm as u64 >= quotas.max_wasm_plugins {
+                    return Err(CrError::QuotaExceeded {
+                        resource: "wasm_plugins".into(),
+                        limit: quotas.max_wasm_plugins,
+                    });
+                }
+            }
+        }
+
+        if ds.is_default {
+            sqlx::query(
+                "UPDATE cr_datasource SET is_default = FALSE WHERE org_id = $1 AND uid <> $2",
+            )
+            .bind(ds.org_id.as_uuid())
+            .bind(&ds.uid)
+            .execute(&mut **tx)
+            .await
+            .map_err(db_err)?;
+        }
+
+        let secret_refs_json = serde_json::to_value(&ds.secret_refs).unwrap_or_default();
+        let allow_hosts_json = serde_json::to_value(&ds.allow_hosts).unwrap_or_default();
+
+        let row = sqlx::query(
+            "INSERT INTO cr_datasource (installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1)
+             ON CONFLICT (org_id, uid) DO UPDATE SET
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                access = EXCLUDED.access,
+                url = EXCLUDED.url,
+                is_default = EXCLUDED.is_default,
+                read_only = EXCLUDED.read_only,
+                json_data = EXCLUDED.json_data,
+                secret_refs = EXCLUDED.secret_refs,
+                allow_hosts = EXCLUDED.allow_hosts,
+                wasm_digest = EXCLUDED.wasm_digest,
+                version = cr_datasource.version + 1,
+                updated_at = NOW()
+             RETURNING installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version, created_at, updated_at",
+        )
+        .bind(ds.installation_id.as_uuid())
+        .bind(ds.org_id.as_uuid())
+        .bind(ds.instance_id.as_uuid())
+        .bind(&ds.project_id)
+        .bind(&ds.uid)
+        .bind(&ds.name)
+        .bind(&ds.kind)
+        .bind(&ds.access)
+        .bind(&ds.url)
+        .bind(ds.is_default)
+        .bind(ds.read_only)
+        .bind(&ds.json_data)
+        .bind(&secret_refs_json)
+        .bind(&allow_hosts_json)
+        .bind(&ds.wasm_digest)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(db_err)?;
+        Ok(row_to_datasource(row))
+    }
 }
 
 impl DaiyaStore for PgStore {
@@ -500,16 +834,9 @@ impl DaiyaStore for PgStore {
     fn list_folders(&self, org_id: OrgId) -> StoreFuture<'_, Vec<FolderRecord>> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
-            let rows = sqlx::query(
-                "SELECT installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at
-                 FROM cr_folder WHERE org_id = $1 ORDER BY uid",
-            )
-            .bind(org_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let out = Self::list_folders_tx(&mut tx, org_id).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows.into_iter().map(row_to_folder).collect())
+            Ok(out)
         })
     }
 
@@ -533,46 +860,10 @@ impl DaiyaStore for PgStore {
 
     fn upsert_folder(&self, folder: FolderRecord) -> StoreFuture<'_, FolderRecord> {
         Box::pin(async move {
-            if folder.uid == "general" {
-                return Err(CrError::BadRequest(
-                    "cannot create or overwrite reserved folder uid 'general'".into(),
-                ));
-            }
             let mut tx = self.begin_org_tx(folder.org_id).await?;
-            check_folder_parents(
-                &mut tx,
-                folder.org_id,
-                &folder.uid,
-                folder.parent_uid.clone(),
-            )
-            .await?;
-            let row = sqlx::query(
-                "INSERT INTO cr_folder (installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10)
-                 ON CONFLICT (org_id, uid) DO UPDATE SET
-                    parent_uid = EXCLUDED.parent_uid,
-                    title = EXCLUDED.title,
-                    version = cr_folder.version + 1,
-                    managed_by = EXCLUDED.managed_by,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = NOW()
-                 RETURNING installation_id, org_id, instance_id, project_id, uid, parent_uid, title, version, managed_by, created_by, updated_by, created_at, updated_at",
-            )
-            .bind(folder.installation_id.as_uuid())
-            .bind(folder.org_id.as_uuid())
-            .bind(folder.instance_id.as_uuid())
-            .bind(&folder.project_id)
-            .bind(&folder.uid)
-            .bind(&folder.parent_uid)
-            .bind(&folder.title)
-            .bind(&folder.managed_by)
-            .bind(&folder.created_by)
-            .bind(&folder.updated_by)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let out = Self::upsert_folder_tx(&mut tx, folder).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(row_to_folder(row))
+            Ok(out)
         })
     }
 
@@ -615,16 +906,9 @@ impl DaiyaStore for PgStore {
     fn list_dashboards(&self, org_id: OrgId) -> StoreFuture<'_, Vec<DashboardRecord>> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
-            let rows = sqlx::query(
-                "SELECT installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by, created_at, updated_at
-                 FROM cr_dashboard WHERE org_id = $1 ORDER BY uid",
-            )
-            .bind(org_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let out = Self::list_dashboards_tx(&mut tx, org_id).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows.into_iter().map(row_to_dashboard).collect())
+            Ok(out)
         })
     }
 
@@ -648,148 +932,16 @@ impl DaiyaStore for PgStore {
 
     fn upsert_dashboard(
         &self,
-        mut dashboard: DashboardRecord,
+        dashboard: DashboardRecord,
         message: &str,
         overwrite: bool,
     ) -> StoreFuture<'_, DashboardRecord> {
         let msg = message.to_owned();
         Box::pin(async move {
             let mut tx = self.begin_org_tx(dashboard.org_id).await?;
-            let quotas = Self::lock_org_quotas(
-                &mut tx,
-                dashboard.installation_id,
-                dashboard.org_id,
-                dashboard.instance_id,
-            )
-            .await?;
-
-            if dashboard.panel_count as u64 > quotas.max_panels_per_dashboard {
-                return Err(CrError::QuotaExceeded {
-                    resource: "panels_per_dashboard".into(),
-                    limit: quotas.max_panels_per_dashboard,
-                });
-            }
-
-            let existing_row = sqlx::query(
-                "SELECT version, is_provisioned, allow_ui_updates FROM cr_dashboard WHERE org_id = $1 AND uid = $2 FOR UPDATE",
-            )
-            .bind(dashboard.org_id.as_uuid())
-            .bind(&dashboard.uid)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_err)?;
-
-            let parent_version = if let Some(ex) = existing_row {
-                let ex_ver: i32 = ex.get("version");
-                let ex_prov: bool = ex.get("is_provisioned");
-                let ex_allow: bool = ex.get("allow_ui_updates");
-                if !overwrite && dashboard.version != ex_ver {
-                    return Err(CrError::PreconditionFailed(format!(
-                        "dashboard '{}' version mismatch",
-                        dashboard.uid
-                    )));
-                }
-                if ex_prov && !ex_allow && !dashboard.is_provisioned {
-                    return Err(CrError::Forbidden(
-                        "cannot update provisioned dashboard when allowUiUpdates is false".into(),
-                    ));
-                }
-                dashboard.version = ex_ver + 1;
-                ex_ver
-            } else {
-                let cnt: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM cr_dashboard WHERE org_id = $1")
-                        .bind(dashboard.org_id.as_uuid())
-                        .fetch_one(&mut *tx)
-                        .await
-                        .map_err(db_err)?;
-                if cnt as u64 >= quotas.max_dashboards {
-                    return Err(CrError::QuotaExceeded {
-                        resource: "dashboards".into(),
-                        limit: quotas.max_dashboards,
-                    });
-                }
-                dashboard.version = 1;
-                0
-            };
-
-            if let Some(obj) = dashboard.data.as_object_mut() {
-                obj.insert("version".to_owned(), Value::from(dashboard.version));
-                obj.insert("uid".to_owned(), Value::String(dashboard.uid.clone()));
-            }
-
-            let tags_json = serde_json::to_value(&dashboard.tags).unwrap_or(Value::Array(vec![]));
-            let ds_json =
-                serde_json::to_value(&dashboard.datasource_uids).unwrap_or(Value::Array(vec![]));
-
-            let saved = sqlx::query(
-                "INSERT INTO cr_dashboard (installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-                 ON CONFLICT (org_id, uid) DO UPDATE SET
-                    folder_uid = EXCLUDED.folder_uid,
-                    title = EXCLUDED.title,
-                    slug = EXCLUDED.slug,
-                    tags = EXCLUDED.tags,
-                    panel_count = EXCLUDED.panel_count,
-                    datasource_uids = EXCLUDED.datasource_uids,
-                    version = EXCLUDED.version,
-                    schema_version = EXCLUDED.schema_version,
-                    is_provisioned = EXCLUDED.is_provisioned,
-                    provisioned_external_id = EXCLUDED.provisioned_external_id,
-                    allow_ui_updates = EXCLUDED.allow_ui_updates,
-                    model = EXCLUDED.model,
-                    updated_by = EXCLUDED.updated_by,
-                    updated_at = NOW()
-                 RETURNING installation_id, org_id, instance_id, project_id, uid, folder_uid, title, slug, tags, panel_count, datasource_uids, version, schema_version, is_provisioned, provisioned_external_id, allow_ui_updates, model, created_by, updated_by, created_at, updated_at",
-            )
-            .bind(dashboard.installation_id.as_uuid())
-            .bind(dashboard.org_id.as_uuid())
-            .bind(dashboard.instance_id.as_uuid())
-            .bind(&dashboard.project_id)
-            .bind(&dashboard.uid)
-            .bind(&dashboard.folder_uid)
-            .bind(&dashboard.title)
-            .bind(&dashboard.slug)
-            .bind(&tags_json)
-            .bind(dashboard.panel_count)
-            .bind(&ds_json)
-            .bind(dashboard.version)
-            .bind(dashboard.schema_version)
-            .bind(dashboard.is_provisioned)
-            .bind(&dashboard.provisioned_external_id)
-            .bind(dashboard.allow_ui_updates)
-            .bind(&dashboard.data)
-            .bind(&dashboard.created_by)
-            .bind(&dashboard.updated_by)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db_err)?;
-
-            sqlx::query(
-                "INSERT INTO cr_dashboard_version (installation_id, org_id, instance_id, dashboard_uid, version, parent_version, restored_from, message, model, created_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, 0, $7, $8, $9)",
-            )
-            .bind(dashboard.installation_id.as_uuid())
-            .bind(dashboard.org_id.as_uuid())
-            .bind(dashboard.instance_id.as_uuid())
-            .bind(&dashboard.uid)
-            .bind(dashboard.version)
-            .bind(parent_version)
-            .bind(if !msg.is_empty() {
-                msg.as_str()
-            } else if parent_version == 0 {
-                "Initial save"
-            } else {
-                "Updated dashboard"
-            })
-            .bind(&dashboard.data)
-            .bind(&dashboard.updated_by)
-            .execute(&mut *tx)
-            .await
-            .map_err(db_err)?;
-
+            let out = Self::upsert_dashboard_tx(&mut tx, dashboard, &msg, overwrite).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(row_to_dashboard(saved))
+            Ok(out)
         })
     }
 
@@ -862,16 +1014,9 @@ impl DaiyaStore for PgStore {
     fn list_datasources(&self, org_id: OrgId) -> StoreFuture<'_, Vec<DatasourceRecord>> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(org_id).await?;
-            let rows = sqlx::query(
-                "SELECT installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version, created_at, updated_at
-                 FROM cr_datasource WHERE org_id = $1 ORDER BY name",
-            )
-            .bind(org_id.as_uuid())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let out = Self::list_datasources_tx(&mut tx, org_id).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(rows.into_iter().map(row_to_datasource).collect())
+            Ok(out)
         })
     }
 
@@ -922,101 +1067,9 @@ impl DaiyaStore for PgStore {
     fn upsert_datasource(&self, ds: DatasourceRecord) -> StoreFuture<'_, DatasourceRecord> {
         Box::pin(async move {
             let mut tx = self.begin_org_tx(ds.org_id).await?;
-            let quotas =
-                Self::lock_org_quotas(&mut tx, ds.installation_id, ds.org_id, ds.instance_id)
-                    .await?;
-
-            let exists: Option<i32> = sqlx::query_scalar(
-                "SELECT version FROM cr_datasource WHERE org_id = $1 AND uid = $2",
-            )
-            .bind(ds.org_id.as_uuid())
-            .bind(&ds.uid)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db_err)?;
-
-            if exists.is_none() {
-                let cnt: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1")
-                        .bind(ds.org_id.as_uuid())
-                        .fetch_one(&mut *tx)
-                        .await
-                        .map_err(db_err)?;
-                if cnt as u64 >= quotas.max_datasources {
-                    return Err(CrError::QuotaExceeded {
-                        resource: "datasources".into(),
-                        limit: quotas.max_datasources,
-                    });
-                }
-                if ds.kind.starts_with("wasm:") {
-                    let wasm: i64 = sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM cr_datasource WHERE org_id = $1 AND kind LIKE 'wasm:%'",
-                    )
-                    .bind(ds.org_id.as_uuid())
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db_err)?;
-                    if wasm as u64 >= quotas.max_wasm_plugins {
-                        return Err(CrError::QuotaExceeded {
-                            resource: "wasm_plugins".into(),
-                            limit: quotas.max_wasm_plugins,
-                        });
-                    }
-                }
-            }
-
-            if ds.is_default {
-                sqlx::query(
-                    "UPDATE cr_datasource SET is_default = FALSE WHERE org_id = $1 AND uid <> $2",
-                )
-                .bind(ds.org_id.as_uuid())
-                .bind(&ds.uid)
-                .execute(&mut *tx)
-                .await
-                .map_err(db_err)?;
-            }
-
-            let secret_refs_json = serde_json::to_value(&ds.secret_refs).unwrap_or_default();
-            let allow_hosts_json = serde_json::to_value(&ds.allow_hosts).unwrap_or_default();
-
-            let row = sqlx::query(
-                "INSERT INTO cr_datasource (installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 1)
-                 ON CONFLICT (org_id, uid) DO UPDATE SET
-                    name = EXCLUDED.name,
-                    kind = EXCLUDED.kind,
-                    access = EXCLUDED.access,
-                    url = EXCLUDED.url,
-                    is_default = EXCLUDED.is_default,
-                    read_only = EXCLUDED.read_only,
-                    json_data = EXCLUDED.json_data,
-                    secret_refs = EXCLUDED.secret_refs,
-                    allow_hosts = EXCLUDED.allow_hosts,
-                    wasm_digest = EXCLUDED.wasm_digest,
-                    version = cr_datasource.version + 1,
-                    updated_at = NOW()
-                 RETURNING installation_id, org_id, instance_id, project_id, uid, name, kind, access, url, is_default, read_only, json_data, secret_refs, allow_hosts, wasm_digest, version, created_at, updated_at",
-            )
-            .bind(ds.installation_id.as_uuid())
-            .bind(ds.org_id.as_uuid())
-            .bind(ds.instance_id.as_uuid())
-            .bind(&ds.project_id)
-            .bind(&ds.uid)
-            .bind(&ds.name)
-            .bind(&ds.kind)
-            .bind(&ds.access)
-            .bind(&ds.url)
-            .bind(ds.is_default)
-            .bind(ds.read_only)
-            .bind(&ds.json_data)
-            .bind(&secret_refs_json)
-            .bind(&allow_hosts_json)
-            .bind(&ds.wasm_digest)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db_err)?;
+            let out = Self::upsert_datasource_tx(&mut tx, ds).await?;
             tx.commit().await.map_err(db_err)?;
-            Ok(row_to_datasource(row))
+            Ok(out)
         })
     }
 
@@ -1413,6 +1466,121 @@ impl DaiyaStore for PgStore {
             .map_err(db_err)?;
             tx.commit().await.map_err(db_err)?;
             Ok(())
+        })
+    }
+    fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut tx = self.begin_org_tx(plan.org_id).await?;
+            sqlx::query("DELETE FROM cr_plan WHERE org_id = $1 AND expires_at <= NOW()")
+                .bind(plan.org_id.as_uuid())
+                .execute(&mut *tx)
+                .await
+                .map_err(db_err)?;
+            let live: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM cr_plan WHERE org_id = $1 AND digest <> $2",
+            )
+            .bind(plan.org_id.as_uuid())
+            .bind(&plan.digest)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            if live as u64 >= MAX_LIVE_PLANS {
+                return Err(CrError::QuotaExceeded {
+                    resource: "plans".into(),
+                    limit: MAX_LIVE_PLANS,
+                });
+            }
+            sqlx::query(
+                "INSERT INTO cr_plan (installation_id, org_id, instance_id, digest, base_etag, desired, created_by, created_at, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (org_id, digest) DO UPDATE SET
+                    created_by = EXCLUDED.created_by,
+                    created_at = EXCLUDED.created_at,
+                    expires_at = EXCLUDED.expires_at",
+            )
+            .bind(plan.installation_id.as_uuid())
+            .bind(plan.org_id.as_uuid())
+            .bind(plan.instance_id.as_uuid())
+            .bind(&plan.digest)
+            .bind(&plan.base_etag)
+            .bind(&plan.desired)
+            .bind(&plan.created_by)
+            .bind(plan.created_at)
+            .bind(plan.expires_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(())
+        })
+    }
+
+    fn get_plan(&self, org_id: OrgId, digest: &str) -> StoreFuture<'_, Option<PlanRecord>> {
+        let digest = digest.to_owned();
+        Box::pin(async move {
+            let mut tx = self.begin_org_tx(org_id).await?;
+            let row = sqlx::query(
+                "SELECT installation_id, org_id, instance_id, digest, base_etag, desired, created_by, created_at, expires_at
+                 FROM cr_plan WHERE org_id = $1 AND digest = $2",
+            )
+            .bind(org_id.as_uuid())
+            .bind(&digest)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db_err)?;
+            tx.commit().await.map_err(db_err)?;
+            Ok(row.map(|r| PlanRecord {
+                installation_id: InstallationId(r.get("installation_id")),
+                org_id: OrgId(r.get("org_id")),
+                instance_id: InstanceId(r.get("instance_id")),
+                digest: r.get("digest"),
+                base_etag: r.get("base_etag"),
+                desired: r.get("desired"),
+                created_by: r.get("created_by"),
+                created_at: r.get("created_at"),
+                expires_at: r.get("expires_at"),
+            }))
+        })
+    }
+
+    fn apply_bundle(&self, bundle: ApplyBundle) -> StoreFuture<'_, Vec<DashboardRecord>> {
+        Box::pin(async move {
+            let mut tx = self.begin_org_tx(bundle.org_id).await?;
+            // Every write of the organization takes this row lock first: from here until the
+            // commit no other write lands, so the etag read below is the state this bundle
+            // replaces.
+            Self::lock_org_quotas(
+                &mut tx,
+                bundle.installation_id,
+                bundle.org_id,
+                bundle.instance_id,
+            )
+            .await?;
+            let current = org_state_etag(
+                &Self::list_folders_tx(&mut tx, bundle.org_id).await?,
+                &Self::list_datasources_tx(&mut tx, bundle.org_id).await?,
+                &Self::list_dashboards_tx(&mut tx, bundle.org_id).await?,
+            );
+            if current != bundle.base_etag {
+                return Err(CrError::StalePlan(format!(
+                    "organization state changed since plan was created (expected etag {}, found {current})",
+                    bundle.base_etag
+                )));
+            }
+            for folder in bundle.folders {
+                Self::upsert_folder_tx(&mut tx, folder).await?;
+            }
+            for ds in bundle.datasources {
+                Self::upsert_datasource_tx(&mut tx, ds).await?;
+            }
+            let mut saved = Vec::with_capacity(bundle.dashboards.len());
+            for dashboard in bundle.dashboards {
+                saved.push(
+                    Self::upsert_dashboard_tx(&mut tx, dashboard, &bundle.message, true).await?,
+                );
+            }
+            tx.commit().await.map_err(db_err)?;
+            Ok(saved)
         })
     }
 }

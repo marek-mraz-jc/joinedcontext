@@ -2,8 +2,9 @@
 //! Async `DaiyaStore` trait implemented by `daiya-store-pg` and `daiya-store-memory` (R1, R8).
 
 use crate::entities::{
-    DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
-    LibraryPanelRecord, PublicDashboardRecord, QueryCacheStatRecord,
+    ApplyBundle, DashboardRecord, DashboardVersionRecord, DatasourceRecord, FolderRecord,
+    ImportReportRecord, LibraryPanelRecord, PlanRecord, PublicDashboardRecord,
+    QueryCacheStatRecord,
 };
 use crate::error::CrResult;
 use crate::ids::OrgId;
@@ -97,4 +98,16 @@ pub trait DaiyaStore: Send + Sync {
     fn upsert_query_cache_stat(&self, stat: QueryCacheStatRecord) -> StoreFuture<'_, ()>;
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>>;
     fn insert_import_report(&self, report: ImportReportRecord) -> StoreFuture<'_, ()>;
+
+    // Plans and Apply (R2, §7.3)
+    /// Keeps `plan` (a repeated `(org_id, digest)` renews its creator and expiry) and drops the
+    /// organization's expired plans.
+    fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()>;
+    /// The organization's plan of `digest`, expired or not (the caller checks `expires_at`).
+    fn get_plan(&self, org_id: OrgId, digest: &str) -> StoreFuture<'_, Option<PlanRecord>>;
+    /// Writes the whole bundle or nothing: one transaction (one write lock) that re-checks the
+    /// organization's state etag against `bundle.base_etag` under an organization lock
+    /// (`CrError::StalePlan` when it moved) and runs every save check of the single upserts.
+    /// Answers the dashboards as saved.
+    fn apply_bundle(&self, bundle: ApplyBundle) -> StoreFuture<'_, Vec<DashboardRecord>>;
 }

@@ -4,7 +4,7 @@
 
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, apply_plan, check_dashboards_offline,
-    compute_plan, export_dashboard, import_dashboards, parse_dashboard_providers_yaml,
+    compute_plan, export_dashboard, import_dashboards, load_plan, parse_dashboard_providers_yaml,
     parse_datasources_yaml,
 };
 use daiya_model::{
@@ -343,13 +343,16 @@ async fn plan_and_apply_refuse_stale_plan_and_provisioning_guards_work() {
     assert!(plan.has_changes);
 
     // Apply succeeds when live state matches plan.base_etag
+    let loaded = load_plan(&store, org, &plan.digest)
+        .await
+        .expect("the server keeps the plan");
     let applied = apply_plan(
         &store,
         inst,
         org,
         instance,
         "ci",
-        &plan,
+        &loaded,
         &InputLimits::default(),
     )
     .await
@@ -363,7 +366,7 @@ async fn plan_and_apply_refuse_stale_plan_and_provisioning_guards_work() {
         org,
         instance,
         "ci",
-        &plan,
+        &loaded,
         &InputLimits::default(),
     )
     .await

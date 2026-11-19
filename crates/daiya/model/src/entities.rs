@@ -206,3 +206,62 @@ pub struct ImportReportRecord {
     pub summary: Value,
     pub created_at: TimestampTz,
 }
+
+/// A plan `Plan` computed and the server keeps (`cr_plan`, R2, §7.3): `Apply` names it by its
+/// `digest`, so what is applied is exactly the bundle the reviewer saw, never a request body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanRecord {
+    pub installation_id: InstallationId,
+    pub org_id: OrgId,
+    pub instance_id: InstanceId,
+    /// SHA-256 (hex) of the canonical `{ baseEtag, desired }`.
+    pub digest: String,
+    pub base_etag: String,
+    pub desired: Value,
+    pub created_by: String,
+    pub created_at: TimestampTz,
+    pub expires_at: TimestampTz,
+}
+
+/// Unexpired plans one organization may hold at once; `insert_plan` refuses more
+/// (`CrError::QuotaExceeded` on `plans`).
+pub const MAX_LIVE_PLANS: u64 = 100;
+
+/// Everything one `Apply` writes, in the order a store writes it inside one transaction:
+/// folders, then datasources, then dashboards (R2, §7.3). The store re-reads the organization's
+/// state under its lock and refuses the whole bundle when its etag is no longer `base_etag`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApplyBundle {
+    pub installation_id: InstallationId,
+    pub org_id: OrgId,
+    pub instance_id: InstanceId,
+    pub base_etag: String,
+    pub folders: Vec<FolderRecord>,
+    pub datasources: Vec<DatasourceRecord>,
+    pub dashboards: Vec<DashboardRecord>,
+    /// Version message of every dashboard written.
+    pub message: String,
+}
+
+/// Deterministic SHA-256 of an organization's folders, datasources and dashboards, in the order
+/// the stores list them (folders and dashboards by uid, datasources by name). Plan records it as
+/// `baseEtag`; a store's `apply_bundle` recomputes it under its lock.
+#[must_use]
+pub fn org_state_etag(
+    folders: &[FolderRecord],
+    datasources: &[DatasourceRecord],
+    dashboards: &[DashboardRecord],
+) -> String {
+    let summary = serde_json::json!({
+        "folders": folders.iter().map(|f| (&f.uid, f.version, &f.title)).collect::<Vec<_>>(),
+        "datasources": datasources.iter().map(|d| (&d.uid, d.version, &d.url)).collect::<Vec<_>>(),
+        "dashboards": dashboards.iter().map(|d| (&d.uid, d.version, &d.data)).collect::<Vec<_>>(),
+    });
+    let canonical = crate::CanonicalJson::canonicalize(&summary);
+    crate::sha256_hex(
+        serde_json::to_string(&canonical)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
+}

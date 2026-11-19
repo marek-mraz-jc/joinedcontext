@@ -16,10 +16,11 @@ pub use provisioning::{
 };
 
 use daiya_model::{
-    CanonicalJson, CrError, CrResult, DaiyaStore, DashboardDocument, DashboardRecord,
+    ApplyBundle, CanonicalJson, CrError, CrResult, DaiyaStore, DashboardDocument, DashboardRecord,
     DataSourceInfo, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
     ImportReportRecord, InputLimits, InstallationId, InstanceId, LibraryPanelRecord,
-    MigrationReport, OrgId, Verdict, classify_and_validate, migrate_to_latest, sha256_hex,
+    MigrationReport, OrgId, PlanRecord, Verdict, classify_and_validate, migrate_to_latest,
+    org_state_etag, sha256_hex,
 };
 use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
@@ -325,6 +326,42 @@ pub async fn import_dashboards(
     limits: &InputLimits,
 ) -> CrResult<ImportReport> {
     let live_ds = store.list_datasources(org_id).await?;
+    let lib_map = library_panels(store, org_id).await?;
+    let ids = (installation_id, org_id, instance_id);
+    let (mut report, records) =
+        prepare_import(&live_ds, &lib_map, ids, actor, inputs, dry_run, limits)?;
+    for (rep, record) in report.dashboards.iter_mut().zip(records) {
+        rep.uid = store.upsert_dashboard(record, "imported", true).await?.uid;
+    }
+    store
+        .insert_import_report(audit_record(org_id, instance_id, &report))
+        .await?;
+    Ok(report)
+}
+
+async fn library_panels(
+    store: &dyn DaiyaStore,
+    org_id: OrgId,
+) -> CrResult<BTreeMap<String, LibraryPanelRecord>> {
+    Ok(store
+        .list_library_panels(org_id)
+        .await?
+        .into_iter()
+        .map(|l| (l.uid.clone(), l))
+        .collect())
+}
+
+/// Validates and migrates `inputs` against `live_ds`; answers the report and, unless
+/// `dry_run`, the dashboard records an import writes (one per report entry, same order).
+fn prepare_import(
+    live_ds: &[DatasourceRecord],
+    lib_map: &BTreeMap<String, LibraryPanelRecord>,
+    (installation_id, org_id, instance_id): (InstallationId, OrgId, InstanceId),
+    actor: &str,
+    inputs: &[DashboardImportInput],
+    dry_run: bool,
+    limits: &InputLimits,
+) -> CrResult<(ImportReport, Vec<DashboardRecord>)> {
     let ds_infos: Vec<DataSourceInfo> = live_ds
         .iter()
         .map(|d| DataSourceInfo {
@@ -338,11 +375,8 @@ pub async fn import_dashboards(
     let ds_index = DatasourceIndex::new(ds_infos);
     let known_uids: BTreeSet<String> = live_ds.iter().map(|d| d.uid.clone()).collect();
 
-    let lib_list = store.list_library_panels(org_id).await?;
-    let lib_map: BTreeMap<String, LibraryPanelRecord> =
-        lib_list.into_iter().map(|l| (l.uid.clone(), l)).collect();
-
     let mut dash_reports = Vec::with_capacity(inputs.len());
+    let mut records = Vec::new();
     let mut total_panels = 0usize;
     let mut refused_count = 0usize;
     let mut mapped_count = 0usize;
@@ -351,7 +385,7 @@ pub async fn import_dashboards(
 
     for item in inputs {
         let (doc, canonical_val, mut rep) =
-            prepare_dashboard(&item.raw_json, &ds_index, &known_uids, &lib_map, limits)?;
+            prepare_dashboard(&item.raw_json, &ds_index, &known_uids, lib_map, limits)?;
         let folder_uid = item.folder_uid.clone().or_else(|| rep.folder_uid.clone());
         rep.folder_uid.clone_from(&folder_uid);
         total_panels += rep.panel_count;
@@ -371,7 +405,8 @@ pub async fn import_dashboards(
             } else {
                 idx.uid
             };
-            let record = DashboardRecord {
+            rep.uid.clone_from(&uid);
+            records.push(DashboardRecord {
                 installation_id,
                 org_id,
                 instance_id,
@@ -393,8 +428,7 @@ pub async fn import_dashboards(
                 updated_by: actor.to_owned(),
                 created_at: now,
                 updated_at: now,
-            };
-            rep.uid = store.upsert_dashboard(record, "imported", true).await?.uid;
+            });
         }
 
         dash_reports.push(rep);
@@ -418,26 +452,30 @@ pub async fn import_dashboards(
         mapped_count,
         supported_count,
     };
+    Ok((report, records))
+}
 
-    let audit = ImportReportRecord {
+fn audit_record(
+    org_id: OrgId,
+    instance_id: InstanceId,
+    report: &ImportReport,
+) -> ImportReportRecord {
+    ImportReportRecord {
         id: uuid::Uuid::now_v7().to_string(),
         org_id,
         instance_id,
-        dry_run,
-        status: if refused_count == 0 {
+        dry_run: report.dry_run,
+        status: if report.refused_count == 0 {
             "success".into()
         } else {
             "completed_with_refusals".into()
         },
         dashboard_count: report.dashboards.len() as i32,
-        refused_count: refused_count as i32,
-        mapped_count: mapped_count as i32,
+        refused_count: report.refused_count as i32,
+        mapped_count: report.mapped_count as i32,
         summary: report.to_json(),
-        created_at: now,
-    };
-    store.insert_import_report(audit).await?;
-
-    Ok(report)
+        created_at: TimestampTz::now(),
+    }
 }
 
 /// Exports a stored dashboard as byte-stable canonical Grafana classic JSON at `schemaVersion: 42`,
@@ -481,6 +519,10 @@ pub struct DesiredBundle {
 #[serde(rename_all = "camelCase")]
 pub struct PlanBundle {
     pub org_id: OrgId,
+    /// What `Apply` takes: the server keeps this plan's bundle under its digest until
+    /// `expires_at` (SHA-256 hex of the canonical `{ baseEtag, desired }`).
+    pub digest: String,
+    pub expires_at: TimestampTz,
     pub base_etag: String,
     pub has_changes: bool,
     pub diffs: Vec<PlanDiffItem>,
@@ -490,18 +532,26 @@ pub struct PlanBundle {
 
 /// Computes a deterministic SHA-256 digest of the organization's live folders, datasources, and dashboards.
 pub async fn compute_org_state_etag(store: &dyn DaiyaStore, org_id: OrgId) -> CrResult<String> {
-    let folders = store.list_folders(org_id).await?;
-    let datasources = store.list_datasources(org_id).await?;
-    let dashboards = store.list_dashboards(org_id).await?;
+    Ok(org_state_etag(
+        &store.list_folders(org_id).await?,
+        &store.list_datasources(org_id).await?,
+        &store.list_dashboards(org_id).await?,
+    ))
+}
 
-    let summary = json!({
-        "folders": folders.iter().map(|f| (&f.uid, f.version, &f.title)).collect::<Vec<_>>(),
-        "datasources": datasources.iter().map(|d| (&d.uid, d.version, &d.url)).collect::<Vec<_>>(),
-        "dashboards": dashboards.iter().map(|d| (&d.uid, d.version, &d.data)).collect::<Vec<_>>(),
-    });
-    let canonical = CanonicalJson::canonicalize(&summary);
-    let bytes = serde_json::to_vec(&canonical).unwrap_or_default();
-    Ok(sha256_hex(&bytes))
+/// How long the server keeps a plan for `Apply` (R2, §7.3).
+pub const PLAN_TTL_MILLIS: i64 = 60 * 60 * 1000;
+
+/// SHA-256 hex of the canonical `{ baseEtag, desired }`: the name `Apply` takes for a plan.
+#[must_use]
+pub fn plan_digest(base_etag: &str, desired: &Value) -> String {
+    let canonical =
+        CanonicalJson::canonicalize(&json!({ "baseEtag": base_etag, "desired": desired }));
+    sha256_hex(
+        serde_json::to_string(&canonical)
+            .unwrap_or_default()
+            .as_bytes(),
+    )
 }
 
 /// Computes a [`PlanBundle`] diffing `desired` against the live state of `org_id` (R2, §7.3).
@@ -632,10 +682,30 @@ pub async fn compute_plan(
     }
 
     let has_changes = diffs.iter().any(|d| d.action != "unchanged");
-    let desired_val = serde_json::to_value(desired).unwrap_or(Value::Null);
+    let desired_val = serde_json::to_value(desired)
+        .map_err(|e| CrError::Internal(format!("plan bundle did not serialize: {e}")))?;
+    let digest = plan_digest(&base_etag, &desired_val);
+    let created_at = TimestampTz::now();
+    let expires_at = TimestampTz::from_millis(created_at.as_millis() + PLAN_TTL_MILLIS)
+        .ok_or_else(|| CrError::Internal("plan expiry out of range".into()))?;
+    store
+        .insert_plan(PlanRecord {
+            installation_id,
+            org_id,
+            instance_id,
+            digest: digest.clone(),
+            base_etag: base_etag.clone(),
+            desired: desired_val.clone(),
+            created_by: actor.to_owned(),
+            created_at,
+            expires_at,
+        })
+        .await?;
 
     Ok(PlanBundle {
         org_id,
+        digest,
+        expires_at,
         base_etag,
         has_changes,
         diffs,
@@ -644,54 +714,144 @@ pub async fn compute_plan(
     })
 }
 
-/// Applies a [`PlanBundle`] to `store`, refusing stale plans if the live state etag has changed
-/// since `compute_plan` (R2, §7.3: exit code 3 / `CrError::StalePlan`).
+/// A plan the server holds, loaded by [`load_plan`]: the only input [`apply_plan`] takes, so
+/// an Apply writes exactly a bundle `Plan` computed and kept, never one a caller supplies.
+#[derive(Debug, Clone)]
+pub struct LoadedPlan {
+    record: PlanRecord,
+    desired: DesiredBundle,
+}
+
+impl LoadedPlan {
+    /// The bundle the plan writes, for the caller's own checks before [`apply_plan`].
+    #[must_use]
+    pub const fn desired(&self) -> &DesiredBundle {
+        &self.desired
+    }
+
+    #[must_use]
+    pub const fn record(&self) -> &PlanRecord {
+        &self.record
+    }
+}
+
+/// Loads the plan `digest` of `org_id`. An ill-formed digest is a 400; an unknown or expired
+/// one, or one of another organization, is the same 404, so a caller learns nothing about plans
+/// it cannot apply.
+pub async fn load_plan(
+    store: &dyn DaiyaStore,
+    org_id: OrgId,
+    digest: &str,
+) -> CrResult<LoadedPlan> {
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(CrError::BadRequest(
+            "digest: give the 64-character lowercase hex digest a Plan answered".into(),
+        ));
+    }
+    let not_found = || {
+        CrError::NotFound("plan not found or expired: run Plan again and apply its digest".into())
+    };
+    let record = store
+        .get_plan(org_id, digest)
+        .await?
+        .filter(|p| p.org_id == org_id && p.expires_at > TimestampTz::now())
+        .ok_or_else(not_found)?;
+    if plan_digest(&record.base_etag, &record.desired) != record.digest {
+        return Err(CrError::Internal(
+            "stored plan does not match its digest".into(),
+        ));
+    }
+    let desired = serde_json::from_value(record.desired.clone())
+        .map_err(|e| CrError::Internal(format!("stored plan bundle did not parse: {e}")))?;
+    Ok(LoadedPlan { record, desired })
+}
+
+/// Applies a plan the server holds in one store transaction ([`DaiyaStore::apply_bundle`]):
+/// folders, datasources and dashboards are all written or none, and a plan whose base etag no
+/// longer matches the organization's state is refused (R2, §7.3: exit code 3 /
+/// `CrError::StalePlan`).
 pub async fn apply_plan(
     store: &dyn DaiyaStore,
     installation_id: InstallationId,
     org_id: OrgId,
     instance_id: InstanceId,
     actor: &str,
-    plan: &PlanBundle,
+    plan: &LoadedPlan,
     limits: &InputLimits,
 ) -> CrResult<ImportReport> {
-    if plan.org_id != org_id {
-        return Err(CrError::NotFound("plan organization mismatch".into()));
+    if plan.record.org_id != org_id {
+        return Err(CrError::NotFound(
+            "plan not found or expired: run Plan again and apply its digest".into(),
+        ));
     }
-    let current_etag = compute_org_state_etag(store, org_id).await?;
-    if current_etag != plan.base_etag {
-        return Err(CrError::StalePlan(format!(
-            "organization state changed since plan was created (expected etag {}, found {})",
-            plan.base_etag, current_etag
-        )));
+    let desired = &plan.desired;
+    let folders = desired
+        .folders
+        .iter()
+        .cloned()
+        .map(|mut f| {
+            f.installation_id = installation_id;
+            f.org_id = org_id;
+            f.instance_id = instance_id;
+            f
+        })
+        .collect();
+    let datasources: Vec<DatasourceRecord> = desired
+        .datasources
+        .iter()
+        .cloned()
+        .map(|mut d| {
+            d.installation_id = installation_id;
+            d.org_id = org_id;
+            d.instance_id = instance_id;
+            d
+        })
+        .collect();
+    // Dashboards resolve their datasources against the state after this bundle's datasources.
+    let mut after: BTreeMap<String, DatasourceRecord> = store
+        .list_datasources(org_id)
+        .await?
+        .into_iter()
+        .map(|d| (d.uid.clone(), d))
+        .collect();
+    for d in &datasources {
+        after.insert(d.uid.clone(), d.clone());
     }
-
-    let desired: DesiredBundle = serde_json::from_value(plan.desired.clone())
-        .map_err(|e| CrError::BadRequest(format!("invalid desired state in plan: {e}")))?;
-
-    for mut folder in desired.folders {
-        folder.installation_id = installation_id;
-        folder.org_id = org_id;
-        folder.instance_id = instance_id;
-        store.upsert_folder(folder).await?;
-    }
-
-    for mut ds in desired.datasources {
-        ds.installation_id = installation_id;
-        ds.org_id = org_id;
-        ds.instance_id = instance_id;
-        store.upsert_datasource(ds).await?;
-    }
-
-    import_dashboards(
-        store,
-        installation_id,
-        org_id,
-        instance_id,
+    let mut after: Vec<DatasourceRecord> = after.into_values().collect();
+    after.sort_by(|a, b| a.name.cmp(&b.name));
+    let lib_map = library_panels(store, org_id).await?;
+    let ids = (installation_id, org_id, instance_id);
+    let (mut report, dashboards) = prepare_import(
+        &after,
+        &lib_map,
+        ids,
         actor,
         &desired.dashboards,
         false,
         limits,
-    )
-    .await
+    )?;
+
+    let saved = store
+        .apply_bundle(ApplyBundle {
+            installation_id,
+            org_id,
+            instance_id,
+            base_etag: plan.record.base_etag.clone(),
+            folders,
+            datasources,
+            dashboards,
+            message: "imported".into(),
+        })
+        .await?;
+    for (rep, record) in report.dashboards.iter_mut().zip(saved) {
+        rep.uid = record.uid;
+    }
+    store
+        .insert_import_report(audit_record(org_id, instance_id, &report))
+        .await?;
+    Ok(report)
 }

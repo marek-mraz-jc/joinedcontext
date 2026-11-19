@@ -14,7 +14,7 @@ use daiya_api::{
     DaiyaState, PanelTimeRange, PublicDashboardQueryReq, execute_public_dashboard_query,
     panel_view, rotate_public_dashboard_token,
 };
-use daiya_import::{DesiredBundle, PlanBundle};
+use daiya_import::DesiredBundle;
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -195,10 +195,8 @@ pub async fn call_mcp_tool(
             exec_odata_plan(state, ctx, desired).await
         }
         "Apply" => {
-            let plan_val = args.get("plan").cloned().unwrap_or(args);
-            let plan: PlanBundle = serde_json::from_value(plan_val)
-                .map_err(|e| CrError::BadRequest(format!("invalid apply plan: {e}")))?;
-            exec_odata_apply(state, ctx, plan).await
+            let digest = required_str(&args, "digest")?;
+            exec_odata_apply(state, ctx, digest).await
         }
         "PublicDashboard/Rotate" => {
             let uid = required_str(&args, "uid")?;
