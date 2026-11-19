@@ -83,8 +83,11 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Bookings {
 /// One change, N in-process subscriptions: every one is notified and booked
 /// once, in a handful of statements instead of N.
 ///
-/// A current-thread runtime keeps every spawned delivery on the thread the
-/// counting subscriber is installed on.
+/// Its own binary with the global subscriber (T-7298): with one scoped
+/// subscriber alive, tracing-core gives a callsite first hit on another
+/// test thread that thread's interest (none) for good, so inside `it` a
+/// `set_default` counter saw 0 statements whenever a parallel test sent the
+/// first `sqlx::query` event.
 #[tokio::test]
 async fn an_in_process_fan_out_books_in_shared_statements() {
     let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
@@ -92,8 +95,8 @@ async fn an_in_process_fan_out_books_in_shared_statements() {
         return;
     };
     let bookings = Bookings::default();
-    let _guard =
-        tracing::subscriber::set_default(tracing_subscriber::registry().with(bookings.clone()));
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(bookings.clone()))
+        .expect("the only subscriber of this binary");
     let pool = antares_sql::store::pg::connect(&url, 10)
         .await
         .expect("connect");

@@ -283,7 +283,7 @@ fn present(meta: &Value) -> Value {
     // 5.16.6 sends each receiverInfo pair as a header: a read answers that
     // a credential is set, as a Subscription read does (5.2.15).
     if let Some(ri) = out.get_mut("receiverInfo") {
-        crate::subscriptions::mask_pairs(ri, |_, _| false);
+        crate::pairs::mask_pairs(ri, |_, _| false);
     }
     out
 }
@@ -421,7 +421,7 @@ fn validate(body: &Value, mode: Mode) -> Result<Map<String, Value>, NgsiError> {
             // The HTTP client owns framing and connection headers, as on a
             // Subscription's receiverInfo (RFC 7230 3.3, 5.4, 6.1).
             if let Some(k) = k.filter(|k| {
-                crate::subscriptions::CLIENT_OWNED_HEADERS
+                crate::pairs::CLIENT_OWNED_HEADERS
                     .iter()
                     .any(|o| o.eq_ignore_ascii_case(k))
             }) {
@@ -1177,7 +1177,7 @@ pub async fn update_snapshot(
                     Some(v) => {
                         let mut v = v.clone();
                         if k == "receiverInfo" {
-                            crate::subscriptions::unmask_pairs(k, &mut v, o.get(k), moved)?;
+                            crate::pairs::unmask_pairs(k, &mut v, o.get(k), moved)?;
                         }
                         o.insert(k.into(), v);
                     }

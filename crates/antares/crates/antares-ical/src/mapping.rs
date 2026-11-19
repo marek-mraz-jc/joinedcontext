@@ -17,6 +17,7 @@
 //! without `DTEND`), a `GEO` off the globe or a `URL` that is not
 //! http(s) is no `VEVENT` at all, and its reason is counted (EP-126).
 
+pub use crate::text::escape;
 use crate::zone::Zone as Tz;
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::Offset;
@@ -966,25 +967,6 @@ fn address(value: &Value) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(", "))
 }
 
-/// RFC 5545 3.3.11 TEXT: backslash, semicolon, comma and newline escaped; the other control
-/// characters, which TEXT excludes, dropped.
-#[must_use]
-pub fn escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            ';' => out.push_str("\\;"),
-            ',' => out.push_str("\\,"),
-            '\n' => out.push_str("\\n"),
-            '\t' => out.push(c),
-            c if c.is_control() => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// RFC 5545 3.1: a content line of at most 75 octets, continued after CRLF and one space, cut
 /// between characters and never inside one.
 pub fn fold(line: &str, out: &mut String) {
@@ -1355,6 +1337,11 @@ impl Plan {
 #[cfg(test)]
 mod wire_golden {
     use super::*;
+
+    #[test]
+    fn default_zone_is_bratislava() {
+        assert_eq!(default_zone().name(), "Europe/Bratislava");
+    }
 
     fn zone(name: &str) -> Tz {
         name.parse().unwrap_or_else(|_| Tz::utc())
