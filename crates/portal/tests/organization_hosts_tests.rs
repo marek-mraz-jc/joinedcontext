@@ -308,7 +308,7 @@ async fn a_restart_serves_the_last_runs_members_or_answers_starting() {
     let last = state();
     last.mirror.save(&path).expect("saved");
 
-    let restarted = AppState::new(last.config.clone(), None);
+    let restarted = AppState::new((*last.config).clone(), None);
     let on_ba = signed_in(&restarted.config, person("ba-only", &[]), Some("ba")).await;
     let response = server::app(restarted.clone())
         .oneshot(
@@ -347,7 +347,7 @@ async fn a_restart_serves_the_last_runs_members_or_answers_starting() {
             name: "ba-only-ba".to_owned(),
         });
     last.mirror.save(&path).expect("saved");
-    let again = AppState::new(last.config.clone(), None);
+    let again = AppState::new((*last.config).clone(), None);
     assert!(again.mirror.restore(&path).expect("restored") > 0);
     assert!(
         again.mirror.removals_held(),
