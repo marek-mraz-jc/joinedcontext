@@ -36,7 +36,7 @@ use antares_ops::{Caller, OperationId, Ops, Surface, ViewOps};
 use axum::body::Bytes;
 use axum::extract::{FromRequestParts as _, MatchedPath, Request};
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{Extensions, HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::any;
 use axum::Router;
@@ -140,8 +140,9 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     let version = csdl_version(&req);
     // The documents that name the model's types and properties show only
     // what the engine lets this caller read (F-ANT4-003), as the LinkML
-    // surface narrows the same schema. A query naming a hidden property
-    // reads it as absent, so the model it runs over stays the view's.
+    // surface narrows the same schema. Any other request resolves against
+    // the view's model up to its first gate, which narrows it to the caller
+    // ([`narrowed_first`]): a hidden name is then refused as an unknown one.
     let (mut parts, body) = req.into_parts();
     let Ok(caller) = Caller::from_request_parts(&mut parts, &()).await;
     let mut req = Request::from_parts(parts, body);
@@ -168,7 +169,7 @@ async fn respond(ops: &Ops, req: Request) -> Response {
         )
         .map(Arc::new)
     } else {
-        kept(&id, view.clone(), version, service_root.clone())
+        kept(&id, view.clone(), None, version, service_root.clone())
     };
     let Some(served) = served else {
         return not_found();
@@ -176,6 +177,8 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     let Served { state, routed, .. } = &*served;
     // The inner router matches its own path; the outer match goes.
     req.extensions_mut().remove::<MatchedPath>();
+    // One narrowing per request, a `$batch`'s members included (they carry its extensions).
+    req.extensions_mut().insert(Arc::new(Narrowing::default()));
     let req = match query_in_body(req, state.url_limits.max_query_len).await {
         Ok(req) => req,
         Err(refused) => return refused.into_response(),
@@ -211,9 +214,9 @@ struct Served {
     weight: u32,
 }
 
-/// [`assembled`] for a request that reads no model document, kept per view, version and
-/// service root on this pod: such a request's model is the same for every caller (the engine narrows only the
-/// documents that name the model), so it is built again only when the view compilation, the
+/// [`assembled`] for what `visible` lets a caller read (`None`: the view's model), kept per
+/// view, version, service root and `visible` on this pod: callers the engine shows the same
+/// names share one, built again only when the view compilation, the
 /// schema revision moves (T-6619 R3-005: the model key, the state and the
 /// router were built per request). Weighed as [`model`] weighs, under the same bound, plus
 /// the inner router the view's `AppState` builds on its first call (~246 KiB, T-5896), which
@@ -222,12 +225,13 @@ struct Served {
 fn kept(
     id: &str,
     view: ViewOps,
+    visible: Option<antares_ops::Visible>,
     version: CsdlVersion,
     service_root: String,
 ) -> Option<Arc<Served>> {
     // The service root is part of the key: one view read under two hosts kept one entry and
     // rebuilt it on every request that changed host (odata review P-2-09).
-    type Key = (String, bool, String);
+    type Key = (String, bool, String, Option<antares_ops::Visible>);
     static KEPT: LazyLock<moka::sync::Cache<Key, Arc<Served>>> = LazyLock::new(|| {
         moka::sync::Cache::builder()
             .max_capacity(MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed))
@@ -240,6 +244,7 @@ fn kept(
         id.to_owned(),
         version == CsdlVersion::V4_01,
         service_root.clone(),
+        visible,
     );
     let generation = view.generation();
     let (revision, _) = view.schema()?;
@@ -248,9 +253,67 @@ fn kept(
             return Some(hit);
         }
     }
-    let served = Arc::new(assembled(id, view, None, version, service_root)?);
+    let served = Arc::new(assembled(id, view, key.3.as_ref(), version, service_root)?);
     KEPT.insert(key, served.clone());
     Some(served)
+}
+
+/// One request's narrowing to its caller, decided at its first gate: the router over the
+/// caller's model when that model is not the view's, `None` when it is or the engine refuses
+/// every read (the gate then answers the refusal over the view's model).
+#[derive(Default)]
+pub(crate) struct Narrowing(std::sync::OnceLock<Option<Router>>);
+
+/// What [`narrowed_first`] needs of a request served over the view's model.
+pub(crate) struct Narrow {
+    request: Arc<Narrowing>,
+    id: String,
+    version: CsdlVersion,
+    service_root: String,
+}
+
+/// Asked before each gate of a request: over the view's model, the first one asks the
+/// engine what the caller may read (one decision per request, a `$batch`'s included) and,
+/// when that narrows the model, refuses the gate so the request is served again over the
+/// caller's model, where a name the engine hides is an unknown one (AUZ-06, ISO-03). A
+/// request the router refuses before any gate never asks.
+pub(crate) async fn narrowed_first(
+    reads: &read::Reads,
+    caller: &Caller,
+    version: odata_json::ODataVersion,
+) -> Result<(), ODataErrorResponse> {
+    let Some(narrow) = &reads.narrow else {
+        return Ok(());
+    };
+    let decided = if let Some(decided) = narrow.request.0.get() {
+        decided.is_some()
+    } else {
+        // the model alone first, cached by the names it shows: a router is built only for a
+        // caller the engine shows less than the view
+        let narrowed = reads.view.read_grant(caller).await.and_then(|visible| {
+            model(&narrow.id, &reads.view, Some(&visible), narrow.version)
+                .filter(|((_, csdl, ..), ..)| **csdl != *reads.state.model)?;
+            let served = kept(
+                &narrow.id,
+                reads.view.clone(),
+                Some(visible),
+                narrow.version,
+                narrow.service_root.clone(),
+            )?;
+            Some(served.routed.clone())
+        });
+        narrow.request.0.get_or_init(|| narrowed).is_some()
+    };
+    if decided {
+        // never sent: the handler's answer is dropped for the narrowed one
+        return Err(ODataErrorResponse::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "InternalError",
+            "the request is served over the caller's model",
+        )
+        .with_version(version));
+    }
+    Ok(())
 }
 
 /// The model of `view` as `visible` narrows it, its state and the router over it.
@@ -292,11 +355,16 @@ fn assembled(
             .map(|name| (*name).to_owned())
             .collect(),
     });
+    // Over the view's model each request's first gate narrows it to the caller.
+    let narrow = visible
+        .is_none()
+        .then(|| (id.to_owned(), version, state.service_root.clone()));
     let reads = Arc::new(read::Reads {
         set_types: read::set_types(&edm),
         view,
         edm,
         state: state.clone(),
+        narrow: None,
     });
     let api = odata_axum::metadata_router(state.clone()).merge(
         Router::new()
@@ -304,9 +372,50 @@ fn assembled(
                 move |method: Method,
                       caller: Caller,
                       request: ODataRequest,
+                      uri: Uri,
+                      extensions: Extensions,
                       headers: HeaderMap,
                       body: Bytes| async move {
-                    route::serve(&reads, &method, &caller, &request, &headers, &body).await
+                    let request_narrowing = extensions.get::<Arc<Narrowing>>().cloned();
+                    let Some((narrowing, (id, version, service_root))) =
+                        request_narrowing.zip(narrow)
+                    else {
+                        return route::serve(&reads, &method, &caller, &request, &headers, &body)
+                            .await;
+                    };
+                    let here = read::Reads {
+                        view: reads.view.clone(),
+                        edm: reads.edm.clone(),
+                        state: reads.state.clone(),
+                        set_types: reads.set_types.clone(),
+                        narrow: Some(Narrow {
+                            request: narrowing.clone(),
+                            id: id.clone(),
+                            version,
+                            service_root,
+                        }),
+                    };
+                    let answer =
+                        route::serve(&here, &method, &caller, &request, &headers, &body).await;
+                    let Some(Some(narrowed)) = narrowing.0.get() else {
+                        return answer;
+                    };
+                    // Served again over the caller's model, from the URL as this router got it.
+                    let target = format!(
+                        "/{id}/odata/v4{}",
+                        uri.path_and_query().map_or("/", |p| p.as_str())
+                    );
+                    let mut again = Request::new(axum::body::Body::from(body));
+                    *again.method_mut() = method;
+                    *again.headers_mut() = headers;
+                    *again.extensions_mut() = extensions;
+                    again.extensions_mut().remove::<MatchedPath>();
+                    match target.parse() {
+                        Ok(uri) => *again.uri_mut() = uri,
+                        Err(_) => return answer,
+                    }
+                    let Ok(resp) = narrowed.clone().oneshot(again).await;
+                    resp
                 },
             )
             .with_state(state.clone()),

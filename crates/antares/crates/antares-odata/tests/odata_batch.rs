@@ -184,10 +184,12 @@ async fn odata_batch_members_are_gated_one_by_one() {
     assert_eq!(statuses(&answer), [200, 200, 204, 204, 204], "{answer}");
     assert_eq!(answer["responses"][1]["body"]["speed"], 3, "{answer}");
     let decisions = engine.take();
+    // alone, each request asks once what its caller may read, then its gate; the batch
+    // asks that once for all its members (S10-12)
     assert_eq!(
         decisions.len(),
-        alone.iter().sum::<usize>(),
-        "one gate per member, as each alone: {decisions:?}"
+        alone.iter().map(|n| n - 1).sum::<usize>() + 1,
+        "one gate per member, as each alone, and one narrowing: {decisions:?}"
     );
     assert!(
         decisions.iter().all(|(t, s)| t == "city" && s == "alice"),
@@ -266,7 +268,11 @@ async fn odata_batch_part_count_is_capped() {
 
     let (status, _, answer) = json_batch(&app, &members(cap), &[]).await;
     assert_eq!(status, StatusCode::OK, "the cap itself is served: {answer}");
-    assert_eq!(engine.take().len(), cap, "every member is gated alone");
+    assert_eq!(
+        engine.take().len(),
+        cap + 1,
+        "every member is gated alone, after one narrowing for the batch"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
