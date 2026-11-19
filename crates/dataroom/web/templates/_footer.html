@@ -38,6 +38,9 @@
           {% for (p_href, p_title) in chrome.footer_pages %}
             <li><a href="{{ p_href }}">{{ p_title }}</a></li>
           {% endfor %}
+          {% for (href, label) in chrome.branding.layout.footer_links %}
+            <li><a href="{{ href }}">{{ label }}</a></li>
+          {% endfor %}
         </ul>
       </nav>
       {% if chrome.lang_options.len() > 1 %}

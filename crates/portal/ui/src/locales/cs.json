@@ -8152,7 +8152,27 @@
         "homeWidgetsNone": "Zatím není nástěnka na výběr. Otevřete projekt této organizace, přejděte na Nástěnky a vytvořte ji; příště se nabídne zde.",
         "homeWidgetsProjects": "Otevřít projekty organizace",
         "opendataWidgets": "Nástěnky na portálu otevřených dat",
-        "opendataWidgetsNone": "Zatím není veřejná nástěnka na výběr: nejprve nastavte nástěnku v projektu této organizace jako veřejnou."
+        "opendataWidgetsNone": "Zatím není veřejná nástěnka na výběr: nejprve nastavte nástěnku v projektu této organizace jako veřejnou.",
+        "font": "Písmo",
+        "fontChoice": {
+          "system": "Systémové (výchozí)",
+          "humanist": "Humanistické bezpatkové",
+          "serif": "Patkové",
+          "mono": "Neproporcionální"
+        },
+        "radius": "Zaoblení rohů (px)",
+        "hero": "Úvod domovské stránky",
+        "heroTitle": "Nadpis",
+        "heroIntro": "Úvodní text",
+        "datasetList": "Seznam datových sad",
+        "datasetListChoice": {
+          "cards": "Karty (výchozí)",
+          "table": "Tabulka"
+        },
+        "navLinks": "Odkazy v záhlaví",
+        "footerLinks": "Odkazy v zápatí",
+        "linkLabel": "Text",
+        "linkUrl": "Adresa"
       }
     },
     "contactRole": {

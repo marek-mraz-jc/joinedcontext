@@ -19,6 +19,10 @@ use tokio_util::task::TaskTracker;
 /// How soon a saved appearance reaches the open data portal and the sign-in pages.
 pub(crate) const FOLLOW_EVERY: Duration = Duration::from_secs(30);
 
+/// How soon a saved appearance reaches the open data portal (T-7410: within 10 s); each round
+/// reads the in-process mirror only, so it is cheap.
+pub(crate) const FOLLOW_LOOK_EVERY: Duration = Duration::from_secs(3);
+
 /// The appearance the Organization `name` carries in `mirror`: `None` when it is not mirrored,
 /// sets nothing, or fails jc-core's check (a manifest pushed past the Portal's judge).
 pub(crate) fn in_mirror(mirror: &Mirror, name: &str) -> Option<OrganizationAppearance> {

@@ -8152,7 +8152,27 @@
         "homeWidgetsNone": "Noch kein Dashboard zur Auswahl. Öffnen Sie ein Projekt dieser Organisation, gehen Sie zu Dashboards und legen Sie eines an; es wird beim nächsten Mal hier angeboten.",
         "homeWidgetsProjects": "Projekte der Organisation öffnen",
         "opendataWidgets": "Dashboards im Open-Data-Portal",
-        "opendataWidgetsNone": "Noch kein öffentliches Dashboard zur Auswahl: Stellen Sie zuerst ein Dashboard eines Projekts dieser Organisation auf öffentlich."
+        "opendataWidgetsNone": "Noch kein öffentliches Dashboard zur Auswahl: Stellen Sie zuerst ein Dashboard eines Projekts dieser Organisation auf öffentlich.",
+        "font": "Schrift",
+        "fontChoice": {
+          "system": "System (Standard)",
+          "humanist": "Humanistische Grotesk",
+          "serif": "Serifenschrift",
+          "mono": "Festbreitenschrift"
+        },
+        "radius": "Eckenradius (px)",
+        "hero": "Kopfbereich der Startseite",
+        "heroTitle": "Überschrift",
+        "heroIntro": "Einleitung",
+        "datasetList": "Datensatzliste",
+        "datasetListChoice": {
+          "cards": "Karten (Standard)",
+          "table": "Tabelle"
+        },
+        "navLinks": "Links in der Kopfzeile",
+        "footerLinks": "Links in der Fußzeile",
+        "linkLabel": "Text",
+        "linkUrl": "Adresse"
       }
     },
     "contactRole": {

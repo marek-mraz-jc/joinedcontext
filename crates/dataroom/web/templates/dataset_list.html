@@ -25,6 +25,7 @@
     --jc-text: {{ chrome.branding.colours.text }};
     --jc-font-heading: {{ chrome.branding.fonts.heading }};
     --jc-font-body: {{ chrome.branding.fonts.body }};
+    {{ chrome.branding.layout.radius_css() }}
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
@@ -56,7 +57,7 @@
       </hgroup>
       <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
         <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-          <li class="active"><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+          <li class="active"><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>{% for (href, label) in chrome.branding.layout.nav_links %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
         </ul>
         <form class="d-flex site-search" action="{{ chrome.lang_prefix }}/dataset/" method="get">
           <label class="d-none" for="field-sitewide-search">{{ labels.search_datasets_placeholder }}</label>
@@ -141,7 +142,23 @@
                 <button type="button" class="show-filters btn btn-default">{{ labels.filter_results }}</button>
               </form>
               <div class="sdk-datagrid" data-grid-config="{{ dataset_grid_config }}">
-              {% if !datasets.is_empty() %}
+              {% if !datasets.is_empty() && chrome.branding.layout.dataset_table %}
+              <div class="jc-dataset-table">
+              <table>
+                <thead><tr><th scope="col">{{ labels.nav_datasets }}</th><th scope="col">{{ labels.format }}</th><th scope="col">{{ labels.col_publisher }}</th><th scope="col">{{ labels.updated }}</th></tr></thead>
+                <tbody>
+                {% for ds in datasets %}
+                <tr>
+                  <th scope="row"><a href="{{ chrome.lang_prefix }}/dataset/{{ ds.name }}">{{ ds.title }}</a></th>
+                  {% if ds.format_chips.is_empty() %}<td class="jc-cell-empty"><span aria-hidden="true">–</span></td>{% else %}<td data-label="{{ labels.format }}">{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>{% endif %}
+                  <td data-label="{{ labels.col_publisher }}">{{ ds.publisher_title }}</td>
+                  <td data-label="{{ labels.updated }}">{{ ds.modified_localized }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              </div>
+              {% else if !datasets.is_empty() %}
               <ul class="dataset-list list-unstyled">
                 {% for ds in datasets %}
                 <li class="dataset-item">

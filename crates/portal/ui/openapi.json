@@ -60929,12 +60929,124 @@
             ],
             "description": "The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`."
           },
+          "datasetList": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "One card per dataset with its description.",
+                    "enum": [
+                      "cards"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "One table row per dataset.",
+                    "enum": [
+                      "table"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.datasetList`."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How the open data portal lists datasets: `cards` (the default) or a compact `table`."
+          },
           "faviconSvg": {
             "type": [
               "string",
               "null"
             ],
             "description": "The favicon as an SVG document of at most 64 KiB, under the same rules as the logo."
+          },
+          "font": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "description": "The platform's interface font.",
+                    "enum": [
+                      "system"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A humanist sans serif.",
+                    "enum": [
+                      "humanist"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A book serif.",
+                    "enum": [
+                      "serif"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "description": "A monospace font.",
+                    "enum": [
+                      "mono"
+                    ]
+                  }
+                ],
+                "description": "`spec.appearance.font`: a system font stack, never a web font (T-7410)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410)."
+          },
+          "footerLinks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "`spec.appearance.navLinks[]` and `footerLinks[]`.",
+              "required": [
+                "label",
+                "url"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "The text of the link, e.g. `Mesto`."
+                },
+                "url": {
+                  "type": "string",
+                  "description": "An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`."
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Links the open data portal's footer adds after its own, under the same rules."
+          },
+          "hero": {
+            "type": "object",
+            "description": "The open data portal's home hero: its title and an introduction in Markdown.",
+            "properties": {
+              "intro": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text."
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The home page's heading, one line, e.g. `Otvorené dáta Banskej Bystrice`."
+              }
+            },
+            "additionalProperties": false
           },
           "homeWidgets": {
             "type": "array",
@@ -60963,6 +61075,29 @@
               "null"
             ],
             "description": "The logo as an SVG document of at most 64 KiB, without script, event handler or external reference."
+          },
+          "navLinks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "`spec.appearance.navLinks[]` and `footerLinks[]`.",
+              "required": [
+                "label",
+                "url"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "The text of the link, e.g. `Mesto`."
+                },
+                "url": {
+                  "type": "string",
+                  "description": "An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`."
+                }
+              },
+              "additionalProperties": false
+            },
+            "description": "Links the open data portal's header adds after its own, at most 8, each a label and an `https://` address or a path on the portal, e.g. `{label: Mesto, url: https://mesto.sk}`."
           },
           "opendataWidgets": {
             "type": "array",
@@ -61005,6 +61140,15 @@
               "null"
             ],
             "description": "The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`."
+          },
+          "radius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "description": "The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.",
+            "minimum": 0
           },
           "shortName": {
             "type": [

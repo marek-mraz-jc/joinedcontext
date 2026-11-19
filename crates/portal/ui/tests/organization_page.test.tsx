@@ -20,6 +20,7 @@ import { OrganizationApplications } from "../src/pages/organization/Organization
 import { OrganizationPage } from "../src/pages/organization/OrganizationPage";
 import type { OrganizationTab } from "../src/pages/organization/OrganizationPage";
 import { fromOrganization, toOrganization } from "../src/pages/organization/OrganizationSettings";
+import { organizationSchema } from "../src/schemas/kinds";
 import { DeleteProjectDialog } from "../src/components/DeleteProjectDialog";
 import { expectDenied } from "./checks";
 import { expectNoAxeViolations, json, list, renderPage } from "./page_contract";
@@ -651,6 +652,49 @@ describe("the Organization form keeps what it does not show", () => {
     expect(manifest.spec.defaultLocale).toBe("en");
     expect(manifest.metadata).toEqual(ORGANIZATION.metadata);
     expect(manifest).not.toHaveProperty("status");
+  });
+});
+
+describe("the open data portal's theme in the Organization form (T-7410)", () => {
+  type Field = {
+    oneOf: { const: string }[];
+    minimum: number;
+    maximum: number;
+    maxItems: number;
+    items: { properties: { url: { pattern: string } } };
+  };
+  const appearance = (organizationSchema((key) => key).properties as Record<string, { properties: Record<string, Field> }>)
+    .appearance.properties;
+
+  it("offers typed choices only: system fonts, a bounded radius, cards or table", () => {
+    expect(appearance.font.oneOf.map((choice) => choice.const)).toEqual(["system", "humanist", "serif", "mono"]);
+    expect([appearance.radius.minimum, appearance.radius.maximum]).toEqual([0, 24]);
+    expect(appearance.datasetList.oneOf.map((choice) => choice.const)).toEqual(["cards", "table"]);
+    expect(appearance.navLinks.maxItems).toBe(8);
+  });
+
+  it("takes an https address or a path on the portal as a link and nothing that runs or leaves by //", () => {
+    const url = new RegExp(appearance.footerLinks.items.properties.url.pattern);
+    for (const fine of ["https://www.banskabystrica.sk", "http://mesto.sk/a?b#c", "/about#api", "/"]) {
+      expect(url.test(fine), fine).toBe(true);
+    }
+    for (const refused of ["javascript:alert(1)", "data:text/html,x", "//evil.example", "/\\evil.example", "about", 'https://x/"onclick=', "https://u@evil.example"]) {
+      expect(url.test(refused), refused).toBe(false);
+    }
+  });
+
+  it("proposes the theme members as the form holds them", () => {
+    const look = {
+      font: "serif",
+      radius: 12,
+      hero: { title: "Otvorené dáta", intro: "Dáta na **jednom mieste**" },
+      datasetList: "table",
+      navLinks: [{ label: "Mesto", url: "https://mesto.sk" }],
+    };
+    const manifest = toOrganization({ ...fromOrganization(ORGANIZATION), appearance: look }, ORGANIZATION) as {
+      spec: { appearance: unknown };
+    };
+    expect(manifest.spec.appearance).toEqual(look);
   });
 });
 
