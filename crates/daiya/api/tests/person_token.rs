@@ -14,7 +14,8 @@ use common::{FlakyStore, ORG, bindings, loopback, prometheus, tokens};
 use daiya_api::{
     DaiyaState, PERSON_TOKEN_HEADER, READ_AS_HEADER, READ_AS_PUBLIC, api_router, format_picked,
 };
-use daiya_model::{InstallationId, InstanceId, PolicyAuthorizer, VariableModel};
+use daiya_model::{InstallationId, InstanceId, PolicyAuthorizer, Subject, VariableModel};
+use daiya_query::EndpointBase;
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use jc_router::Mount;
@@ -79,6 +80,21 @@ struct World {
 
 impl World {
     fn new() -> Self {
+        Self::build(None, false)
+    }
+
+    /// A daiya whose host's gateway serves its Endpoints at `base`.
+    fn at(base: &str) -> Self {
+        Self::build(Some(base), false)
+    }
+
+    /// [`Self::at`], with a host resolver that verifies any JWT bearer as person `viewer` holding
+    /// that bearer: two tokens of one person, as a person and their narrower Connection.
+    fn resolving(base: &str) -> Self {
+        Self::build(Some(base), true)
+    }
+
+    fn build(base: Option<&str>, resolver: bool) -> Self {
         let mut state = DaiyaState::new(
             InstallationId::from_u128(1),
             ORG,
@@ -91,6 +107,21 @@ impl World {
         .unwrap()
         .with_person_tokens();
         state.outbound_policy = loopback();
+        state.endpoint_bases = base
+            .map(|at| EndpointBase::parse(&format!("{at}/api/endpoint/")).unwrap())
+            .into_iter()
+            .collect();
+        if resolver {
+            state = state.with_subject_resolver(|headers| {
+                let bearer = headers
+                    .get("authorization")?
+                    .to_str()
+                    .ok()?
+                    .strip_prefix("Bearer ")
+                    .filter(|token| token.contains('.'))?;
+                Some(Subject::authenticated("viewer", vec![ORG], vec![]).with_bearer_token(bearer))
+            });
+        }
         let app = api_router(
             state,
             Mount::new("daiya", "https", "x.example", "").unwrap(),
@@ -238,7 +269,7 @@ fn bearer_of(head: &str) -> Option<String> {
 async fn the_endpoint_gets_the_persons_token_and_without_it_none() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let (base, seen) = gateway(pia.clone(), "nobody".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
     w.endpoint_board("plain", &base, "closedslug", false).await;
 
@@ -265,7 +296,7 @@ async fn the_endpoint_gets_the_persons_token_and_without_it_none() {
 async fn a_token_for_another_endpoint_or_on_another_credential_goes_nowhere() {
     let elsewhere = jwt("sub-pia", "endpoint:otherslug");
     let (base, seen) = gateway(elsewhere.clone(), "nobody".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
 
     let (_, view) = w.panel("closed", Some(&elsewhere)).await;
@@ -301,7 +332,7 @@ async fn two_persons_reading_one_panel_never_get_each_others_frames() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let ole = jwt("sub-ole", "endpoint:closedslug");
     let (base, seen) = gateway(pia.clone(), ole.clone()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
 
     let (_, first) = w.panel("closed", Some(&pia)).await;
@@ -318,7 +349,7 @@ async fn two_persons_reading_one_panel_never_get_each_others_frames() {
 async fn a_panel_request_without_a_person_token_is_refused() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let (base, seen) = gateway(pia, "nobody".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
     let ds_query = json!({ "from": "1700000000000", "to": "1700000600000", "queries": [{
         "refId": "A", "datasource": { "type": "ngsild-grafana-datasource", "uid": "closed" },
@@ -379,7 +410,7 @@ async fn the_cache_never_keys_on_an_unverified_sub() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let forged = pia.replace(".signature", ".forged");
     let (base, seen) = gateway(pia.clone(), forged.clone()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
 
     let (_, first) = w.panel("closed", Some(&pia)).await;
@@ -389,11 +420,35 @@ async fn the_cache_never_keys_on_an_unverified_sub() {
     assert_eq!(seen.lock().len(), 2, "{:?}", seen.lock());
 }
 
+/// One person, two tokens (the person's own and a narrower Connection's, or one minted before a
+/// grant was revoked): the Endpoint answers each by its token, so neither is served the other's
+/// cached frames.
+#[tokio::test]
+async fn two_tokens_of_one_person_never_share_a_cache_entry() {
+    let wide = jwt("sub-pia", "endpoint:closedslug");
+    let narrow = jwt("sub-pia", "endpoint:closedslug connection");
+    let (base, seen) = gateway(wide.clone(), narrow.clone()).await;
+    let r = World::resolving(&base);
+    r.endpoint_board("closed", &base, "closedslug", true).await;
+    let uri = "/api/dashboards/closed/render?panel=1&from=1700000000000&to=1700000600000";
+
+    let (status, first) = r
+        .send_with("GET", uri, &format!("Bearer {wide}"), &[], None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (_, second) = r
+        .send_with("GET", uri, &format!("Bearer {narrow}"), &[], None)
+        .await;
+    assert_eq!(readings(&first), [json!(1)], "{first}");
+    assert_eq!(readings(&second), [json!(2)], "{second}");
+    assert_eq!(seen.lock().len(), 2, "{:?}", seen.lock());
+}
+
 #[tokio::test]
 async fn a_public_dashboard_reads_as_public_only() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let (base, seen) = gateway(pia.clone(), "nobody".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
     let (status, created) = w
         .send(
@@ -551,7 +606,7 @@ async fn members_only_gateway() -> (String, Arc<Mutex<Vec<String>>>) {
 #[tokio::test]
 async fn a_public_endpoint_panel_renders_with_no_person_token_and_no_authorization() {
     let (base, seen) = gateway("nobody-a".into(), "nobody-b".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     // oauthPassThru on, as the Portal provisions every Endpoint datasource.
     w.endpoint_board("public", &base, "publicslug", true).await;
 
@@ -567,7 +622,7 @@ async fn a_public_endpoint_panel_renders_with_no_person_token_and_no_authorizati
 async fn a_members_only_endpoint_read_with_no_token_goes_out_anonymously_and_its_401_is_the_error()
 {
     let (base, seen) = members_only_gateway().await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("members", &base, "membersslug", true)
         .await;
 
@@ -587,7 +642,7 @@ async fn a_members_only_endpoint_read_with_no_token_goes_out_anonymously_and_its
 async fn an_anonymous_read_and_a_persons_read_of_one_panel_never_share_a_cache_entry() {
     let pia = jwt("sub-pia", "endpoint:closedslug");
     let (base, seen) = gateway(pia.clone(), "nobody".into()).await;
-    let w = World::new();
+    let w = World::at(&base);
     w.endpoint_board("closed", &base, "closedslug", true).await;
 
     let (_, anonymous) = w.panel("closed", None).await;

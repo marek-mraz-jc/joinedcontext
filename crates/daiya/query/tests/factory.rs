@@ -6,8 +6,9 @@
 
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, Subject};
 use daiya_query::{
-    DenyTokenExchanger, DriverDeps, DsError, MapSecretResolver, OperatorReach, OutboundPolicy,
-    PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver, guard_for,
+    DenyTokenExchanger, DriverDeps, DsError, EndpointBase, MapSecretResolver, OperatorReach,
+    OutboundPolicy, PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver,
+    guard_for,
 };
 use ipnet::IpNet;
 use jc_time::TimestampTz;
@@ -77,6 +78,15 @@ fn loopback_policy() -> OutboundPolicy {
         allow_http: true,
         allowed_networks: vec!["127.0.0.0/8".parse::<IpNet>().unwrap()],
         ..OutboundPolicy::default()
+    }
+}
+
+/// [`loopback_policy`] with the mock at `url` as the host's gateway: its Endpoints under
+/// `{url}/api/endpoint/` are the only URLs a caller's token goes to.
+fn gateway_policy(url: &str) -> OutboundPolicy {
+    OutboundPolicy {
+        endpoint_bases: vec![EndpointBase::parse(&format!("{url}/api/endpoint/")).unwrap()],
+        ..loopback_policy()
     }
 }
 
@@ -236,7 +246,7 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
         &format!("{url}/api/endpoint/air"),
         json!({ "oauthPassThru": true, "pageSize": 50, "tenant": "city", "contextUrl": "https://ctx.example/c.jsonld" }),
     );
-    let driver = build_driver(&rec, &deps(loopback_policy(), MapSecretResolver::new()))
+    let driver = build_driver(&rec, &deps(gateway_policy(&url), MapSecretResolver::new()))
         .await
         .unwrap();
     assert_eq!(driver.kind(), "ngsild");
@@ -263,7 +273,7 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
     let deny = DriverDeps {
         secrets: Arc::new(MapSecretResolver::new()),
         token_exchanger: Arc::new(DenyTokenExchanger),
-        policy: loopback_policy(),
+        policy: gateway_policy(&url),
     };
     let refused = build_driver(&rec, &deny).await.unwrap();
     let caller = Subject::authenticated("alice", vec![ORG], vec![]).with_bearer_token("alice-jwt");
@@ -281,17 +291,17 @@ async fn stored_ngsild_record_exchanges_the_caller_token_for_the_endpoint() {
 #[tokio::test]
 async fn stored_odata_record_queries_with_the_record_audience() {
     let (url, seen) = mock(vec![(
-        "/odata/v4/Datasets",
+        "/api/endpoint/dataroom/odata/v4/Datasets",
         json!({ "value": [ { "name": "a", "count": 3 }, { "name": "b", "count": 4 } ] }),
     )])
     .await;
     let rec = record(
         "catalog",
         "odata",
-        &format!("{url}/odata/v4"),
+        &format!("{url}/api/endpoint/dataroom/odata/v4"),
         json!({ "audience": "dataroom" }),
     );
-    let driver = build_driver(&rec, &deps(loopback_policy(), MapSecretResolver::new()))
+    let driver = build_driver(&rec, &deps(gateway_policy(&url), MapSecretResolver::new()))
         .await
         .unwrap();
     let caller = Subject::authenticated("bob", vec![ORG], vec![]).with_bearer_token("bob-jwt");
@@ -308,7 +318,74 @@ async fn stored_odata_record_queries_with_the_record_audience() {
         head.contains("authorization: bearer exchanged:dataroom:bob-jwt"),
         "{head}"
     );
-    assert!(head.starts_with("get /odata/v4/datasets?$top=2"), "{head}");
+    assert!(
+        head.starts_with("get /api/endpoint/dataroom/odata/v4/datasets?$top=2"),
+        "{head}"
+    );
+}
+
+/// A caller's token goes out only to the host's own gateway, for the Endpoint the URL names
+/// there: a datasource whose author names another host, or an OData audience other than the
+/// Endpoint of its URL, is read with no `Authorization`.
+#[tokio::test]
+async fn a_callers_token_goes_only_to_the_hosts_own_gateway_endpoints() {
+    let (url, seen) = mock(vec![
+        (
+            "/api/endpoint/air/odata/v4/Datasets",
+            json!({ "value": [] }),
+        ),
+        ("/api/endpoint/air/ngsi-ld/v1/entities", json!([])),
+    ])
+    .await;
+    let ngsild = record(
+        "air",
+        "ngsild-grafana-datasource",
+        &format!("{url}/api/endpoint/air"),
+        json!({ "oauthPassThru": true }),
+    );
+    let odata_other = record(
+        "catalog",
+        "odata",
+        &format!("{url}/api/endpoint/air/odata/v4"),
+        json!({ "audience": "dataroom" }),
+    );
+    let elsewhere = OutboundPolicy {
+        endpoint_bases: vec![
+            EndpointBase::parse("https://api.city.example/api/endpoint/").unwrap(),
+        ],
+        ..loopback_policy()
+    };
+    let caller = Subject::authenticated("alice", vec![ORG], vec![]).with_bearer_token("alice-jwt");
+    for (rec, policy, model) in [
+        (
+            &ngsild,
+            loopback_policy(),
+            json!({ "queryType": "entity", "entityType": "T" }),
+        ),
+        (
+            &ngsild,
+            elsewhere,
+            json!({ "queryType": "entity", "entityType": "T" }),
+        ),
+        (
+            &odata_other,
+            gateway_policy(&url),
+            json!({ "entitySet": "Datasets" }),
+        ),
+    ] {
+        let driver = build_driver(rec, &deps(policy, MapSecretResolver::new()))
+            .await
+            .unwrap();
+        driver.query(&ctx(caller.clone()), &q(model)).await.unwrap();
+    }
+    let heads = seen.lock().clone();
+    assert_eq!(heads.len(), 3, "{heads:?}");
+    for head in heads {
+        assert!(
+            !head.to_ascii_lowercase().contains("authorization"),
+            "{head}"
+        );
+    }
 }
 
 #[tokio::test]

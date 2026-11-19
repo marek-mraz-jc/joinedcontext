@@ -9,9 +9,10 @@
 //!   same guard and connects to the checked address.
 //! - Credentials come from the record's `secretRefs`, resolved through the host's
 //!   [`SecretResolver`]; a caller's token reaches NGSI-LD and OData only through the
-//!   [`TokenExchanger`].
+//!   [`TokenExchanger`], and only at the host's own gateway Endpoints
+//!   ([`OutboundGuard::token_endpoint`]).
 
-use crate::guard::{GuardConfig, OperatorReach, OutboundGuard, OwnReach};
+use crate::guard::{EndpointBase, GuardConfig, OperatorReach, OutboundGuard, OwnReach};
 use crate::{
     Datasource, DsError, LokiDatasource, NgsiLdDatasource, ODataDatasource, PostgresDatasource,
     PrometheusDatasource, SecretResolver, TokenExchanger,
@@ -36,6 +37,10 @@ pub struct OutboundPolicy {
     /// The host's own gateway Endpoints ([`GuardConfig::own_reach`]), for the `ngsild` and
     /// `odata` kinds only: the guard admits a request by its URL, whoever made the record.
     pub own_reach: Vec<OwnReach>,
+    /// The host's gateway Endpoints at an address of their own ([`GuardConfig::endpoint_bases`]),
+    /// for the `ngsild` and `odata` kinds only: with `own_reach`, the only URLs a caller's token
+    /// is sent to.
+    pub endpoint_bases: Vec<EndpointBase>,
     /// The one address the `prometheus` kind may reach over `http` on a non-public network, and
     /// only for datasources of this organization ([`GuardConfig::operator_reach`]).
     pub prometheus_reach: Option<(OrgId, OperatorReach)>,
@@ -50,6 +55,7 @@ impl Default for OutboundPolicy {
             timeout: guard.timeout,
             max_response_bytes: guard.max_response_bytes,
             own_reach: Vec::new(),
+            endpoint_bases: Vec::new(),
             prometheus_reach: None,
         }
     }
@@ -94,7 +100,7 @@ fn host_and_port(record: &DatasourceRecord, default_port: u16) -> Result<(String
 }
 
 /// The guard of one datasource: its allow-list (or its URL host) and the operator policy. Only
-/// an NGSI-LD or OData datasource gets the policy's [`OutboundPolicy::own_reach`], only a
+/// an NGSI-LD or OData datasource gets the policy's [`OutboundPolicy::own_reach`] and [`OutboundPolicy::endpoint_bases`], only a
 /// Prometheus datasource of the named organization its [`OutboundPolicy::prometheus_reach`].
 pub fn guard_for(
     record: &DatasourceRecord,
@@ -106,6 +112,10 @@ pub fn guard_for(
     } else {
         vec![host_and_port(record, default_port)?.0]
     };
+    let endpoint_kind = matches!(
+        record.kind.as_str(),
+        "ngsild" | "ngsild-grafana-datasource" | "odata"
+    );
     Ok(OutboundGuard::new(GuardConfig {
         allow_hosts,
         max_response_bytes: policy.max_response_bytes,
@@ -113,9 +123,15 @@ pub fn guard_for(
         allow_http: policy.allow_http,
         allow_loopback_for_tests: false,
         allowed_networks: policy.allowed_networks.clone(),
-        own_reach: match record.kind.as_str() {
-            "ngsild" | "ngsild-grafana-datasource" | "odata" => policy.own_reach.clone(),
-            _ => Vec::new(),
+        own_reach: if endpoint_kind {
+            policy.own_reach.clone()
+        } else {
+            Vec::new()
+        },
+        endpoint_bases: if endpoint_kind {
+            policy.endpoint_bases.clone()
+        } else {
+            Vec::new()
         },
         operator_reach: policy
             .prometheus_reach

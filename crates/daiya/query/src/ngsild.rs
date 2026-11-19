@@ -4,8 +4,9 @@
 //! - Supports `queryType`: `entity`, `temporal` (including misspelled `timseries` and `timeseries`),
 //!   `geo`, `nodegraph`.
 //! - Keeps all target fields of `NGP src/types.ts:67-124` on import and exports them losslessly.
-//! - Exchanges the caller's token for the Endpoint's audience slug via [`TokenExchanger`] (never
-//!   uses a service token, R3, §4.2).
+//! - Exchanges the caller's token via [`TokenExchanger`] for the Endpoint slug the URL names, and
+//!   only at the host's own gateway ([`OutboundGuard::token_endpoint`]); never uses a service
+//!   token (R3, §4.2).
 
 use crate::guard::{OutboundGuard, OutboundRequest};
 use crate::{
@@ -110,16 +111,17 @@ impl NgsiLdDatasource {
             headers.push(("NGSILD-Tenant".to_owned(), t.trim().to_owned()));
         }
 
-        // A caller's token leaves only exchanged for the Endpoint's audience. With no token the
-        // read goes out anonymously, whether or not oauthPassThru is on (Grafana parity): the
-        // gateway answers it by the Endpoint's audience.
+        // A caller's token leaves only for the host's own gateway, exchanged for the Endpoint
+        // the URL names there; any other URL is read anonymously, as a read with no token is,
+        // whether or not oauthPassThru is on (Grafana parity): the gateway answers it by the
+        // Endpoint's audience.
         if let Some(caller_token) = &ctx.subject.bearer_token
             && !caller_token.is_empty()
+            && let Some(audience) = self.guard.token_endpoint(&self.endpoint_url)
         {
-            let audience = self.endpoint_slug.as_deref().unwrap_or(self.uid.as_str());
             let exchanged = self
                 .token_exchanger
-                .exchange_for_audience(caller_token, audience)?;
+                .exchange_for_audience(caller_token, &audience)?;
             headers.push((
                 "Authorization".to_owned(),
                 format!("Bearer {}", exchanged.as_str()),

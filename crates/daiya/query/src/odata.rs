@@ -48,8 +48,12 @@ impl ODataDatasource {
             ("Accept".to_owned(), "application/json".to_owned()),
             ("OData-Version".to_owned(), "4.01".to_owned()),
         ];
+        // A caller's token leaves only for the host's own gateway, and only when the Endpoint the
+        // URL names there is the datasource's audience; any other URL is read anonymously.
         if let Some(caller_token) = &ctx.subject.bearer_token
             && !caller_token.is_empty()
+            && self.guard.token_endpoint(&self.service_url).as_deref()
+                == Some(self.audience.as_str())
         {
             let exchanged = self
                 .token_exchanger
@@ -363,7 +367,7 @@ impl Datasource for ODataDatasource {
 mod tests {
     use super::*;
     use crate::DenyTokenExchanger;
-    use crate::guard::GuardConfig;
+    use crate::guard::{EndpointBase, GuardConfig};
     use daiya_model::{InstanceId, OrgId, Subject};
     use parking_lot::Mutex;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -551,9 +555,20 @@ mod tests {
             json!({"value": []})
         );
 
-        // A caller token is never forwarded as is: the default exchanger refuses.
+        // A caller token is never forwarded as is: at the host's gateway, for the Endpoint of
+        // the datasource's audience, the default exchanger refuses it.
         let mut c = ctx();
         c.subject.bearer_token = Some("caller-jwt".into());
+        let root = url.trim_end_matches("/odata/v4");
+        let ds = |url: &str| {
+            let mut d = ds(url);
+            d.service_url = format!("{root}/api/endpoint/dataroom");
+            let mut guard = d.guard.config().clone();
+            guard.endpoint_bases =
+                vec![EndpointBase::parse(&format!("{root}/api/endpoint/")).unwrap()];
+            d.guard = OutboundGuard::new(guard);
+            d
+        };
         let err = ds(&url)
             .query(&c, &[q(json!({"entitySet": "S"}))])
             .await
