@@ -658,6 +658,11 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
          turns single-person approval on",
     ),
     (
+        "automation_logins",
+        "an installation mark only the installation operator writes (T-7432, IDN-13): a restore \
+         never sets or clears one",
+    ),
+    (
         "project_branches",
         "a branch lives at most 30 days and its id stays a tombstone (CHG-15): a restore never \
          revives one",
