@@ -526,7 +526,7 @@ function LinksField({
               id={`${member}-${at}-url`}
               inputMode="url"
               spellCheck={false}
-              placeholder="https://www.example.sk/ · /about"
+              placeholder="https://www.example.org/ or /about"
               value={link.url}
               onChange={(event) => set(at, { url: event.target.value })}
             />
