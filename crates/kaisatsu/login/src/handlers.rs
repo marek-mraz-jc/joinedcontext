@@ -999,14 +999,32 @@ pub(crate) async fn render_expired_session_page(
 }
 
 /// An e-mailed action link that no longer works: used, expired, unreadable, or sent to an
-/// address the account no longer holds. One page names those causes and leads to sign-in
-/// (the account console signs the person in), since the link itself is what failed.
+/// address the account no longer holds. The page says "expired" when the link's signature holds
+/// and its `exp` has passed (the holder already has the token, so this tells them nothing new),
+/// and otherwise "already used or no longer valid". Its next step fits the link's action:
+/// "Forgot your password?" for a password link, a new link from the administrator for an e-mail
+/// or authenticator link, both when the link cannot be read. Sign-in stays the primary way on.
 async fn render_action_link_unusable(
     state: &OidcState,
     mount: &Mount,
     realm: &RealmConfig,
     headers: &HeaderMap,
+    key: &str,
 ) -> Result<Response> {
+    let issuer = mount.realm_issuer(&realm.realm);
+    let claims = crate::email::EmailSender::inspect_refused_action_token(
+        &state.store,
+        &realm.id,
+        &issuer,
+        key,
+    )
+    .await;
+    let expired = claims
+        .as_ref()
+        .is_some_and(|c| c.exp <= TimestampTz::now().as_second());
+    let password_link = claims
+        .as_ref()
+        .map(|c| c.actions.iter().any(|a| a == "UPDATE_PASSWORD"));
     let bundle = Bundle::for_locale(page_locale(realm, None, headers));
     let branding = load_branding(state, realm, None).await?;
     let shell = page::Shell {
@@ -1017,18 +1035,38 @@ async fn render_action_link_unusable(
         app: "",
         locale_base_url: "",
     };
-    let mut tpl = shell.page(
-        "action-link-unusable",
-        bundle.get("jcActionLinkUnusableTitle"),
-        &new_nonce(),
-    );
-    tpl.instructions = vec![bundle.get("jcActionLinkUnusableExplained").to_owned()];
+    let (title, explained) = if expired {
+        ("jcActionLinkExpiredTitle", "jcActionLinkExpiredExplained")
+    } else {
+        ("jcActionLinkUnusableTitle", "jcActionLinkUnusableExplained")
+    };
+    let next_step = match password_link {
+        Some(true) => "jcActionLinkNextPassword",
+        Some(false) => "jcActionLinkNextAdmin",
+        None => "jcActionLinkNextUnknown",
+    };
+    let mut tpl = shell.page("action-link-unusable", bundle.get(title), &new_nonce());
+    tpl.instructions = vec![
+        bundle.get(explained).to_owned(),
+        bundle.get(next_step).to_owned(),
+    ];
     tpl.links = vec![page::Link {
         id: "loginSignInLink".into(),
         class: "pf-m-primary",
         url: format!("{}/realms/{}/account", mount.path_prefix, realm.realm),
         label: bundle.get("jcActionLinkSignIn").to_owned(),
     }];
+    if password_link != Some(false) {
+        tpl.links.push(page::Link {
+            id: "loginResetPasswordLink".into(),
+            class: "pf-m-link",
+            url: format!(
+                "{}/realms/{}/login-actions/reset-credentials",
+                mount.path_prefix, realm.realm
+            ),
+            label: bundle.get("doForgotPassword").to_owned(),
+        });
+    }
     let mut resp = render_with_security_headers(&tpl, None, None);
     *resp.status_mut() = StatusCode::BAD_REQUEST;
     Ok(resp)
@@ -2613,7 +2651,7 @@ async fn action_token_get(
         crate::email::EmailSender::check_action_token(&state.store, &realm.id, &issuer, &query.key)
             .await
     else {
-        return render_action_link_unusable(&state, &mount, &realm, &headers).await;
+        return render_action_link_unusable(&state, &mount, &realm, &headers, &query.key).await;
     };
     let bundle = Bundle::for_locale(page_locale(&realm, None, &headers));
     let branding = load_branding(&state, &realm, None).await?;
@@ -2672,7 +2710,7 @@ async fn apply_action_token(
         crate::email::EmailSender::consume_action_token(&state.store, &realm.id, &issuer, key)
             .await
     else {
-        return render_action_link_unusable(state, mount, realm, headers).await;
+        return render_action_link_unusable(state, mount, realm, headers, key).await;
     };
 
     let mut user = state
@@ -2704,7 +2742,7 @@ async fn apply_action_token(
                         == Some(bound)
                 });
                 if !sent_to_current {
-                    return render_action_link_unusable(state, mount, realm, headers).await;
+                    return render_action_link_unusable(state, mount, realm, headers, key).await;
                 }
                 user.email_verified = true;
                 user.required_actions.retain(|a| a != "VERIFY_EMAIL");

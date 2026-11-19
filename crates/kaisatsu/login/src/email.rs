@@ -6,7 +6,7 @@ use crate::i18n::Bundle;
 use jc_time::TimestampTz;
 use jiff::SignedDuration;
 use kaisatsu_core::{KaisatsuError, Result, RevokedTokenRecord, SmtpServerConfig, Store};
-use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt, verify_jwt};
+use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt, verify_jwt, verify_jwt_allowing_expired};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -143,6 +143,22 @@ impl EmailSender {
             ));
         }
         Ok(claims)
+    }
+
+    /// The claims of an action link that [`Self::check_action_token`] or
+    /// [`Self::consume_action_token`] refused, read only to tell its holder why: the signature and
+    /// issuer are checked and the expiry is not, so the page can say "expired" and offer the next
+    /// step that fits the link's action. A link that does not verify yields `None`.
+    pub async fn inspect_refused_action_token(
+        store: &Arc<dyn Store>,
+        realm_id: &str,
+        issuer: &str,
+        token: &str,
+    ) -> Option<SignedActionToken> {
+        let keys = store.list_signing_keys(realm_id).await.ok()?;
+        let (_, claims): (_, SignedActionToken) =
+            verify_jwt_allowing_expired(token, &keys, Some(issuer)).ok()?;
+        (claims.typ == "Action" && claims.aud == issuer).then_some(claims)
     }
 
     /// Verifies and consumes a single-use action token (second use is refused via `revoked_token`, W7).
