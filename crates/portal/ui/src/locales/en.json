@@ -4278,7 +4278,7 @@
       "personHelp": "Pick one of the organization's people, or type the full e-mail of someone who has not signed in yet, e.g. jana.novak@example.org.",
       "groupHelp": "The name of a group declared under Groups. Everyone in it holds the role while they are a member.",
       "roleHelp": "What the person may do: each role is a set of verbs on a set of kinds, listed under Roles.",
-      "roleEditHelp": "The role this person holds here, e.g. viewer. Changing it is proposed as a change; the Portal refuses a role above your own rights or one that would leave the Organization without an administrator.",
+      "roleEditHelp": "The role this person holds here, one of those listed under Roles. Changing it is proposed as a change; the Portal refuses a role above your own rights or one that would leave the Organization without an administrator.",
       "whereHelp": "How far the role reaches: this project, the whole organization, or one context space of the project.",
       "untilHelp": "The last day the role holds. Left empty it does not expire, which is what a permanent member needs.",
       "rolesEmpty": "This organization has no roles yet. One has to be declared under Roles before it can be granted.",

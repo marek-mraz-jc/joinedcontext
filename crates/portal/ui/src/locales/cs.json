@@ -4278,7 +4278,7 @@
       "personHelp": "Vyberte osobu z organizace nebo zadejte celý e-mail někoho, kdo se ještě nepřihlásil, např. jana.novak@example.org.",
       "groupHelp": "Název skupiny vyhlášené v části Skupiny. Roli drží každý, dokud je jejím členem.",
       "roleHelp": "Co daný člověk smí: každá role je množina sloves nad množinou druhů, vypsaná v části Role.",
-      "roleEditHelp": "Role, kterou tento člověk zde má, např. viewer. Změna se navrhne jako změna; Portál odmítne roli nad vaše vlastní práva nebo takovou, po které by Organizace neměla administrátora.",
+      "roleEditHelp": "Role, kterou tento člověk zde má, jedna z rolí v seznamu Role. Změna se navrhne jako změna; Portál odmítne roli nad vaše vlastní práva nebo takovou, po které by Organizace neměla administrátora.",
       "whereHelp": "Kam až role sahá: tento projekt, celá organizace, nebo jeden kontextový prostor projektu.",
       "untilHelp": "Poslední den platnosti role. Prázdné pole znamená bez konce, což potřebuje stálý člen.",
       "rolesEmpty": "Tato organizace zatím nemá žádné role. Než ji lze přidělit, musí ji někdo vyhlásit v části Role.",
