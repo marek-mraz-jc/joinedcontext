@@ -1069,7 +1069,7 @@ mod tests {
         assert_eq!(sealed.sha256, sha256);
         assert_eq!(sealed.file.metadata().expect("file").len(), size as u64);
         assert_eq!(
-            same_bytes(&sealed, &[sha256.clone()]).expect("same"),
+            same_bytes(&sealed, std::slice::from_ref(&sha256)).expect("same"),
             sha256
         );
     }
