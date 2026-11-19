@@ -744,7 +744,7 @@ fn keep_masked_csi(
         .get("endpoint")
         .is_some_and(|e| Some(e) != stored.get("endpoint"));
     match norm.get_mut("contextSourceInfo") {
-        Some(csi) => crate::subscriptions::unmask_pairs(
+        Some(csi) => crate::pairs::unmask_pairs(
             "contextSourceInfo",
             csi,
             stored.get("contextSourceInfo"),

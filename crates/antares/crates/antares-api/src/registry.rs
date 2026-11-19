@@ -84,7 +84,7 @@ pub fn present_registration(doc: &Value, ctx: &Context, sys_attrs: bool) -> Valu
             // and a 5.11 notification answer that it is set, not what it is.
             "contextSourceInfo" => {
                 let mut csi = v.clone();
-                crate::subscriptions::mask_pairs(&mut csi, csi_shown);
+                crate::pairs::mask_pairs(&mut csi, csi_shown);
                 out.insert(k.clone(), csi);
             }
             _ => {
