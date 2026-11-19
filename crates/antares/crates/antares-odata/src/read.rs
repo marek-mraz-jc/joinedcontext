@@ -59,7 +59,10 @@ pub(crate) struct Reads {
     pub(crate) edm: Arc<Edm>,
     pub(crate) state: Arc<ODataState>,
     /// [`set_types`] of `edm`, compacted once per model, not per Entity read (T-6935 P-2-10).
-    pub(crate) set_types: Vec<(String, String)>,
+    pub(crate) set_types: Arc<[(String, String)]>,
+    /// For a request served over the view's model, how its first gate narrows the model to
+    /// the caller ([`crate::narrowed_first`]); `None` over a model already narrowed.
+    pub(crate) narrow: Option<crate::Narrow>,
 }
 
 /// `$entity?$id=` (Q23): the id, percent-decoded, is a URL of this service,
@@ -1435,6 +1438,7 @@ async fn answered(
     req: OpsRequest,
     version: ODataVersion,
 ) -> Result<(Option<HeldAnswer>, u64), ODataErrorResponse> {
+    crate::narrowed_first(reads, caller, version).await?;
     let answer = reads
         .view
         .run(op, caller, req)
@@ -1669,7 +1673,7 @@ fn types_of(doc: &Value) -> Vec<&str> {
 }
 
 /// The core name of each class's own set's type and the set's name, in set order.
-pub(crate) fn set_types(edm: &Edm) -> Vec<(String, String)> {
+pub(crate) fn set_types(edm: &Edm) -> Arc<[(String, String)]> {
     edm.sets
         .iter()
         .filter(|(_, s)| s.output.is_none())
@@ -2069,6 +2073,7 @@ pub(crate) async fn scanned(
     page: ScanPage,
     version: ODataVersion,
 ) -> Result<(Vec<Value>, Option<usize>), ODataErrorResponse> {
+    crate::narrowed_first(reads, caller, version).await?;
     let result = reads.view.scan(caller, pushdown, Some(program), page).await;
     scan_answer(result, version)
 }
@@ -2085,6 +2090,7 @@ async fn scan_parts(
     version: ODataVersion,
     mut take: impl FnMut(Vec<Value>) -> Result<(), ODataErrorResponse>,
 ) -> Result<usize, ODataErrorResponse> {
+    crate::narrowed_first(reads, caller, version).await?;
     let mut budget = RESIDUAL_SCAN.saturating_add(1);
     let (mut start, mut count) = (0, 0usize);
     loop {
