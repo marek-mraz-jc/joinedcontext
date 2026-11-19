@@ -65,6 +65,7 @@ or userinfo endpoint.
 | G2 | `POST /groups`, `GET /groups?search={name}&exact=true` | name, attributes | | 201 / 200 | groups.rs:331/:344 | group test |
 | G3 | `GET /groups/{id}/members?max=1000`, `PUT`/`DELETE /users/{u}/groups/{g}`, `GET /users/{u}` | | member ids; 404 absent | 200 / 204 | groups.rs:385/:403/:428/:486 | group test |
 | G4 | `PUT /groups/{id}`, `DELETE /groups/{id}` | name, attributes | | 204 | groups.rs:471/:288 | group test |
+| G5 | `GET /groups/{id}/children?briefRepresentation=true&first&max=1000`, `POST /groups/{id}/children` | name `members` | id, name, path of each direct subgroup; 404 another realm's or organization's group | 200 / 201, 409 taken | groups.rs:466/:487 | admin `group_children_stay_within_their_realm_and_organization` |
 | A1 | `GET /groups?briefRepresentation=true&max=1000`, `GET /users/{id}` or `/users?exact=true&{email\|username}=` | | name→id; id, username, email | 200, 404 absent | app_clients.rs:799/:825/:841 | `the_app_wave_converges_an_app_client` |
 | A2 | `POST`/`DELETE /{groups\|users}/{id}/role-mappings/clients/{uuid}` | `[{id, name}]` of an App client role | | 204 | app_clients.rs:929-952 | App test |
 | S1 | `GET /smtp-server` (kaisatsu only, `manage-smtp`) | | host, port, tls, from, user, passwordSet; never the password | 200; 404 none set | people.rs:610 | kaisatsu `smtp_routes` `only_manage_smtp_or_a_realm_applier_reads_and_sets_it`, Portal `operator_changes_tests` |

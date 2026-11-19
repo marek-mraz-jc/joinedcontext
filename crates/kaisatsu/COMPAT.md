@@ -34,6 +34,7 @@ each uses and the answer it parses, replayed by `server/tests/portal_contract.rs
 | 24 | `PUT` | `/admin/realms/{realm}/groups/{id}` | — | `204` | `POR src/reconciler/groups.rs:459` | `row_18_to_26_groups_and_memberships` |
 | 25 | `DELETE` | `/admin/realms/{realm}/groups/{id}` | — | `204` | `POR src/reconciler/groups.rs:281` | `row_18_to_26_groups_and_memberships` |
 | 26 | `GET` | `/admin/realms/{realm}/groups/{id}/members` | `max` | `200` | `POR src/reconciler/groups.rs:367` | `row_18_to_26_groups_and_memberships` |
+| 26a | `GET` / `POST` | `/admin/realms/{realm}/groups/{id}/children` | `first`, `max` (default 10), `briefRepresentation`; POST body `name`: the subgroup takes the parent's organization | `200`, `201 + Location`, `404` (another realm's or organization's group), `409` (sibling name taken) | `POR src/reconciler/groups.rs:466`, `:487` | `authz_regressions.rs` `group_children_stay_within_their_realm_and_organization` |
 | 27 | `POST` | `/admin/realms/{realm}/users/{id}/role-mappings/clients/{client_uuid}` | — | `204` | `POR src/reconciler/app_clients.rs:734` | `row_27_to_34_roles_and_role_mappings` |
 | 28 | `DELETE` | `/admin/realms/{realm}/users/{id}/role-mappings/clients/{client_uuid}` | — | `204` | `POR src/reconciler/app_clients.rs:703` | `row_27_to_34_roles_and_role_mappings` |
 | 29 | `POST` | `/admin/realms/{realm}/groups/{id}/role-mappings/clients/{client_uuid}` | — | `204` | `POR src/reconciler/app_clients.rs:734` | `row_27_to_34_roles_and_role_mappings` |
