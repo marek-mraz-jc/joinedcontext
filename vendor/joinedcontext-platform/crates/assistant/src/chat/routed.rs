@@ -3304,9 +3304,7 @@ fn keeps_live(ask: &Ask<'_>, missing: &[String], text: &str) -> bool {
 
 /// Whether the answer names the moment it was written, which a later visitor must not read.
 fn tells_time(ask: &Ask<'_>, text: &str) -> bool {
-    super::clock::readings(ask.now, ask.zone)
-        .iter()
-        .any(|at| text.contains(at.as_str()))
+    super::clock::quotes_reading(ask.now, ask.zone, text)
 }
 
 /// Answers one question by the routed loop; returns what it spent. Every outcome reaches
