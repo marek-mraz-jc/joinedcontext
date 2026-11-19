@@ -37,11 +37,14 @@ img=$(base "${1:-bins/jc/Dockerfile}")
 ws=$(pwd)
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 mkdir -p "$cargo_home/registry" "$cargo_home/git"
-# The build tools the Dockerfile's rust stage installs (make for tikv-jemalloc-sys, cmake for
-# aws-lc-sys, g++ for the assistant's tokenizer), in an image of its own: the build itself runs
-# unprivileged.
-printf 'FROM %s\nRUN apt-get update && apt-get install -y --no-install-recommends make cmake g++ && rm -rf /var/lib/apt/lists/*\n' "$img" \
-  | docker build -q -t jc-build-base -
+# What the Dockerfile's rust stage adds to the image, in an image of its own (the build itself runs
+# unprivileged): make for tikv-jemalloc-sys, cmake for aws-lc-sys, g++ for the assistant's
+# tokenizer, and the PDFium the assistant links, checksum-pinned by pdfium.sh (without
+# KREUZBERG_PDFIUM_PREBUILT kreuzberg's build script downloads an unchecked one with curl).
+printf '%s\n' "FROM $img" \
+  'RUN apt-get update && apt-get install -y --no-install-recommends make cmake g++ curl ca-certificates && rm -rf /var/lib/apt/lists/*' \
+  'COPY pdfium.sh /tmp/' 'RUN sh /tmp/pdfium.sh /opt/pdfium' 'ENV KREUZBERG_PDFIUM_PREBUILT=/opt/pdfium' \
+  | docker build -q -t jc-build-base -f - vendor/joinedcontext-platform/scripts/ci
 
 # sccache from the runner (sccache-action installs the static musl build), when the env names it.
 set --
