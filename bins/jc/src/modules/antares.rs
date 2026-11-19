@@ -17,7 +17,10 @@
 //! the environment asks for timescale), the URL built from the section and its password file
 //! instead of `ANTARES_DATABASE_URL`, and a role that bypasses row-level security refuses the
 //! start (`require_rls`, the standalone `ANTARES_REQUIRE_RLS=1`). The broker migrates itself at
-//! start under sqlx's advisory lock, as standalone.
+//! start under sqlx's advisory lock, as standalone: as the section's `migrate_url` role when set
+//! (the tables' owner, which also builds the weekly history partitions; the `url` role must then
+//! own nothing), and it runs the cross-Tenant work as `maintenance_url`'s role, a member of
+//! `antares_maintenance` (T-7310).
 //!
 //! The broker keeps process-wide statics (memory budget, WebSocket hub, caches): one Antares per
 //! process.
@@ -181,6 +184,16 @@ pub async fn build(
         }
         let url = db.app_url_with_password().map_err(err)?;
         broker_cfg.database_url = Some(antares_broker::Secret::new(url.expose().to_owned()));
+        // The owner migrates and builds the weekly partitions; the request role then owns
+        // nothing, and the maintenance role runs the cross-Tenant work (T-7310).
+        if let Some(owner) = db.migrate_url_with_password().map_err(err)? {
+            broker_cfg.migration_database_url =
+                Some(antares_broker::Secret::new(owner.expose().to_owned()));
+        }
+        if let Some(maint) = db.maintenance_url_with_password().map_err(err)? {
+            broker_cfg.maintenance_database_url =
+                Some(antares_broker::Secret::new(maint.expose().to_owned()));
+        }
         // Unset: ANTARES_PG_POOL (default 20), as standalone.
         broker_cfg.pg_pool = db.max_connections;
     }

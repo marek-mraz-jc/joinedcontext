@@ -87,6 +87,9 @@ spec:
           value: {{ $role.type | default "readonly" | quote }}
         - name: DB_OWNER
           value: {{ $config.user | quote }}
+        # The NOLOGIN group roles this role is a member of, and of no other (type dml only).
+        - name: ROLE_MEMBER_OF
+          value: {{ $role.memberOf | default list | toJson | quote }}
         {{- if eq ($role.type | default "readonly") "backup" }}
         # backup: SELECT on these columns only, the list the program that reads them names.
         - name: ROLE_GRANTS
@@ -156,6 +159,43 @@ spec:
               FROM jsonb_array_elements(:'grants'::jsonb) g
               WHERE to_regclass(format('%I.%I', g->>'schema', g->>'table')) IS NOT NULL \gexec
           EOSQL
+          elif [ "${ROLE_TYPE}" = "dml" ]; then
+          # dml: a program's request or maintenance role that the owner migrates for (Antares,
+          # T-7310). Rows of every table the owner holds now or creates later (a weekly history
+          # partition included), no function the migrations kept from PUBLIC, never row-level
+          # security bypassed, and of the group roles exactly those memberOf names: a group
+          # granted by hand earlier is revoked here, so the request role cannot keep the
+          # cross-Tenant escape a maintenance group carries.
+          psql -v ON_ERROR_STOP=1 <<-'EOSQL'
+            \getenv role_name ROLE_NAME
+            \getenv member_of ROLE_MEMBER_OF
+            \getenv database PGDATABASE
+            \getenv owner DB_OWNER
+            SELECT format('ALTER ROLE %I NOBYPASSRLS', :'role_name') \gexec
+            SELECT format('CREATE ROLE %I NOLOGIN', g)
+              FROM jsonb_array_elements_text(:'member_of'::jsonb) g
+              WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = g) \gexec
+            SELECT format('ALTER ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS', g)
+              FROM jsonb_array_elements_text(:'member_of'::jsonb) g \gexec
+            SELECT format('REVOKE %I FROM %I', r.rolname, :'role_name')
+              FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
+              WHERE m.member = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = :'role_name')
+                AND NOT r.rolname IN (SELECT jsonb_array_elements_text(:'member_of'::jsonb)) \gexec
+            SELECT format('GRANT %I TO %I', g, :'role_name')
+              FROM jsonb_array_elements_text(:'member_of'::jsonb) g \gexec
+            SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database', :'role_name') \gexec
+            SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'role_name') \gexec
+            SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I', :'role_name') \gexec
+            SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %I', :'role_name') \gexec
+            SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %I', :'owner', :'role_name') \gexec
+            SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %I', :'owner', :'role_name') \gexec
+          EOSQL
+          # A request role that owns a table can switch its row-level security off.
+          psql -v ON_ERROR_STOP=1 -tA <<-'EOSQL' | grep -qx 0 || { echo "ERROR: role ${ROLE_NAME} owns a table of ${PGDATABASE}; reassign it to ${DB_OWNER}"; exit 1; }
+            \getenv role_name ROLE_NAME
+            SELECT count(*) FROM pg_catalog.pg_class c JOIN pg_catalog.pg_roles r ON r.oid = c.relowner
+              WHERE r.rolname = :'role_name';
+          EOSQL
           elif [ "${ROLE_TYPE}" = "login" ]; then
           # login: the program's own migrations grant this role its tables (jc's shako, daiya,
           # dataroom and ekiben request roles); the revoke below would strip them at every upgrade.
@@ -207,12 +247,12 @@ spec:
 
           # Verify the role has no access to other databases by ensuring no extra privileges
           echo "Verifying role is limited to database ${PGDATABASE}..."
-          psql -v ON_ERROR_STOP=1 -t <<-EOSQL | grep -q "^ *0$" || { echo "ERROR: role ${ROLE_NAME} holds superuser, createrole, createdb or (a backup role) bypassrls"; exit 1; }
+          psql -v ON_ERROR_STOP=1 -t <<-EOSQL | grep -q "^ *0$" || { echo "ERROR: role ${ROLE_NAME} holds superuser, createrole, createdb or (a backup or dml role) bypassrls"; exit 1; }
             SELECT count(*)
             FROM pg_roles
             WHERE rolname = '${ROLE_NAME}'
               AND (rolsuper = true OR rolcreaterole = true OR rolcreatedb = true
-                OR (rolbypassrls = true AND '${ROLE_TYPE}' = 'backup'));
+                OR (rolbypassrls = true AND '${ROLE_TYPE}' IN ('backup', 'dml')));
           EOSQL
           echo "✓ Role has no system-level privileges"
 

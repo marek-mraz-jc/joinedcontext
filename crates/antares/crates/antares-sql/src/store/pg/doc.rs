@@ -479,12 +479,19 @@ impl PgDocStore {
         Ok(doc)
     }
 
-    /// The names a rename moved `tenant` away from (migration 0038).
+    /// The names a rename moved `tenant` away from (migration 0038), read
+    /// scoped to the Tenant, the only rows the request role sees (0043).
     async fn former_names(&self, tenant: &TenantId) -> Result<Vec<String>, sqlx::Error> {
-        sqlx::query_scalar("SELECT former FROM tenant_seal_alias WHERE tenant = $1 ORDER BY former")
-            .bind(tenant.as_str())
-            .fetch_all(&self.pool)
-            .await
+        let mut tx = super::begin(&self.pool).await?;
+        super::set_tenant(&mut tx, tenant).await?;
+        let former = sqlx::query_scalar(
+            "SELECT former FROM tenant_seal_alias WHERE tenant = $1 ORDER BY former",
+        )
+        .bind(tenant.as_str())
+        .fetch_all(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(former)
     }
 
     fn sealed<'a>(
@@ -1014,8 +1021,9 @@ impl PgDocStore {
         }
         // every tenant row, the broker's own included, and the default
         // Tenant, which exists without one (5.5.10)
+        // the listing is the maintenance role's (0043)
         let mut tenants: Vec<String> = sqlx::query_scalar("SELECT tenant_id FROM tenants")
-            .fetch_all(&self.pool)
+            .fetch_all(&self.maint)
             .await?;
         if !tenants.iter().any(|t| t == TenantId::DEFAULT) {
             tenants.push(TenantId::DEFAULT.to_owned());
@@ -1077,7 +1085,7 @@ impl PgDocStore {
     async fn reseal_renamed(&self) -> Result<u64, sqlx::Error> {
         let renamed: Vec<String> =
             sqlx::query_scalar("SELECT DISTINCT tenant FROM tenant_seal_alias ORDER BY tenant")
-                .fetch_all(&self.pool)
+                .fetch_all(&self.maint)
                 .await?;
         let mut sealed = 0u64;
         for raw in renamed {
@@ -1111,7 +1119,7 @@ impl PgDocStore {
             sqlx::query("DELETE FROM tenant_seal_alias WHERE tenant = $1 AND former = ANY($2)")
                 .bind(tenant.as_str())
                 .bind(&former)
-                .execute(&self.pool)
+                .execute(&self.maint)
                 .await?;
         }
         Ok(sealed)

@@ -176,3 +176,7 @@ note = "adds row-level security to each history partition; an older release read
 [0042]
 rollback = "compatible"
 note = "the cross-Tenant escape of every policy also needs a member of antares_maintenance or the tables' owner, and Cached jsonld_contexts rows take UPDATE and DELETE only behind it; an older release arms the setting as before and connects as the owner, so its drain, reaps and Cached writes keep working"
+
+[0043]
+rollback = "compatible"
+note = "tenants, tenant_rename and tenant_seal_alias admit the scoped Tenant's row or a member of antares_maintenance, and antares_tenant_standing answers one name's standing; an older release connects as the owner, which the policies do not bind (ENABLE, not FORCE), so its reads and writes of the inventory keep working"

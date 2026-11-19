@@ -470,6 +470,14 @@ envSecret:
   BROKER_DB_PASSWORD:
     secret: db-jc-antares
     key: password
+  {{- if (dig "antaresRoleSplit" false $jc) }}
+  BROKER_APP_DB_PASSWORD:
+    secret: db-jc-antares-app
+    key: password
+  BROKER_MAINT_DB_PASSWORD:
+    secret: db-jc-antares-maint
+    key: password
+  {{- end }}
   BACKUP_ANTARES_DB_PASSWORD:
     secret: db-jc-antares-backup
     key: password
@@ -580,7 +588,15 @@ env:
   JC_PORTAL_BACKUP_DAIYA_DATABASE_URL: "postgresql://daiya_backup:$(BACKUP_DAIYA_DB_PASSWORD)@{{ $pg }}:5432/jc_daiya"
   JC_PORTAL_BACKUP_DATAROOM_DATABASE_URL: "postgresql://dataroom_backup:$(BACKUP_DATAROOM_DB_PASSWORD)@{{ $pg }}:5432/jc_dataroom"
   ANTARES_STORE: "postgres"
+  {{- if (dig "antaresRoleSplit" false $jc) }}
+  # Antares migrates and builds its weekly partitions as jc_antares, the owner, serves as
+  # jc_antares_app and runs the cross-Tenant work as jc_antares_maint (T-7310, databases.yaml).
+  ANTARES_DATABASE_URL: "postgresql://jc_antares_app:$(BROKER_APP_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
+  ANTARES_MIGRATION_DATABASE_URL: "postgresql://jc_antares:$(BROKER_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
+  ANTARES_MAINTENANCE_DATABASE_URL: "postgresql://jc_antares_maint:$(BROKER_MAINT_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
+  {{- else }}
   ANTARES_DATABASE_URL: "postgresql://jc_antares:$(BROKER_DB_PASSWORD)@{{ $pg }}:5432/jc_antares"
+  {{- end }}
   ANTARES_PG_POOL: {{ $jc.antaresPool | quote }}
   {{- if dig "jc" "functions" "enabled" false .Values }}
   # The App functions runtime beside jc (values/functions); the Portal calls it with its token.

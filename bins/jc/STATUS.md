@@ -424,8 +424,9 @@ migrate_password_file = "/run/secrets/shako-migrate-password"
 
 - Migrations run as `migrate_url`'s role under the module's advisory lock (sqlx `Migrator` for shako, ekiben,
   kaisatsu; daiya's and dataroom's own `pg_advisory_lock`), then grant the request role. Without `migrate_url` the schema must be
-  migrated already; the boot check refuses a missing table. Antares migrates itself as its request role (its
-  design) and refuses a `migrate_url`.
+  migrated already; the boot check refuses a missing table. Antares migrates itself: as `migrate_url`'s role (the
+  tables' owner, which also builds its weekly history partitions) when set, else as its request role; its
+  `maintenance_url` role, a member of `antares_maintenance`, runs the cross-Tenant work (T-7310).
 - Boot checks run inside jc as standalone: the request role must be neither SUPERUSER nor BYPASSRLS, own no table
   of the module's schema, and every table there has forced RLS and a policy. Antares runs with `require_rls`
   forced whenever it has a database.

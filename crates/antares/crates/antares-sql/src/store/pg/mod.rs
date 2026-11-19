@@ -488,6 +488,21 @@ pub async fn holds_maintenance(pool: &PgPool) -> Result<bool, sqlx::Error> {
     Ok(holds)
 }
 
+/// Does the connected role own (or inherit the owner of) a table, view or
+/// sequence of the broker's schema? An owner can switch a table's row-level
+/// security off and drop its policies, so a split deployment's request pool
+/// must answer `false` (T-7310); the boot refuses it otherwise.
+pub async fn role_owns_tables(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_class c \
+          WHERE c.relnamespace = pg_catalog.current_schema()::pg_catalog.regnamespace \
+            AND c.relkind IN ('r', 'p', 'v', 'm', 'S') \
+            AND pg_catalog.pg_has_role(current_user, c.relowner, 'MEMBER'))",
+    )
+    .fetch_one(pool)
+    .await
+}
+
 /// The write's own claim on its tenant (ADR-0001: "every implicit tenant
 /// creation inserts its row in the same transaction as the document"). Two
 /// things ride on it being IN the document's transaction rather than before
@@ -558,16 +573,20 @@ pub async fn claim_tenant(
 }
 
 /// The same claim outside a document transaction, for the callers that have
-/// no document to pair it with (test seeds, the maintenance paths).
+/// no document to pair it with (test seeds, the maintenance paths). Scoped to
+/// the Tenant like every other write: the request role sees and inserts only
+/// that Tenant's row of `tenants` (0043).
 pub async fn ensure_tenant(pool: &PgPool, tenant: &TenantId) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    set_tenant(&mut tx, tenant).await?;
     sqlx::query(
         "INSERT INTO tenants (tenant_id, organization_id) \
          VALUES ($1, tenant_organization($1)) ON CONFLICT DO NOTHING",
     )
     .bind(tenant.as_str())
-    .execute(pool)
-    .await
-    .map(|_| ())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
 }
 
 #[cfg(test)]
