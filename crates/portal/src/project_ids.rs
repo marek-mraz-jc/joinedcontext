@@ -176,7 +176,15 @@ pub async fn person_tx(
     let Some(organization) = person_organization(mirror, configured) else {
         return Ok(None);
     };
-    match reserved(pool, &organization).await? {
+    let mut key = reserved(pool, &organization).await?;
+    // Off an Organization host, the repository's installation claim the registry lacks (jc-prod
+    // `hel`) gives way to the configured installation (T-7414), as [`installation`] does.
+    if key.is_none() && crate::organization_host::organization().is_none() {
+        if let Some(configured) = configured.or(mirror.configured_installation()) {
+            key = reserved(pool, configured).await?;
+        }
+    }
+    match key {
         Some(key) => Ok(Some(crate::db::tenant_tx(pool, key).await?)),
         None => Ok(None),
     }
@@ -259,7 +267,10 @@ pub async fn key_of(
         return Ok(None);
     }
     let key = match organization_of(mirror, project) {
-        Some(organization) => key(pool, &organization, project).await?,
+        Some(organization) => match key(pool, &organization, project).await? {
+            None => unregistered_claim(pool, mirror, &organization, project).await?,
+            found => found,
+        },
         None => None,
     };
     let key = key.filter(|key| {
@@ -271,6 +282,28 @@ pub async fn key_of(
         crate::request_id::record_key(project, key);
     }
     Ok(key)
+}
+
+/// The key of `project` under the configured installation Organization when `organization` is
+/// the repository's installation claim and the registry holds no active Organization of that name
+/// (T-7414, as [`installation`] for the reserved project): jc-prod's forge names its installation
+/// `hel` and the registry `smartcity`, so the installation's projects had no key.
+async fn unregistered_claim(
+    pool: &PgPool,
+    mirror: &Mirror,
+    organization: &str,
+    project: &str,
+) -> Result<Option<ProjectKey>, sqlx::Error> {
+    let Some(configured) = mirror.configured_installation() else {
+        return Ok(None);
+    };
+    if configured == organization
+        || crate::permissions::installation_organization(mirror).as_deref() != Some(organization)
+        || reserved(pool, organization).await?.is_some()
+    {
+        return Ok(None);
+    }
+    key(pool, configured, project).await
 }
 
 /// The key of the live branch named `name` (TEN-12, CHG-15) whose Organization is an active one of

@@ -78,7 +78,7 @@ async fn session_token(state: &AppState, headers: &HeaderMap, ask: &Ask) -> Opti
     });
     let asked = crate::auth::endpoint_token(state, &cookie, &ask.slug);
     let token = match pin {
-        Some(pin) => crate::organization_host::scope(pin, asked).await,
+        Some(pin) => crate::organization_host::scope_in(state, pin, asked).await,
         None => asked.await,
     };
     match token {

@@ -296,6 +296,97 @@ async fn a_person_of_another_organization_signed_in_on_its_host_gets_403() {
     assert_ne!(st, StatusCode::FORBIDDEN);
 }
 
+/// T-7414 (jc-prod): the forge keeps the installation Organization's manifest as `hel` while the
+/// registry and `JC_PORTAL_INSTALLATION_ORGANIZATION` call it `smartcity`, and its projects name no
+/// `organizationRef`. Its org-admin, bound at `hel`, is a member on smartcity's host and lists its
+/// projects there; ba's person stays refused there, and the hel admin on ba's host.
+#[tokio::test]
+async fn the_installation_kept_under_another_name_in_the_forge_is_its_hosts_organization() {
+    const SMARTCITY: &str = "portal.smartcity.example";
+    let smartcity = OrganizationHost {
+        organization: "smartcity".to_owned(),
+        base: format!("https://{SMARTCITY}").parse().expect("url"),
+    };
+    let config = Config {
+        organization_hosts: vec![smartcity.clone(), host("ba")],
+        bootstrap_admins: ROOTS.to_owned(),
+        ..Config::for_tests()
+    };
+    let state = AppState::new(config, None);
+    let m = &state.mirror;
+    m.set_configured_installation("smartcity");
+    m.upsert(envelope(
+        "Role",
+        "reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Endpoint", "Workspace"], "verbs": ["read", "propose"] }] }),
+    ));
+    m.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "installation": true }),
+    ));
+    m.upsert(envelope("Organization", "ba", ORG_NAMESPACE, json!({})));
+    m.upsert(envelope("Project", "helsinki", ORG_NAMESPACE, json!({})));
+    m.upsert(envelope(
+        "Project",
+        "bratislava",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "ba" }),
+    ));
+    for (who, org) in [("hel-admin", "hel"), ("ba-only", "ba")] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("{who}-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{who}@hel.fi") }], "role": "reader",
+                    "scope": { "organization": org } }),
+        ));
+    }
+    let on_smartcity = organization_host::scope(
+        smartcity.clone(),
+        signed_in(&state.config, person("hel-admin", &[]), None),
+    )
+    .await;
+    let (st, list) = call(&state, SMARTCITY, &on_smartcity, "GET", "/api/v1/projects").await;
+    assert_eq!(
+        (st, names(&list)),
+        (StatusCode::OK, vec!["helsinki"]),
+        "the installation's admin on its own host: {list}"
+    );
+    let (st, body) = call(
+        &state,
+        SMARTCITY,
+        &on_smartcity,
+        "GET",
+        "/api/v1/projects/helsinki",
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+
+    let ba_there = organization_host::scope(
+        smartcity,
+        signed_in(&state.config, person("ba-only", &[]), None),
+    )
+    .await;
+    let (st, body) = call(&state, SMARTCITY, &ba_there, "GET", "/api/v1/projects").await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "ba's person on smartcity's host: {body}"
+    );
+    let hel_on_ba = signed_in(&state.config, person("hel-admin", &[]), Some("ba")).await;
+    for uri in ["/api/v1/projects", "/api/v1/projects/bratislava"] {
+        let (st, body) = call(&state, BA, &hel_on_ba, "GET", uri).await;
+        assert_eq!(
+            st,
+            StatusCode::FORBIDDEN,
+            "the hel admin on ba's host {uri}: {body}"
+        );
+    }
+}
+
 /// T-7401: a restarted Portal whose first run has not ended serves the mirror the last completed
 /// run kept, so a member keeps their projects; with no copy it answers a 503 with `Retry-After`,
 /// never "you belong to none of its projects"; and a binding the last run had removed stays

@@ -1,0 +1,15 @@
+{
+  "id": "urn:ngsi-ld:ShareCheck:joinedcontext.com:example:1",
+  "level": "level",
+  "location": {
+    "coordinates": [
+      0.0,
+      0.0
+    ],
+    "type": "Point"
+  },
+  "note": "note",
+  "observedAt": "2026-01-01T00:00:00Z",
+  "secret": "secret",
+  "type": "ShareCheck"
+}
