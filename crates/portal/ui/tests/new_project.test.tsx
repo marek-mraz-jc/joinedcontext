@@ -70,7 +70,7 @@ function renderShell(creation: { allowed: boolean; reason?: string }) {
   return { posted };
 }
 
-describe("the New project control in the sidebar", () => {
+describe("New project in the project switcher", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
     window.history.pushState({}, "", "/projects/banskabystrica/spaces");
@@ -80,25 +80,43 @@ describe("the New project control in the sidebar", () => {
     vi.restoreAllMocks();
   });
 
+  /** Opens the switcher and answers its New project item (T-7404). */
+  async function newProjectItem(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+    await user.click(await screen.findByRole("button", { name: "Projects" }));
+    const menu = await screen.findByRole("menu");
+    return within(menu).getByRole("menuitem", { name: /New project/ });
+  }
+
+  it("is the switcher's last item, not a line of its own under it", async () => {
+    renderShell({ allowed: true });
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Projects" });
+    expect(screen.queryByRole("button", { name: "New project" })).toBeNull();
+    const item = await newProjectItem(user);
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitem");
+    expect(items[items.length - 1]).toBe(item);
+    expect(item).not.toHaveAttribute("aria-disabled");
+    expect(within(screen.getByRole("menu")).getByRole("separator")).toBeTruthy();
+  });
+
   it("is disabled with the API's own reason when the organization does not let this caller open a project", async () => {
     renderShell({ allowed: false, reason: REFUSED });
-
-    // Refused, never hidden, and reachable so the reason can be read (UI-44, T-1758). It used
-    // to be a hard-`disabled` button inside a bare `tabIndex={0}` span: an unnamed tab stop, a
-    // `title` the disabled button swallowed, and a `role="tooltip"` nothing referenced.
+    const user = userEvent.setup();
+    // Refused, never hidden: the item stays, disabled, and says why in its own text (UI-44).
+    const item = await newProjectItem(user);
     await waitFor(() => {
-      expectDenied(screen.getByRole("button", { name: "New project" }), REFUSED);
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveTextContent(REFUSED);
     });
-    const button = screen.getByRole("button", { name: "New project" });
-    expect(button).toHaveAttribute("title", REFUSED);
-    expect(screen.queryByRole("tooltip")).toBeNull();
+    await user.click(item);
+    expect(screen.queryByRole("dialog", { name: /Open a project/ })).toBeNull();
   });
 
   it("checks the name while it is typed and proposes the project as one change", async () => {
     const { posted } = renderShell({ allowed: true });
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole("button", { name: "New project" }));
+    await user.click(await newProjectItem(user));
     const dialog = await screen.findByRole("dialog", { name: /Open a project/ });
     const open = within(dialog).getByRole("button", { name: "Open project" });
     // Nothing typed yet: nothing to send, and the button says so where it stands.

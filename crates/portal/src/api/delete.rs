@@ -467,6 +467,10 @@ pub async fn delete_with_identity(
             name,
         },
     )?;
+    // IDN-06: removing one's own binding is a change of one's own access (T-7403).
+    if kind_info.kind == "RoleBinding" {
+        crate::permissions::own_binding_needs_second_factor(state, identity, Some(&envelope.spec))?;
+    }
 
     // 2. Every resource in the mirror that still references the target (MF-07, R20)
     let dependents = mirror.matching(|candidate| {
