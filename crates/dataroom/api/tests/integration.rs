@@ -1474,14 +1474,16 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
     }
 
     // T-7410: host A's Organization sets a layout; host B's never shows it.
-    let mut look_a = dataroom_core::branding::BrandingBlock::default();
-    look_a.layout = dataroom_core::branding::BrandingLayout {
-        radius_px: Some(12),
-        hero_title: Some("Dáta mesta BB".into()),
-        hero_intro_html: Some("<p>Úvod <strong>BB</strong></p>".into()),
-        dataset_table: true,
-        nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
-        footer_links: vec![("/about#api".into(), "API mesta".into())],
+    let look_a = dataroom_core::branding::BrandingBlock {
+        layout: dataroom_core::branding::BrandingLayout {
+            radius_px: Some(12),
+            hero_title: Some("Dáta mesta BB".into()),
+            hero_intro_html: Some("<p>Úvod <strong>BB</strong></p>".into()),
+            dataset_table: true,
+            nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
+            footer_links: vec![("/about#api".into(), "API mesta".into())],
+        },
+        ..dataroom_core::branding::BrandingBlock::default()
     };
     let app = router(
         DataroomState::new(store, Arc::new(PolicyAuthorizer::default()), org_a, cat_a)

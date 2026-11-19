@@ -98,12 +98,13 @@ color: var(--jc-muted); font-weight: 550; padding: .5rem .875rem; border-radius:
 .masthead .site-search .form-control { min-width: 0; width: 100%; }
 }
 /* G1 judge: on a phone the logo and the search share the first row and the three links the
-second, so the header keeps two rows instead of four. */
+second, so the header keeps two rows instead of four; an Organization's own header links (T-7410)
+wrap onto a further row instead of widening the page. */
 @media (max-width: 40rem) {
 .masthead .navbar { flex-wrap: wrap; gap: .5rem .75rem; }
 .masthead .main-navbar { display: contents; }
 .masthead .site-search { order: 1; flex: 1 1 8rem; margin: 0; }
-.masthead .navbar-nav { order: 2; flex: 1 1 100%; flex-wrap: nowrap; }
+.masthead .navbar-nav { order: 2; flex: 1 1 100%; flex-wrap: wrap; min-width: 0; }
 .masthead .main-navbar ul li a { display: block; padding: .375rem .625rem; white-space: nowrap; }
 }
 /* ---- Cards: the modules CKAN draws, as the Portal's surfaces --------------------------- */
@@ -183,7 +184,17 @@ background: var(--jc-n100); color: var(--jc-ink); border: 1px solid var(--jc-bor
 .jc-dataset-table table { width: 100%; border-collapse: collapse; }
 .jc-dataset-table th, .jc-dataset-table td { padding: .5rem .75rem; text-align: start; vertical-align: top; border-bottom: 1px solid var(--jc-border); }
 .jc-dataset-table thead th { font-size: .875rem; color: var(--jc-muted); font-weight: 600; white-space: nowrap; }
-.jc-dataset-table tbody th { font-weight: 550; }
+.jc-dataset-table tbody th { font-weight: 550; min-width: 10rem; }
+.jc-dataset-table td:last-child { white-space: nowrap; }
+/* On a phone each dataset is one block: its title on a row of its own, then formats, publisher and date. */
+@media (max-width: 40rem) {
+.jc-dataset-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.jc-dataset-table tr { display: flex; flex-wrap: wrap; gap: .25rem .75rem; padding: .625rem .75rem; border-bottom: 1px solid var(--jc-border); }
+.jc-dataset-table tbody tr:last-child { border-bottom: 0; }
+.jc-dataset-table th, .jc-dataset-table td { padding: 0; border: 0; }
+.jc-dataset-table tbody th { flex: 1 1 100%; min-width: 0; }
+.jc-dataset-table td { font-size: .875rem; color: var(--jc-muted); }
+}
 .jc-dataset-table tbody tr:last-child > * { border-bottom: 0; }
 .dataset-item {
 background: var(--jc-surface); border: 1px solid var(--jc-border); border-radius: var(--jc-radius-lg);

@@ -145,12 +145,12 @@
               {% if !datasets.is_empty() && chrome.branding.layout.dataset_table %}
               <div class="jc-dataset-table">
               <table>
-                <thead><tr><th scope="col">{{ labels.nav_datasets }}</th><th scope="col">{{ labels.format }}</th><th scope="col">{{ labels.publishers }}</th><th scope="col">{{ labels.updated }}</th></tr></thead>
+                <thead><tr><th scope="col">{{ labels.nav_datasets }}</th><th scope="col">{{ labels.format }}</th><th scope="col">{{ labels.col_publisher }}</th><th scope="col">{{ labels.updated }}</th></tr></thead>
                 <tbody>
                 {% for ds in datasets %}
                 <tr>
                   <th scope="row"><a href="{{ chrome.lang_prefix }}/dataset/{{ ds.name }}">{{ ds.title }}</a></th>
-                  <td>{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>
+                  <td>{% if ds.format_chips.is_empty() %}<span aria-hidden="true">–</span>{% endif %}{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>
                   <td>{{ ds.publisher_title }}</td>
                   <td>{{ ds.modified_localized }}</td>
                 </tr>
