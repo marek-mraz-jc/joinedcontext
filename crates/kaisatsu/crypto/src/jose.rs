@@ -7,6 +7,7 @@ use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
 };
+use jc_time::TimestampTz;
 use kaisatsu_core::{KaisatsuError, Result, SigningKeyRecord};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -99,9 +100,12 @@ fn verify_jwt_signed<T: DeserializeOwned>(
         .kid
         .as_deref()
         .ok_or_else(|| KaisatsuError::Unauthorized("JWT missing kid".into()))?;
+    let now = TimestampTz::now();
     let rec = keys
         .iter()
-        .find(|k| k.kid == kid && k.status != "RETIRED")
+        .find(|k| {
+            k.kid == kid && k.status != "RETIRED" && !k.expires_at.is_some_and(|exp| exp <= now)
+        })
         .ok_or_else(|| KaisatsuError::Unauthorized("unknown or retired kid".into()))?;
     let key_alg = parse_alg(&rec.algorithm)?;
     if header.alg != key_alg {

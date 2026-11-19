@@ -389,4 +389,33 @@ impl KeyManager {
         }
         Ok(new_key)
     }
+
+    /// Makes each staged `PASSIVE` key whose `activate_at` has passed `ACTIVE`, and demotes the
+    /// `ACTIVE` keys of its algorithm as an immediate [`Self::rotate`] does. Returns the changed
+    /// records, for the caller to store.
+    pub fn promote_due(keys: &mut [SigningKeyRecord], token_ttl_secs: i64) -> Vec<SigningKeyRecord> {
+        let now = TimestampTz::now();
+        let mut due: Vec<usize> = (0..keys.len())
+            .filter(|&i| {
+                keys[i].status == "PASSIVE" && keys[i].activate_at.is_some_and(|at| at <= now)
+            })
+            .collect();
+        due.sort_by_key(|&i| keys[i].activate_at);
+        let mut changed = std::collections::BTreeSet::new();
+        for i in due {
+            let algorithm = keys[i].algorithm.clone();
+            for (j, k) in keys.iter_mut().enumerate() {
+                if k.algorithm == algorithm && k.status == "ACTIVE" {
+                    k.status = "PASSIVE".into();
+                    k.expires_at =
+                        Some(now + SignedDuration::from_secs(token_ttl_secs.max(300) * 2));
+                    changed.insert(j);
+                }
+            }
+            keys[i].status = "ACTIVE".into();
+            keys[i].activate_at = None;
+            changed.insert(i);
+        }
+        changed.into_iter().map(|i| keys[i].clone()).collect()
+    }
 }
