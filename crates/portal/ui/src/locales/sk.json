@@ -314,6 +314,8 @@
       "hint": "Tento návrh napísal AI klient ({client}) cez MCP a {author} ho potvrdil(a). Prečítajte si, čo mení, ako pri každom inom.",
       "badgeConnector": "Cez {client}, konektor {connector}",
       "hintConnector": "Tento návrh napísal AI klient ({client}) cez MCP konektor {connector} používateľa {author} a {author} ho potvrdil(a). Prečítajte si, čo mení, ako pri každom inom.",
+      "automation": "Navrhol automatizačný login {login} (konektor {connector}). Automatizačný login nikdy neschvaľuje: o tejto zmene rozhoduje človek.",
+      "automationAlone": "Navrhol automatizačný login {login}. Automatizačný login nikdy neschvaľuje: o tejto zmene rozhoduje človek.",
       "plan": "Plán {plan}: rozdiel, ktorý AI klient ukázal používateľovi {author} pred použitím."
     },
     "workspace": "Z kópie",
@@ -13832,6 +13834,7 @@
       "turnOff": "Vypnúť",
       "turnOnHint": "Len pre organizáciu, v ktorej má rolu práve jedna osoba, napr. prvý administrátor mesta. Schvaľuje ho druhý operátor; s jedným operátorom platí hneď.",
       "onePersonOnly": "Rolu má {count} osôb: štyri oči sú možné, režim zostáva vypnutý.",
+      "automationLogins": "Automatizačné loginy, nepočítajú sa a neschvaľujú: {logins}",
       "asked": "Požiadané: schváli to druhý operátor v Zmenách operátorov.",
       "applied": "Použité."
     },

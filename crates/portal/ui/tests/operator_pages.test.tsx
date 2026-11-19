@@ -181,8 +181,8 @@ describe("audit", () => {
 describe("organizations", () => {
   const ORGS = {
     items: [
-      { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 }, approvals: { organization: "bbsk", singlePerson: false, peopleWithARole: 4 } },
-      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {}, approvals: { organization: "presov", singlePerson: false, peopleWithARole: 1 } },
+      { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 }, approvals: { organization: "bbsk", singlePerson: false, peopleWithARole: 4, automationLogins: ["bbsk-mcp-admin"] } },
+      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {}, approvals: { organization: "presov", singlePerson: false, peopleWithARole: 1, automationLogins: [] } },
     ],
     ids: [
       { id: "sk_bbsk", domain: "bbsk.sk", recordName: "_joinedcontext.bbsk.sk", recordValue: "jc-verify=c0ffee", requestedAt: "2026-11-16T09:00:00Z", mintedAt: "2026-11-16T09:10:00Z", organizations: ["bbsk"] },
@@ -220,6 +220,10 @@ describe("organizations", () => {
     });
     expect((await screen.findAllByText("Banskobystrický kraj")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("1 served, 1 on their way").length).toBeGreaterThan(0);
+    // T-7432: the logins the person count leaves out are named, and only where there are some.
+    expect(screen.getAllByTestId("org-automation-logins")[0]).toHaveTextContent(
+      en.operator.organizations.automationLogins.replace("{logins}", "bbsk-mcp-admin"),
+    );
     expect(screen.getAllByText('_joinedcontext.zilina.sk TXT "jc-verify=beef"').length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: en.operator.ids.check })).toHaveLength(1);
     // An Organization without a domain says where it is set.

@@ -644,6 +644,7 @@ pub(crate) async fn approve_request(
     Path((project, id)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
     let request = owned_request(&state, &user, &project, &id).await?;
+    crate::automation::refuse_approver(&state, &user.0.identity, "an access request").await?;
     if request.requested_by == user.0.identity.username {
         return Err(ApiError::SelfApproval(format!(
             "you filed access request {id}; another owner of space '{}' approves it (PL-91)",

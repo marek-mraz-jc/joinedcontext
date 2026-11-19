@@ -314,6 +314,8 @@
       "hint": "Ein KI-Client ({client}) hat diesen Vorschlag über MCP geschrieben, {author} hat ihn bestätigt. Prüfen Sie die Änderungen wie bei jedem anderen.",
       "badgeConnector": "Über {client}, Konnektor {connector}",
       "hintConnector": "Ein KI-Client ({client}) hat diesen Vorschlag über den MCP-Konnektor {connector} von {author} geschrieben, {author} hat ihn bestätigt. Prüfen Sie die Änderungen wie bei jedem anderen.",
+      "automation": "Vorgeschlagen vom Automatisierungs-Login {login} (Konnektor {connector}). Ein Automatisierungs-Login genehmigt nie: Über diese Änderung entscheidet eine Person.",
+      "automationAlone": "Vorgeschlagen vom Automatisierungs-Login {login}. Ein Automatisierungs-Login genehmigt nie: Über diese Änderung entscheidet eine Person.",
       "plan": "Plan {plan}: der Diff, den der KI-Client {author} vor der Anwendung gezeigt hat."
     },
     "workspace": "Aus einer Kopie",
@@ -13832,6 +13834,7 @@
       "turnOff": "Ausschalten",
       "turnOnHint": "Nur für eine Organisation, in der genau eine Person eine Rolle hat, z. B. die erste Administratorin einer Stadt. Ein zweiter Betreiber genehmigt es; mit einem Betreiber gilt es sofort.",
       "onePersonOnly": "{count} Personen haben eine Rolle: Vier Augen sind möglich, der Modus bleibt aus.",
+      "automationLogins": "Automatisierungs-Logins, nie gezählt und nie genehmigend: {logins}",
       "asked": "Beantragt: Ein zweiter Betreiber genehmigt es unter Betreiber-Änderungen.",
       "applied": "Übernommen."
     },

@@ -31,8 +31,11 @@ pub struct ApprovalMode {
     pub organization: String,
     /// Whether its one person approves their own access Changes after a fresh second factor.
     pub single_person: bool,
-    /// How many people hold a role in the Organization now.
+    /// How many people hold a role in the Organization now, its automation logins left out.
     pub people_with_a_role: usize,
+    /// The automation logins holding a role there, which are no people here (T-7432), e.g.
+    /// `bbsk-mcp-admin`.
+    pub automation_logins: Vec<String>,
     /// When an operator or the Portal last changed the mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
@@ -81,22 +84,40 @@ pub fn verdict(
     }
 }
 
+/// The people holding a role in `organization` now, its automation logins left out (T-7432).
+pub async fn humans_with_a_role(
+    state: &AppState,
+    organization: &str,
+) -> Result<std::collections::BTreeSet<String>, ApiError> {
+    let people = crate::permissions::people_with_a_role(
+        &state.mirror,
+        organization,
+        jc_time::TimestampTz::now(),
+    );
+    crate::automation::humans(state, organization, people).await
+}
+
 /// The people holding a role in `organization` other than `identity`, matched by user id,
-/// e-mail or username, any case.
-pub fn others(state: &AppState, organization: &str, identity: &Identity) -> usize {
+/// e-mail or username, any case; automation logins are no people here (T-7432).
+pub async fn others(
+    state: &AppState,
+    organization: &str,
+    identity: &Identity,
+) -> Result<usize, ApiError> {
     let me = [
         Some(identity.subject.as_str()),
         identity.email.as_deref(),
         Some(identity.username.as_str()),
     ];
-    crate::permissions::people_with_a_role(&state.mirror, organization, jc_time::TimestampTz::now())
+    Ok(humans_with_a_role(state, organization)
+        .await?
         .iter()
         .filter(|person| {
             !me.iter()
                 .flatten()
                 .any(|mine| mine.trim().eq_ignore_ascii_case(person))
         })
-        .count()
+        .count())
 }
 
 fn db(e: sqlx::Error) -> ApiError {
@@ -154,12 +175,7 @@ fn second_person_reason(people: usize) -> String {
 /// The mode of `organization` now. A mode found on while more than one person holds a role is
 /// turned off here, with its reason and an audit line, before it is answered.
 pub async fn mode(state: &AppState, organization: &str) -> Result<ApprovalMode, ApiError> {
-    let people = crate::permissions::people_with_a_role(
-        &state.mirror,
-        organization,
-        jc_time::TimestampTz::now(),
-    )
-    .len();
+    let people = humans_with_a_role(state, organization).await?.len();
     let row = match state.db.as_ref() {
         Some(pool) => stored(pool, organization).await?,
         None => None,
@@ -182,6 +198,11 @@ pub async fn mode(state: &AppState, organization: &str) -> Result<ApprovalMode, 
         organization: organization.to_owned(),
         single_person: on,
         people_with_a_role: people,
+        automation_logins: crate::automation::marked(state, Some(organization))
+            .await?
+            .into_iter()
+            .map(|row| row.login)
+            .collect(),
         changed_at: (changed > 0)
             .then(|| jc_time::TimestampTz::from_second(changed))
             .flatten(),
@@ -205,7 +226,7 @@ pub async fn approves_alone(
     };
     let person = person && identity.client.is_none();
     let found = mode(state, &organization).await?;
-    let others = others(state, &organization, identity);
+    let others = others(state, &organization, identity).await?;
     match verdict(
         found.single_person,
         person,

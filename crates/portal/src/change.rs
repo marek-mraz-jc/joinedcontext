@@ -134,6 +134,9 @@ pub struct ProposedVia {
     /// The plan `jc_change_apply` took (T-5956): the diff the person's AI client showed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
+    /// The automation login that proposed it (T-7432), e.g. `bbsk-mcp-admin`: a person approves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation_login: Option<String>,
 }
 
 tokio::task_local! {
@@ -166,6 +169,7 @@ impl ProposedVia {
             connector: None,
             connector_name: None,
             plan: None,
+            automation_login: None,
         }
     }
 
@@ -176,6 +180,13 @@ impl ProposedVia {
             self.connector = Some(connector.id.clone());
             self.connector_name = Some(connector.name.clone());
         }
+        self
+    }
+
+    /// The automation login the caller signs in as (T-7432); a login outside the charset is left
+    /// unsaid.
+    pub fn automated(mut self, login: Option<&crate::automation::AutomationLogin>) -> Self {
+        self.automation_login = login.map(|l| l.login.clone()).filter(|l| valid_login(l));
         self
     }
 
@@ -198,6 +209,7 @@ impl ProposedVia {
             ("connector", &self.connector),
             ("connectorName", &self.connector_name),
             ("plan", &self.plan),
+            ("automationLogin", &self.automation_login),
         ] {
             if let Some(value) = value {
                 line.push_str(&format!("; {key}={value}"));
@@ -223,8 +235,14 @@ impl ProposedVia {
                     Some(name) => format!(" through connector `{name}`"),
                     None => String::new(),
                 };
+                let login = match &via.automation_login {
+                    Some(login) => {
+                        format!(" by automation login `{login}`, so a person approves it")
+                    }
+                    None => String::new(),
+                };
                 format!(
-                    "Proposed through an AI client over MCP (client `{}`){connector}.\n\n{body}\n\n{}",
+                    "Proposed through an AI client over MCP (client `{}`){connector}{login}.\n\n{body}\n\n{}",
                     via.client,
                     via.trailer()
                 )
@@ -250,13 +268,19 @@ impl ProposedVia {
         let mut via = Self::mcp(Some(client));
         for part in parts {
             let (key, value) = part.split_once('=')?;
-            if !valid_client(value) {
+            let valid = if key == "automationLogin" {
+                valid_login(value)
+            } else {
+                valid_client(value)
+            };
+            if !valid {
                 return None;
             }
             let slot = match key {
                 "connector" => &mut via.connector,
                 "connectorName" => &mut via.connector_name,
                 "plan" => &mut via.plan,
+                "automationLogin" => &mut via.automation_login,
                 _ => return None,
             };
             *slot = Some(value.to_owned());
@@ -282,6 +306,14 @@ const CIMD_CLIENTS: [(&str, &str); 2] = [
 fn cimd_host(client: &str) -> Option<String> {
     let host = client.strip_prefix("https://")?.split('/').next()?;
     (!host.is_empty() && !host.contains(':') && valid_client(host)).then(|| host.to_owned())
+}
+
+/// A login as a RoleBinding names it (T-7432): a user id, username or e-mail.
+fn valid_login(login: &str) -> bool {
+    (1..=255).contains(&login.len())
+        && login
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'@' | b'+' | b'-'))
 }
 
 fn valid_client(client: &str) -> bool {
@@ -885,6 +917,34 @@ mod tests {
             None
         );
         assert_eq!(ProposedVia::in_body("Proposed-Via: person; client=x"), None);
+    }
+
+    #[test]
+    fn a_change_an_automation_login_opened_names_it_in_the_trailer_and_the_body() {
+        let login = crate::automation::AutomationLogin {
+            organization: "bbsk".into(),
+            login: "mcp@bbsk.sk".into(),
+            connector: Some("bbsk-mcp".into()),
+        };
+        let via = ProposedVia::mcp(Some("claude-code")).automated(Some(&login));
+        assert_eq!(
+            via.trailer(),
+            "Proposed-Via: mcp; client=claude-code; automationLogin=mcp@bbsk.sk"
+        );
+        let body = format!("Proposed update.\n\n{}", via.trailer());
+        assert_eq!(
+            ProposedVia::in_body(&body).and_then(|v| v.automation_login),
+            Some("mcp@bbsk.sk".to_owned())
+        );
+        let signed = PROPOSED_VIA.sync_scope(via, || ProposedVia::sign_body("x").into_owned());
+        assert!(
+            signed.contains("by automation login `mcp@bbsk.sk`, so a person approves it"),
+            "{signed}"
+        );
+        assert_eq!(
+            ProposedVia::in_body("Proposed-Via: mcp; client=c; automationLogin=<b>x</b>"),
+            None
+        );
     }
 
     #[test]

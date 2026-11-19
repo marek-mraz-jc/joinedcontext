@@ -924,6 +924,7 @@ pub async fn approve_connector(
 ) -> Result<Json<Connector>, ApiError> {
     let identity = &user.0.identity;
     administrator(&state, identity)?;
+    crate::automation::refuse_approver(&state, identity, "a connector").await?;
     // An approval widens a delegation past the ceiling: a decision door like a Change approval,
     // so it wants the second factor too (JC2-17, T-5567).
     crate::auth::session::require_second_factor(identity, &state.config)?;

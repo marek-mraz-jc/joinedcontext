@@ -314,6 +314,8 @@
       "hint": "An AI client ({client}) wrote this proposal over MCP and {author} confirmed it. Read what it changes as you would any other.",
       "badgeConnector": "Via {client} connector {connector}",
       "hintConnector": "An AI client ({client}) wrote this proposal through {author}'s connector {connector} over MCP, and {author} confirmed it. Read what it changes as you would any other.",
+      "automation": "Proposed by the automation login {login} (connector {connector}). An automation login never approves: a person decides this change.",
+      "automationAlone": "Proposed by the automation login {login}. An automation login never approves: a person decides this change.",
       "plan": "Plan {plan}: the diff the AI client showed {author} before the apply."
     },
     "workspace": "From a copy",
@@ -13832,6 +13834,7 @@
       "turnOff": "Turn off",
       "turnOnHint": "Only for an Organization where exactly one person holds a role, e.g. a city's first administrator. A second operator approves it; with one operator it applies at once.",
       "onePersonOnly": "{count} people hold a role: four eyes is possible, so the mode stays off.",
+      "automationLogins": "Automation logins, never counted or approving: {logins}",
       "asked": "Asked for: a second operator approves it under Operator changes.",
       "applied": "Applied."
     },
