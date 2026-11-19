@@ -32,7 +32,9 @@ w2 surface takes to refuse; the w3 copy that remains is recorded as such.
 The verdict: a cell on known.json (built later, each with its spec reference) that fails is
 `not built` and keeps the run green; any other failing cell turns it red. --lane judges only the
 cells of lane.json (those green on the last measured run, the train's smoke lane) and reports the
-others as skips.
+others as skips. An instance whose forge refuses the fixture repositories (403 or 405, e.g. a local
+jc of a deployed export) gets one skip row naming that and no matrix, before any persona exists;
+in --lane mode the same refusal fails, since the train's gate jc allows them.
 
 Security: the personas (`sh-*`) get random passwords kept in memory and are deleted after the run,
 also a failed one, with the fixture projects; the report holds statuses, counts and attribute
@@ -79,6 +81,9 @@ ACROSS = ("hidden", "outsider", "revoked")
 # Checks of a way: a write by B's member refused, B's admin's granted write (w1 alone allows one).
 WRITES = {"w1": ("write-refused", "write-granted"), "w2-public": ("write-refused",),
           "w2-protected": ("write-refused",), "w3": ("write-refused",)}
+# A forge that refuses the fixture repositories (403, 405: a deployed export's jc, jc-dev 2026-11-19):
+# outside --lane one skip row; in the lane (the train's gate jc, which allows them) a fail.
+FIXTURE_REFUSED = (403, 405)
 NO_CONTROL = {"mirror", "outsider", "write-refused"}  # judged by themselves, see cells()
 
 
@@ -264,6 +269,7 @@ class Suite(mo.Suite):
         self.matrix: list[dict] = []
         self.slugs = {n: b32() for n in ("sh-shared", "sh-open", "sh-fedpub", "sh-fedprot", "sh-copy")}
         self.made = False
+        self.skipped = False  # the forge refused the fixtures: one skip row, no matrix
         self.tok: dict = {}  # (persona, slug) -> exchanged Endpoint token, never written anywhere
         self.revoked_at: float | None = None
 
@@ -340,6 +346,21 @@ class Suite(mo.Suite):
         self.domain_a = self.domain_of(self.org_a)
         self.urn = owned_urn(self.domain_a)
         h = self.client()
+        auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
+        # the repositories before any persona: a forge that refuses them leaves nothing to remove
+        self.made = True
+        for project in (PA, PB):
+            st, _body = h.json("POST", f"/git/api/v1/orgs/{mo.CONFIG[0]}/repos", headers=auth, body={
+                "name": project, "private": True, "auto_init": True, "default_branch": "main"})
+            if st in FIXTURE_REFUSED and project == PA and self.lane is None:
+                self.made = False
+                self.skipped = True
+                self.row("setup.fixtures", f"{mo.CONFIG[0]}/{PA}", f"POST /git/api/v1/orgs/{mo.CONFIG[0]}/repos",
+                         "201", str(st), None, "no fixture rights on this instance: the suite measures a jc that "
+                         "lets it make its fixture projects (the train's gate jc)")
+                return False
+            if st not in (201, 409):
+                raise RuntimeError(f"POST /git/api/v1/orgs/{mo.CONFIG[0]}/repos {project}: {st}")
         tok = R.admin_token(h, self.state)
         for key in ("a-admin", "b-admin", "b-member", "c-member"):
             uid, pw = R.make_person(h, tok, self.realm, f"sh-{key}")
@@ -349,13 +370,7 @@ class Suite(mo.Suite):
                   + f"spec:\n  subjects:\n    - user: {self.ids(key)} # sh-{key}\n"
                   f"  role: {'org-admin' if key.endswith('admin') else 'viewer'}\n  scope: {{ organization: {org[key[0]]} }}\n")
                  for key in self.people]
-        auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
-        self.made = True
         for project, repo in ((PA, self.a_files()), (PB, self.b_files())):
-            st, _body = h.json("POST", f"/git/api/v1/orgs/{mo.CONFIG[0]}/repos", headers=auth, body={
-                "name": project, "private": True, "auto_init": True, "default_branch": "main"})
-            if st not in (201, 409):
-                raise RuntimeError(f"POST /git/api/v1/orgs/{mo.CONFIG[0]}/repos {project}: {st}")
             self.commit(repo, f"sharing smoke: fixture {project}", repo=(mo.CONFIG[0], project))
             files.append((f"projects/{project}.yaml", head("Project", project, "org")
                           + f"spec:\n  organizationRef: {org['a' if project == PA else 'b']}\n"
@@ -408,7 +423,7 @@ class Suite(mo.Suite):
             st, _, _ = h.call("DELETE", f"/git/api/v1/repos/{mo.CONFIG[0]}/{project}", headers=auth)
             if st not in (204, 404):
                 left.append(f"{project} ({st})")
-        admin = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"}
+        admin = {"Authorization": f"Bearer {R.admin_token(h, self.state)}"} if self.people else {}
         for key, p in self.people.items():
             st, _, _ = h.call("DELETE", f"/login/admin/realms/{self.realm}/users/{p['id']}", headers=admin)
             if st not in (204, 404):
@@ -725,6 +740,8 @@ class Suite(mo.Suite):
     def run(self):
         try:
             if not self.setup():
+                if self.skipped:
+                    return
                 self.lacking("setup: A's admin could not write the entity within the sync timeout")
                 return
             control = {}
@@ -758,7 +775,7 @@ class Suite(mo.Suite):
             self.tok.clear()
 
     def write(self, out: Path, lane: set | None) -> int:
-        rows = settle(self.matrix, load_known(), lane)
+        rows = [] if self.skipped else settle(self.matrix, load_known(), lane)
         checks = [{"id": r["id"], "target": r["way"], "call": f"{r['surface']} {r['check']}",
                    "expected": "pass" + (" (control answered)" if r["control"] else ""),
                    "actual": r["actual"] + (f"; control {r['controlActual']}" if r["controlActual"] else ""),
