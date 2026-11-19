@@ -13316,7 +13316,7 @@
           "ckan-action": "Adresa https CKAN Action API, napríklad https://data.gov.sk/api/3/action.",
           "nkod-sparql": "Adresa https SPARQL endpointu, napríklad https://data.slovensko.sk/sparql.",
           "arcgis-hub": "Adresa https stránky ArcGIS Hub, napríklad https://opendata.bratislava.sk.",
-          "arcgis-rest": "Adresa https adresára služieb ArcGIS REST, priečinka alebo jednej služby FeatureServer či MapServer, napríklad https://sampleserver6.arcgisonline.com/arcgis/rest/services; každá služba bude jedna dátová sada.",
+          "arcgis-rest": "Adresa https adresára služieb ArcGIS REST, priečinka alebo jednej mapovej či prvkovej služby, napríklad https://sampleserver6.arcgisonline.com/arcgis/rest/services; každá služba bude jedna dátová sada.",
           "ogc-records": "Adresa https kolekcie OGC API Records, napríklad https://demo.pygeoapi.io/master/collections/dutch-metadata; každý záznam bude jedna dátová sada."
         },
         "allowedHosts": "Hostiteľské mená, z ktorých beh smie tiež čítať, oddelené čiarkou, napríklad files.kosice.sk; hostiteľ adresy je povolený vždy. Každé musí byť v zozname povolených operátora.",
