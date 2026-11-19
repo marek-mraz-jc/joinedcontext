@@ -622,6 +622,8 @@ function ProjectFrame({
   );
 
   const organizationActive = Boolean(matchRoute({ to: "/organization/$tab", fuzzy: true }));
+  // The Organization's projects page belongs to no one project: its trail names none (T-7380).
+  const projectsListActive = Boolean(matchRoute({ to: "/projects" }));
   // An Organization's own administrator opens its own sections of Administration (T-5248).
   const { opensAdministration } = useAdministers();
   const modelsActive = Boolean(matchRoute({ to: "/projects/$project/models", params: { project }, fuzzy: true }));
@@ -961,10 +963,10 @@ function ProjectFrame({
                     </li>
                   ) : null}
                   {/* Administration is the organization's page: its trail names no project (T-4223). */}
-                  {organizationActive ? (
+                  {organizationActive || projectsListActive ? (
                     <li>
                       <span aria-current="page" className="font-medium text-fg">
-                        {t("nav.organization")}
+                        {t(projectsListActive ? "projectsPage.title" : "nav.organization")}
                       </span>
                     </li>
                   ) : (

@@ -2276,6 +2276,14 @@
         "portal_sources.test.tsx"
       ]
     },
+    "src/pages/projects/ProjectsPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "projects_page.test.tsx"
+      ]
+    },
     "src/pages/repositories/PullsView.tsx": {
       "controls": {
         "Button": 1

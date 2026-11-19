@@ -25,6 +25,7 @@ import { ChunkFailed, ErrorPage, errorReference, isChunkLoadError } from "./comp
 import { NotFoundState } from "./components/NotFoundState";
 import { LoginPage } from "./routes/LoginPage";
 import { hasEditForm, ResourceListPage } from "./routes/ResourceListPage";
+const ProjectsPage = lazy(() => import("./pages/projects/ProjectsPage").then((module) => ({ default: module.ProjectsPage })));
 const InboxPage = lazy(() => import("./pages/inbox/InboxPage").then((module) => ({ default: module.InboxPage })));
 import { FormRouteHost } from "./components/forms/FormRoute";
 import type { FormTarget } from "./components/forms/FormRoute";
@@ -113,6 +114,7 @@ const BringBackPage = lazy(() => import("./pages/workspaces/BringBackPage").then
 const TryItPage = lazy(() => import("./pages/workspaces/TryItPage").then((module) => ({ default: module.TryItPage })));
 const Gallery = lazy(() => import("./pages/gallery/Gallery").then((module) => ({ default: module.Gallery })));
 import { ORG_NAMESPACE } from "./api/manifest";
+import { homeOf, useMayOpenProject } from "./api/permissions";
 import { AdminNav, isOrganizationTab } from "./pages/organization/AdminNav";
 import type { OrganizationTab } from "./pages/organization/AdminNav";
 import { isProjectSettingsTab } from "./pages/projectSettings/tabs";
@@ -229,9 +231,13 @@ function NotFound(): React.JSX.Element {
 function IndexRedirect(): React.JSX.Element {
   const projects = useProjects();
   const first = usePreferredProject();
-  // A member (ADR-N-067, T-6411): signed in with no project, so the catalogue is home.
-  if (!first && projects.isSuccess) {
-    return <Navigate to="/catalogue" />;
+  const may = useMayOpenProject();
+  const home = homeOf(first, projects.isSuccess, may);
+  if (home === "wait") {
+    return <main aria-busy="true" className="min-h-screen bg-bg" />;
+  }
+  if (home === "/projects" || home === "/catalogue") {
+    return <Navigate to={home} />;
   }
   if (!first) {
     return <NoProject projects={projects} />;
@@ -535,6 +541,18 @@ const workspaceBringBackRoute = createRoute({
         <BringBackPage project={project} name={name} />
       </Shell>
     );
+  },
+});
+
+/**
+ * `/projects`: the Organization's projects the person reads, and its first-run page while it has
+ * none (T-7380), in the project shell when there is a project to anchor it, else the member's.
+ */
+const projectsRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: "/projects",
+  component: function ProjectsRoute() {
+    return <SignedInCatalogue>{() => <ProjectsPage />}</SignedInCatalogue>;
   },
 });
 
@@ -1683,6 +1701,7 @@ export const routeTree = rootRoute.addChildren([
   ...devRoutes,
   protectedRoute.addChildren([
     indexRoute,
+    projectsRoute,
     homeRoute,
     activityRoute,
     grafanaRoute,

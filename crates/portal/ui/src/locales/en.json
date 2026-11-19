@@ -6179,6 +6179,17 @@
     "nameNeeded": "A usable name is needed to open a project.",
     "planLocked": "Close the dialog and start again to change this; the plan was made for it."
   },
+  "projectsPage": {
+    "title": "Projects",
+    "lead": "Your Organization's projects you may open. Each holds its Context Spaces, Endpoints and Pipelines.",
+    "firstTitle": "Create your first project",
+    "firstLead": "A project holds your Context Spaces, Endpoints and Pipelines. You become its steward and add your colleagues under Members.",
+    "first": "Create your first project",
+    "noneTitle": "You are in no project yet",
+    "noneLead": "Ask your Organization's administrators to add you to a project. Public datasets are open to you in the catalogue.",
+    "toCatalogue": "Open the catalogue",
+    "pagesOf": "Pages of {project}"
+  },
   "entities": {
     "type": "Entity type",
     "scopeQ": "Area",
@@ -8153,7 +8164,8 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
-    "installationOnly": "This section belongs to the installation: only its administrators open it.",
+    "installationOnlyTitle": "{section} is the installation's section",
+    "installationOnly": "The {section} section belongs to the installation: only its administrators open it.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
@@ -12345,7 +12357,9 @@
     "catalogue": "Catalogue",
     "connectors": "AI connectors",
     "settings": "Settings",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "projects": "Projects",
+    "administration": "Administration"
   },
   "dataAccess": {
     "title": "Data access",

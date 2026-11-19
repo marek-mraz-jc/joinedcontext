@@ -25,6 +25,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { NameById } from "../src/pages/organization/NameById";
+import { usePermissions } from "../src/api/permissions";
+import { ORG_NAMESPACE } from "../src/api/manifest";
 import {
   isPersonId,
   personLabel,
@@ -44,7 +46,8 @@ const PLAN = {
   unresolved: ["nobody@hel.fi"],
 };
 
-function stub(verbs: string[]): { url: string; method: string }[] {
+// An installation administrator by default; `organization` narrows every grant to that one (T-7380).
+function stub(verbs: string[], organization?: string): { url: string; method: string }[] {
   const sent: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -60,7 +63,10 @@ function stub(verbs: string[]): { url: string; method: string }[] {
         return json({
           project: "org",
           bootstrap: false,
-          grants: [{ rule: { kinds: ["Person"], verbs } }],
+          grants: [
+            { organization, rule: { kinds: ["Person"], verbs } },
+            { organization, rule: { kinds: ["RoleBinding"], verbs: ["read", "approve", "delete"] } },
+          ],
         });
       }
       sent.push({
@@ -89,6 +95,11 @@ function stub(verbs: string[]): { url: string; method: string }[] {
   );
   doorsAsRest();
   return sent;
+}
+
+/** Says when the permissions document has arrived, so a hidden control is asserted after it. */
+function PermissionsRead(): ReactElement | null {
+  return usePermissions(ORG_NAMESPACE).data ? <p>permissions read</p> : null;
 }
 
 function wrap(element: ReactElement) {
@@ -174,6 +185,23 @@ describe("naming people by id (ADR-N-061)", () => {
         }),
       ).toBeNull(),
     );
+  });
+
+  it("is not offered to an Organization's own administrator: it rewrites every repository (T-7380)", async () => {
+    stub(["read", "update"], "bbsk");
+    wrap(
+      <>
+        <NameById />
+        <PermissionsRead />
+      </>,
+    );
+    // Asserted once permissions/me has answered, not on the first render, which is empty anyway.
+    await screen.findByText("permissions read");
+    expect(
+      screen.queryByRole("region", {
+        name: en.organization.people.nameById.title,
+      }),
+    ).toBeNull();
   });
 
   it("names a person by name for a people administrator, and asks nobody else's names", async () => {

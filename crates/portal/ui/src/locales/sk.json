@@ -6179,6 +6179,17 @@
     "nameNeeded": "Na otvorenie projektu je potrebné použiteľné meno.",
     "planLocked": "Ak to chcete zmeniť, zatvorte okno a začnite znova; plán bol pripravený pre túto hodnotu."
   },
+  "projectsPage": {
+    "title": "Projekty",
+    "lead": "Projekty vašej organizácie, ktoré môžete otvoriť. Každý obsahuje svoje kontextové priestory, endpointy a pipeliny.",
+    "firstTitle": "Vytvorte svoj prvý projekt",
+    "firstLead": "Projekt obsahuje vaše kontextové priestory, endpointy a pipeliny. Stanete sa jeho správcom údajov a kolegov pridáte v časti Členovia.",
+    "first": "Vytvoriť prvý projekt",
+    "noneTitle": "Zatiaľ nie ste v žiadnom projekte",
+    "noneLead": "Požiadajte správcov svojej organizácie, aby vás pridali do projektu. Verejné dátové sady máte k dispozícii v katalógu.",
+    "toCatalogue": "Otvoriť katalóg",
+    "pagesOf": "Stránky projektu {project}"
+  },
   "entities": {
     "type": "Typ entity",
     "scopeQ": "Oblasť",
@@ -8153,7 +8164,8 @@
     },
     "title": "Administrácia",
     "adminOnly": "Táto stránka je pre administrátorov organizácie. O to, čo tu potrebujete, požiadajte niektorého z nich.",
-    "installationOnly": "Táto časť patrí inštalácii: otvárajú ju iba jej správcovia.",
+    "installationOnlyTitle": "Sekcia {section} patrí inštalácii",
+    "installationOnly": "Časť {section} patrí inštalácii: otvárajú ju iba jej správcovia.",
     "lead": "Čo je rovnaké v každom projekte: nastavenia organizácie, jej členovia, roly, skupiny a servisné účty a jej projekty. Každá zmena sa tu navrhuje a schvaľuje.",
     "tab": {
       "settings": "Nastavenia",
@@ -12345,7 +12357,9 @@
     "catalogue": "Katalóg",
     "connectors": "AI konektory",
     "settings": "Nastavenia",
-    "signOut": "Odhlásiť sa"
+    "signOut": "Odhlásiť sa",
+    "projects": "Projekty",
+    "administration": "Správa"
   },
   "dataAccess": {
     "title": "Prístup k údajom",
