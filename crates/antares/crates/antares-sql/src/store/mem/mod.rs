@@ -14,8 +14,8 @@
 use ::redb::{Database, Durability, ReadableDatabase, ReadableTableMetadata};
 use antares_model::{NgsiError, TenantId};
 use antares_store::{
-    context_row_owner, context_row_usage, context_row_view, context_row_visible, filter,
-    ChangeHook, Kind, CONTEXT_COUNTERS, CONTEXT_USAGE,
+    context_row_owner, context_row_stored, context_row_used, context_row_view, context_row_visible,
+    filter, ChangeHook, Kind, CONTEXT_USAGE,
 };
 
 mod redb;
@@ -42,32 +42,6 @@ pub const MAX_CACHED_CONTEXTS: usize = 1_000;
 /// The `Cached` entry ids to drop so at most `MAX_CACHED_CONTEXTS` remain,
 /// oldest `createdAt` first (5.13.1 stamps every stored entry with one; an
 /// entry without a stamp sorts oldest and goes first). Other kinds are never
-/// The counters `tenant` has on a stored Cached row, if it ever used it.
-fn row_used<'a>(row: &'a Value, tenant: Option<&TenantId>) -> Option<&'a Value> {
-    row.get(CONTEXT_USAGE)?.get(tenant?.as_str())
-}
-
-/// What a Cached row stores once a put or a mutate acting for `tenant` leaves
-/// `view`: the shared body, the usage every other Tenant has on the row it
-/// replaces, and the view's counters as `tenant`'s own (S5-10).
-fn cached_stored(mut view: Value, held: Option<&Value>, tenant: Option<&TenantId>) -> Value {
-    let mut usage = held
-        .and_then(|r| r.get(CONTEXT_USAGE))
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    if let Some(t) = tenant {
-        usage.insert(t.as_str().to_owned(), context_row_usage(&view));
-    }
-    if let Some(o) = view.as_object_mut() {
-        for k in CONTEXT_COUNTERS {
-            o.remove(k);
-        }
-        o.insert(CONTEXT_USAGE.into(), Value::Object(usage));
-    }
-    view
-}
-
 /// candidates.
 fn oldest_cached(contexts: &BTreeMap<String, Value>) -> Vec<String> {
     let mut cached: Vec<(&str, &str)> = contexts
@@ -1425,7 +1399,7 @@ impl Store {
             }
             let cached = context_row_owner(&doc).is_none();
             let doc = if cached {
-                cached_stored(doc, held, tenant)
+                context_row_stored(doc, held, tenant)
             } else {
                 doc
             };
@@ -1456,7 +1430,7 @@ impl Store {
             .contexts
             .get(id)
             .filter(|r| context_row_visible(r, tenant))
-            .and_then(|r| context_row_view(r.clone(), tenant, row_used(r, tenant)))
+            .and_then(|r| context_row_view(r.clone(), tenant, context_row_used(r, tenant)))
     }
 
     /// Read-modify-write under the write lock; `None` when the row is absent
@@ -1476,13 +1450,13 @@ impl Store {
             // a mutate reaches a Cached row the Tenant never used: its first
             // use starts the Tenant's counters at zero
             let fresh = Value::Object(serde_json::Map::new());
-            let used = row_used(row, tenant).or(tenant.map(|_| &fresh));
+            let used = context_row_used(row, tenant).or(tenant.map(|_| &fresh));
             let mut doc = context_row_view(row.clone(), tenant, used)?;
             if f(&mut doc).is_err() {
                 return Some(Err(()));
             }
             if context_row_owner(row).is_none() {
-                doc = cached_stored(doc, Some(&*row), tenant);
+                doc = context_row_stored(doc, Some(&*row), tenant);
             }
             self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
             *row = doc;
@@ -1528,7 +1502,7 @@ impl Store {
                 ),
                 None => (v.clone(), v),
             })
-            .filter_map(|(meta, v)| context_row_view(meta, tenant, row_used(v, tenant)))
+            .filter_map(|(meta, v)| context_row_view(meta, tenant, context_row_used(v, tenant)))
             .collect()
     }
 }

@@ -435,6 +435,37 @@ pub fn context_row_usage(view: &Value) -> Value {
     })
 }
 
+/// The counters `tenant` has on a Cached row that keeps them in its
+/// [`CONTEXT_USAGE`] member, if it ever used the copy.
+pub fn context_row_used<'a>(row: &'a Value, tenant: Option<&TenantId>) -> Option<&'a Value> {
+    row.get(CONTEXT_USAGE)?.get(tenant?.as_str())
+}
+
+/// What a Cached row keeping its usage inside the row stores once a put or a
+/// mutate acting for `tenant` leaves `view`: the shared body, the usage every other Tenant has on the row it
+/// replaces, and the view's counters as `tenant`'s own (S5-10).
+pub fn context_row_stored(
+    mut view: Value,
+    held: Option<&Value>,
+    tenant: Option<&TenantId>,
+) -> Value {
+    let mut usage = held
+        .and_then(|r| r.get(CONTEXT_USAGE))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(t) = tenant {
+        usage.insert(t.as_str().to_owned(), context_row_usage(&view));
+    }
+    if let Some(o) = view.as_object_mut() {
+        for k in CONTEXT_COUNTERS {
+            o.remove(k);
+        }
+        o.insert(CONTEXT_USAGE.into(), Value::Object(usage));
+    }
+    view
+}
+
 /// Current-state storage: everything except the temporal evolution.
 ///
 /// Contract carried over from the enum seam it replaces: every mutate is

@@ -15,8 +15,9 @@
 
 use antares_model::{NgsiError, TenantId};
 use antares_store::{
-    context_row_visible, filter, BatchMutateFn, ChangeHook, CurrentStateDriver, Kind, MutateFn,
-    TemporalDriver, TenantStats,
+    context_row_owner, context_row_stored, context_row_used, context_row_view, context_row_visible,
+    filter, BatchMutateFn, ChangeHook, CurrentStateDriver, Kind, MutateFn, TemporalDriver,
+    TenantStats, CONTEXT_USAGE,
 };
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -553,6 +554,19 @@ impl CurrentStateDriver for ExampleStore {
         // removing them under a write guard leaves a window in which a row
         // written for this tenant survives the purge.
         self.write().retain(|(t, _, _), _| t != tenant.as_str());
+        // its @context documents and its uses of the shared Cached copies
+        // (S5-10), or the next holder of the name would list them
+        let mut contexts = self
+            .contexts
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        contexts.retain(|_, row| context_row_owner(row) != Some(tenant.as_str()));
+        for row in contexts.values_mut() {
+            if let Some(u) = row.get_mut(CONTEXT_USAGE).and_then(Value::as_object_mut) {
+                u.remove(tenant.as_str());
+            }
+        }
+        drop(contexts);
         // The default tenant is emptied and keeps existing (5.5.10).
         if tenant.as_str() != TenantId::DEFAULT {
             self.tenants
@@ -568,7 +582,8 @@ impl CurrentStateDriver for ExampleStore {
     /// `context_row_visible` is the broker's own statement of that rule, so a
     /// plugin store enforces exactly what the built-in ones do — an
     /// implementation that ignored `tenant` here would hand one Tenant's term
-    /// mappings to another.
+    /// mappings to another. A Cached row keeps its counters per Tenant in
+    /// its `usage` member and is read through `context_row_view` (S5-10).
     async fn context_put(
         &self,
         tenant: Option<&TenantId>,
@@ -594,6 +609,11 @@ impl CurrentStateDriver for ExampleStore {
                 "@context row without a kind".into(),
             ));
         }
+        let doc = if context_row_owner(&doc).is_none() {
+            context_row_stored(doc, rows.get(id), tenant)
+        } else {
+            doc
+        };
         rows.insert(id.to_owned(), doc);
         Ok(())
     }
@@ -609,7 +629,7 @@ impl CurrentStateDriver for ExampleStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(id)
             .filter(|row| context_row_visible(row, tenant))
-            .cloned())
+            .and_then(|row| context_row_view(row.clone(), tenant, context_row_used(row, tenant))))
     }
 
     /// Under the write lock, so a bump racing a delete or another bump
@@ -631,12 +651,20 @@ impl CurrentStateDriver for ExampleStore {
         else {
             return Ok(None);
         };
-        let mut doc = row.clone();
+        // a Tenant's first use of a Cached row starts its counters at zero
+        let fresh = Value::Object(Map::new());
+        let used = context_row_used(row, tenant).or(tenant.map(|_| &fresh));
+        let Some(mut doc) = context_row_view(row.clone(), tenant, used) else {
+            return Ok(None);
+        };
         if f(&mut doc).is_err()
             || doc.get("kind") != row.get("kind")
             || !context_row_visible(&doc, tenant)
         {
             return Ok(Some(Err(())));
+        }
+        if context_row_owner(row).is_none() {
+            doc = context_row_stored(doc, Some(&*row), tenant);
         }
         *row = doc;
         Ok(Some(Ok(())))
@@ -666,12 +694,12 @@ impl CurrentStateDriver for ExampleStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .filter(|v| context_row_visible(v, tenant))
-            .map(|v| {
+            .filter_map(|v| {
                 let mut row = v.clone();
                 if let Some(o) = row.as_object_mut() {
                     o.remove("body");
                 }
-                row
+                context_row_view(row, tenant, context_row_used(v, tenant))
             })
             .collect())
     }

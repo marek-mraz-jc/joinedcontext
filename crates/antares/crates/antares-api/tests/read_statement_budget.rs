@@ -291,20 +291,31 @@ async fn each_read_shape_sends_its_pinned_statements() {
     // (d) the page with a Link to the Cached @context the warm-up fetched:
     // one transaction of the @context write-through the hit still runs
     // (state.rs `set_cache_writer`: `context_mutate`'s set_config, SELECT
-    // ... FOR UPDATE, UPDATE, COMMIT), then the page's own three. A warm hit
-    // should write nothing; pinned here as today's cost, the change that
-    // stops the rewrite lowers both numbers.
+    // ... FOR UPDATE, the Tenant's usage SELECT, the usage upsert, COMMIT),
+    // then the page's own three. The counters are the Tenant's own row in
+    // jsonld_context_usage (S5-10), read in a statement of its own after the
+    // lock (a join in the locking SELECT reads them from the pre-lock
+    // snapshot and loses racing counts), so the hit costs one statement more
+    // than the old in-body counter and no longer rewrites the shared body.
+    // A warm hit should write nothing; pinned here as today's cost, the
+    // change that stops the write lowers both numbers.
     let (body, d) = counted(&st, &log, page, &tenant, Some(&link)).await;
     assert_eq!(body.as_array().map(Vec::len), Some(20), "{body}");
-    assert_eq!(d.len(), 7, "statements: {d:#?}");
-    let context_writes: Vec<&String> = d
-        .iter()
-        .filter(|q| q.contains("jsonld_contexts") && !q.starts_with("SELECT"))
-        .collect();
+    assert_eq!(d.len(), 8, "statements: {d:#?}");
+    let writes = |table: &str| -> Vec<&String> {
+        d.iter()
+            .filter(|q| q.contains(table) && !q.starts_with("SELECT"))
+            .collect()
+    };
     assert_eq!(
-        context_writes.len(),
+        writes("jsonld_contexts"),
+        Vec::<&String>::new(),
+        "a hit must not rewrite the shared @context body"
+    );
+    assert_eq!(
+        writes("jsonld_context_usage").len(),
         1,
-        "@context writes: {context_writes:#?}"
+        "@context usage writes: {d:#?}"
     );
 
     sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
