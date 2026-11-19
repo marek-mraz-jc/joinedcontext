@@ -137,10 +137,7 @@ pub async fn person_names(
     }
     // An id outside the administrator's Organizations is answered like one the realm lacks.
     let ids: BTreeSet<&str> = match &members {
-        Some(members) => ids
-            .into_iter()
-            .filter(|id| members.contains(*id))
-            .collect(),
+        Some(members) => ids.into_iter().filter(|id| members.contains(*id)).collect(),
         None => ids,
     };
     if ids.is_empty() {
@@ -703,7 +700,10 @@ mod tests {
         let state = state();
         let m = &state.mirror;
         for (name, spec) in [
-            ("ops", json!({ "domain": "ops.example", "installation": true })),
+            (
+                "ops",
+                json!({ "domain": "ops.example", "installation": true }),
+            ),
             ("bbsk", json!({ "domain": "bbsk.sk" })),
             ("praha", json!({ "domain": "praha.eu" })),
         ] {
@@ -715,9 +715,11 @@ mod tests {
             ORG_NAMESPACE,
             json!({ "rules": [{ "kinds": ["RoleBinding", "Group"], "verbs": ["read", "propose", "approve", "delete"] }] }),
         ));
-        for (name, user, organization) in
-            [("bbsk-admin", JANA, "bbsk"), ("bbsk-eva", EVA, "bbsk"), ("praha-petr", PETR, "praha")]
-        {
+        for (name, user, organization) in [
+            ("bbsk-admin", JANA, "bbsk"),
+            ("bbsk-eva", EVA, "bbsk"),
+            ("praha-petr", PETR, "praha"),
+        ] {
             m.upsert(envelope(
                 "RoleBinding",
                 name,
@@ -729,14 +731,19 @@ mod tests {
             person_names(
                 caller(None, &[]),
                 State(state.clone()),
-                Query(NamesQuery { ids: ids.to_owned() }),
+                Query(NamesQuery {
+                    ids: ids.to_owned(),
+                }),
             )
         };
         let outsider = ask(PETR).await.expect("answered");
         assert!(outsider.0.items.is_empty());
         // A member's id reaches Keycloak, which these tests do not configure.
         let member = ask(EVA).await;
-        assert!(matches!(member, Err(ApiError::Unavailable(_))), "{member:?}");
+        assert!(
+            matches!(member, Err(ApiError::Unavailable(_))),
+            "{member:?}"
+        );
     }
 
     #[tokio::test]

@@ -227,7 +227,8 @@ describe("portal shell", () => {
 
     const items = await screen.findAllByRole("menuitem");
     // Every row the same, no sample badge (owner 2026-10-30).
-    expect(items.map((item) => item.textContent?.trim())).toEqual(["helsinki", "banskabystrica"]);
+    // New project closes the list, after a divider (T-7404).
+    expect(items.map((item) => item.textContent?.trim())).toEqual(["helsinki", "banskabystrica", "New project"]);
 
     await user.click(screen.getByRole("menuitem", { name: "banskabystrica" }));
 

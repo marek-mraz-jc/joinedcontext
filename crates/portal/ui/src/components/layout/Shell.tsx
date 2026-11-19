@@ -136,10 +136,10 @@ function ProjectSelector({ active }: { active: string }) {
           onSelect={() => setWriting(true)}
           className="py-2!"
         >
-          <Icon name="plus" className="size-4 shrink-0" />
+          <Icon name={creation.allowed ? "plus" : "lock"} className="size-4 shrink-0" />
           <span className="min-w-0 flex-1">
             <span className="block">{t("projects.new")}</span>
-            {/* The refusal in words inside the item, read with it (UI-44). */}
+            {/* The refusal in words inside the item, read with it and legible (UI-44). */}
             {creation.allowed ? null : (
               <span className="block text-caption text-fg-muted">{creation.reason}</span>
             )}
