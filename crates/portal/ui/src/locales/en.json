@@ -8196,6 +8196,7 @@
       "connectors": "Connectors",
       "data-access": "Data access",
       "backups": "Backups",
+      "repositories": "Repositories",
       "operator-organizations": "Organizations",
       "operator-hosts": "Hosts and certificates",
       "operator-installation": "Installation",
@@ -13504,6 +13505,33 @@
     "phase": {
       "merged": "published",
       "rejected": "rejected"
+    }
+  },
+  "orgRepositories": {
+    "title": "Repositories",
+    "loading": "Loading the repositories…",
+    "lead": "Every Git repository of this Organization: its projects' configuration and their Apps' source. Download one as a .tar.gz of its default branch.",
+    "hint": "The file name carries the repository and the commit, e.g. air-quality-2c245c6.tar.gz. Archives up to {size} download here; clone a larger repository with git. Your browser shows the download's progress.",
+    "toProjects": "Open Projects",
+    "tooLarge": "Larger than {size}: clone it with git instead.",
+    "empty": "No repositories yet",
+    "emptyHint": "A project gets its repository when it is created, an App when it is built. Create a project under Projects first.",
+    "name": "Repository",
+    "what": "Holds",
+    "updated": "Last change",
+    "size": "Size",
+    "state": "State",
+    "archived": "Archived",
+    "active": "Active",
+    "download": "Download",
+    "downloadOne": "Download {name} as .tar.gz",
+    "ofProject": "project {project}",
+    "ofApp": "App {app} in {project}",
+    "ofOrganization": "the whole installation",
+    "role": {
+      "configuration": "Configuration",
+      "project": "Project configuration",
+      "application": "App source"
     }
   },
   "backups": {

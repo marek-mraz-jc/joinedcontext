@@ -209,6 +209,8 @@ use crate::tools::model_tools::{
         crate::api::organization_limits::get_limits,
         crate::api::approval_mode::get_approval_mode,
         crate::api::org_backups::overview,
+        crate::api::org_repositories::list,
+        crate::api::org_repositories::archive,
         crate::api::org_backups::save,
         crate::api::org_backups::run_now,
         crate::api::org_backups::versions,

@@ -8196,6 +8196,7 @@
       "connectors": "Konektory",
       "data-access": "Prístup k údajom",
       "backups": "Zálohy",
+      "repositories": "Repozitáre",
       "operator-organizations": "Organizácie",
       "operator-hosts": "Hostitelia a certifikáty",
       "operator-installation": "Inštalácia",
@@ -13504,6 +13505,33 @@
     "phase": {
       "merged": "zverejnené",
       "rejected": "zamietnuté"
+    }
+  },
+  "orgRepositories": {
+    "title": "Repozitáre",
+    "loading": "Načítavajú sa repozitáre…",
+    "lead": "Všetky Git repozitáre tejto organizácie: konfigurácia jej projektov a zdrojový kód ich aplikácií. Stiahnite si repozitár ako .tar.gz jeho predvolenej vetvy.",
+    "hint": "Názov súboru obsahuje repozitár a commit, napr. air-quality-2c245c6.tar.gz. Archívy do {size} sa stiahnu tu; väčší repozitár naklonujte cez git. Priebeh sťahovania ukazuje prehliadač.",
+    "toProjects": "Otvoriť Projekty",
+    "tooLarge": "Väčší ako {size}: naklonujte ho cez git.",
+    "empty": "Zatiaľ žiadne repozitáre",
+    "emptyHint": "Projekt dostane repozitár pri vytvorení, aplikácia pri zostavení. Najprv vytvorte projekt v časti Projekty.",
+    "name": "Repozitár",
+    "what": "Obsah",
+    "updated": "Posledná zmena",
+    "size": "Veľkosť",
+    "state": "Stav",
+    "archived": "Archivovaný",
+    "active": "Aktívny",
+    "download": "Stiahnuť",
+    "downloadOne": "Stiahnuť {name} ako .tar.gz",
+    "ofProject": "projekt {project}",
+    "ofApp": "aplikácia {app} v {project}",
+    "ofOrganization": "celá inštalácia",
+    "role": {
+      "configuration": "Konfigurácia",
+      "project": "Konfigurácia projektu",
+      "application": "Zdrojový kód aplikácie"
     }
   },
   "backups": {

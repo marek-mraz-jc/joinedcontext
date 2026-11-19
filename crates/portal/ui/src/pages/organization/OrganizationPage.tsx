@@ -46,6 +46,7 @@ import { ValidationHealth } from "./ValidationHealth";
 import { OrganizationConnectors } from "./OrganizationConnectors";
 import { OpendataPages } from "./OpendataPages";
 import { Backups } from "./Backups";
+import { Repositories } from "./Repositories";
 import { AskAdmins } from "./AskAdmins";
 import { DataAccessMatrix } from "./DataAccess";
 import { HealthLog } from "../health/HealthLog";
@@ -481,6 +482,7 @@ export function OrganizationPage({
         {tab === "connectors" ? <OrganizationConnectors /> : null}
         {tab === "opendata-pages" ? <OpendataPages /> : null}
         {tab === "backups" ? <Backups /> : null}
+        {tab === "repositories" ? <Repositories /> : null}
         {operatorTab ? (
           <Suspense
             fallback={

@@ -30,6 +30,19 @@ use crate::state::AppState;
 /// administers it: the right to approve and to delete RoleBindings held at that Organization, never
 /// through a binding of another Organization or of one of its projects. Anyone else is refused.
 fn administered(state: &AppState, identity: &Identity) -> Result<String, ApiError> {
+    administered_for(
+        state,
+        identity,
+        "the Organization's backups are for its administrators, on Administration > Backups",
+    )
+}
+
+/// [`administered`] for another Administration page, refusing with `refusal`.
+pub(crate) fn administered_for(
+    state: &AppState,
+    identity: &Identity,
+    refusal: &str,
+) -> Result<String, ApiError> {
     let name = crate::organization_host::organization()
         .or_else(|| crate::permissions::installation_organization(&state.mirror));
     let holds = |organization: &str, verb| {
@@ -48,10 +61,7 @@ fn administered(state: &AppState, identity: &Identity) -> Result<String, ApiErro
         {
             Ok(organization)
         }
-        _ => Err(ApiError::Denied(
-            "the Organization's backups are for its administrators, on Administration > Backups"
-                .into(),
-        )),
+        _ => Err(ApiError::Denied(refusal.into())),
     }
 }
 
