@@ -578,6 +578,63 @@ async fn a_rotated_secret_file_behind_an_unchanged_document_is_applied() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// jc substitutes each Organization realm's derived client secret as `$(NAME)` (T-7267): a
+/// restart with a changed value stores it and reports the realm changed once (T-7288, where the
+/// client diff left the secret out and the start logged "changed: false"); the next restart is
+/// unchanged. Values are compared as hashes, never printed.
+#[tokio::test]
+async fn a_changed_secret_variable_is_applied_and_reported_once() {
+    let doc = json!({
+        "realm": "derived",
+        "clients": [{
+            "clientId": "portal-reconciler",
+            "publicClient": false,
+            "serviceAccountsEnabled": true,
+            "secret": "$(CLIENT_SECRET_PORTAL_RECONCILER)"
+        }]
+    });
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::default());
+    let files = [("realm.json".to_owned(), doc)];
+    let hash = |s: &str| <sha2::Sha256 as sha2::Digest>::digest(s).to_vec();
+    let opts = |value: &str| ApplyOptions {
+        env_vars: [(
+            "CLIENT_SECRET_PORTAL_RECONCILER".to_owned(),
+            value.to_owned(),
+        )]
+        .into(),
+        ..Default::default()
+    };
+    let stored = || async {
+        let s = store
+            .get_client_by_client_id("derived", "portal-reconciler")
+            .await
+            .unwrap()
+            .unwrap()
+            .secret
+            .unwrap_or_default();
+        hash(&s)
+    };
+    apply_realm_files(&store, &files, &opts("installation-secret-a"))
+        .await
+        .expect("apply A");
+    assert_eq!(stored().await, hash("installation-secret-a"));
+
+    let derived = apply_realm_files(&store, &files, &opts("derived-secret-b"))
+        .await
+        .expect("restart with B");
+    assert_eq!(stored().await, hash("derived-secret-b"), "B is stored");
+    assert!(
+        derived.has_changes(),
+        "a changed secret reports the realm changed"
+    );
+
+    let again = apply_realm_files(&store, &files, &opts("derived-secret-b"))
+        .await
+        .expect("restart with B again");
+    assert!(!again.has_changes(), "nothing changed: unchanged");
+    assert_eq!(stored().await, hash("derived-secret-b"));
+}
+
 /// The Portal deletes a `managed-by: joinedcontext` group while its repository is still empty and
 /// makes it again from the manifest without its client roles (prod rehearsal gate 4): the next
 /// start re-applies the unchanged file and gives the group its roles back; a role added since

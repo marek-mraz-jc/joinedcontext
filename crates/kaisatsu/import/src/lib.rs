@@ -1413,7 +1413,10 @@ pub async fn apply_realm_files(
                     if p.redirect_uris == client.redirect_uris
                         && p.default_client_scopes == client.default_client_scopes
                         && p.optional_client_scopes == client.optional_client_scopes
-                        && p.attributes == client.attributes =>
+                        && p.attributes == client.attributes
+                        // A changed substituted secret (a rotated file, a realm's derived
+                        // value, T-7288) is a change too; none in the file keeps the stored one.
+                        && (client.secret.is_none() || p.secret == client.secret) =>
                 {
                     ChangeAction::Unchanged
                 }
