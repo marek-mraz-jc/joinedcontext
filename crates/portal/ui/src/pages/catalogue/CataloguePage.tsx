@@ -236,7 +236,6 @@ function Results({
           </p>
           <Button
             variant="secondary"
-            size="sm"
             className="md:hidden"
             aria-haspopup="dialog"
             onClick={() => setFiltersOpen(true)}
