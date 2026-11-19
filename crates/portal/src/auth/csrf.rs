@@ -360,6 +360,7 @@ mod tests {
             expires_at: now + 3600,
             issued_at: now,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: "opaque-id-token-for-tests".into(),
             access_expires_at: now + 3600,
             refresh_token: Some("opaque-refresh-token-for-tests".into()),

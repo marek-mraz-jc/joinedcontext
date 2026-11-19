@@ -2198,6 +2198,7 @@ async fn a_disabled_person_is_refused_before_their_token_expires() {
         expires_at: listed[0].1 + 3600,
         issued_at: listed[0].1 + 1,
         signed_in_at: None,
+        stepped_up_at: None,
         id_token: String::new(),
         access_expires_at: listed[0].1 + 3600,
         refresh_token: None,

@@ -1598,6 +1598,7 @@ mod tests {
             expires_at: 0,
             issued_at: 0,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: String::new(),
             access_expires_at: 0,
             refresh_token: None,

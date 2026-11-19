@@ -94,6 +94,7 @@ pub mod org_backups;
 pub mod organization_addresses;
 pub mod organization_ids;
 pub mod organization_limits;
+pub mod approval_mode;
 pub mod organization_widgets;
 pub mod people;
 pub mod people_ids;
@@ -222,6 +223,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())
+        .merge(approval_mode::router())
         .merge(org_backups::router())
         .merge(opendata_pages::router())
         .merge(organization_ids::router())

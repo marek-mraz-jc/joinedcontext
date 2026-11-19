@@ -553,7 +553,13 @@ impl OidcClient {
             }
         }
         Ok((
-            mint_session(identity, id_token, session.issued_at, &token_response),
+            mint_session(
+                identity,
+                id_token,
+                session.issued_at,
+                session.stepped_up_at,
+                &token_response,
+            ),
             token_response.access_token().secret().clone(),
         ))
     }
@@ -580,6 +586,7 @@ fn mint_session(
     identity: Identity,
     id_token: String,
     issued_at: i64,
+    stepped_up_at: Option<i64>,
     token_response: &openidconnect::core::CoreTokenResponse,
 ) -> Session {
     let now = session::now_unix();
@@ -600,6 +607,7 @@ fn mint_session(
         expires_at,
         issued_at,
         signed_in_at: None,
+        stepped_up_at,
         id_token,
         access_expires_at: now + access_ttl,
         refresh_token,
@@ -1044,7 +1052,14 @@ pub async fn callback(
     if realm.is_some() {
         crate::auth::realms::confine(&mut identity, &state.config.bootstrap_admins);
     }
-    let session = mint_session(identity, id_token.to_string(), issued_at, &token_response);
+    let stepped_up_at = second_factor_at(id_token.to_string().as_str());
+    let session = mint_session(
+        identity,
+        id_token.to_string(),
+        issued_at,
+        stepped_up_at,
+        &token_response,
+    );
     tracing::info!(subject = %session.identity.subject, realm = realm.as_deref().unwrap_or(""), "portal login");
 
     let jar = session::store_in(jar, &session, realm.as_deref())?;
@@ -1111,6 +1126,19 @@ fn second_factor(id_token: &str) -> bool {
     }
     jwt_payload::<Payload>(id_token)
         .is_some_and(|p| session::proves_second_factor(p.acr.as_deref(), &p.amr))
+}
+
+/// When the token proved its second factor: its `auth_time`, if its `acr`/`amr` prove one. A
+/// step-up login (`prompt=login`) authenticates again, so its token carries a new `auth_time`.
+fn second_factor_at(id_token: &str) -> Option<i64> {
+    #[derive(serde::Deserialize)]
+    struct Payload {
+        auth_time: Option<i64>,
+    }
+    if !second_factor(id_token) {
+        return None;
+    }
+    jwt_payload::<Payload>(id_token).and_then(|p| p.auth_time)
 }
 
 fn realm_roles(id_token: &str) -> Vec<String> {
@@ -1562,6 +1590,7 @@ pub(crate) mod tests {
             expires_at: session::now_unix() + 600,
             issued_at: session::now_unix() - 60,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: "opaque-id-token-for-tests".into(),
             access_expires_at: session::now_unix() + 60,
             refresh_token: refresh_token.map(str::to_owned),
@@ -2284,6 +2313,21 @@ mod realm_roles_tests {
         assert!(!second_factor(&token(r#"{"acr":"1"}"#)));
         assert!(!second_factor(&token(r#"{"sub":"u1"}"#)));
         assert!(!second_factor("not-a-token"));
+    }
+
+    /// T-7388: the second factor's time is the `auth_time` of a token that proves one, never of
+    /// a password-only one.
+    #[test]
+    fn the_second_factor_time_is_the_auth_time_of_a_token_proving_one() {
+        assert_eq!(
+            second_factor_at(&token(r#"{"acr":"mfa","auth_time":1800000000}"#)),
+            Some(1_800_000_000)
+        );
+        assert_eq!(
+            second_factor_at(&token(r#"{"acr":"pwd","amr":["pwd"],"auth_time":1800000000}"#)),
+            None
+        );
+        assert_eq!(second_factor_at(&token(r#"{"amr":["otp"]}"#)), None);
     }
 
     #[test]
