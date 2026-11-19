@@ -128,6 +128,12 @@ name = "read_statement_budget"
 path = "tests/read_statement_budget.rs"
 
 [[test]]
+# own process: sets the global tracing subscriber that counts bookkeeping statements; a
+# thread-local one misses sqlx::query once another test thread registers that callsite first
+name = "fanout_bookkeeping_t5159"
+path = "tests/fanout_bookkeeping_t5159.rs"
+
+[[test]]
 # own process: sets the global tracing subscriber that counts Entity rows read
 name = "types_id_pattern_probe_pg"
 path = "tests/types_id_pattern_probe_pg.rs"

@@ -250,7 +250,7 @@ pub fn vtimezone(zone: Zone, year: i32) -> Vec<String> {
         lines.push(format!("TZOFFSETFROM:{}", offset(*from)));
         lines.push(format!("TZOFFSETTO:{}", offset(*to)));
         // the IANA database names every offset (`CET`, `+03`)
-        lines.push(format!("TZNAME:{}", crate::mapping::escape(name)));
+        lines.push(format!("TZNAME:{}", crate::text::escape(name)));
         lines.push(format!("END:{kind}"));
     }
     lines.push("END:VTIMEZONE".to_owned());
@@ -277,11 +277,6 @@ mod tests {
         assert_eq!("US/Eastern".parse::<Zone>()?.name(), "US/Eastern");
         assert_eq!(Zone::utc().name(), "UTC");
         Ok(())
-    }
-
-    #[test]
-    fn default_zone_is_bratislava() {
-        assert_eq!(crate::mapping::default_zone().name(), "Europe/Bratislava");
     }
 
     /// DST in both test zones: the spring gap has no time, the autumn fold reads as its
