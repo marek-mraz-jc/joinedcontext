@@ -38,6 +38,14 @@ path_prefix = ""
 host = "assistant.city.test"
 path_prefix = ""
 
+[[mounts.gateway]]
+host = "api.city.test"
+path_prefix = ""
+
+[[mounts.gateway]]
+host = "portal.city.test"
+path_prefix = "/api/mcp"
+
 [[organizations]]
 name = "alpha"
 catalogue_id = "00000000-0000-7000-8000-0000000000a1"
@@ -162,8 +170,16 @@ def edge():
             if path == "/realms/jc/.well-known/openid-configuration" and host == "idm.city.test":
                 return j({"issuer": "http://idm.city.test/realms/jc"})
             if path == "/.well-known/oauth-protected-resource/api/mcp":
-                realm = "http://idm.alpha.test/realms/alpha" if host == "api.alpha.test" else "http://idm.city.test/realms/alpha"
-                return j({"authorization_servers": [realm]})
+                if host != "api.city.test":  # an Organization host answers the SPA here
+                    return self.reply(200, b"<!doctype html>", "text/html")
+                return j({"resource": "http://api.city.test/api/mcp",
+                          "authorization_servers": ["http://api.city.test", "http://idm.city.test/realms/jc"]})
+            if path == "/.well-known/oauth-protected-resource/api/v1/mcp":
+                # alpha: its own realm; beta: another realm; gamma: its realm, but another host's resource.
+                realm = {"portal.alpha.test": "http://idm.alpha.test/realms/alpha",
+                         "portal.beta.test": "http://idm.city.test/realms/alpha"}.get(host, "http://idm.city.test/realms/jc")
+                res = "http://api.city.test/api/v1/mcp" if host == "portal.gamma.test" else f"http://{host}/api/v1/mcp"
+                return j({"resource": res, "authorization_servers": [realm]})
             if path.endswith("/api/3/action/package_search?rows=0"):
                 return j({"success": True})
             if path == "/api/mcp":
@@ -204,11 +220,11 @@ def public_sources(monkeypatch, edge):
     return port
 
 
-def run(tmp_path, port, *extra):
+def run(tmp_path, port, *extra, snap_doc=None):
     toml = tmp_path / "jc.toml"
     toml.write_text(TOML.replace("{port}", str(port)))
     snap = tmp_path / "snap.json"
-    snap.write_text(json.dumps(snapshot(port)))
+    snap.write_text(json.dumps(snap_doc or snapshot(port)))
     out = tmp_path / "out"
     code = orgs.main(["--out", str(out), "--jc-config", str(toml), "--deployment", "t", "--domain", "city.test",
                       "--edge", "127.0.0.1", "--edge-port", str(port), "--scheme", "http", "--rate", "1000",
@@ -220,14 +236,19 @@ def run(tmp_path, port, *extra):
 def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, public_sources):
     code, res = run(tmp_path, public_sources, "--app-host", "alpha=nosuch.apps.alpha.test")
     rows = {r["id"]: r for r in res["checks"]}
-    green = ["portal.alpha", "oidc.alpha", "prm.alpha", "catalogue.alpha", "mcp.alpha", "harvest.alpha.alpha-nkod",
+    green = ["prm.gateway", "portal.alpha", "oidc.alpha", "prm.alpha", "catalogue.alpha", "mcp.alpha", "harvest.alpha.alpha-nkod",
              "crawl.alpha.web/site", "crawl.alpha.web/site.fresh", "embed.alpha", "assistant.alpha",
              "portal.beta", "oidc.beta", "catalogue.beta", "crawl.beta.web/site"]
     assert {k: rows[k]["result"] for k in green} == {k: "pass" for k in green}, rows
     red = {k for k, r in rows.items() if r["result"] == "fail"}
     # beta: the installation realm's metadata names realm alpha; its harvest source answers 503;
     # its last crawl is 100 h old; the embedder refused 7 passages. alpha: the App host is unknown.
-    assert {"prm.beta", "harvest.beta.beta-arcgis", "crawl.beta.web/site.fresh", "embed.beta",
+    # gamma: its metadata names api.city.test as the resource.
+    assert rows["prm.gamma"]["actual"] == "200 resource api.city.test http://idm.city.test/realms/jc"
+    assert rows["prm.alpha"]["call"] == "GET portal.alpha.test/.well-known/oauth-protected-resource/api/v1/mcp"
+    # The gateway's /api/mcp metadata is asked of the gateway host only, never of an Organization host.
+    assert [h for m, h, p in edge[1] if p == "/.well-known/oauth-protected-resource/api/mcp"] == ["api.city.test"]
+    assert {"prm.beta", "prm.gamma", "harvest.beta.beta-arcgis", "crawl.beta.web/site.fresh", "embed.beta",
             "app.alpha.nosuch.apps.alpha.test"} <= red
     assert rows["embed.beta"]["actual"] == "7 refused, 0 waiting"
     assert rows["crawl.beta.files/upload"]["result"] == "skip"
@@ -236,6 +257,16 @@ def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, 
     assert res["organizations"]["alpha"]["fail"] == 1 and res["organizations"]["beta"]["fail"] >= 4
     # No answer body reaches a row: statuses and counts only.
     assert not any("query_entities" in r["actual"] or "issuer" in r["actual"] for r in res["checks"])
+
+
+def test_an_assistant_schema_before_migration_0025_skips_the_embed_row(tmp_path, edge, public_sources):
+    doc = snapshot(public_sources)
+    for k in doc["knowledge"]:
+        k["errors"] = None  # watch.assistant_sql(False): the column does not exist there
+    _, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {r["id"]: r for r in res["checks"]}
+    assert rows["embed.alpha"]["result"] == rows["embed.beta"]["result"] == "skip"
+    assert "migration 0025" in rows["embed.beta"]["reason"]
 
 
 def test_the_guard_refuses_writes_foreign_hosts_and_private_sources(tmp_path, edge, monkeypatch):
@@ -323,11 +354,14 @@ def test_the_line_names_each_organization_and_the_log_keeps_seven_days(tmp_path)
     assert [d.name for d in runs.iterdir()] == ["20261118T000000Z"]
 
 
-def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp_path):
+@pytest.mark.parametrize("embed_error", [True, False])
+def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp_path, embed_error):
     calls = []
 
     def fake(cfg, *args, timeout=60):
         calls.append(args)
+        if args[-1] == watch.EMBED_ERROR_SQL:
+            return "SET\n" + json.dumps({"embedError": embed_error})
         if args[-1].startswith("SELECT"):
             return "SET\n" + json.dumps({"organizations": []} if "organizations" in args[-1] else {"knowledge": []})
         return "pod/postgres-cluster-1\n" if "pod" in args else 'mode = "host"\n'
@@ -341,6 +375,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert toml.read_text() == 'mode = "host"\n'
     assert json.loads(snap.read_text()) == {"organizations": [], "knowledge": []}
     queries = [c for c in calls if c[-1].startswith("SELECT")]
-    assert len(queries) == 2 and all("SET default_transaction_read_only = on" in c for c in queries)
-    for sql in (watch.PORTAL_SQL, watch.ASSISTANT_SQL):
+    assert len(queries) == 3 and all("SET default_transaction_read_only = on" in c for c in queries)
+    # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
+    assert ("embed_error" in queries[-1][-1]) is embed_error
+    for sql in (watch.PORTAL_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
         assert not any(w in sql.upper() for w in ("INSERT", "UPDATE ", "DELETE", "DROP", "TRUNCATE", "C.TEXT"))

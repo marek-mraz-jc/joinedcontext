@@ -62,9 +62,20 @@ ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_
   'organization', s.organization, 'project', s.project, 'source', s.source,
   'lastCrawl', to_char(s.last_crawl AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'root', (SELECT p.url FROM pages p WHERE p.site_id = s.id AND p.depth = 0 ORDER BY p.id LIMIT 1),
-  'pending', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL AND c.embed_error IS NULL),
-  'errors', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embed_error IS NOT NULL)
+  'pending', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL{pending}),
+  'errors', {errors}
 ) ORDER BY s.organization, s.project, s.source), '[]')) FROM sites s"""
+# chunks.embed_error arrives with assistant migration 0025: before it, the errors are unknown (null).
+EMBED_ERROR_SQL = """SELECT json_build_object('embedError', EXISTS (SELECT 1 FROM information_schema.columns
+  WHERE table_schema = current_schema() AND table_name = 'chunks' AND column_name = 'embed_error'))"""
+
+
+def assistant_sql(embed_error: bool) -> str:
+    if embed_error:
+        return ASSISTANT_SQL.format(
+            pending=" AND c.embed_error IS NULL",
+            errors="(SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embed_error IS NOT NULL)")
+    return ASSISTANT_SQL.format(pending="", errors="NULL")
 
 REQUIRED = ("cluster", "kubeconfig", "namespace", "pg_namespace", "edge", "domain", "state", "owner")
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
@@ -108,7 +119,9 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
     toml.write_text(text)
     pod = kubectl(cfg, "-n", cfg["pg_namespace"], "get", "pod", "-o", "name", "-l",
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
-    snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_assistant", ASSISTANT_SQL)}
+    embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
+    snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL),
+            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error))}
     path = run / "snapshot.json"
     path.write_text(json.dumps(snap, indent=1))
     return toml, path

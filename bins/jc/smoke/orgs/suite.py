@@ -17,14 +17,18 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
 - portal.O: its working host answers 2xx/3xx.
 - oidc.O: its realm's discovery (O on hosts.idm, else the installation realm on the sign-in host)
   answers 200 over verified TLS and names exactly that issuer.
-- prm.O: the protected-resource metadata of the MCP door on its API host names that realm alone.
+- prm.O: the protected-resource metadata of the Portal MCP on its working host (/api/v1/mcp, the
+  Portal's door) names that host as the resource and that realm alone.
+- prm.gateway: the gateway's own host (the first [[mounts.gateway]] without a path prefix) serves
+  the metadata of /api/mcp naming itself as the resource and the installation realm alone.
 - catalogue.O: its open data catalogue answers package_search (success true).
 - mcp.O: MCP initialize and tools/list on its API host, anonymous, list at least one tool.
 - app.O.<host>: each App host (--app-host) answers 2xx/3xx.
 - harvest.O.<name>: each enabled [[dataroom.harvest]] source of O answers HEAD (any status < 500).
 - crawl.O.<project>/<source>: each crawl root answers HEAD (< 500), and its last crawl is younger
   than --max-crawl-hours.
-- embed.O: no passage of O's crawl sources holds an embedder refusal (`chunks.embed_error`).
+- embed.O: no passage of O's crawl sources holds an embedder refusal (`chunks.embed_error`); a
+  skip on an assistant schema before migration 0025 (no such column: `errors` null).
 - assistant.O: with --assistant O=<publicId>, one fixed question through the visitor flow answers
   (no `error` event, an `answer`) citing at least one page of O's own crawl roots.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
@@ -151,11 +155,17 @@ class Suite:
         self.login = (mount.get("host") if isinstance(mount, dict) else None) or doc.get("base_host", "")
         mount = (doc.get("mounts") or {}).get("assistant")
         self.assistant_host = mount.get("host") if isinstance(mount, dict) else None
+        mounts = (doc.get("mounts") or {}).get("gateway") or []
+        self.gateway = next((m["host"].lower() for m in ([mounts] if isinstance(mounts, dict) else mounts)
+                             if isinstance(m, dict) and m.get("host") and not m.get("path_prefix")), None)
 
     def http(self, host: str) -> Http:
         return Http(f"{self.scheme}://{host}", timeout=self.a.timeout)
 
     def run(self) -> None:
+        if self.gateway:
+            self.prm("prm.gateway", "gateway", self.gateway, "/api/mcp",
+                     f"{self.scheme}://{self.login}/realms/{self.installation}")
         for o, e in self.orgs.items():
             self.one(o, e)
 
@@ -172,12 +182,7 @@ class Suite:
         self.r.check(f"oidc.{o}", o, f"GET {signin}/realms/{realm}/.well-known/openid-configuration",
                      f"200, issuer {issuer}", f"{st} {got or ''}".strip(), st == 200 and got == issuer)
 
-        st, _, raw = self.http(api).call("GET", "/.well-known/oauth-protected-resource/api/mcp")
-        doc = as_json(raw) if st == 200 else None
-        named = sorted({s.rstrip("/") for s in (doc or {}).get("authorization_servers") or []
-                        if isinstance(s, str) and "/realms/" in s})
-        self.r.check(f"prm.{o}", o, f"GET {api}/.well-known/oauth-protected-resource/api/mcp",
-                     f"200 naming {issuer} alone", f"{st} {' '.join(named)}".strip(), named == [issuer])
+        self.prm(f"prm.{o}", o, portal, "/api/v1/mcp", issuer)
 
         if hs.get("opendata"):
             od, path = hs["opendata"], "/api/3/action/package_search?rows=0"
@@ -206,7 +211,10 @@ class Suite:
             self.r.check(f"{rid}.fresh", o, "sites.last_crawl", f"under {self.a.max_crawl_hours} h",
                          f"{age:.1f} h" if age is not None else "never",
                          age is not None and age <= self.a.max_crawl_hours)
-        if e["crawl"]:
+        if e["crawl"] and all(c.get("errors") is None for c in e["crawl"]):
+            self.r.skip(f"embed.{o}", o, "chunks.embed_error of O's sources", "0 refused passages",
+                        "the assistant schema has no chunks.embed_error yet (assistant migration 0025)")
+        elif e["crawl"]:
             errors = sum(int(c.get("errors") or 0) for c in e["crawl"])
             pending = sum(int(c.get("pending") or 0) for c in e["crawl"])
             self.r.check(f"embed.{o}", o, "chunks.embed_error of O's sources", "0 refused passages",
@@ -221,6 +229,19 @@ class Suite:
         ok = 0 < st < 500
         self.r.check(rid, o, f"HEAD {u.netloc}{u.path}", "an answer under 500", str(st), ok, why)
         return ok
+
+    def prm(self, rid: str, o: str, host: str, door: str, issuer: str) -> None:
+        """The protected-resource metadata of `door` on `host`: resource on that host, `issuer` the only realm."""
+        path = f"/.well-known/oauth-protected-resource{door}"
+        st, _, raw = self.http(host).call("GET", path)
+        doc = (as_json(raw) if st == 200 else None) or {}
+        resource = doc.get("resource") if isinstance(doc.get("resource"), str) else ""
+        named = sorted({s.rstrip("/") for s in doc.get("authorization_servers") or []
+                        if isinstance(s, str) and "/realms/" in s})
+        own = host_of(resource) == host
+        self.r.check(rid, o, f"GET {host}{path}", f"200, resource on {host}, naming {issuer} alone",
+                     f"{st} {'' if own else 'resource ' + (host_of(resource) or 'missing') + ' '}{' '.join(named)}".strip(),
+                     own and named == [issuer])
 
     def mcp(self, o: str, api: str) -> None:
         m = Mcp(self.http(api), "/api/mcp", retries=1)
