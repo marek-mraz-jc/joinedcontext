@@ -18,7 +18,7 @@ use crate::error::ApiError;
 use crate::permissions::{effective, Effective};
 use crate::state::AppState;
 use crate::store::Mirror;
-use chrono::Utc;
+use jc_time::TimestampTz;
 use jc_core::kinds::{PipelineSpec, Verb};
 use serde_json::Value;
 
@@ -69,7 +69,7 @@ pub fn missing(
     if manifest.get("kind").and_then(Value::as_str) != Some("Pipeline") {
         return Vec::new();
     }
-    let effective = effective(mirror, bootstrap_group, identity, project, Utc::now());
+    let effective = effective(mirror, bootstrap_group, identity, project, TimestampTz::now());
     if effective.bootstrap {
         return Vec::new();
     }

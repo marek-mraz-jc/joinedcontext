@@ -9,7 +9,7 @@
 //! refused ones in a warning. A broker that does not answer is a warning that the check could not
 //! run, never a silent pass.
 
-use chrono::Utc;
+use jc_time::TimestampTz;
 use jc_core::kinds::{OutputMode, PipelineSpec};
 use serde_json::{json, Value};
 
@@ -103,7 +103,7 @@ async fn refused(
         Ok(read) => read,
         Err(why) => return unchecked(endpoint, &why),
     };
-    let judged = match writable(state, project, manifest, entity_type, &names, Utc::now()) {
+    let judged = match writable(state, project, manifest, entity_type, &names, TimestampTz::now()) {
         Ok(judged) => judged,
         Err(err) => return unchecked(endpoint, &err.to_string()),
     };

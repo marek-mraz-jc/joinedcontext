@@ -408,7 +408,7 @@ async fn kpi_compute(
     let (ep_slug, ep_name) = read
         .or_else(|| kpi::kpi_endpoint(state, project))
         .unwrap_or_else(|| (format!("{project}-kpi"), format!("{project}-kpi")));
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = jc_time::TimestampTz::now().to_rfc3339();
     let prov = kpi::Provenance {
         org_domain: &org_domain,
         project,

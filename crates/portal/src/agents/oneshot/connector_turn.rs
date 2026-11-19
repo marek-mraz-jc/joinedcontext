@@ -813,11 +813,11 @@ mod tests {
         );
         assert!(state
             .plans
-            .peek(&id, "someone-else", "helsinki", chrono::Utc::now())
+            .peek(&id, "someone-else", "helsinki", jc_time::TimestampTz::now())
             .is_none());
         assert!(state
             .plans
-            .peek(&id, &probe.identity.subject, "espoo", chrono::Utc::now())
+            .peek(&id, &probe.identity.subject, "espoo", jc_time::TimestampTz::now())
             .is_none());
     }
 

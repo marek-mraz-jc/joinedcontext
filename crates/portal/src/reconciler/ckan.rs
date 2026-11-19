@@ -1283,7 +1283,7 @@ pub fn measurements(
     });
     let freshness_seconds = daily.and_then(|report| {
         let newest = report.types.iter().filter_map(|kind| kind.newest).max()?;
-        Some((report.observed_at - newest).num_seconds().max(0))
+        Some((report.observed_at - newest).as_secs().max(0))
     });
     Measurements {
         pass_rate: (all > 0).then(|| (pass as f64 / all as f64 * 100.0).round() / 100.0),

@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Constraints, Request, Verdict as Decision};
 use context_gateway::pdp::write_guard::{self, Refusal};
@@ -199,7 +199,7 @@ pub fn check_records(
     project: &str,
     pipeline: &Value,
     records: &[Value],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<Checked, ApiError> {
     if records.len() > MAX_RECORDS {
         return Err(ApiError::BadRequest(format!(
@@ -424,7 +424,7 @@ pub fn writable(
     pipeline: &Value,
     entity_type: &str,
     names: &[String],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<Vec<Writable>, ApiError> {
     let writer = writer(state, project, pipeline)?;
     let target = target_of(&writer.types, &writer.targets, entity_type);
@@ -474,7 +474,7 @@ pub fn check_trace(
     mapping: &[Value],
 ) -> Result<Checked, ApiError> {
     let records = &mapping[..mapping.len().min(MAX_RECORDS)];
-    check_records(state, project, pipeline, records, Utc::now())
+    check_records(state, project, pipeline, records, TimestampTz::now())
 }
 
 /// The account the pipeline writes as and, under per-pipeline identity, its Policies derived
@@ -618,7 +618,7 @@ fn judge_endpoint(
     target: &Target,
     entity_type: &str,
     record: &Value,
-    now: DateTime<Utc>,
+    now: TimestampTz,
     findings: &mut Vec<Finding>,
 ) {
     judge_write(
@@ -638,7 +638,7 @@ fn judge_write(
     target: &Target,
     entity_type: &str,
     record: &Value,
-    now: DateTime<Utc>,
+    now: TimestampTz,
     guard: fn(&Value, &Constraints) -> Result<(), Refusal>,
     findings: &mut Vec<Finding>,
 ) {
@@ -830,7 +830,7 @@ fn judge_lifetime(
     spec: &PipelineSpec,
     entity_type: &str,
     record: &Value,
-    now: DateTime<Utc>,
+    now: TimestampTz,
     findings: &mut Vec<Finding>,
 ) {
     for entry in spec
@@ -884,14 +884,14 @@ fn judge_lifetime(
     for (field, end) in ends {
         match end
             .as_str()
-            .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            .and_then(jc_time::parse_rfc3339)
         {
             None => findings.push(lifetime(
                 "expiresAt",
                 &field,
                 "is no RFC 3339 date-time".into(),
             )),
-            Some(end) if end <= now => findings.push(lifetime(
+            Some(end) if end <= now.0 => findings.push(lifetime(
                 "expiresAt",
                 &field,
                 "lies in the past: the broker would hide it as soon as it is written".into(),
@@ -965,13 +965,12 @@ mod tests {
     }
     use crate::config::Config;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
-    use chrono::TimeZone;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    fn now() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap()
+    fn now() -> TimestampTz {
+        jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0)).expect("an instant"))
     }
 
     /// Helsinki's vehicles space: its model's Bus has a date-time `observedOn`, a `speed` and a

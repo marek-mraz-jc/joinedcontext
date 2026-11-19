@@ -6,7 +6,7 @@
 //! then, before the Portal hashes anything), and `succeeded` or `failed` at the end. At most one
 //! build of an App is pending and one running: a newer head replaces the pending one.
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use sha2::{Digest, Sha256};
 use sqlx::{AssertSqlSafe, PgPool};
 use time::OffsetDateTime;
@@ -24,10 +24,10 @@ pub struct Record {
     pub trigger: String,
     pub requested_by: Option<String>,
     pub state: String,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
+    pub created_at: TimestampTz,
+    pub started_at: Option<TimestampTz>,
+    pub finished_at: Option<TimestampTz>,
     pub digest: Option<String>,
     pub reason: Option<String>,
 }
@@ -51,8 +51,8 @@ struct Row {
     reason: Option<String>,
 }
 
-fn utc(at: OffsetDateTime) -> DateTime<Utc> {
-    DateTime::from_timestamp(at.unix_timestamp(), at.nanosecond()).unwrap_or_default()
+fn utc(at: OffsetDateTime) -> TimestampTz {
+    jiff::Timestamp::from_nanosecond(at.unix_timestamp_nanos()).map_or_else(|_| TimestampTz::default(), TimestampTz)
 }
 
 impl From<Row> for Record {
@@ -92,7 +92,7 @@ impl Record {
     /// How long a finished build took, in seconds.
     pub fn seconds(&self) -> Option<u64> {
         let took = self.finished_at? - self.started_at?;
-        u64::try_from(took.num_seconds()).ok()
+        u64::try_from(took.as_secs()).ok()
     }
 }
 
@@ -316,7 +316,7 @@ pub async fn start(
     project: &str,
     id: i64,
     token: &str,
-    valid_for: chrono::Duration,
+    valid_for: jiff::SignedDuration,
 ) -> Result<bool, sqlx::Error> {
     let mut tx = crate::project_ids::recorded_tx(db, project).await?;
     let started = sqlx::query(
@@ -327,7 +327,7 @@ pub async fn start(
     .bind(id)
     .bind(project)
     .bind(token_hash(token))
-    .bind(valid_for.num_milliseconds() as f64 / 1000.0)
+    .bind(valid_for.as_secs_f64())
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

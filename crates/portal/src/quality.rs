@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -31,9 +31,9 @@ pub const PAGE: usize = 1_000;
 /// Entities one run reads of one space at most: the run's resource budget.
 pub const PER_SPACE: usize = 20_000;
 /// How often a run is due.
-pub const EVERY: chrono::Duration = chrono::Duration::hours(24);
+pub const EVERY: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
 /// The least time between two runs: how soon a space that was not read is tried again.
-const RETRY: chrono::Duration = chrono::Duration::hours(1);
+const RETRY: jiff::SignedDuration = jiff::SignedDuration::from_hours(1);
 /// Example ids kept per rule.
 const EXAMPLES: usize = 5;
 /// The least slack a freshness target allows past the interval, in seconds.
@@ -69,7 +69,7 @@ pub struct Freshness {
     #[serde(rename = "type")]
     pub entity_type: String,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub newest: Option<DateTime<Utc>>,
+    pub newest: Option<TimestampTz>,
     pub target_seconds: Option<u64>,
     pub state: FreshState,
     pub paused: bool,
@@ -88,7 +88,7 @@ impl Freshness {
 #[serde(rename_all = "camelCase")]
 pub struct SpaceQuality {
     #[schema(value_type = String, format = DateTime)]
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: TimestampTz,
     pub checked: u64,
     pub invalid: u64,
     pub truncated: bool,
@@ -107,7 +107,7 @@ pub struct TypeQuality {
     pub entity_type: String,
     pub count: u64,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub newest: Option<DateTime<Utc>>,
+    pub newest: Option<TimestampTz>,
     /// Every attribute an entity of the type carries, the most complete first.
     pub attributes: Vec<AttributeQuality>,
 }
@@ -149,7 +149,7 @@ pub struct Tally {
     pub truncated: bool,
     rules: BTreeMap<(String, String), (u64, Vec<String>)>,
     /// The newest `modifiedAt` per type.
-    newest: BTreeMap<String, DateTime<Utc>>,
+    newest: BTreeMap<String, TimestampTz>,
     types: BTreeMap<String, TypeTally>,
 }
 
@@ -167,7 +167,7 @@ fn number_of(attribute: &Value) -> Option<f64> {
 
 impl Tally {
     /// Counts one entity with what the model said of it, and its `modifiedAt`.
-    pub fn add(&mut self, entity: &Value, modified: Option<DateTime<Utc>>, problems: &[Problem]) {
+    pub fn add(&mut self, entity: &Value, modified: Option<TimestampTz>, problems: &[Problem]) {
         self.checked += 1;
         if let (Some(kind), Some(at)) = (entity.get("type").and_then(Value::as_str), modified) {
             let newest = self.newest.entry(kind.to_owned()).or_insert(at);
@@ -221,7 +221,7 @@ impl Tally {
     }
 
     /// The newest entity of `entity_type`, or of the whole space when it is empty.
-    pub fn newest(&self, entity_type: &str) -> Option<DateTime<Utc>> {
+    pub fn newest(&self, entity_type: &str) -> Option<TimestampTz> {
         match entity_type {
             "" => self.newest.values().max().copied(),
             kind => self.newest.get(kind).copied(),
@@ -230,7 +230,7 @@ impl Tally {
 
     pub fn into_quality(
         self,
-        observed_at: DateTime<Utc>,
+        observed_at: TimestampTz,
         freshness: Vec<Freshness>,
     ) -> SpaceQuality {
         let mut rules: Vec<RuleCount> = self
@@ -272,7 +272,7 @@ impl Tally {
 /// One type's report from what the run kept of it.
 fn type_quality(
     entity_type: String,
-    newest: Option<DateTime<Utc>>,
+    newest: Option<TimestampTz>,
     tally: TypeTally,
 ) -> TypeQuality {
     let TypeTally {
@@ -334,8 +334,8 @@ fn outliers_of(sorted: &[(f64, u32)], ids: &[String]) -> (u64, Vec<String>) {
 
 /// The entity's `modifiedAt`, which `options=sysAttrs` adds. The model check takes the entity as
 /// stored: the system members of DM-130 pass a closed class and are never reported (DM-131).
-pub fn modified_of(entity: &Value) -> Option<DateTime<Utc>> {
-    entity.get("modifiedAt")?.as_str()?.parse().ok()
+pub fn modified_of(entity: &Value) -> Option<TimestampTz> {
+    jc_time::parse_rfc3339_relaxed(entity.get("modifiedAt")?.as_str()?).map(TimestampTz)
 }
 
 /// Seconds between two runs of a five-field cron `schedule`, or `None` for one this reading does
@@ -393,14 +393,14 @@ pub fn target_seconds(period: Option<u64>, schedule: Option<&str>) -> Option<u64
 }
 
 pub fn fresh_state(
-    newest: Option<DateTime<Utc>>,
+    newest: Option<TimestampTz>,
     target: Option<u64>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> FreshState {
     match (newest, target) {
         (_, None) => FreshState::Untargeted,
         (None, Some(_)) => FreshState::Empty,
-        (Some(at), Some(target)) if (now - at).num_seconds() > target as i64 => FreshState::Stale,
+        (Some(at), Some(target)) if (now - at).as_secs() > target as i64 => FreshState::Stale,
         (Some(_), Some(_)) => FreshState::Fresh,
     }
 }
@@ -413,7 +413,7 @@ pub struct Store {
     new_rules: RwLock<BTreeMap<(String, String), Vec<String>>>,
     running: AtomicBool,
     /// When the last run started; the next starts no sooner than `RETRY` after it.
-    last_start: RwLock<Option<DateTime<Utc>>>,
+    last_start: RwLock<Option<TimestampTz>>,
     db: Option<sqlx::PgPool>,
     /// What places each project in its Organization: every row is read and written in a
     /// `db::tenant_tx` of its project's key (T-7197 PK-1e).
@@ -577,7 +577,7 @@ impl Store {
     }
 
     /// The spaces of `spaces` whose report is missing or [`EVERY`] old at `now`.
-    pub fn due(&self, spaces: &[(String, String)], now: DateTime<Utc>) -> Vec<(String, String)> {
+    pub fn due(&self, spaces: &[(String, String)], now: TimestampTz) -> Vec<(String, String)> {
         let by_space = self.by_space.read().unwrap_or_else(|e| e.into_inner());
         spaces
             .iter()
@@ -592,7 +592,7 @@ impl Store {
 
     /// Whether a run may start at `now`, an hour or more after the last one; when it may, this
     /// call claims it.
-    pub fn claim(&self, now: DateTime<Utc>) -> bool {
+    pub fn claim(&self, now: TimestampTz) -> bool {
         let mut last = self.last_start.write().unwrap_or_else(|e| e.into_inner());
         if last.is_some_and(|at| now - at < RETRY) {
             return false;
@@ -642,7 +642,7 @@ impl Scanner {
     /// Starts a run in the background when a space is due; the reconciler calls it on every
     /// sync of the leader and never waits for it.
     pub fn start_if_due(self: &Arc<Self>) {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let spaces = self.schemas.spaces();
         let due = self.store.due(&spaces, now);
         if due.is_empty() || !self.store.claim(now) {
@@ -708,7 +708,7 @@ impl Scanner {
                 tokio::time::sleep(BETWEEN_PAGES).await;
             }
         }
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let freshness = pipelines_into(&self.mirror, project, space)
             .into_iter()
             .map(|(pipeline, entity_type, target, paused)| {
@@ -763,7 +763,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         text.parse().unwrap()
     }
 
@@ -1025,8 +1025,8 @@ mod tests {
         assert!(store.claim(start));
         assert!(!store.claim(start), "one run at a time");
         store.finish();
-        assert!(!store.claim(start + chrono::Duration::minutes(59)));
-        assert!(store.claim(start + chrono::Duration::hours(1)));
+        assert!(!store.claim(start + jiff::SignedDuration::from_mins(59)));
+        assert!(store.claim(start + jiff::SignedDuration::from_hours(1)));
     }
 
     /// A run cut short by a restart, or a space whose read failed, leaves spaces without a
@@ -1035,13 +1035,13 @@ mod tests {
     fn a_space_is_due_until_it_has_a_report_less_than_a_day_old() {
         let store = Store::default();
         let old = report(&[]);
-        let day = old.observed_at + chrono::Duration::hours(24);
+        let day = old.observed_at + jiff::SignedDuration::from_hours(24);
         store.put("p", "old", old.clone());
         store.put(
             "p",
             "read",
             SpaceQuality {
-                observed_at: day - chrono::Duration::hours(1),
+                observed_at: day - jiff::SignedDuration::from_hours(1),
                 ..old
             },
         );
@@ -1057,7 +1057,7 @@ mod tests {
                 ("p".to_owned(), "unread".to_owned())
             ]
         );
-        assert_eq!(due(day + chrono::Duration::hours(23)), spaces);
+        assert_eq!(due(day + jiff::SignedDuration::from_hours(23)), spaces);
     }
 
     fn report(rules: &[(&str, &str)]) -> SpaceQuality {
@@ -1137,7 +1137,7 @@ mod tests {
             after
                 .due(
                     &[(t5066.into(), "air".into())],
-                    kept.observed_at + chrono::Duration::hours(23)
+                    kept.observed_at + jiff::SignedDuration::from_hours(23)
                 )
                 .is_empty(),
             "not due yet"

@@ -199,8 +199,8 @@ impl SpaceRetention {
 fn date(secs: u64) -> String {
     i64::try_from(secs)
         .ok()
-        .and_then(|secs| chrono::DateTime::from_timestamp(secs, 0))
-        .map(|at| at.format("%Y-%m-%d %H:%M UTC").to_string())
+        .and_then(|secs| jc_time::TimestampTz::from_second(secs))
+        .map(|at| at.0.strftime("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| secs.to_string())
 }
 

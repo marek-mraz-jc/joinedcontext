@@ -27,7 +27,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::OrganizationAppearance;
 use jc_router::registry::Rules;
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,7 @@ pub struct OperatorChange {
     /// The user id of the operator who asked for it.
     pub proposed_by: String,
     #[schema(value_type = String, format = DateTime)]
-    pub proposed_at: DateTime<Utc>,
+    pub proposed_at: TimestampTz,
     /// The name of the operator who asked for it, when the realm answers it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposed_by_name: Option<String>,
@@ -202,7 +202,7 @@ pub struct OperatorChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decided_by_name: Option<String>,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub decided_at: Option<DateTime<Utc>>,
+    pub decided_at: Option<TimestampTz>,
 }
 
 /// The operator Changes, newest first.
@@ -802,8 +802,8 @@ type Row = (
 const COLUMNS: &str = "id::text, kind, payload, state, proposed_by, \
      extract(epoch FROM proposed_at)::bigint, decided_by, extract(epoch FROM decided_at)::bigint";
 
-fn at(seconds: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp(seconds, 0).unwrap_or_else(Utc::now)
+fn at(seconds: i64) -> TimestampTz {
+    jc_time::TimestampTz::from_second(seconds).unwrap_or_else(jc_time::TimestampTz::now)
 }
 
 fn change(row: Row) -> Result<OperatorChange, ApiError> {
@@ -1514,9 +1514,9 @@ pub struct OperatorHost {
     /// `waiting for a certificate slot until 2026-11-18 09:00 UTC`; none once served.
     pub detail: Option<String>,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub detail_at: Option<DateTime<Utc>>,
+    pub detail_at: Option<TimestampTz>,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
 }
 
 /// The new-certificate slots of the instance (T-7129 §3 pacing).
@@ -1531,7 +1531,7 @@ pub struct CertificateSlots {
     pub per_domain_week: i64,
     /// When the next slot frees, while every slot of the day is taken.
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub next_free_at: Option<DateTime<Utc>>,
+    pub next_free_at: Option<TimestampTz>,
 }
 
 /// Every host of the registry and the certificate slots.
@@ -1625,7 +1625,7 @@ pub async fn hosts(
 pub struct OperatorAuditEntry {
     pub id: i64,
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     /// The operator's user id, or `reconciler` for a step on a host's objects.
     pub actor: String,
     /// The operator's name, when the realm answers it.
@@ -1716,10 +1716,10 @@ pub struct OperatorOrganizationId {
     /// The TXT record's value, `jc-verify={challenge}`: public, it is published in DNS.
     pub record_value: String,
     #[schema(value_type = String, format = DateTime)]
-    pub requested_at: DateTime<Utc>,
+    pub requested_at: TimestampTz,
     /// When the id was minted; none while the record is not checked yet.
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub minted_at: Option<DateTime<Utc>>,
+    pub minted_at: Option<TimestampTz>,
     /// The active Organizations this id belongs to, or whose domain it is.
     pub organizations: Vec<String>,
 }

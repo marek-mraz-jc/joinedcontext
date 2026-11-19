@@ -299,7 +299,7 @@ pub async fn add_comment(
         )));
     }
     let identity = &user.0.identity;
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let me = recipients(&user);
     let mut notified = Vec::new();
     let mut unknown = Vec::new();

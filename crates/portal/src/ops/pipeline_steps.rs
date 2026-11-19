@@ -406,7 +406,7 @@ async fn sample_of_planned(
 ) -> Result<(Value, (Sample, PipelineSpec)), OpError> {
     let items = state
         .plans
-        .peek(id, &caller.identity.subject, project, chrono::Utc::now())
+        .peek(id, &caller.identity.subject, project, jc_time::TimestampTz::now())
         .ok_or_else(|| {
             OpError::from(ApiError::NotFound(format!(
                 "no open plan {id} of yours in project '{project}'; plan the DataSource with jc_change_plan first"
@@ -1081,7 +1081,7 @@ pub fn operations() -> Vec<Operation> {
                             project,
                             manifest,
                             &input.records,
-                            chrono::Utc::now(),
+                            jc_time::TimestampTz::now(),
                         )?),
                         None => None,
                     };
@@ -1145,7 +1145,7 @@ fn writable_of(
         pipeline,
         entity_type,
         &names,
-        chrono::Utc::now(),
+        jc_time::TimestampTz::now(),
     )?)
 }
 

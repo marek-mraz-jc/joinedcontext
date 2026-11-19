@@ -5,7 +5,7 @@
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::Utc;
+use jc_time::TimestampTz;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -53,7 +53,7 @@ pub async fn list_project(
     }
     let items = state
         .health_log
-        .list(Some(&project), Utc::now())
+        .list(Some(&project), jc_time::TimestampTz::now())
         .await
         .map_err(unavailable)?
         .into_iter()
@@ -96,7 +96,7 @@ pub async fn list_all(
     }
     let items = state
         .health_log
-        .list(None, Utc::now())
+        .list(None, jc_time::TimestampTz::now())
         .await
         .map_err(unavailable)?;
     Ok(Json(HealthChecks { items }))

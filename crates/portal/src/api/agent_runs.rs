@@ -1237,7 +1237,7 @@ async fn record_answer(
     question_id: &str,
 ) {
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "agent.answer".to_owned(),

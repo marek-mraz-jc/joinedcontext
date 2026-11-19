@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -245,14 +245,14 @@ pub async fn mute(
     Path(id): Path<i64>,
     Json(mute): Json<Mute>,
 ) -> Result<Json<Subscription>, ApiError> {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let until = match mute.duration.as_deref() {
         None => None,
-        Some("1h") => Some(now + Duration::hours(1)),
-        Some("1d") => Some(now + Duration::days(1)),
-        Some("7d") => Some(now + Duration::days(7)),
+        Some("1h") => Some(now + jiff::SignedDuration::from_hours(1)),
+        Some("1d") => Some(now + jiff::SignedDuration::from_hours(24 * 1)),
+        Some("7d") => Some(now + jiff::SignedDuration::from_hours(24 * 7)),
         // Far enough that a person who chose "forever" never meets it.
-        Some("forever") => Some(now + Duration::days(365 * 100)),
+        Some("forever") => Some(now + jiff::SignedDuration::from_hours(24 * 365 * 100)),
         Some(other) => {
             return Err(ApiError::BadRequest(format!(
                 "`{other}` is not 1h, 1d, 7d or forever"

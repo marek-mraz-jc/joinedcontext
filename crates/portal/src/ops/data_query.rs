@@ -254,7 +254,7 @@ fn temporal_of(
     format: Option<&str>,
     query: &mut Query,
 ) -> Result<(), OpError> {
-    if chrono::DateTime::parse_from_rfc3339(&temporal.time_at).is_err() {
+    if jc_time::parse_rfc3339(&temporal.time_at).is_none() {
         return Err(invalid(
             "/temporal/timeAt",
             "an ISO 8601 time, e.g. 2026-10-27T00:00:00Z",
@@ -264,7 +264,7 @@ fn temporal_of(
         ("between", None) => {
             return Err(invalid("/temporal/endTimeAt", "between needs endTimeAt"));
         }
-        (_, Some(end)) if chrono::DateTime::parse_from_rfc3339(end).is_err() => {
+        (_, Some(end)) if jc_time::parse_rfc3339(end).is_none() => {
             return Err(invalid(
                 "/temporal/endTimeAt",
                 "an ISO 8601 time, e.g. 2026-10-28T00:00:00Z",

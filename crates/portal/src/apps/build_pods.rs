@@ -120,9 +120,11 @@ impl Class {
     }
 
     /// How long a build's token admits its pod: the deadline and a grace for the report.
-    pub fn token_lifetime(self) -> chrono::Duration {
-        chrono::Duration::seconds(
-            i64::try_from(self.deadline_seconds()).unwrap_or(i64::MAX) + TOKEN_GRACE_SECONDS,
+    pub fn token_lifetime(self) -> jiff::SignedDuration {
+        jiff::SignedDuration::from_secs(
+            i64::try_from(self.deadline_seconds())
+                .unwrap_or(i64::MAX)
+                .saturating_add(TOKEN_GRACE_SECONDS),
         )
     }
 
@@ -416,7 +418,7 @@ pub async fn dispatch_once(
 /// Ends every running build whose Job ended without the pod reporting, is gone, or whose token
 /// expired; a build being verified is the Portal's own and is left to finish.
 async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, DispatchError> {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let mut ended_now = Vec::new();
     for build in build_records::in_state(db, "running").await? {
         let name = job_name(&build.app, build.id);
@@ -439,7 +441,7 @@ async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, Dispa
             None if job.is_none()
                 && build
                     .started_at
-                    .is_some_and(|at| now - at > chrono::Duration::minutes(2)) =>
+                    .is_some_and(|at| now - at > jiff::SignedDuration::from_mins(2)) =>
             {
                 Some(format!("the build Job {name} is gone"))
             }
@@ -455,7 +457,7 @@ async fn settle(db: &PgPool, jobs: &[Value]) -> Result<Vec<(i64, String)>, Dispa
     for build in build_records::in_state(db, "verifying").await? {
         if build
             .expires_at
-            .is_some_and(|at| at + chrono::Duration::minutes(30) <= now)
+            .is_some_and(|at| at + jiff::SignedDuration::from_mins(30) <= now)
         {
             let why = "the Portal stopped while it published the build".to_owned();
             build_records::finish(db, &build.project, build.id, Err(&why)).await?;
@@ -785,7 +787,7 @@ mod tests {
             requested_by: None,
             state: "pending".into(),
             expires_at: None,
-            created_at: chrono::Utc::now(),
+            created_at: jc_time::TimestampTz::now(),
             started_at: None,
             finished_at: None,
             digest: None,
@@ -1016,11 +1018,11 @@ mod tests {
     fn a_token_admits_its_pod_until_the_deadline_and_a_grace() {
         assert_eq!(
             Class::Node.token_lifetime(),
-            chrono::Duration::seconds(1200 + 300)
+            jiff::SignedDuration::from_secs(1200 + 300)
         );
         assert_eq!(
             Class::Rust.token_lifetime(),
-            chrono::Duration::seconds(1800 + 300)
+            jiff::SignedDuration::from_secs(1800 + 300)
         );
     }
 }

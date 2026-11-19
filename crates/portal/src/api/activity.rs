@@ -17,7 +17,7 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio_stream::wrappers::BroadcastStream;
@@ -60,11 +60,9 @@ impl ActivityQuery {
     pub fn into_filter(self) -> Result<ActivityFilter, ApiError> {
         let since = match &self.since {
             Some(text) => Some(
-                DateTime::parse_from_rfc3339(text)
-                    .map_err(|_| {
-                        ApiError::BadRequest(format!("'{text}' is not an RFC 3339 instant"))
-                    })?
-                    .with_timezone(&Utc),
+                jc_time::parse_rfc3339(text).map(TimestampTz).ok_or_else(|| {
+                    ApiError::BadRequest(format!("'{text}' is not an RFC 3339 instant"))
+                })?,
             ),
             None => None,
         };
@@ -332,8 +330,8 @@ fn event_of(record: &Value) -> Result<ActivityEvent, String> {
                 .and_then(|text| text.parse::<i64>().ok())
                 .or_else(|| value.as_i64())
         })
-        .map(DateTime::from_timestamp_nanos)
-        .unwrap_or_else(Utc::now);
+        .and_then(|nanos| jiff::Timestamp::from_nanosecond(i128::from(nanos)).ok())
+        .map_or_else(TimestampTz::now, TimestampTz);
 
     let summary = text("summary")
         .or_else(|| {
@@ -532,7 +530,7 @@ mod tests {
             event.correlation_id.as_deref(),
             Some("4bf92f3577b34da6a3ce929d0e0e4736")
         );
-        assert_eq!(event.time.timestamp(), 1_789_314_063);
+        assert_eq!(event.time.as_second(), 1_789_314_063);
         // Everything the vocabulary does not name is details, with its own type kept.
         assert_eq!(event.details["endpoint"], json!("public-air"));
         assert_eq!(event.details["requests"], json!(42));

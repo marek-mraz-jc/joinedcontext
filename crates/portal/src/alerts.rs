@@ -11,12 +11,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
-use chrono::{DateTime, Duration, Timelike, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{ts_to_odt, odt_to_ts};
 use crate::resource::Phase;
 use crate::store::Mirror;
 
@@ -180,8 +180,8 @@ pub struct Notice {
 pub struct Held {
     pub subject: String,
     pub subscription: Subscription,
-    pub muted_until: Option<DateTime<Utc>>,
-    pub digest_at: Option<DateTime<Utc>>,
+    pub muted_until: Option<TimestampTz>,
+    pub digest_at: Option<TimestampTz>,
 }
 
 /// `(project, pipeline, event)`.
@@ -192,14 +192,14 @@ pub type IncidentKey = (String, String, Event);
 pub struct Incident {
     pub key: IncidentKey,
     pub detail: String,
-    pub opened_at: DateTime<Utc>,
+    pub opened_at: TimestampTz,
 }
 
 #[derive(Debug, Default)]
 struct Memory {
     next: i64,
     subscriptions: Vec<Held>,
-    incidents: Vec<(Incident, Option<DateTime<Utc>>)>,
+    incidents: Vec<(Incident, Option<TimestampTz>)>,
     notices: Vec<(String, Notice)>,
 }
 
@@ -216,8 +216,8 @@ enum Inner {
 
 type Stamp = time::OffsetDateTime;
 
-pub(crate) fn rfc3339(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+pub(crate) fn rfc3339(at: TimestampTz) -> String {
+    at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
 }
 
 /// One row of `alert_incidents` as Postgres answers it: id, project, pipeline, event, detail,
@@ -251,8 +251,8 @@ type SubscriptionRow = (
 
 fn held_of(row: SubscriptionRow) -> Option<Held> {
     let (id, subject, project, scope, target, events, delivery, muted_until, digest_at) = row;
-    let muted_until = muted_until.map(odt_to_chrono);
-    let digest_at = digest_at.map(odt_to_chrono);
+    let muted_until = muted_until.map(odt_to_ts);
+    let digest_at = digest_at.map(odt_to_ts);
     Some(Held {
         subject,
         subscription: Subscription {
@@ -497,7 +497,7 @@ impl AlertStore {
         &self,
         subject: &str,
         id: i64,
-        until: Option<DateTime<Utc>>,
+        until: Option<TimestampTz>,
     ) -> Result<Option<Subscription>, sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
@@ -509,7 +509,7 @@ impl AlertStore {
                     )
                     .bind(id)
                     .bind(subject)
-                    .bind(until.map(chrono_to_odt))
+                    .bind(until.map(ts_to_odt))
                     .fetch_optional(&mut *tx)
                     .await?;
                     tx.commit().await?;
@@ -535,7 +535,7 @@ impl AlertStore {
     }
 
     /// Records that the subscription's digest was written at `at`.
-    async fn digested(&self, project: &str, id: i64, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    async fn digested(&self, project: &str, id: i64, at: TimestampTz) -> Result<(), sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 let Some(key) = crate::project_ids::key_of(pool, mirror, project).await? else {
@@ -544,7 +544,7 @@ impl AlertStore {
                 let mut tx = crate::db::tenant_tx(pool, key).await?;
                 sqlx::query("UPDATE alert_subscriptions SET digest_at = $2 WHERE id = $1")
                     .bind(id)
-                    .bind(chrono_to_odt(at))
+                    .bind(ts_to_odt(at))
                     .execute(&mut *tx)
                     .await?;
                 tx.commit().await
@@ -577,8 +577,8 @@ impl AlertStore {
     /// Incidents opened after `since` (every open one when `None`), with when they recovered.
     async fn incidents_since(
         &self,
-        since: Option<DateTime<Utc>>,
-    ) -> Result<Vec<(Incident, Option<DateTime<Utc>>)>, sqlx::Error> {
+        since: Option<TimestampTz>,
+    ) -> Result<Vec<(Incident, Option<TimestampTz>)>, sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 let mut rows: Vec<IncidentRow> = Vec::new();
@@ -590,7 +590,7 @@ impl AlertStore {
                              WHERE project = $2 AND (($1::timestamptz IS NULL AND recovered_at IS NULL) OR opened_at > $1) \
                              ORDER BY id",
                         )
-                        .bind(since.map(chrono_to_odt))
+                        .bind(since.map(ts_to_odt))
                         .bind(&project)
                         .fetch_all(&mut *tx)
                         .await?,
@@ -606,9 +606,9 @@ impl AlertStore {
                                 Incident {
                                     key: (project, pipeline, Event::parse(&event)?),
                                     detail,
-                                    opened_at: odt_to_chrono(opened_at),
+                                    opened_at: odt_to_ts(opened_at),
                                 },
-                                recovered_at.map(odt_to_chrono),
+                                recovered_at.map(odt_to_ts),
                             ))
                         },
                     )
@@ -630,7 +630,7 @@ impl AlertStore {
     }
 
     /// Opens an incident; a project with no tenancy key keeps none.
-    async fn open(&self, signal: &Signal, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    async fn open(&self, signal: &Signal, at: TimestampTz) -> Result<(), sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 let Some(key) = crate::project_ids::key_of(pool, mirror, &signal.key.0).await?
@@ -646,7 +646,7 @@ impl AlertStore {
                 .bind(&signal.key.1)
                 .bind(signal.key.2.as_str())
                 .bind(&signal.detail)
-                .bind(chrono_to_odt(at))
+                .bind(ts_to_odt(at))
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await
@@ -668,7 +668,7 @@ impl AlertStore {
         }
     }
 
-    async fn close(&self, key: &IncidentKey, at: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    async fn close(&self, key: &IncidentKey, at: TimestampTz) -> Result<(), sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 let Some(tenant) = crate::project_ids::key_of(pool, mirror, &key.0).await? else {
@@ -682,7 +682,7 @@ impl AlertStore {
                 .bind(&key.0)
                 .bind(&key.1)
                 .bind(key.2.as_str())
-                .bind(chrono_to_odt(at))
+                .bind(ts_to_odt(at))
                 .execute(&mut *tx)
                 .await?;
                 tx.commit().await
@@ -750,7 +750,7 @@ impl AlertStore {
                     event: key.2,
                     change: change.to_owned(),
                     detail: detail.to_owned(),
-                    created_at: rfc3339(Utc::now()),
+                    created_at: rfc3339(TimestampTz::now()),
                     read: false,
                 };
                 memory.notices.push((recipient.to_owned(), notice));
@@ -819,7 +819,7 @@ impl AlertStore {
                                 event: Event::parse(&event)?,
                                 change,
                                 detail,
-                                created_at: rfc3339(odt_to_chrono(created_at)),
+                                created_at: rfc3339(odt_to_ts(created_at)),
                                 read: read_at.is_some(),
                             })
                         },
@@ -1130,14 +1130,13 @@ pub fn step(
 }
 
 /// Whether the day's digest is due for a subscription at `now`.
-pub fn digest_due(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
-    if now.hour() < DIGEST_HOUR {
+pub fn digest_due(last: Option<TimestampTz>, now: TimestampTz) -> bool {
+    let utc = now.utc();
+    if u32::try_from(utc.hour()).unwrap_or_default() < DIGEST_HOUR {
         return false;
     }
-    let today = now
-        .date_naive()
-        .and_hms_opt(DIGEST_HOUR, 0, 0)
-        .map(|at| at.and_utc());
+    let today = TimestampTz::from_date(utc.date())
+        .and_then(|day| day.checked_add(jiff::SignedDuration::from_hours(i64::from(DIGEST_HOUR))));
     match (last, today) {
         (Some(last), Some(today)) => last < today,
         (None, _) => true,
@@ -1155,7 +1154,7 @@ pub struct Evaluator {
     /// The runs whose health opens `failure` and `zero` incidents (T-5048), and the signals of
     /// the last hourly reading of them.
     runs: Option<Arc<crate::pipeline_log::LogStore>>,
-    health: tokio::sync::Mutex<Option<(DateTime<Utc>, Vec<Signal>)>>,
+    health: tokio::sync::Mutex<Option<(TimestampTz, Vec<Signal>)>>,
     /// The health log every run's signals are written to (T-5067).
     log: Option<(
         Arc<crate::health_log::HealthStore>,
@@ -1234,7 +1233,7 @@ impl Evaluator {
         &self,
         open: &BTreeMap<IncidentKey, Incident>,
         signals: &mut Vec<Signal>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) {
         let Some(agents) = &self.agents else {
             return;
@@ -1260,7 +1259,7 @@ impl Evaluator {
         &self,
         pipelines: &[Watched],
         signals: &mut Vec<Signal>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<(), sqlx::Error> {
         let Some(runs) = &self.runs else {
             return Ok(());
@@ -1268,7 +1267,7 @@ impl Evaluator {
         let mut cached = self.health.lock().await;
         if cached
             .as_ref()
-            .is_none_or(|(at, _)| now - *at >= Duration::hours(1))
+            .is_none_or(|(at, _)| now - *at >= jiff::SignedDuration::from_hours(1))
         {
             let mut read = Vec::new();
             for pipeline in pipelines {
@@ -1311,14 +1310,14 @@ impl Evaluator {
     /// Starts a run in the background unless one is under way; the sync never waits.
     pub fn start(self: &Arc<Self>) {
         if let Some(links) = &self.links {
-            links.start_due(Utc::now());
+            links.start_due(TimestampTz::now());
         }
         if self.running.swap(true, Ordering::AcqRel) {
             return;
         }
         let evaluator = Arc::clone(self);
         tokio::spawn(async move {
-            if let Err(error) = evaluator.run(Utc::now()).await {
+            if let Err(error) = evaluator.run(TimestampTz::now()).await {
                 tracing::warn!(%error, "the alert run did not complete");
             }
             evaluator.running.store(false, Ordering::Release);
@@ -1326,7 +1325,7 @@ impl Evaluator {
     }
 
     /// One pass: open and close incidents, notify subscribers, write the digests that are due.
-    pub async fn run(&self, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+    pub async fn run(&self, now: TimestampTz) -> Result<(), sqlx::Error> {
         let (pipelines, mut signals) = read_pipelines(&self.mirror, &self.quality);
         self.add_holds(&mut signals).await?;
         self.add_health(&pipelines, &mut signals, now).await?;
@@ -1386,13 +1385,13 @@ impl Evaluator {
         if !digests.is_empty() {
             let day = self
                 .store
-                .incidents_since(Some(now - Duration::days(1)))
+                .incidents_since(Some(now - jiff::SignedDuration::from_hours(24 * 1)))
                 .await?;
             for held in digests {
                 let muted = held.muted_until.is_some_and(|until| until > now);
                 if !muted {
                     for (incident, recovered) in &day {
-                        let since = held.digest_at.unwrap_or(now - Duration::days(1));
+                        let since = held.digest_at.unwrap_or(now - jiff::SignedDuration::from_hours(24 * 1));
                         let covered = covers_key(&held.subscription, &incident.key, &pipelines);
                         if incident.opened_at > since
                             && covered
@@ -1428,7 +1427,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         text.parse().unwrap()
     }
 
@@ -1642,7 +1641,7 @@ mod tests {
             None,
             Default::default(),
         ));
-        let run = agent_run("r1", &rfc3339(Utc::now() - Duration::minutes(10)));
+        let run = agent_run("r1", &rfc3339(TimestampTz::now() - jiff::SignedDuration::from_mins(10)));
         agents.create_run(&run).await.unwrap();
         for _ in 0..crate::api::agent_activity::REFUSAL_SPIKE {
             agents
@@ -1655,7 +1654,7 @@ mod tests {
                 .unwrap();
         }
         // After the refusals: a signal counts only what happened up to the evaluator's now.
-        let now = Utc::now() + Duration::seconds(1);
+        let now = TimestampTz::now() + jiff::SignedDuration::from_secs(1);
         let mirror = mirror();
         let store = Arc::new(AlertStore::new(None, Default::default()));
         let evaluator = Evaluator::new(
@@ -1694,8 +1693,8 @@ mod tests {
                 .expect("kept");
         }
         evaluator.run(now).await.unwrap();
-        evaluator.run(now + Duration::minutes(1)).await.unwrap();
-        evaluator.run(now + Duration::hours(2)).await.unwrap();
+        evaluator.run(now + jiff::SignedDuration::from_mins(1)).await.unwrap();
+        evaluator.run(now + jiff::SignedDuration::from_hours(2)).await.unwrap();
 
         let told = store.notices(&["jana".into()]).await.unwrap();
         assert_eq!(
@@ -1768,7 +1767,7 @@ mod tests {
             message: "below 0".into(),
         };
         tally.add(&entity, None, &[problem]);
-        let report = tally.into_quality(chrono::Utc::now(), Vec::new());
+        let report = tally.into_quality(jc_time::TimestampTz::now(), Vec::new());
         quality.put("helsinki", "mobility", report.clone());
         let (_, signals) = read_pipelines(&mirror, &quality);
         assert_eq!(

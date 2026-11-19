@@ -12,7 +12,7 @@
 use crate::config::ClientAuth;
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::GroupSpec;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -130,7 +130,7 @@ fn teams_of(slug: &str) -> [String; 2] {
 pub fn derived_groups(
     mirror: &Mirror,
     projects: &BTreeMap<String, String>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<DerivedGroup> {
     let of_projects = projects.keys().flat_map(|slug| {
         let members = project_members(mirror, slug, now);

@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -122,29 +122,30 @@ impl CostPrices {
 
 /// The calendar month `text` names (`2026-09`), as its first instant and the next month's; or
 /// why not. A month that has not started is refused: it has no cost yet.
-pub fn month(text: &str, now: DateTime<Utc>) -> Result<(DateTime<Utc>, DateTime<Utc>), String> {
+pub fn month(text: &str, now: TimestampTz) -> Result<(TimestampTz, TimestampTz), String> {
     let first = (text.len() == 7)
-        .then(|| NaiveDate::parse_from_str(&format!("{text}-01"), "%Y-%m-%d").ok())
+        .then(|| jc_time::parse_date(&format!("{text}-01")))
         .flatten()
         .ok_or_else(|| format!("month '{text}' is no month such as 2026-09"))?;
-    let start = Utc.from_utc_datetime(&first.and_time(chrono::NaiveTime::MIN));
+    let out_of_range = || format!("month '{text}' is out of range");
+    let start = TimestampTz::from_date(first).ok_or_else(out_of_range)?;
     if start > now {
         return Err(format!("month '{text}' has not started yet"));
     }
     let next = first
-        .checked_add_months(chrono::Months::new(1))
-        .ok_or_else(|| format!("month '{text}' is out of range"))?;
-    Ok((
-        start,
-        Utc.from_utc_datetime(&next.and_time(chrono::NaiveTime::MIN)),
-    ))
+        .checked_add(jiff::Span::new().months(1))
+        .ok()
+        .and_then(TimestampTz::from_date)
+        .ok_or_else(out_of_range)?;
+    Ok((start, next))
 }
 
 /// The month before `now`'s, as `2026-09`: the last one billed whole.
-pub fn last_month(now: DateTime<Utc>) -> String {
-    let (year, month) = match now.month() {
-        1 => (now.year() - 1, 12),
-        m => (now.year(), m - 1),
+pub fn last_month(now: TimestampTz) -> String {
+    let day = now.utc();
+    let (year, month) = match day.month() {
+        1 => (day.year() - 1, 12),
+        m => (day.year(), m - 1),
     };
     format!("{year:04}-{month:02}")
 }
@@ -487,7 +488,7 @@ mod tests {
 
     #[test]
     fn a_month_is_a_started_calendar_month() {
-        let now = Utc.with_ymd_and_hms(2026, 10, 22, 1, 0, 0).unwrap();
+        let now = jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 10, 22, 1, 0, 0, 0)).expect("an instant"));
         let (from, to) = month("2026-09", now).expect("September");
         assert_eq!(from.to_rfc3339(), "2026-09-01T00:00:00+00:00");
         assert_eq!(to.to_rfc3339(), "2026-10-01T00:00:00+00:00");
@@ -502,7 +503,7 @@ mod tests {
         }
         assert_eq!(last_month(now), "2026-09");
         assert_eq!(
-            last_month(Utc.with_ymd_and_hms(2026, 1, 5, 0, 0, 0).unwrap()),
+            last_month(jc_time::TimestampTz(jiff::tz::Offset::UTC.to_timestamp(jiff::civil::datetime(2026, 1, 5, 0, 0, 0, 0)).expect("an instant"))),
             "2025-12"
         );
     }

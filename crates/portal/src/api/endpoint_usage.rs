@@ -7,7 +7,7 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::NaiveDate;
+use jiff::civil::Date as NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use utoipa::{IntoParams, ToSchema};
@@ -139,7 +139,7 @@ pub async fn get_endpoint_usage(
             "endpoint '{name}' not found in project '{project}'"
         )));
     }
-    let (from, to) = window(chrono::Utc::now().date_naive(), days);
+    let (from, to) = window(jc_time::TimestampTz::now().utc().date(), days);
     let rows = stored(&state, &project, from, to).await?;
     Ok(Json(usage(&name, from, to, &rows)))
 }
@@ -167,7 +167,7 @@ pub async fn list_project_usage(
 ) -> Result<Json<ProjectUsage>, ApiError> {
     let days = days_of(&query)?;
     let endpoints = readable(&state, &user, &project)?;
-    let (from, to) = window(chrono::Utc::now().date_naive(), days);
+    let (from, to) = window(jc_time::TimestampTz::now().utc().date(), days);
     let rows = stored(&state, &project, from, to).await?;
     Ok(Json(ProjectUsage {
         from: from.to_string(),

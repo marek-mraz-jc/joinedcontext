@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::mqtt_broker::{MqttCapture, MqttMode};
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS, SubscribeFilter};
 
@@ -138,15 +138,15 @@ pub fn client_of(publish: &[String], topic: &str) -> Option<String> {
 pub struct Message {
     pub topic: String,
     pub client_id: Option<String>,
-    pub received_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub received_at: TimestampTz,
+    pub expires_at: TimestampTz,
     pub payload: Vec<u8>,
 }
 
 /// Keeps the newest of a broker's `messages` (oldest first) within its caps: none past its
 /// window, at most `per_topic` per topic, [`BROKER_MESSAGES`] and [`BROKER_BYTES`] in all.
 /// Once the count or the bytes are reached, every older message goes too.
-pub fn trim(messages: &mut VecDeque<Message>, per_topic: usize, now: DateTime<Utc>) {
+pub fn trim(messages: &mut VecDeque<Message>, per_topic: usize, now: TimestampTz) {
     let mut topics: HashMap<String, usize> = HashMap::new();
     let (mut count, mut bytes, mut full) = (0usize, 0usize, false);
     let mut kept = VecDeque::with_capacity(messages.len().min(BROKER_MESSAGES));
@@ -175,8 +175,8 @@ type Key = (String, String);
 type Row = (String, Option<String>, i64, i64, Vec<u8>);
 
 /// A stored instant, in milliseconds since the epoch: this crate's sqlx reads no chrono type.
-fn at(millis: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp_millis(millis).unwrap_or_default()
+fn at(millis: i64) -> TimestampTz {
+    jc_time::TimestampTz::from_millis(millis).unwrap_or_default()
 }
 
 enum Inner {
@@ -227,7 +227,7 @@ impl CaptureStore {
         broker: &str,
         per_topic: usize,
         batch: Vec<Message>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<(), sqlx::Error> {
         let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
@@ -254,8 +254,8 @@ impl CaptureStore {
             for message in batch {
                 topics.push(message.topic);
                 clients.push(message.client_id);
-                received.push(message.received_at.timestamp_millis());
-                expires.push(message.expires_at.timestamp_millis());
+                received.push(message.received_at.as_millis());
+                expires.push(message.expires_at.as_millis());
                 payloads.push(message.payload);
             }
             sqlx::query(
@@ -277,7 +277,7 @@ impl CaptureStore {
         sqlx::query(TRIM)
             .bind(project)
             .bind(broker)
-            .bind(now.timestamp_millis())
+            .bind(now.as_millis())
             .bind(i64::try_from(per_topic).unwrap_or(i64::MAX))
             .bind(BROKER_MESSAGES as i64)
             .bind(BROKER_BYTES as i64)
@@ -294,7 +294,7 @@ impl CaptureStore {
         broker: &str,
         topic: Option<&str>,
         limit: usize,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<(Vec<Message>, bool), sqlx::Error> {
         let mut found: Vec<Message> = match &self.inner {
             Inner::Memory(memory) => Self::memory(memory)
@@ -321,7 +321,7 @@ impl CaptureStore {
                 )
                 .bind(project)
                 .bind(broker)
-                .bind(now.timestamp_millis())
+                .bind(now.as_millis())
                 .bind(topic)
                 .bind(i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX))
                 .fetch_all(&mut *tx)
@@ -374,7 +374,7 @@ impl CaptureStore {
     pub async fn sweep(
         &self,
         capturing: &BTreeSet<Key>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<u64, sqlx::Error> {
         match &self.inner {
             Inner::Memory(memory) => {
@@ -400,7 +400,7 @@ impl CaptureStore {
                         "DELETE FROM mqtt_capture WHERE project = $2 \
                          AND (expires_at <= to_timestamp($1 / 1000.0) OR NOT (broker = ANY($3)))",
                     )
-                    .bind(now.timestamp_millis())
+                    .bind(now.as_millis())
                     .bind(&project)
                     .bind(&brokers)
                     .execute(&mut *tx)
@@ -469,7 +469,7 @@ impl Capture {
             return;
         }
         let capturing = wanted.values().map(Target::key).collect();
-        match self.store.sweep(&capturing, Utc::now()).await {
+        match self.store.sweep(&capturing, TimestampTz::now()).await {
             Ok(0) => {}
             Ok(gone) => tracing::info!(messages = gone, "MQTT capture swept"),
             Err(error) => tracing::warn!(%error, "the MQTT capture was not swept"),
@@ -512,13 +512,13 @@ async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
                     }
                 }
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
-                    let received_at = Utc::now();
+                    let received_at = TimestampTz::now();
                     bytes = bytes.saturating_add(publish.payload.len());
                     buffer.push_back(Message {
                         client_id: client_of(&target.publish, &publish.topic),
                         topic: publish.topic,
                         received_at,
-                        expires_at: received_at + chrono::Duration::seconds(target.window),
+                        expires_at: received_at + jiff::SignedDuration::from_secs(target.window),
                         payload: publish.payload.to_vec(),
                     });
                     while buffer.len() > BROKER_MESSAGES || bytes > BROKER_BYTES {
@@ -540,7 +540,7 @@ async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
                 let batch: Vec<Message> = std::mem::take(&mut buffer).into();
                 bytes = 0;
                 if let Err(error) = store
-                    .keep(&target.project, &target.name, target.per_topic, batch, Utc::now())
+                    .keep(&target.project, &target.name, target.per_topic, batch, TimestampTz::now())
                     .await
                 {
                     tracing::warn!(broker = %target.release, %error, "the MQTT capture was not stored");
@@ -554,7 +554,7 @@ async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
 mod tests {
     use super::*;
 
-    fn at(second: i64) -> DateTime<Utc> {
+    fn at(second: i64) -> TimestampTz {
         DateTime::from_timestamp(1_800_000_000 + second, 0).unwrap_or_default()
     }
 
@@ -568,7 +568,7 @@ mod tests {
         }
     }
 
-    fn topics(messages: &VecDeque<Message>) -> Vec<(String, DateTime<Utc>)> {
+    fn topics(messages: &VecDeque<Message>) -> Vec<(String, TimestampTz)> {
         messages
             .iter()
             .map(|m| (m.topic.clone(), m.received_at))
@@ -672,9 +672,9 @@ mod tests {
     #[tokio::test]
     async fn a_subscriber_runs_per_capture_broker_and_its_capture_goes_with_the_mode() {
         let store = Arc::new(CaptureStore::new(None, Default::default()));
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let fresh = |topic: &str| Message {
-            expires_at: now + chrono::Duration::hours(1),
+            expires_at: now + jiff::SignedDuration::from_hours(1),
             ..message(topic, 0, 1)
         };
         for name in ["cams", "old"] {

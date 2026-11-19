@@ -872,7 +872,7 @@ async fn widget_rows(
             let method = aggr_method
                 .and_then(|m| serde_json::to_value(m).ok())
                 .and_then(|m| m.as_str().map(str::to_owned));
-            let since = chrono::Utc::now() - chrono::Duration::seconds(window);
+            let since = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(window);
             let query = DataQueryInput {
                 endpoint: endpoint.to_owned(),
                 entity_type: Some(entity_type.clone()),
@@ -887,7 +887,7 @@ async fn widget_rows(
                 ),
                 temporal: Some(data_query::Temporal {
                     timerel: "after".into(),
-                    time_at: since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    time_at: since.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
                     end_time_at: None,
                     last_n: None,
                     aggr_methods: method.iter().cloned().collect(),

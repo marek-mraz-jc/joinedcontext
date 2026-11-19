@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::QualityRule;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -24,14 +24,14 @@ use crate::api::pipelines::{label, parse_line};
 /// The gateway's counter (DM-93).
 pub const METRIC: &str = "jc_quality_checks_total";
 /// The two windows, by the name the answer gives them.
-const DAY: chrono::Duration = chrono::Duration::hours(24);
-const WEEK: chrono::Duration = chrono::Duration::days(7);
+const DAY: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
+const WEEK: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
 /// How long a reading is kept: the week and a day of slack.
-const KEEP: chrono::Duration = chrono::Duration::days(8);
+const KEEP: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 8);
 /// The gap between two kept readings, and the period of the background reading.
-const HOURLY: chrono::Duration = chrono::Duration::hours(1);
+const HOURLY: jiff::SignedDuration = jiff::SignedDuration::from_hours(1);
 /// A latest reading younger than this answers a request without asking the gateway again.
-const MIN_GAP: chrono::Duration = chrono::Duration::seconds(60);
+const MIN_GAP: jiff::SignedDuration = jiff::SignedDuration::from_secs(60);
 const TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One counter: space, type, rule, outcome.
@@ -40,7 +40,7 @@ type Key = (String, String, String, String);
 /// What the gateway's counters said at one moment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Reading {
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub counts: BTreeMap<Key, f64>,
 }
 
@@ -89,7 +89,7 @@ pub struct RuleChecks {
     pub week: Counts,
     /// The reading at which the rule's `reject` counter last grew, inside seven days.
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub last_rejected: Option<DateTime<Utc>>,
+    pub last_rejected: Option<TimestampTz>,
 }
 
 /// Where each window starts: its oldest reading.
@@ -97,10 +97,10 @@ pub struct RuleChecks {
 pub struct Windows {
     #[serde(rename = "24h")]
     #[schema(value_type = String, format = DateTime)]
-    pub day: DateTime<Utc>,
+    pub day: TimestampTz,
     #[serde(rename = "7d")]
     #[schema(value_type = String, format = DateTime)]
-    pub week: DateTime<Utc>,
+    pub week: TimestampTz,
 }
 
 /// The answer of `GET …/spaces/{space}/quality/checks`.
@@ -108,7 +108,7 @@ pub struct Windows {
 pub struct SpaceChecks {
     /// The newest reading; `null` while there is none.
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub at: Option<DateTime<Utc>>,
+    pub at: Option<TimestampTz>,
     pub windows: Option<Windows>,
     pub rules: Vec<RuleChecks>,
 }
@@ -175,7 +175,7 @@ impl Readings {
         }
         let text = response.text().await.map_err(|e| e.to_string())?;
         self.record(Reading {
-            at: Utc::now(),
+            at: TimestampTz::now(),
             counts: parse(&text),
         });
         Ok(())
@@ -189,7 +189,7 @@ impl Readings {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
-            .is_none_or(|latest| Utc::now() - latest.at >= MIN_GAP);
+            .is_none_or(|latest| TimestampTz::now() - latest.at >= MIN_GAP);
         if due {
             if let Err(err) = self.read().await {
                 tracing::warn!(error = %err, "the gateway's quality counters were not read");
@@ -206,7 +206,7 @@ impl Readings {
         let readings = Arc::clone(self);
         tokio::spawn(async move {
             let mut tick =
-                tokio::time::interval(HOURLY.to_std().unwrap_or(Duration::from_secs(3600)));
+                tokio::time::interval(HOURLY.unsigned_abs());
             loop {
                 tick.tick().await;
                 if let Err(err) = readings.read().await {
@@ -233,7 +233,7 @@ impl Readings {
         };
         let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner()).clone();
         // The oldest reading inside a window is its base; none inside means the window starts now.
-        let base = |window: chrono::Duration| {
+        let base = |window: jiff::SignedDuration| {
             kept.iter()
                 .find(|reading| reading.at >= latest.at - window)
                 .unwrap_or(&latest)
@@ -324,8 +324,8 @@ impl Readings {
 mod tests {
     use super::*;
 
-    fn at(hours: i64) -> DateTime<Utc> {
-        "2026-10-12T00:00:00Z".parse::<DateTime<Utc>>().unwrap() + chrono::Duration::hours(hours)
+    fn at(hours: i64) -> TimestampTz {
+        "2026-10-12T00:00:00Z".parse::<TimestampTz>().unwrap() + jiff::SignedDuration::from_hours(hours)
     }
 
     fn reading(hours: i64, counts: &[(&str, &str, &str, f64)]) -> Reading {
@@ -451,7 +451,7 @@ mod tests {
         let readings = Readings::new(None);
         for minutes in [0, 30, 60] {
             readings.record(Reading {
-                at: at(0) + chrono::Duration::minutes(minutes),
+                at: at(0) + jiff::SignedDuration::from_mins(minutes),
                 counts: BTreeMap::new(),
             });
         }

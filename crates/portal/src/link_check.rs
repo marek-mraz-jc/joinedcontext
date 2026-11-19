@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use futures_util::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -30,7 +30,7 @@ use utoipa::ToSchema;
 use crate::store::Mirror;
 
 /// How often the links are asked.
-pub const EVERY: Duration = Duration::days(7);
+pub const EVERY: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
 /// The pause between two requests to one host.
 pub const PER_HOST: StdDuration = StdDuration::from_secs(1);
 /// How long one request waits for its answer.
@@ -129,10 +129,10 @@ pub fn fold(
     previous: Option<&Links>,
     outcomes: &[(String, Outcome)],
     elsewhere: usize,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Links {
     let mut links = Links {
-        checked_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        checked_at: now.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
         skipped: elsewhere,
         ..Links::default()
     };
@@ -539,13 +539,12 @@ impl LinkStore {
     }
 
     /// When the newest check ran, over every pipeline, read project by project (STO-07).
-    pub async fn newest(&self) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+    pub async fn newest(&self) -> Result<Option<TimestampTz>, sqlx::Error> {
         let Some(pool) = &self.db else {
             let memory = self.memory.read().unwrap_or_else(|p| p.into_inner());
             return Ok(memory
                 .values()
-                .filter_map(|l| DateTime::parse_from_rfc3339(&l.checked_at).ok())
-                .map(|t| t.with_timezone(&Utc))
+                .filter_map(|l| jc_time::parse_rfc3339(&l.checked_at).map(TimestampTz))
                 .max());
         };
         let mut newest: Option<time::OffsetDateTime> = None;
@@ -559,7 +558,7 @@ impl LinkStore {
             tx.commit().await?;
             newest = newest.max(row.0);
         }
-        Ok(newest.and_then(|t| DateTime::from_timestamp(t.unix_timestamp(), 0)))
+        Ok(newest.and_then(|t| jc_time::TimestampTz::from_second(t.unix_timestamp())))
     }
 }
 
@@ -609,7 +608,7 @@ impl Checker {
     }
 
     /// Starts a run in the background when the newest is [`EVERY`] old and none is under way.
-    pub fn start_due(self: &Arc<Self>, now: DateTime<Utc>) {
+    pub fn start_due(self: &Arc<Self>, now: TimestampTz) {
         if self.running.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -625,7 +624,7 @@ impl Checker {
     }
 
     /// One pass over every space.
-    pub async fn run(&self, now: DateTime<Utc>) {
+    pub async fn run(&self, now: TimestampTz) {
         let mut plans = Vec::new();
         let mut inventoried = BTreeSet::new();
         for space in spaces(&self.mirror) {
@@ -890,7 +889,7 @@ mod tests {
 
     #[test]
     fn a_link_failing_twice_in_a_row_is_dead_and_an_answer_clears_it() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let bad = |status| Outcome::Failed {
             status: Some(status),
             error: None,
@@ -936,7 +935,7 @@ mod tests {
     /// The database keeps the failures in a row, so a link failing in two stored checks is dead.
     #[test]
     fn a_stored_check_keeps_the_failures_the_next_check_counts_on() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let bad = || Outcome::Failed {
             status: Some(404),
             error: None,
@@ -956,7 +955,7 @@ mod tests {
 
     #[test]
     fn the_view_lists_the_first_five_dead_links_and_counts_them_all() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let outcomes = (0..7)
             .map(|i| {
                 (
@@ -1128,7 +1127,7 @@ mod tests {
 
     #[test]
     fn a_failure_of_a_slow_host_twice_in_a_row_flags_the_source() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let slow = [(
             "https://a.sk/slow".to_owned(),
             Outcome::Failed {
@@ -1258,7 +1257,7 @@ mod tests {
             Arc::clone(&store),
             Url::parse(&format!("http://{at}/")).expect("gateway"),
         );
-        let now = Utc::now();
+        let now = TimestampTz::now();
         checker.run(now).await;
         let links = store
             .get("bbsk", "podujatia-a")
@@ -1267,8 +1266,8 @@ mod tests {
             .expect("kept");
         assert_eq!((links.checked, links.skipped, links.dead_count), (0, 2, 0));
         assert_eq!(
-            store.newest().await.expect("newest").map(|t| t.timestamp()),
-            Some(now.timestamp())
+            store.newest().await.expect("newest").map(|t| t.as_second()),
+            Some(now.as_second())
         );
         let asked = asked.lock().expect("asked").clone();
         assert_eq!(asked.len(), 1, "{asked:?}");

@@ -1136,15 +1136,15 @@ fn grounding(state: &AppState) -> Value {
         .as_ref()
         .map(|syncer| syncer.status())
         .unwrap_or_default();
-    grounding_of(&status, chrono::Utc::now())
+    grounding_of(&status, jc_time::TimestampTz::now())
 }
 
 fn grounding_of(
     status: &crate::reconciler::SyncStatus,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> Value {
     let utc =
-        |at: chrono::DateTime<chrono::Utc>| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        |at: jc_time::TimestampTz| at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     let drift = match (&status.last_sync, &status.last_error) {
         (None, _) => "unsynced",
         (Some(_), Some(_)) => "sync-failed",
@@ -1154,7 +1154,7 @@ fn grounding_of(
         "revision": status.revision,
         "syncedAt": status
             .last_sync
-            .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+            .and_then(|secs| jc_time::TimestampTz::from_second(secs))
             .map(utc),
         "evaluatedAt": utc(now),
         "drift": drift,
@@ -1530,7 +1530,7 @@ async fn record_call(
         details["change"] = json!(change);
     }
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "mcp.tool".to_owned(),
@@ -2272,7 +2272,7 @@ mod tests {
     #[test]
     fn drift_says_whether_the_answer_may_be_behind_the_repository() {
         let now =
-            chrono::DateTime::<chrono::Utc>::from_timestamp(1_790_000_000, 0).expect("a time");
+            jc_time::TimestampTz::from_second(1_790_000_000).expect("a time");
         let synced = SyncStatus {
             last_sync: Some(1_789_999_940),
             revision: Some("4f2c1ab".into()),

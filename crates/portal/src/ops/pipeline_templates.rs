@@ -5,14 +5,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::Row;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{ts_to_odt, odt_to_ts};
 use crate::ops::data_views::new_id;
 
 /// Templates one project may hold.
@@ -30,7 +30,7 @@ pub struct PipelineTemplate {
     pub spec: Value,
     pub created_by: String,
     #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -178,7 +178,7 @@ impl TemplateStore {
                             title: row.get("title"),
                             spec: row.get("spec"),
                             created_by: row.get("created_by"),
-                            created_at: odt_to_chrono(row.get("created_at")),
+                            created_at: odt_to_ts(row.get("created_at")),
                         })
                     })
                     .collect()
@@ -206,7 +206,7 @@ impl TemplateStore {
             title: title.to_owned(),
             spec: template_spec(&request.manifest)?,
             created_by: created_by.to_owned(),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         };
         match &*self.inner {
             Inner::Memory(map) => {
@@ -243,7 +243,7 @@ impl TemplateStore {
                 .bind(&template.title)
                 .bind(&template.spec)
                 .bind(&template.created_by)
-                .bind(chrono_to_odt(template.created_at))
+                .bind(ts_to_odt(template.created_at))
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;

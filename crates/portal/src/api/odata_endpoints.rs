@@ -259,7 +259,7 @@ fn reference_to<'a>(
 /// Calls per own Endpoint in the last 7 days, as the gateways count them (T-5118); `None` when
 /// the usage database does not answer, so the rows still show and the count reads as unknown.
 async fn calls_7d(state: &AppState, project: &str) -> Option<HashMap<String, u64>> {
-    let (from, to) = crate::endpoint_usage::window(chrono::Utc::now().date_naive(), 7);
+    let (from, to) = crate::endpoint_usage::window(jc_time::TimestampTz::now().utc().date(), 7);
     match state.endpoint_usage.read(project, from, to).await {
         Ok(rows) => Some(rows.iter().fold(HashMap::new(), |mut totals, row| {
             *totals.entry(row.name.clone()).or_insert(0) += row.calls;

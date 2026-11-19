@@ -1800,7 +1800,7 @@ mod tests {
             touched_by: by.to_owned(),
             touched_kind: "assistant".to_owned(),
             version: 1,
-            updated_at: chrono::Utc::now(),
+            updated_at: jc_time::TimestampTz::now(),
         }
     }
 

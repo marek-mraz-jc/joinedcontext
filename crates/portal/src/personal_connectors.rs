@@ -12,7 +12,7 @@
 //! their DelegationPolicy ceiling admits, so a moved connector never names what its owner cannot
 //! see. Neither the start-up nor the gateway's listener knows a person's groups, so neither moves.
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::Audience;
 use jc_core::kinds::EndpointSpec;
 use jc_core::reach::EndpointFacts;
@@ -244,7 +244,7 @@ pub fn adopted(old: &Old, endpoints: &[EndpointFacts], ceiling: &Ceiling) -> Opt
         kinds: None,
         writes: false,
         autonomous: false,
-        expires_at: Utc::now() + Duration::days(ceiling.max_days()),
+        expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24 * ceiling.max_days()),
         allowed_clients: Vec::new(),
     })
 }
@@ -282,7 +282,7 @@ fn readable(
 
 /// Why `ceiling` would not let `new` go live at once, `None` when it does.
 fn refused(new: &NewConnector, ceiling: &Ceiling) -> Option<String> {
-    match crate::connectors::validate(new, ceiling, Utc::now()) {
+    match crate::connectors::validate(new, ceiling, TimestampTz::now()) {
         Ok(above) if above.is_empty() => None,
         Ok(above) => Some(above.join("; ")),
         Err(refusal) => Some(refusal.to_string()),
@@ -542,7 +542,7 @@ mod tests {
         assert!(!new.writes);
         assert!(new.scope.iter().all(|i| i.access == ItemAccess::Read));
         let within =
-            crate::connectors::validate(&new, &Ceiling::of_policies(Vec::new()), Utc::now())
+            crate::connectors::validate(&new, &Ceiling::of_policies(Vec::new()), TimestampTz::now())
                 .expect("a valid request");
         assert!(within.is_empty(), "within the default ceiling: {within:?}");
         let none: Old = serde_json::from_value(

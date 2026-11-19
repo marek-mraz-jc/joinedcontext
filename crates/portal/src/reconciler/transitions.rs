@@ -183,7 +183,7 @@ mod tests {
         mirror.upsert(app(vec![ready("False", "NoBuild", now)]));
         let before = Transitions::of(&mirror);
         let fresh = Mirror::new();
-        let later = now + chrono::Duration::minutes(1);
+        let later = now + jiff::SignedDuration::minutes(1);
         fresh.upsert(app(vec![ready("False", "NoBuild", later)]));
         before.keep_all(&fresh);
         let kept = fresh

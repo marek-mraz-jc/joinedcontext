@@ -210,7 +210,7 @@ pub struct ConnectorPatch {
     /// RFC 3339, e.g. `2026-11-27T00:00:00Z`.
     #[serde(default)]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expires_at: Option<jc_time::TimestampTz>,
     #[serde(default)]
     pub allowed_clients: Option<Vec<String>>,
 }
@@ -635,7 +635,7 @@ pub async fn create_connector(
     in_the_portal(&state, identity)?;
     let Json(new) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     let ceiling = Ceiling::of(&state.mirror, identity);
-    let above = connectors::validate(&new, &ceiling, chrono::Utc::now())?;
+    let above = connectors::validate(&new, &ceiling, jc_time::TimestampTz::now())?;
     reachable(&state, &user.0, &headers, &new).await?;
     may_be_autonomous(&state, identity, &new)?;
     match params.dry_run.as_deref() {
@@ -735,7 +735,7 @@ pub async fn edit_connector(
     let above = connectors::validate(
         &new,
         &Ceiling::of(&state.mirror, identity),
-        chrono::Utc::now(),
+        jc_time::TimestampTz::now(),
     )?;
     reachable(&state, &user.0, &headers, &new).await?;
     may_be_autonomous(&state, identity, &new)?;
@@ -980,8 +980,8 @@ pub(crate) async fn notify_expiring(
     identity: &Identity,
     me: &str,
 ) -> Result<(), ApiError> {
-    let now = chrono::Utc::now();
-    let soon = now + chrono::Duration::days(EXPIRY_NOTICE_DAYS);
+    let now = jc_time::TimestampTz::now();
+    let soon = now + jiff::SignedDuration::from_hours(24 * EXPIRY_NOTICE_DAYS);
     for connector in state
         .connectors
         .of_owner(&identity.subject, &base(state))
@@ -993,7 +993,7 @@ pub(crate) async fn notify_expiring(
         let key = format!(
             "connector.expiring:{}:{}",
             connector.id,
-            connector.expires_at.timestamp()
+            connector.expires_at.as_second()
         );
         state
             .comments
@@ -1117,7 +1117,7 @@ pub struct PairedTab {
     pub name: String,
     /// When the pairing ends with the session, unless the person disconnects before.
     #[schema(value_type = String, format = DateTime)]
-    pub until: chrono::DateTime<chrono::Utc>,
+    pub until: jc_time::TimestampTz,
 }
 
 /// The person signed in in a browser: a tab is paired by its person, never by a workload or by a
@@ -1137,7 +1137,7 @@ fn in_a_browser(state: &AppState, identity: &Identity) -> Result<(), ApiError> {
 /// One row of the connector's audit for its tab: who paired or let it go.
 async fn audit_tab(state: &AppState, identity: &Identity, id: &str, tool: &str) {
     let call = Call {
-        at: chrono::Utc::now(),
+        at: jc_time::TimestampTz::now(),
         subject: identity.subject.clone(),
         client: identity.client.clone(),
         tool: tool.to_owned(),
@@ -1185,7 +1185,7 @@ pub async fn pair_tab(
         session.expires_at,
     );
     audit_tab(&state, &session.identity, &connector.id, "tab/connect").await;
-    let until = chrono::DateTime::from_timestamp(session.expires_at, 0).unwrap_or_default();
+    let until = jc_time::TimestampTz::from_second(session.expires_at).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
         Json(PairedTab {
@@ -1346,7 +1346,7 @@ mod tests {
             }]),
             writes,
             autonomous: false,
-            expires_at: chrono::Utc::now(),
+            expires_at: jc_time::TimestampTz::now(),
             allowed_clients: vec![],
         };
         let fine = ask(&["data-read"], false, vec![ConnectorVerb::Read]);
@@ -1440,7 +1440,7 @@ mod tests {
         let new: NewConnector = serde_json::from_value(json!({
             "name": format!("asks-{access}"), "segments": ["data-read"],
             "scope": [{ "project": "doprava", "access": access }], "writes": writes,
-            "expiresAt": (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1)).to_rfc3339(),
         }))
         .expect("request");
         state
@@ -1502,7 +1502,7 @@ mod tests {
                 let new: NewConnector = serde_json::from_value(json!({
                     "name": name, "segments": ["data-read"], "kinds": kinds,
                     "scope": [{ "project": "doprava", "access": "write" }], "writes": true,
-                    "expiresAt": (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+                    "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 1)).to_rfc3339(),
                 }))
                 .expect("request");
                 state
@@ -1605,7 +1605,7 @@ mod tests {
     }
 
     fn body(name: &str) -> Result<Json<NewConnector>, JsonRejection> {
-        let expires = chrono::Utc::now() + chrono::Duration::days(7);
+        let expires = jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7);
         Ok(Json(
             serde_json::from_value(json!({
                 "name": name, "segments": ["data-read"],
@@ -1895,7 +1895,7 @@ mod tests {
             .collect();
         assert_eq!(offered, vec![(CLAUDE_CODE, false), (CLAUDE_AI, true)]);
         // Offering a client grants nothing: create still refuses a realm client the policy omits.
-        let days = (chrono::Utc::now() + chrono::Duration::days(5)).to_rfc3339();
+        let days = (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 5)).to_rfc3339();
         let ask = |client: &str| {
             let new: NewConnector = serde_json::from_value(json!({
                 "name": "air", "segments": ["data-read"], "expiresAt": days,
@@ -1903,7 +1903,7 @@ mod tests {
             }))
             .expect("new");
             let ceiling = Ceiling::of(&state.mirror, &user("reader@hel.fi").0.identity);
-            connectors::validate(&new, &ceiling, chrono::Utc::now()).map(|above| above.len())
+            connectors::validate(&new, &ceiling, jc_time::TimestampTz::now()).map(|above| above.len())
         };
         assert_eq!(ask(CLAUDE_AI).ok(), Some(0));
         assert!(
@@ -1928,7 +1928,7 @@ mod tests {
         );
         assert_eq!(options.ceiling.segments, vec!["data-read"]);
 
-        let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+        let expires = (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
         let new: NewConnector = serde_json::from_value(json!({
             "name": "air", "segments": ["data-read"], "expiresAt": expires,
             "scope": [{ "project": "helsinki", "access": "read" }]
@@ -2061,7 +2061,7 @@ mod tests {
             ORG_NAMESPACE,
             json!({ "subjects": [{ "user": "reader@hel.fi" }], "role": "reader", "scope": { "project": "espoo" } }),
         ));
-        let days = |n: i64| (chrono::Utc::now() + chrono::Duration::days(n)).to_rfc3339();
+        let days = |n: i64| (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * n)).to_rfc3339();
         let new: NewConnector = serde_json::from_value(json!({
             "name": "air", "segments": ["data-read"], "expiresAt": days(5),
             "scope": [{ "project": "helsinki", "access": "read" }]
@@ -2191,7 +2191,7 @@ mod tests {
             .expect("created");
         for verdict in std::iter::repeat_n("refused: outside the scope", 10).chain(["allowed"]) {
             let call = Call {
-                at: chrono::Utc::now(),
+                at: jc_time::TimestampTz::now(),
                 subject: "f:1:ana".into(),
                 client: Some("mcp-local".into()),
                 tool: "jc_resource_list".into(),

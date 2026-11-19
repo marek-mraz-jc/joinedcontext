@@ -160,7 +160,7 @@ pub async fn revert_drift(
         .await
         .map_err(ApiError::Unavailable)?;
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.clone(),
         space: Some(space.clone()),
         kind: "config.drifted".to_owned(),

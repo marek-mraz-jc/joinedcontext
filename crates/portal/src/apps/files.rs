@@ -526,7 +526,7 @@ pub(super) async fn url(
             Err(err) => return unavailable(err),
         }
     }
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let url = files.store.presign(
         (&method, &files.bucket, &key),
         size,
@@ -534,10 +534,10 @@ pub(super) async fn url(
         origin,
         now,
     );
-    let expires = now + chrono::Duration::seconds(i64::from(PRESIGN_SECONDS));
+    let expires = now + jiff::SignedDuration::from_secs(i64::from(PRESIGN_SECONDS));
     Json(serde_json::json!({
         "url": url,
-        "expiresAt": expires.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "expiresAt": expires.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
     }))
     .into_response()
 }

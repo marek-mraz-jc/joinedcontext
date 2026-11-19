@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::{
     Constraint, RoleBindingSpec, RoleScope, RoleSpec, Rule, ServiceAccountSpec, Verb,
 };
@@ -103,7 +103,7 @@ pub fn for_request(state: &AppState, identity: &Identity, project: &str) -> Effe
         &state.config.bootstrap_admins,
         identity,
         project,
-        Utc::now(),
+        TimestampTz::now(),
     )
 }
 
@@ -111,7 +111,7 @@ pub fn for_request(state: &AppState, identity: &Identity, project: &str) -> Effe
 /// bootstrap group: who reads an organization model, since a schema carries no data (DM-75).
 pub fn is_organization_member(state: &AppState, identity: &Identity) -> bool {
     in_group(identity, &state.config.bootstrap_admins)
-        || !in_force(&state.mirror, identity, Utc::now()).is_empty()
+        || !in_force(&state.mirror, identity, TimestampTz::now()).is_empty()
 }
 
 /// Whether the caller belongs to the Organization that owns `project` (AP-174, ADR-N-067): a
@@ -120,14 +120,14 @@ pub fn is_organization_member(state: &AppState, identity: &Identity) -> bool {
 /// in another Organization makes nobody a member here.
 pub fn is_member_of_organization_of(state: &AppState, identity: &Identity, project: &str) -> bool {
     in_group(identity, &state.config.bootstrap_admins)
-        || member_of_organization_of(&state.mirror, identity, project, Utc::now())
+        || member_of_organization_of(&state.mirror, identity, project, TimestampTz::now())
 }
 
 fn member_of_organization_of(
     mirror: &Mirror,
     identity: &Identity,
     project: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> bool {
     let held = in_force(mirror, identity, now);
     if organizations(mirror).len() <= 1 {
@@ -168,7 +168,7 @@ pub fn belongs_to_organization(
     organization: &str,
 ) -> bool {
     in_group(identity, bootstrap_group)
-        || in_force(mirror, identity, Utc::now())
+        || in_force(mirror, identity, TimestampTz::now())
             .iter()
             .any(|(reach, _)| organization_of_reach(mirror, reach).as_deref() == Some(organization))
 }
@@ -186,7 +186,7 @@ pub fn holds_at_organization(
     target: Option<&Value>,
 ) -> bool {
     in_group(identity, &state.config.bootstrap_admins)
-        || in_force(&state.mirror, identity, Utc::now())
+        || in_force(&state.mirror, identity, TimestampTz::now())
             .iter()
             .any(|(reach, grant)| {
                 matches!(reach, Reach::Organization(held) if held == organization)
@@ -204,7 +204,7 @@ fn branch_effective(
     bootstrap_group: &str,
     identity: &Identity,
     project: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Effective {
     let mut effective = Effective {
         project: project.to_owned(),
@@ -236,7 +236,7 @@ fn effective_of_parent(
     bootstrap_group: &str,
     identity: &Identity,
     parent: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Effective {
     if jc_router::branch_name(parent) {
         return Effective {
@@ -256,7 +256,7 @@ pub fn effective(
     bootstrap_group: &str,
     identity: &Identity,
     project: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Effective {
     if jc_router::branch_name(project) {
         return branch_effective(mirror, bootstrap_group, identity, project, now);
@@ -1251,7 +1251,7 @@ fn role_of(
 }
 
 /// Every rule a binding in force at `now` gives the caller, with where the binding applies.
-fn in_force(mirror: &Mirror, identity: &Identity, now: DateTime<Utc>) -> Vec<(Reach, Grant)> {
+fn in_force(mirror: &Mirror, identity: &Identity, now: TimestampTz) -> Vec<(Reach, Grant)> {
     let organization = roles(mirror, ORG_NAMESPACE);
     let mut grants = Vec::new();
     for env in mirror.kind_where(ORG_NAMESPACE, "RoleBinding", |env| {
@@ -1384,7 +1384,7 @@ fn account_grants(
     mirror: &Mirror,
     organization: &[(String, RoleSpec)],
     identity: &Identity,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<(Reach, Grant)> {
     let Some((account, spec)) = account_of(mirror, identity) else {
         return Vec::new();
@@ -1433,7 +1433,7 @@ pub fn may_read_space(
     project: &str,
     space: &str,
     person: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> bool {
     let identity = named_person(mirror, person);
     // No bootstrap group: a person named in a comment is judged by their bindings alone.
@@ -1484,7 +1484,7 @@ pub struct ProjectMembers {
     pub approvers: BTreeSet<String>,
 }
 
-pub fn project_members(mirror: &Mirror, project: &str, now: DateTime<Utc>) -> ProjectMembers {
+pub fn project_members(mirror: &Mirror, project: &str, now: TimestampTz) -> ProjectMembers {
     members_where(mirror, now, |reach| match reach {
         Reach::Organization(organization) => organization_reaches(mirror, organization, project),
         Reach::Project(held) => held == project,
@@ -1498,7 +1498,7 @@ pub fn project_members(mirror: &Mirror, project: &str, now: DateTime<Utc>) -> Pr
 pub fn organization_scoped_people(
     mirror: &Mirror,
     organization: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> BTreeSet<String> {
     let members = members_where(
         mirror,
@@ -1511,7 +1511,7 @@ pub fn organization_scoped_people(
 /// [`ProjectMembers`] by every binding in force at `now` whose scope `counts`.
 fn members_where(
     mirror: &Mirror,
-    now: DateTime<Utc>,
+    now: TimestampTz,
     counts: impl Fn(&Reach) -> bool,
 ) -> ProjectMembers {
     let organization = roles(mirror, ORG_NAMESPACE);
@@ -1598,7 +1598,7 @@ pub fn people_of(
 
 /// Everyone a binding in force at `now` names, at any scope: who [`is_organization_member`]
 /// admits, besides the bootstrap group, which no manifest lists (DM-75, AP-173).
-pub fn organization_people(mirror: &Mirror, now: DateTime<Utc>) -> BTreeSet<String> {
+pub fn organization_people(mirror: &Mirror, now: TimestampTz) -> BTreeSet<String> {
     let groups = group_members(mirror);
     mirror
         .list(ORG_NAMESPACE, "RoleBinding", &ListOptions::default())
@@ -1786,7 +1786,7 @@ pub fn keeps_an_administrator_after(
         .into_iter()
         .map(|env| (env.metadata.name, env.spec))
         .collect();
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let installation = installation_scope(mirror);
     let before = administrators(&roles, &bindings, &groups, installation.as_ref(), now);
     if before.is_empty() {
@@ -1869,7 +1869,7 @@ pub fn administrator_people(mirror: &Mirror) -> BTreeSet<String> {
         &bindings,
         &groups,
         installation_scope(mirror).as_ref(),
-        Utc::now(),
+        TimestampTz::now(),
     ) {
         let Some(binding) = bindings
             .get(&name)
@@ -1909,7 +1909,7 @@ fn administrators(
     bindings: &BTreeMap<String, Value>,
     groups: &BTreeMap<String, Value>,
     installation: Option<&Option<String>>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<String> {
     let administers = |role: &str| {
         roles
@@ -2090,7 +2090,7 @@ pub fn within_own_rights(
     if in_group(identity, &state.config.bootstrap_admins) {
         return scopes();
     }
-    let held = in_force(mirror, identity, Utc::now());
+    let held = in_force(mirror, identity, TimestampTz::now());
     let mut missing: Vec<String> = Vec::new();
     for (rules, target) in &grants {
         for rule in rules {
@@ -2353,10 +2353,10 @@ pub struct AccountGrant {
     pub scope: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub not_before: Option<DateTime<Utc>>,
+    pub not_before: Option<TimestampTz>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub not_after: Option<DateTime<Utc>>,
+    pub not_after: Option<TimestampTz>,
     pub state: GrantState,
     pub rules: Vec<AccountRule>,
 }
@@ -2381,7 +2381,7 @@ pub struct AccountRule {
 pub fn account_access(
     mirror: &Mirror,
     spec: &ServiceAccountSpec,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<AccountGrant> {
     let organization = roles(mirror, ORG_NAMESPACE);
     spec.roles
@@ -2603,7 +2603,7 @@ mod tests {
                 groups: Vec::new(),
                 second_factor: false,
             };
-            let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
+            let grants = effective(&mirror, "portal-approver", &who, "espoo", TimestampTz::now());
             assert_eq!(grants.may_read("Endpoint"), reads, "{scope}");
         }
     }
@@ -2647,7 +2647,7 @@ mod tests {
                 groups: Vec::new(),
                 second_factor: false,
             };
-            let grants = effective(&mirror, "portal-approver", &who, "espoo", Utc::now());
+            let grants = effective(&mirror, "portal-approver", &who, "espoo", TimestampTz::now());
             assert_eq!(grants.check_converses("espoo").is_ok(), converses, "{role}");
         }
     }
@@ -2701,7 +2701,7 @@ mod tests {
                 "portal-approver",
                 &person(who),
                 "espoo",
-                Utc::now(),
+                TimestampTz::now(),
             );
             for kind in ["Group", "Environment"] {
                 // A space binding reads only what names its space, which no group does.
@@ -2760,7 +2760,7 @@ mod tests {
                 serde_json::json!({ "subjects": [{ "user": who }], "role": "viewer", "scope": scope }),
             ));
         }
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let member = |who: &str, project: &str| {
             member_of_organization_of(&mirror, &person(who), project, now)
         };
@@ -2852,7 +2852,7 @@ mod tests {
         let ba = person("ba@x.eu", Vec::new());
         let root = person("root@x.eu", vec!["portal-approver".to_owned()]);
         let reads = |who: &Identity, project: &str| {
-            effective(&mirror, "portal-approver", who, project, Utc::now()).may_read_project()
+            effective(&mirror, "portal-approver", who, project, TimestampTz::now()).may_read_project()
         };
         let host = |name: &str| crate::organization_host::OrganizationHost {
             organization: name.to_owned(),
@@ -2866,10 +2866,10 @@ mod tests {
                 reads(&root, "helsinki"),
                 reads(&both, "bratislava"),
                 reads(&root, "bratislava"),
-                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, Utc::now()).bootstrap,
+                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, TimestampTz::now()).bootstrap,
                 {
                     let grants =
-                        effective(&mirror, "portal-approver", &both, ORG_NAMESPACE, Utc::now())
+                        effective(&mirror, "portal-approver", &both, ORG_NAMESPACE, TimestampTz::now())
                             .grants;
                     !grants.is_empty()
                         && grants
@@ -2894,7 +2894,7 @@ mod tests {
                 reads(&both, "bratislava"),
                 reads(&root, "bratislava"),
                 reads(&both, "helsinki"),
-                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, Utc::now()).bootstrap,
+                effective(&mirror, "portal-approver", &root, ORG_NAMESPACE, TimestampTz::now()).bootstrap,
             )
         })
         .await;
@@ -2922,7 +2922,7 @@ mod tests {
                                 "scope": { "organization": "hel" },
                                 "validity": { "notAfter": "2020-01-01T00:00:00Z" } }),
         ));
-        let people = organization_people(&mirror, Utc::now());
+        let people = organization_people(&mirror, TimestampTz::now());
         assert_eq!(
             people.into_iter().collect::<Vec<_>>(),
             ["jana@hel.fi", "vera@hel.fi"],
@@ -2960,7 +2960,7 @@ mod tests {
             groups: Vec::new(),
             second_factor: false,
         };
-        let at = |project: &str| effective(&mirror, "no-bootstrap", &owner, project, Utc::now());
+        let at = |project: &str| effective(&mirror, "no-bootstrap", &owner, project, TimestampTz::now());
         // `jc_member_list` asks read on RoleBinding: propose implies it, as `may` already says.
         assert!(at("t-full").check("RoleBinding", Verb::Read, None).is_ok());
         assert!(at("t-full").check("Pipeline", Verb::Propose, None).is_ok());
@@ -3020,7 +3020,7 @@ mod tests {
             groups: Vec::new(),
             second_factor: false,
         };
-        let expected = effective(&mirror, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now());
+        let expected = effective(&mirror, "no-bootstrap", &bo, ORG_NAMESPACE, TimestampTz::now());
         let grants_group = |grants: &Effective| {
             grants
                 .grants
@@ -3043,7 +3043,7 @@ mod tests {
         let reader = Arc::clone(&mirror);
         std::thread::spawn(move || {
             let granted = (0..200)
-                .map(|_| effective(&reader, "no-bootstrap", &bo, ORG_NAMESPACE, Utc::now()))
+                .map(|_| effective(&reader, "no-bootstrap", &bo, ORG_NAMESPACE, TimestampTz::now()))
                 .all(|grants| grants_group(&grants));
             let _ = done.send(granted);
         });

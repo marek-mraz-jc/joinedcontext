@@ -808,7 +808,7 @@ impl LogStore {
     /// Every (project, pipeline) with at least one run kept (T-4421), with the time of its newest
     /// run's last line: a pipeline whose next due time after it has passed missed a run while no
     /// Portal held it (T-5778).
-    pub async fn ran(&self) -> Result<HashMap<Key, chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+    pub async fn ran(&self) -> Result<HashMap<Key, jc_time::TimestampTz>, sqlx::Error> {
         match &self.inner {
             Inner::Postgres(pool, mirror) => {
                 let mut rows: Vec<(String, String, time::OffsetDateTime)> = Vec::new();
@@ -823,7 +823,7 @@ impl LogStore {
                 Ok(rows
                     .into_iter()
                     .filter_map(|(project, pipeline, last)| {
-                        let last = chrono::DateTime::from_timestamp(last.unix_timestamp(), 0)?;
+                        let last = jc_time::TimestampTz::from_second(last.unix_timestamp())?;
                         Some(((project, pipeline), last))
                     })
                     .collect())
@@ -836,9 +836,9 @@ impl LogStore {
                     let last = memory
                         .runs
                         .iter()
-                        .filter_map(|run| chrono::DateTime::parse_from_rfc3339(&run.last_at).ok())
+                        .filter_map(|run| jc_time::parse_rfc3339(&run.last_at))
                         .max()?;
-                    Some((key.clone(), last.with_timezone(&chrono::Utc)))
+                    Some((key.clone(), jc_time::TimestampTz(last)))
                 })
                 .collect()),
         }
@@ -1557,7 +1557,7 @@ mod tests {
         assert_eq!(keys, [&("slovensko".to_owned(), "susr-as".to_owned())]);
         // T-5778: with the time of its last line, which the queue reads for a missed due time.
         let last = ran[&("slovensko".to_owned(), "susr-as".to_owned())];
-        assert!((chrono::Utc::now() - last).num_seconds().abs() < 60);
+        assert!((jc_time::TimestampTz::now() - last).as_secs().abs() < 60);
     }
 
     /// T-5825: a run's stream hash is kept only for a run the log holds, and the queue reads the

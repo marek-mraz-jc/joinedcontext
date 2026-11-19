@@ -136,7 +136,7 @@ async fn record(state: &AppState, user: &CurrentUser, request: &AccessRequest, w
         Requester::Person(person) => format!("person {person}"),
     };
     let event = |project: &str, space: Option<&str>| crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: space.map(str::to_owned),
         kind: "access-request".to_owned(),

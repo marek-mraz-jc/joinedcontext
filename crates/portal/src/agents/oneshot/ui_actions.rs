@@ -15,7 +15,7 @@ use super::*;
 
 use std::borrow::Cow;
 
-use chrono::Utc;
+use jc_time::TimestampTz;
 
 use crate::error::ApiError;
 
@@ -520,7 +520,7 @@ impl Asker<'_> {
         let items = self
             .state
             .plans
-            .peek(&id, &self.identity.subject, self.project, Utc::now())
+            .peek(&id, &self.identity.subject, self.project, TimestampTz::now())
             .ok_or_else(|| {
                 format!(
                     "no plan '{id}' of yours in this project; a plan lives {} minutes, plan the \

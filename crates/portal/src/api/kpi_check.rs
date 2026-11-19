@@ -232,7 +232,7 @@ pub fn records_verdict(
     let record = indicator(kpi_step(&spec)?, &target, project, pipeline)?;
     let records = [record];
     let checked =
-        crate::record_check::check_records(state, project, manifest, &records, Utc::now()).ok()?;
+        crate::record_check::check_records(state, project, manifest, &records, jc_time::TimestampTz::now()).ok()?;
     Some(checked.verdict(manifest, &records))
 }
 

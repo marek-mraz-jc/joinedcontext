@@ -1098,7 +1098,7 @@ async fn build_archive(
     organization: &str,
     actor: &str,
 ) -> Result<(Scratch, DataIndex), ApiError> {
-    let taken_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let taken_at = jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     let (scratch, file) = Scratch::new(".zip")?;
     let mut zip = zip::ZipWriter::new(BufWriter::new(file));
     let mut modules = BTreeMap::new();

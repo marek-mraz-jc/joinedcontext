@@ -708,7 +708,7 @@ const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 /// One upload or removal in the project's activity, beside the crawls it replaces.
 async fn record(state: &AppState, project: &str, kind: &str, summary: String, details: Value) {
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: kind.to_owned(),
@@ -1122,7 +1122,7 @@ pub(super) async fn audited(
 ) {
     let actor = &user.0.identity.username;
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "assistant.transcript".to_owned(),

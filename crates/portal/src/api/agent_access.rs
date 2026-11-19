@@ -112,7 +112,7 @@ pub(crate) async fn account_access(
     let may_propose = effective.check(KIND, Verb::Propose, Some(&target)).is_ok();
     let may_approve = effective.check(KIND, Verb::Approve, Some(&target)).is_ok();
     Ok(Json(AccountAccess {
-        grants: crate::permissions::account_access(&state.mirror, &spec, chrono::Utc::now()),
+        grants: crate::permissions::account_access(&state.mirror, &spec, jc_time::TimestampTz::now()),
         no_secret: crate::api::account_secret::no_secret(&spec).map(|(code, _)| code.to_owned()),
         may_issue_secret: identity.client.is_none() && may_approve,
         delegates: spec.delegation.is_some(),
@@ -402,7 +402,7 @@ async fn record(
     change: &crate::change::Change,
 ) {
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "access.revoked".to_owned(),

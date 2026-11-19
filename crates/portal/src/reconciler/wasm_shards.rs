@@ -295,7 +295,7 @@ impl WasmShards {
                 app.legacy = !moved;
                 if let (false, Some(store)) = (moved, store) {
                     let legacy = crate::apps::files::legacy_prefix(app.shard, &id);
-                    let at = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+                    let at = jc_time::TimestampTz::now().0.strftime("%Y%m%dT%H%M%SZ").to_string();
                     match crate::apps::files::move_legacy(
                         store,
                         &self.bucket,

@@ -431,7 +431,7 @@ impl Client {
         body: Vec<u8>,
         operation: &'static str,
     ) -> Result<(), Error> {
-        let now = chrono::Utc::now();
+        let now = jc_time::TimestampTz::now();
         let headers = self.sign("PUT", path, query, &body, now);
 
         let query_string = canonical_query(query);
@@ -464,7 +464,7 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
         body: &[u8],
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> Vec<(&'static str, String)> {
         self.sign_with(method, path, query, body, &[], now)
     }
@@ -478,10 +478,10 @@ impl Client {
         query: &[(&str, String)],
         body: &[u8],
         extra: &[(&str, String)],
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> Vec<(&'static str, String)> {
-        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-        let date = now.format("%Y%m%d").to_string();
+        let amz_date = now.0.strftime("%Y%m%dT%H%M%SZ").to_string();
+        let date = now.0.strftime("%Y%m%d").to_string();
         let payload_hash = hex(&Sha256::digest(body));
 
         let mut headers: BTreeMap<String, String> = BTreeMap::new();
@@ -535,7 +535,7 @@ impl Client {
         length: Option<u64>,
         expires: u32,
         origin: &str,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> String {
         presigned(
             &self.settings,
@@ -555,10 +555,10 @@ fn presigned(
     (method, path, length): (&str, &str, Option<u64>),
     expires: u32,
     origin: &str,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> String {
-    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = now.format("%Y%m%d").to_string();
+    let amz_date = now.0.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let date = now.0.strftime("%Y%m%d").to_string();
     let scope = format!("{date}/{}/s3/aws4_request", settings.region);
     let origin = origin.trim_end_matches('/');
     let host = origin.split_once("://").map_or(origin, |(_, host)| host);
@@ -620,7 +620,7 @@ impl Client {
             &[],
             &body,
             extra,
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         let url = format!("{}{path}", self.settings.endpoint.trim_end_matches('/'));
         let mut request = self.http.request(method, &url);
@@ -741,7 +741,7 @@ impl Client {
             if let Some(token) = &token {
                 query.push(("continuation-token", token.clone()));
             }
-            let headers = self.sign("GET", &path, &query, &[], chrono::Utc::now());
+            let headers = self.sign("GET", &path, &query, &[], jc_time::TimestampTz::now());
             let url = format!(
                 "{}{path}?{}",
                 self.settings.endpoint.trim_end_matches('/'),

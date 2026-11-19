@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -118,13 +118,13 @@ pub fn registered_domain(host: &str) -> String {
 /// When the next certificate may be requested, or `None` for now: `day` are this instance's
 /// requests of the last 24 hours, `week` those of the last 7 days for the host's registered
 /// domain, each oldest first.
-pub fn wait_until(day: &[DateTime<Utc>], week: &[DateTime<Utc>]) -> Option<DateTime<Utc>> {
+pub fn wait_until(day: &[TimestampTz], week: &[TimestampTz]) -> Option<TimestampTz> {
     // The slot frees when the oldest request still counted leaves its window.
-    let free = |held: &[DateTime<Utc>], limit: usize, window: Duration| {
+    let free = |held: &[TimestampTz], limit: usize, window: jiff::SignedDuration| {
         (held.len() >= limit).then(|| held[held.len() - limit] + window)
     };
-    let by_day = free(day, PER_INSTANCE_DAY, Duration::hours(24));
-    let by_week = free(week, PER_DOMAIN_WEEK, Duration::days(7));
+    let by_day = free(day, PER_INSTANCE_DAY, jiff::SignedDuration::from_hours(24));
+    let by_week = free(week, PER_DOMAIN_WEEK, jiff::SignedDuration::from_hours(24 * 7));
     by_day.max(by_week)
 }
 
@@ -354,7 +354,7 @@ impl OrgHosts {
         if let Some(at) = wait_until(&day, &week) {
             return Step::Waits(format!(
                 "waiting for a certificate slot until {}",
-                at.format("%Y-%m-%d %H:%M UTC")
+                at.0.strftime("%Y-%m-%d %H:%M UTC")
             ));
         }
         let name = object_name(host);
@@ -402,7 +402,7 @@ impl OrgHosts {
     async fn held(
         &self,
         domain: &str,
-    ) -> Result<(Vec<DateTime<Utc>>, Vec<DateTime<Utc>>), sqlx::Error> {
+    ) -> Result<(Vec<TimestampTz>, Vec<TimestampTz>), sqlx::Error> {
         let day: Vec<i64> = sqlx::query_scalar(
             "SELECT extract(epoch FROM requested_at)::bigint FROM organization_host_certificates \
              WHERE requested_at > now() - interval '24 hours' ORDER BY requested_at",
@@ -419,7 +419,7 @@ impl OrgHosts {
         .await?;
         let at = |held: Vec<i64>| {
             held.into_iter()
-                .filter_map(|seconds| DateTime::from_timestamp(seconds, 0))
+                .filter_map(|seconds| jc_time::TimestampTz::from_second(seconds))
                 .collect()
         };
         Ok((at(day), at(week)))
@@ -738,30 +738,30 @@ mod tests {
     /// for one registered domain; each waits until its oldest counted request leaves the window.
     #[test]
     fn the_eleventh_a_day_and_the_twenty_first_a_week_wait() {
-        let now = Utc::now();
-        let hours = |n: i64| now - Duration::hours(n);
+        let now = TimestampTz::now();
+        let hours = |n: i64| now - jiff::SignedDuration::from_hours(n);
         let day: Vec<_> = (0..9).rev().map(hours).collect();
         assert_eq!(wait_until(&day, &day), None, "the tenth goes");
         let day: Vec<_> = (0..10).rev().map(hours).collect();
         assert_eq!(
             wait_until(&day, &day),
-            Some(hours(9) + Duration::hours(24)),
+            Some(hours(9) + jiff::SignedDuration::from_hours(24)),
             "the eleventh waits"
         );
 
         let week: Vec<_> = (0..20)
             .rev()
-            .map(|n| now - Duration::hours(6 * n))
+            .map(|n| now - jiff::SignedDuration::from_hours(6 * n))
             .collect();
         let today: Vec<_> = week
             .iter()
             .copied()
-            .filter(|t| *t > now - Duration::hours(24))
+            .filter(|t| *t > now - jiff::SignedDuration::from_hours(24))
             .collect();
         assert!(today.len() < PER_INSTANCE_DAY);
         assert_eq!(
             wait_until(&today, &week),
-            Some(week[0] + Duration::days(7)),
+            Some(week[0] + jiff::SignedDuration::from_hours(24 * 7)),
             "the 21st waits"
         );
         assert_eq!(wait_until(&today, &week[1..]), None);

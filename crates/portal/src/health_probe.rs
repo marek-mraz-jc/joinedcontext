@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use futures_util::stream::{self, StreamExt};
 use url::Url;
 
@@ -21,7 +21,7 @@ use crate::space_usage::{Counter, SpaceUsage};
 use crate::store::Mirror;
 
 /// How often the probes run; a broken surface turns red within this and the log's own beat.
-pub const EVERY: Duration = Duration::minutes(5);
+pub const EVERY: jiff::SignedDuration = jiff::SignedDuration::from_mins(5);
 /// An answer slower than this is a warning.
 pub const SLOW_MS: u64 = 3_000;
 const TIMEOUT: StdDuration = StdDuration::from_secs(10);
@@ -247,7 +247,7 @@ pub struct Probes {
     counter: Option<Arc<Counter>>,
     client: reqwest::Client,
     counts: tokio::sync::Mutex<HashMap<(String, String), u64>>,
-    kept: tokio::sync::Mutex<Option<(DateTime<Utc>, Vec<Finding>)>>,
+    kept: tokio::sync::Mutex<Option<(TimestampTz, Vec<Finding>)>>,
 }
 
 impl Probes {
@@ -269,7 +269,7 @@ impl Probes {
     }
 
     /// The findings of the last probe run, run again when it is [`EVERY`] old.
-    pub async fn findings(&self, mirror: &Mirror, now: DateTime<Utc>) -> Vec<Finding> {
+    pub async fn findings(&self, mirror: &Mirror, now: TimestampTz) -> Vec<Finding> {
         let mut kept = self.kept.lock().await;
         if let Some((at, findings)) = kept.as_ref() {
             if now - *at < EVERY {
@@ -470,8 +470,8 @@ mod tests {
         SpaceUsage {
             entities,
             broker: "main".into(),
-            observed_at: Utc::now(),
-            measured_at: Utc::now(),
+            observed_at: TimestampTz::now(),
+            measured_at: TimestampTz::now(),
             bytes: Some(crate::space_usage::SpaceBytes {
                 entities,
                 attr_instances: history,
@@ -573,7 +573,7 @@ mod tests {
             .expect("an endpoint"),
         );
         let probes = Probes::new(Some(gateway), None);
-        let t0 = Utc::now();
+        let t0 = TimestampTz::now();
         let (red, _) = logged(probes.findings(&mirror, t0)).await;
         let check = |findings: &[Finding], surface: &str| {
             findings
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(check(&red, "odata"), Some(Status::Ok));
         assert_eq!(red.len(), 2, "mcp is off: {red:?}");
         ngsi.store(200, Ordering::SeqCst);
-        let (kept, _) = logged(probes.findings(&mirror, t0 + Duration::minutes(1))).await;
+        let (kept, _) = logged(probes.findings(&mirror, t0 + jiff::SignedDuration::from_mins(1))).await;
         assert_eq!(
             check(&kept, "ngsi-ld"),
             Some(Status::Error),
@@ -666,7 +666,7 @@ mod tests {
             );
         }
         let (found, log) =
-            logged(Probes::new(Some(gateway), None).findings(&mirror, Utc::now())).await;
+            logged(Probes::new(Some(gateway), None).findings(&mirror, TimestampTz::now())).await;
         let lines: Vec<_> = log.lines().filter(|l| l.contains("health_probe")).collect();
         assert_eq!(found.len(), 6, "{found:?}");
         assert_eq!(lines.len(), 3, "{log}");
@@ -732,7 +732,7 @@ mod tests {
             );
         }
         let (found, _) =
-            logged(Probes::new(Some(gateway), None).findings(&mirror, Utc::now())).await;
+            logged(Probes::new(Some(gateway), None).findings(&mirror, TimestampTz::now())).await;
         let files: Vec<_> = found.iter().filter(|f| f.check == "csv").collect();
         assert_eq!(files.len(), 4, "{found:?}");
         assert!(files.iter().all(|f| f.status == Status::Ok), "{files:?}");

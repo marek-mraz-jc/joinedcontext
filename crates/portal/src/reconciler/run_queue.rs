@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Duration as Span, SecondsFormat, Timelike, Utc};
+use jc_time::TimestampTz;
 use jc_core::kinds::data_source::DataSourceType;
 use serde_json::Value;
 
@@ -129,25 +129,25 @@ impl Clock {
     }
 
     /// The first run strictly after `t`; none for [`Clock::Once`].
-    pub fn next_after(&self, t: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    pub fn next_after(&self, t: TimestampTz) -> Option<TimestampTz> {
         match self {
             Clock::Once => None,
             Clock::Every(every, phase) => {
                 let every = every.as_millis() as i64;
                 let phase = phase.as_millis() as i64;
-                let at = ((t.timestamp_millis() - phase).div_euclid(every) + 1) * every + phase;
-                DateTime::from_timestamp_millis(at)
+                let at = ((t.as_millis() - phase).div_euclid(every) + 1) * every + phase;
+                jc_time::TimestampTz::from_millis(at)
             }
             Clock::Cron(cron) => cron.next_after(t),
         }
     }
 
     /// The lane of a pipeline on this clock, read from the gap between its next two runs.
-    pub fn lane(&self, now: DateTime<Utc>) -> Lane {
+    pub fn lane(&self, now: TimestampTz) -> Lane {
         let gap = self
             .next_after(now)
             .and_then(|first| Some((first, self.next_after(first)?)))
-            .map(|(first, second)| (second - first).to_std().unwrap_or_default());
+            .map(|(first, second)| Duration::try_from(second - first).unwrap_or_default());
         match gap {
             Some(gap) if gap < SHORT_BELOW => Lane::Short,
             _ => Lane::Batch,
@@ -189,11 +189,11 @@ impl Cron {
         })
     }
 
-    fn matches(&self, t: DateTime<Utc>) -> bool {
-        use chrono::Datelike;
-        let has = |set: u64, v: u32| set & (1 << v) != 0;
+    fn matches(&self, t: TimestampTz) -> bool {
+        let t = t.utc();
+        let has = |set: u64, v: i8| u32::try_from(v).is_ok_and(|v| set & (1 << v) != 0);
         let day = has(self.days, t.day());
-        let weekday = has(self.weekdays, t.weekday().num_days_from_sunday());
+        let weekday = has(self.weekdays, t.weekday().to_sunday_zero_offset());
         // Both restricted means either one, as cron reads it.
         let day_ok = match (self.any_day, self.any_weekday) {
             (true, true) => true,
@@ -210,23 +210,24 @@ impl Cron {
     /// How far into each `every` from 1970-01-01T00:00Z this cron first fires; zero when it never
     /// does within the year [`Cron::next_after`] scans.
     fn phase(&self, every: Duration) -> Duration {
-        let epoch = DateTime::<Utc>::UNIX_EPOCH;
+        let epoch = TimestampTz::UNIX_EPOCH;
         let since = self
-            .next_after(epoch - Span::minutes(1))
-            .and_then(|first| (first - epoch).to_std().ok())
+            .next_after(epoch - jiff::SignedDuration::from_mins(1))
+            .and_then(|first| Duration::try_from(first - epoch).ok())
             .unwrap_or_default();
         Duration::from_millis((since.as_millis() % every.as_millis().max(1)) as u64)
     }
 
     /// ponytail: a minute-by-minute scan over at most a year (half a million cheap checks for a
     /// date that never comes, such as 30 February); a field-skipping search if it ever shows.
-    fn next_after(&self, t: DateTime<Utc>) -> Option<DateTime<Utc>> {
-        let mut at = t.with_second(0)?.with_nanosecond(0)? + Span::minutes(1);
+    fn next_after(&self, t: TimestampTz) -> Option<TimestampTz> {
+        let minute = t.as_second().div_euclid(60).checked_mul(60)?;
+        let mut at = TimestampTz::from_second(minute)?.checked_add(jiff::SignedDuration::from_mins(1))?;
         for _ in 0..366 * 24 * 60 {
             if self.matches(at) {
                 return Some(at);
             }
-            at += Span::minutes(1);
+            at = at + jiff::SignedDuration::from_mins(1);
         }
         None
     }
@@ -338,14 +339,14 @@ fn hex(bytes: &[u8]) -> String {
 
 #[derive(Debug, Clone)]
 enum Last {
-    Finished { at: DateTime<Utc>, seconds: i64 },
-    Failed { at: DateTime<Utc>, reason: String },
+    Finished { at: TimestampTz, seconds: i64 },
+    Failed { at: TimestampTz, reason: String },
 }
 
 /// The run a pipeline earned when its last run failed for a cause outside its source (T-5687).
 #[derive(Debug, Clone)]
 struct Retry {
-    at: DateTime<Utc>,
+    at: TimestampTz,
     cause: String,
 }
 
@@ -356,11 +357,11 @@ struct Entry {
     clock: Clock,
     lane: Lane,
     /// When it is due next.
-    next: Option<DateTime<Utc>>,
+    next: Option<TimestampTz>,
     /// In the queue since this due time.
-    queued: Option<DateTime<Utc>>,
+    queued: Option<TimestampTz>,
     /// In the runner since then.
-    running: Option<DateTime<Utc>>,
+    running: Option<TimestampTz>,
     /// The id of the run in the runner: its due time, as the pipeline's log names runs (PL-62).
     run: Option<String>,
     /// The [`stream_hash`] of the stream that run runs, kept from its start: the stream may
@@ -380,7 +381,7 @@ struct Entry {
     /// Retries armed since its last run that did not fail for an outside cause.
     attempts: usize,
     /// When each retry of the last day was queued.
-    retried: Vec<DateTime<Utc>>,
+    retried: Vec<TimestampTz>,
 }
 
 impl Entry {
@@ -398,15 +399,15 @@ impl Entry {
 
     /// Arms the retry the failed run `run` earned: the next step of [`BACKOFF`], unless its clock
     /// comes sooner, the backoff is spent or it had [`RETRIES_PER_DAY`] retries in the last day.
-    fn arm(&mut self, run: &str, cause: &str, now: DateTime<Utc>) {
+    fn arm(&mut self, run: &str, cause: &str, now: TimestampTz) {
         if self.armed_for.as_deref() == Some(run) {
             return;
         }
         self.armed_for = Some(run.to_owned());
-        self.retried.retain(|t| now - *t < Span::days(1));
+        self.retried.retain(|t| now - *t < jiff::SignedDuration::from_hours(24 * 1));
         let at = BACKOFF
             .get(self.attempts)
-            .map(|wait| now + Span::from_std(*wait).unwrap_or_default());
+            .map(|wait| now + jiff::SignedDuration::try_from(*wait).unwrap_or_default());
         self.attempts = self.attempts.saturating_add(1);
         let next = self.next;
         let room = self.retried.len() < RETRIES_PER_DAY;
@@ -466,13 +467,13 @@ pub struct RunQueue {
     /// The runs that ended since the last tick, by run id, and whether the runner finished them
     /// (T-4891): a snapshot pipeline judges its deletes on them.
     ends: Vec<(Key, String, bool, String)>,
-    planned_at: Option<DateTime<Utc>>,
+    planned_at: Option<TimestampTz>,
     /// The pipelines with a run in the durable log and when their newest run last wrote
     /// (T-4421): a scheduled one new to this queue and not among them never ran, so it runs at
     /// once instead of waiting a day for its clock; one whose due time after that run has passed
     /// missed it while no Portal held it, so it is queued under that due time (T-5778). `None`
     /// until the log has been read: a restart then never runs every pipeline at once.
-    ran: Option<HashMap<Key, DateTime<Utc>>>,
+    ran: Option<HashMap<Key, TimestampTz>>,
     /// The [`stream_hash`] of the stream each pipeline's newest logged run ran (T-5825): a
     /// replace pipeline new to this queue whose stream differs from it changed while no Portal
     /// held it, so it runs at once. A pipeline whose newest run has no hash is not in it.
@@ -550,7 +551,7 @@ impl RunQueue {
 
     /// The pipelines the run log holds a run of, with their newest run's last line, read before
     /// each [`RunQueue::plan`].
-    pub fn ran(&mut self, ran: HashMap<Key, DateTime<Utc>>) {
+    pub fn ran(&mut self, ran: HashMap<Key, TimestampTz>) {
         self.ran = Some(ran);
     }
 
@@ -597,7 +598,7 @@ impl RunQueue {
     /// hold what the old mapping wrote until it runs, and only a replace run removes that. The
     /// same holds for a replace pipeline new to this queue whose stream differs from the one its
     /// newest logged run ran: it changed while no Portal held it (T-5825).
-    pub fn plan(&mut self, wanted: BTreeMap<Key, Planned>, now: DateTime<Utc>) {
+    pub fn plan(&mut self, wanted: BTreeMap<Key, Planned>, now: TimestampTz) {
         self.planned_at = Some(now);
         let dropped: Vec<Key> = self
             .entries
@@ -678,7 +679,7 @@ impl RunQueue {
     /// the retries of a project whose rules changed forward to now (T-5687). A run in the queue
     /// or the runner is judged once it ended; a run the queue saw fail itself (the runner refused
     /// or lost it) armed its retry when it failed.
-    fn retries(&mut self, now: DateTime<Utc>) {
+    fn retries(&mut self, now: TimestampTz) {
         let failed = self.failed.take();
         let changed = std::mem::take(&mut self.rules_changed);
         for (key, entry) in &mut self.entries {
@@ -721,7 +722,7 @@ impl RunQueue {
     }
 
     /// What came due joins the queue; a pipeline already queued or running stays one entry.
-    fn queue_due(&mut self, now: DateTime<Utc>) {
+    fn queue_due(&mut self, now: TimestampTz) {
         for entry in self.entries.values_mut() {
             let Some(due) = entry.next.filter(|due| *due <= now) else {
                 continue;
@@ -738,7 +739,7 @@ impl RunQueue {
     fn settle(
         &mut self,
         states: Vec<(Key, RunState)>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> (Vec<Key>, Vec<(Key, Value)>) {
         let mut ended = Vec::new();
         for (key, state) in states {
@@ -748,7 +749,7 @@ impl RunQueue {
             let Some(started) = entry.running else {
                 continue;
             };
-            let seconds = (now - started).num_seconds().max(0);
+            let seconds = (now - started).as_secs().max(0);
             let cap = entry.cap(self.timeout);
             let outcome = match state {
                 RunState::Finished => Some(("finished", None)),
@@ -763,7 +764,7 @@ impl RunQueue {
                     "failed",
                     Some("the runner no longer holds the run".to_owned()),
                 )),
-                RunState::Running if (now - started).to_std().unwrap_or_default() >= cap => Some((
+                RunState::Running if Duration::try_from(now - started).unwrap_or_default() >= cap => Some((
                     "timeout",
                     Some(format!(
                         "it ran past {} min and was stopped",
@@ -803,7 +804,7 @@ impl RunQueue {
         let mut starts = Vec::new();
         let fresh = self
             .planned_at
-            .is_some_and(|at| (now - at).to_std().unwrap_or_default() < STALE_PLAN);
+            .is_some_and(|at| Duration::try_from(now - at).unwrap_or_default() < STALE_PLAN);
         for (lane, limit) in [(Lane::Batch, self.batch), (Lane::Short, self.short)] {
             let in_lane = |e: &Entry| e.lane == lane;
             let busy = self
@@ -811,7 +812,7 @@ impl RunQueue {
                 .values()
                 .filter(|e| in_lane(e) && e.running.is_some())
                 .count();
-            let mut waiting: Vec<(DateTime<Utc>, Key)> = self
+            let mut waiting: Vec<(TimestampTz, Key)> = self
                 .entries
                 .iter()
                 .filter(|(_, e)| in_lane(e) && e.running.is_none() && !e.sweep)
@@ -860,7 +861,7 @@ impl RunQueue {
     }
 
     /// A retry that came due joins the queue under its own time (T-5687).
-    fn queue_retries(&mut self, now: DateTime<Utc>) {
+    fn queue_retries(&mut self, now: TimestampTz) {
         for entry in self.entries.values_mut() {
             let Some(retry) = entry.retry.take_if(|retry| retry.at <= now) else {
                 continue;
@@ -875,7 +876,7 @@ impl RunQueue {
     /// Queues one run of `key` now, outside its clock (T-4349), and names it: an entry already
     /// queued keeps its place and its run. A held pipeline (T-5370) stays held: another run
     /// would loop in the runner again.
-    pub fn run_now(&mut self, key: &Key, now: DateTime<Utc>) -> Result<String, RunNow> {
+    pub fn run_now(&mut self, key: &Key, now: TimestampTz) -> Result<String, RunNow> {
         let entry = self.entries.get_mut(key).ok_or(RunNow::NotQueued)?;
         if entry.running.is_some() {
             return Err(RunNow::Running(entry.run.clone().unwrap_or_default()));
@@ -888,7 +889,7 @@ impl RunQueue {
 
     /// The runner did not let go of `key`'s run past its cap (T-5370): the reason says what
     /// to change, and the pipeline does not start again until its stream does.
-    fn stuck(&mut self, key: &Key, now: DateTime<Utc>) {
+    fn stuck(&mut self, key: &Key, now: TimestampTz) {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.stuck = true;
             entry.queued = None;
@@ -903,7 +904,7 @@ impl RunQueue {
         }
     }
 
-    fn failed_to_start(&mut self, key: &Key, reason: String, now: DateTime<Utc>) {
+    fn failed_to_start(&mut self, key: &Key, reason: String, now: TimestampTz) {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.running = None;
             let reason = format!("the runner refused the run: {reason}");
@@ -990,7 +991,7 @@ fn with_run(stream: &str, run: &str) -> Value {
 /// waited longest are the ones it forgot, so they waited a whole period more after every
 /// restart; slovensko's 300 pipelines, queued last by name, ran on neither cluster for a day
 /// (T-5778). Queued under that time, they run before what came due since.
-fn missed(clock: &Clock, last: DateTime<Utc>, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn missed(clock: &Clock, last: TimestampTz, now: TimestampTz) -> Option<TimestampTz> {
     clock.next_after(last).filter(|due| *due <= now)
 }
 
@@ -1001,13 +1002,13 @@ pub fn stream_hash(stream: &str) -> String {
     hex(&digest(stream))
 }
 
-fn stamp(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Secs, true)
+fn stamp(t: TimestampTz) -> String {
+    t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
 }
 
 /// One step of the queue against the runner: sweeps, then the running runs' state, then ends
 /// and starts. The lock is never held across a runner call.
-pub(crate) async fn tick<R: Runner>(queue: &Mutex<RunQueue>, runner: &R, now: DateTime<Utc>) {
+pub(crate) async fn tick<R: Runner>(queue: &Mutex<RunQueue>, runner: &R, now: TimestampTz) {
     let lock = || {
         queue
             .lock()
@@ -1145,7 +1146,7 @@ mod tests {
     use super::*;
     use std::collections::{BTreeSet, HashMap};
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         DateTime::parse_from_rfc3339(text)
             .expect("a time")
             .with_timezone(&Utc)
@@ -1254,8 +1255,8 @@ mod tests {
         step(&queue, &fake, now).await;
         assert!(fake.ends.lock().unwrap().is_empty(), "nothing ended yet");
         fake.end("a", RunState::Finished);
-        step(&queue, &fake, now + Span::minutes(1)).await;
-        step(&queue, &fake, now + Span::minutes(15)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(1)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(
             *fake.ends.lock().unwrap(),
             [
@@ -1276,7 +1277,7 @@ mod tests {
         queue.lock().unwrap().plan(wanted, now);
         step(&queue, &fake, now).await;
         fake.end("a", RunState::Failed);
-        step(&queue, &fake, now + Span::minutes(1)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(1)).await;
         assert_eq!(
             *fake.ends.lock().unwrap(),
             [("a".to_owned(), "2026-10-17T05:00:00Z".to_owned(), false)]
@@ -1284,7 +1285,7 @@ mod tests {
     }
 
     /// One tick, the reconciler having planned just before it as it does on every pass.
-    async fn step(queue: &Mutex<RunQueue>, fake: &Fake, now: DateTime<Utc>) {
+    async fn step(queue: &Mutex<RunQueue>, fake: &Fake, now: TimestampTz) {
         queue.lock().unwrap().planned_at = Some(now);
         tick(queue, fake, now).await;
     }
@@ -1298,7 +1299,7 @@ mod tests {
 
     /// One reconciler pass over pipeline `a` (weekly, run before) whose newest logged run, when
     /// given, failed for a cause outside its source.
-    fn pass(queue: &Mutex<RunQueue>, failed: Option<&str>, rules: u64, now: DateTime<Utc>) {
+    fn pass(queue: &Mutex<RunQueue>, failed: Option<&str>, rules: u64, now: TimestampTz) {
         let mut q = queue.lock().unwrap();
         q.ran([(key("a"), now)].into_iter().collect());
         q.rules([("p".to_owned(), rules)].into_iter().collect());
@@ -1319,13 +1320,13 @@ mod tests {
     }
 
     /// One run of `a` from start to delete at `due`.
-    async fn retried_at(queue: &Mutex<RunQueue>, fake: &Fake, due: DateTime<Utc>) {
-        step(queue, fake, due - Span::minutes(1)).await;
+    async fn retried_at(queue: &Mutex<RunQueue>, fake: &Fake, due: TimestampTz) {
+        step(queue, fake, due - jiff::SignedDuration::from_mins(1)).await;
         assert!(fake.log().is_empty(), "nothing runs before {due}");
         step(queue, fake, due).await;
         assert_eq!(fake.log(), ["start a"], "the retry runs at {due}");
         fake.end("a", RunState::Finished);
-        step(queue, fake, due + Span::minutes(1)).await;
+        step(queue, fake, due + jiff::SignedDuration::from_mins(1)).await;
         assert_eq!(fake.log(), ["delete a"]);
     }
 
@@ -1423,20 +1424,20 @@ mod tests {
             &queue,
             Some("2026-10-25T14:00:00Z"),
             2,
-            now + Span::minutes(2),
+            now + jiff::SignedDuration::from_mins(2),
         );
         assert!(
             said(&queue).contains("next try 2026-10-25T16:02:00Z"),
             "{}",
             said(&queue)
         );
-        step(&queue, &fake, now + Span::minutes(2)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(2)).await;
         assert_eq!(fake.log(), ["start a"]);
         fake.end("a", RunState::Finished);
-        step(&queue, &fake, now + Span::minutes(3)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(3)).await;
         fake.log();
 
-        pass(&queue, None, 2, now + Span::minutes(4));
+        pass(&queue, None, 2, now + jiff::SignedDuration::from_mins(4));
         assert!(
             said(&queue).starts_with("Waiting: next run 2026-10-29T00:00:00Z"),
             "{}",
@@ -1446,7 +1447,7 @@ mod tests {
             &queue,
             Some("2026-10-25T16:30:00Z"),
             2,
-            now + Span::minutes(40),
+            now + jiff::SignedDuration::from_mins(40),
         );
         assert!(
             said(&queue).contains("next try 2026-10-25T16:55:00Z"),
@@ -1467,8 +1468,8 @@ mod tests {
         fake.log();
         for n in 0..RETRIES_PER_DAY {
             pass(&queue, Some(&format!("failed-{n}")), 1, now);
-            retried_at(&queue, &fake, now + Span::minutes(15)).await;
-            now += Span::minutes(20);
+            retried_at(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
+            now += jiff::SignedDuration::from_mins(20);
             pass(&queue, None, 1, now);
         }
         pass(&queue, Some("failed-again"), 1, now);
@@ -1490,12 +1491,12 @@ mod tests {
         fake.refuse.lock().unwrap().insert("a".to_owned());
         step(&queue, &fake, now).await;
         assert_eq!(fake.log(), ["delete a", "start a", "delete a"]);
-        pass(&queue, None, 1, now + Span::minutes(1));
+        pass(&queue, None, 1, now + jiff::SignedDuration::from_mins(1));
         assert!(
             matches!(queue.lock().unwrap().outcome(&key("a")), Some(StreamOutcome::Error(e)) if e.contains("400 bad config") && e.ends_with("next try 2026-10-25T16:15:00Z"))
         );
         fake.refuse.lock().unwrap().clear();
-        step(&queue, &fake, now + Span::minutes(15)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(fake.log(), ["start a"]);
     }
 
@@ -1513,7 +1514,7 @@ mod tests {
         }
     }
 
-    fn next_of(queue: &RunQueue, name: &str) -> Option<DateTime<Utc>> {
+    fn next_of(queue: &RunQueue, name: &str) -> Option<TimestampTz> {
         queue.entries.get(&key(name)).and_then(|entry| entry.next)
     }
 
@@ -1561,7 +1562,7 @@ mod tests {
     fn a_replace_stream_changed_across_a_restart_is_due_at_once() {
         let mut queue = RunQueue::new(1, 1);
         let now = at("2026-10-27T06:00:00Z");
-        let last = now - Span::hours(1);
+        let last = now - jiff::SignedDuration::from_hours(1);
         let names = ["replaced", "same", "unhashed", "upserted"];
         queue.ran(names.iter().map(|name| (key(name), last)).collect());
         let old = weekly_run(true, 1).stream.hash();
@@ -1606,7 +1607,7 @@ mod tests {
         second.clock = Clock::Once;
         queue.lock().unwrap().plan([(key("a"), second)].into(), now);
         fake.end("a", RunState::Finished);
-        step(&queue, &fake, now + Span::minutes(1)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(1)).await;
         assert_eq!(
             fake.ran_streams.lock().unwrap().first(),
             Some(&("a".to_owned(), first.stream.hash()))
@@ -1661,7 +1662,7 @@ mod tests {
         };
         queue.plan(
             [(key("a"), digest_only(&run)), (key("b"), digest_only(&run))].into(),
-            now + Span::hours(1),
+            now + jiff::SignedDuration::from_hours(1),
         );
         assert_eq!(next_of(&queue, "a"), next, "unchanged, not re-queued");
         assert!(
@@ -1704,7 +1705,7 @@ mod tests {
             "nothing is due yet"
         );
 
-        let later = start + Span::hours(1);
+        let later = start + jiff::SignedDuration::from_hours(1);
         queue.lock().unwrap().plan(wanted(2), later);
         let mut previous: Option<&str> = None;
         for name in names {
@@ -1883,7 +1884,7 @@ mod tests {
             .unwrap()
             .run_now(&key("a"), five)
             .expect("queued");
-        step(&queue, &fake, five + Span::seconds(60)).await;
+        step(&queue, &fake, five + jiff::SignedDuration::from_secs(60)).await;
         assert_eq!(fake.log(), ["delete b", "start a"]);
     }
 
@@ -1907,7 +1908,7 @@ mod tests {
         let five = at("2026-10-17T05:00:00Z");
         step(&queue, &fake, five).await;
         assert_eq!(fake.log(), ["start a"]);
-        step(&queue, &fake, five + Span::seconds(5)).await;
+        step(&queue, &fake, five + jiff::SignedDuration::from_secs(5)).await;
         assert_eq!(fake.held(), ["a"], "b waits while a runs");
         assert_eq!(
             queue.lock().unwrap().outcome(&key("b")),
@@ -1918,7 +1919,7 @@ mod tests {
         );
         for (name, next) in [("a", "b"), ("b", "c")] {
             fake.end(name, RunState::Finished);
-            step(&queue, &fake, five + Span::seconds(60)).await;
+            step(&queue, &fake, five + jiff::SignedDuration::from_secs(60)).await;
             assert_eq!(
                 fake.log(),
                 [format!("delete {name}"), format!("start {next}")]
@@ -1926,7 +1927,7 @@ mod tests {
             assert_eq!(fake.held(), [next]);
         }
         fake.end("c", RunState::Finished);
-        step(&queue, &fake, five + Span::seconds(120)).await;
+        step(&queue, &fake, five + jiff::SignedDuration::from_secs(120)).await;
         assert_eq!(fake.log(), ["delete c"]);
         assert!(
             fake.held().is_empty(),
@@ -1962,9 +1963,9 @@ mod tests {
 
         step(&queue, &fake, now).await;
         assert_eq!(fake.log(), ["start b"]);
-        step(&queue, &fake, now + Span::minutes(14)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(14)).await;
         assert_eq!(fake.held(), ["b"]);
-        step(&queue, &fake, now + Span::minutes(15)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(
             fake.log(),
             ["delete b", "start c"],
@@ -1975,7 +1976,7 @@ mod tests {
         );
 
         fake.held.lock().unwrap().remove(&key("c"));
-        step(&queue, &fake, now + Span::minutes(16)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(16)).await;
         assert_eq!(
             fake.log(),
             ["delete c", "start d"],
@@ -2007,7 +2008,7 @@ mod tests {
         step(&queue, &fake, now).await;
         fake.log();
         fake.end("ok", RunState::Finished);
-        step(&queue, &fake, now + Span::minutes(15)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(fake.log(), ["delete loop", "delete ok"]);
         let outcome = queue.lock().unwrap().outcome(&key("loop"));
         let Some(StreamOutcome::Error(said)) = outcome else {
@@ -2019,12 +2020,12 @@ mod tests {
             queue
                 .lock()
                 .unwrap()
-                .run_now(&key("loop"), now + Span::minutes(15)),
+                .run_now(&key("loop"), now + jiff::SignedDuration::from_mins(15)),
             Err(RunNow::Held),
             "Run now on a held pipeline is refused, not queued for a start that never comes"
         );
 
-        step(&queue, &fake, now + Span::hours(1)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_hours(1)).await;
         assert_eq!(
             fake.log(),
             ["start ok"],
@@ -2042,8 +2043,8 @@ mod tests {
                 replace: false,
             },
         );
-        queue.lock().unwrap().plan(changed, now + Span::hours(1));
-        step(&queue, &fake, now + Span::hours(1)).await;
+        queue.lock().unwrap().plan(changed, now + jiff::SignedDuration::from_hours(1));
+        step(&queue, &fake, now + jiff::SignedDuration::from_hours(1)).await;
         assert_eq!(fake.log(), ["start loop"], "a changed stream runs again");
     }
 
@@ -2066,22 +2067,22 @@ mod tests {
         queue.lock().unwrap().run_now(&key("loop"), now).unwrap();
         fake.stuck.lock().unwrap().insert("loop".to_owned());
         step(&queue, &fake, now).await;
-        step(&queue, &fake, now + Span::minutes(15)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         fake.log();
 
-        step(&queue, &fake, now + Span::minutes(70)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(70)).await;
         queue
             .lock()
             .unwrap()
-            .plan(wanted(2), now + Span::minutes(70));
-        step(&queue, &fake, now + Span::minutes(70)).await;
+            .plan(wanted(2), now + jiff::SignedDuration::from_mins(70));
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(70)).await;
         assert_eq!(
             fake.log(),
             Vec::<String>::new(),
             "the due time passed while held queued nothing"
         );
-        step(&queue, &fake, now + Span::minutes(131)).await;
-        step(&queue, &fake, now + Span::minutes(131)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(131)).await;
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(131)).await;
         assert_eq!(fake.log(), ["start loop"], "it runs at its next due time");
     }
 
@@ -2222,7 +2223,7 @@ mod tests {
         assert_eq!(queue.lock().unwrap().outcome(&key("a")), None);
 
         fake.end("b", RunState::Finished);
-        let later = now + Span::minutes(11);
+        let later = now + jiff::SignedDuration::from_mins(11);
         queue.lock().unwrap().plan(
             [
                 (key("b"), planned(Clock::Once)),
@@ -2268,7 +2269,7 @@ mod tests {
             .run_now(&key("a"), now)
             .expect("queued");
         assert_eq!(run, "2026-10-16T14:00:00Z");
-        let later = now + Span::seconds(30);
+        let later = now + jiff::SignedDuration::from_secs(30);
         assert_eq!(
             queue.lock().unwrap().run_now(&key("a"), later),
             Ok(run.clone()),
@@ -2325,7 +2326,7 @@ mod tests {
         fake.end("fresh", RunState::Finished);
         // Reconciler passes go on while the log has not caught up: still one run, not one each.
         for minutes in 1..4 {
-            let later = now + Span::minutes(minutes);
+            let later = now + jiff::SignedDuration::from_mins(minutes);
             queue.lock().unwrap().plan(wanted(), later);
             step(&queue, &fake, later).await;
         }
@@ -2420,15 +2421,15 @@ mod tests {
         let fake = Fake::default();
         let start = at("2026-10-26T04:00:00Z");
         // The run log: each ran the day before.
-        let mut log: HashMap<Key, DateTime<Utc>> = wanted()
+        let mut log: HashMap<Key, TimestampTz> = wanted()
             .into_keys()
-            .map(|key| (key, start - Span::hours(20)))
+            .map(|key| (key, start - jiff::SignedDuration::from_hours(20)))
             .collect();
         let mut queue = Mutex::new(RunQueue::new(1, 1));
-        let mut running: HashMap<Key, DateTime<Utc>> = HashMap::new();
+        let mut running: HashMap<Key, TimestampTz> = HashMap::new();
         let mut daily = Vec::new();
         for minute in 0..24 * 60 {
-            let now = start + Span::minutes(minute);
+            let now = start + jiff::SignedDuration::from_mins(minute);
             if minute % 30 == 0 {
                 queue = Mutex::new(RunQueue::new(1, 1));
             }
@@ -2438,7 +2439,7 @@ mod tests {
                 q.plan(wanted(), now);
             }
             running.retain(|key, since| {
-                let done = now - *since >= Span::minutes(15);
+                let done = now - *since >= jiff::SignedDuration::from_mins(15);
                 if done {
                     fake.end(&key.1, RunState::Finished);
                 }

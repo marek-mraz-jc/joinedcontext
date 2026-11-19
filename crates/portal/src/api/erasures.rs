@@ -223,7 +223,7 @@ async fn audited(
 ) {
     let actor = &user.0.identity.username;
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: Some(space.to_owned()),
         kind: "personal-data".to_owned(),

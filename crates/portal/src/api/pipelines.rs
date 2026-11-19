@@ -373,7 +373,7 @@ pub async fn get_samples(
     let hidden = hidden.unwrap_or_default();
     let nodes = state
         .pipeline_samples
-        .read(&project, &name, chrono::Utc::now())
+        .read(&project, &name, jc_time::TimestampTz::now())
         .into_iter()
         .filter(|(node, _)| !withheld || node == "output")
         .map(|(node, samples)| {
@@ -1200,7 +1200,7 @@ pub async fn post_run(
         )),
         })?;
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.clone(),
         space: None,
         kind: "pipeline.run".to_owned(),
@@ -1677,7 +1677,7 @@ async fn source_decision(
         }
     };
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "pipeline.source-delete".to_owned(),
