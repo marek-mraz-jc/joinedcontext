@@ -923,7 +923,7 @@ async fn a_project_nobody_bound_the_caller_to_is_not_there_and_one_they_only_rea
 /// counted from the commit that removed it.
 #[tokio::test]
 async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passes() {
-    let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    let day_ago = (jc_time::TimestampTz::now() - jiff::SignedDuration::from_hours(24)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
         "Sha": "c0ffee", "Message": "delete project mobilita",
         "Author": "admin", "Email": "admin@hel.fi", "Date": day_ago
@@ -937,7 +937,8 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
     assert!(body.contains("reserved until"), "{body}");
 
     // The same name once the period has passed: a project again, nothing written before.
-    let long_ago = (chrono::Utc::now() - chrono::Duration::days(60)).to_rfc3339();
+    let long_ago =
+        (jc_time::TimestampTz::now() - jiff::SignedDuration::from_hours(60 * 24)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
         "Sha": "c0ffee", "Message": "delete project mobilita",
         "Author": "admin", "Email": "admin@hel.fi", "Date": long_ago
@@ -952,7 +953,7 @@ async fn the_name_of_a_deleted_project_is_refused_until_the_cooling_period_passe
 /// PF-78: `nameCooldownDays: 0` is the organization saying it wants no reservation at all.
 #[tokio::test]
 async fn an_organization_may_set_no_cooling_period_at_all() {
-    let day_ago = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+    let day_ago = (jc_time::TimestampTz::now() - jiff::SignedDuration::from_hours(24)).to_rfc3339();
     let shako = forge_with_a_tree(json!([{
         "Sha": "c0ffee", "Message": "delete project mobilita",
         "Author": "admin", "Email": "admin@hel.fi", "Date": day_ago

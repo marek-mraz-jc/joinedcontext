@@ -385,8 +385,7 @@ pub async fn internal_mcp(
 /// since `started` (RFC 3339): that takes back what the run does in their name (T-6226). A start
 /// time that does not parse counts as the oldest.
 fn signed_out_since(state: &AppState, subject: &str, started: &str) -> bool {
-    let started =
-        chrono::DateTime::parse_from_rfc3339(started).map_or(i64::MIN, |at| at.timestamp());
+    let started = jc_time::parse_rfc3339(started).map_or(i64::MIN, |at| at.as_second());
     state.revoked_since(subject, started)
 }
 
@@ -420,9 +419,7 @@ mod tests {
     async fn a_run_stops_acting_for_a_person_who_signed_out_since_it_started() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
         let started = "2026-10-31T10:00:00Z";
-        let at = chrono::DateTime::parse_from_rfc3339(started)
-            .expect("time")
-            .timestamp();
+        let at = jc_time::parse_rfc3339(started).expect("time").as_second();
         assert!(!signed_out_since(&state, "sub-ana", started));
         state.revoke_subject("sub-ana", at + 60).await;
         assert!(signed_out_since(&state, "sub-ana", started));

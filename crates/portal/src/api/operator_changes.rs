@@ -787,7 +787,7 @@ async fn operators_hold(
     Ok(())
 }
 
-/// A Change as it is read: times in epoch seconds (sqlx here speaks `time`, the answer chrono).
+/// A Change as it is read: times in epoch seconds (sqlx here speaks `time`, the answer jc-time).
 type Row = (
     String,
     String,

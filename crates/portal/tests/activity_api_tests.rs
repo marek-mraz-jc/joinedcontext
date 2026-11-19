@@ -393,7 +393,7 @@ async fn a_postgres_page_keeps_one_connectors_events_and_pages_on_by_cursor() {
     let Some((pool, project)) = activity_db().await else {
         return;
     };
-    // The store keeps whole seconds (`chrono_to_odt`); the id orders events of one second.
+    // The store keeps whole seconds (`ts_to_odt`); the id orders events of one second.
     let now = TimestampTz::from_second(TimestampTz::now().as_second()).expect("an instant");
     let mirror = common::keyed_mirror(&pool, &[&project]).await;
     let store = ActivityStore::new(Some(pool), mirror);

@@ -16,9 +16,9 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::{Duration, SecondsFormat, Utc};
 use jc_core::kinds::{PipelineSource, PipelineSpec, Step, Verb};
 use jc_core::kpi_join::{earlier_reads, Earlier, Expr, Input, KpiStep};
+use jc_time::{SecondsFormat, TimestampTz};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -248,7 +248,7 @@ fn indicator(step: &KpiStep, target: &str, project: &str, pipeline: &str) -> Opt
         .strip_prefix("urn:ngsi-ld:Endpoint:")?
         .rsplit_once(':')?;
     let (domain, _) = scope.split_once(':')?;
-    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    let now = TimestampTz::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     Some(serde_json::json!({
         "id": format!("urn:ngsi-ld:KeyPerformanceIndicator:{scope}:{}", step.name),
         "type": "KeyPerformanceIndicator",
@@ -676,8 +676,10 @@ async fn history(reader: &Reader<'_>, input: &Input, read: &Earlier) -> Result<V
 /// The history read of a source: its type and `q`, the attributes the `prev` terms fold, each
 /// row's newest reading at the time one period back, one page.
 fn history_query(input: &Input, read: &Earlier) -> Vec<(&'static str, String)> {
-    let at =
-        Utc::now() - Duration::seconds(i64::from(jc_core::kpi_join::period_seconds(&read.period)));
+    let at = TimestampTz::now()
+        - jiff::SignedDuration::from_secs(i64::from(jc_core::kpi_join::period_seconds(
+            &read.period,
+        )));
     let mut query = vec![
         ("type", input.entity_type.clone()),
         ("attrs", read.attrs.join(",")),
@@ -765,8 +767,8 @@ mod tests {
         assert_eq!(query["timerel"], "before");
         assert_eq!(query["lastN"], "1");
         assert_eq!(query["q"], "occupied>0");
-        let at = chrono::DateTime::parse_from_rfc3339(&query["timeAt"]).expect("a time");
-        let back = (Utc::now() - at.with_timezone(&Utc)).num_seconds();
+        let at = jc_time::parse_rfc3339(&query["timeAt"]).expect("a time");
+        let back = (TimestampTz::now() - TimestampTz(at)).as_secs();
         assert!((604_790..=604_810).contains(&back), "{back}");
     }
 

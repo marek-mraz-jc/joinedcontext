@@ -8,8 +8,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use jc_core::kinds::Verb;
+use jc_time::TimestampTz;
 use jc_types::ProjectId;
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -91,7 +91,7 @@ pub struct Branch {
     pub parent: String,
     /// When the branch stops answering unless renewed (CHG-15).
     #[schema(value_type = String, format = DateTime)]
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
 }
 
 impl Branch {
@@ -100,7 +100,7 @@ impl Branch {
             id: row.id.path_segment(),
             name: row.name,
             parent: parent.to_owned(),
-            expires_at: DateTime::from_timestamp(row.expires_at, 0).unwrap_or_default(),
+            expires_at: TimestampTz::from_second(row.expires_at).unwrap_or_default(),
         }
     }
 }

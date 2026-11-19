@@ -2038,7 +2038,7 @@ async fn an_invitation_into_a_project_links_to_its_home_and_says_when_it_expires
         .expect("a clean row");
     let waiting = pending_person(&kc).await;
     state.db = Some(pool.clone());
-    let before = chrono::Utc::now();
+    let before = jiff::Timestamp::now();
     let resent = send(
         &state,
         person("pia"),
@@ -2054,12 +2054,12 @@ async fn an_invitation_into_a_project_links_to_its_home_and_says_when_it_expires
         .as_array()
         .and_then(|items| items.iter().find(|p| p["id"] == waiting))
         .and_then(|p| p["invitationExpires"].as_str())
-        .and_then(|at| chrono::DateTime::parse_from_rfc3339(at).ok())
+        .and_then(jc_time::parse_rfc3339)
         .expect("the pending invitation's expiry");
-    let twelve_hours = chrono::Duration::hours(12);
+    let twelve_hours = jiff::SignedDuration::from_hours(12);
     assert!(
-        expires >= before + twelve_hours - chrono::Duration::seconds(5)
-            && expires <= chrono::Utc::now() + twelve_hours,
+        expires >= before + twelve_hours - jiff::SignedDuration::from_secs(5)
+            && expires <= jiff::Timestamp::now() + twelve_hours,
         "{expires}"
     );
     // A person who took every step shows no expiry.
@@ -2233,7 +2233,7 @@ async fn disabling_a_person_revokes_their_connectors_on_the_feed() {
         serde_json::from_value(json!({
             "name": name, "segments": ["data-read"],
             "scope": [{ "project": "doprava", "access": "read" }],
-            "expiresAt": (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339(),
+            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(7 * 24)).to_rfc3339(),
         }))
         .expect("a connector")
     };

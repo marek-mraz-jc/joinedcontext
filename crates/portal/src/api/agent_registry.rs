@@ -395,7 +395,7 @@ fn manifest_spend(kind: &str, spec: &Value, runs: &[&AgentRun]) -> Spend {
             per: Some("day".into()),
         },
         "AgentProfile" => {
-            let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            let today = jiff::Timestamp::now().strftime("%Y-%m-%d").to_string();
             let used = runs
                 .iter()
                 .filter(|run| run.created_at.starts_with(&today))

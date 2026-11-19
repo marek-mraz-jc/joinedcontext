@@ -429,8 +429,8 @@ impl StreamDeployer {
     }
 
     /// One step of the run queue at `now`: what [`Self::spawn_queue`] does every few seconds.
-    /// `now` is anything chrono's instant converts from, such as `SystemTime`, so a caller
-    /// already off chrono (portal-dump, T-7240) passes the clock without it.
+    /// `now` is a [`jc_time::TimestampTz`] or a `jiff::Timestamp`, so portal-dump (T-7240)
+    /// passes its own clock.
     pub async fn tick_queue(&self, now: impl Into<jc_time::TimestampTz>) {
         run_queue::tick(&self.queue, self, now.into()).await;
     }

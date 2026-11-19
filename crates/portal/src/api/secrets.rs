@@ -294,7 +294,7 @@ pub(crate) async fn propose_secret(
     let base = shako.default_branch().await?;
     let existing = shako.get_file(&path, &base).await?;
     let recipients = recipients(own, existing.as_ref().map(|f| f.content.as_str()));
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let now = jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     let values: BTreeMap<String, Zeroizing<String>> = std::mem::take(&mut body.values)
         .into_iter()
         .map(|(key, value)| (key, Zeroizing::new(value)))

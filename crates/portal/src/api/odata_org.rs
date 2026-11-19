@@ -1937,7 +1937,7 @@ async fn member_rows(read: &Read<'_>) -> Result<Vec<Value>, Refused> {
             && owned_by(state, org, "RoleBinding", &env.metadata.name)
     });
     let mut members: BTreeMap<String, (BTreeSet<String>, BTreeSet<String>)> = BTreeMap::new();
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     for binding in bindings {
         // A binding outside its validity makes nobody a member today (AUZ-02).
         let lapsed =
