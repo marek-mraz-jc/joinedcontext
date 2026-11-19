@@ -262,9 +262,14 @@ async fn apply_portal_realm(
     if realm_owner(&ctx.setup.dir, realm, existed_before, import_brings_portal)?
         == RealmOwner::Import
     {
+        let added = add_organization_hosts(store, realm, &ctx.siblings.organization_portals)
+            .await
+            .map_err(|e| err(&e))?;
         tracing::info!(
             %realm,
-            "kaisatsu: the deployment brings the Portal's realm; jc writes nothing into it"
+            added,
+            "kaisatsu: the deployment brings the Portal's realm; jc adds only its Organizations' \
+             hosts to the Portal's clients"
         );
         return Ok(());
     }
@@ -304,6 +309,68 @@ async fn apply_portal_realm(
         "kaisatsu: the Portal's realm is applied"
     );
     Ok(())
+}
+
+/// Adds the exact sign-in callbacks, web origins and logout targets of `bases` (the Portal on
+/// each `[[organizations]]` host signing in through this realm) to the Portal's clients of an
+/// imported realm (T-7289). A targeted client update, never through the import file: its checksum
+/// stays, so the export is not re-applied, and nothing already there is removed or reordered.
+/// Returns how many entries were added; a second run adds none and writes nothing.
+async fn add_organization_hosts(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+    bases: &[String],
+) -> Result<usize, String> {
+    let bases: Vec<&str> = bases.iter().map(|b| b.trim_end_matches('/')).collect();
+    let mut added = 0;
+    for (client_id, callback) in [
+        (setup::PORTAL_CLIENT, "/api/v1/auth/callback"),
+        (setup::PORTAL_UI_CLIENT, setup::SSO_CHECK_DONE),
+    ] {
+        let Some(mut client) = store
+            .get_client_by_client_id(realm.as_str(), client_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        let before = added;
+        let mut add = |list: &mut Vec<String>, value: String| {
+            if !list.contains(&value) {
+                list.push(value);
+                added += 1;
+            }
+        };
+        // No attribute means `+` (the redirect URIs), which an explicit list would otherwise lose.
+        let mut logout: Vec<String> = client
+            .attributes
+            .get("post.logout.redirect.uris")
+            .map_or("+", String::as_str)
+            .split("##")
+            .filter(|v| !v.trim().is_empty())
+            .map(str::to_owned)
+            .collect();
+        for base in &bases {
+            add(&mut client.redirect_uris, format!("{base}{callback}"));
+            add(&mut client.web_origins, (*base).to_owned());
+            if client_id == setup::PORTAL_CLIENT {
+                add(&mut logout, format!("{base}/"));
+            }
+        }
+        if added == before {
+            continue;
+        }
+        if client_id == setup::PORTAL_CLIENT {
+            client
+                .attributes
+                .insert("post.logout.redirect.uris".to_owned(), logout.join("##"));
+        }
+        store
+            .upsert_client(client)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(added)
 }
 
 /// What an Organization's own realm is written from (T-7001): named like the Organization,
@@ -2213,6 +2280,106 @@ mod tests {
             !linked("jc").await.contains(&scope),
             "the other realm is left alone"
         );
+    }
+
+    /// T-7289: an imported realm (jc-prod smartcity) gets the callbacks of an Organization host
+    /// signing in through it as a targeted client update; the export's scopes, mappers and
+    /// URIs stay, a second start writes nothing, and an unrelated client is untouched.
+    #[tokio::test]
+    async fn an_imported_realm_gets_its_organization_hosts_callbacks_added_once() {
+        let store: Arc<dyn Store> =
+            Arc::new(MemoryStore::new(Kek::from_raw_bytes(&[7; 32]).unwrap()));
+        let realm = setup::Realm::parse("smartcity").unwrap();
+        store
+            .upsert_realm(kaisatsu_core::RealmConfig {
+                id: "smartcity".into(),
+                realm: "smartcity".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let old = "https://portal.smartcity.example";
+        let client = |client_id: &str, redirect: &str| ClientRepresentation {
+            realm_id: "smartcity".into(),
+            client_id: client_id.into(),
+            redirect_uris: vec![format!("{old}{redirect}")],
+            web_origins: vec![old.into()],
+            optional_client_scopes: vec!["endpoint:aaaa".into()],
+            attributes: [("post.logout.redirect.uris".to_owned(), format!("{old}/"))].into(),
+            protocol_mappers: vec![kaisatsu_core::ProtocolMapperRepresentation {
+                name: "jc_groups".into(),
+                ..Default::default()
+            }],
+            ..ClientRepresentation::default()
+        };
+        let portal = client(setup::PORTAL_CLIENT, "/api/v1/auth/callback");
+        let other = client("broker", "/cb");
+        let mut ui = client(setup::PORTAL_UI_CLIENT, setup::SSO_CHECK_DONE);
+        ui.attributes.clear();
+        for c in [portal, ui, other] {
+            store.upsert_client(c).await.unwrap();
+        }
+        let read = |id: &'static str| {
+            let store = store.clone();
+            async move {
+                store
+                    .get_client_by_client_id("smartcity", id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let other_before = read("broker").await;
+        let new = "https://smartcity.smartcity.example";
+        let callback = format!("{new}/api/v1/auth/callback");
+        assert!(
+            !read(setup::PORTAL_CLIENT)
+                .await
+                .redirect_uris
+                .contains(&callback)
+        );
+
+        let added = add_organization_hosts(&store, &realm, &[format!("{new}/")])
+            .await
+            .unwrap();
+        assert_eq!(
+            added, 5,
+            "callback, origin and logout on portal-api; two on portal-ui"
+        );
+        let portal = read(setup::PORTAL_CLIENT).await;
+        assert_eq!(
+            portal.redirect_uris,
+            vec![format!("{old}/api/v1/auth/callback"), callback]
+        );
+        assert_eq!(portal.web_origins, vec![old.to_owned(), new.to_owned()]);
+        assert_eq!(
+            portal.attributes["post.logout.redirect.uris"],
+            format!("{old}/##{new}/")
+        );
+        assert_eq!(
+            portal.optional_client_scopes,
+            vec!["endpoint:aaaa".to_owned()]
+        );
+        assert_eq!(portal.protocol_mappers.len(), 1);
+        let ui = read(setup::PORTAL_UI_CLIENT).await;
+        assert!(
+            ui.redirect_uris
+                .contains(&format!("{new}{}", setup::SSO_CHECK_DONE))
+        );
+        assert!(
+            !ui.attributes.contains_key("post.logout.redirect.uris"),
+            "portal-ui gets no logout list"
+        );
+        assert_eq!(read("broker").await, other_before);
+
+        let portal_before = read(setup::PORTAL_CLIENT).await;
+        assert_eq!(
+            add_organization_hosts(&store, &realm, &[new.to_owned()])
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(read(setup::PORTAL_CLIENT).await, portal_before);
     }
 
     #[test]
