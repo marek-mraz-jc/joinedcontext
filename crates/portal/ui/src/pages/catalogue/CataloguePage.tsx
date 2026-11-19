@@ -203,7 +203,7 @@ function Results({
         title={t("catalogue.facets.label")}
         description={t("catalogue.facets.hint")}
         closeLabel={t("catalogue.facets.close")}
-        className="h-[88vh]"
+        className="h-screen"
         footer={
           <Button variant="primary" onClick={() => setFiltersOpen(false)}>
             {t("catalogue.facets.show", { count: answer.total })}
@@ -394,48 +394,50 @@ function FacetGroup({
       : [...matching.filter((v) => selected.includes(v.value)), ...matching.filter((v) => !selected.includes(v.value))].slice(0, FIRST_OPTIONS);
   const name = t(`catalogue.facets.${facet}`);
   return (
-    <details
-      open={!idle && (facet === "publisher" || facet === "theme" || selected.length > 0) ? true : undefined}
-      className="group rounded-lg border border-border bg-surface"
-    >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-body font-semibold text-fg [&::-webkit-details-marker]:hidden">
-        <span>
-          {name}
-          {selected.length > 0 ? <Badge tone="primary" className="ml-2">{selected.length}</Badge> : null}
-        </span>
-        <Icon name="chevronDown" className="size-4 text-fg-muted transition-transform group-open:rotate-180" />
-      </summary>
-      <fieldset className="flex flex-col gap-2 border-t border-border px-4 pb-4 pt-3">
-        <legend className="sr-only">{name}</legend>
-        {idle ? <p className="text-caption text-fg-muted">{t("catalogue.facets.everywhere")}</p> : null}
-        {options.length > SEARCHABLE ? (
-          <Input
-            className="mb-1"
-            type="search"
-            value={needle}
-            onChange={(event) => setNeedle(event.target.value)}
-            aria-label={t("catalogue.facets.find.label", { facet: name })}
-            placeholder={t("catalogue.facets.find.placeholder", { example: options[0]?.label ?? "" })}
-          />
-        ) : null}
-        {shown.map((value) => (
-          <Checkbox
-            key={value.value}
-            className="flex w-full items-start [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
-            checked={selected.includes(value.value)}
-            onChange={() => onToggle(value.value)}
-            label={<span className="break-words" title={facet === "spatial" ? value.value : undefined}>{value.label}</span>}
-            hint={<Badge tone="neutral" className="tabular-nums">{value.count}</Badge>}
-          />
-        ))}
-        {word && matching.length === 0 ? <p className="text-caption text-fg-muted">{t("catalogue.facets.noMatch")}</p> : null}
-        {!word && matching.length > FIRST_OPTIONS ? (
-          <Button variant="ghost" size="sm" className="self-start" aria-expanded={all} onClick={() => setAll(!all)}>
-            {all ? t("catalogue.facets.fewer") : t("catalogue.facets.all", { count: matching.length })}
-          </Button>
-        ) : null}
-      </fieldset>
-    </details>
+    <Card flush>
+      <details
+        open={!idle && (facet === "publisher" || facet === "theme" || selected.length > 0) ? true : undefined}
+        className="group"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-body font-semibold text-fg [&::-webkit-details-marker]:hidden">
+          <span>
+            {name}
+            {selected.length > 0 ? <Badge tone="primary" className="ml-2">{selected.length}</Badge> : null}
+          </span>
+          <Icon name="chevronDown" className="size-4 text-fg-muted transition-transform group-open:rotate-180" />
+        </summary>
+        <fieldset className="flex flex-col gap-2 border-t border-border px-4 pb-4 pt-3">
+          <legend className="sr-only">{name}</legend>
+          {idle ? <p className="text-caption text-fg-muted">{t("catalogue.facets.everywhere")}</p> : null}
+          {options.length > SEARCHABLE ? (
+            <Input
+              className="mb-1"
+              type="search"
+              value={needle}
+              onChange={(event) => setNeedle(event.target.value)}
+              aria-label={t("catalogue.facets.find.label", { facet: name })}
+              placeholder={t("catalogue.facets.find.placeholder", { example: options[0]?.label ?? "" })}
+            />
+          ) : null}
+          {shown.map((value) => (
+            <Checkbox
+              key={value.value}
+              className="flex w-full items-start [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
+              checked={selected.includes(value.value)}
+              onChange={() => onToggle(value.value)}
+              label={<span className="break-words" title={facet === "spatial" ? value.value : undefined}>{value.label}</span>}
+              hint={<Badge tone="neutral" className="tabular-nums">{value.count}</Badge>}
+            />
+          ))}
+          {word && matching.length === 0 ? <p className="text-caption text-fg-muted">{t("catalogue.facets.noMatch")}</p> : null}
+          {!word && matching.length > FIRST_OPTIONS ? (
+            <Button variant="ghost" size="sm" className="self-start" aria-expanded={all} onClick={() => setAll(!all)}>
+              {all ? t("catalogue.facets.fewer") : t("catalogue.facets.all", { count: matching.length })}
+            </Button>
+          ) : null}
+        </fieldset>
+      </details>
+    </Card>
   );
 }
 
