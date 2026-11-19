@@ -947,7 +947,7 @@ async fn forced_rls_hides_other_organizations_from_raw_sql_of_the_app_role() {
 }
 
 #[tokio::test]
-async fn public_token_policy_shows_exactly_one_row_and_never_allows_writes() {
+async fn a_public_token_resolves_through_the_lookup_and_no_setting_widens_rls() {
     let _schema = SCHEMA_LOCK.read().await;
     let Some(db) = pg().await else { return };
     let org = OrgId::new();
@@ -968,47 +968,38 @@ async fn public_token_policy_shows_exactly_one_row_and_never_allows_writes() {
             .unwrap();
     }
 
-    // Token known, organization unknown: exactly the row of that token, and nothing else in
-    // any other table.
+    // No session setting other than `cr.org` shows a row: the old token setting sees nothing.
     assert_eq!(
         visible_rows(&db, "cr_public_dashboard", None, Some(&hash)).await,
-        1
+        0
     );
     assert_eq!(
         visible_rows(&db, "cr_dashboard", None, Some(&hash)).await,
         0
     );
-    assert_eq!(
-        visible_rows(&db, "cr_public_dashboard", None, Some("not-a-hash")).await,
-        0
-    );
-    assert_eq!(
-        visible_rows(&db, "cr_public_dashboard", None, Some("")).await,
-        0
-    );
 
-    // The token policy is SELECT only: an UPDATE or DELETE through it touches nothing.
-    let mut tx = db.app.pool().begin().await.unwrap();
-    sqlx::query("SELECT set_config('cr.public_token', $1, true)")
-        .bind(&hash)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    let upd = sqlx::query(
-        "UPDATE cr_public_dashboard SET show_query_text = TRUE WHERE access_token_hash = $1",
-    )
-    .bind(&hash)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    assert_eq!(upd.rows_affected(), 0);
-    let del = sqlx::query("DELETE FROM cr_public_dashboard WHERE access_token_hash = $1")
-        .bind(&hash)
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    assert_eq!(del.rows_affected(), 0);
-    tx.rollback().await.unwrap();
+    // The application role cannot list the token index; it resolves one known hash to its
+    // organization through the lookup function only.
+    let listed = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM daiya_public_token")
+        .fetch_one(db.app.pool())
+        .await;
+    assert!(
+        listed.is_err(),
+        "the token index is not readable by the app role"
+    );
+    let resolve = |h: String| {
+        let pool = db.app.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, Option<uuid::Uuid>>("SELECT daiya_public_token_org($1)")
+                .bind(h)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(resolve(hash.clone()).await, Some(org.0));
+    assert_eq!(resolve("not-a-hash".into()).await, None);
+    assert_eq!(resolve(String::new()).await, None);
 
     // Through the store: the anonymous lookup returns the dashboard of the right organization.
     let (pd, dash) = db
@@ -1156,7 +1147,10 @@ async fn migration_is_idempotent_and_runs_concurrently() {
     .fetch_one(&db.admin)
     .await
     .unwrap();
-    assert_eq!(policies, 2, "org_isolation and public_token_lookup");
+    assert_eq!(
+        policies, 1,
+        "org_isolation only: no second setting widens RLS"
+    );
     let checksum: String =
         sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = 1")
             .fetch_one(&db.admin)

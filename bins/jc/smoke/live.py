@@ -11,8 +11,12 @@ its own process and in every suite process (`run` installs it from $JC_SMOKE_LIV
   connects to the edge IP and names the real host in Host and SNI; TLS is verified.
 - Hosts: only the domain's hosts the jc.toml mounts; any other host, a raw socket, an unverified
   TLS context and every subprocess but another `run` are refused.
-- Requests: GET, HEAD and OPTIONS; POST only to the anonymous MCP JSON-RPC paths and to the
-  anonymous write refusal probe; never an Authorization or Cookie header. A refused request
+- Outside hosts (suite `orgs`: an Organization's crawl and harvest sources, named by the caller):
+  HEAD only, reached directly by their own DNS answer, refused when any address it names is not a
+  public one (loopback, private, link-local: the cluster's or the runner's own network).
+- Requests: GET, HEAD and OPTIONS; POST only to the anonymous MCP JSON-RPC paths, the anonymous
+  write refusal probe and an assistant's visitor token and chat; never an Authorization or Cookie
+  header. A refused request
   raises ConnectionRefusedError naming it (the suite's row fails with that text) and is logged.
 - Rate: one cap shared by every thread and process (a lock file), default 5 requests/s, and
   anonymous MCP calls under the gateway's per-address limit (MCP_RATE).
@@ -50,13 +54,16 @@ GATEWAY_ROOTS = ("/api/endpoint", "/api/endpoints", "/api/mcp", "/cs", "/catalog
 READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 # POST, anonymous only: the MCP JSON-RPC doors and the gateway's anonymous write refusal probe.
 MCP_PATHS = (re.compile(r"/api/mcp(/[^/?]+/[^/?]+)?/?"), re.compile(r"/api/endpoint/[^/?]+/mcp/?"))
-POST_PATHS = (*MCP_PATHS, re.compile(r"/api/endpoint/[a-z2-7]+/ngsi-ld/v1/entities"))
+# The visitor flow of a public AssistantDeployment (assistant chat/mod.rs): the proof's token and one question.
+VISITOR_PATHS = (re.compile(r"/api/v1/d/[a-z0-9][a-z0-9-]{0,62}/(token|chat)"),)
+POST_PATHS = (*MCP_PATHS, *VISITOR_PATHS, re.compile(r"/api/endpoint/[a-z2-7]+/ngsi-ld/v1/entities"))
 # Behind the edge the gateway counts anonymous MCP per client address: 120 a minute, burst 30
 # (context-gateway ANONYMOUS_MCP_RATE_LIMIT, spend_anonymous_mcp). A loopback rehearsal carries no
 # X-Forwarded-For and is never counted, so the suites' own pacing is faster than that.
 MCP_RATE = 1.8
 SECRET_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+HOST = re.compile(r"[a-z0-9]([a-z0-9-]{0,62})(\.[a-z0-9]([a-z0-9-]{0,62}))+")
 
 
 class Refused(ConnectionRefusedError):
@@ -95,8 +102,17 @@ def routes(jc_toml: str, domain: str) -> tuple[list[tuple[str, str, str]], set[s
     return sorted(out, key=lambda r: -len(r[0])), hosts
 
 
+def plain_hosts(hosts, what: str) -> set[str]:
+    out = {str(h).lower().rstrip(".") for h in hosts}
+    if bad := sorted(h for h in out if not HOST.fullmatch(h)):
+        raise SystemExit(f"{what}: not a plain host name: {', '.join(bad)}")
+    return out
+
+
 def config(deployment: str, domain: str, edge: str, jc_toml: str, out: Path, rate: float = 5.0,
-           edge_port: int = 443, scheme: str = "https") -> dict:
+           edge_port: int = 443, scheme: str = "https", org_hosts=(), outside=()) -> dict:
+    """`org_hosts`: further hosts of the deployment (an Organization's own domain), reached
+    through the edge like the mounts'. `outside`: hosts the guard admits HEAD to, directly."""
     domain = domain.lower().rstrip(".")
     if not NAME.fullmatch(deployment):
         raise SystemExit(f"--deployment {deployment!r}: a lower-case name")
@@ -106,10 +122,12 @@ def config(deployment: str, domain: str, edge: str, jc_toml: str, out: Path, rat
     if rate <= 0:
         raise SystemExit("--rate: above 0")
     table, hosts = routes(jc_toml, domain)
+    hosts |= plain_hosts(org_hosts, "an Organization host")
+    outside = plain_hosts(outside, "an outside host") - hosts
     out.mkdir(parents=True, exist_ok=True)
     return {"deployment": deployment, "domain": domain, "edge": edge, "edge_port": edge_port,
             "scheme": scheme, "virtual": f"{deployment}.smoke.invalid", "routes": table,
-            "hosts": sorted(hosts), "rate": rate, "bucket": str(out / ".rate"),
+            "hosts": sorted(hosts), "outside": sorted(outside), "rate": rate, "bucket": str(out / ".rate"),
             "log": str(out / "refused.jsonl")}
 
 
@@ -123,6 +141,7 @@ class Guard:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.hosts = set(cfg["hosts"])
+        self.outside = set(cfg.get("outside") or ())
         self.local = threading.local()
         self.lock = threading.Lock()
 
@@ -139,11 +158,15 @@ class Guard:
                 if virtual == "" or path == virtual or path.startswith(virtual + "/"):
                     # The gateway's entries name its root paths (virtual == prefix): kept whole.
                     return real, (prefix + path[len(virtual):] or "/") + query
-        if host in self.hosts:
+        if host in self.hosts or host in self.outside:
             return host, path + query
         raise Refused(f"host {host or '?'} is not a host of {self.cfg['deployment']}")
 
-    def method(self, method: str, path: str) -> None:
+    def method(self, method: str, path: str, host: str = "") -> None:
+        if host in self.outside:
+            if method == "HEAD":
+                return
+            raise Refused(f"{method} {host}: an outside host takes HEAD only")
         if method in READ_METHODS:
             return
         bare = path.split("?", 1)[0]
@@ -180,6 +203,18 @@ class Guard:
             return now
 
 
+def resolve(host: str, port: int) -> list[tuple[str, int]]:
+    """Every (address, port) DNS answers for an outside host, empty when it answers none."""
+    try:
+        return [(i[4][0], port) for i in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
+    except OSError:
+        return []
+
+
+def is_public(ip: str) -> bool:
+    return ipaddress.ip_address(ip).is_global
+
+
 ACTIVE: Guard | None = None
 _SAVED: dict = {}
 
@@ -211,7 +246,7 @@ def install(cfg: dict) -> Guard:
             g.refuse(what, f"{scheme}: the live mode speaks {cfg['scheme']} only")
         try:
             host, path = g.route(self.host, url)
-            g.method(method, path)
+            g.method(method, path, host)
         except Refused as e:
             g.refuse(what, str(e))
         if self.sock is not None and host != self.host:
@@ -248,13 +283,24 @@ def install(cfg: dict) -> Guard:
         host, port = address[0], address[1]
         if not getattr(g.local, "http", False):
             g.refuse(f"socket {host}:{port}", "a raw socket: the live mode sends HTTP requests only")
+        if str(host).lower() in g.outside:
+            addrs = resolve(str(host).lower(), port)
+            if not addrs or not all(is_public(ip) for ip, _ in addrs):
+                g.refuse(f"socket {host}:{port}", f"outside host {host} names an address that is not public "
+                         f"({', '.join(sorted({ip for ip, _ in addrs})) or 'none'})")
+            g.local.dest = addrs[0]
+            try:
+                return _SAVED["create_connection"](addrs[0], *a, **k)
+            finally:
+                g.local.dest = None
         if str(host).lower() not in g.hosts:
             g.refuse(f"socket {host}:{port}", f"host {host} is not a host of {cfg['deployment']}")
         return _SAVED["create_connection"]((cfg["edge"], cfg["edge_port"]), *a, **k)
 
     def edge_only(addr):
         if not (getattr(g.local, "http", False) and isinstance(addr, tuple)
-                and addr[:2] == (cfg["edge"], cfg["edge_port"])):
+                and (addr[:2] == (cfg["edge"], cfg["edge_port"])
+                     or (getattr(g.local, "dest", None) and addr[:2] == g.local.dest))):
             g.refuse(f"socket {addr}", "only the edge, through an HTTP request")
 
     def sock_connect(self, addr):

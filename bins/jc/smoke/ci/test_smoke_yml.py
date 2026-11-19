@@ -77,9 +77,15 @@ def test_every_suite_runs_on_exactly_one_shard_and_logs_on_each():
     assert ran.pop("logs") == [m["shard"] for m in matrix()]
     split = {"ui"}  # by persona, ui's rows below
     assert {r: len(v) for r, v in ran.items() if r not in split} == {r: 1 for r in ran if r not in split}
-    # restore compares before and after: on a young rehearsal the Pipelines' first runs write new
-    # types in between (runs 43683591053, 43685936569), so it follows pipelines on their shard
-    assert ran["restore"] == ran["pipelines"] and plan.index("pipelines") < plan.index("restore")
+    # restore on a shard of its own (T-7313: after pipelines that shard took 22-29 min); the
+    # Pipelines' first runs write new types between its before and after runs (runs 43683591053,
+    # 43685936569), so the gate makes its before run wait for them, bounded, never a fixed sleep
+    assert ran["restore"] == ["restore"] and ran["pipelines"] == ["pipelines"]
+    assert next(m for m in matrix() if m["shard"] == "restore")["only"] == "restore,logs"
+    line = next(x for x in gate.splitlines() if x.startswith('args+=(--with "restore='))
+    drain = re.search(r"--drain (\d+)", line)
+    assert "--home $home" in line and drain and 0 < int(drain.group(1)) <= 900
+    assert "sleep" not in next(m for m in matrix() if m["shard"] == "restore").get("with", "")
     ui = [m["with"] for m in matrix() if m["shard"] in ran["ui"]]
     personas = [x for w in ui for x in w.split("--personas ")[1].split()[0].split(",")]
     assert sorted(personas) == ["admin", "outsider", "viewer"]

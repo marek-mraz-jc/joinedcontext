@@ -415,19 +415,23 @@ impl OutboundGuard {
             self.check_addr(ip, operator)?;
             return Ok(vec![SocketAddr::new(ip, port)]);
         }
+        // A name that does not resolve and a name that resolves to a refused address answer
+        // the same text, without the address: the refusal tells nothing about internal names.
+        let unreachable = || {
+            DsError::GuardRefused(format!(
+                "host '{clean_host}' does not resolve to an address the outbound policy allows"
+            ))
+        };
         let resolved: Vec<SocketAddr> = tokio::net::lookup_host((clean_host, port))
             .await
-            .map_err(|e| {
-                DsError::GuardRefused(format!("DNS resolution failed for '{clean_host}': {e}"))
-            })?
+            .map_err(|_| unreachable())?
             .collect();
         if resolved.is_empty() {
-            return Err(DsError::GuardRefused(format!(
-                "DNS resolution returned no addresses for '{clean_host}'"
-            )));
+            return Err(unreachable());
         }
         for addr in &resolved {
-            self.check_addr(addr.ip(), operator)?;
+            self.check_addr(addr.ip(), operator)
+                .map_err(|_| unreachable())?;
         }
         Ok(resolved)
     }

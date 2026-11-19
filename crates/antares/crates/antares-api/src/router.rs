@@ -20,9 +20,12 @@ pub fn ops_router(state: AppState) -> Router {
     // Admin only, deliberately: a worker widening its surface to whatever a
     // deployment registered is the same class of accident this router exists
     // to prevent.
-    Router::new()
-        .nest(Admin.prefix(), Admin.router(state.clone()))
-        .with_state(state)
+    let routes = Admin.router(state.clone());
+    let routes = match Admin.streaming_router(state.clone()) {
+        Some(streaming) => routes.merge(streaming),
+        None => routes,
+    };
+    Router::new().nest(Admin.prefix(), routes).with_state(state)
 }
 
 /// The NGSI-LD API, path by path: `router()` mounts exactly these under the
@@ -301,42 +304,64 @@ pub(super) fn routes(state: AppState) -> Router {
     // letters, and a deployment's own /x routes are no less a way in.
     let mut surfaces = Router::new();
     let mut view_root: Option<Router<AppState>> = None;
-    for s in state.surfaces.iter() {
-        let routes = s.router(state.clone());
-        if s.prefix() == surface::VIEW_ROOT {
-            view_root = Some(match view_root {
-                Some(shared) => shared.merge(routes),
-                None => routes,
-            });
-        } else {
-            surfaces = surfaces.nest(s.prefix(), routes);
-        }
-    }
-    if let Some(shared) = view_root {
-        // F-01: a view surface hands the request's subject to an in-process
-        // call, which believes it; so the subject is vouched here, at the
-        // door, as the API nest vouches its own (T-5032, F-ANT2-001).
-        let shared = shared
-            // EP-188: the view's Tenant is checked against the caller's
-            // Organization where the view is looked up.
-            .layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                crate::admin_auth::view_organization_layer,
+    // S4-08: the routes a surface streams its body through bound it
+    // themselves; the wall goes around the rest of each surface here, so the
+    // streaming ones merged after it stay outside.
+    let wall = |routes: Router<AppState>| {
+        routes
+            .layer(axum::extract::DefaultBodyLimit::max(
+                *bounds::MAX_BODY_BYTES,
             ))
             .layer(axum::middleware::from_fn_with_state(
                 state.clone(),
-                crate::admin_auth::subject_or_admin,
-            ));
+                bounds::bounds_layer,
+            ))
+    };
+    let mut view_streaming: Option<Router<AppState>> = None;
+    let join = |a: Option<Router<AppState>>, b: Router<AppState>| match a {
+        Some(a) => a.merge(b),
+        None => b,
+    };
+    for s in state.surfaces.iter() {
+        let routes = s.router(state.clone());
+        let streaming = s.streaming_router(state.clone());
+        if s.prefix() == surface::VIEW_ROOT {
+            view_root = Some(join(view_root, routes));
+            if let Some(streaming) = streaming {
+                view_streaming = Some(join(view_streaming, streaming));
+            }
+        } else {
+            let routes = wall(routes);
+            let routes = match streaming {
+                Some(streaming) => routes.merge(streaming),
+                None => routes,
+            };
+            surfaces = surfaces.nest(s.prefix(), routes);
+        }
+    }
+    if view_root.is_some() || view_streaming.is_some() {
+        // F-01: a view surface hands the request's subject to an in-process
+        // call, which believes it; so the subject is vouched here, at the
+        // door, as the API nest vouches its own (T-5032, F-ANT2-001).
+        let door = |routes: Router<AppState>| {
+            routes
+                // EP-188: the view's Tenant is checked against the caller's
+                // Organization where the view is looked up.
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::admin_auth::view_organization_layer,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    crate::admin_auth::subject_or_admin,
+                ))
+        };
+        let mut shared = wall(door(view_root.unwrap_or_default()));
+        if let Some(streaming) = view_streaming {
+            shared = shared.merge(door(streaming));
+        }
         surfaces = surfaces.nest(surface::VIEW_ROOT, shared);
     }
-    let surfaces = surfaces
-        .layer(axum::extract::DefaultBodyLimit::max(
-            *bounds::MAX_BODY_BYTES,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            bounds::bounds_layer,
-        ));
 
     surfaces
         .merge(remote_notify)

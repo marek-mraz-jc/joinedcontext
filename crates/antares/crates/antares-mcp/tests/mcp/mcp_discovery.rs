@@ -2,7 +2,7 @@
 //! Discovery and the tool list (MCP D-3, D-4; MC1, MC2).
 
 use crate::common::{call, fixture, fixture_with, rpc, tool_names};
-use crate::engines::NoTypes;
+use crate::engines::{NoTypes, NoneOfTheTypes, SpeedOnly};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -37,6 +37,33 @@ async fn input_schemas_list_only_visible_names() -> Result<(), String> {
     assert!(
         query.pointer("/annotations/readOnlyHint") == Some(&json!(true)),
         "{query}"
+    );
+    Ok(())
+}
+
+/// AUZ-06, MCP-03: the schemas, the guide and the resource list name what
+/// the caller may read, not all the view shows.
+#[tokio::test(flavor = "multi_thread")]
+async fn schemas_and_resources_name_only_what_the_caller_may_read() -> Result<(), String> {
+    let f = fixture_with(Some(Arc::new(SpeedOnly))).await?;
+    let list = rpc(&f.app, "cars", "tools/list", json!({})).await;
+    let text = list.result().to_string();
+    assert!(text.contains("speed"), "{text}");
+    for hidden in ["colour", "note"] {
+        assert!(!text.contains(hidden), "{hidden} in {text}");
+    }
+    let f = fixture_with(Some(Arc::new(NoneOfTheTypes))).await?;
+    let list = rpc(&f.app, "cars", "tools/list", json!({})).await;
+    let text = list.result().to_string();
+    for hidden in ["Car", "speed", "colour"] {
+        assert!(!text.contains(hidden), "{hidden} in {text}");
+    }
+    let resources = rpc(&f.app, "cars", "resources/list", json!({})).await;
+    assert_eq!(
+        resources.result().get("resources"),
+        Some(&json!([])),
+        "{}",
+        resources.text
     );
     Ok(())
 }

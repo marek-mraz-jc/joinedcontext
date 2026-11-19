@@ -59,6 +59,9 @@ pub(crate) async fn serve(
         metadata_etag: reads.state.metadata_etag.as_deref(),
     };
     if let ODataUri::Entity { options } = &request.uri {
+        if let Err(narrowed) = crate::narrowed_first(reads, caller, version).await {
+            return narrowed.into_response();
+        }
         return dereference(reads, caller, &ctx, options)
             .await
             .unwrap_or_else(IntoResponse::into_response);
@@ -67,6 +70,11 @@ pub(crate) async fn serve(
     let (ODataUri::Resource { path, options }, None) = (&request.uri, refused) else {
         return not_implemented(refused.unwrap_or("this resource"), version).into_response();
     };
+    // What follows reads the names the request holds, their types included: over the caller's
+    // model, so a refusal tells a hidden name from an unknown one by nothing (S10-12).
+    if let Err(narrowed) = crate::narrowed_first(reads, caller, version).await {
+        return narrowed.into_response();
+    }
     if let Some(set) = history_set(reads, path) {
         return history(reads, caller, &ctx, set, path, options, headers)
             .await
@@ -204,6 +212,7 @@ async fn write(
         version,
         metadata_etag: reads.state.metadata_etag.as_deref(),
     };
+    // A write narrows at its gate ([`crate::narrowed_first`]), after its body's own refusals.
     let answer = match form {
         Form::Create(set) => create(reads, caller, &ctx, set, headers, body).await,
         Form::Change(set, key, kind) => {

@@ -164,6 +164,16 @@ impl CompiledView {
     /// under the core @context, sorted, once each: a name the core context
     /// does not define stays the IRI, which expands to itself.
     pub fn shown_names(&self) -> (Vec<String>, Vec<String>) {
+        self.shown_names_where(|_, _| true)
+    }
+
+    /// [`Self::shown_names`] less what `keeps` refuses: a type when
+    /// `keeps(type, None)` is false, an Attribute when no kept type of its
+    /// rule answers `keeps(type, Some(attribute))`. Both are expanded IRIs.
+    pub fn shown_names_where(
+        &self,
+        keeps: impl Fn(&str, Option<&str>) -> bool,
+    ) -> (Vec<String>, Vec<String>) {
         let ctx = crate::repr::policy_context();
         let compact = |names: &mut dyn Iterator<Item = &String>| {
             names
@@ -172,10 +182,19 @@ impl CompiledView {
                 .into_iter()
                 .collect::<Vec<_>>()
         };
-        let rules = &self.narrowing.rules;
+        let (mut types, mut attributes) = (Vec::new(), Vec::new());
+        for rule in &self.narrowing.rules {
+            let kept: Vec<&String> = rule.types.iter().filter(|t| keeps(t, None)).collect();
+            attributes.extend(
+                rule.attributes
+                    .iter()
+                    .filter(|a| kept.iter().any(|t| keeps(t, Some(a)))),
+            );
+            types.extend(kept);
+        }
         (
-            compact(&mut rules.iter().flat_map(|r| &r.types)),
-            compact(&mut rules.iter().flat_map(|r| &r.attributes)),
+            compact(&mut types.into_iter()),
+            compact(&mut attributes.into_iter()),
         )
     }
 }
@@ -584,6 +603,12 @@ pub struct ViewTable {
 /// view documents in [`VIEW_TENANT`]. A view id is `[a-z0-9-]`, so no view
 /// shares a key with a schema.
 pub const SCHEMA_ID_PREFIX: &str = "schema:";
+
+/// The id prefixes of the documents stored once per Tenant beside the views
+/// in [`VIEW_TENANT`], each followed by the Tenant's name: its schema, and
+/// the retention and quality rules antares-ops keeps (`RETENTION_ID_PREFIX`,
+/// `QUALITY_ID_PREFIX` there). A Tenant purge deletes them (S4-30).
+pub const TENANT_DOC_PREFIXES: [&str; 3] = [SCHEMA_ID_PREFIX, "retention:", "quality:"];
 
 /// A Tenant's `LinkML` schema as written to `/q/schemas/{tenant}` (T-3628):
 /// JSON the broker checked for size and well-formedness only. A surface

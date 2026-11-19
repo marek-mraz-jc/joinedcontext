@@ -178,11 +178,13 @@ jobs:
           retention-days: 14
 
   # One rehearsal per shard. Every shard runs logs too (its own jc log and result dirs); ui splits
-  # by persona, the dataroom and shako walks on ui-admin. restore runs after pipelines on their
-  # shard: on a shard of its own it compared 3 min after the import, while the Pipelines' first
-  # runs still wrote new types between its before and after runs (runs 43683591053, 43685936569:
-  # TrafficFlowObserved/anon.types.written before absent, after pass); after pipelines the run
-  # queue has reached the suite's run-now, as in the one-job gate. `rest` names what it leaves out, so a new
+  # by persona, the dataroom and shako walks on ui-admin. restore has a shard of its own (T-7313:
+  # riding after pipelines made that shard 22-29 min, the critical path, in runs 44466375658,
+  # 44469218044, 44474109775). Alone it once compared 3 min after the import while the Pipelines'
+  # first runs still wrote new types (runs 43683591053, 43685936569: TrafficFlowObserved/
+  # anon.types.written before absent, after pass), so gate.sh hands it --drain: its before run
+  # waits, bounded, until the Portal's Pipeline statuses show no first run running, queued or due
+  # (row control.drained, red naming the pending ones). `rest` names what it leaves out, so a new
   # suite runs there. ci/test_smoke_yml.py checks that every suite runs on exactly one shard.
   shard:
     needs: [build, apps]
@@ -193,7 +195,8 @@ jobs:
       matrix:
         include:
           - { shard: rest, skip: "multiorg,pipelines,restore,ui" }
-          - { shard: pipelines, only: "pipelines,restore,logs" }
+          - { shard: pipelines, only: "pipelines,logs" }
+          - { shard: restore, only: "restore,logs" }
           - { shard: ui-admin, only: "ui,logs", with: "ui=--personas admin" }
           - { shard: ui-viewer, only: "ui,logs", with: "ui=--personas viewer --no-shared" }
           - { shard: ui-outsider, only: "ui,logs", with: "ui=--personas outsider --no-shared" }
@@ -255,7 +258,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/smoke/shards"
           python3 -I bins/jc/smoke/ci/merge.py --out "$RUNNER_TEMP/smoke" --known bins/jc/smoke/ci/known.txt \
-            --expect rest,pipelines,ui-admin,ui-viewer,ui-outsider,multiorg,multiorg-path,e2e \
+            --expect rest,pipelines,restore,ui-admin,ui-viewer,ui-outsider,multiorg,multiorg-path,e2e \
             "$RUNNER_TEMP"/smoke/shards/*
       - name: the runner's own tests passed
         if: always()

@@ -1345,22 +1345,35 @@ pub(crate) async fn view_payload(
                 .map_err(|problem| answer(*problem))?;
         }
     }
-    // ADR-N-066 2.3: an attribute the grant keeps is kept whatever the client sends (DM-150).
-    // The body is parsed for its attributes only when a grant keeps any (P-3-01: 36.8 ms per
-    // 4 MB batch otherwise). `keeps(None)` holds whenever `keeps(Some(_))` does, so asking it
-    // first changes no answer.
-    let now = crate::pdp::now();
-    let keeps = |touched: Option<&std::collections::BTreeSet<String>>| {
-        crate::pdp::evaluator::keeps_versions(subject, &endpoint.policies, now, touched)
-    };
-    if operation.is_write() && keeps(None) && keeps(touched_attributes(path, sent).as_ref()) {
-        headers.insert(tenancy::AUDIT, HeaderValue::from_static("changes"));
+    if operation.is_write() {
+        mark_kept_versions((endpoint, subject), headers, || {
+            touched_attributes(path, sent)
+        });
     }
     if sent.len() != before {
         headers.remove(CONTENT_LENGTH);
         headers.insert(CONTENT_LENGTH, HeaderValue::from(sent.len() as u64));
     }
     Ok(filled)
+}
+
+/// Marks a write whose attributes a grant keeps as versions (ADR-N-066 2.3, DM-150), whatever
+/// the client sends; `touched` names them, `None` every attribute. It is asked only when a grant
+/// keeps any (P-3-01: parsing a 4 MB batch for its attributes costs 36.8 ms), and
+/// `keeps(None)` holds whenever `keeps(Some(_))` does, so asking it first changes no answer.
+/// Every write surface marks through here (the NGSI-LD view, OData).
+pub(crate) fn mark_kept_versions(
+    (endpoint, subject): (&Endpoint, &Subject),
+    headers: &mut HeaderMap,
+    touched: impl FnOnce() -> Option<std::collections::BTreeSet<String>>,
+) {
+    let now = crate::pdp::now();
+    let keeps = |touched: Option<&std::collections::BTreeSet<String>>| {
+        crate::pdp::evaluator::keeps_versions(subject, &endpoint.policies, now, touched)
+    };
+    if keeps(None) && keeps(touched().as_ref()) {
+        headers.insert(tenancy::AUDIT, HeaderValue::from_static("changes"));
+    }
 }
 
 /// What the Endpoint asks of a write whatever the grants are: an id that is an NGSI-LD URN of

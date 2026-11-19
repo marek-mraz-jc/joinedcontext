@@ -675,6 +675,20 @@ pub async fn serve_context(
 
 // ---------- DELETE /jsonldContexts/{ctxId} (5.13.5) ----------
 
+/// Whether the caller may evict or refetch a Cached @context every Tenant
+/// shares: the admin bearer, or on a standalone broker (no subject and no
+/// Organization check) the default Tenant.
+fn operates_shared_cache(st: &AppState, tenant: &TenantId, headers: &HeaderMap) -> bool {
+    let bearer = st.admin_auth.as_deref().is_some_and(|a| {
+        a.admits(
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .map(axum::http::HeaderValue::as_bytes),
+        )
+    });
+    bearer || (!st.subject_required && !st.tenant_organization && *tenant == TenantId::default())
+}
+
 /// 5.13.5.4 Delete and Reload @context: unknown id → ResourceNotFound;
 /// reload=true re-downloads a Cached @context in place (failure →
 /// LdContextNotAvailable, entry kept) and is BadRequestData for other
@@ -696,14 +710,17 @@ pub async fn delete_context(
             return Err(NgsiError::ResourceNotFound(format!("@context {id} not found")).into());
         };
         // A Cached copy (the core one included) belongs to no Tenant and
-        // serves every one: only the default Tenant, the operator's, may
-        // evict or refetch it (F-ANT2-008). Decided (worker-t5704, owner may
-        // override): admin-only, because one Tenant could otherwise evict
-        // or refetch the cache every other Tenant resolves from.
-        if matches!(entry, CtxEntry::Cached(_) | CtxEntry::Core(_)) && tenant != TenantId::default()
+        // serves every one, so evicting or refetching it is the operator's
+        // (F-ANT2-008). A broker serving many Tenants (subject or
+        // Organization check on) admits only the admin bearer: the absence
+        // of NGSILD-Tenant is no credential (S4-14, T-7306). A standalone
+        // broker without those checks keeps the default Tenant as its
+        // operator, the single-tenant shape the ETSI suite runs.
+        if matches!(entry, CtxEntry::Cached(_) | CtxEntry::Core(_))
+            && !operates_shared_cache(&st, &tenant, &headers)
         {
             return Err(ApiError::Denied(
-                "a Cached @context is shared by every Tenant: only the default Tenant deletes or reloads it"
+                "a Cached @context is shared by every Tenant: only the broker's operator deletes or reloads it (admin bearer token)"
                     .into(),
             ));
         }

@@ -54,7 +54,8 @@ async fn call(
     let mut req = Request::builder()
         .method(method)
         .uri(uri)
-        .header("content-type", "application/json");
+        .header("content-type", "application/json")
+        .extension(jc_router::ClientAddr("203.0.113.9".parse().unwrap()));
     if let Some(t) = token {
         req = req.header("authorization", format!("Bearer {t}"));
     }

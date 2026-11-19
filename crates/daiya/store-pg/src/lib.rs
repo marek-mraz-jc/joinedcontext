@@ -1256,14 +1256,17 @@ impl DaiyaStore for PgStore {
     ) -> StoreFuture<'_, Option<(PublicDashboardRecord, DashboardRecord)>> {
         let th = token_hash.to_owned();
         Box::pin(async move {
-            // Forced RLS hides every row while `cr.org` is unset; the `public_token_lookup`
-            // policy shows the one row whose hash this transaction names.
-            let mut tx = self.pool.begin().await.map_err(db_err)?;
-            sqlx::query("SELECT set_config('cr.public_token', $1, true)")
+            // The token resolves to its organization through the owner-defined lookup (no
+            // session setting widens RLS); the row is then read under that organization.
+            let org: Option<uuid::Uuid> = sqlx::query_scalar("SELECT daiya_public_token_org($1)")
                 .bind(&th)
-                .execute(&mut *tx)
+                .fetch_one(&self.pool)
                 .await
                 .map_err(db_err)?;
+            let Some(org) = org else {
+                return Ok(None);
+            };
+            let mut tx = self.begin_org_tx(OrgId(org)).await?;
             let row = sqlx::query(
                 "SELECT installation_id, org_id, instance_id, uid, dashboard_uid, access_token_hash, is_enabled, time_selection_enabled, annotations_enabled, show_query_text, share, created_by, updated_by, created_at, updated_at
                  FROM cr_public_dashboard WHERE access_token_hash = $1",

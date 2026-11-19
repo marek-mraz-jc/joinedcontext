@@ -159,7 +159,8 @@ impl World {
         let mut req = Request::builder()
             .method(method)
             .uri(uri)
-            .header("authorization", authorization);
+            .header("authorization", authorization)
+            .extension(jc_router::ClientAddr("203.0.113.9".parse().unwrap()));
         for (name, value) in headers {
             req = req.header(*name, *value);
         }

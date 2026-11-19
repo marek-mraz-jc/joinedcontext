@@ -465,6 +465,15 @@ impl crate::ApiSurface for Channels {
         // An in-process call builds the router again; the stored Channels
         // start once per process.
         if self.restored.set(()).is_ok() {
+            // a purged Tenant's Channels stop here (S4-30)
+            let running = Arc::clone(&self.running);
+            st.purge_hooks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Arc::new(move |tenant: &TenantId| {
+                    let prefix = key(tenant, "");
+                    lock(&running).retain(|k, _| !k.starts_with(&prefix));
+                }));
             let (st, shared) = (st.clone(), shared.clone());
             tokio::spawn(async move { restore(&st, &shared).await });
         }
@@ -699,6 +708,47 @@ async fn start(
     Ok(())
 }
 
+/// Delete the stored Channels of `tenant` (S4-30); the purge hook the
+/// router registered stops the running ones.
+///
+/// # Errors
+/// The store's.
+pub(crate) async fn purge_tenant(st: &AppState, tenant: &TenantId) -> Result<(), NgsiError> {
+    let store = TenantId::new_internal(CHANNEL_TENANT)?;
+    let mut keys = Vec::new();
+    crate::csource::walk_docs(st, &store, Kind::View, |doc| {
+        if stored_tenant(&doc).as_ref() == Some(tenant) {
+            if let Some(id) = doc.get("id").and_then(Value::as_str) {
+                keys.push(key(tenant, id));
+            }
+        }
+        Ok(())
+    })
+    .await?;
+    for k in keys {
+        st.store.delete(&store, Kind::View, &k).await?;
+    }
+    Ok(())
+}
+
+/// Whether a Channel of `tenant` (as its binder named it) may bind `topic`
+/// (T-7306). A named Tenant binds only topics under `{tenant}/`, so on a
+/// bridge every Tenant shares no Tenant receives another's messages; a
+/// request naming no Tenant binds no topic whose first level is a Tenant of
+/// an Organization.
+fn topic_in_namespace(tenant: Option<&str>, topic: &str) -> bool {
+    match tenant {
+        Some(t) => topic
+            .strip_prefix(t)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .is_some_and(|rest| !rest.is_empty()),
+        None => {
+            let first = topic.split('/').next().unwrap_or(topic);
+            TenantId::organization_of(first).is_none()
+        }
+    }
+}
+
 /// Start every stored Channel; one its bridge refuses is logged and skipped.
 async fn restore(st: &AppState, shared: &Shared) {
     let Ok(t) = store_tenant() else { return };
@@ -725,6 +775,16 @@ async fn restore(st: &AppState, shared: &Shared) {
             tracing::warn!(
                 channel = %ch.id, tenant = tenant.as_str(),
                 "channels: a stored channel's Tenant is refused by the Organization check (EP-188): not restored"
+            );
+            continue;
+        }
+        // a binding stored before the topic namespace (T-7306) that reaches
+        // outside it stays stored and stopped until its binder binds again
+        if !topic_in_namespace(ch.tenant.as_deref(), &ch.topic) {
+            tracing::warn!(
+                channel = %ch.id, tenant = tenant.as_str(),
+                "channels: a stored channel's topic is outside its Tenant's namespace: not restored; bind it again under {}/",
+                tenant.as_str()
             );
             continue;
         }
@@ -839,6 +899,14 @@ async fn bind_inner(
     let (tenant, named) = tenant_of(headers)?;
     let spec: Spec = serde_json::from_slice(body).map_err(|e| bad(format!("channel: {e}")))?;
     let mut ch = spec.check(id, &shared.bridges)?;
+    if !topic_in_namespace(named.as_deref(), &ch.topic) {
+        return Err(bad(match &named {
+            Some(t) => format!(
+                "topic: a Channel of Tenant {t} binds topics under {t}/ only, e.g. {t}/bus/12/speed"
+            ),
+            None => "topic: its first level names a Tenant of an Organization; bind it under that Tenant's NGSILD-Tenant".to_owned(),
+        }));
+    }
     ch.tenant = named;
     ch.link = headers
         .get("link")
@@ -966,6 +1034,26 @@ fn stored_tenant(doc: &Value) -> Option<TenantId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7306: a Tenant binds topics under its own name only, and a request
+    /// naming no Tenant binds no topic of an Organization's Tenant.
+    #[test]
+    fn a_tenant_binds_topics_under_its_own_name_only() {
+        assert!(topic_in_namespace(Some("sk_b__x"), "sk_b__x/bus/1/speed"));
+        for outside in [
+            "sk_a__x/bus/1",
+            "bus/1/speed",
+            "sk_b__x",
+            "sk_b__x/",
+            "sk_b__xy/bus",
+        ] {
+            assert!(!topic_in_namespace(Some("sk_b__x"), outside), "{outside}");
+        }
+        assert!(topic_in_namespace(None, "bus/1/speed"));
+        assert!(topic_in_namespace(None, "city"));
+        assert!(!topic_in_namespace(None, "sk_b__x/bus/1"));
+        assert!(!topic_in_namespace(None, "sk_b__x"));
+    }
 
     #[test]
     fn a_payload_is_json_or_text_and_a_notification_is_looped() {

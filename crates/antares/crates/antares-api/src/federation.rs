@@ -546,6 +546,18 @@ pub async fn matching_regs(
         .await?
         .iter()
         .filter_map(|doc| {
+            // a Registration stored before the Organization rule (T-7306)
+            // that names another Organization's Tenant forwards nothing
+            if !crate::csource::member_tenant_admitted(tenant, doc.get("tenant")) {
+                tracing::warn!(
+                    registration = doc
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default(),
+                    "a Registration names a Tenant of another Organization: not forwarded"
+                );
+                return None;
+            }
             let infos = reg_candidate(doc, spec, ctx, &seen)?;
             let alias = doc
                 .get("contextSourceAlias")

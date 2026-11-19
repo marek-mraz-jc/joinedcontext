@@ -163,8 +163,11 @@ async fn odata_query_segment_reaches_the_engine_with_q() {
         assert_eq!(by_post, by_get, "{kind}: the same answer as the GET");
         assert_eq!(engine.take(), get_seen, "{kind}: the engine saw the same q");
     }
+    // first what the caller may read (S10-12), asked with no filter; then the query's gate
+    let (narrowing, gates) = get_seen.split_first().expect("the engine was asked");
+    assert_eq!(narrowing, "None", "{get_seen:?}");
     assert!(
-        get_seen.iter().all(|q| q.starts_with("Some(")),
+        !gates.is_empty() && gates.iter().all(|q| q.starts_with("Some(")),
         "the filter reached the engine: {get_seen:?}"
     );
     assert_eq!(ids(&by_get), ["urn:ngsi-ld:Car:3", "urn:ngsi-ld:Car:2"]);

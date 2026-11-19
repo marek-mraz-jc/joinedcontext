@@ -41,7 +41,7 @@ impl ApiSurface for Admin {
     }
 
     fn router(&self, st: AppState) -> Router<AppState> {
-        let [health_p, ready_p, metrics_p, tenants_p, tenant_p, digest_p, export_p, import_p, attrs_p, dl_p, dl_id_p, replay_p] =
+        let [health_p, ready_p, metrics_p, tenants_p, tenant_p, digest_p, export_p, _import_p, attrs_p, dl_p, dl_id_p, replay_p] =
             Self::PATHS;
         let guard = axum::middleware::from_fn_with_state(st.clone(), admin_auth::require);
         let metrics = Self::metrics_routes(&st, metrics_p);
@@ -51,7 +51,6 @@ impl ApiSurface for Admin {
             // ADR-0030: a Tenant's move to another broker.
             .route(digest_p, get(tenant_move::digest))
             .route(export_p, get(tenant_move::export))
-            .route(import_p, post(tenant_move::import))
             // T-6001: the names a replace write would be judged on.
             .route(attrs_p, get(crate::types_attrs::stored_attributes))
             .route(dl_p, get(dead_letters_list))
@@ -70,6 +69,21 @@ impl ApiSurface for Admin {
             .route(health_p, get(health))
             .route(ready_p, get(ready))
             .merge(metrics)
+    }
+
+    /// S4-08: a Tenant import streams line by line under
+    /// `tenant_move::MAX_LINE_BYTES` per line; behind the bounds wall it was
+    /// buffered whole and refused past `ANTARES_MAX_BODY_BYTES`.
+    fn streaming_router(&self, st: AppState) -> Option<Router<AppState>> {
+        let [_, _, _, _, _, _, _, import_p, _, _, _, _] = Self::PATHS;
+        Some(
+            Router::new()
+                .route(import_p, post(tenant_move::import))
+                .route_layer(axum::middleware::from_fn_with_state(
+                    st,
+                    admin_auth::require,
+                )),
+        )
     }
 
     fn version_info(&self) -> serde_json::Value {
@@ -773,6 +787,23 @@ pub(super) async fn tenant_purge(
         // nothing and a Tenant recreated under the name resolved the old
         // term mappings).
         crate::contexts::purge_tenant(&st, &tenant).await?;
+        // S4-30: the broker's own documents naming the Tenant, and what runs
+        // for it, go with it; a Tenant created again under the name starts
+        // with none of them
+        #[cfg(feature = "views")]
+        st.purge_tenant_documents(&tenant)
+            .await
+            .map_err(NgsiError::InternalError)?;
+        #[cfg(all(feature = "channels", not(target_arch = "wasm32")))]
+        crate::channels::purge_tenant(&st, &tenant).await?;
+        let hooks = st
+            .purge_hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for hook in hooks {
+            hook(&tenant);
+        }
         st.temporal.purge_tenant(&tenant).await?;
         st.store.purge_tenant(&tenant).await?;
         st.known_tenants.forget(&tenant);
