@@ -18,9 +18,12 @@ pub use cache::{CacheKey, PublicCacheKey, QueryCache};
 pub use daiya_model::{
     ColumnValues, FieldColumn, FieldType, Frame, FrameMeta, FrameSet, Notice, NoticeSeverity,
 };
-pub use factory::{DriverDeps, OutboundPolicy, build_driver, guard_for};
+pub use factory::{
+    DRIVER_KINDS, DriverDeps, OpenedNetwork, OutboundPolicy, build_driver, driver_kind, guard_for,
+};
 pub use guard::{
-    GuardConfig, OperatorReach, OutboundGuard, OutboundRequest, OutboundResponse, OwnReach,
+    EndpointBase, GuardConfig, OperatorReach, OutboundGuard, OutboundRequest, OutboundResponse,
+    OwnReach,
 };
 pub use loki::LokiDatasource;
 pub use ngsild::NgsiLdDatasource;

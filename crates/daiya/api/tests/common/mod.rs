@@ -12,7 +12,7 @@ use daiya_model::{
     OrgId, OrgQuotas, PolicyAuthorizer, PublicDashboardRecord, QueryCacheStatRecord, RoleBinding,
     Subject,
 };
-use daiya_query::OutboundPolicy;
+use daiya_query::{OpenedNetwork, OutboundPolicy};
 use daiya_store_memory::MemoryStore;
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -345,7 +345,11 @@ pub async fn prometheus() -> (String, Arc<Mutex<Vec<String>>>) {
 pub fn loopback() -> OutboundPolicy {
     OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["127.0.0.0/8".parse().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &["prometheus", "ngsild", "odata", "postgres"],
+        )],
         ..OutboundPolicy::default()
     }
 }

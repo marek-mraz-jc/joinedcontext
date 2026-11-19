@@ -92,16 +92,39 @@ fn configuration_defaults_and_refusals() {
     );
     assert!(config(json!({ "outbound": { "allowHttp": true, "allowPrivate": true } })).is_err());
 
-    let bad_cidr =
-        config(json!({ "outbound": { "allowedNetworks": ["10.0.0.0/8", "nope"] } })).unwrap();
+    let org = "01900000-0000-7000-8000-000000000001";
+    let opened = |network: &str, kinds: Value| {
+        json!({ "outbound": { "allowHttp": true, "allowedNetworks": [
+            { "network": network, "organization": org, "kinds": kinds } ] } })
+    };
+    let bad_cidr = config(opened("nope", json!(["prometheus"]))).unwrap();
     let err = bad_cidr.outbound_policy().unwrap_err();
     assert!(err.to_string().contains("nope"), "{err}");
-    let ok =
-        config(json!({ "outbound": { "allowHttp": true, "allowedNetworks": [" 10.43.0.0/16 "] } }))
-            .unwrap();
+    // A network open to every organization or to no kind cannot be written.
+    assert!(config(json!({ "outbound": { "allowedNetworks": ["10.43.0.0/16"] } })).is_err());
+    assert!(
+        config(json!({ "outbound": { "allowedNetworks": [
+            { "network": "10.43.0.0/16", "kinds": ["prometheus"] } ] } }))
+        .is_err()
+    );
+    let no_kind = config(opened("10.43.0.0/16", json!([" "]))).unwrap();
+    let err = no_kind.outbound_policy().unwrap_err();
+    assert!(err.to_string().contains("kind"), "{err}");
+    // A Grafana type name is no driver kind: the operator names `postgres`, not the record's type.
+    let grafana_kind = config(opened(
+        "10.43.0.0/16",
+        json!(["grafana-postgresql-datasource"]),
+    ))
+    .unwrap();
+    let err = grafana_kind.outbound_policy().unwrap_err();
+    assert!(err.to_string().contains("postgres, loki"), "{err}");
+    let ok = config(opened(" 10.43.0.0/16 ", json!(["prometheus"]))).unwrap();
     let policy = ok.outbound_policy().unwrap();
     assert!(policy.allow_http);
-    assert_eq!(policy.allowed_networks[0].to_string(), "10.43.0.0/16");
+    let first = &policy.allowed_networks[0];
+    assert_eq!(first.network.to_string(), "10.43.0.0/16");
+    assert_eq!(first.org_id.to_string(), org);
+    assert_eq!(first.kinds, ["prometheus"]);
 
     let bad_mount = config(json!({ "mount": { "pathPrefix": "dash/../x" } })).unwrap();
     assert!(bad_mount.mount().is_err());

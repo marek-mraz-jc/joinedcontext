@@ -15,7 +15,8 @@
 //!   "tokensFile": "/run/secrets/daiya-tokens.json",
 //!   "secretsDir": "/run/secrets/datasources",
 //!   "provisioningDir": "/etc/daiya/provisioning",
-//!   "outbound": { "allowHttp": true, "allowedNetworks": ["10.43.0.0/16"] },
+//!   "outbound": { "allowHttp": true, "allowedNetworks": [
+//!                 { "network": "10.43.0.0/16", "organization": "0190...", "kinds": ["prometheus"] } ] },
 //!   "serverAdmin": { "user": "admin", "passwordFile": "/run/secrets/daiya-admin" }
 //! }
 //! ```
@@ -32,7 +33,9 @@ use daiya_model::{
     CrError, CrResult, DaiyaStore, GrafanaRole, InstallationId, InstanceId, OrgId,
     PolicyAuthorizer, RoleBinding, Subject,
 };
-use daiya_query::{FileSecretResolver, MapSecretResolver, OutboundPolicy};
+use daiya_query::{
+    DRIVER_KINDS, FileSecretResolver, MapSecretResolver, OpenedNetwork, OutboundPolicy,
+};
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{PgPoolConfig, PgStore};
 use ipnet::IpNet;
@@ -227,9 +230,20 @@ pub struct MigrateConfig {
 pub struct OutboundConfig {
     #[serde(default)]
     pub allow_http: bool,
-    /// CIDRs of non-public networks datasources may reach (for example the service network).
+    /// Non-public networks datasources may reach (for example the service network), each
+    /// opened to one organization's datasources of the kinds it names.
     #[serde(default)]
-    pub allowed_networks: Vec<String>,
+    pub allowed_networks: Vec<AllowedNetworkConfig>,
+}
+
+/// One opened network: `{ "network": "10.43.0.0/16", "organization": "<id>", "kinds":
+/// ["prometheus"] }`. A network open to every organization cannot be written.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AllowedNetworkConfig {
+    pub network: String,
+    pub organization: OrgId,
+    pub kinds: Vec<String>,
 }
 
 /// One API credential of the tokens file.
@@ -274,10 +288,34 @@ impl DaiyaConfig {
             .outbound
             .allowed_networks
             .iter()
-            .map(|cidr| {
-                cidr.trim()
+            .map(|opened| {
+                let cidr = &opened.network;
+                let network = cidr
+                    .trim()
                     .parse::<IpNet>()
-                    .map_err(|_| config_err(format!("'{cidr}' is not a CIDR")))
+                    .map_err(|_| config_err(format!("'{cidr}' is not a CIDR")))?;
+                let kinds: Vec<String> = opened
+                    .kinds
+                    .iter()
+                    .map(|k| k.trim().to_owned())
+                    .filter(|k| !k.is_empty())
+                    .collect();
+                if kinds.is_empty() {
+                    return Err(config_err(format!(
+                        "allowedNetworks '{cidr}' names no datasource kind (for example \"kinds\": [\"prometheus\"])"
+                    )));
+                }
+                if let Some(unknown) = kinds.iter().find(|k| !DRIVER_KINDS.contains(&k.as_str())) {
+                    return Err(config_err(format!(
+                        "allowedNetworks '{cidr}' names the unknown kind '{unknown}'; use one of {}",
+                        DRIVER_KINDS.join(", ")
+                    )));
+                }
+                Ok(OpenedNetwork {
+                    network,
+                    org_id: opened.organization,
+                    kinds,
+                })
             })
             .collect::<CrResult<Vec<_>>>()?;
         Ok(OutboundPolicy {
