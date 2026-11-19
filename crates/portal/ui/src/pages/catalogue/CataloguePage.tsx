@@ -18,6 +18,7 @@ import {
   PageHeader,
   PageLoading,
   PermissionGuard,
+  RadioGroup,
 } from "../../components/ui";
 import { useThemeLabel } from "./labels";
 import { useAuthStatus } from "../../auth/AuthProvider";
@@ -61,8 +62,11 @@ export function CataloguePage({
   // one list, and lead it on its first page (T-6411, T-7389).
   const signedIn = useAuthStatus() === "authenticated";
   const granted = useGranted(signedIn, search.q);
+  // Opened in a project, the catalogue starts at that project's datasets; outside one, or on
+  // "Whole organization", it lists every project of the host's Organization (T-7389).
+  const scope = project ? (search.scope ?? "project") : "organization";
   const catalogue = useQuery({
-    ...catalogueQuery(search),
+    ...catalogueQuery(search, scope === "project" && project ? project : undefined),
     placeholderData: keepPreviousData,
   });
 
@@ -109,6 +113,24 @@ export function CataloguePage({
           onSearch={onSearch}
           refreshing={catalogue.isFetching}
           granted={granted}
+          publish={
+            project ? (
+              <PermissionGuard project={project} kind="Endpoint" verb="propose">
+                <Button variant="primary" icon={<Icon name="ckan" className="size-4" />} onClick={() => setPublishing(true)}>
+                  {t("catalogue.publish.open")}
+                </Button>
+              </PermissionGuard>
+            ) : null
+          }
+          scope={
+            project ? (
+              <ScopeFacet
+                project={project}
+                value={scope}
+                onChange={(next) => onSearch({ ...search, scope: next, page: undefined })}
+              />
+            ) : null
+          }
         />
       )}
     </div>
@@ -164,12 +186,18 @@ function Results({
   onSearch,
   refreshing,
   granted,
+  publish,
+  scope,
 }: {
   answer: CataloguePageAnswer;
   search: CatalogueSearch;
   onSearch: (next: CatalogueSearch) => void;
   refreshing: boolean;
   granted: Granted;
+  /** "Publish a dataset" for one who may, offered by an empty list. */
+  publish: JSX.Element | null;
+  /** The Scope filter, first in the sidebar, when the person works in a project. */
+  scope: JSX.Element | null;
 }): JSX.Element {
   const { t } = useTranslation();
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -215,6 +243,7 @@ function Results({
     );
   const sidebar = (
     <>
+      {scope}
       {access}
       {onlyGranted ? null : groups}
     </>
@@ -294,7 +323,9 @@ function Results({
                 <Button variant="secondary" onClick={() => onSearch({})}>
                   {t("catalogue.search.clear")}
                 </Button>
-              ) : undefined
+              ) : (
+                (publish ?? undefined)
+              )
             }
           />
         ) : (
@@ -338,6 +369,35 @@ function Results({
         ) : null}
       </section>
     </div>
+  );
+}
+
+/** This project or the whole Organization (T-7389): which projects' datasets the list holds. */
+function ScopeFacet({
+  project,
+  value,
+  onChange,
+}: {
+  project: string;
+  value: "project" | "organization";
+  onChange: (next: "project" | "organization") => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <Card flush>
+      <RadioGroup
+        className="px-4 pb-4 pt-3"
+        name="catalogue-scope"
+        legend={t("catalogue.scope.label")}
+        description={t("catalogue.scope.hint", { project })}
+        value={value}
+        onChange={onChange}
+        options={[
+          { value: "project", label: t("catalogue.scope.project"), description: project },
+          { value: "organization", label: t("catalogue.scope.organization"), description: t("catalogue.scope.organizationHint") },
+        ]}
+      />
+    </Card>
   );
 }
 

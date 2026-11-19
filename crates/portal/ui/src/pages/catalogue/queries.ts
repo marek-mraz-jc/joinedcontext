@@ -6,7 +6,7 @@ import type { CatalogueSearch } from "./search";
  * matches, beside the page's own chunk, so a phone waits one round trip for both rather than the
  * chunk and then the read (T-5165).
  */
-export function catalogueKey(search: CatalogueSearch) {
+export function catalogueKey(search: CatalogueSearch & { project?: string }) {
   return ["catalogue", search] as const;
 }
 
@@ -14,10 +14,13 @@ export function datasetKey(name: string) {
   return ["catalogue", "datasets", name] as const;
 }
 
-export function catalogueQuery(search: CatalogueSearch) {
+/**
+ * One page of the catalogue; with `project`, that project's datasets alone (T-7389). Access and
+ * scope pick among answers already asked for, so they are not part of the server's query.
+ */
+export function catalogueQuery(search: CatalogueSearch, project?: string) {
   return {
-    // Access picks among datasets already read, so the server's answer is the same (T-7389).
-    queryKey: catalogueKey({ ...search, access: undefined }),
+    queryKey: catalogueKey({ ...search, access: undefined, scope: undefined, ...(project ? { project } : {}) }),
     queryFn: async () =>
       unwrap(
         await api.GET("/api/v1/catalogue", {
@@ -30,6 +33,7 @@ export function catalogueQuery(search: CatalogueSearch) {
               licence: search.licence,
               spatial: search.spatial,
               year: search.year,
+              project,
               page: search.page,
             },
           },

@@ -15,6 +15,8 @@ export interface CatalogueSearch {
   year?: string[];
   /** Signed in: only the datasets granted to the person, or only the public ones (T-7389). */
   access?: "granted" | "public";
+  /** In a project: that project's datasets alone, or its whole Organization's (T-7389). */
+  scope?: "project" | "organization";
   page?: number;
 }
 
@@ -39,6 +41,9 @@ export function parseCatalogueSearch(search: Record<string, unknown>): Catalogue
   }
   if (search.access === "granted" || search.access === "public") {
     out.access = search.access;
+  }
+  if (search.scope === "project" || search.scope === "organization") {
+    out.scope = search.scope;
   }
   const page = Number(search.page);
   if (Number.isInteger(page) && page > 1) {

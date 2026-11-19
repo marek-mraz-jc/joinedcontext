@@ -217,10 +217,10 @@ describe("the catalogue (EP-81, EP-82)", () => {
     const search = screen.getByRole("search");
     const layout = results.parentElement;
     expect(layout?.previousElementSibling).toBe(search);
-    // Access leads the sidebar.
+    // Scope, then Access, lead the sidebar.
     const filters = screen.getByRole("complementary", { name: "Filters" });
     const access = await within(filters).findByRole("group", { name: "Access" });
-    expect(filters.firstElementChild?.contains(access)).toBe(true);
+    expect(filters.children[1]?.contains(access)).toBe(true);
     const mine = await within(access).findByRole("checkbox", { name: /Granted to me/ });
     await waitFor(() => expect(mine).toHaveAttribute("aria-disabled", "true"));
     expect(mine.closest("label")?.textContent).toBe("Granted to me0");
@@ -309,11 +309,41 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(await screen.findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
   });
 
-  it("offers no Access filter to a visitor", async () => {
+  it("starts in a project at that project's datasets, and widens to the whole organization through the address (T-7389)", async () => {
+    renderAt("/catalogue");
+    const filters = await screen.findByRole("complementary", { name: "Filters" });
+    const scope = await within(filters).findByRole("radiogroup", { name: "Scope" });
+    expect(filters.firstElementChild?.contains(scope)).toBe(true);
+    expect(within(scope).getByRole("radio", { name: "This project" })).toBeChecked();
+    await waitFor(() => expect(catalogueCalls().at(-1)?.searchParams.get("project")).toBe("helsinki"));
+    fireEvent.click(within(scope).getByRole("radio", { name: "Whole organization" }));
+    await waitFor(() => expect(catalogueCalls().at(-1)?.searchParams.get("project")).toBeNull());
+    expect(window.location.search).toBe("?scope=organization");
+    expect(within(scope).getByRole("radio", { name: "Whole organization" })).toBeChecked();
+  });
+
+  it("reopens a shared link on the whole organization", async () => {
+    renderAt("/catalogue?scope=organization");
+    const scope = await screen.findByRole("radiogroup", { name: "Scope" });
+    expect(within(scope).getByRole("radio", { name: "Whole organization" })).toBeChecked();
+    await screen.findByText(/2 datasets/);
+    expect(catalogueCalls().every((url) => !url.searchParams.has("project"))).toBe(true);
+  });
+
+  it("offers Publish a dataset from an empty project list", async () => {
+    answers["/api/v1/catalogue"] = { status: 200, body: { ...PAGE, total: 0, datasets: [] } };
+    renderAt("/catalogue");
+    const results = await screen.findByRole("region", { name: "Datasets" });
+    expect(await within(results).findByText("No public dataset yet")).toBeInTheDocument();
+    expect(await within(results).findByRole("button", { name: "Publish a dataset" })).toBeInTheDocument();
+  });
+
+  it("offers no Access and no Scope filter to a visitor", async () => {
     signedIn = false;
     renderAt("/catalogue");
     await screen.findByText("2 datasets");
     expect(screen.queryByRole("group", { name: "Access" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Scope" })).not.toBeInTheDocument();
   });
 
   it("ends a card in four key formats and counts the rest, which the dataset page lists (T-4995)", async () => {

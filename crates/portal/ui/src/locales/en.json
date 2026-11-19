@@ -9606,6 +9606,13 @@
       "all": "Show all {count}",
       "fewer": "Show fewer"
     },
+    "scope": {
+      "label": "Scope",
+      "project": "This project",
+      "organization": "Whole organization",
+      "organizationHint": "Every project of this organization",
+      "hint": "Which datasets the list holds, e.g. This project lists only {project}'s."
+    },
     "access": {
       "label": "Access",
       "granted": "Granted to me",

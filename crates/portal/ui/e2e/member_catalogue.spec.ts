@@ -201,6 +201,25 @@ test.describe("a member's catalogue", () => {
       await shot(page, `member-catalogue-no-project-en-${width}`);
     });
 
+    test(`an Organization with no dataset yet says so instead of listing another Organization's (${width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stub(page, [row("bikes", "Bike counters", "public")], 200);
+      // The marek-mraz host's catalogue holds only its own projects' datasets: none yet (T-7389).
+      await page.route("**/api/v1/catalogue?*", (route) =>
+        route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...PAGE, total: 0, datasets: [], facets: { publisher: [], theme: [], format: [], licence: [], spatial: [], year: [] } }) }),
+      );
+      await page.route("**/api/v1/catalogue", (route) =>
+        route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...PAGE, total: 0, datasets: [], facets: { publisher: [], theme: [], format: [], licence: [], spatial: [], year: [] } }) }),
+      );
+      await page.goto("/catalogue?lang=en");
+      const list = page.getByRole("region", { name: "Datasets" });
+      await expect(list.getByText("No public dataset yet")).toBeVisible();
+      await expect(list.getByText(/once a project publishes an endpoint/)).toBeVisible();
+      await expect(page.getByText("Air quality in Banská Bystrica — PM10 by station")).toHaveCount(0);
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `organization-catalogue-empty-en-${width}`);
+    });
+
     test(`a non-public dataset asks a visitor to sign in and tells a member without a grant no access (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stub(page, "visitor", 401);

@@ -9606,6 +9606,13 @@
       "all": "Zobraziť všetkých {count}",
       "fewer": "Zobraziť menej"
     },
+    "scope": {
+      "label": "Rozsah",
+      "project": "Tento projekt",
+      "organization": "Celá organizácia",
+      "organizationHint": "Všetky projekty tejto organizácie",
+      "hint": "Ktoré datasety zoznam obsahuje, napr. Tento projekt ukáže len datasety projektu {project}."
+    },
     "access": {
       "label": "Prístup",
       "granted": "Sprístupnené mne",

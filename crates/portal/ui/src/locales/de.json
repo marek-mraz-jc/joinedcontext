@@ -9606,6 +9606,13 @@
       "all": "Alle {count} anzeigen",
       "fewer": "Weniger anzeigen"
     },
+    "scope": {
+      "label": "Umfang",
+      "project": "Dieses Projekt",
+      "organization": "Ganze Organisation",
+      "organizationHint": "Alle Projekte dieser Organisation",
+      "hint": "Welche Datensätze die Liste enthält, z. B. zeigt Dieses Projekt nur die von {project}."
+    },
     "access": {
       "label": "Zugriff",
       "granted": "Für mich freigegeben",
