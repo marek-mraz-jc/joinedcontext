@@ -292,7 +292,11 @@ async fn health_fails_when_the_database_cannot_be_reached() {
     let c = ctx(Subject::anonymous());
     let h = d.health(&c).await;
     assert_eq!(h.status, HealthState::Error, "{}", h.message);
-    assert!(h.message.contains("postgres connection failed"), "{}", h.message);
+    assert!(
+        h.message.contains("postgres connection failed"),
+        "{}",
+        h.message
+    );
     assert!(!h.message.contains("never-shown-9f2"));
     let err = d
         .query(&c, &q(json!({ "rawSql": "SELECT 1 FROM metrics" })))

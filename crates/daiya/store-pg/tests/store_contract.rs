@@ -983,7 +983,10 @@ async fn a_public_token_resolves_through_the_lookup_and_no_setting_widens_rls() 
     let listed = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM daiya_public_token")
         .fetch_one(db.app.pool())
         .await;
-    assert!(listed.is_err(), "the token index is not readable by the app role");
+    assert!(
+        listed.is_err(),
+        "the token index is not readable by the app role"
+    );
     let resolve = |h: String| {
         let pool = db.app.pool().clone();
         async move {
@@ -1144,7 +1147,10 @@ async fn migration_is_idempotent_and_runs_concurrently() {
     .fetch_one(&db.admin)
     .await
     .unwrap();
-    assert_eq!(policies, 1, "org_isolation only: no second setting widens RLS");
+    assert_eq!(
+        policies, 1,
+        "org_isolation only: no second setting widens RLS"
+    );
     let checksum: String =
         sqlx::query_scalar("SELECT checksum FROM daiya_schema_migrations WHERE version = 1")
             .fetch_one(&db.admin)

@@ -164,7 +164,10 @@ async fn a_refused_name_answers_one_text_without_its_address() {
         strip(&missing, "daiya-test-host.invalid")
     );
     for text in [private.to_string(), missing.to_string()] {
-        assert!(!text.contains("127.0.0.1") && !text.contains("::1"), "{text}");
+        assert!(
+            !text.contains("127.0.0.1") && !text.contains("::1"),
+            "{text}"
+        );
     }
 }
 

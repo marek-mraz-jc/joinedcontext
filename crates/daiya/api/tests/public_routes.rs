@@ -291,10 +291,12 @@ async fn the_anonymous_view_carries_no_variable_or_annotation_query() {
 async fn the_anonymous_view_keeps_only_the_members_needed_to_draw() {
     let w = world();
     let mut d = templated("listed", "prom");
-    d["links"] = json!([{ "title": "Ops", "type": "link", "url": "https://ops.internal.example/a" }]);
+    d["links"] =
+        json!([{ "title": "Ops", "type": "link", "url": "https://ops.internal.example/a" }]);
     d["internalNote"] = json!("note-kept-from-viewers");
     let panel = &mut d["panels"][0];
-    panel["links"] = json!([{ "title": "Runbook", "type": "link", "url": "https://wiki.internal.example/r" }]);
+    panel["links"] =
+        json!([{ "title": "Runbook", "type": "link", "url": "https://wiki.internal.example/r" }]);
     panel["libraryPanel"] = json!({ "uid": "lib-hidden", "name": "Shared" });
     panel["fieldConfig"] = json!({
         "defaults": { "unit": "short", "links": [{ "url": "https://drill.internal.example" }] },

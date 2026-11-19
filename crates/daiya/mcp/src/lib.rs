@@ -11,8 +11,8 @@ use daiya_api::odata::{
     exec_odata_datasource_resource, exec_odata_export, exec_odata_import, exec_odata_plan,
 };
 use daiya_api::{
-    DaiyaState, PanelTimeRange, PublicCaller, PublicDashboardQueryReq, execute_public_dashboard_query,
-    panel_view, rotate_public_dashboard_token,
+    DaiyaState, PanelTimeRange, PublicCaller, PublicDashboardQueryReq,
+    execute_public_dashboard_query, panel_view, rotate_public_dashboard_token,
 };
 use daiya_import::DesiredBundle;
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};

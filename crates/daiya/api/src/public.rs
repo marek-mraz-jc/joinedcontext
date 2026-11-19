@@ -862,7 +862,7 @@ async fn http_query_public_dashboard(
         panel_id,
         req,
     )
-        .await
+    .await
     {
         Ok(frame_sets) => {
             let mut results = serde_json::Map::new();
