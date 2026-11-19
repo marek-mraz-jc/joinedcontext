@@ -6,10 +6,10 @@
 mod common;
 
 use common::{World, dashboard, prometheus, world};
-use daiya_api::PublicRateLimiter;
+use daiya_api::{PublicCaller, PublicRateLimiter};
 use http::StatusCode;
 use serde_json::{Value, json};
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 /// A dashboard with a `$job` variable (options `edge`, `core`), a range of one hour and a
@@ -523,19 +523,95 @@ fn the_limiter_resets_after_its_window_and_bounds_its_table() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     limiter.check_rate_limit(a).unwrap();
 
-    // A full table refuses a new address while every window is live, and frees expired ones.
-    // Filling 65,536 addresses takes over a second on a CI runner, so the window is 5 s.
-    let full = PublicRateLimiter::new(5, 5);
+    // A full table admits a new caller by dropping the oldest window: callers that rotate
+    // addresses never lock a new one out. IPv4 keys are counted one per address.
+    let full = PublicRateLimiter::new(5, 60);
     for i in 0..PublicRateLimiter::MAX_TRACKED_ADDRESSES {
-        full.check_rate_limit(IpAddr::V6(Ipv6Addr::from(i as u128)))
+        full.check_rate_limit(IpAddr::V4(Ipv4Addr::from(0x0a00_0000 + i as u32)))
             .unwrap();
     }
-    let newcomer = IpAddr::V6(Ipv6Addr::from(u128::MAX));
-    assert!(full.check_rate_limit(newcomer).is_err());
-    full.check_rate_limit(IpAddr::V6(Ipv6Addr::from(7u128)))
-        .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(5100));
+    let newcomer: IpAddr = "198.51.100.7".parse().unwrap();
     full.check_rate_limit(newcomer).unwrap();
+    full.check_rate_limit(IpAddr::V4(Ipv4Addr::from(0x0a00_0007)))
+        .unwrap();
+}
+
+#[test]
+fn ipv6_callers_share_one_bucket_per_64_and_subjects_count_apart() {
+    let limiter = PublicRateLimiter::new(1, 60);
+    let first: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+    let same_64: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+    let other_64: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+    limiter.check_rate_limit(first).unwrap();
+    assert!(limiter.check_rate_limit(same_64).is_err());
+    limiter.check_rate_limit(other_64).unwrap();
+    limiter
+        .check_rate_limit(PublicCaller::Subject("pia".into()))
+        .unwrap();
+    limiter
+        .check_rate_limit(PublicCaller::Subject("ola".into()))
+        .unwrap();
+    assert!(
+        limiter
+            .check_rate_limit(PublicCaller::Subject("pia".into()))
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_public_request_without_a_source_address_is_refused() {
+    let (w, token) = published(false).await;
+    for (method, uri, body) in [
+        ("GET", format!("/api/public/dashboards/{token}"), None),
+        (
+            "POST",
+            format!("/api/public/dashboards/{token}/panels/1/query"),
+            Some("{}"),
+        ),
+    ] {
+        let mut req = http::Request::builder().method(method).uri(&uri);
+        if body.is_some() {
+            req = req.header("content-type", "application/json");
+        }
+        let req = req
+            .body(axum::body::Body::from(body.unwrap_or_default()))
+            .unwrap();
+        let (st, answer) = w.send(req).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{uri}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn an_anonymous_viewer_gets_a_fixed_text_for_a_failed_saved_query() {
+    let w = world();
+    let (url, _) = common::upstream(vec![(
+        "/api/v1/query_range",
+        json!({ "status": "error", "errorType": "bad_data", "error": "upstream-internal-detail" }),
+    )])
+    .await;
+    w.add_prometheus("prom", &url).await;
+    w.add_dashboard(dashboard("failing", "prom"), None).await;
+    let created = w
+        .ok(
+            "POST",
+            "/api/dashboards/uid/failing/public-dashboards",
+            Some(json!({ "isEnabled": true })),
+        )
+        .await;
+    let token = created["accessToken"].as_str().unwrap();
+    let (st, body) = w
+        .call(
+            "POST",
+            &format!("/api/public/dashboards/{token}/panels/1/query"),
+            None,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(st, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(
+        !body.to_string().contains("upstream-internal-detail"),
+        "{body}"
+    );
 }
 
 #[tokio::test]

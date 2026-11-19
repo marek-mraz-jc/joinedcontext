@@ -33,7 +33,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 /// Generates a 256-bit random access token (64 lowercase hex characters) and its SHA-256 hash (R7).
@@ -52,12 +52,43 @@ pub fn is_valid_access_token_format(token: &str) -> bool {
     (32..=64).contains(&token.len()) && token.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Per-source-address sliding window rate limiter for public dashboard endpoints (R7).
+/// Who a public dashboard request is counted against (R7): the source address the router
+/// resolved, or the authenticated subject when the call arrives through a door that knows one
+/// (MCP). A door that knows neither refuses the request instead of counting it under a shared key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PublicCaller {
+    Addr(IpAddr),
+    Subject(String),
+}
+
+impl From<IpAddr> for PublicCaller {
+    fn from(addr: IpAddr) -> Self {
+        Self::Addr(addr)
+    }
+}
+
+impl PublicCaller {
+    /// The bucket key: an IPv6 caller counts by its /64 (one host's usual allocation), so
+    /// rotating addresses inside it buys no extra quota; IPv4 and subjects count as they are.
+    fn bucket(&self) -> String {
+        match self {
+            Self::Addr(IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
+                let s = v6.segments();
+                format!("addr:{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+            }
+            Self::Addr(IpAddr::V6(v6)) => format!("addr:{}", v6.to_canonical()),
+            Self::Addr(IpAddr::V4(v4)) => format!("addr:{v4}"),
+            Self::Subject(id) => format!("subject:{id}"),
+        }
+    }
+}
+
+/// Per-caller sliding window rate limiter for public dashboard endpoints (R7).
 #[derive(Debug)]
 pub struct PublicRateLimiter {
     max_requests: u32,
     window: Duration,
-    buckets: Mutex<BTreeMap<IpAddr, (u32, Instant)>>,
+    buckets: Mutex<BTreeMap<String, (u32, Instant)>>,
 }
 
 impl PublicRateLimiter {
@@ -70,34 +101,60 @@ impl PublicRateLimiter {
         }
     }
 
-    /// Most source addresses tracked at once; expired windows are dropped first, and a full table
-    /// refuses new addresses rather than growing without bound.
+    /// Most callers tracked at once. A full table drops expired windows first, then the oldest
+    /// live window: callers rotating addresses can never lock new callers out.
     pub const MAX_TRACKED_ADDRESSES: usize = 65_536;
 
-    pub fn check_rate_limit(&self, addr: IpAddr) -> CrResult<()> {
+    pub fn check_rate_limit(&self, caller: impl Into<PublicCaller>) -> CrResult<()> {
+        let key = caller.into().bucket();
         let mut guard = self.buckets.lock();
         let now = Instant::now();
-        if guard.len() >= Self::MAX_TRACKED_ADDRESSES && !guard.contains_key(&addr) {
+        if guard.len() >= Self::MAX_TRACKED_ADDRESSES && !guard.contains_key(&key) {
             let window = self.window;
             guard.retain(|_, (_, started)| now.duration_since(*started) < window);
-            if guard.len() >= Self::MAX_TRACKED_ADDRESSES {
-                return Err(CrError::RateLimited(
-                    "public dashboard rate limit table is full".into(),
-                ));
+            if guard.len() >= Self::MAX_TRACKED_ADDRESSES
+                && let Some(oldest) = guard
+                    .iter()
+                    .min_by_key(|(_, (_, started))| *started)
+                    .map(|(k, _)| k.clone())
+            {
+                guard.remove(&oldest);
             }
         }
-        let entry = guard.entry(addr).or_insert((0, now));
+        let entry = guard.entry(key).or_insert((0, now));
         if now.duration_since(entry.1) >= self.window {
             *entry = (1, now);
             return Ok(());
         }
         if entry.0 >= self.max_requests {
-            return Err(CrError::RateLimited(format!(
-                "public dashboard rate limit exceeded for source address {addr}"
-            )));
+            return Err(CrError::RateLimited(
+                "public dashboard rate limit exceeded; retry after the window ends".into(),
+            ));
         }
         entry.0 += 1;
         Ok(())
+    }
+}
+
+/// Answer of a public door that cannot see the caller's source address.
+fn unknown_caller() -> CrError {
+    CrError::Forbidden(
+        "public dashboards answer only requests whose source address the server can see".into(),
+    )
+}
+
+/// The public caller of a door whose router resolves `ClientAddr`; none when it is absent.
+#[must_use]
+pub fn public_caller_of(client: Option<&ClientAddr>) -> Option<PublicCaller> {
+    client.map(|c| PublicCaller::Addr(c.0))
+}
+
+/// An anonymous viewer gets a fixed text for a failed saved query: the datasource's own error
+/// (upstream body, database message, refused address) stays with the dashboard's members.
+fn public_query_error(err: CrError) -> CrError {
+    match err {
+        CrError::RateLimited(_) => err,
+        _ => CrError::OutboundFailed("the panel's saved query failed".into()),
     }
 }
 
@@ -373,10 +430,12 @@ fn sanitize_panels_for_public(panels: &mut [Value], show_query_text: bool) {
 /// Unknown, disabled, or rotated tokens return the exact same 404 error.
 pub async fn view_public_dashboard(
     state: &DaiyaState,
-    client_addr: IpAddr,
+    caller: Option<PublicCaller>,
     access_token: &str,
 ) -> CrResult<PublicDashboardViewDto> {
-    state.public_rate_limiter.check_rate_limit(client_addr)?;
+    state
+        .public_rate_limiter
+        .check_rate_limit(caller.ok_or_else(unknown_caller)?)?;
     if !is_valid_access_token_format(access_token) {
         return Err(CrError::NotFound("Public dashboard not found".into()));
     }
@@ -431,12 +490,14 @@ pub async fn view_public_dashboard(
 ///    never datasource UID, URL, credentials, or query text (unless `show_query_text == true`).
 pub async fn execute_public_dashboard_query(
     state: &DaiyaState,
-    client_addr: IpAddr,
+    caller: Option<PublicCaller>,
     access_token: &str,
     panel_id: u32,
     req: PublicDashboardQueryReq,
 ) -> CrResult<Vec<FrameSet>> {
-    state.public_rate_limiter.check_rate_limit(client_addr)?;
+    state
+        .public_rate_limiter
+        .check_rate_limit(caller.ok_or_else(unknown_caller)?)?;
     if !is_valid_access_token_format(access_token) {
         return Err(CrError::NotFound("Public dashboard not found".into()));
     }
@@ -646,7 +707,8 @@ pub async fn execute_public_dashboard_query(
         &resolved_vars,
         false,
     )
-    .await?;
+    .await
+    .map_err(public_query_error)?;
 
     if let Some(txs) = &panel.transformations
         && !txs.is_empty()
@@ -671,16 +733,12 @@ pub async fn execute_public_dashboard_query(
     Ok(frame_sets)
 }
 
-fn client_ip_of(ext: Option<Extension<ClientAddr>>) -> IpAddr {
-    ext.map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |e| e.0.0)
-}
-
 async fn http_view_public_dashboard(
     State(state): State<DaiyaState>,
     client: Option<Extension<ClientAddr>>,
     Path(access_token): Path<String>,
 ) -> Response {
-    match view_public_dashboard(&state, client_ip_of(client), &access_token).await {
+    match view_public_dashboard(&state, public_caller_of(client.as_deref()), &access_token).await {
         Ok(dto) => (
             StatusCode::OK,
             [(axum::http::header::CACHE_CONTROL, "private, no-store")],
@@ -698,7 +756,13 @@ async fn http_query_public_dashboard(
     body: Option<Json<PublicDashboardQueryReq>>,
 ) -> Response {
     let req = body.map_or_else(PublicDashboardQueryReq::default, |Json(b)| b);
-    match execute_public_dashboard_query(&state, client_ip_of(client), &access_token, panel_id, req)
+    match execute_public_dashboard_query(
+        &state,
+        public_caller_of(client.as_deref()),
+        &access_token,
+        panel_id,
+        req,
+    )
         .await
     {
         Ok(frame_sets) => {

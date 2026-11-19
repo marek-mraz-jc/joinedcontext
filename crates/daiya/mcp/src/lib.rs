@@ -11,7 +11,7 @@ use daiya_api::odata::{
     exec_odata_datasource_resource, exec_odata_export, exec_odata_import, exec_odata_plan,
 };
 use daiya_api::{
-    DaiyaState, PanelTimeRange, PublicDashboardQueryReq, execute_public_dashboard_query,
+    DaiyaState, PanelTimeRange, PublicCaller, PublicDashboardQueryReq, execute_public_dashboard_query,
     panel_view, rotate_public_dashboard_token,
 };
 use daiya_import::DesiredBundle;
@@ -19,7 +19,6 @@ use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr};
 
 /// MCP tool specification generated from the operation registry (R10, R10a).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,9 +209,10 @@ pub async fn call_mcp_tool(
         "PublicDashboard/Query" => {
             let token = required_str(&args, "accessToken")?;
             let panel_id = required_panel_id(&args)?;
+            // An MCP caller is counted as its own subject, never under a shared address.
             let sets = execute_public_dashboard_query(
                 state,
-                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                ctx.subject.actor_id.clone().map(PublicCaller::Subject),
                 token,
                 panel_id,
                 PublicDashboardQueryReq::default(),
