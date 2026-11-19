@@ -396,6 +396,7 @@ dependencies = [
  "antares-bus",
  "antares-feed",
  "antares-ical",
+ "antares-icsr",
  "antares-linkml",
  "antares-mcp",
  "antares-odata",
@@ -479,6 +480,18 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tracing",
+]
+
+[[package]]
+name = "antares-icsr"
+version = "0.3.0"
+dependencies = [
+ "antares-ops",
+ "axum",
+ "serde",
+ "serde_json",
+ "tracing",
+ "url",
 ]
 
 [[package]]

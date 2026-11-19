@@ -144,15 +144,32 @@ pub struct Built {
     pub hop: Option<Hop>,
 }
 
+/// The addresses this jc's broker answers under for its siblings, as `ANTARES_SELF_URLS` lists
+/// them: a registration the Portal writes naming one is served in process under the target
+/// Tenant's export grant (Antares ADR-0025), never over a socket through the egress guard
+/// (SHR-17, T-7422).
+pub fn self_urls(siblings: &crate::siblings::Siblings) -> Option<String> {
+    let broker = siblings.get(Module::Antares)?;
+    let mut urls = vec![broker.internal.clone()];
+    if broker.public != broker.internal {
+        urls.push(broker.public.clone());
+    }
+    Some(urls.join(","))
+}
+
 pub async fn build(
     cfg: &AntaresSection,
     setup: &crate::setup::Setup,
     hop_secret: Option<&str>,
+    self_urls: Option<String>,
     shutdown: &CancellationToken,
 ) -> Result<Built, StartError> {
     let render = antares_broker::telemetry::init_hosted();
     let mut broker_cfg = antares_broker::config_from_env().map_err(err)?;
     broker_cfg.defaults = defaults();
+    if let Some(urls) = self_urls {
+        broker_cfg.defaults.insert("ANTARES_SELF_URLS".into(), urls);
+    }
     // The `/q` admin credential is mandatory in a shared process: the operator's, else the one
     // setup holds (a file while the Portal, which reads it from one, runs beside it; else made
     // per boot in memory).
@@ -259,6 +276,23 @@ async fn serve_hop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7422: the self URLs hold the broker address the Portal is handed
+    /// (`JC_PORTAL_BROKER_URL`), so a registration it writes naming that address is served in
+    /// process, and the broker's public base beside it.
+    #[test]
+    fn the_self_urls_name_the_broker_as_the_portal_reaches_it() {
+        let plans = crate::siblings::tests::host_mode_plans();
+        let mut siblings = crate::siblings::Siblings::new(&plans, "0.0.0.0:8080".parse().unwrap());
+        for module in crate::siblings::hosted_in_pod(&plans) {
+            siblings.set_in_pod(module, "127.0.0.1:40125".parse().unwrap());
+        }
+        let urls = self_urls(&siblings).unwrap();
+        let broker = siblings.get(Module::Antares).unwrap();
+        let listed: Vec<&str> = urls.split(',').collect();
+        assert_eq!(listed[0], broker.internal);
+        assert!(listed.contains(&broker.public.as_str()), "{urls}");
+    }
 
     /// dev's four write settings come as defaults beside the identity keys; the broker reads each
     /// through its host defaults, so the environment or `[antares.database]` still wins

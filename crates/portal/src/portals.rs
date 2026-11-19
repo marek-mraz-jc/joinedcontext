@@ -2,7 +2,8 @@
 //! Organization it names exists, its `spec.path` is unique in that Organization and never
 //! moves to another one, its `spec.host` is one the operator listed for the Organization, and
 //! the deployment holds no more than `portals.max` portals. jc fills the settings from its
-//! `[[organizations]]` (`hosts.portals`) and `[dataroom] portals_max`.
+//! `[[organizations]]` (`hosts.portals`) and `[dataroom] portals_max`; an Organization's own
+//! `portal-site` hosts in the host registry (T-7415) count as listed too ([`Sites`]).
 
 use crate::error::ApiError;
 use crate::permissions::ORG_NAMESPACE;
@@ -10,6 +11,73 @@ use crate::resource::ResourceEnvelope;
 use crate::store::{ListOptions, Mirror};
 use jc_core::kinds::{is_portal_host, PortalSpec};
 use std::collections::BTreeMap;
+use std::sync::{Arc, RwLock};
+
+/// The host registry's `portal-site` rows that are not `removed`, by Organization: `(host,
+/// state)`. jc refreshes it on every registry rebuild, the self-service host routes after each
+/// write (T-7415). One copy is shared by every clone of the settings.
+#[derive(Debug, Clone, Default)]
+pub struct Sites(Arc<RwLock<SitesByOrganization>>);
+
+/// `(host, state)` pairs by Organization.
+type SitesByOrganization = BTreeMap<String, Vec<(String, String)>>;
+
+impl PartialEq for Sites {
+    fn eq(&self, other: &Self) -> bool {
+        // One shared copy is equal to itself without taking its lock twice.
+        Arc::ptr_eq(&self.0, &other.0) || self.snapshot() == other.snapshot()
+    }
+}
+impl Eq for Sites {}
+
+impl Sites {
+    /// Takes the `portal-site` rows of `rows` that are not removed, replacing the set whole.
+    pub fn replace(&self, rows: &[crate::host_registry::HostRow]) {
+        let mut next = SitesByOrganization::new();
+        for row in rows
+            .iter()
+            .filter(|r| r.role == SITE_ROLE && r.state != "removed")
+        {
+            next.entry(row.organization.clone())
+                .or_default()
+                .push((row.host.clone(), row.state.clone()));
+        }
+        // A poisoned lock only means a writer panicked mid-replace; the next replace is whole.
+        *self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
+
+    fn snapshot(&self) -> SitesByOrganization {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// `org`'s hosts with their registry state.
+    pub fn of(&self, org: &str) -> Vec<(String, String)> {
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(org)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// `org`'s hosts that are `served` (certificate issued, routed).
+    pub fn served(&self, org: &str) -> Vec<String> {
+        self.of(org)
+            .into_iter()
+            .filter(|(_, state)| state == "served")
+            .map(|(host, _)| host)
+            .collect()
+    }
+}
+
+/// The registry role of a host a further portal answers on.
+pub const SITE_ROLE: &str = "portal-site";
 
 /// The deployment's word on portals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -22,6 +90,8 @@ pub struct PortalSettings {
     /// The deployment's harvest allow-list (`JC_PORTAL_HARVEST_HOSTS`, hosts separated by
     /// commas): each `allowedHosts` entry of a source is one of these (ODP-10).
     pub harvest_hosts: Vec<String>,
+    /// The Organizations' own portal hosts in the host registry (T-7415).
+    pub sites: Sites,
 }
 
 /// `JC_PORTAL_PORTAL_HOSTS` and `JC_PORTAL_PORTALS_MAX`, checked: a plain host each, no host
@@ -168,13 +238,18 @@ pub fn check(
         return Ok(());
     };
     if let Some(host) = &spec.host {
-        let listed = settings.hosts.get(org).is_some_and(|h| h.contains(host));
+        let listed = settings.hosts.get(org).is_some_and(|h| h.contains(host))
+            || settings
+                .sites
+                .of(org)
+                .iter()
+                .any(|(h, _)| h.eq_ignore_ascii_case(host));
         if !listed {
             return Err(refused(
                 "spec.host",
                 format!(
-                    "host {host} is not listed for this Organization; ask the operator to list \
-                     it, or leave host out for the address /{org}/opendata/-/{}/",
+                    "host {host} is not a host of this Organization; add it under Hosts first, \
+                     or leave host out for the address /{org}/opendata/-/{}/",
                     spec.path
                 ),
             ));
@@ -315,7 +390,8 @@ mod tests {
                 check(&mirror, Some(&s), &portal("p", org, "mobility", Some(host))).unwrap_err(),
             );
             assert!(
-                detail.starts_with("spec.host: host ") && detail.contains("not listed"),
+                detail.starts_with("spec.host: host ")
+                    && detail.contains("not a host of this Organization"),
                 "{org} {host}: {detail}"
             );
         }
@@ -388,6 +464,48 @@ mod tests {
         }
         // Default stays default, so it still cannot be deleted.
         assert!(deletion(&mirror, "Portal", ORG_NAMESPACE, "ba-default").is_err());
+    }
+
+    #[test]
+    fn an_organizations_own_registry_host_is_its_portal_host_and_nobody_elses() {
+        let mirror = mirror();
+        let s = settings(10);
+        let row = |host: &str, org: &str, role: &str, state: &str| crate::host_registry::HostRow {
+            host: host.into(),
+            organization: org.into(),
+            organization_id: None,
+            role: role.into(),
+            state: state.into(),
+        };
+        s.sites.replace(&[
+            row("data2.ba.example", "ba", SITE_ROLE, "approved"),
+            row("old.ba.example", "ba", SITE_ROLE, "removed"),
+            row("work.ba.example", "ba", "working", "served"),
+        ]);
+        check(
+            &mirror,
+            Some(&s),
+            &portal("p", "ba", "mobility", Some("data2.ba.example")),
+        )
+        .expect("an own pending portal host");
+        assert_eq!(
+            s.sites.served("ba"),
+            Vec::<String>::new(),
+            "only served hosts are routed"
+        );
+        for (org, host) in [
+            ("ke", "data2.ba.example"),
+            ("ba", "old.ba.example"),
+            ("ba", "work.ba.example"),
+        ] {
+            let detail = field(
+                check(&mirror, Some(&s), &portal("p", org, "mobility", Some(host))).unwrap_err(),
+            );
+            assert!(
+                detail.starts_with("spec.host: host "),
+                "{org} {host}: {detail}"
+            );
+        }
     }
 
     #[test]

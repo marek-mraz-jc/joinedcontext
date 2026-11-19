@@ -1454,6 +1454,8 @@ export interface Actions {
   portal_pipeline_template_create: { body?: unknown };
   portal_pipeline_template_delete: { id: string };
   portal_pipeline_test: { body?: unknown };
+  portal_portal_host_add: { body?: unknown };
+  portal_portal_host_remove: { host: string };
   portal_portal_source_run: { name: string; source: string };
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
@@ -1639,6 +1641,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_template_create: ["Project"],
   portal_pipeline_template_delete: ["Project"],
   portal_pipeline_test: ["Project"],
+  portal_portal_host_add: ["Organization"],
+  portal_portal_host_remove: ["Organization"],
   portal_portal_source_run: ["Organization"],
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],

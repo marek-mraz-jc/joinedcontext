@@ -118,7 +118,7 @@ ekiben-server = { path = "../../crates/ekiben/crates/ekiben-server", optional = 
 ekiben-core = { path = "../../crates/ekiben/crates/ekiben-core", optional = true }
 ekiben-linkml = { path = "../../crates/shared/ekiben-linkml", optional = true }
 
-antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed", "parquet", "tabular"] }
+antares-broker = { path = "../../crates/antares/crates/antares-broker", optional = true, features = ["full", "jc-policy", "linkml", "ical", "feed", "parquet", "tabular", "internal-csr"] }
 
 context-gateway = { path = "../../vendor/joinedcontext-platform/crates/context-gateway", optional = true }
 # Every build: the Organization names the platform reserves (T-6974) are in jc-core.

@@ -223,11 +223,23 @@ impl ContextSourceRegistrationSpec {
         self.validate_anonymous_target()
     }
 
-    /// An anonymous forward reaches only an `https` address outside this platform (T-6545): a
-    /// member Endpoint here is read under its own Policy, which an anonymous forward would skip,
-    /// and a plain `http` hop would carry the answer in the clear over the internet.
+    /// An anonymous forward reaches an `https` address outside this platform (T-6545), or an
+    /// Endpoint another project shares with this one (SHR-15 `live`, T-7422): the reconciler
+    /// serves that forward in process under the shared Endpoint's own view and Policy, decided
+    /// as an anonymous caller, so no token or person of this project reaches the other
+    /// (SHR-17). An Endpoint of this project is read under its own Policy, which an anonymous
+    /// forward would skip, and a plain `http` hop would carry the answer in the clear over the
+    /// internet.
     fn validate_anonymous_target(&self) -> Result<()> {
         if self.federation.identity != FederationIdentity::Anonymous {
+            return Ok(());
+        }
+        if self
+            .endpoint_ref
+            .as_ref()
+            .is_some_and(|reference| reference.namespace().is_some())
+        {
+            // `validate_scope` holds it to another project than the registration's own.
             return Ok(());
         }
         match &self.endpoint {
@@ -241,8 +253,9 @@ impl ContextSourceRegistrationSpec {
             None => Err(Error::Name {
                 field: "spec.federation.identity",
                 value: "anonymous".to_owned(),
-                reason: "anonymous identity reaches an address outside this platform; an \
-                         Endpoint here is read as serviceAccount or caller (PF-48)",
+                reason: "anonymous identity reaches an address outside this platform or an \
+                         Endpoint another project shares (endpointRef with its namespace); an \
+                         Endpoint of this project is read as serviceAccount or caller (PF-48)",
             }),
         }
     }
@@ -271,9 +284,27 @@ impl ContextSourceRegistrationSpec {
                 self.federation.service_account_ref.as_ref(),
             ),
         ] {
+            let anonymous_member = field == "spec.endpointRef.namespace"
+                && self.federation.identity == FederationIdentity::Anonymous;
             let Some(namespace) = reference.and_then(Ref::namespace) else {
                 continue;
             };
+            // SHR-15 `live` (T-7422): an anonymous member is an Endpoint another project shares
+            // with this one, read in process as an anonymous caller under that Endpoint's own
+            // view and Policy; the reconciler registers it only under a SharedSpaceReference
+            // naming it. Its own project's Endpoint is read as serviceAccount or caller.
+            if anonymous_member {
+                if Some(namespace) == project {
+                    return Err(Error::Name {
+                        field,
+                        value: namespace.to_owned(),
+                        reason: "anonymous identity reads an Endpoint another project shares; an \
+                                 Endpoint of this project is read as serviceAccount or caller \
+                                 (PF-48)",
+                    });
+                }
+                continue;
+            }
             if Some(namespace) != project {
                 return Err(Error::Name {
                     field,
@@ -339,5 +370,76 @@ impl Federation {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContextSourceRegistrationSpec;
+
+    fn spec(
+        endpoint_ref: serde_json::Value,
+        federation: serde_json::Value,
+    ) -> ContextSourceRegistrationSpec {
+        serde_json::from_value(serde_json::json!({
+            "contextSpaceRef": "hub",
+            "endpointRef": endpoint_ref,
+            "information": [{"entities": [{"type": "Vehicle"}]}],
+            "federation": federation,
+        }))
+        .unwrap_or_else(|e| unreachable!("{e}"))
+    }
+
+    /// SHR-15 `live` (T-7422): an anonymous registration may name an Endpoint another project
+    /// shares, and only that: the same Endpoint of the registration's own project, an Endpoint
+    /// with no namespace, or another project's Endpoint read as the caller or a ServiceAccount
+    /// stay refused (PF-48, SHR-17).
+    #[test]
+    fn an_anonymous_member_is_an_endpoint_of_another_project() {
+        let anonymous = serde_json::json!({"identity": "anonymous"});
+        let shared = spec(
+            serde_json::json!({"kind": "Endpoint", "name": "shared", "namespace": "espoo"}),
+            anonymous.clone(),
+        );
+        assert!(shared.validate().is_ok());
+        assert!(shared.validate_scope(Some("helsinki")).is_ok());
+
+        let own = spec(
+            serde_json::json!({"kind": "Endpoint", "name": "shared", "namespace": "helsinki"}),
+            anonymous.clone(),
+        );
+        assert!(own.validate().is_ok());
+        let said = own
+            .validate_scope(Some("helsinki"))
+            .map_err(|e| e.to_string());
+        assert!(
+            said.as_ref()
+                .is_err_and(|e| e.contains("spec.endpointRef.namespace")),
+            "{said:?}"
+        );
+
+        let bare = spec(
+            serde_json::json!({"kind": "Endpoint", "name": "shared"}),
+            anonymous,
+        );
+        let said = bare.validate().map_err(|e| e.to_string());
+        assert!(
+            said.as_ref()
+                .is_err_and(|e| e.contains("spec.federation.identity")),
+            "{said:?}"
+        );
+
+        let caller = spec(
+            serde_json::json!({"kind": "Endpoint", "name": "shared", "namespace": "espoo"}),
+            serde_json::json!({"identity": "caller"}),
+        );
+        assert!(caller.validate().is_ok());
+        let said = caller
+            .validate_scope(Some("helsinki"))
+            .map_err(|e| e.to_string());
+        assert!(
+            said.as_ref().is_err_and(|e| e.contains("espoo")),
+            "{said:?}"
+        );
     }
 }

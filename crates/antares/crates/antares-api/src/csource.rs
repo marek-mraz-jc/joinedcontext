@@ -570,8 +570,17 @@ pub(crate) fn member_tenant_admitted(registering: &TenantId, member: Option<&Val
     }
 }
 
-fn check_member_tenant(registering: &TenantId, norm: &Map<String, Value>) -> Result<(), NgsiError> {
-    if member_tenant_admitted(registering, norm.get("tenant")) {
+/// `in_process`: the registration's endpoint is one the forward transport
+/// serves without a socket. Such a registration may name another
+/// Organization's Tenant: the transport admits it only under that Tenant's
+/// export grant marked to cross Organizations, read again on every forward
+/// (ADR-0025 rule 5, T-7306, SHR-15 `live`).
+fn check_member_tenant(
+    registering: &TenantId,
+    norm: &Map<String, Value>,
+    in_process: bool,
+) -> Result<(), NgsiError> {
+    if in_process || member_tenant_admitted(registering, norm.get("tenant")) {
         return Ok(());
     }
     Err(NgsiError::BadRequestData(
@@ -1076,7 +1085,11 @@ pub async fn create_registration(
         // it is in hand here — see the same note on subscription create.
         let named = obj.get("id").and_then(Value::as_str);
         let mut norm = normalize_registration(obj, &parsed.ctx, false)?;
-        check_member_tenant(&tenant, &norm)?;
+        check_member_tenant(
+            &tenant,
+            &norm,
+            crate::federation::served_in_process(&st, norm.get("endpoint")),
+        )?;
         let (types, attrs) = info_members(&norm);
         gate!(
             st, &tenant, &headers, "5.9.2",
@@ -1480,7 +1493,11 @@ pub async fn update_registration(
             "fragment must be a JSON object".into(),
         ))?;
         let mut norm = normalize_registration(obj, &parsed.ctx, true)?;
-        check_member_tenant(&tenant, &norm)?;
+        check_member_tenant(
+            &tenant,
+            &norm,
+            crate::federation::served_in_process(&st, norm.get("endpoint")),
+        )?;
         let ts = now_iso();
         // The 5.9.3.4 re-checks below read the registration set that the
         // mutate then writes — the pair is atomic or a concurrent write can
@@ -1605,13 +1622,17 @@ mod member_tenant_t7306 {
             let mut norm = Map::new();
             norm.insert("tenant".into(), member.clone());
             assert_eq!(
-                check_member_tenant(registering, &norm).is_ok(),
+                check_member_tenant(registering, &norm, false).is_ok(),
                 admitted,
                 "{} -> {member}",
                 registering.as_str()
             );
         }
-        assert!(check_member_tenant(&mine, &Map::new()).is_ok());
+        assert!(check_member_tenant(&mine, &Map::new(), false).is_ok());
+        // served in process, the transport's grant decides instead (T-7422)
+        let mut across = Map::new();
+        across.insert("tenant".into(), json!("sk_a__x"));
+        assert!(check_member_tenant(&mine, &across, true).is_ok());
     }
 }
 

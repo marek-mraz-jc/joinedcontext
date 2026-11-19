@@ -13262,7 +13262,8 @@
       "delete": "Odstranit portál",
       "defaultKept": "Výchozí portál zůstává: je to vlastní katalog organizace.",
       "fixed": "Po založení portálu se nemění: portál se nikdy nepřesune k jiné organizaci, jménu ani cestě.",
-      "descriptionTabs": "Nastavení portálu, jeho zdroje s běhy a jeho datové sady. Každá změna se navrhne schvalovateli."
+      "descriptionTabs": "Nastavení portálu, jeho zdroje s běhy a jeho datové sady. Každá změna se navrhne schvalovateli.",
+      "hostPending": "{host} (zatím nefunguje)"
     },
     "tabs": {
       "label": "Pohledy portálu",
@@ -13386,6 +13387,37 @@
       "noCatalogue": "Tato instalace zatím neposkytuje katalog otevřených dat, proto tento portál zde nevypíše žádné datové sady. Požádejte operátora o zapnutí katalogu.",
       "toSources": "Přejít na Zdroje",
       "noCatalogueTitle": "Zatím zde není katalog otevřených dat"
+    },
+    "hosts": {
+      "title": "Adresy portálů",
+      "titleOf": "Adresy portálů organizace {organization}",
+      "description": "Jména, na kterých mohou vaše portály odpovídat. Nová adresa začne fungovat, jakmile DNS ukazuje na platformu a její vlastní certifikát je vydán, obvykle během několika minut; operátor ani restart nejsou potřeba.",
+      "empty": "Zatím nemáte vlastní adresu portálu. Přidejte ji níže a pak ji vyberte jako doménu portálu.",
+      "state": {
+        "approved": "Čeká na DNS",
+        "dns-ok": "Čeká na certifikát",
+        "cert-issued": "Spouští se",
+        "served": "Funguje"
+      },
+      "mode": "Kde adresa leží",
+      "modeOwn": "Pod adresou vaší organizace",
+      "modeDomain": "Pod vaší ověřenou doménou {domain}",
+      "label": "Název",
+      "labelHint": "Jedno slovo z malých písmen, číslic nebo pomlček, např. opendata2",
+      "base": "Pod",
+      "baseHint": "Adresa, na které vaše organizace odpovídá",
+      "whole": "Adresa",
+      "wholeHint": "Jakékoli jméno končící na .{domain}; jeho DNS TXT záznam se při přidání ověří znovu",
+      "will": "Přidá {host}",
+      "add": "Přidat adresu",
+      "adding": "Přidává se…",
+      "cannotAdd": "Vaše organizace zatím nemá žádnou adresu ani ověřenou doménu. Ověřte doménu v nastavení organizace nebo požádejte operátora o adresu.",
+      "remove": "Odebrat adresu",
+      "removeOf": "Odebrat adresu {host}",
+      "removeTitle": "Odebrat adresu {host}?",
+      "removeDescription": "Platforma na ní nejprve přestane odpovídat a pak smaže její certifikát. Stejné jméno už nelze přidat znovu. Portál, který ji používá, musí nejprve přejít na jinou adresu.",
+      "nameFirst": "Nejprve zadejte název adresy.",
+      "cannotAddLink": "Otevřít nastavení organizace"
     }
   },
   "assistantGuides": {
