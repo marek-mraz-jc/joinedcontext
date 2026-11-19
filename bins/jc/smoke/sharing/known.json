@@ -1,0 +1,6 @@
+{
+ "source": "cells not built yet, each with the spec reference that says so (T-7402); a known cell that passes is reported as a stale entry to drop",
+ "notBuilt": {
+  "w2-protected\\.(ngsi-ld\\.(query|retrieve|temporal|subscription|hidden|revoked)|mcp\\.(query-entities|get-entity|revoked))": "ARCHITECTURE-FEDERATION.md 45.1 table: no token on a forward (the broker mints none, fed:1383-1408); FED rules 45.4 private_key_jwt ServiceAccount forward"
+ }
+}

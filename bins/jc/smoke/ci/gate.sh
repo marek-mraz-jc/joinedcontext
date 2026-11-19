@@ -220,6 +220,9 @@ args+=(--with "multiorg=--base-url http://127.0.0.1:$mo_port --export $mo_export
   --state $REHEARSAL_HOME/mo-hosts/smoke-state --hosts $mo_hosts")
 args+=(--with "multiorg@path=--base-url http://127.0.0.1:$mp_port --export $mo_export --composed
   --state $REHEARSAL_HOME/mo-path/smoke-state")
+# sharing makes its fixtures in hel (A) and zilina (B) on this jc and removes them; in the gate it
+# judges only the cells green on its last measured run (sharing/lane.json, T-7402).
+args+=(--with "sharing=--lane")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
 args+=(--with "pipelines=--runs 3 --wait 120")
 # Failures the gate knows, each with where it is filed; only a new one turns the verdict red.
