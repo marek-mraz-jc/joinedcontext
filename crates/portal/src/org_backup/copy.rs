@@ -3,9 +3,11 @@
 //!
 //! A format 2 archive keeps each project's Portal rows in `module/portal/project/<ProjectId>/`.
 //! An administrator picks one of those folders and a new name: the restore mints a new
-//! [`ProjectId`] whose `project_ids` row names the source as its `parent`, writes the folder's
-//! rows under the new project's key with their `project` column set to the new name and new row
-//! ids where a row is addressed by one, records the lineage in `project_copies`, and applies
+//! [`ProjectId`] whose `project_ids` row is the live row of the new name in the source's
+//! Organization (so every reader by name enters the copy's key, and the Project created under
+//! that name later finds the rows), writes the folder's rows under the new project's key with
+//! their `project` column set to the new name and new row ids where a row is addressed by one,
+//! records the lineage (the source) in `project_copies`, and applies
 //! every approved erasure of the source project again to the copy. The source project and its
 //! rows are never written.
 //!
@@ -324,22 +326,21 @@ pub async fn copy(
     let erasures = crate::erasure::approved_in(&mut tx, std::slice::from_ref(&source_name))
         .await
         .map_err(failed)?;
-    sqlx::query(
-        "INSERT INTO project_ids (id, name, parent, organization) VALUES ($1::uuid, $2, $3::uuid, $4)",
-    )
-    .bind(new_key.project.to_string())
-    .bind(request.name)
-    .bind(source.to_string())
-    .bind(request.organization)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::Database(d) if d.is_unique_violation() => invalid(
-            "name",
-            format!("{} was taken a moment ago; pick a new name", request.name),
-        ),
-        e => failed(e),
-    })?;
+    // No `parent`: a row with one is a branch, which no reader by name resolves (TEN-12). The
+    // copy's source is its lineage in `project_copies`.
+    sqlx::query("INSERT INTO project_ids (id, name, organization) VALUES ($1::uuid, $2, $3)")
+        .bind(new_key.project.to_string())
+        .bind(request.name)
+        .bind(request.organization)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::Database(d) if d.is_unique_violation() => invalid(
+                "name",
+                format!("{} was taken a moment ago; pick a new name", request.name),
+            ),
+            e => failed(e),
+        })?;
     crate::db::enter(&mut tx, new_key).await.map_err(failed)?;
 
     let mut ids: HashMap<&str, HashMap<String, String>> = HashMap::new();
