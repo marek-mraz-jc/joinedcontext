@@ -41,6 +41,8 @@ batch/v1/CronJob addons/decidim-sync
 batch/v1/CronJob addons/keycloak-admin-permissions-sync
 batch/v1/CronJob addons/postgres-cluster-dr-drill
 batch/v1/Job addons/jc-antares-db-create-role-antares-backup-backup
+batch/v1/Job addons/jc-antares-db-create-role-jc-antares-app-dml
+batch/v1/Job addons/jc-antares-db-create-role-jc-antares-maint-dml
 batch/v1/Job addons/jc-daiya-db-create-role-daiya-app-login
 batch/v1/Job addons/jc-daiya-db-create-role-daiya-backup-backup
 batch/v1/Job addons/jc-dataroom-db-create-role-dataroom-app-login
