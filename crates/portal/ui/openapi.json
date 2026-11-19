@@ -3888,6 +3888,94 @@
         }
       }
     },
+    "/api/v1/organization/approval-mode": {
+      "get": {
+        "tags": [
+          "changes"
+        ],
+        "summary": "Read The Approval Mode",
+        "description": "Whether an Organization is in single-person approval mode (T-7388): its one person approves their own access Changes after a fresh second factor. Off by default; an installation operator sets it, and a second person with a role turns it off.",
+        "operationId": "approval_mode_get",
+        "parameters": [
+          {
+            "name": "organization",
+            "in": "query",
+            "description": "The Organization, e.g. `marek-mraz`: for a person who belongs to it.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "description": "A project, e.g. `ovzdusie`: its Organization's mode, for a person who reads the project.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalMode"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Neither or both of organization and project",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No Organization or project the caller belongs to or reads",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/backups/configuration": {
       "get": {
         "tags": [
@@ -50873,6 +50961,45 @@
           }
         }
       },
+      "ApprovalMode": {
+        "type": "object",
+        "description": "The mode of one Organization as its Administration page and an approval show it.",
+        "required": [
+          "organization",
+          "singlePerson",
+          "peopleWithARole"
+        ],
+        "properties": {
+          "changedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When an operator or the Portal last changed the mode."
+          },
+          "offReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the Portal turned the mode off by itself, e.g. a second person holds a role."
+          },
+          "organization": {
+            "type": "string",
+            "description": "The Organization's name, e.g. `marek-mraz`."
+          },
+          "peopleWithARole": {
+            "type": "integer",
+            "description": "How many people hold a role in the Organization now.",
+            "minimum": 0
+          },
+          "singlePerson": {
+            "type": "boolean",
+            "description": "Whether its one person approves their own access Changes after a fresh second factor."
+          }
+        }
+      },
       "ApproveBody": {
         "type": "object",
         "description": "Request body for approving or rejecting a change proposal.",
@@ -53416,6 +53543,12 @@
               "null"
             ]
           },
+          "singlePerson": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "smtp": {
             "oneOf": [
               {
@@ -53587,6 +53720,13 @@
               "null"
             ],
             "description": "`HostAdd`: what answers on the host: `working`, `opendata`, `api`, `signin`, `apps`,\n`portal-site` or `host`."
+          },
+          "singlePerson": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`SinglePersonSet`: whether the `organization`'s one person approves their own access\nChanges after a fresh second factor, e.g. `true`."
           },
           "smtp": {
             "oneOf": [
@@ -60542,7 +60682,8 @@
           "OperatorRemove",
           "SmtpSet",
           "BrandingSet",
-          "ProjectMove"
+          "ProjectMove",
+          "SinglePersonSet"
         ]
       },
       "OperatorOrganization": {
@@ -60550,9 +60691,14 @@
         "description": "One Organization of the installation as the operators' list shows it.",
         "required": [
           "name",
-          "hosts"
+          "hosts",
+          "approvals"
         ],
         "properties": {
+          "approvals": {
+            "$ref": "#/components/schemas/ApprovalMode",
+            "description": "Its single-person approval mode (T-7388), which a `SinglePersonSet` Change sets."
+          },
           "domain": {
             "type": [
               "string",

@@ -74,6 +74,11 @@ pub enum OperatorKind {
     /// A project and every row keyed by it move to another Organization (T-7305), once its
     /// manifest names that Organization.
     ProjectMove,
+    /// An Organization's `approvals.singlePerson` (T-7388): on, its one person approves their own
+    /// access Changes after a fresh second factor; allowed only while one person holds a role
+    /// there. Turning it off applies at once; turning it on waits for a second operator, unless
+    /// the installation has one.
+    SinglePersonSet,
 }
 
 impl OperatorKind {
@@ -86,6 +91,7 @@ impl OperatorKind {
             Self::SmtpSet => "SmtpSet",
             Self::BrandingSet => "BrandingSet",
             Self::ProjectMove => "ProjectMove",
+            Self::SinglePersonSet => "SinglePersonSet",
         }
     }
 
@@ -98,6 +104,7 @@ impl OperatorKind {
             Self::SmtpSet,
             Self::BrandingSet,
             Self::ProjectMove,
+            Self::SinglePersonSet,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -132,6 +139,9 @@ pub struct ChangeRequest {
     pub branding: Option<OrganizationAppearance>,
     /// `ProjectMove`: the name of the project that moves, e.g. `banskabystrica`.
     pub project: Option<String>,
+    /// `SinglePersonSet`: whether the `organization`'s one person approves their own access
+    /// Changes after a fresh second factor, e.g. `true`.
+    pub single_person: Option<bool>,
 }
 
 /// `SmtpSet`: the e-mail server as an operator types it.
@@ -189,6 +199,8 @@ pub struct ChangePayload {
     pub branding: Option<OrganizationAppearance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub single_person: Option<bool>,
 }
 
 /// One operator Change.
@@ -309,6 +321,12 @@ fn payload(
             format!("{} takes no branding", kind.as_str()),
         ));
     }
+    if kind != OperatorKind::SinglePersonSet && request.single_person.is_some() {
+        return Err(invalid(
+            "singlePerson",
+            format!("{} takes no singlePerson", kind.as_str()),
+        ));
+    }
     if kind != OperatorKind::ProjectMove && request.project.is_some() {
         return Err(invalid(
             "project",
@@ -343,6 +361,7 @@ fn payload(
                     role: Some(role),
                     subject: None,
                     smtp: None,
+                    single_person: None,
                     branding: None,
                     project: None,
                 },
@@ -485,7 +504,71 @@ fn payload(
                 None,
             ))
         }
+        OperatorKind::SinglePersonSet => {
+            absent(
+                kind,
+                &[
+                    ("host", &request.host),
+                    ("organizationId", &request.organization_id),
+                    ("role", &request.role),
+                    ("subject", &request.subject),
+                ],
+            )?;
+            let organization = required("organization", request.organization, "marek-mraz")?;
+            let on = request.single_person.ok_or_else(|| {
+                invalid(
+                    "singlePerson",
+                    "singlePerson is required: true turns the mode on, false off".into(),
+                )
+            })?;
+            Ok((
+                kind,
+                ChangePayload {
+                    organization: Some(organization.clone()),
+                    single_person: Some(on),
+                    ..ChangePayload::default()
+                },
+                format!("approvals:{organization}"),
+                None,
+            ))
+        }
     }
+}
+
+/// `SinglePersonSet`: the Organization exists, and the mode turns on only while at most one
+/// person holds a role in it.
+async fn single_person_holds(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    payload: &ChangePayload,
+) -> Result<(), ApiError> {
+    let organization = payload.organization.as_deref().unwrap_or_default();
+    if !host_registry::organizations(pool)
+        .await
+        .map_err(db)?
+        .iter()
+        .any(|row| row.name == organization && row.state == "active")
+    {
+        return Err(invalid(
+            "organization",
+            format!("the installation has no Organization '{organization}'"),
+        ));
+    }
+    if payload.single_person != Some(true) {
+        return Ok(());
+    }
+    let people =
+        crate::permissions::people_with_a_role(&state.mirror, organization, TimestampTz::now())
+            .len();
+    if people > 1 {
+        return Err(invalid(
+            "singlePerson",
+            format!(
+                "{people} people hold a role in '{organization}'; single-person approvals are for an Organization with exactly one, where PF-58's second person does not exist"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// A project's name as the registry holds it: a DNS label.
@@ -741,6 +824,7 @@ async fn holds(
         }
         OperatorKind::BrandingSet => Ok(()),
         OperatorKind::ProjectMove => move_holds(state, pool, payload).await.map(drop),
+        OperatorKind::SinglePersonSet => single_person_holds(state, pool, payload).await,
     }
 }
 
@@ -1069,8 +1153,54 @@ pub async fn propose(
         ip.as_deref(),
     )
     .await?;
+    if let Some(why) = applies_at_once(&state, kind, &payload, &identity.subject).await {
+        let (before, after) =
+            apply_single_person(&state, &mut tx, &payload, &identity.subject).await?;
+        let decided = decide(&mut tx, &row.0, "applied", &identity.subject).await?;
+        audit(
+            &mut tx,
+            &identity.subject,
+            &row.0,
+            &format!("applied {} ({why})", kind.as_str()),
+            before.as_ref(),
+            after.as_ref(),
+            ip.as_deref(),
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        return Ok((StatusCode::CREATED, Json(decided)));
+    }
     tx.commit().await.map_err(db)?;
     Ok((StatusCode::CREATED, Json(change(row)?)))
+}
+
+/// Why a `SinglePersonSet` applies when it is asked for, without a second operator (T-7388):
+/// turning the mode off only restores PF-58, and an installation whose operators' group holds
+/// the proposer alone has no second operator to ask. `None` (a second operator approves) for
+/// every other Change, and whenever the realm cannot say who the operators are.
+async fn applies_at_once(
+    state: &AppState,
+    kind: OperatorKind,
+    payload: &ChangePayload,
+    proposer: &str,
+) -> Option<&'static str> {
+    if kind != OperatorKind::SinglePersonSet {
+        return None;
+    }
+    if payload.single_person != Some(true) {
+        return Some("turning off needs no second operator");
+    }
+    let admin = state.people.as_deref()?.admin().await.ok()?;
+    let operators = admin
+        .group_members(&state.config.bootstrap_admins)
+        .await
+        .ok()??;
+    let operators: Vec<_> = operators
+        .iter()
+        .filter(|m| m.enabled && !m.is_service_account())
+        .collect();
+    (operators.len() == 1 && operators[0].id == proposer)
+        .then_some("the installation has one operator")
 }
 
 /// The TXT record of the minted id `id` still carries its challenge; `422` naming the record
@@ -1210,7 +1340,8 @@ pub async fn approve(
         | OperatorKind::HostRemove
         | OperatorKind::SmtpSet
         | OperatorKind::BrandingSet
-        | OperatorKind::ProjectMove,
+        | OperatorKind::ProjectMove
+        | OperatorKind::SinglePersonSet,
     ) = (state.people.as_deref(), found.kind)
     {
         proposer_holds(
@@ -1266,6 +1397,9 @@ pub async fn approve(
         OperatorKind::ProjectMove => {
             return apply_move(&state, tx, &found, &identity.subject, source(client)).await;
         }
+        OperatorKind::SinglePersonSet => {
+            apply_single_person(&state, &mut tx, payload, &identity.subject).await?
+        }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
     let ip = source(client);
@@ -1284,6 +1418,25 @@ pub async fn approve(
         state.set_installation_look(payload.branding.clone().unwrap_or_default());
     }
     Ok(Json(decided))
+}
+
+/// Writes an applied `SinglePersonSet` (T-7388): the mode before and after, for the audit row.
+async fn apply_single_person(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    payload: &ChangePayload,
+    by: &str,
+) -> Result<(Option<Value>, Option<Value>), ApiError> {
+    let organization = payload.organization.as_deref().unwrap_or_default();
+    let on = payload.single_person == Some(true);
+    let before = crate::single_person::mode(state, organization).await?;
+    crate::single_person::set(tx, organization, on, by, None)
+        .await
+        .map_err(db)?;
+    Ok((
+        Some(json!({ "organization": organization, "singlePerson": before.single_person })),
+        Some(json!({ "organization": organization, "singlePerson": on })),
+    ))
 }
 
 /// Applies an approved `ProjectMove` (T-7305) through migration 0089's `project_move`, which
@@ -1870,6 +2023,8 @@ pub struct OperatorOrganization {
     pub domain: Option<String>,
     /// Its hosts per registry state, e.g. `{"served": 3, "dns-ok": 1}`.
     pub hosts: std::collections::BTreeMap<String, i64>,
+    /// Its single-person approval mode (T-7388), which a `SinglePersonSet` Change sets.
+    pub approvals: crate::single_person::ApprovalMode,
 }
 
 /// The Organizations and the Organization ids.
@@ -1945,9 +2100,14 @@ pub async fn organizations(
                     .map(str::to_owned)
             })
     };
+    let mut modes = Vec::with_capacity(organizations.len());
+    for row in &organizations {
+        modes.push(crate::single_person::mode(&state, &row.name).await?);
+    }
     let items: Vec<OperatorOrganization> = organizations
         .iter()
-        .map(|row| OperatorOrganization {
+        .zip(modes)
+        .map(|(row, approvals)| OperatorOrganization {
             name: row.name.clone(),
             title: manifest(&row.name).and_then(|env| {
                 env.spec
@@ -1962,6 +2122,7 @@ pub async fn organizations(
                 .filter(|(org, _, _)| *org == row.name)
                 .map(|(_, host_state, n)| (host_state.clone(), *n))
                 .collect(),
+            approvals,
         })
         .collect();
     let ids = rows

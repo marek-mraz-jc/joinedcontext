@@ -44,6 +44,7 @@ fn cookies(config: &Config, identity: Identity) -> String {
         expires_at: now + 3600,
         issued_at: now,
         signed_in_at: None,
+        stepped_up_at: None,
         id_token: "id".into(),
         access_expires_at: now + 3600,
         refresh_token: None,

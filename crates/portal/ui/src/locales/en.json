@@ -380,7 +380,11 @@
     },
     "reasonFirst": "Write why you reject the change first.",
     "publication": "The CKAN page of {name} after the approval",
-    "publicationPublic": "Anyone can read this dataset without signing in once you approve. Read the page and the field changes above before you type the name."
+    "publicationPublic": "Anyone can read this dataset without signing in once you approve. Read the page and the field changes above before you type the name.",
+    "singlePerson": {
+      "title": "Single-person mode: you approve this alone",
+      "body": "You approve your own access change alone, as the one person of {organization}. The Portal asks for your one-time code again when the last one is older than 5 minutes, and records the approval as \"self (single-person mode)\"."
+    }
   },
   "lane": {
     "green": "Green",
@@ -9129,6 +9133,17 @@
         "mcp": "Each MCP server answers at this address followed by its project and its name, e.g. …/api/mcp/doprava/cestovne-poriadky.",
         "sign-in": "The identity provider its people sign in at; passwords and second factors are typed only there."
       }
+    },
+    "approvals": {
+      "title": "Approvals",
+      "lead": "Who approves a change that grants access or changes a data model. A second person approves it (four eyes) unless an installation operator turned single-person mode on.",
+      "mode": "Single-person mode",
+      "on": "On: the Organization's one person approves their own access changes after a fresh one-time code (at most 5 minutes old).",
+      "off": "Off: a second person approves every access change (four eyes).",
+      "people": "People with a role",
+      "offReason": "Turned off by the Portal: {reason}",
+      "operatorOnly": "Only an installation operator changes this, under Administration, Operators, Organizations. It turns off by itself when a second person gets a role.",
+      "failed": "The approval mode did not load."
     }
   },
   "projectDelete": {
@@ -13684,7 +13699,17 @@
       "driftLead": "People cannot be given roles in these Organizations until the repository and the registry list the same names. Nothing is renamed automatically.",
       "driftForge": "Only in the registry",
       "driftRegistry": "Only in the repository",
-      "driftFix": "Open Organization settings"
+      "driftFix": "Open Organization settings",
+      "approvals": "Single-person approvals",
+      "approvalsOn": "On",
+      "approvalsOff": "Off",
+      "people": "{count} with a role",
+      "turnOn": "Turn on",
+      "turnOff": "Turn off",
+      "turnOnHint": "Only for an Organization where exactly one person holds a role, e.g. a city's first administrator. A second operator approves it; with one operator it applies at once.",
+      "onePersonOnly": "{count} people hold a role: four eyes is possible, so the mode stays off.",
+      "asked": "Asked for: a second operator approves it under Operator changes.",
+      "applied": "Applied."
     },
     "ids": {
       "title": "Domains and their TXT records",

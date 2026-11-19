@@ -380,7 +380,11 @@
     },
     "reasonFirst": "Nejprve napište, proč změnu zamítáte.",
     "publication": "Datová sada {name} v CKAN po schválení",
-    "publicationPublic": "Po schválení tuto datovou sadu může číst kdokoli bez přihlášení. Před napsáním názvu si přečtěte stránku i změny polí výše."
+    "publicationPublic": "Po schválení tuto datovou sadu může číst kdokoli bez přihlášení. Před napsáním názvu si přečtěte stránku i změny polí výše.",
+    "singlePerson": {
+      "title": "Režim jedné osoby: tuto změnu schvalujete sami",
+      "body": "Svou změnu přístupu schvalujete sami, jako jediná osoba organizace {organization}. Portál si vyžádá jednorázový kód znovu, pokud je poslední starší než 5 minut, a schválení zaznamená jako „self (single-person mode)“."
+    }
   },
   "lane": {
     "green": "Zelená",
@@ -9129,6 +9133,17 @@
         "mcp": "Každý MCP server odpovídá na této adrese, za kterou následuje jeho projekt a název, např. …/api/mcp/doprava/cestovne-poriadky.",
         "sign-in": "Poskytovatel identity, kde se její lidé přihlašují; hesla a druhé faktory se zadávají jen tam."
       }
+    },
+    "approvals": {
+      "title": "Schvalování",
+      "lead": "Kdo schvaluje změnu, která uděluje přístup nebo mění datový model. Schvaluje ji druhá osoba (čtyři oči), pokud operátor instalace nezapnul režim jedné osoby.",
+      "mode": "Režim jedné osoby",
+      "on": "Zapnutý: jediná osoba organizace schvaluje své změny přístupu po čerstvém jednorázovém kódu (nejvýše 5 minut starém).",
+      "off": "Vypnutý: každou změnu přístupu schvaluje druhá osoba (čtyři oči).",
+      "people": "Osoby s rolí",
+      "offReason": "Vypnul ho Portál: {reason}",
+      "operatorOnly": "Změnit ho může jen operátor instalace v Administraci, Operátoři, Organizace. Vypne se sám, když roli dostane druhá osoba.",
+      "failed": "Režim schvalování se nenačetl."
     }
   },
   "projectDelete": {
@@ -13684,7 +13699,17 @@
       "driftLead": "Lidem nelze přidělit role v těchto organizacích, dokud repozitář a registr neuvádějí stejné názvy. Nic se nepřejmenuje automaticky.",
       "driftForge": "Jen v registru",
       "driftRegistry": "Jen v repozitáři",
-      "driftFix": "Otevřít nastavení organizace"
+      "driftFix": "Otevřít nastavení organizace",
+      "approvals": "Schvalování jednou osobou",
+      "approvalsOn": "Zapnuto",
+      "approvalsOff": "Vypnuto",
+      "people": "{count} s rolí",
+      "turnOn": "Zapnout",
+      "turnOff": "Vypnout",
+      "turnOnHint": "Jen pro organizaci, ve které má roli právě jedna osoba, např. první administrátor města. Schvaluje ho druhý operátor; s jedním operátorem platí hned.",
+      "onePersonOnly": "Roli má {count} osob: čtyři oči jsou možné, režim zůstává vypnutý.",
+      "asked": "Požádáno: schválí to druhý operátor ve Změnách operátorů.",
+      "applied": "Použito."
     },
     "ids": {
       "title": "Domény a jejich TXT záznamy",

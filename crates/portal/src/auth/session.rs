@@ -159,6 +159,11 @@ pub struct Session {
     /// names one token, and only a paired tab reads it (JC2-19); revocation keeps `issued_at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signed_in_at: Option<i64>,
+    /// Unix seconds this session last proved a second factor: the `auth_time` of the ID token
+    /// whose `acr`/`amr` proved it at login or step-up, kept across refreshes. Single-person
+    /// approvals ask for one at most five minutes old (T-7388). `None` for a bearer session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stepped_up_at: Option<i64>,
     /// Kept only as `id_token_hint` for RP-initiated logout, and never in a cookie: the realm
     /// repeats every group in it, and beside the identity it pushed the session cookie past
     /// the 4096 bytes a browser keeps (T-6549). Login and refresh hand it to
@@ -636,6 +641,7 @@ mod tests {
             expires_at: now + expires_in,
             issued_at: now,
             signed_in_at: None,
+            stepped_up_at: None,
             // Deliberately not JWT-shaped: a real-looking token literal trips gitleaks in CI.
             id_token: "opaque-id-token-for-tests".into(),
             access_expires_at: now + expires_in,

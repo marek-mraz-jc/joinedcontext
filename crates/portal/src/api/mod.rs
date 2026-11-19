@@ -18,6 +18,7 @@ pub mod app_shapes;
 pub mod app_share;
 pub mod app_templates;
 pub mod app_transfer;
+pub mod approval_mode;
 pub mod assistant;
 pub mod assistant_context;
 pub mod assistant_preview;
@@ -222,6 +223,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())
+        .merge(approval_mode::router())
         .merge(org_backups::router())
         .merge(opendata_pages::router())
         .merge(organization_ids::router())

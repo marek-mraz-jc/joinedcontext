@@ -777,6 +777,7 @@ mod tests {
             expires_at: 9_999_999_999,
             issued_at: 1000,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: "dummy-token".into(),
             access_expires_at: 9_999_999_999,
             refresh_token: None,

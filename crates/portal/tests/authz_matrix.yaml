@@ -274,6 +274,11 @@ routes:
     rule: "org-admin"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
     note: "the fixture holds no feedback 0, so an administrator meets its 404"
+  - route: GET /organization/approval-mode
+    rule: "signed-in member of the Organization (organization=) or reader of the project (project=); 404 for everyone else (T-7388)"
+    query: "project=helsinki"
+    expect: [401, allow, allow, allow, allow, allow, 404, allow]
+    note: "the project's Organization's single-person approval mode; the fixture has no database, so a reader may meet 503; tests/single_person_approval_tests.rs holds the 200 and 404 paths"
   - route: GET /organization/health
     rule: "org-admin"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

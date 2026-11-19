@@ -2052,13 +2052,14 @@ pub async fn approve_change(
         )
     };
     let confirm = approve_body.as_ref().and_then(|b| b.confirm.as_deref());
-    let change = approve_change_for(
+    let change = approve_change_as(
         &state,
         &user.0.identity,
         &project,
         &id,
         confirm,
         ApprovedBy::Person,
+        user.0.stepped_up_at,
     )
     .await?;
     Ok((StatusCode::ACCEPTED, Json(change)).into_response())
@@ -2609,6 +2610,20 @@ pub async fn approve_change_for(
     confirm: Option<&str>,
     by: ApprovedBy,
 ) -> Result<Change, ApiError> {
+    approve_change_as(state, identity, project, id, confirm, by, None).await
+}
+
+/// [`approve_change_for`] with the session's last second factor (`stepped_up_at`, unix seconds),
+/// which single-person approvals ask for (T-7388): only the Portal's approve button passes one.
+pub async fn approve_change_as(
+    state: &AppState,
+    identity: &crate::auth::session::Identity,
+    project: &str,
+    id: &str,
+    confirm: Option<&str>,
+    by: ApprovedBy,
+    stepped_up_at: Option<i64>,
+) -> Result<Change, ApiError> {
     // A connector's token is a client's; only the Portal itself, for a connector its owner set
     // autonomous, approves through it (T-6552).
     let connector = match &by {
@@ -2720,11 +2735,25 @@ pub async fn approve_change_for(
     // which a namesake shares and a rename changes. A head that names no e-mail cannot be told
     // apart from the approver's own, so it counts as theirs (T-6706).
     let is_author = written_by(identity, project, author.email.as_deref());
+    // PF-58 sends this change to a second person; in an Organization with one person, whose
+    // operator turned single-person approvals on, that person approves it alone after a fresh
+    // second factor (T-7388). Never an agent, MCP or a connector.
+    let alone = is_author
+        && connector.is_none()
+        && (grants_approver || changes_access || needs_second_person(&data.kind))
+        && crate::single_person::approves_alone(
+            state,
+            identity,
+            project,
+            by == ApprovedBy::Person,
+            stepped_up_at,
+        )
+        .await?;
 
     // Nobody grants themselves access alone: a Policy naming its author, a Group they are in or
     // a role they hold, or a Group change adding them, waits for someone else, an administrator
     // of Policy included (PF-58, T-5563).
-    if is_author && grants_approver {
+    if is_author && grants_approver && !alone {
         tracing::warn!(change = %id, kind = %data.kind, approver = %identity.username, "refused: a change granting access to its own proposer");
         return Err(ApiError::SelfApproval(
             "this change grants access to its own author (a Policy naming them, a Group they are in, or a Group adding them), so a second person approves it, never its author (PF-58)".to_string(),
@@ -2734,7 +2763,11 @@ pub async fn approve_change_for(
     // it, an administrator of its kind or the bootstrap group (PF-58, T-4833, T-4830).
     // An autonomous connector's model change is its owner's standing approval (T-6552); access
     // never reaches here, refused above.
-    if is_author && connector.is_none() && (changes_access || needs_second_person(&data.kind)) {
+    if is_author
+        && connector.is_none()
+        && !alone
+        && (changes_access || needs_second_person(&data.kind))
+    {
         tracing::warn!(change = %id, kind = %data.kind, approver = %identity.username, "refused: the proposer of an access or model change may not approve it");
         return Err(ApiError::SelfApproval(format!(
             "a change to {} is approved by a second administrator, never by its proposer (PF-58)",
@@ -2781,6 +2814,14 @@ pub async fn approve_change_for(
             "Merge change proposal {id}: {}\n\nApproved in the Portal by {approver}{VIA_CONNECTOR}{name}, autonomous, as an administrator of {} (T-6552)",
             pr.title, data.kind
         )
+    } else if alone {
+        tracing::warn!(target: "audit", change = %id, project, kind = %data.kind, approver, approved_by = crate::single_person::APPROVED_BY, "a change approved by its author alone in single-person mode (T-7388)");
+        format!(
+            "Merge change proposal {id}: {}\n\nApproved in the Portal by {approver}, its author, as an administrator of {} after a fresh second factor\napprovedBy: {} (T-7388)",
+            pr.title,
+            data.kind,
+            crate::single_person::APPROVED_BY
+        )
     } else if is_author {
         format!(
             "Merge change proposal {id}: {}\n\nApproved in the Portal by {approver}, its author, as an administrator of {} (PF-58)",
@@ -2825,7 +2866,7 @@ pub async fn approve_change_for(
         Some((&merger_name, &merger_email)),
     )
     .await?;
-    say_merged(state, project, id, &data, approver, connector).await;
+    say_merged(state, project, id, &data, approver, connector, alone).await;
 
     // A published application's own repository merges once its Change has (AP-77).
     crate::api::agent_runs::merge_published_application(
@@ -2866,10 +2907,12 @@ async fn say_merged(
     data: &ManifestData,
     approver: &str,
     connector: Option<&str>,
+    alone: bool,
 ) {
     let operation = operation_word(data.operation);
     let by = match connector {
         Some(name) => format!("{approver} via connector {name}"),
+        None if alone => format!("{approver}, {}", crate::single_person::APPROVED_BY),
         None => approver.to_owned(),
     };
     let mut details = serde_json::json!({
@@ -2881,6 +2924,9 @@ async fn say_merged(
     });
     if let Some(name) = connector {
         details["viaConnector"] = Value::String(name.to_owned());
+    }
+    if alone {
+        details["approvedAs"] = Value::String(crate::single_person::APPROVED_BY.to_owned());
     }
     if let Some(info) = crate::resource::by_kind(&data.kind) {
         details["object"] = Value::String(format!("{}/{}", info.plural, data.name));
@@ -3588,6 +3634,7 @@ mod tests {
             expires_at: 9_999_999_999,
             issued_at: 1000,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: "dummy".into(),
             access_expires_at: 9_999_999_999,
             refresh_token: None,
