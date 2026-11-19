@@ -321,8 +321,8 @@ async fn build_postgres(
             "jsonData.allowedViews must name the views granted to the organization",
         ));
     }
-    let ssl_mode = ssl_mode_of(json_str(record, "sslmode"), &host)
-        .map_err(|why| config_error(record, why))?;
+    let ssl_mode =
+        ssl_mode_of(json_str(record, "sslmode"), &host).map_err(|why| config_error(record, why))?;
 
     // The guard decides the address and the pool dials that address in every mode: a name
     // handed to the driver would be resolved again at connect time, past the guard.
