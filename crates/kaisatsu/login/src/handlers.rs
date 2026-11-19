@@ -23,6 +23,7 @@ use kaisatsu_oidc::{
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 pub fn login_router(state: OidcState) -> Router {
     Router::new()
@@ -2395,6 +2396,49 @@ async fn reset_credentials_get(
 /// exists and has an e-mail address, and performs dummy work otherwise so both paths return
 /// the exact same page and timing band. Opened from a sign-in, it goes back to that sign-in
 /// page with the "e-mail on its way" banner, as keycloak.v2 does.
+/// Reset mails one person can be sent per [`RESET_MAIL_WINDOW_SECS`].
+const RESET_MAILS_PER_WINDOW: u32 = 3;
+const RESET_MAIL_WINDOW_SECS: i64 = 3600;
+
+/// Queues `outbox` unless its person already had [`RESET_MAILS_PER_WINDOW`] reset mails in the
+/// current window: the public form cannot flood a mailbox or grow the outbox without bound.
+async fn queue_reset_mail(store: Arc<dyn Store>, outbox: EmailOutboxRecord) {
+    let now = TimestampTz::now();
+    let key = format!("reset:{}", outbox.user_id);
+    let update = |current: Option<LoginFailureRecord>| {
+        let mut rec = current
+            .filter(|r| {
+                r.window_started_at + SignedDuration::from_secs(RESET_MAIL_WINDOW_SECS) > now
+            })
+            .unwrap_or_else(|| LoginFailureRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: outbox.realm_id.clone(),
+                target_key: key.clone(),
+                num_failures: 0,
+                last_failure_ms: 0,
+                last_ip_failure: String::new(),
+                locked_until: None,
+                window_started_at: now,
+            });
+        rec.num_failures += 1;
+        rec.last_failure_ms = now.as_millis();
+        rec
+    };
+    let allowed = match store
+        .update_login_failure(&outbox.realm_id, &key, &update)
+        .await
+    {
+        Ok(rec) => rec.num_failures <= RESET_MAILS_PER_WINDOW,
+        Err(e) => {
+            tracing::warn!(error = %e, "reset mail counter unavailable; mail not queued");
+            false
+        }
+    };
+    if allowed && let Err(e) = store.enqueue_outbox(outbox).await {
+        tracing::warn!(error = %e, "reset mail not queued");
+    }
+}
+
 async fn reset_credentials_post(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
@@ -2462,10 +2506,8 @@ async fn reset_credentials_post(
                 created_at: TimestampTz::now(),
                 sent_at: None,
             };
-            let _ = state.store.enqueue_outbox(outbox).await;
-        } else {
-            // Keep timing in the same band when the user does not exist.
-            let _ = sha256_hex(identifier);
+            // Queued after the answer, so a known and an unknown account answer alike.
+            tokio::spawn(queue_reset_mail(state.store.clone(), outbox));
         }
     }
 

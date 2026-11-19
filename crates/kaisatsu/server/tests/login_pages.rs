@@ -1179,6 +1179,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         None,
     )
     .await;
+    queued_mails_settle().await;
     assert_eq!(
         dispatcher
             .dispatch_realm_batch(&mount(), "dev", 50)
@@ -1405,6 +1406,41 @@ async fn reset_credentials_never_says_whether_the_account_exists() {
         h.replace(&h[i..(i + 22).min(h.len())], "")
     };
     assert_eq!(strip(&known).len(), strip(&unknown).len());
+}
+
+/// The reset mail is queued after the answer; let that task run.
+async fn queued_mails_settle() {
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// LIM-06: the public reset form queues at most three mails per person per hour, however often
+/// it is posted.
+#[tokio::test]
+async fn reset_credentials_caps_the_mails_queued_per_person() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    for _ in 0..6 {
+        let (st, _, html) = post_form(
+            &app,
+            "/realms/dev/login-actions/reset-credentials",
+            &[("username", MEMBER)],
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(page_id(&html), "reset-credentials-sent");
+        queued_mails_settle().await;
+    }
+    let queued = store
+        .list_outbox_rows("dev", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.user_id == member.id && r.template_kind == "RESET_CREDENTIALS")
+        .count();
+    assert_eq!(queued, 3);
 }
 
 /// K7: a recovery code whose single use is already recorded (a concurrent submit that won the
