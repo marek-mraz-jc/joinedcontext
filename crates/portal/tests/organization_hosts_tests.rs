@@ -296,6 +296,68 @@ async fn a_person_of_another_organization_signed_in_on_its_host_gets_403() {
     assert_ne!(st, StatusCode::FORBIDDEN);
 }
 
+/// T-7401: a restarted Portal whose first run has not ended serves the mirror the last completed
+/// run kept, so a member keeps their projects; with no copy it answers a 503 with `Retry-After`,
+/// never "you belong to none of its projects"; and a binding the last run had removed stays
+/// removed in the copy.
+#[tokio::test]
+async fn a_restart_serves_the_last_runs_members_or_answers_starting() {
+    let dir = std::env::temp_dir().join(format!("jc-t7401-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("mirror.json");
+    let last = state();
+    last.mirror.save(&path).expect("saved");
+
+    let restarted = AppState::new(last.config.clone(), None);
+    let on_ba = signed_in(&restarted.config, person("ba-only", &[]), Some("ba")).await;
+    let response = server::app(restarted.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/projects")
+                .header(header::HOST, BA)
+                .header(header::COOKIE, &on_ba.0)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains("starting") && !body.contains("none of its projects"),
+        "{body}"
+    );
+
+    assert!(restarted.mirror.restore(&path).expect("restored") > 0);
+    let (st, list) = call(&restarted, BA, &on_ba, "GET", "/api/v1/projects").await;
+    assert_eq!((st, names(&list)), (StatusCode::OK, vec!["bratislava"]));
+
+    // The last run removed ba-only's binding: the copy grants it nothing.
+    last.mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "RoleBinding".to_owned(),
+            name: "ba-only-ba".to_owned(),
+        });
+    last.mirror.save(&path).expect("saved");
+    let again = AppState::new(last.config.clone(), None);
+    assert!(again.mirror.restore(&path).expect("restored") > 0);
+    assert!(
+        again.mirror.removals_held(),
+        "a served copy holds every removal"
+    );
+    let (st, body) = call(&again, BA, &on_ba, "GET", "/api/v1/projects").await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// One cookie key seals every host's cookies: the session of hel's host, presented on ba's (or on
 /// the deployment's own address), is no session there.
 #[tokio::test]
