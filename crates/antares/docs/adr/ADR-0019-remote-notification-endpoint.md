@@ -68,6 +68,20 @@ takes a different position on each:
    so a distributed subscription created by an earlier broker stops
    receiving notifications after the upgrade: delete it and create it again.
    Keeping the old route would keep the ETSI prefix this decision is about.
+5. The key names a mapping and proves nothing (T-7421). Each copy's
+   `notification.endpoint.receiverInfo` carries an `Antares-Notify-Proof`
+   pair, 244 random bits made when the copy is created and made again on
+   every forwarded update (the previous one stays valid until the next
+   update). The Context Source sends it back as a header with every
+   notification (5.2.22), masks it on a read and seals it at rest; this
+   broker stores only its SHA-256 beside the mapping and compares in
+   constant time. A notification also needs a `notifiedAt` within 300 s of
+   this broker's clock and an `id` this process has not taken under the same
+   key inside that window. A missing or wrong proof, a stale or replayed
+   notification, an unknown key and a Tenant the door refuses all answer
+   the same 401. A copy made before the proof existed carries none and is
+   refused: update or re-create its Subscription. The in-process delivery of
+   ADR-0025 carries the same header.
 
 ## Consequences
 

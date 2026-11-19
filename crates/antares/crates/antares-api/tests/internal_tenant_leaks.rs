@@ -297,7 +297,9 @@ async fn the_peer_route_takes_its_tenant_from_the_mapping_not_the_header() {
             &idx,
             Kind::DistSub,
             remote_id,
-            json!({"tenant": OWNER, "own": SUB}),
+            // the digest of the proof "t" the copy carried (T-7421)
+            json!({"tenant": OWNER, "own": SUB,
+                   "proof": "e3b98a4da31a127d4bde6e43033f66ba274cab0eb7eb1c70ec41402bf6273dd8"}),
         )
         .await
         .expect("seed the inbound mapping");
@@ -305,7 +307,7 @@ async fn the_peer_route_takes_its_tenant_from_the_mapping_not_the_header() {
     // the peer names the OTHER tenant; the mapping says OWNER
     let inbound = json!({"id": "urn:ngsi-ld:Notification:dsroute", "type": "Notification",
         "subscriptionId": remote_id,
-        "notifiedAt": "2026-08-12T12:00:00Z",
+        "notifiedAt": antares_api::state::now_iso(),
         "data": [{"id": "urn:ngsi-ld:Vehicle:dsroute", "type": "Vehicle",
                   "speed": {"type": "Property", "value": 99}}]})
     .to_string();
@@ -314,7 +316,7 @@ async fn the_peer_route_takes_its_tenant_from_the_mapping_not_the_header() {
         "POST",
         "/ex/v1/remote-notify",
         Some(inbound),
-        &[("NGSILD-Tenant", OTHER)],
+        &[("NGSILD-Tenant", OTHER), ("Antares-Notify-Proof", "t")],
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{b}");

@@ -197,7 +197,7 @@ fn dist_sub_mapping_survives_restart() {
     let dir = scratch_dir("distsub");
 
     let first = rt();
-    let remote_id = first.block_on(async {
+    let (remote_id, proof) = first.block_on(async {
         // remote broker mock: replies 201, records subscription bodies
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(4);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -260,8 +260,12 @@ fn dist_sub_mapping_survives_restart() {
             .expect("forwarded subscription within 10s")
             .expect("one copy");
             let rid = copy["id"].as_str().expect("remote id").to_owned();
+            let proof = copy["notification"]["endpoint"]["receiverInfo"][0]["value"]
+                .as_str()
+                .expect("the copy carries its notification proof")
+                .to_owned();
             shutdown(st);
-            rid
+            (rid, proof)
         }
     });
     drop(first);
@@ -270,8 +274,10 @@ fn dist_sub_mapping_survives_restart() {
     second.block_on(async {
         let st2 = file_state(&dir).await;
         let inbound = json!({
+            "id": "urn:ngsi-ld:Notification:afterboot",
             "type": "Notification",
             "subscriptionId": remote_id,
+            "notifiedAt": antares_api::state::now_iso(),
             "data": [{"id": "urn:ngsi-ld:Vehicle:afterboot", "type": "Vehicle"}],
         });
         let (status, _, b) = send_h(
@@ -279,7 +285,7 @@ fn dist_sub_mapping_survives_restart() {
             "POST",
             "/ex/v1/remote-notify",
             Some(inbound.to_string()),
-            &[],
+            &[("Antares-Notify-Proof", proof.as_str())],
         )
         .await;
         assert_eq!(
@@ -287,7 +293,7 @@ fn dist_sub_mapping_survives_restart() {
             StatusCode::OK,
             "the mapping must survive the restart: {b}"
         );
-        // negative: an id that was never mapped is still 404
+        // negative: an id that was never mapped is refused (T-7421: 401, like a missing proof)
         let (status, _, _) = send_h(
             &st2,
             "POST",
@@ -299,7 +305,7 @@ fn dist_sub_mapping_survives_restart() {
             &[],
         )
         .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     });
 
     let _ = std::fs::remove_dir_all(&dir);

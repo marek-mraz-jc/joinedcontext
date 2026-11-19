@@ -950,12 +950,14 @@ pub trait ForwardTransport: Send + Sync {
     /// Tenant `tenant` sends to `uri`, an endpoint [`Self::notifies`] took.
     /// `Err` carries why it failed: a failed attempt under the 5.8.6 retry
     /// and dead-letter policy, as an HTTP one is. No subject is carried:
-    /// delivery is broker-initiated (ADR-0020).
+    /// delivery is broker-initiated (ADR-0020). `receiver_info` is the
+    /// endpoint's `receiverInfo` (5.2.22), the headers an HTTP delivery sends.
     fn notify<'a>(
         &'a self,
         _tenant: &'a TenantId,
         _uri: &'a str,
         _notification: &'a Value,
+        _receiver_info: &'a [(String, String)],
     ) -> NotifyFuture<'a> {
         Box::pin(std::future::ready(Err(
             "this transport delivers no notification".into(),

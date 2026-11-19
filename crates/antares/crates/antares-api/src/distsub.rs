@@ -124,7 +124,190 @@ async fn ds_set_remote(
         .is_some_and(|r: Result<(), ()>| r.is_ok())
 }
 
-async fn inbound_put(st: &AppState, remote_id: &str, tenant: &TenantId, own_id: &str) {
+/// The `receiverInfo` header a forwarded copy's notifications carry back to
+/// `POST /ex/v1/remote-notify` (T-7421). The remote subscription id names a mapping, it
+/// proves nothing: anyone who learns it at the Context Source could post a
+/// notification under it.
+pub const NOTIFY_PROOF_HEADER: &str = "Antares-Notify-Proof";
+
+/// How far a notification's `notifiedAt` may lie from this broker's clock,
+/// and how long its id is remembered against a replay.
+const NOTIFY_WINDOW_SECS: i64 = 300;
+
+/// Remembered notification ids at most. ponytail: per process, so a replay
+/// to another replica inside the window passes its proof check; a shared
+/// store row per id is the upgrade path.
+const NOTIFY_SEEN_CAP: usize = 1 << 20;
+
+/// A fresh proof for one remote copy: 244 random bits from two v4 UUIDs.
+fn notify_token() -> String {
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
+}
+
+/// What the inbound index stores in place of a proof: its SHA-256, so a
+/// store read never yields a token that notifies.
+fn proof_digest(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// The copy's notification endpoint carries `token` as a receiverInfo pair
+/// (5.2.22): the Context Source sends it with every notification, masks it on
+/// a read and seals it at rest.
+fn with_proof(copy: &mut Value, token: &str) {
+    if let Some(ep) = copy
+        .pointer_mut("/notification/endpoint")
+        .and_then(Value::as_object_mut)
+    {
+        ep.insert(
+            "receiverInfo".into(),
+            json!([{"key": NOTIFY_PROOF_HEADER, "value": token}]),
+        );
+    }
+}
+
+/// A new proof for the mapping of `remote_id`, the current one kept as
+/// `prev` so notifications sent before the update lands still pass;
+/// `None` puts the previous proof back after a failed update.
+async fn inbound_rotate(st: &AppState, remote_id: &str, digest: Option<&str>) {
+    let Some(idx) = ds_index_tenant() else { return };
+    let _ = st
+        .store
+        .mutate(&idx, Kind::DistSub, remote_id, |d| {
+            if let Some(o) = d.as_object_mut() {
+                match digest {
+                    Some(new) => {
+                        if let Some(cur) = o.remove("proof") {
+                            o.insert("prev".into(), cur);
+                        }
+                        o.insert("proof".into(), Value::String(new.to_owned()));
+                    }
+                    None => {
+                        if let Some(prev) = o.remove("prev") {
+                            o.insert("proof".into(), prev);
+                        }
+                    }
+                }
+            }
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .await;
+}
+
+/// A PATCH of the remote copy `remote_id` with a rotated proof; a refused
+/// update puts the previous proof back.
+#[allow(clippy::too_many_arguments)] // forward_sub's parts plus the copy id
+async fn patch_copy(
+    st: &AppState,
+    tenant: &TenantId,
+    endpoint: &str,
+    remote_id: &str,
+    reg_id: &str,
+    reg: &Value,
+    ctx_url: &str,
+    via: &HeaderMap,
+    mut copy: Value,
+) {
+    copy.as_object_mut().map(|o| o.remove("id"));
+    let token = notify_token();
+    with_proof(&mut copy, &token);
+    inbound_rotate(st, remote_id, Some(&proof_digest(&token))).await;
+    let (status, _) = forward_sub(
+        st,
+        tenant,
+        reqwest::Method::PATCH,
+        format!("{endpoint}/ngsi-ld/v1/subscriptions/{remote_id}"),
+        reg_id,
+        reg,
+        ctx_url,
+        via,
+        Some(copy),
+    )
+    .await;
+    if !(200..300).contains(&status) {
+        inbound_rotate(st, remote_id, None).await;
+    }
+}
+
+/// Whether `headers` carry the proof one of `digests` stands for.
+fn proof_matches(headers: &HeaderMap, digests: &[String]) -> bool {
+    let Some(presented) = headers
+        .get(NOTIFY_PROOF_HEADER)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return false;
+    };
+    let got = proof_digest(presented);
+    digests.iter().fold(false, |ok, d| {
+        crate::admin_auth::constant_time_eq(d.as_bytes(), got.as_bytes()) | ok
+    })
+}
+
+/// `false` when the notification is stale, from the future, without an id,
+/// or one this broker already took under `sid` inside the window.
+fn notification_fresh(v: &Value, sid: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashMap<[u8; 16], i64>>> = OnceLock::new();
+    let now = jiff::Timestamp::now().as_second();
+    let Some(at) = v
+        .get("notifiedAt")
+        .and_then(Value::as_str)
+        .and_then(|s| s.parse::<jiff::Timestamp>().ok())
+        .map(jiff::Timestamp::as_second)
+    else {
+        return false;
+    };
+    if now.abs_diff(at) > NOTIFY_WINDOW_SECS.unsigned_abs() {
+        return false;
+    }
+    let Some(id) = v.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let key: [u8; 16] = {
+        use sha2::{Digest, Sha256};
+        let h = Sha256::digest(format!("{sid}\0{id}").as_bytes());
+        let mut k = [0u8; 16];
+        k.copy_from_slice(h.get(..16).unwrap_or(&[0u8; 16]));
+        k
+    };
+    let mut seen = SEEN
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if seen.len() >= NOTIFY_SEEN_CAP {
+        seen.retain(|_, t| now.saturating_sub(*t) <= NOTIFY_WINDOW_SECS);
+    }
+    if seen.len() >= NOTIFY_SEEN_CAP || seen.contains_key(&key) {
+        return false;
+    }
+    seen.insert(key, now);
+    true
+}
+
+/// The one answer to a notification without a valid proof, for an unknown
+/// subscription id alike, so a caller learns nothing about which ids exist.
+fn notify_refused() -> Response {
+    (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(json!({
+                "type": crate::admin_auth::UNAUTHORIZED_TYPE,
+                "title": "Unauthorized",
+                "status": 401,
+                "detail": format!("the notification is not accepted: it needs a fresh notifiedAt, an id not sent before and the {NOTIFY_PROOF_HEADER} header of its subscription"),
+            })),
+    )
+        .into_response()
+}
+
+async fn inbound_put(st: &AppState, remote_id: &str, tenant: &TenantId, own_id: &str, proof: &str) {
     if let Some(idx) = ds_index_tenant() {
         // Without this index every notification the source sends is answered
         // 404 and the subscription silently never notifies — a store failure
@@ -135,7 +318,7 @@ async fn inbound_put(st: &AppState, remote_id: &str, tenant: &TenantId, own_id: 
                 &idx,
                 Kind::DistSub,
                 remote_id,
-                json!({"tenant": tenant.as_str(), "own": own_id}),
+                json!({"tenant": tenant.as_str(), "own": own_id, "proof": proof}),
             )
             .await
         {
@@ -146,7 +329,9 @@ async fn inbound_put(st: &AppState, remote_id: &str, tenant: &TenantId, own_id: 
     }
 }
 
-async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(String, String)> {
+/// Tenant, own Subscription id and the proof digests (current, previous) of
+/// the mapping of `remote_id`.
+async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(String, String, Vec<String>)> {
     let idx = ds_index_tenant()?;
     let doc = st
         .store
@@ -154,9 +339,14 @@ async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(String, String)>
         .await
         .ok()
         .flatten()?;
+    let proofs = ["proof", "prev"]
+        .iter()
+        .filter_map(|k| doc.get(*k).and_then(Value::as_str).map(str::to_owned))
+        .collect();
     Some((
         doc.get("tenant")?.as_str()?.to_owned(),
         doc.get("own")?.as_str()?.to_owned(),
+        proofs,
     ))
 }
 
@@ -167,7 +357,7 @@ impl AppState {
     pub async fn notification_receiver(&self, subscription_id: &str) -> Option<String> {
         inbound_get(self, subscription_id)
             .await
-            .map(|(tenant, _)| tenant)
+            .map(|(tenant, _, _)| tenant)
     }
 }
 
@@ -388,20 +578,19 @@ pub(crate) async fn on_subscription_updated(st: &AppState, tenant: &TenantId, ow
         let ctx_url = sub_ctx_url(st, &sub);
         crate::spawn(async move {
             let ctx = crate::notify::sub_context(&st2, &t2, &sub2).await;
-            let Some(mut copy) = reduced_copy(&st2, &sub2, &reg, &remote_id, &ctx) else {
+            let Some(copy) = reduced_copy(&st2, &sub2, &reg, &remote_id, &ctx) else {
                 return;
             };
-            copy.as_object_mut().map(|o| o.remove("id"));
-            forward_sub(
+            patch_copy(
                 &st2,
                 &t2,
-                reqwest::Method::PATCH,
-                format!("{endpoint}/ngsi-ld/v1/subscriptions/{remote_id}"),
+                &endpoint,
+                &remote_id,
                 &reg_id,
                 &reg,
                 &ctx_url,
                 &sub_via_headers(&sub2),
-                Some(copy),
+                copy,
             )
             .await;
         });
@@ -555,18 +744,20 @@ pub(crate) async fn on_csource_notification(
             {
                 let remote_id =
                     format!("urn:ngsi-ld:Subscription:distsub:{}", uuid::Uuid::new_v4());
-                let Some(copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
+                let Some(mut copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
                     // nothing this registration covers is watched — there is
                     // no reduced copy to forward to it
                     continue;
                 };
+                let token = notify_token();
+                with_proof(&mut copy, &token);
                 // 5.8.1.4/5.8.5.4: the mapping is stored BEFORE the forward —
                 // the remote id is broker-generated, and a delete Subscription
                 // arriving while the create-forward's response is still in
                 // flight must find the mapping or the delete-forward is lost
                 // (the ETSI 5814_01_01 pg race). A failed forward rolls the
                 // mapping back below.
-                inbound_put(st, &remote_id, tenant, own_id).await;
+                inbound_put(st, &remote_id, tenant, own_id, &proof_digest(&token)).await;
                 if !ds_set_remote(
                     st,
                     tenant,
@@ -601,20 +792,11 @@ pub(crate) async fn on_csource_notification(
             ("updated", Some((_, remote_id)))
                 if crate::federation::doc_supports(reg, "updateSubscription") =>
             {
-                let Some(mut copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
+                let Some(copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
                     continue;
                 };
-                copy.as_object_mut().map(|o| o.remove("id"));
-                forward_sub(
-                    st,
-                    tenant,
-                    reqwest::Method::PATCH,
-                    format!("{endpoint}/ngsi-ld/v1/subscriptions/{remote_id}"),
-                    reg_id,
-                    reg,
-                    &ctx_url,
-                    &via,
-                    Some(copy),
+                patch_copy(
+                    st, tenant, &endpoint, &remote_id, reg_id, reg, &ctx_url, &via, copy,
                 )
                 .await;
             }
@@ -930,11 +1112,14 @@ async fn remote_notify_inner(
         .get("subscriptionId")
         .and_then(Value::as_str)
         .ok_or_else(|| NgsiError::BadRequestData("notification without subscriptionId".into()))?;
-    let Some((tenant, own_id)) = inbound_get(st, sid).await else {
-        return Err(ApiError::from(NgsiError::ResourceNotFound(format!(
-            "no distributed subscription maps {sid}"
-        ))));
+    // T-7421: the proof first, and the same answer for an id no mapping
+    // holds, so a guessed or leaked subscription id buys nothing.
+    let Some((tenant, own_id, proofs)) = inbound_get(st, sid).await else {
+        return Ok(notify_refused());
     };
+    if !proof_matches(headers, &proofs) || !notification_fresh(&v, sid) {
+        return Ok(notify_refused());
+    }
     // read back from the broker's own inbound index, not from the request
     let tenant = TenantId::new_internal(&tenant)
         .map_err(|_| NgsiError::InternalError("stored tenant invalid".into()))?;
@@ -944,9 +1129,7 @@ async fn remote_notify_inner(
         .await
         .is_some()
     {
-        return Err(ApiError::from(NgsiError::ResourceNotFound(format!(
-            "no distributed subscription maps {sid}"
-        ))));
+        return Ok(notify_refused());
     }
     let Some(sub) = st
         .store
@@ -1085,6 +1268,25 @@ fn project_forwarded(sub: &Value, data: Vec<Value>, ctx: &antares_jsonld::Contex
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Headers carrying the proof `t` the unit-test mappings store.
+    fn proven(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(NOTIFY_PROOF_HEADER, token.parse().expect("header value"));
+        h
+    }
+
+    /// A notification under `sid` with a fresh notifiedAt and a new id.
+    fn fresh(sid: &str, data: Value) -> String {
+        json!({
+            "id": format!("urn:ngsi-ld:Notification:{}", uuid::Uuid::new_v4()),
+            "type": "Notification",
+            "subscriptionId": sid,
+            "notifiedAt": now_iso(),
+            "data": data,
+        })
+        .to_string()
+    }
 
     /// F-ANT3-013: a forwarded notification carries what the local
     /// Subscription projects, not what the source sent.
@@ -1640,10 +1842,10 @@ mod tests {
             .expect("mapping read")
             .get("csr_sub")
             .is_none());
-        inbound_put(&st, "urn:remote:1", &a, own).await;
+        inbound_put(&st, "urn:remote:1", &a, own, &proof_digest("t")).await;
         assert_eq!(
             inbound_get(&st, "urn:remote:1").await,
-            Some(("alpha".to_owned(), own.to_owned()))
+            Some(("alpha".to_owned(), own.to_owned(), vec![proof_digest("t")]))
         );
         assert!(
             st.store
@@ -1673,11 +1875,29 @@ mod tests {
         let a = TenantId::new("alpha").expect("tenant");
         let b = TenantId::new("beta").expect("tenant");
         let shared = "urn:ngsi-ld:Subscription:distsub:collide";
-        inbound_put(&st, shared, &a, "urn:ngsi-ld:Subscription:a").await;
-        inbound_put(&st, shared, &b, "urn:ngsi-ld:Subscription:b").await;
+        inbound_put(
+            &st,
+            shared,
+            &a,
+            "urn:ngsi-ld:Subscription:a",
+            &proof_digest("t"),
+        )
+        .await;
+        inbound_put(
+            &st,
+            shared,
+            &b,
+            "urn:ngsi-ld:Subscription:b",
+            &proof_digest("t"),
+        )
+        .await;
         assert_eq!(
             inbound_get(&st, shared).await,
-            Some(("alpha".to_owned(), "urn:ngsi-ld:Subscription:a".to_owned())),
+            Some((
+                "alpha".to_owned(),
+                "urn:ngsi-ld:Subscription:a".to_owned(),
+                vec![proof_digest("t")]
+            )),
             "the second tenant took the first tenant's inbound route"
         );
     }
@@ -1907,7 +2127,7 @@ mod tests {
             remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body(cap))).await;
         assert_eq!(
             at_cap.status(),
-            StatusCode::NOT_FOUND,
+            StatusCode::UNAUTHORIZED,
             "the ceiling itself is accepted — the unknown mapping is what stops it"
         );
     }
@@ -1921,10 +2141,16 @@ mod tests {
         let st = AppState::new("antares-ds-prune".into());
         let t = TenantId::new("alpha").expect("tenant");
         let remote = "urn:ngsi-ld:Subscription:remote9";
-        inbound_put(&st, remote, &t, "urn:ngsi-ld:Subscription:gone").await;
-        let body =
-            json!({"type": "Notification", "subscriptionId": remote, "data": []}).to_string();
-        let resp = remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body)).await;
+        inbound_put(
+            &st,
+            remote,
+            &t,
+            "urn:ngsi-ld:Subscription:gone",
+            &proof_digest("t"),
+        )
+        .await;
+        let body = fresh(remote, json!([]));
+        let resp = remote_notify(State(st.clone()), proven("t"), Bytes::from(body)).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert!(
             inbound_get(&st, remote).await.is_none(),
@@ -2040,20 +2266,18 @@ mod tests {
             .await
             .expect("subscription row");
         let remote = "urn:ngsi-ld:Subscription:remote-narrowed";
-        inbound_put(&st, remote, &t, own).await;
+        inbound_put(&st, remote, &t, own, &proof_digest("t")).await;
 
-        let body = json!({
-            "type": "Notification",
-            "subscriptionId": remote,
-            "data": [{
+        let body = fresh(
+            remote,
+            json!([{
                 "id": "urn:ngsi-ld:Vehicle:1",
                 "type": "Vehicle",
                 "speed": {"type": "Property", "value": 50},
                 "secret": {"type": "Property", "value": "hidden"},
-            }],
-        })
-        .to_string();
-        let resp = remote_notify(State(st.clone()), HeaderMap::new(), Bytes::from(body)).await;
+            }]),
+        );
+        let resp = remote_notify(State(st.clone()), proven("t"), Bytes::from(body)).await;
         assert_eq!(resp.status(), StatusCode::OK);
 
         let mut delivered = None;
@@ -2083,6 +2307,86 @@ mod tests {
             *engine.0.lock().expect("subjects"),
             vec![vec![("x-user".to_owned(), "alice".to_owned())]],
             "asked once, about the original subscriber"
+        );
+    }
+
+    /// T-7421: a proof names one mapping. The proof of copy A sent under the
+    /// subscription id of copy B is refused like no proof at all, and the
+    /// previous proof of a rotated copy still passes until the next rotation.
+    #[tokio::test]
+    async fn remote_notify_proof_belongs_to_its_own_mapping() {
+        let st = AppState::new("antares-ds-proof".into());
+        let t = TenantId::new("alpha").expect("tenant");
+        let (ra, rb) = (
+            "urn:ngsi-ld:Subscription:remote-a",
+            "urn:ngsi-ld:Subscription:remote-b",
+        );
+        inbound_put(
+            &st,
+            ra,
+            &t,
+            "urn:ngsi-ld:Subscription:gone-a",
+            &proof_digest("ta"),
+        )
+        .await;
+        inbound_put(
+            &st,
+            rb,
+            &t,
+            "urn:ngsi-ld:Subscription:gone-b",
+            &proof_digest("tb"),
+        )
+        .await;
+        let wrong = remote_notify(
+            State(st.clone()),
+            proven("ta"),
+            Bytes::from(fresh(rb, json!([]))),
+        )
+        .await;
+        assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+
+        inbound_rotate(&st, ra, Some(&proof_digest("ta2"))).await;
+        let (_, _, proofs) = inbound_get(&st, ra).await.expect("mapping");
+        assert_eq!(proofs, vec![proof_digest("ta2"), proof_digest("ta")]);
+        inbound_rotate(&st, ra, None).await;
+        let (_, _, proofs) = inbound_get(&st, ra).await.expect("mapping");
+        assert_eq!(
+            proofs,
+            vec![proof_digest("ta")],
+            "a failed update restores the old proof"
+        );
+        // the right proof reaches the mapping: its subscriber is gone, so 404
+        let right = remote_notify(
+            State(st.clone()),
+            proven("ta"),
+            Bytes::from(fresh(ra, json!([]))),
+        )
+        .await;
+        assert_eq!(right.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// T-7421: no stored row or index entry holds a token that notifies.
+    #[tokio::test]
+    async fn remote_notify_index_stores_a_digest_never_the_token() {
+        let st = AppState::new("antares-ds-digest".into());
+        let t = TenantId::new("alpha").expect("tenant");
+        let token = notify_token();
+        assert_eq!(token.len(), 64);
+        inbound_put(&st, "urn:r", &t, "urn:own", &proof_digest(&token)).await;
+        let idx = ds_index_tenant().expect("index tenant");
+        let row = st
+            .store
+            .get(&idx, Kind::DistSub, "urn:r")
+            .await
+            .expect("read")
+            .expect("row");
+        assert!(!row.to_string().contains(&token), "{row}");
+        let mut copy =
+            json!({"notification": {"endpoint": {"uri": "http://x/ex/v1/remote-notify"}}});
+        with_proof(&mut copy, &token);
+        assert_eq!(
+            copy["notification"]["endpoint"]["receiverInfo"][0]["key"],
+            NOTIFY_PROOF_HEADER
         );
     }
 }
