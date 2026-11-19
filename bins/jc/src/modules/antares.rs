@@ -84,6 +84,11 @@ pub fn defaults() -> BTreeMap<String, String> {
                 "ANTARES_POLICY_SUBJECT_FROM",
                 crate::modules::GATEWAY_IDENTITY,
             ),
+            // Subscription endpoints, registrations and @context URLs are addresses a Tenant
+            // types: none reaches a private range (loopback, RFC 1918, link-local, ULA) unless
+            // the environment says `true`, as dev's standalone broker ran. A local jc whose
+            // Portal live updates notify a loopback public URL sets it to `true`.
+            ("ANTARES_EGRESS_ALLOW_PRIVATE", "false"),
             // The Portal PUTs each Tenant's schema to /q/schemas/{tenant}; unset, the broker takes
             // none and serves no OGC or OData collection (dev's value).
             ("ANTARES_SCHEMA_MAX_BYTES", SCHEMA_MAX_BYTES),
@@ -295,6 +300,11 @@ mod tests {
         assert_eq!(d["ANTARES_POLICY"], "joinedcontext");
         assert!(d["ANTARES_API_SURFACES"].split(',').any(|s| s == "views"));
         assert_eq!(d["ANTARES_SCHEMA_MAX_BYTES"], "1048576");
+    }
+
+    #[test]
+    fn the_defaults_deny_private_range_egress() {
+        assert_eq!(defaults()["ANTARES_EGRESS_ALLOW_PRIVATE"], "false");
     }
 
     /// The `l5d-client-id` a request reaches the broker with, behind `guard`.

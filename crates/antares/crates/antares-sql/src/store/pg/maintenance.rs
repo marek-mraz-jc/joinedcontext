@@ -172,13 +172,23 @@ pub async fn temporal_maintenance(
             // owning a savepoint to roll back to; without it the first
             // already-occupied range poisons the entire maintenance pass.
             let mut sp = tx.begin().await?;
-            match sqlx::query(sqlx::AssertSqlSafe(create_partition_sql(
+            let mut created = sqlx::query(sqlx::AssertSqlSafe(create_partition_sql(
                 keyed, &suffix, &lo, &hi,
             )))
             .execute(&mut *sp)
             .await
-            {
-                Ok(_) => {
+            .map(|_| ());
+            for stmt in partition_rls_sql(&partition_name(keyed, &suffix)) {
+                if created.is_err() {
+                    break;
+                }
+                created = sqlx::query(sqlx::AssertSqlSafe(stmt))
+                    .execute(&mut *sp)
+                    .await
+                    .map(|_| ());
+            }
+            match created {
+                Ok(()) => {
                     sp.commit().await?;
                     done.push(format!("partition {suffix}: ok"));
                     continue;
@@ -191,7 +201,10 @@ pub async fn temporal_maintenance(
             // lock_timeout, and a loser simply retries on the next tick.
             let mut sp = tx.begin().await?;
             let mut adopted = Ok(());
-            for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi) {
+            for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi)
+                .into_iter()
+                .chain(partition_rls_sql(&partition_name(keyed, &suffix)))
+            {
                 adopted = sqlx::query(sqlx::AssertSqlSafe(stmt))
                     .execute(&mut *sp)
                     .await
@@ -1191,6 +1204,7 @@ async fn drop_partitions(
     let mut any = false;
     for (name, hi) in &found {
         let mut tx = pool.begin().await?;
+        crate::store::pg::set_service(&mut tx).await?;
         let ok = droppable(&mut tx, name, hi, tenants, cuts).await?;
         tx.commit().await?;
         if ok {
@@ -1242,8 +1256,10 @@ async fn drop_partitions(
 
 /// Whether [`DROPPABLE`] admits the partition `name` with upper bound `hi`
 /// and it holds no audit row ([`audit_free`]). The partition is read
-/// directly: it carries no policy of its own, so the read sees every
-/// Tenant's rows whatever the role.
+/// directly, under its own copy of the parent's policies
+/// ([`partition_rls_sql`]): the caller's transaction runs as the service
+/// (`set_service`), or the read would see no Tenant's rows and call a full
+/// partition empty.
 async fn droppable(
     tx: &mut sqlx::PgConnection,
     name: &str,
@@ -1273,6 +1289,45 @@ async fn droppable(
 /// in `public`, and `search_path` is not what should decide which one.
 fn drop_partition_sql(name: &str) -> String {
     format!("DROP TABLE public.\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The weekly partition `create_partition_sql` and `adopt_default_rows_sql`
+/// make for `suffix`.
+fn partition_name(keyed: bool, suffix: &str) -> String {
+    if keyed {
+        format!("attr_rows_{suffix}")
+    } else {
+        format!("attr_instances_{suffix}")
+    }
+}
+
+/// Row-level security on one history partition, the parent's policies of
+/// 0005 copied: PostgreSQL applies a parent's policies only to statements
+/// that name the parent, so a statement naming the partition itself would
+/// otherwise read and write every Tenant's rows (migration 0040 does the same
+/// for the partitions made before it). Idempotent, for a partition that
+/// already exists.
+fn partition_rls_sql(table: &str) -> Vec<String> {
+    const MINE: &str = "tenant_id = current_setting('antares.tenant', true)";
+    const MINE_OR_SERVICE: &str = "(tenant_id = current_setting('antares.tenant', true) \
+         OR current_setting('antares.service', true) = 'on')";
+    let mut sql = vec![
+        format!("ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"),
+        format!("ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"),
+    ];
+    for (name, rule) in [
+        ("tenant_read", format!("FOR SELECT USING {MINE_OR_SERVICE}")),
+        ("tenant_reap", format!("FOR DELETE USING {MINE_OR_SERVICE}")),
+        ("tenant_write", format!("FOR INSERT WITH CHECK ({MINE})")),
+        (
+            "tenant_update",
+            format!("FOR UPDATE USING ({MINE}) WITH CHECK ({MINE})"),
+        ),
+    ] {
+        sql.push(format!("DROP POLICY IF EXISTS {name} ON public.{table}"));
+        sql.push(format!("CREATE POLICY {name} ON public.{table} {rule}"));
+    }
+    sql
 }
 
 /// One weekly partition, created directly under the parent: `attr_rows_long`,
@@ -1704,6 +1759,22 @@ mod tests {
             "DROP TABLE public.\"a\"\"b\"",
             "a quote in the name closes nothing"
         );
+    }
+
+    #[test]
+    fn a_new_partition_gets_the_parents_policies() {
+        let sql = partition_rls_sql(&partition_name(false, "2026w34")).join(";\n");
+        for want in [
+            "ALTER TABLE public.attr_instances_2026w34 ENABLE ROW LEVEL SECURITY",
+            "ALTER TABLE public.attr_instances_2026w34 FORCE ROW LEVEL SECURITY",
+            "CREATE POLICY tenant_read ON public.attr_instances_2026w34 FOR SELECT",
+            "CREATE POLICY tenant_reap ON public.attr_instances_2026w34 FOR DELETE",
+            "CREATE POLICY tenant_write ON public.attr_instances_2026w34 FOR INSERT",
+            "CREATE POLICY tenant_update ON public.attr_instances_2026w34 FOR UPDATE",
+        ] {
+            assert!(sql.contains(want), "{want} in {sql}");
+        }
+        assert_eq!(partition_name(true, "2026w34"), "attr_rows_2026w34");
     }
 
     #[test]

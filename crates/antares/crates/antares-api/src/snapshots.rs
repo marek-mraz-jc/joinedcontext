@@ -233,6 +233,26 @@ pub(crate) async fn sweep_expired_snapshots(st: &AppState, tenant: &TenantId) ->
     n
 }
 
+/// The synthetic tenants holding the copies of `tenant`'s Snapshots, expired
+/// ones included until the sweep frees them: an erasure reaches each.
+///
+/// # Errors
+/// The store's, when the Snapshots cannot be listed.
+pub(crate) async fn copies_of(
+    st: &AppState,
+    tenant: &TenantId,
+) -> Result<Vec<TenantId>, NgsiError> {
+    let mut copies = Vec::new();
+    crate::csource::walk_docs(st, tenant, Kind::Snapshot, |doc| {
+        if is_snapshot(&doc) {
+            copies.extend(synth_tenant(&doc));
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(copies)
+}
+
 fn synth_tenant(meta: &Value) -> Option<TenantId> {
     meta.get("__tenant")
         .and_then(Value::as_str)
