@@ -13572,7 +13572,7 @@
       "recoveryFingerprint": "Fingerabdruck des Wiederherstellungsschlüssels",
       "identity": "Identität, die das Archiv öffnet",
       "identityHint": "Fügen Sie die Arbeits- oder die Wiederherstellungsidentität ein, eine Zeile, z. B. AGE-SECRET-KEY-1… (die Zeile aus Ihrer Schlüsseldatei). Sie gilt nur für diese Anfrage und wird nie gespeichert.",
-      "identityRefused": "Die Identität wurde nicht angenommen: {reason}",
+      "identityRefused": "Die Identität wurde abgelehnt: {reason}",
       "identityShow": "Identität anzeigen",
       "identityHide": "Identität verbergen",
       "identityFirst": "Fügen Sie zuerst die Identität ein",

@@ -13572,7 +13572,7 @@
       "recoveryFingerprint": "Otisk záložního klíče",
       "identity": "Identita, která otevře archiv",
       "identityHint": "Vložte pracovní nebo záložní identitu age, jeden řádek, např. AGE-SECRET-KEY-1… (řádek z vašeho souboru s klíčem). Použije se jen pro tento požadavek a nikdy se neuloží.",
-      "identityRefused": "Identita nebyla přijata: {reason}",
+      "identityRefused": "Identita byla odmítnuta: {reason}",
       "identityShow": "Zobrazit identitu",
       "identityHide": "Skrýt identitu",
       "identityFirst": "Nejprve vložte identitu",

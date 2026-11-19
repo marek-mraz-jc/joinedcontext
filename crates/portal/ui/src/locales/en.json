@@ -13572,7 +13572,7 @@
       "recoveryFingerprint": "Recovery key fingerprint",
       "identity": "Identity that opens the archive",
       "identityHint": "Paste the working or the recovery age identity, one line, e.g. AGE-SECRET-KEY-1… (the line in your key file). It is used for this request only and never stored.",
-      "identityRefused": "The identity was not accepted: {reason}",
+      "identityRefused": "The identity was refused: {reason}",
       "identityShow": "Show the identity",
       "identityHide": "Hide the identity",
       "identityFirst": "Paste the identity first",

@@ -498,7 +498,7 @@ function IdentityField({ id, value, onChange, error }: { id: string; value: stri
         />
       </Field>
       <div>
-        <Button variant="ghost" size="sm" type="button" aria-controls={id} aria-pressed={shown} onClick={() => setShown((s) => !s)}>
+        <Button variant="secondary" size="sm" type="button" aria-controls={id} aria-pressed={shown} onClick={() => setShown((s) => !s)}>
           {shown ? t("backups.data.identityHide") : t("backups.data.identityShow")}
         </Button>
       </div>
