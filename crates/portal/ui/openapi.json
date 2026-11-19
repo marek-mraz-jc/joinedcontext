@@ -1015,7 +1015,7 @@
           "ckan"
         ],
         "summary": "Search the Catalogue",
-        "description": "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees.",
+        "description": "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
         "operationId": "get_catalogue",
         "parameters": [
           {
@@ -1100,6 +1100,15 @@
             }
           },
           {
+            "name": "project",
+            "in": "query",
+            "description": "Only the datasets of this project, which the caller must be able to read, e.g. pilot",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "description": "Page, from 1",
@@ -1117,6 +1126,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CataloguePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`project` asked without signing in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`project` names a project the caller may not read, or one of another Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
