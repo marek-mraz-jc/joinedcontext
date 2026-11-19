@@ -66,7 +66,7 @@ pub const PORTAL_CLIENT: &str = "portal-api";
 /// The Portal's public client of the silent sign-in check (AP-122).
 pub const PORTAL_UI_CLIENT: &str = "portal-ui";
 /// The one page the sign-in check lands on (the Portal's `oidc::SSO_CHECK_DONE`).
-const SSO_CHECK_DONE: &str = "/api/v1/auth/sso-check/done";
+pub const SSO_CHECK_DONE: &str = "/api/v1/auth/sso-check/done";
 /// The Portal's people-administration client (service account only).
 pub const PORTAL_ADMIN_CLIENT: &str = "portal-reconciler";
 /// The Context Gateway's client (client_credentials), the Portal's `JC_PORTAL_GATEWAY_CLIENT_ID`.
