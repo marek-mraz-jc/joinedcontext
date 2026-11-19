@@ -998,6 +998,42 @@ pub(crate) async fn render_expired_session_page(
     Ok(resp)
 }
 
+/// An e-mailed action link that no longer works: used, expired, unreadable, or sent to an
+/// address the account no longer holds. One page names those causes and leads to sign-in
+/// (the account console signs the person in), since the link itself is what failed.
+async fn render_action_link_unusable(
+    state: &OidcState,
+    mount: &Mount,
+    realm: &RealmConfig,
+    headers: &HeaderMap,
+) -> Result<Response> {
+    let bundle = Bundle::for_locale(page_locale(realm, None, headers));
+    let branding = load_branding(state, realm, None).await?;
+    let shell = page::Shell {
+        bundle: &bundle,
+        realm,
+        branding: &branding,
+        path_prefix: &mount.path_prefix,
+        app: "",
+        locale_base_url: "",
+    };
+    let mut tpl = shell.page(
+        "action-link-unusable",
+        bundle.get("jcActionLinkUnusableTitle"),
+        &new_nonce(),
+    );
+    tpl.instructions = vec![bundle.get("jcActionLinkUnusableExplained").to_owned()];
+    tpl.links = vec![page::Link {
+        id: "loginSignInLink".into(),
+        class: "pf-m-primary",
+        url: format!("{}/realms/{}/account", mount.path_prefix, realm.realm),
+        label: bundle.get("jcActionLinkSignIn").to_owned(),
+    }];
+    let mut resp = render_with_security_headers(&tpl, None, None);
+    *resp.status_mut() = StatusCode::BAD_REQUEST;
+    Ok(resp)
+}
+
 /// `GET /realms/{realm}/login-actions/restart`: "Restart login" and "Start signing in again"
 /// send the session this browser holds back to its first step (the person signs in from the
 /// start; nothing already passed is kept), then to the sign-in page.
@@ -2577,15 +2613,7 @@ async fn action_token_get(
         crate::email::EmailSender::check_action_token(&state.store, &realm.id, &issuer, &query.key)
             .await
     else {
-        return render_expired_session_page(
-            &state,
-            &mount,
-            &realm,
-            &headers,
-            None,
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
+        return render_action_link_unusable(&state, &mount, &realm, &headers).await;
     };
     let bundle = Bundle::for_locale(page_locale(&realm, None, &headers));
     let branding = load_branding(&state, &realm, None).await?;
@@ -2644,15 +2672,7 @@ async fn apply_action_token(
         crate::email::EmailSender::consume_action_token(&state.store, &realm.id, &issuer, key)
             .await
     else {
-        return render_expired_session_page(
-            state,
-            mount,
-            realm,
-            headers,
-            None,
-            StatusCode::BAD_REQUEST,
-        )
-        .await;
+        return render_action_link_unusable(state, mount, realm, headers).await;
     };
 
     let mut user = state
@@ -2684,15 +2704,7 @@ async fn apply_action_token(
                         == Some(bound)
                 });
                 if !sent_to_current {
-                    return render_expired_session_page(
-                        state,
-                        mount,
-                        realm,
-                        headers,
-                        None,
-                        StatusCode::BAD_REQUEST,
-                    )
-                    .await;
+                    return render_action_link_unusable(state, mount, realm, headers).await;
                 }
                 user.email_verified = true;
                 user.required_actions.retain(|a| a != "VERIFY_EMAIL");

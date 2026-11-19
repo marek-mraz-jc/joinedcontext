@@ -1218,7 +1218,11 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     // Second use of the same action-token link is refused
     let (st_at_replay, _, html_at_replay) = open_action_link(&app, link_path).await;
     assert_eq!(st_at_replay, StatusCode::BAD_REQUEST);
-    assert_eq!(page_id(&html_at_replay), "expired");
+    assert_eq!(page_id(&html_at_replay), "action-link-unusable");
+    assert!(
+        html_at_replay.contains("href=\"/realms/dev/account\""),
+        "a used link offers the way to sign in: {html_at_replay}"
+    );
 
     // The reset form offers "sign out other devices", checked as on Keycloak's form: whoever
     // held the old password loses their sessions with it.

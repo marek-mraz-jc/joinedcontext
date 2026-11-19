@@ -230,7 +230,11 @@ async fn pages_follow_accept_language_and_the_client_display_name() {
     )
     .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    assert_eq!(page_id(&html), "expired");
+    assert_eq!(page_id(&html), "action-link-unusable");
+    assert!(
+        html.contains("Dieser Link funktioniert nicht mehr"),
+        "{html}"
+    );
 }
 
 /// Organization memberships feed the picker, and an organization pinned on the session that
@@ -497,8 +501,9 @@ async fn verify_email_links_verify_the_address_they_were_sent_to_on_confirm_only
     let mut moved = user(&store, MEMBER).await;
     moved.email = Some("someone-else@example.org".into());
     store.update_user(moved).await.unwrap();
-    let (st, _, _) = open_action_link(&app, &link).await;
+    let (st, _, html) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(page_id(&html), "action-link-unusable");
     assert!(!user(&store, MEMBER).await.email_verified);
 
     let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
