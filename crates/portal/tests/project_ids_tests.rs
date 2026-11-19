@@ -1002,6 +1002,84 @@ async fn the_org_namespace_takes_the_configured_installation_when_the_claim_has_
     );
 }
 
+/// T-7414 (jc-prod): the forge's installation claim (`hel`) has no registry row and the deployment
+/// configures `smartcity`. The installation's projects key under the configured Organization, a
+/// person on the deployment's own host keeps a connector there (was 409 "belongs to no active
+/// Organization"), and a project of another Organization the registry lacks still keys nothing.
+#[tokio::test]
+async fn the_installation_claim_without_a_registry_row_keys_under_the_configured_one() {
+    use joinedcontext_portal::connectors::{ConnectorStore, NewConnector};
+    let pool = pool().await;
+    let org_ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    let configured = organization(&pool, "t14city").await;
+    let (claim, other) = (run_name("t14hel"), run_name("t14zil"));
+    let (own, foreign) = (run_name("t14helsinki"), run_name("t14zilina"));
+    let mirror = std::sync::Arc::new(joinedcontext_portal::store::Mirror::default());
+    mirror.upsert(envelope(
+        "Organization",
+        &claim,
+        org_ns,
+        json!({ "installation": true }),
+    ));
+    mirror.upsert(envelope("Organization", &other, org_ns, json!({})));
+    mirror.upsert(envelope("Project", &own, org_ns, json!({})));
+    mirror.upsert(envelope(
+        "Project",
+        &foreign,
+        org_ns,
+        json!({ "organizationRef": other }),
+    ));
+    mirror.set_configured_installation(&configured);
+
+    let expected = project_ids::key(&pool, &configured, &own)
+        .await
+        .expect("key")
+        .expect("the configured installation's key");
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, &own)
+            .await
+            .expect("key"),
+        Some(expected)
+    );
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, &foreign)
+            .await
+            .expect("key"),
+        None,
+        "another Organization the registry lacks never takes the installation's key"
+    );
+
+    let store = ConnectorStore::new(Some((pool.clone(), std::sync::Arc::clone(&mirror))), None);
+    let ask: NewConnector = serde_json::from_value(json!({
+        "name": "smartcity-mcp", "segments": ["data-read"], "scope": [],
+        "expiresAt": "2030-01-01T00:00:00Z"
+    }))
+    .expect("a connector");
+    let made = store
+        .create(
+            &run_name("f:1:city-admin"),
+            ask,
+            vec![],
+            "https://portal.test",
+        )
+        .await
+        .expect("created on the deployment's own host");
+    let reserved = project_ids::reserved(&pool, &configured)
+        .await
+        .expect("reserved")
+        .expect("the configured installation's reserved key");
+    let (org_id, project_id): (String, String) =
+        sqlx::query_as("SELECT org_id::text, project_id::text FROM connectors WHERE id = $1")
+            .bind(&made.id)
+            .fetch_one(&pool)
+            .await
+            .expect("the row");
+    assert_eq!(
+        (org_id, project_id),
+        (reserved.org.to_string(), reserved.project.to_string())
+    );
+}
+
 /// T-7319: the drift report names each side once the mirror holds Organizations, and nothing
 /// before the first sync.
 #[tokio::test]
