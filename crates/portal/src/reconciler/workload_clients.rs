@@ -804,6 +804,9 @@ fn contested(accounts: &[BoundAccount], listed: &Value) -> BTreeMap<String, Stri
 pub type Revoke =
     std::sync::Arc<dyn Fn(String) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
 
+/// A host runner's client secrets, by (project, variable).
+type HostSecrets = BTreeMap<(String, String), String>;
+
 /// The realm's workload clients, as the reconciler's own client may write them.
 pub struct WorkloadClientSync {
     admin: Admin,
@@ -829,7 +832,7 @@ pub struct WorkloadClientSync {
     /// runner variable a stream names (`JC_CLIENT_SECRET_<PROJECT>`, a Pipeline's own
     /// `JC_PIPELINE_SECRET_<CLIENT>`). Held for the host runner
     /// alone, never logged.
-    host_secrets: std::sync::RwLock<BTreeMap<String, String>>,
+    host_secrets: std::sync::RwLock<HostSecrets>,
     /// The project registry whose ids each managed client's [`PROJECT_ATTRIBUTE`] carries; `None`
     /// writes none, and kaisatsu then issues the client's tokens with no `project`.
     keys: Option<sqlx::PgPool>,
@@ -882,10 +885,28 @@ impl WorkloadClientSync {
     /// variable a stream names (`JC_CLIENT_SECRET_<PROJECT>`, `JC_PIPELINE_SECRET_<CLIENT>`); empty
     /// without a host runner.
     pub fn host_secrets(&self) -> BTreeMap<String, String> {
-        self.host_secrets
+        self.host_secrets_by_project()
+            .into_values()
+            .flatten()
+            .collect()
+    }
+
+    /// [`Self::host_secrets`] by the project each client belongs to: a host runner hands a
+    /// project's streams only that project's credentials (T-7269).
+    pub fn host_secrets_by_project(&self) -> BTreeMap<String, BTreeMap<String, String>> {
+        let mut by_project: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        for ((project, variable), value) in self
+            .host_secrets
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+            .iter()
+        {
+            by_project
+                .entry(project.clone())
+                .or_default()
+                .insert(variable.clone(), value.clone());
+        }
+        by_project
     }
 
     /// Revokes the service-account user of each client this sync removes, so a deleted
@@ -1110,7 +1131,7 @@ impl WorkloadClientSync {
         token: &str,
         mirror: &Mirror,
         account: &BoundAccount,
-        secrets: &mut BTreeMap<String, String>,
+        secrets: &mut HostSecrets,
         outcome: &mut ClientOutcome,
     ) {
         if !host_derived(account) {
@@ -1151,7 +1172,7 @@ impl WorkloadClientSync {
         };
         match read {
             Ok(Some(secret)) => {
-                secrets.insert(variable, secret);
+                secrets.insert((account.project.clone(), variable), secret);
             }
             failed => {
                 self.keep_host_secret(account, secrets);
@@ -1165,13 +1186,20 @@ impl WorkloadClientSync {
 
     /// Carries the last secret of a project pipeline client into `secrets` for a run that could
     /// not converge or read it, so the runner keeps its credential until the realm answers.
-    fn keep_host_secret(&self, account: &BoundAccount, secrets: &mut BTreeMap<String, String>) {
+    fn keep_host_secret(&self, account: &BoundAccount, secrets: &mut HostSecrets) {
         if !host_derived(account) {
             return;
         }
         let variable = host_variable(account);
-        if let Some(last) = self.host_secrets().remove(&variable) {
-            secrets.insert(variable, last);
+        let key = (account.project.clone(), variable);
+        let last = self
+            .host_secrets
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&key)
+            .cloned();
+        if let Some(last) = last {
+            secrets.insert(key, last);
         }
     }
 

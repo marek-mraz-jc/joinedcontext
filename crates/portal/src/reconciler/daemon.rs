@@ -258,7 +258,7 @@ pub struct Syncer {
     /// The pipeline credentials the last sync resolved for a host runner, kept so the workload
     /// wave can hand a project pipeline client's new secret over in the same sync (T-6832).
     /// Never logged.
-    host_runner_values: RwLock<BTreeMap<String, String>>,
+    host_runner_values: RwLock<BTreeMap<String, BTreeMap<String, String>>>,
     /// The pipelines' own Kubernetes ServiceAccounts and the namespace they live in (PL-19).
     pipeline_service_accounts: Option<(Arc<crate::apps::kube::KubeClient>, String)>,
     /// The Apps' job ServiceAccounts and the identities namespace they live in (AP-159).
@@ -2706,7 +2706,9 @@ impl Syncer {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
         if let Some(clients) = self.workload_clients.as_ref() {
-            values.extend(clients.host_secrets());
+            for (project, secrets) in clients.host_secrets_by_project() {
+                values.entry(project).or_default().extend(secrets);
+            }
         }
         host.replace(values);
     }
@@ -3538,7 +3540,7 @@ impl Syncer {
             *self
                 .host_runner_values
                 .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = runner.values().clone();
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = runner.by_project().clone();
             self.hand_to_host(host.as_ref());
             tracing::info!(
                 variables = runner.variables().count(),

@@ -267,7 +267,7 @@ impl StreamManager {
     ) -> Result<(), CoreError> {
         let text = serde_json::to_string(&posted).map_err(|e| CoreError::other(e.to_string()))?;
         let filled = self
-            .interpolate(&org, &text)
+            .interpolate_stream(&org, &id, &text)
             .map_err(|e| CoreError::config(format!("missing variables {:?}", e.missing)))?;
         let raw: JsonValue =
             serde_json::from_str(&filled).map_err(|e| CoreError::other(e.to_string()))?;
@@ -288,6 +288,22 @@ impl StreamManager {
     /// environment as `env_access` allows.
     pub fn interpolate(&self, org: &OrgId, raw: &str) -> Result<String, EnvLintError> {
         let vars = self.resources.get_or_create_org(org).secrets_snapshot();
+        let access = self.env_access;
+        interpolate_env_str(raw, |k| access.resolve(&vars, k))
+    }
+
+    /// [`Self::interpolate`] for stream `stream_id`: its scope's variables beside the
+    /// organization's, never another scope's (T-7269).
+    pub fn interpolate_stream(
+        &self,
+        org: &OrgId,
+        stream_id: &str,
+        raw: &str,
+    ) -> Result<String, EnvLintError> {
+        let vars = self
+            .resources
+            .get_or_create_org(org)
+            .secrets_snapshot_for(stream_id);
         let access = self.env_access;
         interpolate_env_str(raw, |k| access.resolve(&vars, k))
     }

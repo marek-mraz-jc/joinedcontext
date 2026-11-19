@@ -250,7 +250,7 @@ pub async fn test_event(
         .credential()
         .ok_or_else(|| ApiError::Internal("a validated webhook holds one credential".into()))?;
     let credential = host
-        .credential(&env_var_of(&name, reference))
+        .credential(&project, &env_var_of(&name, reference))
         .ok_or_else(|| {
             ApiError::Unavailable(format!(
                 "the runner holds no value for secret '{}' yet; wait for the next sync after the pipeline is applied, and check the pipeline's status",
