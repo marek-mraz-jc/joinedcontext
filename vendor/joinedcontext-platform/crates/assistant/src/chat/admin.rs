@@ -495,7 +495,7 @@ async fn errors(
                WHERE d.site_id = $1 AND d.status = 'failed' \
              UNION ALL \
              SELECT c.url, CASE WHEN c.document_id IS NULL THEN 'page' ELSE 'document' END, \
-                 count(*)::text || ' passages not embedded: ' || min(c.embed_error), max(c.id) \
+                 count(*)::text || ' of its passages not embedded: ' || min(c.embed_error), max(c.id) \
                FROM chunks c WHERE c.site_id = $1 AND c.embed_error IS NOT NULL \
                GROUP BY c.url, c.document_id IS NULL \
          ) failed ORDER BY at DESC LIMIT $2",

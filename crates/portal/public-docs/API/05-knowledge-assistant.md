@@ -327,7 +327,7 @@ the service's own tables (T-4197):
 `GET …/knowledge/sources/{source}/errors` answers `{"items": [{"url", "kind", "reason"}]}`: at most
 50 pages (`kind: page`) and documents (`kind: document`) whose last read failed, newest first.
 A page or document with passages the embedder refused (each piece is cut to its 8,192-byte cap,
-so this is rare) has `reason` `{n} passages not embedded: {the embedder's refusal}`; such a passage
+so this is rare) has `reason` `{n} of its passages not embedded: {the embedder's refusal}`; such a passage
 is sent again only when its page or document changes (T-7290).
 `reason` is `HTTP {status}` or the network error, at most 300 characters; no content of a page is
 in it. A source not crawled yet answers `404`.
