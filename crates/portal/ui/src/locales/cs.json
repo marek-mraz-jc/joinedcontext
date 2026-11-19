@@ -13568,7 +13568,7 @@
     "openChange": "Změna tohoto manifestu čeká na schválení. Před dalším zveřejněním ji schvalte nebo zamítněte:",
     "waits": "Portál ukáže nový vzhled několik sekund poté, co administrátor změnu schválí.",
     "refused": {
-      "403": "Změnu tohoto manifestu nemůžete navrhnout. Může to administrátor Organizace: {detail}",
+      "403": "Tuto změnu nemůžete navrhnout: mohou ji navrhnout jen administrátoři Organizace. Požádejte jednoho z nich. Server: {detail}",
       "409": "Jiná změna tohoto manifestu je otevřená. Nejprve ji schvalte nebo zamítněte: {detail}",
       "422": "Server odmítl hodnotu: {detail}. Opravte pole, které jmenuje, a zveřejněte znovu."
     },
@@ -13601,7 +13601,8 @@
     "revertOrganization": "Obnovit vestavěný vzhled",
     "revertPortal": "Obnovit vzhled Organizace",
     "previewPage": "Stránka v náhledu",
-    "previewWidths": "Šířka obrazovky"
+    "previewWidths": "Šířka obrazovky",
+    "previewRefused": "Kresleno odmítnutou barvou, aby bylo vidět proč: opravte označené pole."
   },
   "backups": {
     "loading": "Načítá se záloha…",

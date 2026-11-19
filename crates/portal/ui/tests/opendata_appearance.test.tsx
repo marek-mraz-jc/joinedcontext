@@ -201,6 +201,7 @@ describe("open data appearance", () => {
     fireEvent.change(screen.getByRole("textbox", { name: /^Background/ }), { target: { value: "#ffffff" } });
     fireEvent.change(screen.getByRole("textbox", { name: /^Text/ }), { target: { value: "#999999" } });
     expect(screen.getByTestId("contrast-text").textContent).toBe("Contrast 2.85:1, below 4.5:1");
+    expect(screen.getByText(/Drawn with the refused colour/)).toBeInTheDocument();
     expect(screen.getByText(/Contrast 2\.85:1 with the background is below 4\.5:1/)).toBeInTheDocument();
     const publish = screen.getByRole("button", { name: "Publish appearance" });
     expect(publish).toBeDisabled();
@@ -272,7 +273,10 @@ describe("open data appearance", () => {
     const user = userEvent.setup();
     await screen.findByTestId("opendata-appearance-editor");
     await user.click(screen.getByRole("button", { name: "Publish appearance" }));
-    expect(await screen.findByText(/An administrator of the Organization can: propose Organization is not granted/)).toBeInTheDocument();
+    expect(await screen.findByText(/only the Organization.s administrators can\. Ask one of them\. Server: propose Organization is not granted/)).toBeInTheDocument();
+    // A second try ends the same way: Publish says why it is off.
+    expect(screen.getByRole("button", { name: "Publish appearance" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publish appearance" })).toHaveAccessibleDescription(/only the Organization.s administrators/);
   });
 
   it("passes_axe", async () => {

@@ -13568,7 +13568,7 @@
     "openChange": "A change of this manifest waits for approval. Approve or reject it before publishing another:",
     "waits": "The portal shows the new look within seconds of an administrator approving this change.",
     "refused": {
-      "403": "You may not propose a change to this manifest. An administrator of the Organization can: {detail}",
+      "403": "You may not propose this change: only the Organization's administrators can. Ask one of them. Server: {detail}",
       "409": "Another change of this manifest is open. Approve or reject it first: {detail}",
       "422": "The server refused a value: {detail}. Correct the field it names and publish again."
     },
@@ -13601,7 +13601,8 @@
     "revertOrganization": "Reset to the built-in look",
     "revertPortal": "Reset to the Organization's look",
     "previewPage": "Page to preview",
-    "previewWidths": "Screen width"
+    "previewWidths": "Screen width",
+    "previewRefused": "Drawn with the refused colour, so you see why it is refused: fix the marked field."
   },
   "backups": {
     "loading": "Loading the backup…",

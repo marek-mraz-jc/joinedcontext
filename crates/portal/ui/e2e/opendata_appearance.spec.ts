@@ -199,7 +199,7 @@ test.describe("Administration → Open data appearance", () => {
     await stubApi(page, { write: { status: 403, detail: "propose on Organization bbsk is not granted to ada" } });
     await page.goto("/organization/opendata-appearance?lang=en");
     await page.getByRole("button", { name: "Publish appearance" }).click();
-    await expect(page.getByText(/An administrator of the Organization can/)).toBeVisible();
+    await expect(page.getByText(/only the Organization.s administrators can/)).toBeVisible();
     await shot(page, "refused");
   });
 });

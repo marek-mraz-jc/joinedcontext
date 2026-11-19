@@ -217,6 +217,8 @@ function AppearanceEditor({
   const anchorOf = (field: string) => (/^(navLinks|footerLinks)-/.test(field) ? field : `appearance-${field}`);
   const blocked = open.length > 0 && !done;
   const own = hasLook(appearanceOf(stored));
+  // The server said this person may not propose the manifest: a second try ends the same way.
+  const refusedHere = error instanceof ApiError && error.status === 403;
   const inherited = target.kind === "Portal" ? t("opendataAppearance.fromOrganization") : t("opendataAppearance.fromCatalogue");
   const setColour = (name: ColourName, value: string) =>
     setForm((now) => ({ ...now, colours: { ...now.colours, [name]: value } }));
@@ -252,7 +254,12 @@ function AppearanceEditor({
       <div className="grid gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
         {/* First on a phone, so an edit is seen without scrolling past the form; beside it and held in view on a wide screen. */}
         <div className="min-w-0 xl:sticky xl:top-4 xl:order-2 xl:self-start">
-          <LookPreview look={look} name={target.name} fallbackFont={builtIn.fonts.body} />
+          <LookPreview
+            look={look}
+            name={target.name}
+            fallbackFont={builtIn.fonts.body}
+            refused={problems.some((item) => item.key === "contrastLow")}
+          />
         </div>
         <form
           className="flex flex-col gap-4 xl:order-1"
@@ -371,7 +378,7 @@ function AppearanceEditor({
               <ul className="flex flex-wrap gap-x-4 gap-y-1">
                 {[...new Set(problems.map((item) => item.field))].map((field) => (
                   <li key={field}>
-                    <a href={`#${anchorOf(field)}`} className="focus-ring text-body text-danger underline">
+                    <a href={`#${anchorOf(field)}`} className="focus-ring inline-block py-1 text-body text-danger underline">
                       {labelOf(field)}
                     </a>
                   </li>
@@ -386,8 +393,10 @@ function AppearanceEditor({
                 type="submit"
                 variant="primary"
                 loading={publish.isPending}
-                disabled={blocked || problems.length > 0}
-                aria-describedby={blocked ? "appearance-blocked" : problems.length > 0 ? "appearance-fix-first" : undefined}
+                disabled={blocked || problems.length > 0 || refusedHere}
+                aria-describedby={
+                  blocked ? "appearance-blocked" : problems.length > 0 ? "appearance-fix-first" : refusedHere ? "appearance-outcome" : undefined
+                }
               >
                 {t("opendataAppearance.publish")}
               </Button>
@@ -502,7 +511,7 @@ function LinksField({
       <p className="text-caption text-fg-muted">{t(`opendataAppearance.hint.${member}`, { max: MAX_LINKS })}</p>
       {links.length === 0 ? <p className="text-caption text-fg-muted">{t("opendataAppearance.linksEmpty")}</p> : null}
       {links.map((link, at) => (
-        <div key={at} className="grid gap-2 rounded-md border border-border p-3 sm:grid-cols-[1fr_1.4fr_auto] sm:items-start">
+        <div key={at} className="grid gap-2 rounded-md border border-border p-3">
           <Field id={`${member}-${at}-label`} label={t("organization.field.appearance.linkLabel")} errors={errorOf(`${member}-${at}-label`)}>
             <Input
               id={`${member}-${at}-label`}
@@ -525,7 +534,7 @@ function LinksField({
           <Button
             size="sm"
             variant="ghost"
-            className="sm:mt-7"
+            className="justify-self-end"
             aria-label={t("opendataAppearance.removeLink", { label: link.label || at + 1 })}
             onClick={() => onChange(links.filter((_, index) => index !== at))}
           >
@@ -556,7 +565,7 @@ function Outcome({ change, error }: { change: Change | null; error: unknown }): 
   if (!error) return null;
   const status = error instanceof ApiError ? error.status : 0;
   return (
-    <Alert tone={status === 409 ? "warning" : "danger"}>
+    <Alert tone={status === 409 ? "warning" : "danger"} id="appearance-outcome">
       {status === 403 || status === 409 || status === 422
         ? t(`opendataAppearance.refused.${status}`, { detail: problem(error) })
         : problem(error)}
@@ -570,11 +579,24 @@ function Outcome({ change, error }: { change: Change | null; error: unknown }): 
  * nothing of the person's input becomes CSS. The rows are labelled examples; the hero
  * introduction goes through the catalogue's Markdown renderer and is rebuilt as elements.
  */
-function LookPreview({ look, name, fallbackFont }: { look: Look; name: string; fallbackFont: string }): JSX.Element {
+function LookPreview({
+  look,
+  name,
+  fallbackFont,
+  refused,
+}: {
+  look: Look;
+  name: string;
+  fallbackFont: string;
+  /** A colour pair below AA: the preview draws it anyway, so the person sees why it is refused. */
+  refused: boolean;
+}): JSX.Element {
   const { t } = useTranslation();
   const phone = useIsPhone();
   const [page, setPage] = useState<"home" | "dataset">("home");
-  const [width, setWidth] = useState<"1440" | "400">(phone ? "400" : "1440");
+  // A phone shows the phone's page until the person picks the other width.
+  const [picked, setWidth] = useState<"1440" | "400" | null>(null);
+  const width = picked ?? (phone ? "400" : "1440");
   const intro = usePreview(look.hero?.intro ?? "");
   const introHtml = look.hero?.intro && intro.data ? previewElements(intro.data.html) : null;
   const pages = [
@@ -591,6 +613,7 @@ function LookPreview({ look, name, fallbackFont }: { look: Look; name: string; f
         {t("opendataAppearance.preview")}
       </h3>
       <p className="text-caption text-fg-muted">{t("opendataAppearance.previewLead")}</p>
+      {refused ? <Alert tone="warning">{t("opendataAppearance.previewRefused")}</Alert> : null}
       <div className="flex flex-wrap items-end justify-between gap-2">
         <Tabs id="appearance-preview-page" label={t("opendataAppearance.previewPage")} tabs={pages} value={page} onChange={setPage} />
         <Tabs

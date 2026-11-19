@@ -13568,7 +13568,7 @@
     "openChange": "Eine Änderung dieses Manifests wartet auf Genehmigung. Genehmigen oder verwerfen Sie sie vor der nächsten Veröffentlichung:",
     "waits": "Das Portal zeigt das neue Aussehen wenige Sekunden nachdem ein Administrator die Änderung genehmigt.",
     "refused": {
-      "403": "Sie dürfen keine Änderung dieses Manifests vorschlagen. Ein Administrator der Organisation kann es: {detail}",
+      "403": "Sie dürfen diese Änderung nicht vorschlagen: nur die Administratoren der Organisation dürfen das. Bitten Sie einen von ihnen. Server: {detail}",
       "409": "Eine andere Änderung dieses Manifests ist offen. Genehmigen oder verwerfen Sie sie zuerst: {detail}",
       "422": "Der Server hat einen Wert abgelehnt: {detail}. Korrigieren Sie das genannte Feld und veröffentlichen Sie erneut."
     },
@@ -13601,7 +13601,8 @@
     "revertOrganization": "Eingebautes Aussehen wiederherstellen",
     "revertPortal": "Aussehen der Organisation wiederherstellen",
     "previewPage": "Seite in der Vorschau",
-    "previewWidths": "Bildschirmbreite"
+    "previewWidths": "Bildschirmbreite",
+    "previewRefused": "Mit der abgelehnten Farbe gezeichnet, damit Sie sehen warum: korrigieren Sie das markierte Feld."
   },
   "backups": {
     "loading": "Sicherung wird geladen…",
