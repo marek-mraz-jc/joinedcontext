@@ -7553,7 +7553,8 @@
         }
       },
       "repository": {
-        "read": "Repository gelesen"
+        "read": "Repository gelesen",
+        "downloaded": "Repository heruntergeladen"
       }
     },
     "sources": {
@@ -13526,7 +13527,7 @@
     "download": "Herunterladen",
     "downloadOne": "{name} als .tar.gz herunterladen",
     "ofProject": "Projekt {project}",
-    "ofApp": "App {app} in {project}",
+    "ofApp": "App {app} im Projekt {project}",
     "ofOrganization": "die ganze Installation",
     "role": {
       "configuration": "Konfiguration",

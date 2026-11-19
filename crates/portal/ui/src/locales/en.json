@@ -7553,7 +7553,8 @@
         }
       },
       "repository": {
-        "read": "Repository read"
+        "read": "Repository read",
+        "downloaded": "Repository downloaded"
       }
     },
     "sources": {

@@ -16,14 +16,6 @@ async function readRepositories(): Promise<Listing> {
   return (await door("portal_organization_repositories", {})) as Listing;
 }
 
-/**
- * Where the browser downloads one repository: the REST route itself, so the archive streams to
- * disk instead of passing through the page's memory as the JSON door would carry it.
- */
-export function archiveHref(name: string): string {
-  return `/api/v1/organization/repositories/${encodeURIComponent(name)}/archive`;
-}
-
 function bytes(size: number, locale: string): string {
   const units = ["B", "KB", "MB", "GB"];
   let value = size;
@@ -139,7 +131,9 @@ function RepositoryList(): JSX.Element {
               ) : (
                 <a
                   className={buttonClass("secondary", "md")}
-                  href={archiveHref(row.name)}
+                  // The REST route itself, so the archive streams to disk instead of passing through
+                  // the page's memory as the JSON door would carry it.
+                  href={`/api/v1/organization/repositories/${encodeURIComponent(row.name)}/archive`}
                   download
                   aria-label={t("orgRepositories.downloadOne", { name: row.name })}
                 >

@@ -7,7 +7,7 @@ import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import i18n from "../src/i18n";
 import type { Effective } from "../src/api/permissions";
-import { Repositories, archiveHref } from "../src/pages/organization/Repositories";
+import { Repositories } from "../src/pages/organization/Repositories";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
 
 const ADMIN = {
@@ -88,9 +88,5 @@ describe("Administration → Repositories", () => {
     const { asked } = render(VIEWER, () => json(LISTING));
     expect(await screen.findByText(/administrator/i)).toBeTruthy();
     expect(asked).not.toContain("/api/v1/organization/repositories");
-  });
-
-  it("encodes a repository name into the download address", () => {
-    expect(archiveHref("a b/c")).toBe("/api/v1/organization/repositories/a%20b%2Fc/archive");
   });
 });

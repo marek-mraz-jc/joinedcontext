@@ -1964,6 +1964,14 @@
         "organization_backups.test.tsx"
       ]
     },
+    "src/pages/organization/Repositories.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "organization_repositories.test.tsx"
+      ]
+    },
     "src/pages/organization/Costs.tsx": {
       "controls": {
         "Button": 1

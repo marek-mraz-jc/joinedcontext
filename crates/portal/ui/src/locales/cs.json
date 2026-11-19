@@ -7553,7 +7553,8 @@
         }
       },
       "repository": {
-        "read": "Čtení repozitáře"
+        "read": "Čtení repozitáře",
+        "downloaded": "Repozitář stažen"
       }
     },
     "sources": {
