@@ -56,7 +56,7 @@ check() { # path needle
 }
 check /login/realms/jc/.well-known/openid-configuration '"issuer"'
 check /opendata/api/3/action/status_show '"success"'
-check /dashboards/api/health '"database"'
+check /dashboards/api/health '"commit":"daiya"'
 check /streams/ping pong
 check /broker/ngsi-ld/v1/info/sourceIdentity antares
 check /git/api/healthz '"status":"ok"'
