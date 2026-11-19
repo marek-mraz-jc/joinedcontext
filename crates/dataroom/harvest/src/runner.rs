@@ -4,7 +4,9 @@
 
 use crate::guard::{validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX_REDIRECT_HOPS};
 use crate::sources::{
-    parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
+    arcgis_service_type, arcgis_services_root, parse_arcgis_directory, parse_arcgis_hub_items,
+    parse_arcgis_service, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
+    parse_ogc_records_page, records_collection,
 };
 use dataroom_core::ops::{HarvestRunner, PreviewRecord, SourcePreview, SourceTest, PREVIEW_MAX};
 use dataroom_core::store::BoxFuture;
@@ -284,6 +286,23 @@ const MAX_PAGES: usize = 50;
 
 /// Most `package_search` pages (1000 records each) read from a CKAN source in one run.
 const CKAN_MAX_PAGES: usize = 20;
+
+/// Most services one run of an ArcGIS REST source reads, each one request.
+const ARCGIS_MAX_SERVICES: usize = 500;
+
+/// Records asked for per page of an OGC API Records collection.
+const RECORDS_PAGE: usize = 100;
+
+/// What an OGC API Records page is asked to answer in.
+const RECORDS_ACCEPT: &str = "application/geo+json, application/json";
+
+/// The first `/items` page of an OGC API Records collection, `limit` records long.
+fn records_page_url(source_url: &str, limit: usize) -> String {
+    format!(
+        "{}/items?limit={limit}&f=json",
+        records_collection(source_url)
+    )
+}
 
 /// A source read that cannot be shown complete: nothing of it is written or withdrawn.
 fn incomplete(what: String) -> DataroomError {
@@ -631,6 +650,14 @@ impl HarvestEngine {
         }
 
         match source.kind {
+            HarvestSourceKind::ArcGisRest => {
+                self.gather_arcgis_rest(ctx, source, cat_allowed_hosts, default_lang)
+                    .await
+            }
+            HarvestSourceKind::OgcRecords => {
+                self.gather_ogc_records(ctx, source, cat_allowed_hosts, default_lang)
+                    .await
+            }
             HarvestSourceKind::ArcGisHub => {
                 let mut features = Vec::new();
                 let hub = source.url.trim_end_matches('/');
@@ -822,6 +849,180 @@ impl HarvestEngine {
 type Gathered = (Vec<(String, Dataset)>, Vec<HarvestSkippedItem>);
 
 impl HarvestEngine {
+    /// Every FeatureServer and MapServer of an ArcGIS REST directory and its folders, one record
+    /// each; a source URL naming one service reads that service alone. A directory or service
+    /// that cannot be read fails the run (only a complete read may withdraw); a service whose
+    /// answer is not a service's JSON, or any other service type, is skipped with its reason.
+    async fn gather_arcgis_rest(
+        &self,
+        ctx: &RequestCtx,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        lang: &str,
+    ) -> Result<Gathered> {
+        let root = arcgis_services_root(&source.url);
+        let start = source.url.split(['?', '#']).next().unwrap_or(&source.url);
+        let start = start.trim_end_matches('/');
+        let mut services = BTreeSet::new();
+        let mut skipped = Vec::new();
+        if arcgis_service_type(start).is_some() {
+            services.insert(start.to_owned());
+        } else {
+            let mut folders = vec![start.to_owned()];
+            let mut seen = BTreeSet::new();
+            while let Some(folder) = folders.pop() {
+                if !seen.insert(folder.clone()) {
+                    continue;
+                }
+                if seen.len() > MAX_PAGES {
+                    return Err(incomplete(format!(
+                        "the directory has more than {MAX_PAGES} folders"
+                    )));
+                }
+                let (_, body) = self
+                    .checked_fetch(
+                        &format!("{folder}?f=json"),
+                        source,
+                        cat_allowed_hosts,
+                        "application/json",
+                    )
+                    .await?;
+                let dir = parse_arcgis_directory(&body)?;
+                folders.extend(dir.folders.iter().map(|f| format!("{root}/{f}")));
+                for (name, kind) in dir.services {
+                    if arcgis_service_type(&kind).is_some() {
+                        services.insert(format!("{root}/{name}/{kind}"));
+                    } else {
+                        skipped.push(HarvestSkippedItem {
+                            item_id: format!("{name}/{kind}"),
+                            title: name,
+                            reason: format!("type {kind} is not a dataset"),
+                        });
+                    }
+                }
+            }
+        }
+        // A service published as both lists its data once, as the FeatureServer.
+        let doubles: Vec<String> = services
+            .iter()
+            .filter_map(|u| u.strip_suffix("/MapServer"))
+            .filter(|stem| services.contains(&format!("{stem}/FeatureServer")))
+            .map(|stem| format!("{stem}/MapServer"))
+            .collect();
+        for url in doubles {
+            services.remove(&url);
+            let item_id = url
+                .strip_prefix(root)
+                .unwrap_or(&url)
+                .trim_start_matches('/');
+            skipped.push(HarvestSkippedItem {
+                item_id: item_id.to_owned(),
+                title: item_id.to_owned(),
+                reason: "listed as its FeatureServer".into(),
+            });
+        }
+        if services.len() > ARCGIS_MAX_SERVICES {
+            return Err(incomplete(format!(
+                "the directory lists {} services, more than the {ARCGIS_MAX_SERVICES} a run reads",
+                services.len()
+            )));
+        }
+        let mut kept = Vec::new();
+        for url in services {
+            let item_id = url
+                .strip_prefix(root)
+                .unwrap_or(&url)
+                .trim_start_matches('/')
+                .to_owned();
+            let (_, body) = self
+                .checked_fetch(
+                    &format!("{url}?f=json"),
+                    source,
+                    cat_allowed_hosts,
+                    "application/json",
+                )
+                .await?;
+            match parse_arcgis_service(
+                ctx.org_id,
+                ctx.catalogue_id,
+                source,
+                &url,
+                &item_id,
+                &body,
+                lang,
+            ) {
+                Ok(ds) => match source.skip_items.get(&item_id) {
+                    Some(reason) => skipped.push(HarvestSkippedItem {
+                        item_id,
+                        title: dataroom_core::text_in_lang(&ds.title, None)
+                            .unwrap_or(&ds.name)
+                            .to_owned(),
+                        reason: reason.clone(),
+                    }),
+                    None => kept.push((item_id, ds)),
+                },
+                Err(reason) => skipped.push(HarvestSkippedItem {
+                    title: item_id.clone(),
+                    item_id,
+                    reason,
+                }),
+            }
+        }
+        Ok((kept, skipped))
+    }
+
+    /// Every record of an OGC API Records collection, page by page along `rel: next`. The read
+    /// is complete when the pages stop, do not loop, and hold `numberMatched` records where the
+    /// first page gives it; a record with no id or title is skipped with its reason.
+    async fn gather_ogc_records(
+        &self,
+        ctx: &RequestCtx,
+        source: &HarvestSource,
+        cat_allowed_hosts: &[String],
+        lang: &str,
+    ) -> Result<Gathered> {
+        let (mut kept, mut skipped) = (Vec::new(), Vec::new());
+        let (mut read, mut matched) = (0usize, None);
+        let mut next_url = Some(records_page_url(&source.url, RECORDS_PAGE));
+        let mut seen = BTreeSet::new();
+        for _ in 0..MAX_PAGES {
+            let Some(url) = next_url.take() else {
+                break;
+            };
+            if !seen.insert(url.clone()) {
+                return Err(incomplete(format!("the pages loop back to {url}")));
+            }
+            let (_, body) = self
+                .checked_fetch(&url, source, cat_allowed_hosts, RECORDS_ACCEPT)
+                .await?;
+            let page =
+                parse_ogc_records_page(ctx.org_id, ctx.catalogue_id, source, &url, &body, lang)?;
+            matched = matched.or(page.matched);
+            read += page.read;
+            kept.extend(page.kept);
+            skipped.extend(page.skipped);
+            next_url = page.next.filter(|_| page.read > 0);
+        }
+        if next_url.is_some() {
+            return Err(incomplete(format!(
+                "the collection still pages after {MAX_PAGES} pages"
+            )));
+        }
+        if let Some(expected) = matched.filter(|&m| m != read) {
+            return Err(incomplete(format!("got {read} of {expected} records")));
+        }
+        let distinct = kept.iter().map(|(id, _)| id).collect::<BTreeSet<_>>().len();
+        if distinct != kept.len() {
+            return Err(incomplete(format!(
+                "the collection listed {} records, {distinct} of them distinct",
+                kept.len()
+            )));
+        }
+        Ok((kept, skipped))
+    }
+}
+
+impl HarvestEngine {
     /// Keeps the items the platform converted (`source.converted`), each with its Endpoint's
     /// distributions in place of the source's links (prod's `od_standards`, EP-118); the others
     /// are skipped and, when an earlier run listed them, withdrawn. An Endpoint's model index
@@ -970,6 +1171,11 @@ impl HarvestEngine {
                 format!("{base}/api/search/v1/collections/dataset/items?limit=1"),
                 "application/json",
             ),
+            HarvestSourceKind::ArcGisRest => (
+                format!("{}?f=json", base.split(['?', '#']).next().unwrap_or(base)),
+                "application/json",
+            ),
+            HarvestSourceKind::OgcRecords => (records_page_url(base, 1), RECORDS_ACCEPT),
         })
     }
 
@@ -986,6 +1192,23 @@ impl HarvestEngine {
                 .is_ok_and(|v| v.get("features").is_some_and(Value::is_array)),
             HarvestSourceKind::NkodSparql => serde_json::from_str::<Value>(body)
                 .is_ok_and(|v| v.pointer("/results/bindings").is_some_and(Value::is_array)),
+            HarvestSourceKind::ArcGisRest if arcgis_service_type(&source.url).is_some() => {
+                serde_json::from_str::<Value>(body).is_ok_and(|v| {
+                    v.get("error").is_none()
+                        && (v.get("layers").is_some_and(Value::is_array)
+                            || v.get("serviceDescription").is_some())
+                })
+            }
+            HarvestSourceKind::ArcGisRest => parse_arcgis_directory(body).is_ok(),
+            HarvestSourceKind::OgcRecords => parse_ogc_records_page(
+                ctx.org_id,
+                ctx.catalogue_id,
+                source,
+                &source.url,
+                body,
+                "en",
+            )
+            .is_ok(),
         }
     }
 }

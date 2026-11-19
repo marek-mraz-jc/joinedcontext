@@ -535,15 +535,20 @@ async fn remote_notify_for_another_organizations_tenant_reads_as_an_unknown_mapp
             &index,
             antares_store::Kind::DistSub,
             remote,
-            json!({"tenant": "sk_b__x", "own": "urn:ngsi-ld:Subscription:own"}),
+            // the digest of the proof "t" the copy carried (T-7421)
+            json!({"tenant": "sk_b__x", "own": "urn:ngsi-ld:Subscription:own",
+                   "proof": "e3b98a4da31a127d4bde6e43033f66ba274cab0eb7eb1c70ec41402bf6273dd8"}),
         )
     };
     map().await.expect("mapping");
-    let note = json!({"id": "urn:ngsi-ld:Notification:1", "type": "Notification",
-                      "subscriptionId": remote, "notifiedAt": "2026-01-01T00:00:00Z",
-                      "data": []});
-    let notify = |caller: Vec<(&'static str, &'static str)>| {
-        let (st, note) = (st.clone(), note.clone());
+    let seq = std::sync::atomic::AtomicU64::new(0);
+    let notify = |mut caller: Vec<(&'static str, &'static str)>| {
+        let n = seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let note = json!({"id": format!("urn:ngsi-ld:Notification:{n}"), "type": "Notification",
+                          "subscriptionId": remote, "notifiedAt": antares_api::state::now_iso(),
+                          "data": []});
+        caller.push(("Antares-Notify-Proof", "t"));
+        let st = st.clone();
         async move {
             send(
                 &st,
@@ -557,9 +562,9 @@ async fn remote_notify_for_another_organizations_tenant_reads_as_an_unknown_mapp
         }
     };
     let served = notify(owner.clone()).await;
-    assert_ne!(
+    assert_eq!(
         served.0,
-        StatusCode::NOT_FOUND,
+        StatusCode::OK,
         "the owner's notification is taken"
     );
     let refused = notify(member("sk_a")).await;
@@ -568,7 +573,7 @@ async fn remote_notify_for_another_organizations_tenant_reads_as_an_unknown_mapp
         .await
         .expect("unmap");
     let unknown = notify(member("sk_a")).await;
-    assert_eq!(unknown.0, StatusCode::NOT_FOUND);
+    assert_eq!(unknown.0, StatusCode::UNAUTHORIZED);
     assert_eq!(refused, unknown);
 }
 

@@ -29,7 +29,15 @@ import type { BadgeTone } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 
 /** The source types a Portal knows (docs/kinds/Portal.md, ODP-10), the harvested ones after `endpoints`. */
-export const SOURCE_TYPES = ["endpoints", "dcat-ap", "ckan-action", "nkod-sparql", "arcgis-hub"] as const;
+export const SOURCE_TYPES = [
+  "endpoints",
+  "dcat-ap",
+  "ckan-action",
+  "nkod-sparql",
+  "arcgis-hub",
+  "arcgis-rest",
+  "ogc-records",
+] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 /** One `spec.sources[]` entry, the members this tab writes; the others stay as stored. */

@@ -13294,7 +13294,9 @@
         "dcat-ap": "DCAT-AP-Katalog",
         "ckan-action": "CKAN-Katalog",
         "nkod-sparql": "Nationaler Katalog (SPARQL)",
-        "arcgis-hub": "ArcGIS Hub"
+        "arcgis-hub": "ArcGIS Hub",
+        "arcgis-rest": "ArcGIS-REST-Dienste",
+        "ogc-records": "OGC API Records"
       },
       "field": {
         "type": "Typ",
@@ -13314,7 +13316,9 @@
           "dcat-ap": "Die https-Adresse eines DCAT-AP-Katalogs in Turtle, RDF/XML oder JSON-LD, zum Beispiel https://data.kosice.sk/catalog.ttl.",
           "ckan-action": "Die https-Adresse einer CKAN Action API, zum Beispiel https://data.gov.sk/api/3/action.",
           "nkod-sparql": "Die https-Adresse des SPARQL-Endpunkts, zum Beispiel https://data.slovensko.sk/sparql.",
-          "arcgis-hub": "Die https-Adresse einer ArcGIS-Hub-Seite, zum Beispiel https://opendata.bratislava.sk."
+          "arcgis-hub": "Die https-Adresse einer ArcGIS-Hub-Seite, zum Beispiel https://opendata.bratislava.sk.",
+          "arcgis-rest": "Die https-Adresse eines ArcGIS-REST-Dienstverzeichnisses, eines Ordners oder eines einzelnen Feature- oder Kartendienstes, zum Beispiel https://sampleserver6.arcgisonline.com/arcgis/rest/services; jeder Dienst wird ein Datensatz.",
+          "ogc-records": "Die https-Adresse einer OGC-API-Records-Sammlung, zum Beispiel https://demo.pygeoapi.io/master/collections/dutch-metadata; jeder Datensatz der Sammlung wird ein Datensatz."
         },
         "allowedHosts": "Hosts, von denen der Lauf auch lesen darf, durch Kommas getrennt, zum Beispiel files.kosice.sk; der Host der Adresse ist immer erlaubt. Jeder muss in der Erlaubnisliste des Betreibers stehen.",
         "records": "Ein Lauf endet nach so vielen Datensätzen, zum Beispiel 5000.",
@@ -13326,7 +13330,7 @@
         "name": "Verwenden Sie Kleinbuchstaben, Ziffern und Bindestriche.",
         "nameTaken": "Das Portal hat bereits eine Quelle dieses Namens.",
         "type": "Wählen Sie einen Typ.",
-        "url": "Schreiben Sie eine https-Adresse, zum Beispiel https://data.kosice.sk/catalog.ttl.",
+        "url": "Schreiben Sie eine https-Adresse wie im Beispiel unter dem Feld.",
         "allowedHosts": "Schreiben Sie nur Hostnamen.",
         "number": "Schreiben Sie eine ganze Zahl über 0.",
         "schedule": "Schreiben Sie fünf Cron-Felder.",

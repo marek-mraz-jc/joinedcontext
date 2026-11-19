@@ -13294,7 +13294,9 @@
         "dcat-ap": "Katalóg DCAT-AP",
         "ckan-action": "Katalóg CKAN",
         "nkod-sparql": "Národný katalóg (SPARQL)",
-        "arcgis-hub": "ArcGIS Hub"
+        "arcgis-hub": "ArcGIS Hub",
+        "arcgis-rest": "Služby ArcGIS REST",
+        "ogc-records": "OGC API Records"
       },
       "field": {
         "type": "Typ",
@@ -13314,7 +13316,9 @@
           "dcat-ap": "Adresa https katalógu DCAT-AP v Turtle, RDF/XML alebo JSON-LD, napríklad https://data.kosice.sk/catalog.ttl.",
           "ckan-action": "Adresa https CKAN Action API, napríklad https://data.gov.sk/api/3/action.",
           "nkod-sparql": "Adresa https SPARQL endpointu, napríklad https://data.slovensko.sk/sparql.",
-          "arcgis-hub": "Adresa https stránky ArcGIS Hub, napríklad https://opendata.bratislava.sk."
+          "arcgis-hub": "Adresa https stránky ArcGIS Hub, napríklad https://opendata.bratislava.sk.",
+          "arcgis-rest": "Adresa https adresára služieb ArcGIS REST, priečinka alebo jednej mapovej či prvkovej služby, napríklad https://sampleserver6.arcgisonline.com/arcgis/rest/services; každá služba bude jedna dátová sada.",
+          "ogc-records": "Adresa https kolekcie OGC API Records, napríklad https://demo.pygeoapi.io/master/collections/dutch-metadata; každý záznam bude jedna dátová sada."
         },
         "allowedHosts": "Hostiteľské mená, z ktorých beh smie tiež čítať, oddelené čiarkou, napríklad files.kosice.sk; hostiteľ adresy je povolený vždy. Každé musí byť v zozname povolených operátora.",
         "records": "Beh skončí po tomto počte záznamov, napríklad 5000.",
@@ -13326,7 +13330,7 @@
         "name": "Použite malé písmená, číslice a pomlčky.",
         "nameTaken": "Portál už má zdroj s týmto názvom.",
         "type": "Vyberte typ.",
-        "url": "Napíšte adresu https, napríklad https://data.kosice.sk/catalog.ttl.",
+        "url": "Napíšte adresu https, ako v príklade pod poľom.",
         "allowedHosts": "Napíšte len hostiteľské mená.",
         "number": "Napíšte celé číslo väčšie ako 0.",
         "schedule": "Napíšte päť polí cron.",

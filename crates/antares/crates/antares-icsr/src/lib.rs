@@ -113,8 +113,9 @@ impl ForwardTransport for Internal {
         tenant: &'a TenantId,
         _uri: &'a str,
         notification: &'a serde_json::Value,
+        receiver_info: &'a [(String, String)],
     ) -> NotifyFuture<'a> {
-        Box::pin(self.deliver(tenant.as_str(), notification))
+        Box::pin(self.deliver(tenant.as_str(), notification, receiver_info))
     }
 }
 
@@ -125,7 +126,12 @@ const REFUSED: ForwardAnswer = (403, serde_json::Value::Null, Vec::new());
 impl Internal {
     /// Deliver `notification` of a copy in Tenant `target` to the Tenant
     /// that receives it, if `target` still grants that Tenant its data.
-    async fn deliver(&self, target: &str, notification: &serde_json::Value) -> Result<(), String> {
+    async fn deliver(
+        &self,
+        target: &str,
+        notification: &serde_json::Value,
+        receiver_info: &[(String, String)],
+    ) -> Result<(), String> {
         let copy = notification
             .get("subscriptionId")
             .and_then(serde_json::Value::as_str)
@@ -157,7 +163,9 @@ impl Internal {
             target_tenant = target,
             "internal notification"
         );
-        self.ops.notify_in_process(RECEIVER, notification).await
+        self.ops
+            .notify_in_process(RECEIVER, notification, receiver_info)
+            .await
     }
 
     /// Serve `req`, whose target `url` lies under `self_url`, in process if

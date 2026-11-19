@@ -60,6 +60,70 @@ async fn send_ld(st: &AppState, method: &str, path: &str, body: String) -> (Stat
 
 /// Same as [`send`], with an inbound `Via` header — the shape of a request
 /// arriving from a peer broker (6.3.17/6.3.18).
+/// The proof each forwarded copy carries in its receiverInfo, by remote
+/// subscription id, as the recording mocks saw it (T-7421): what a real
+/// Context Source sends back with every notification.
+static PROOFS: std::sync::LazyLock<Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(Mutex::default);
+static NOTIFICATION_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn remember_proof(head: &str, body: &str) {
+    let Ok(copy) = serde_json::from_str::<Value>(body) else {
+        return;
+    };
+    let token = copy
+        .pointer("/notification/endpoint/receiverInfo")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|p| p["key"] == "Antares-Notify-Proof")
+        .and_then(|p| p["value"].as_str());
+    // a PATCH names the copy in its path, a POST in its body
+    let id = copy["id"].as_str().map(str::to_owned).or_else(|| {
+        head.split_whitespace()
+            .nth(1)
+            .and_then(|p| p.rsplit('/').next())
+            .map(str::to_owned)
+    });
+    if let (Some(id), Some(token)) = (id, token) {
+        PROOFS.lock().expect("proofs").insert(id, token.to_owned());
+    }
+}
+
+/// A notification as the Context Source sends it: the copy's proof header,
+/// a fresh notifiedAt and an id of its own.
+fn as_source(
+    b: axum::http::request::Builder,
+    path: &str,
+    body: Option<String>,
+) -> (axum::http::request::Builder, Option<String>) {
+    if path != "/ex/v1/remote-notify" {
+        return (b, body);
+    }
+    let Some(mut v) = body
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+    else {
+        return (b, body);
+    };
+    let n = NOTIFICATION_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let proof = v["subscriptionId"]
+        .as_str()
+        .and_then(|sid| PROOFS.lock().expect("proofs").get(sid).cloned());
+    if let Some(o) = v.as_object_mut() {
+        o.insert(
+            "id".into(),
+            json!(format!("urn:ngsi-ld:Notification:test{n}")),
+        );
+        o.insert("notifiedAt".into(), json!(antares_api::state::now_iso()));
+    }
+    let b = match proof {
+        Some(p) => b.header("Antares-Notify-Proof", p),
+        None => b,
+    };
+    (b, Some(v.to_string()))
+}
+
 async fn send_via(
     st: &AppState,
     method: &str,
@@ -71,6 +135,7 @@ async fn send_via(
     if let Some(v) = via {
         b = b.header("Via", v);
     }
+    let (b, body) = as_source(b, path, body);
     let req = match body {
         Some(body) => b
             .header("Content-Type", "application/json")
@@ -157,6 +222,7 @@ fn recording_mock_opts(delay_ms: u64, record_head: bool) -> (u16, Arc<Mutex<Vec<
                 }
                 let first = headers.lines().next().unwrap_or("").to_owned();
                 let body = String::from_utf8_lossy(&buf[header_end..]).to_string();
+                remember_proof(&first, &body);
                 let head = if record_head { headers.clone() } else { first };
                 sink.lock().expect("sink").push(format!("{head}\n\n{body}"));
                 if delay_ms > 0 {
@@ -324,7 +390,8 @@ async fn clause_5_8_1_4_consumer_half_end_to_end() {
     )
     .await;
 
-    // an unknown remote subscriptionId is 404, never forwarded
+    // an unknown remote subscriptionId is refused like a missing proof
+    // (T-7421), never forwarded
     let (status, _) = send(
         &st,
         "POST",
@@ -332,7 +399,7 @@ async fn clause_5_8_1_4_consumer_half_end_to_end() {
         Some(json!({"type": "Notification", "subscriptionId": "urn:nope", "data": []}).to_string()),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // 5.8.5.4: deleting the Subscription forwards the delete (5.11.6)
     let (status, _) = send(
@@ -485,14 +552,14 @@ async fn clause_5_8_6_origin_csf_gates_inbound_notifications() {
             Some(inbound("urn:ngsi-ld:Vehicle:gated")),
         )
         .await;
-        if status == StatusCode::NOT_FOUND {
+        if status == StatusCode::UNAUTHORIZED {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
     assert_eq!(
         status,
-        StatusCode::NOT_FOUND,
+        StatusCode::UNAUTHORIZED,
         "a notification for a mapping that no longer exists is refused"
     );
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
@@ -1605,10 +1672,11 @@ async fn send_tenant(
     body: Option<String>,
     tenant: &str,
 ) -> (StatusCode, Value) {
-    let mut b = Request::builder()
+    let b = Request::builder()
         .method(method)
         .uri(path)
         .header("NGSILD-Tenant", tenant);
+    let (mut b, body) = as_source(b, path, body);
     if body.is_some() {
         b = b.header("Content-Type", "application/json");
     }
@@ -1913,4 +1981,187 @@ async fn the_internal_distsub_endpoint_cannot_be_named_by_a_client() {
     // and nothing was stored under that id
     let (status, _) = send(&st, "GET", &format!("/ngsi-ld/v1/subscriptions/{id}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "no subscription was created");
+}
+
+/// One notification posted exactly as given, with `proof` in the header.
+async fn post_notification(
+    st: &AppState,
+    proof: Option<&str>,
+    body: &Value,
+) -> (StatusCode, Value) {
+    let body = body.to_string();
+    let mut b = Request::builder()
+        .method("POST")
+        .uri("/ex/v1/remote-notify")
+        .header("Content-Type", "application/json")
+        .header("Content-Length", body.len());
+    if let Some(p) = proof {
+        b = b.header("Antares-Notify-Proof", p);
+    }
+    let res = antares_api::router(st.clone())
+        .oneshot(b.body(Body::from(body)).expect("request"))
+        .await
+        .expect("response");
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// T-7421: the copy's notification endpoint carries a proof the Context
+/// Source sends back, and `/ex/v1/remote-notify` takes a notification only
+/// with that proof, a fresh notifiedAt and an id it has not taken before. A
+/// forged, wrong, replayed or stale notification and one under an unknown id
+/// all get the same 401, and none reaches the subscriber.
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_notify_needs_the_proof_of_its_copy() {
+    allow_private();
+    std::env::set_var("ANTARES_PUBLIC_URL", "http://127.0.0.1:9999");
+    let mut st = AppState::new("antares-distsub-proof".into());
+    antares_api::wire(&mut st).await;
+    let (remote_port, remote_seen) = recording_mock();
+    let (orig_port, orig_seen) = recording_mock();
+    let reg = json!({
+        "id": "urn:ngsi-ld:ContextSourceRegistration:proof1",
+        "type": "ContextSourceRegistration",
+        "information": [{"entities": [{"type": "Vehicle"}]}],
+        "operations": ["federationOps"],
+        "endpoint": format!("http://127.0.0.1:{remote_port}"),
+    });
+    let (status, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/csourceRegistrations",
+        Some(reg.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let sub = json!({
+        "id": "urn:ngsi-ld:Subscription:proof-own",
+        "type": "Subscription",
+        "entities": [{"type": "Vehicle"}],
+        "notification": {"endpoint": {"uri": format!("http://127.0.0.1:{orig_port}/original")}},
+    });
+    let (status, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/subscriptions",
+        Some(sub.to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    wait_for("the forwarded copy", || {
+        remote_seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .any(|r| r.starts_with("POST /ngsi-ld/v1/subscriptions"))
+    })
+    .await;
+    let copy: Value = {
+        let seen = remote_seen.lock().expect("seen");
+        let raw = seen
+            .iter()
+            .find(|r| r.starts_with("POST /ngsi-ld/v1/subscriptions"))
+            .expect("post");
+        serde_json::from_str(raw.split_once("\n\n").expect("body").1).expect("json")
+    };
+    let remote_id = copy["id"].as_str().expect("remote id").to_owned();
+    let proof = copy["notification"]["endpoint"]["receiverInfo"][0]["value"]
+        .as_str()
+        .expect("the copy carries a proof for its notifications")
+        .to_owned();
+    assert_eq!(
+        copy["notification"]["endpoint"]["receiverInfo"][0]["key"],
+        "Antares-Notify-Proof"
+    );
+
+    let note = |id: &str, at: String, sid: &str| {
+        json!({"id": id, "type": "Notification", "subscriptionId": sid, "notifiedAt": at,
+               "data": [{"id": "urn:ngsi-ld:Vehicle:proof", "type": "Vehicle",
+                         "speed": {"type": "Property", "value": 1}}]})
+    };
+    let now = antares_api::state::now_iso;
+    let refused = [
+        (
+            "forged: no proof",
+            None,
+            note("urn:ngsi-ld:Notification:p1", now(), &remote_id),
+        ),
+        (
+            "a wrong proof",
+            Some("0".repeat(64)),
+            note("urn:ngsi-ld:Notification:p2", now(), &remote_id),
+        ),
+        (
+            "an unknown id",
+            Some(proof.clone()),
+            note(
+                "urn:ngsi-ld:Notification:p3",
+                now(),
+                "urn:ngsi-ld:Subscription:nope",
+            ),
+        ),
+        (
+            "expired: notifiedAt an hour ago",
+            Some(proof.clone()),
+            note(
+                "urn:ngsi-ld:Notification:p4",
+                "2020-01-01T00:00:00Z".to_owned(),
+                &remote_id,
+            ),
+        ),
+        (
+            "no notification id",
+            Some(proof.clone()),
+            json!({"type": "Notification", "subscriptionId": remote_id, "notifiedAt": now(), "data": []}),
+        ),
+    ];
+    let mut answers = Vec::new();
+    for (what, p, body) in &refused {
+        let (status, body) = post_notification(&st, p.as_deref(), body).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{what}: {body}");
+        answers.push(body);
+    }
+    assert!(
+        answers.windows(2).all(|w| w[0] == w[1]),
+        "one answer for every refusal: {answers:?}"
+    );
+    assert!(
+        !answers[0].to_string().contains(&proof),
+        "the answer never echoes a proof"
+    );
+
+    let valid = note("urn:ngsi-ld:Notification:p5", now(), &remote_id);
+    let (status, body) = post_notification(&st, Some(&proof), &valid).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    wait_for("the valid notification at the subscriber", || {
+        orig_seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .any(|r| r.contains("urn:ngsi-ld:Vehicle:proof"))
+    })
+    .await;
+    let (status, body) = post_notification(&st, Some(&proof), &valid).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a replay is refused: {body}"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(
+        orig_seen
+            .lock()
+            .expect("seen")
+            .iter()
+            .filter(|r| r.contains("urn:ngsi-ld:Vehicle:proof"))
+            .count(),
+        1,
+        "only the valid notification reached the subscriber"
+    );
 }

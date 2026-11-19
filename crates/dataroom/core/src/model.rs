@@ -818,6 +818,11 @@ pub enum HarvestSourceKind {
     /// derived spelling `arc-gis-hub` is still read.
     #[serde(rename = "arcgis-hub", alias = "arc-gis-hub")]
     ArcGisHub,
+    /// An ArcGIS REST services directory, folder or one FeatureServer/MapServer.
+    #[serde(rename = "arcgis-rest")]
+    ArcGisRest,
+    /// An OGC API Records collection.
+    OgcRecords,
 }
 
 impl HarvestSourceKind {
@@ -827,6 +832,8 @@ impl HarvestSourceKind {
             Self::NkodSparql => "nkod-sparql",
             Self::CkanAction => "ckan-action",
             Self::ArcGisHub => "arcgis-hub",
+            Self::ArcGisRest => "arcgis-rest",
+            Self::OgcRecords => "ogc-records",
         }
     }
 }

@@ -202,4 +202,7 @@ def test_the_report_holds_statuses_and_attribute_names_never_values():
     assert "w1 | ngsi-ld | hidden | fail" in text
     assert "kept" not in text and "second" not in text
     assert suite.Suite.brief([entity(True)]) == "list of 1"
+    assert suite.Suite.brief({"title": "AccessDenied", "detail": "no Policy of this endpoint grants you this write"}) \
+        == "title: AccessDenied, detail: no Policy of this endpoint grants you this write"
+    assert suite.Suite.brief({"title": "AccessDenied"}) == "title: AccessDenied"
     assert "kept" not in suite.Suite.brief(entity(True))
