@@ -75,13 +75,22 @@ def under(host: str, domain: str) -> bool:
 
 
 def routes(jc_toml: str, domain: str) -> tuple[list[tuple[str, str, str]], set[str]]:
-    """([(virtual prefix, host, real prefix)] longest first, every host) of a host-mode jc.toml.
-    Entries on a host outside `domain` (localhost:8080, a wildcard) are left out: never reached."""
+    """([(virtual prefix, host, real prefix)] longest first, every host) of a host- or slug-mode jc.toml.
+    Host mode: entries on a host outside `domain` (localhost:8080, a wildcard) are left out: never
+    reached. Slug mode serves every module as paths of base_host, so the virtual paths go there
+    whole; it is accepted only with [[organizations]] on hosts of their own (jc-dev), the hosts the
+    orgs suite probes."""
     doc = tomllib.loads(jc_toml)
-    if doc.get("mode") != "host":
-        raise SystemExit("--jc-config: not a host-mode jc.toml (mode = \"host\")")
+    if doc.get("mode") not in ("host", "slug"):
+        raise SystemExit("--jc-config: neither a host-mode nor a slug-mode jc.toml (mode = \"host\" or \"slug\")")
     if doc.get("base_host", "").lower() != domain:
         raise SystemExit(f"--jc-config: base_host {doc.get('base_host')!r} is not --domain {domain!r}")
+    if doc["mode"] == "slug":
+        own = {h for o in doc.get("organizations") or [] if isinstance(o, dict) and o.get("host") != "auto"
+               for h in (o.get("hosts") or {}).values() if isinstance(h, str) and h}
+        if not own:
+            raise SystemExit("--jc-config: a slug-mode jc.toml whose [[organizations]] name no hosts: no host to probe")
+        return [("", domain, "")], plain_hosts(own, "an Organization host") | {domain}
     out, hosts = [], set()
     for module, entries in (doc.get("mounts") or {}).items():
         entries = entries if isinstance(entries, list) else [entries]
