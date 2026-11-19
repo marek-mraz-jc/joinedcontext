@@ -40,6 +40,9 @@ pub struct DashboardTarget {
     pub anchor: Target,
     /// The published Endpoints the dashboard reads, by name, with their slugs.
     pub endpoints: BTreeMap<String, String>,
+    /// The `spec.catalog.publisher` of its project, else of the project's Organization: who the
+    /// dashboard's dataset names as its publisher, as the project's other datasets do (T-7317).
+    pub publisher: Option<Value>,
 }
 
 impl DashboardTarget {
@@ -95,6 +98,7 @@ pub fn targets(repo: &Repository, wanted: &[Target]) -> Vec<DashboardTarget> {
         }
         if let Some(anchor) = anchor {
             out.push(DashboardTarget {
+                publisher: catalog_publisher(repo, &project),
                 project,
                 name: id.name.clone(),
                 spec,
@@ -104,6 +108,41 @@ pub fn targets(repo: &Repository, wanted: &[Target]) -> Vec<DashboardTarget> {
         }
     }
     out
+}
+
+/// The `spec.catalog.publisher` of `project`, else of its Organization (ADR-N-058 2.3).
+fn catalog_publisher(repo: &Repository, project: &str) -> Option<Value> {
+    let declared = |kind: &str, name: &str| {
+        repo.iter()
+            .find(|(id, _)| {
+                id.kind == kind
+                    && id.name == name
+                    && id
+                        .namespace
+                        .as_deref()
+                        .is_none_or(|n| n == crate::api::blueprints::ORG_NAMESPACE)
+            })
+            .and_then(|(_, r)| r.manifest.spec.pointer("/catalog/publisher").cloned())
+            .filter(|p| p.get("name").is_some())
+    };
+    declared("Project", project).or_else(|| {
+        let organization = super::ckan::organization_in(repo, project)?;
+        declared("Organization", &organization)
+    })
+}
+
+/// A text of a manifest: a plain string, or one per language, taken in the first of `preferred`
+/// it has, else English, else any.
+fn text_in(value: &Value, preferred: &[String]) -> Option<String> {
+    let text = match value {
+        Value::Object(texts) => preferred
+            .iter()
+            .chain(std::iter::once(&"en".to_owned()))
+            .find_map(|lang| texts.get(lang).and_then(Value::as_str))
+            .or_else(|| texts.values().find_map(Value::as_str)),
+        other => other.as_str(),
+    }?;
+    (!text.trim().is_empty()).then(|| text.trim().to_owned())
 }
 
 /// What the catalogue should hold for a dashboard: the package, and each chart view with the
@@ -203,17 +242,27 @@ pub fn desired(
         "{title}: charts and tables over the live data of {}.",
         read.join(", ")
     );
+    let mut extras = vec![
+        json!({ "key": "generated_by", "value": GENERATOR }),
+        json!({ "key": ENDPOINTS_EXTRA, "value": urls.join(" ") }),
+        json!({ "key": LAYOUT_EXTRA, "value": text(&json!({ "pages": pages }))? }),
+    ];
+    // The keys the publisher writes beside every other dataset (ckanext-dcat's), so the
+    // dashboard names its project's publisher, not the organization it is filed under.
+    let publisher = dashboard.publisher.as_ref();
+    if let Some(name) = publisher.and_then(|p| text_in(&p["name"], &preferred)) {
+        extras.push(json!({ "key": "publisher_name", "value": name }));
+    }
+    if let Some(uri) = publisher.and_then(|p| text_in(&p["uri"], &[])) {
+        extras.push(json!({ "key": "publisher_uri", "value": uri }));
+    }
     let package = json!({
         "name": name,
         "title": title,
         "notes": notes,
         "type": DASHBOARD_TYPE,
         "owner_org": organization,
-        "extras": [
-            { "key": "generated_by", "value": GENERATOR },
-            { "key": ENDPOINTS_EXTRA, "value": urls.join(" ") },
-            { "key": LAYOUT_EXTRA, "value": text(&json!({ "pages": pages }))? },
-        ],
+        "extras": extras,
         "resources": resources,
     });
     Ok(Desired { package, views })

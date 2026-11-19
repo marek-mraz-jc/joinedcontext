@@ -9591,7 +9591,20 @@
       "hint": "Tick the values a dataset must have. Two values of one filter mean either, e.g. two publishers.",
       "open": "{count, plural, =0 {Filters} other {Filters (#)}}",
       "close": "Close filters",
-      "show": "{count, plural, =0 {Show no dataset} one {Show # dataset} other {Show # datasets}}"
+      "show": "{count, plural, =0 {Show no dataset} one {Show # dataset} other {Show # datasets}}",
+      "chosen": "Chosen filters",
+      "remove": "Remove filter {facet}: {value}",
+      "clearAll": "Clear all",
+      "clear": "Clear",
+      "noneChosen": "No filter is ticked yet.",
+      "everywhere": "Every dataset listed has these values, so this filter narrows nothing now.",
+      "find": {
+        "label": "Find a {facet} value",
+        "placeholder": "Type to narrow, e.g. {example}"
+      },
+      "noMatch": "No value matches.",
+      "all": "Show all {count}",
+      "fewer": "Show fewer"
     },
     "results": {
       "label": "Datasets",
@@ -9802,6 +9815,10 @@
       "empty": {
         "title": "No internal dataset is shared with you yet",
         "description": "Ask a data steward of your organization to grant your group access. The public datasets below are open to everyone."
+      },
+      "noProject": {
+        "title": "You are not in a project of this organization yet",
+        "description": "A project owner or an administrator of this organization can add you to a project; its internal datasets are then listed here. The public datasets below are open to everyone."
       },
       "unanswered": "{count} datasets could not be checked just now and are not listed. Reload the page in a minute.",
       "access": {

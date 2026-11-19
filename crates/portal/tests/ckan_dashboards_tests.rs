@@ -57,6 +57,11 @@ fn dashboard(visibility: &str) -> Value {
 
 /// The repository of one project: its catalogue, a public Endpoint and the dashboard.
 fn targets_of(visibility: &str) -> Vec<DashboardTarget> {
+    targets_beside(visibility, &[])
+}
+
+/// [`targets_of`] with `more` manifests (YAML documents) in the repository.
+fn targets_beside(visibility: &str, more: &[String]) -> Vec<DashboardTarget> {
     static RUN: AtomicUsize = AtomicUsize::new(0);
     let repository = std::env::temp_dir().join(format!(
         "jc-ckan-dashboards-{}-{}",
@@ -82,6 +87,10 @@ fn targets_of(visibility: &str) -> Vec<DashboardTarget> {
             manifest("Endpoint", "bikes", endpoint),
             manifest("Dashboard", "ukazovatele", dashboard(visibility)),
         ]
+        .iter()
+        .chain(more)
+        .cloned()
+        .collect::<Vec<_>>()
         .join("---\n"),
     )
     .expect("the repository");
@@ -142,6 +151,64 @@ fn a_public_dashboard_is_a_dashboard_package_with_a_chart_view_per_vega_lite_wid
         source,
         json!({ "source": "csv", "type": "BikeHireDockingStation" })
     );
+}
+
+/// An Organization-level manifest (`namespace: org`).
+fn org_manifest(kind: &str, name: &str, spec: Value) -> String {
+    serde_norway::to_string(&json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": kind,
+        "metadata": { "name": name, "namespace": "org" },
+        "spec": spec,
+    }))
+    .expect("yaml")
+}
+
+/// T-7317: a dashboard of a project filed under the installation's organization names its
+/// project's publisher, else its Organization's, as the project's datasets do; none, no key.
+#[test]
+fn a_dashboard_names_its_project_publisher_else_its_organization() {
+    let organization = org_manifest(
+        "Organization",
+        "hel",
+        json!({ "catalog": { "publisher": { "name": { "en": "Helsinki Region Context" } } } }),
+    );
+    let declared = org_manifest(
+        "Project",
+        PROJECT,
+        json!({
+            "organizationRef": "hel",
+            "catalog": { "publisher": {
+                "name": { "sk": "Banskobystrický samosprávny kraj", "en": "Banská Bystrica Self-Governing Region" },
+                "uri": "https://data.gov.sk/id/legal-subject/37828100"
+            } }
+        }),
+    );
+    let mut sk = settings();
+    sk.language = Some("sk".into());
+    let found = targets_beside("public", &[organization.clone(), declared]);
+    let package = desired(&found[0], "hel", &sk).expect("desired").package;
+    assert_eq!(
+        extra(&package, "publisher_name"),
+        "Banskobystrický samosprávny kraj"
+    );
+    assert_eq!(
+        extra(&package, "publisher_uri"),
+        "https://data.gov.sk/id/legal-subject/37828100"
+    );
+
+    let silent = org_manifest("Project", PROJECT, json!({ "organizationRef": "hel" }));
+    let found = targets_beside("public", &[organization, silent]);
+    let package = desired(&found[0], "hel", &settings())
+        .expect("desired")
+        .package;
+    assert_eq!(extra(&package, "publisher_name"), "Helsinki Region Context");
+    assert_eq!(extra(&package, "publisher_uri"), "");
+
+    let package = desired(&targets_of("public")[0], "bbsk", &settings())
+        .expect("desired")
+        .package;
+    assert_eq!(extra(&package, "publisher_name"), "");
 }
 
 #[test]
