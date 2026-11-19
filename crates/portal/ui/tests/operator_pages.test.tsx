@@ -140,6 +140,14 @@ describe("changes", () => {
     await expectNoAxeViolations(document.body);
   });
 
+  it("names a ProjectMove by its project and the Organization it moves to", async () => {
+    const move = { id: "7d1e2f3a-4b5c-4d6e-8f70-112233445566", kind: "ProjectMove", payload: { project: "banskabystrica", organization: "banskabystrica" }, state: "proposed", proposedBy: "someone-else", proposedAt: "2026-11-19T08:00:00Z", decidedBy: null, decidedAt: null };
+    render(<OperatorChanges />, (path) => (path === "/api/v1/operator/changes" ? json({ items: [move] }) : undefined));
+    expect((await screen.findAllByText(en.operator.kind.ProjectMove)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^banskabystrica/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(`${en.operator.changes.organization}: banskabystrica`).length).toBeGreaterThan(0);
+  });
+
   it("says what to do when nothing is asked for", async () => {
     render(<OperatorChanges />, (path) => (path === "/api/v1/operator/changes" ? json({ items: [] }) : undefined));
     expect(await screen.findByText(en.operator.changes.empty)).toBeTruthy();

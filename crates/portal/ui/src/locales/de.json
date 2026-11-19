@@ -13739,7 +13739,8 @@
       "HostRemove": "Host entfernen",
       "OperatorAdd": "Betreiber hinzufügen",
       "OperatorRemove": "Betreiber entfernen",
-      "SmtpSet": "E-Mail-Server festlegen"
+      "SmtpSet": "E-Mail-Server festlegen",
+      "ProjectMove": "Projekt in eine andere Organisation verschieben"
     },
     "changeState": {
       "proposed": "Wartet auf Genehmigung",

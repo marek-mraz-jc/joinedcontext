@@ -274,7 +274,7 @@ async fn a_project_named_like_its_new_organization_moves() {
 }
 
 /// Only an operator with a second factor plans or asks for a move; the registry refuses a moved
-/// Organization outside an approved move, and every table `tenant` guards has the move's policy.
+/// Organization outside an approved move, and the keyed tables stay forced.
 #[tokio::test]
 async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
     let state = world().await;
@@ -313,12 +313,12 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
         "the registry refuses a move outside a ProjectMove"
     );
 
-    let unguarded: Vec<String> = sqlx::query_scalar(
-        "SELECT tablename::text FROM pg_policies WHERE schemaname = current_schema() AND policyname = 'tenant' \
-         EXCEPT SELECT tablename::text FROM pg_policies WHERE schemaname = current_schema() AND policyname = 'project_move'",
+    // The tables stay forced: the move lifts FORCE only inside its own transaction.
+    let unforced: Vec<String> = sqlx::query_scalar(
+        "SELECT relname::text FROM pg_class WHERE relname IN ('drafts', 'activity') AND NOT relforcerowsecurity",
     )
     .fetch_all(pool(&state))
     .await
-    .expect("policies");
-    assert_eq!(unguarded, Vec::<String>::new());
+    .expect("catalog");
+    assert_eq!(unforced, Vec::<String>::new());
 }

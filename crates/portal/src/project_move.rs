@@ -1,7 +1,7 @@
 //! Moving a project to another Organization (T-7305): what the operators' `ProjectMove` Change
 //! plans and applies. The project keeps its id; its registry row and every row keyed by
-//! (old Organization, project id) take the target Organization's key in one transaction, under the
-//! `project_move` policy of migration 0089. The Organization a request places the project in comes
+//! (old Organization, project id) take the target Organization's key in one transaction, through
+//! migration 0089's `project_move`. The Organization a request places the project in comes
 //! from its Project manifest (`spec.organizationRef`, in Git), so the move applies only once the
 //! manifest names the target: before that the registry would key the project under an
 //! Organization the mirror does not place it in, and every keyed read would answer 404.
@@ -234,8 +234,8 @@ impl From<sqlx::Error> for MoveError {
 }
 
 /// Moves `project` to `to` inside `tx`, which the caller commits with its decision and audit row:
-/// the registry row is locked, every keyed row of the project under its old Organization takes
-/// the target's key, then the registry row does. A project under `to` already moves nothing
+/// the rules of [`plan`] are checked again under the registry row's lock, then every keyed row of
+/// the project under its old Organization takes the target's key, and the registry row does. A project under `to` already moves nothing
 /// (an apply is idempotent). Answers the plan as it was applied, with the rows moved per table.
 pub async fn apply(
     tx: &mut sqlx::PgConnection,
@@ -251,16 +251,16 @@ pub async fn apply(
     .bind(project)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((id, Some(from), Some(from_key))) = row else {
+    let Some((id, Some(from), Some(_))) = row else {
         return Err(MoveError::Refused(format!(
             "project: '{project}' is no project of the registry with an Organization"
         )));
     };
-    let to_key = active_key(&mut *tx, to).await?.ok_or_else(|| {
-        MoveError::Refused(format!(
+    if active_key(&mut *tx, to).await?.is_none() {
+        return Err(MoveError::Refused(format!(
             "organization: '{to}' is no active Organization of the registry"
-        ))
-    })?;
+        )));
+    }
     let manifest_organization = organization_of(mirror, project);
     if manifest_organization.as_deref() != Some(to) {
         return Err(MoveError::Refused(format!(
@@ -280,46 +280,21 @@ pub async fn apply(
             "project: '{project}' has {branches} live branch(es); merge or close them first"
         )));
     }
-    let mut moved = Vec::new();
-    if from != to {
-        sqlx::query(
-            "SELECT set_config('statement_timeout', $4, true), set_config('jc.org', $1, true), \
-             set_config('jc.project', $2, true), set_config('jc.move_to', $3, true)",
-        )
-        .bind(&from_key)
-        .bind(&id)
-        .bind(&to_key)
-        .bind(crate::db::BULK_STATEMENT_TIMEOUT)
-        .execute(&mut *tx)
-        .await?;
-        for table in keyed_tables(&mut *tx).await? {
-            let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-                "UPDATE \"{table}\" SET org_id = $3::uuid \
-                 WHERE org_id = $1::uuid AND project_id = $2::uuid"
-            )))
-            .bind(&from_key)
-            .bind(&id)
-            .bind(&to_key)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-            if rows > 0 {
-                moved.push(TableRows { table, rows });
-            }
-        }
-        sqlx::query("UPDATE project_ids SET organization = $2 WHERE id = $1::uuid")
+    // Migration 0089's `project_move` re-keys each table holding the project's rows as their
+    // owner, then the registry row; it moves nothing when the project is under `to` already.
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("SELECT moved_table, moved_rows FROM project_move($1::uuid, $2)")
             .bind(&id)
             .bind(to)
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await?;
-        // The rest of the caller's transaction (its decision and audit row) is keyed by nothing.
-        sqlx::query(
-            "SELECT set_config('jc.org', '', true), set_config('jc.project', '', true), \
-             set_config('jc.move_to', '', true)",
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
+    let moved: Vec<TableRows> = rows
+        .into_iter()
+        .map(|(table, rows)| TableRows {
+            table,
+            rows: rows.unsigned_abs(),
+        })
+        .collect();
     Ok(MovePlan {
         project: project.to_owned(),
         done: from == to,

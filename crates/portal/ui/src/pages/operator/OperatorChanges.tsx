@@ -23,7 +23,7 @@ export function OperatorChanges(): JSX.Element {
     mutationFn: ({ id, verb }: { id: string; verb: "approve" | "reject" }) => decideChange(id, verb),
     onSettled: () => client.invalidateQueries({ queryKey: ["operator"] }),
   });
-  const target = (row: OperatorChange) => row.payload.host ?? row.payload.subject ?? row.payload.smtp?.host ?? "";
+  const target = (row: OperatorChange) => row.payload.host ?? row.payload.subject ?? row.payload.smtp?.host ?? row.payload.project ?? "";
   const asker = (row: OperatorChange) => (row.proposedBy === me ? t("operator.changes.you") : (row.proposedByName ?? row.proposedBy));
   return (
     <section className="space-y-6" aria-labelledby="operator-changes-heading">

@@ -13739,7 +13739,8 @@
       "HostRemove": "Odstranit hostitele",
       "OperatorAdd": "Přidat operátora",
       "OperatorRemove": "Odstranit operátora",
-      "SmtpSet": "Nastavit e-mailový server"
+      "SmtpSet": "Nastavit e-mailový server",
+      "ProjectMove": "Přesunout projekt do jiné organizace"
     },
     "changeState": {
       "proposed": "Čeká na schválení",

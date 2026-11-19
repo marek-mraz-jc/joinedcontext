@@ -289,6 +289,9 @@ routes:
   - route: GET /operator/organizations
     rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
     expect: [401, 403, 403, 403, 403, 403, 403, 403]
+  - route: GET /operator/project-moves/plan
+    rule: "a person of the operators' group with a second factor (T-7305); 403 for everyone else, a bearer token included"
+    expect: [401, 403, 403, 403, 403, 403, 403, 403]
   - route: GET /operator/hosts
     rule: "a person of the operators' group with a second factor (T-7129 §4); 403 for everyone else, a bearer token included"
     expect: [401, 403, 403, 403, 403, 403, 403, 403]

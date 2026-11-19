@@ -13739,7 +13739,8 @@
       "HostRemove": "Remove a host",
       "OperatorAdd": "Add an operator",
       "OperatorRemove": "Remove an operator",
-      "SmtpSet": "Set the e-mail server"
+      "SmtpSet": "Set the e-mail server",
+      "ProjectMove": "Move a project to another Organization"
     },
     "changeState": {
       "proposed": "Waits for approval",
