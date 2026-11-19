@@ -14,8 +14,9 @@ age = { version = "0.12", default-features = false, features = ["armor"] }
 # the pinned core @context (T-3913). The same tag as context-gateway's, so one copy builds.
 antares-jsonld.workspace = true
 base64 = "0.22"
-# The export index stamps when it was taken; jc-core already carries the same clock.
-chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# The export index stamps when it was taken, and the changelog's window and days (T-7233 plan).
+jc-time = { version = "0.1.0", path = "../../../../crates/shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # The proof key of `jcctl login` (RFC 7636): the OS random source, already in the tree.
 getrandom = "0.3"
 jsonschema = { version = "0.54", default-features = false }

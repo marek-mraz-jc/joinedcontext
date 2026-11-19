@@ -10,7 +10,7 @@ use crate::envelope::{Kind, ObjectMeta, Scope, SecretRef};
 use crate::error::{Error, Result};
 use crate::names;
 use crate::registry;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -406,7 +406,7 @@ impl BundleItem {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BundleSpec {
     /// When the bundle was produced.
-    pub exported_at: DateTime<Utc>,
+    pub exported_at: TimestampTz,
     /// Who produced it (a user or ServiceAccount name).
     pub exported_by: String,
     /// Base URL of the instance it came from, so a re-import can be traced (MF-25).

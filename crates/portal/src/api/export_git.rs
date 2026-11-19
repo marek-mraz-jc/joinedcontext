@@ -248,7 +248,7 @@ pub async fn archive(
             ..Default::default()
         },
         spec: BundleSpec {
-            exported_at: chrono::Utc::now(),
+            exported_at: jc_time::TimestampTz::now(),
             exported_by: exported_by.to_owned(),
             source_instance: None,
             source_revision: head.clone(),

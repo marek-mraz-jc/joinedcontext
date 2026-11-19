@@ -28,6 +28,7 @@ use jc_core::kinds::{
     AgreementRole, AgreementState, DataAgreementSpec, DataOfferSpec, Operation, OperationGroup,
     OperationRef, PolicySpec, Principal, PrincipalKind, Validity,
 };
+use jc_time::TimestampTz;
 use serde_json::Value;
 
 /// Why an agreement compiles into nothing.

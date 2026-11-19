@@ -3,7 +3,7 @@
 use crate::envelope::{Kind, ObjectMeta, Scope, TypedRef, ORG_NAMESPACE};
 use crate::error::{Error, Result};
 use crate::names;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -231,7 +231,7 @@ pub struct RemoteSource {
     /// SHA-256 of the fetched source, 64 lowercase hexadecimal characters; a change opens a merge request.
     pub sha256: String,
     /// When the fetch happened.
-    pub fetched_at: DateTime<Utc>,
+    pub fetched_at: TimestampTz,
 }
 
 impl DataModelSource {

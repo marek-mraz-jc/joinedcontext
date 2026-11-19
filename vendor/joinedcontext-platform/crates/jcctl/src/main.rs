@@ -959,7 +959,7 @@ fn changelog(words: &[&str]) -> ExitCode {
     let Some(options) = jcctl::commands::changelog::Options::parse(words) else {
         return usage();
     };
-    match options.render(chrono::Utc::now()) {
+    match options.render(jc_time::TimestampTz::now()) {
         Ok(page) => {
             println!("{page}");
             ExitCode::SUCCESS

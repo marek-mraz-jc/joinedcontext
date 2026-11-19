@@ -7,7 +7,7 @@
 use crate::error::{Error, Result};
 use crate::kinds::pipeline_lifetime::is_slot_name;
 use crate::kinds::Representation;
-use chrono::NaiveDate;
+use jc_time::Date;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -22,9 +22,9 @@ pub const MAX_LINK_LEN: usize = 2048;
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Deprecation {
     /// The day the deprecation was announced, `YYYY-MM-DD`.
-    pub since: NaiveDate,
+    pub since: Date,
     /// The earliest day the deprecated part may stop answering, at least 90 days after `since`.
-    pub sunset: NaiveDate,
+    pub sunset: Date,
     /// A public `https` page about the change and its replacement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
@@ -39,15 +39,28 @@ pub struct Deprecation {
 impl Deprecation {
     /// Checks the notice period, the link and that each surface is one the Endpoint `serves`.
     pub fn validate(&self, serves: &[Representation]) -> Result<()> {
-        if self.sunset - self.since < chrono::Duration::days(NOTICE_DAYS) {
+        let days = i64::from(
+            self.since
+                .0
+                .until(self.sunset.0)
+                .map_or(0, |span| span.get_days()),
+        );
+        if days < NOTICE_DAYS {
             return Err(Error::Invalid {
                 field: "spec.deprecation.sunset".to_owned(),
                 reason: format!(
                     "a breaking change is announced at least {NOTICE_DAYS} days ahead: the \
                      sunset is {} days after since {}; set it to {} or later (EP-146)",
-                    (self.sunset - self.since).num_days(),
+                    days,
                     self.since,
-                    self.since + chrono::Duration::days(NOTICE_DAYS),
+                    // NOTICE_DAYS is 90: inside jiff's range for any date but the last 90 days
+                    // of year 9999, where the hint repeats `since` rather than overflow.
+                    Date(
+                        self.since
+                            .0
+                            .checked_add(jiff::Span::new().days(NOTICE_DAYS))
+                            .unwrap_or(self.since.0)
+                    ),
                 ),
             });
         }
@@ -109,8 +122,8 @@ mod tests {
 
     fn deprecation(since: &str, sunset: &str) -> Deprecation {
         Deprecation {
-            since: since.parse().expect("date"),
-            sunset: sunset.parse().expect("date"),
+            since: Date(jc_time::parse_date(since).expect("date")),
+            sunset: Date(jc_time::parse_date(sunset).expect("date")),
             link: None,
             representations: Vec::new(),
             attributes: Vec::new(),
@@ -139,6 +152,25 @@ mod tests {
             .validate(&all)
             .expect_err("before since");
         assert_eq!(field_of(err), "spec.deprecation.sunset");
+    }
+
+    /// The refusal reads as the chrono build wrote it (T-7252): days counted across a leap day
+    /// and a year end, the hint date `since` + 90 days. Strings pasted from the chrono run.
+    #[test]
+    fn the_notice_refusal_keeps_the_chrono_wording() {
+        let golden = [
+            ("2026-01-01", "2026-03-31", Some("invalid spec.deprecation.sunset: a breaking change is announced at least 90 days ahead: the sunset is 89 days after since 2026-01-01; set it to 2026-04-01 or later (EP-146)")),
+            ("2026-01-01", "2026-04-01", None),
+            ("2024-02-29", "2024-05-28", Some("invalid spec.deprecation.sunset: a breaking change is announced at least 90 days ahead: the sunset is 89 days after since 2024-02-29; set it to 2024-05-29 or later (EP-146)")),
+            ("2026-10-25", "2026-12-01", Some("invalid spec.deprecation.sunset: a breaking change is announced at least 90 days ahead: the sunset is 37 days after since 2026-10-25; set it to 2027-01-23 or later (EP-146)")),
+        ];
+        for (since, sunset, want) in golden {
+            let got = deprecation(since, sunset)
+                .validate(&[])
+                .err()
+                .map(|e| e.to_string());
+            assert_eq!(got.as_deref(), want, "{since} {sunset}");
+        }
     }
 
     #[test]

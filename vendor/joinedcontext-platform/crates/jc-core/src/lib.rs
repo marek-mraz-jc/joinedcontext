@@ -11,6 +11,8 @@
 pub mod address;
 #[cfg(feature = "auth")]
 pub mod auth;
+#[cfg(test)]
+mod chrono_wire_tests;
 pub mod classification;
 pub mod conversions;
 pub mod cron;

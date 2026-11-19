@@ -85,7 +85,7 @@ fn mirror_with_build(spec: serde_json::Value, commit: &str) -> Arc<Mirror> {
             digest: format!("sha256:{}", "a1b2c3d4".repeat(8)),
             commit: commit.to_owned(),
             sdk_version: "0.4.1".to_owned(),
-            built_at: chrono::Utc::now(),
+            built_at: jc_time::TimestampTz::now(),
             component: None,
         }),
         shard: None,

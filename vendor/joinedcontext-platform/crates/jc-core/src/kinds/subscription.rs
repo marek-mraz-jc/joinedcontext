@@ -17,9 +17,10 @@
 use crate::envelope::{Kind, ObjectMeta, Ref, Scope, SecretRef};
 use crate::error::{Error, Result};
 use crate::names;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
 /// One selector of the entities a subscription watches (CIM 009 clause 5.2.12).
 ///
@@ -113,7 +114,7 @@ pub struct SubscriptionSpec {
     pub throttling: Option<u32>,
     /// When the subscription stops, if it is not open-ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
     /// Whether the broker delivers; a subscription written with `isActive: false` is declared
     /// and silent, which is how one is parked without deleting it.
     #[serde(default = "default_active")]
@@ -169,7 +170,7 @@ impl SubscriptionSpec {
     /// Validates the selector and the endpoint (CC-72, MF-31).
     ///
     /// The expiry is not checked here, because this crate has no clock on purpose: the gateway
-    /// links it and takes chrono without `clock`, so the moment is the caller's to supply —
+    /// links it, so the moment is the caller's to supply —
     /// [`validate_at`](Self::validate_at) is the same check with one.
     pub fn validate(&self) -> Result<()> {
         if self.entities.is_empty() && self.watched_attributes.is_empty() {
@@ -204,10 +205,11 @@ impl SubscriptionSpec {
     ///
     /// An expiry already past is a subscription that never fires, written as though it would:
     /// whoever writes it is told so, rather than the broker silently dropping it.
-    pub fn validate_at(&self, now: DateTime<Utc>) -> Result<()> {
+    pub fn validate_at(&self, now: impl Into<SystemTime>) -> Result<()> {
+        let now = now.into();
         self.validate()?;
         match self.expires_at {
-            Some(expires_at) if expires_at <= now => Err(Error::Name {
+            Some(expires_at) if SystemTime::from(expires_at) <= now => Err(Error::Name {
                 field: "spec.expiresAt",
                 value: expires_at.to_rfc3339(),
                 reason: "a subscription that has already expired would never fire",

@@ -295,7 +295,7 @@ pub fn reapable(spec: &ServiceAccountSpec, now: chrono::DateTime<chrono::Utc>) -
                 .validity
                 .as_ref()
                 .and_then(|v| v.not_after)
-                .is_some_and(|to| to < now)
+                .is_some_and(|to| crate::time_shim::utc(to) < now)
         })
         .map(|(at, _)| at)
         .collect();

@@ -10,7 +10,8 @@ pub mod topics;
 
 pub use grant::{Grant, ANY_BROKER, GRANT_PREFIX};
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
+use std::time::SystemTime;
 
 use crate::kinds::mqtt_broker::MqttRole;
 use crate::kinds::service_account::BindingValidity;
@@ -36,7 +37,7 @@ pub struct Held<'a> {
     /// Held through at least one RoleBinding in force.
     pub bound: bool,
     /// When the last grant of the role ends; `None` while one has no end.
-    pub until: Option<DateTime<Utc>>,
+    pub until: Option<TimestampTz>,
 }
 
 /// The account a broker's roles are decided for.
@@ -67,12 +68,13 @@ pub fn roles_held<'a, 'b>(
     broker: Broker<'a>,
     account: Account<'_>,
     bindings: impl IntoIterator<Item = Binding<'b>>,
-    now: DateTime<Utc>,
+    now: impl Into<SystemTime>,
 ) -> Vec<Held<'a>> {
+    let now = now.into();
     if account.project != broker.project {
         return Vec::new();
     }
-    let grants: Vec<(Grant<'b>, Option<DateTime<Utc>>)> = bindings
+    let grants: Vec<(Grant<'b>, Option<TimestampTz>)> = bindings
         .into_iter()
         .filter(|b| b.project == Some(broker.project))
         .filter(|b| b.validity.is_none_or(|v| v.contains(now)))
@@ -86,7 +88,7 @@ pub fn roles_held<'a, 'b>(
         .iter()
         .filter_map(|role| {
             let legacy = role.service_accounts.iter().any(|a| a == account.name);
-            let ends: Vec<Option<DateTime<Utc>>> = grants
+            let ends: Vec<Option<TimestampTz>> = grants
                 .iter()
                 .filter(|(grant, _)| grant.names(broker.name, &role.name))
                 .map(|(_, end)| *end)
@@ -113,7 +115,6 @@ pub fn roles_held<'a, 'b>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     fn role(name: &str, accounts: &[&str]) -> MqttRole {
         MqttRole {
@@ -126,10 +127,11 @@ mod tests {
         }
     }
 
-    fn at(day: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 11, day, 12, 0, 0)
-            .single()
+    fn at(day: i8) -> TimestampTz {
+        TimestampTz::from_date(jiff::civil::date(2026, 11, day))
             .expect("a date")
+            .checked_add(jiff::SignedDuration::from_hours(12))
+            .expect("in range")
     }
 
     fn names(held: &[Held<'_>]) -> Vec<String> {

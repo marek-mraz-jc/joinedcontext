@@ -1,6 +1,5 @@
 //! T-0525: `kind: Role` and `kind: RoleBinding` (PF-49, PF-52).
 
-use chrono::{TimeZone, Utc};
 use jc_core::envelope::ResourceEnvelope;
 use jc_core::error::Error;
 use jc_core::kinds::{Role, RoleBindingSpec, SubjectSource, Verb};
@@ -193,10 +192,9 @@ fn validity_is_ordered_and_bounds_are_inclusive() {
 
     let binding = binding("", "").expect("valid");
     let validity = binding.spec.validity.as_ref().expect("has validity");
-    assert!(validity.contains(Utc.with_ymd_and_hms(2026, 12, 31, 23, 59, 59).unwrap()));
-    assert!(!validity.contains(Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).unwrap()));
-    assert!(jc_core::kinds::BindingValidity::default()
-        .contains(Utc.with_ymd_and_hms(2030, 6, 1, 0, 0, 0).unwrap()));
+    assert!(validity.contains(at("2026-12-31T23:59:59Z")));
+    assert!(!validity.contains(at("2027-01-01T00:00:00Z")));
+    assert!(jc_core::kinds::BindingValidity::default().contains(at("2030-06-01T00:00:00Z")));
 }
 
 #[test]
@@ -537,4 +535,8 @@ fn a_user_subject_named_by_e_mail_or_username_is_refused() {
         assert!(err.to_string().contains("spec.subjects[].user"), "{err}");
         assert!(err.to_string().contains("Keycloak user id"), "{err}");
     }
+}
+
+fn at(s: &str) -> jiff::Timestamp {
+    s.parse().expect("an instant")
 }

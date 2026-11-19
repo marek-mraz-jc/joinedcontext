@@ -4,7 +4,7 @@ use crate::envelope::{Kind, ObjectMeta, Ref, Scope};
 use crate::error::{Error, Result};
 use crate::names;
 use crate::urn::Urn;
-use chrono::{DateTime, Utc};
+use jc_time::{SecondsFormat, TimestampTz};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -724,16 +724,25 @@ pub enum WriteCapability {
     Delete,
 }
 
+/// `t` as chrono's `DateTime<Utc>` displayed it in a refusal: `2026-01-01 00:00:00.500 UTC`.
+pub(crate) fn chrono_display(t: TimestampTz) -> String {
+    let rfc3339 = t.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+    format!(
+        "{} UTC",
+        rfc3339.trim_end_matches('Z').replacen('T', " ", 1)
+    )
+}
+
 /// Temporal validity window for a policy grant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Validity {
     /// Effective start timestamp (UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub from: Option<DateTime<Utc>>,
+    pub from: Option<TimestampTz>,
     /// Effective expiration timestamp (UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub to: Option<DateTime<Utc>>,
+    pub to: Option<TimestampTz>,
 }
 
 /// What a Policy grants beyond CIM 009's operations (ADR-N-054 2.4, 2.6; T-4666).
@@ -1026,7 +1035,7 @@ impl PolicySpec {
                 if from > to {
                     return Err(Error::Name {
                         field: "spec.validity",
-                        value: format!("{from} > {to}"),
+                        value: format!("{} > {}", chrono_display(from), chrono_display(to)),
                         reason: "validity `from` must be less than or equal to `to`",
                     });
                 }

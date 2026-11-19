@@ -2390,8 +2390,8 @@ pub fn account_access(
         .map(|(index, granted)| {
             let window = granted.validity.clone().unwrap_or_default();
             let state = match (window.not_before, window.not_after) {
-                (Some(from), _) if now < from => GrantState::Pending,
-                (_, Some(to)) if to < now => GrantState::Expired,
+                (Some(from), _) if now < crate::time_shim::utc(from) => GrantState::Pending,
+                (_, Some(to)) if crate::time_shim::utc(to) < now => GrantState::Expired,
                 _ => GrantState::Active,
             };
             let reach = Reach::of(&granted.scope);
@@ -2421,8 +2421,8 @@ pub fn account_access(
                 index,
                 role: granted.role.clone(),
                 scope: reach.map(|reach| reach.name()).unwrap_or_default(),
-                not_before: window.not_before,
-                not_after: window.not_after,
+                not_before: window.not_before.map(crate::time_shim::utc),
+                not_after: window.not_after.map(crate::time_shim::utc),
                 state,
                 rules,
             }

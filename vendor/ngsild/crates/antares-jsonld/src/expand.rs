@@ -1513,9 +1513,10 @@ pub fn parse_datetime(s: &str) -> bool {
             return false;
         }
     }
-    // real calendar date/time, not just digits in the right slots
-    let normalized = format!("{seconds}Z");
-    chrono::DateTime::parse_from_rfc3339(&normalized).is_ok()
+    // real calendar date/time, not just digits in the right slots; a civil one, since
+    // 9999-12-31 is past jiff's last instant but a real day, and second 60 reads as 59 as
+    // chrono took a leap second
+    seconds.parse::<jiff::civil::DateTime>().is_ok()
 }
 
 /// A DateTime `parse_datetime` accepted, with a comma fraction separator
@@ -1531,6 +1532,23 @@ fn point_fraction(s: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// T-7252: the calendar check takes what chrono's `parse_from_rfc3339` took: a leap day only
+    /// in a leap year, second 60, no hour 24 or month 13. Verdicts pasted from the chrono build.
+    #[test]
+    fn the_calendar_check_reads_as_the_chrono_build_did() {
+        for (text, want) in [
+            ("2024-02-29T00:00:00Z", true),
+            ("2026-02-29T00:00:00Z", false),
+            ("2026-06-30T23:59:60Z", true),
+            ("2026-01-01T24:00:00Z", false),
+            ("2026-13-01T00:00:00Z", false),
+            ("0000-01-01T00:00:00Z", true),
+            ("9999-12-31T23:59:59Z", true),
+        ] {
+            assert_eq!(parse_datetime(text), want, "{text}");
+        }
+    }
 
     /// 4.5.5.1: explicit "datasetId": "@none" designates the default
     /// instance — normalized to absent, so it never appears in responses and

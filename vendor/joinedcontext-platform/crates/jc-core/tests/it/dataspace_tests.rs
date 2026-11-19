@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use jc_core::envelope::{Ref, SecretRef};
 use jc_core::error::Error;
 use jc_core::kinds::dataspace::{AgreementRole, AgreementState, ConnectorEngine, Did};
@@ -354,11 +353,11 @@ fn data_agreement_state_machine_transitions() {
 fn data_agreement_is_active_boundaries() {
     let agr = DataAgreement::from_yaml(GOLDEN_AGREEMENT).expect("valid golden YAML");
 
-    let t_before: DateTime<Utc> = "2026-08-31T23:59:59Z".parse().unwrap();
-    let t_start: DateTime<Utc> = "2026-09-01T00:00:00Z".parse().unwrap();
-    let t_mid: DateTime<Utc> = "2027-01-15T12:00:00Z".parse().unwrap();
-    let t_end: DateTime<Utc> = "2027-09-01T00:00:00Z".parse().unwrap();
-    let t_after: DateTime<Utc> = "2027-09-01T00:00:01Z".parse().unwrap();
+    let t_before: jiff::Timestamp = "2026-08-31T23:59:59Z".parse().unwrap();
+    let t_start: jiff::Timestamp = "2026-09-01T00:00:00Z".parse().unwrap();
+    let t_mid: jiff::Timestamp = "2027-01-15T12:00:00Z".parse().unwrap();
+    let t_end: jiff::Timestamp = "2027-09-01T00:00:00Z".parse().unwrap();
+    let t_after: jiff::Timestamp = "2027-09-01T00:00:01Z".parse().unwrap();
 
     assert!(!agr.spec.is_active(t_before));
     assert!(agr.spec.is_active(t_start));

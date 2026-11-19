@@ -16,7 +16,7 @@ use crate::kinds::policy::{
 };
 use crate::kinds::Policy;
 use crate::urn::Urn;
-use chrono::{DateTime, SecondsFormat, Utc};
+use jc_time::{parse_rfc3339, SecondsFormat, TimestampTz};
 use serde_json::{json, Map, Value};
 
 /// The JSON-LD contexts of the profile, in this order: ODRL's own, then the `ngsi-ld:` profile.
@@ -638,11 +638,7 @@ fn geo_q(relation: &str, right: &Value, at: &str) -> Out<String> {
 }
 
 fn validity(grant: &mut Grant, operator: &str, right: &Value, at: &str) -> Out<()> {
-    let Some(at_time) = right
-        .as_str()
-        .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-        .map(|t| t.with_timezone(&Utc))
-    else {
+    let Some(at_time) = right.as_str().and_then(parse_rfc3339).map(TimestampTz) else {
         return refuse(
             format!("{at}.rightOperand"),
             "an RFC 3339 time, e.g. 2027-01-01T00:00:00Z",

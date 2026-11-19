@@ -16,11 +16,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use axum::http::{HeaderMap, StatusCode};
-use chrono::Utc;
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Request};
 use context_gateway::resolver::EndpointRoles;
 use jc_core::kinds::{AppSpec, EndpointSpec, Operation, PolicySpec};
+use jc_time::TimestampTz;
 use jcctl::loader::RawManifest;
 use joinedcontext_portal::apps::reconciler::{
     generate_slug, grants, render, RenderError, Settings,
@@ -304,7 +304,15 @@ fn allowed(subject: &Subject, operation: Operation, policies: &[PolicySpec]) -> 
         types: BTreeSet::from([TYPE.to_owned()]),
         ..Request::default()
     };
-    !evaluate(subject, operation, &request, SPACE, policies, Utc::now()).is_deny()
+    !evaluate(
+        subject,
+        operation,
+        &request,
+        SPACE,
+        policies,
+        TimestampTz::now(),
+    )
+    .is_deny()
 }
 
 /// What the variant's access and roles say a persona may do; the gateway is held to this.
@@ -427,7 +435,7 @@ fn every_variant_renders_and_the_gateway_decides_what_its_access_says() {
                 &elsewhere,
                 SPACE,
                 &policy_specs,
-                Utc::now(),
+                TimestampTz::now(),
             );
             assert!(
                 verdict

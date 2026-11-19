@@ -580,7 +580,7 @@ pub struct Build {
     /// The version of the app SDK the artifact was built against.
     pub sdk_version: String,
     /// When the build lane published it.
-    pub built_at: chrono::DateTime<chrono::Utc>,
+    pub built_at: jc_time::TimestampTz,
     /// The digest of a `wasm` App's server component, taken from the checked bundle and stored
     /// by it in the object store; what the WASM host loads and checks (AP-151).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -667,5 +667,5 @@ pub struct Condition {
     pub message: Option<String>,
     /// Last transition timestamp.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_transition_time: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_transition_time: Option<jc_time::TimestampTz>,
 }

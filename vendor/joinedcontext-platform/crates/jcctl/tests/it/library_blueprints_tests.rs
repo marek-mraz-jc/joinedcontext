@@ -459,8 +459,8 @@ fn run_camera_mapping(mapping: &str, payloads: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-fn time_of(value: &Value) -> chrono::DateTime<chrono::FixedOffset> {
-    chrono::DateTime::parse_from_rfc3339(value.as_str().expect("a time")).expect("RFC 3339")
+fn time_of(value: &Value) -> jiff::Timestamp {
+    jc_time::parse_rfc3339(value.as_str().expect("a time")).expect("RFC 3339")
 }
 
 /// T-5562: a message timed an hour back or ahead, or with a time that does not parse, writes
@@ -478,8 +478,8 @@ fn a_replayed_or_backdated_frame_does_not_overwrite_current_state() {
     let mapping = pipeline.spec["compute"]["bloblang"]
         .as_str()
         .expect("a mapping");
-    let started = chrono::Utc::now();
-    let at = |minutes: i64| (started + chrono::Duration::minutes(minutes)).to_rfc3339();
+    let started = jc_time::TimestampTz::now();
+    let at = |minutes: i64| (started + jiff::SignedDuration::from_mins(minutes)).to_rfc3339();
     let frame = |n: u32, observed: String| json!({ "measurementType": "temperature", "value": 21.5, "frame": n, "observedAt": observed });
     let fresh = frame(7, at(-1));
     let written = run_camera_mapping(
@@ -505,7 +505,7 @@ fn a_replayed_or_backdated_frame_does_not_overwrite_current_state() {
         &first[0]["dateLastValueReported"]["value"],
     ] {
         assert!(
-            time_of(attribute) >= started,
+            time_of(attribute) >= started.0,
             "the Device takes the arrival time: {attribute}"
         );
     }

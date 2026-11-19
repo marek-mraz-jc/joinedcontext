@@ -40,7 +40,7 @@ fn sub_str<'a>(sub: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
 }
 
 /// Every predicate at once: active, entities selector (5.2.33), `q` /
@@ -207,11 +207,8 @@ pub fn throttled(sub: &Value) -> bool {
     else {
         return false;
     };
-    chrono::DateTime::parse_from_rfc3339(last).is_ok_and(|t| {
-        chrono::Utc::now()
-            .signed_duration_since(t.with_timezone(&chrono::Utc))
-            .num_milliseconds()
-            < (secs * 1000.0) as i64
+    jc_time::parse_rfc3339(last).is_some_and(|t| {
+        jiff::Timestamp::now().duration_since(t).as_millis() < i128::from((secs * 1000.0) as i64)
     })
 }
 
@@ -363,13 +360,51 @@ mod tests {
             "an old lastNotification is outside the window"
         );
         // the window is in seconds: 10 s ago is inside 60 s and outside 5 s
-        let ago = (chrono::Utc::now() - chrono::Duration::seconds(10))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let ago = (jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10))
+            .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
         s["notification"]["lastNotification"] = json!(ago);
         s["throttling"] = json!(60);
         assert!(throttled(&s), "10 s ago, 60 s window");
         s["throttling"] = json!(5);
         assert!(!throttled(&s), "10 s ago, 5 s window");
+    }
+
+    /// T-7252: `lastNotification` reads by chrono's RFC 3339 grammar: an offset (the DST nights
+    /// of Bratislava and Helsinki), a space or `t` separator and `z` pass; `+0200`, a missing
+    /// offset and outer spaces do not, and an unread stamp throttles nothing.
+    #[test]
+    fn last_notification_reads_as_the_chrono_build_did() {
+        let ago = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10);
+        let in_zone = |zone: &str| {
+            let zoned = ago.0.in_tz(zone).expect("a zone");
+            zoned.strftime("%Y-%m-%dT%H:%M:%S%:z").to_string()
+        };
+        let z = ago.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
+        let bare = z.trim_end_matches('Z').to_owned();
+        let bratislava = in_zone("Europe/Bratislava");
+        let helsinki = in_zone("Europe/Helsinki");
+        for (text, want) in [
+            (z.clone(), true),
+            (bratislava.clone(), true),
+            (helsinki.clone(), true),
+            (z.replacen('T', " ", 1), true),
+            (z.replacen('T', "t", 1).replace('Z', "z"), true),
+            (
+                format!(
+                    "{}{}",
+                    &helsinki[..helsinki.len() - 3],
+                    &helsinki[helsinki.len() - 2..]
+                ),
+                false,
+            ),
+            (bare, false),
+            (format!(" {z}"), false),
+        ] {
+            let mut s = sub();
+            s["throttling"] = json!(60);
+            s["notification"]["lastNotification"] = json!(text);
+            assert_eq!(throttled(&s), want, "{text}");
+        }
     }
 
     /// 5.2.33 Table 5.2.33-1: `id` takes precedence over `idPattern`, and a

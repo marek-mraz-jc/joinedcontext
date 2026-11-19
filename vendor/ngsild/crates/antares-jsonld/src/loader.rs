@@ -590,6 +590,14 @@ pub async fn io_deadline<T>(fut: impl std::future::Future<Output = T>, ms: u32) 
 /// panics) on a hostile max-age or Expires.
 const MAX_CONTEXT_TTL: std::time::Duration = std::time::Duration::from_secs(31_536_000);
 
+/// An `Expires` value read as chrono's `parse_from_rfc2822` read it: RFC 2822 with the obsolete
+/// zones (`UT`, `EST`, `PDT`), two-digit years and comments; a wrong weekday is refused.
+fn http_date(text: &str) -> Option<jiff::Timestamp> {
+    jiff::fmt::rfc2822::parse(text)
+        .ok()
+        .map(|zoned| zoned.timestamp())
+}
+
 /// 6.3.16: cache lifetime of a downloaded @context comes from its response
 /// headers. `None` = no explicit lifetime (cache until evicted/reloaded).
 fn ttl_from_headers(
@@ -618,13 +626,9 @@ fn ttl_from_headers(
     }
     if let Some(exp) = expires {
         // HTTP-date (RFC 7231); an unparsable or past Expires means "stale".
-        let when = chrono::DateTime::parse_from_rfc2822(exp).ok()?;
-        let delta = when
-            .with_timezone(&chrono::Utc)
-            .signed_duration_since(chrono::Utc::now());
+        let delta = http_date(exp)?.duration_since(jiff::Timestamp::now());
         return Some(
-            delta
-                .to_std()
+            std::time::Duration::try_from(delta)
                 .unwrap_or(std::time::Duration::ZERO)
                 .min(MAX_CONTEXT_TTL),
         );
@@ -926,7 +930,7 @@ impl Loader {
     }
 
     fn now() -> String {
-        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
     }
 
     /// Bump usage stats (numberOfHits / lastUsage, 5.13.3.5) for one URL —
@@ -1542,6 +1546,38 @@ impl Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7252: `Expires` reads as chrono's `parse_from_rfc2822` read it, the DST nights of
+    /// Bratislava (+0100/+0200) and Helsinki (+0200/+0300) included. Seconds pasted from the
+    /// chrono build.
+    #[test]
+    fn expires_reads_as_the_chrono_build_did() {
+        let golden = [
+            ("Sun, 06 Nov 1994 08:49:37 GMT", Some(784111777)),
+            ("Sun, 29 Mar 2026 03:30:00 +0200", Some(1774747800)),
+            ("Sun, 29 Mar 2026 01:30:00 +0100", Some(1774744200)),
+            ("Sun, 25 Oct 2026 03:30:00 +0300", Some(1792888200)),
+            ("Sun, 25 Oct 2026 02:30:00 +0200", Some(1792888200)),
+            ("25 Oct 2026 01:30:00 UT", Some(1792891800)),
+            ("Sun, 25 Oct 2026 01:30 EST", Some(1792909800)),
+            ("Sun, 25 Oct 26 01:30:00 GMT", Some(1792891800)),
+            (
+                "Sun, 25 Oct 2026 01:30:00 -0000 (comment)",
+                Some(1792891800),
+            ),
+            ("Mon, 25 Oct 2026 01:30:00 GMT", None),
+            ("2026-10-25T01:30:00Z", None),
+            ("", None),
+            ("0", None),
+            ("Sun, 31 Feb 2026 01:30:00 GMT", None),
+            ("sun, 25 oct 2026 01:30:00 gmt", Some(1792891800)),
+            ("Sun, 25 Oct 2026 01:30:00 PDT", Some(1792917000)),
+            ("Sun, 25 Oct 2026 01:30:00 Z", Some(1792891800)),
+        ];
+        for (text, want) in golden {
+            assert_eq!(http_date(text).map(|t| t.as_second()), want, "{text:?}");
+        }
+    }
 
     /// 4.4: "the Core @context is protected and shall remain immutable and
     /// invariant during expansion or compaction of terms. […] implementations

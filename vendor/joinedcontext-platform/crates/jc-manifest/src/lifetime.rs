@@ -228,8 +228,7 @@ fn end_expression(end: &End) -> String {
             "{}.ts_unix()",
             literal(
                 // RFC 3339 in UTC to the second (chrono's `to_rfc3339_opts(Secs, true)`).
-                // `instant` is jc-core's chrono value until its slice (T-7252) moves it.
-                &instant.to_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+                &instant.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
             )
         ),
         End::From {

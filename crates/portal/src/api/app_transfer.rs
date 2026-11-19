@@ -127,7 +127,7 @@ pub async fn export_app(
             ..Default::default()
         },
         spec: BundleSpec {
-            exported_at: chrono::Utc::now(),
+            exported_at: jc_time::TimestampTz::now(),
             exported_by: identity.username.clone(),
             source_instance: None,
             source_revision: head.clone(),
