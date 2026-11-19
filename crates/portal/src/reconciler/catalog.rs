@@ -566,7 +566,7 @@ async fn listing(
     let mut held = BTreeMap::new();
     let mut offset = 0usize;
     loop {
-        let page: Vec<Value> = http
+        let response = http
             .get(format!("{surface}/entities"))
             .query(&[
                 ("type", "Dataset,DataService,Organization"),
@@ -578,8 +578,23 @@ async fn listing(
             .header("Accept", "application/json")
             .send()
             .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(|err| format!("the catalogue did not list: {err}"))?
+            .map_err(|err| format!("the catalogue did not list: {err}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let problem: Value = response.json().await.unwrap_or_default();
+            // CIM 009 clause 5.5.10: the broker creates a Tenant on its first create, so a
+            // catalogue nobody has written yet has none and holds nothing; the upsert that
+            // follows creates it through the Endpoint and its Policy (T-7387). Any other 404,
+            // such as an unknown Endpoint, still fails the run.
+            if status == reqwest::StatusCode::NOT_FOUND && names_no_tenant(&problem) {
+                return Ok(held);
+            }
+            return Err(format!(
+                "the catalogue did not list: {status}{}",
+                explained(&problem)
+            ));
+        }
+        let page: Vec<Value> = response
             .json()
             .await
             .map_err(|err| format!("the catalogue's listing is not JSON: {err}"))?;
@@ -592,6 +607,33 @@ async fn listing(
                 held.insert(id.to_owned(), Value::Null);
             }
         }
+    }
+}
+
+/// Whether a problem document is CIM 009's `NonexistentTenant` (clause 5.5.2), by the last
+/// segment of its `type`, as the gateway reads it.
+fn names_no_tenant(problem: &Value) -> bool {
+    problem["type"]
+        .as_str()
+        .is_some_and(|kind| kind.rsplit('/').next() == Some("NonexistentTenant"))
+}
+
+/// A refusal's problem `type` and `detail`, cut to [`REASON_CHARS`], so the run's error says
+/// which 404 or 403 it was; empty when the answer was no problem document.
+fn explained(problem: &Value) -> String {
+    let said: Vec<&str> = ["type", "detail"]
+        .into_iter()
+        .filter_map(|member| problem[member].as_str())
+        .collect();
+    match said.is_empty() {
+        true => String::new(),
+        false => format!(
+            " ({})",
+            said.join(": ")
+                .chars()
+                .take(REASON_CHARS)
+                .collect::<String>()
+        ),
     }
 }
 
@@ -691,6 +733,88 @@ mod tests {
             spec: json!({ "contextSpaceRef": space, "slug": slug }),
             status: None,
         }
+    }
+
+    /// A wave on a gateway at `server`, and one Dataset it wants written.
+    fn wave(server: &wiremock::MockServer) -> (CatalogSync, BTreeMap<String, Value>) {
+        let watch = Watch::new(
+            server.uri(),
+            &format!("{}/realms/city", server.uri()),
+            "portal".to_owned(),
+            crate::config::ClientAuth::Secret("s".into()),
+        );
+        let id = "urn:ngsi-ld:Dataset:air";
+        let wanted = BTreeMap::from([(id.to_owned(), json!({ "id": id, "type": "Dataset" }))]);
+        (
+            CatalogSync::new(Arc::new(watch), reqwest::Client::new()),
+            wanted,
+        )
+    }
+
+    /// T-7387, CIM 009 clause 5.5.10: a catalogue nobody has written has no Tenant, so its list
+    /// answers `NonexistentTenant`; that is an empty catalogue, and the upsert that creates the
+    /// Tenant goes out through the write door.
+    #[tokio::test]
+    async fn a_catalogue_without_a_tenant_is_empty_and_gets_its_first_write() {
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/api/endpoint/door/ngsi-ld/v1/entities"))
+            .respond_with(wiremock::ResponseTemplate::new(404).set_body_json(json!({
+                "type": "https://uri.etsi.org/ngsi-ld/errors/NonexistentTenant",
+                "title": "NonexistentTenant",
+                "detail": "tenant catalog does not exist",
+            })))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(path(
+                "/api/endpoint/door/ngsi-ld/v1/entityOperations/upsert",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (sync, wanted) = wave(&server);
+        let run = sync
+            .write(&reqwest::Client::new(), &server.uri(), "t", "door", wanted)
+            .await
+            .expect("an empty catalogue is written");
+        assert_eq!(
+            run,
+            Run {
+                upserted: 1,
+                deleted: 0
+            }
+        );
+    }
+
+    /// Any other 404 (an unknown Endpoint, a view the broker does not hold) still fails the run,
+    /// writes nothing and names what the gateway said.
+    #[tokio::test]
+    async fn a_catalogue_list_answering_another_404_fails_the_run() {
+        use wiremock::matchers::method;
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(404).set_body_json(json!({
+                "type": "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound",
+                "title": "Not Found",
+                "detail": "no Endpoint of that name",
+            })))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let (sync, wanted) = wave(&server);
+        let failed = sync
+            .write(&reqwest::Client::new(), &server.uri(), "t", "door", wanted)
+            .await
+            .expect_err("a plain 404 fails the run");
+        assert!(failed.contains("404"), "{failed}");
+        assert!(failed.contains("no Endpoint of that name"), "{failed}");
     }
 
     /// EP-187, T-6980: the public `catalog` Endpoint is open data and refuses writes, so the wave
