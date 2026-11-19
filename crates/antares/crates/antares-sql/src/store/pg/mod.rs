@@ -461,15 +461,31 @@ fn bypasses(probe: Result<bool, sqlx::Error>) -> bool {
     })
 }
 
-/// Arm the transaction-scoped `antares.service` escape (0001_init.sql) for
-/// the two internal cross-tenant jobs: outbox drain and temporal retention.
-/// NEVER call from a request path — request queries carry explicit tenant
-/// predicates and run under `set_tenant` only.
+/// Arm the transaction-scoped `antares.service` escape for the internal
+/// cross-tenant jobs: the outbox drain, the reaps and retention. Since 0042
+/// it opens anything only for a role that is a member of
+/// `antares_maintenance` or owns the tables, never for the request role of a
+/// split deployment. NEVER call from a request path — request queries carry
+/// explicit tenant predicates and run under `set_tenant` only.
 pub async fn set_service(tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT set_config('antares.service', 'on', true)")
         .execute(&mut **tx)
         .await
         .map(|_| ())
+}
+
+/// Whether this pool's role holds the cross-Tenant escape of 0042 once it
+/// arms [`set_service`]: a member of `antares_maintenance`, or the tables'
+/// owner. The boot refuses a maintenance pool that does not, since its drain
+/// and reaps would then read nothing and fail silently.
+pub async fn holds_maintenance(pool: &PgPool) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    set_service(&mut tx).await?;
+    let holds = sqlx::query_scalar("SELECT antares_service()")
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.rollback().await?;
+    Ok(holds)
 }
 
 /// The write's own claim on its tenant (ADR-0001: "every implicit tenant

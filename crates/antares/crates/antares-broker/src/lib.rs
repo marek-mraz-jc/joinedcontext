@@ -42,6 +42,8 @@ const KNOWN_KEYS: &[&str] = &[
     #[cfg(feature = "plugin-example")]
     antares_plugin_example::RULES_ENV,
     "ANTARES_DATABASE_URL",
+    // The cross-Tenant work's own role (0042, T-7307); unset = the request pool.
+    "ANTARES_MAINTENANCE_DATABASE_URL",
     "ANTARES_STORE",
     // Temporal driver: a store mode, or `none` — history off (temporal
     // reads answer OperationNotSupported, Table 6.3.2-1). Defaults to the
@@ -549,6 +551,52 @@ struct PgSettings {
     async_commit_var: Option<String>,
 }
 
+/// ANTARES_MAINTENANCE_DATABASE_URL → the pool the cross-Tenant work runs
+/// on (0042, T-7307). Unset or empty, `backend` comes back as it was and
+/// its request pool does that work too, which holds only when its role owns
+/// the tables. The
+/// role must hold the escape (a member of `antares_maintenance`) and, under
+/// ANTARES_REQUIRE_RLS, must not bypass row-level security; either failing
+/// stops the boot. The URL carries a password: held as a Secret and never
+/// echoed.
+async fn with_maintenance_pool(
+    backend: antares_sql::store::any::PgBackend,
+    require_rls: bool,
+    statement_timeout: std::time::Duration,
+) -> Result<antares_sql::store::any::PgBackend, String> {
+    let Some(url) = std::env::var("ANTARES_MAINTENANCE_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .map(Secret::new)
+    else {
+        return Ok(backend);
+    };
+    let pool = antares_sql::store::pg::connect_reserve(url.expose(), 4, statement_timeout)
+        .await
+        .map_err(|e| format!("ANTARES_MAINTENANCE_DATABASE_URL: pool not opened: {e}"))?;
+    let holds = antares_sql::store::pg::holds_maintenance(&pool)
+        .await
+        .map_err(|e| format!("ANTARES_MAINTENANCE_DATABASE_URL: escape probe failed: {e}"))?;
+    if !holds {
+        return Err(
+            "ANTARES_MAINTENANCE_DATABASE_URL: the role is not a member of \
+                    antares_maintenance, so the outbox drain and the reaps would read \
+                    nothing; GRANT antares_maintenance TO it"
+                .into(),
+        );
+    }
+    if require_rls && antares_sql::store::pg::role_bypasses_rls(&pool).await {
+        return Err(
+            "ANTARES_REQUIRE_RLS=1 but the ANTARES_MAINTENANCE_DATABASE_URL role \
+                    bypasses row-level security (superuser or BYPASSRLS); connect it as a \
+                    member of antares_maintenance without BYPASSRLS"
+                .into(),
+        );
+    }
+    tracing::info!("ANTARES_MAINTENANCE_DATABASE_URL: cross-tenant work runs on its own pool");
+    Ok(backend.with_maintenance(pool))
+}
+
 /// ANTARES_PG_STATEMENT_TIMEOUT_MS → the per-session `statement_timeout`
 /// every pooled connection carries (a runaway query is cancelled, 5.5.2
 /// InternalError); absent = 30 000; not a positive integer = fatal.
@@ -962,7 +1010,7 @@ async fn build_store(
     };
     let maintenance = match (&store, backend) {
         (antares_sql::store::any::AnyStore::Pg(p), Some(backend)) => {
-            Some((p.docs.pool().clone(), backend))
+            Some((p.docs.maint().clone(), backend))
         }
         _ => None,
     };
@@ -1132,6 +1180,12 @@ async fn build_builtin(
                             );
                             backend_pg = backend_pg.with_write_reserve(reserve);
                         }
+                        // T-7307: the outbox drain, the reaps, retention and
+                        // the shared Cached @context writes on a role the
+                        // request role is not (0042).
+                        backend_pg =
+                            with_maintenance_pool(backend_pg, pg.require_rls, statement_timeout)
+                                .await?;
                         let sealing = secret_key.is_some();
                         if let Some(key) = secret_key.take() {
                             backend_pg = backend_pg.with_secret_key(key);

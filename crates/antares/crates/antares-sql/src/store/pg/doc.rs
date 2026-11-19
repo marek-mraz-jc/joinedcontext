@@ -361,6 +361,12 @@ fn seal_row<'a>(kind: DocKind, tenant: &'a TenantId, id: &'a str) -> super::seal
 
 pub struct PgDocStore {
     pool: PgPool,
+    /// The cross-Tenant work's pool (0042, T-7307): the outbox drain, the
+    /// reaps and retention, and every write to a shared Cached @context. A
+    /// deployment connects it as a member of `antares_maintenance` and the
+    /// request pool as a role that is not; a single-role deployment shares
+    /// one pool, whose role then owns the tables.
+    maint: PgPool,
     /// `ANTARES_SECRET_KEY`: seals the notification credentials (T-5838).
     key: Option<std::sync::Arc<super::seal::SecretKey>>,
 }
@@ -430,7 +436,17 @@ async fn set_context_tenant(
 
 impl PgDocStore {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool, key: None }
+        Self {
+            maint: pool.clone(),
+            pool,
+            key: None,
+        }
+    }
+
+    /// Run the cross-Tenant work on `maint` instead of the request pool.
+    pub fn with_maintenance(mut self, maint: PgPool) -> Self {
+        self.maint = maint;
+        self
     }
 
     /// Seal every notification credential this store writes under `key`
@@ -500,6 +516,12 @@ impl PgDocStore {
 
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// The maintenance pool ([`Self::with_maintenance`]); the request pool
+    /// when none was given.
+    pub fn maint(&self) -> &PgPool {
+        &self.maint
     }
 
     /// Create one doc: `Ok(false)` when a document with that id already
@@ -1263,8 +1285,16 @@ impl PgDocStore {
         doc: &Value,
         kind: &str,
     ) -> Result<(), sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
+        // A Cached copy is shared: replacing and evicting one is maintenance
+        // work (0042), so its write-through runs on that pool.
+        let cached = kind == "Cached";
+        let mut tx = if cached { &self.maint } else { &self.pool }
+            .begin()
+            .await?;
         set_context_tenant(&mut tx, tenant).await?;
+        if cached {
+            super::set_service(&mut tx).await?;
+        }
         // a Tenant's own row claims the Tenant like any other write, so its
         // purge reaches the row and a renamed-away name is refused
         if let Some(t) = tenant.filter(|_| kind != "Cached") {
@@ -1281,7 +1311,6 @@ impl PgDocStore {
         // driver contract probes.
         // a Cached row's counters are the acting Tenant's and go to its
         // usage row below, never into the shared body (S5-10)
-        let cached = kind == "Cached";
         let usage = cached.then(|| antares_store::context_row_usage(doc));
         let stripped;
         let doc = match doc.as_object().filter(|_| cached) {
@@ -1355,8 +1384,12 @@ impl PgDocStore {
         id: &str,
         f: impl FnOnce(&mut Value) -> Result<(), ()> + Send,
     ) -> Result<Option<Result<(), ()>>, sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
+        // The row may be a shared Cached copy, which only the maintenance
+        // role locks and rewrites (0042); the explicit Tenant predicate and
+        // the per-Tenant belt keep a Tenant's own rows its own.
+        let mut tx = self.maint.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;
+        super::set_service(&mut tx).await?;
         let row = sqlx::query(
             "SELECT body FROM jsonld_contexts
               WHERE id = $1 AND (tenant_id IS NULL OR tenant_id = $2) FOR UPDATE",
@@ -1423,8 +1456,10 @@ impl PgDocStore {
         tenant: Option<&TenantId>,
         id: &str,
     ) -> Result<bool, sqlx::Error> {
-        let mut tx = self.pool.begin().await?;
+        // as `context_mutate`: a Cached copy is deleted by the maintenance role
+        let mut tx = self.maint.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;
+        super::set_service(&mut tx).await?;
         let gone = sqlx::query(
             "DELETE FROM jsonld_contexts
               WHERE id = $1 AND (tenant_id IS NULL OR tenant_id = $2)",
