@@ -33,10 +33,23 @@ pub fn drain_errors() -> u64 {
 // immediately.
 #[cfg(not(target_arch = "wasm32"))]
 tokio::task_local! {
-    static BUFFER: std::cell::RefCell<Vec<TemporalEvent>>;
+    static BUFFER: Shared<TemporalEvent>;
     static STAGED: std::cell::RefCell<Vec<TemporalEvent>>;
-    static CHANGES: std::cell::RefCell<Vec<crate::mirror::Change>>;
+    static CHANGES: Shared<crate::mirror::Change>;
     static TENANT: Option<TenantId>;
+}
+
+/// A request's committed history events or matcher changes, shared with the
+/// layer's [`Pending`] guard so a dropped request still hands them on.
+#[cfg(not(target_arch = "wasm32"))]
+type Shared<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
+
+/// The vector behind `shared`; a panic while it was held leaves it usable.
+#[cfg(not(target_arch = "wasm32"))]
+fn lock<T>(shared: &Shared<T>) -> std::sync::MutexGuard<'_, Vec<T>> {
+    shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// `ANTARES_HISTORY_BACKFILL=on` (T-4665, ADR-N-054 2.1): a Core API write of
@@ -159,7 +172,7 @@ pub(crate) fn settle(id: &str, committed: bool) {
             })
             .unwrap_or_default();
         if committed && !mine.is_empty() {
-            let _ = BUFFER.try_with(|b| b.borrow_mut().extend(mine));
+            let _ = BUFFER.try_with(|b| lock(b).extend(mine));
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -312,7 +325,7 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
         let mut slot = Some(change);
         let _ = CHANGES.try_with(|b| {
             if let Some(c) = slot.take() {
-                b.borrow_mut().push(c);
+                lock(b).push(c);
             }
         });
         slot
@@ -330,7 +343,7 @@ pub(crate) async fn push(st: &AppState, ev: TemporalEvent) {
         let buffered = BUFFER
             .try_with(|b| {
                 if let Some(ev) = slot.take() {
-                    b.borrow_mut().push(ev);
+                    lock(b).push(ev);
                 }
             })
             .is_ok();
@@ -848,9 +861,12 @@ pub(crate) async fn drain(st: &AppState, evs: Vec<TemporalEvent>) {
 /// read-your-writes holds at any store latency (the ETSI temporal suites
 /// read history straight after the write).
 ///
-/// S4-07: handler, drain and flush run as one spawned task the layer awaits.
-/// A client that hangs up drops only the await: a write the store committed
-/// still reaches history and the matcher instead of going with the buffers.
+/// S4-07: the handler runs inline, in its caller's task-locals (a view's
+/// scope must reach the policy engine), and writes its events into buffers
+/// the layer shares with a [`Pending`] guard. Drain and flush run as one
+/// spawned task the layer awaits; a client that hangs up mid-handler drops
+/// the guard, which hands what the request had committed on, so history and
+/// the matcher keep a write the store holds.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn layer(
     axum::extract::State(st): axum::extract::State<AppState>,
@@ -859,49 +875,72 @@ pub(crate) async fn layer(
 ) -> axum::response::Response {
     let provenance = crate::provenance::of_request(req.headers(), st.provenance_from.as_deref());
     let tenant = crate::negotiate::tenant_from(req.headers()).ok();
-    let handled = BUFFER.scope(std::cell::RefCell::new(Vec::new()), async {
-        STAGED
-            .scope(
+    let mut pending = Pending {
+        st,
+        buffer: Shared::default(),
+        changes: Shared::default(),
+    };
+    let resp = BUFFER
+        .scope(
+            pending.buffer.clone(),
+            STAGED.scope(
                 std::cell::RefCell::new(Vec::new()),
-                CHANGES.scope(std::cell::RefCell::new(Vec::new()), async {
-                    PROVENANCE
-                        .scope(
-                            provenance,
-                            TENANT.scope(tenant, async {
-                                let resp = next.run(req).await;
-                                (resp, BUFFER.with(|b| b.take()), CHANGES.with(|c| c.take()))
-                            }),
-                        )
-                        .await
-                }),
-            )
-            .await
-    });
-    let job = async move {
-        let (resp, evs, changes) = handled.await;
-        drain(&st, evs).await;
-        if !changes.is_empty() {
-            if let Some(flush) = &st.change_flush {
-                flush(changes);
+                CHANGES.scope(
+                    pending.changes.clone(),
+                    PROVENANCE.scope(provenance, TENANT.scope(tenant, next.run(req))),
+                ),
+            ),
+        )
+        .await;
+    if let Some(finish) = pending.finish() {
+        // awaited for read-your-writes; spawned so a drop now cannot cut it
+        if let Err(e) = tokio::spawn(finish).await {
+            if e.is_panic() {
+                // the router's catch-panic layer answers it, as before
+                std::panic::resume_unwind(e.into_panic());
             }
         }
-        resp
-    };
-    // An in-process call (a view, a socket, a channel) runs inline: its
-    // caller's task-locals (the view, the @context, the call depth) do not
-    // cross a spawn, and its caller holds the request off the socket.
-    // ponytail: a dropped in-process call still drops its buffers; the
-    // upgrade is to carry those task-locals into the spawned job.
-    if crate::state::in_process_depth() > 0 {
-        return job.await;
     }
-    match tokio::spawn(tracing::Instrument::in_current_span(job)).await {
-        Ok(resp) => resp,
-        // the router's catch-panic layer answers it, as before the spawn
-        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
-        // the runtime is shutting down
-        Err(_) => {
-            axum::response::IntoResponse::into_response(axum::http::StatusCode::SERVICE_UNAVAILABLE)
+    resp
+}
+
+/// What a request in flight has committed, handed to history and the matcher
+/// when the layer finishes or, when the request is dropped first, on drop.
+#[cfg(not(target_arch = "wasm32"))]
+struct Pending {
+    st: AppState,
+    buffer: Shared<TemporalEvent>,
+    changes: Shared<crate::mirror::Change>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Pending {
+    /// Takes the buffers; None when the request committed nothing.
+    fn finish(&mut self) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        let evs = std::mem::take(&mut *lock(&self.buffer));
+        let changes = std::mem::take(&mut *lock(&self.changes));
+        if evs.is_empty() && changes.is_empty() {
+            return None;
+        }
+        let st = self.st.clone();
+        Some(tracing::Instrument::in_current_span(async move {
+            drain(&st, evs).await;
+            if !changes.is_empty() {
+                if let Some(flush) = &st.change_flush {
+                    flush(changes);
+                }
+            }
+        }))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Some(finish) = self.finish() {
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.spawn(finish);
+            }
         }
     }
 }
@@ -1059,14 +1098,14 @@ mod tests {
     #[tokio::test]
     async fn a_backfill_is_recorded_only_for_a_committed_write() {
         let buffered = BUFFER
-            .scope(std::cell::RefCell::new(Vec::new()), async {
+            .scope(Shared::default(), async {
                 STAGED
                     .scope(std::cell::RefCell::new(Vec::new()), async {
                         // refused: nothing reaches history
                         restage("urn:a");
                         assert!(stage(ev("urn:a")));
                         settle("urn:a", false);
-                        assert_eq!(BUFFER.with(|b| b.borrow().len()), 0);
+                        assert_eq!(BUFFER.with(|b| lock(b).len()), 0);
                         // rerun twice, then committed: one event
                         restage("urn:b");
                         assert!(stage(ev("urn:b")));
@@ -1076,7 +1115,7 @@ mod tests {
                         assert!(stage(ev("urn:c")));
                         settle_all::<(), ()>(&["urn:b".to_owned()], &[Some(Ok(()))]);
                         assert_eq!(STAGED.with(|b| b.borrow().len()), 1);
-                        BUFFER.with(|b| b.take())
+                        BUFFER.with(|b| std::mem::take(&mut *lock(b)))
                     })
                     .await
             })
@@ -1085,10 +1124,10 @@ mod tests {
         assert_eq!(ids, ["urn:b"]);
     }
 
-    /// An in-process request keeps its caller's task-locals through the
-    /// layer: the views and sockets read theirs inside the handler.
+    /// The caller's task-locals reach the handler through the layer: a
+    /// view's policy scope and an in-process call's depth are read there.
     #[tokio::test(flavor = "multi_thread")]
-    async fn an_in_process_request_keeps_its_callers_scope() {
+    async fn the_callers_task_locals_reach_the_handler() {
         use tower::ServiceExt;
         let st = AppState::new("antares-history-inprocess".into());
         let app = axum::Router::new()
