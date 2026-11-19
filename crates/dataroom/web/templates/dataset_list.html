@@ -150,9 +150,9 @@
                 {% for ds in datasets %}
                 <tr>
                   <th scope="row"><a href="{{ chrome.lang_prefix }}/dataset/{{ ds.name }}">{{ ds.title }}</a></th>
-                  <td>{% if ds.format_chips.is_empty() %}<span aria-hidden="true">–</span>{% endif %}{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>
-                  <td>{{ ds.publisher_title }}</td>
-                  <td>{{ ds.modified_localized }}</td>
+                  {% if ds.format_chips.is_empty() %}<td class="jc-cell-empty"><span aria-hidden="true">–</span></td>{% else %}<td data-label="{{ labels.format }}">{% for chip in ds.format_chips %}<span class="jc-chip">{{ chip }}</span>{% endfor %}</td>{% endif %}
+                  <td data-label="{{ labels.col_publisher }}">{{ ds.publisher_title }}</td>
+                  <td data-label="{{ labels.updated }}">{{ ds.modified_localized }}</td>
                 </tr>
                 {% endfor %}
                 </tbody>
