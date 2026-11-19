@@ -34,7 +34,7 @@ test("a person who is no administrator of the Organization is refused every back
     await page.request.put(door, { headers, data: target }),
     await page.request.post(`${door}/run`, { headers }),
     await page.request.get(`${door}/versions`),
-    await page.request.post(`${door}/versions/v1/restore`, { headers, data: { apply: false } }),
+    await page.request.post(`${door}/versions/v1/restore`, { headers, data: { identity: "AGE-SECRET-KEY-1", apply: false } }),
     await page.request.delete(`${door}/bundle`, { headers }),
     await page.request.get(data),
     await page.request.put(data, { headers, data: { ...target, workingRecipient: RECIPIENT, recoveryRecipient: RECIPIENT } }),
