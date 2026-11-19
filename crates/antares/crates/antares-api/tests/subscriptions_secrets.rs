@@ -223,6 +223,37 @@ async fn context_source_info_is_masked_like_receiver_info() {
     let held = stored().await["contextSourceInfo"].clone();
     assert_eq!(held[0]["value"], json!(TOKEN));
     assert_eq!(held[2]["value"], json!("someone"));
+    // a patch that moves the endpoint without contextSourceInfo drops the
+    // stored pairs: they were given for the old endpoint
+    let (status, body) = send(
+        &st,
+        "PATCH",
+        &path,
+        Some(json!({"endpoint": "http://localhost:18098"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let moved = stored().await;
+    assert_eq!(moved["endpoint"], json!("http://localhost:18098"));
+    assert!(moved.get("contextSourceInfo").is_none(), "{moved}");
+    // ... and a patch on the same endpoint without it keeps them
+    let (status, body) = send(
+        &st,
+        "PATCH",
+        &path,
+        Some(json!({"endpoint": "http://localhost:18098", "contextSourceInfo": csi})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, body) = send(
+        &st,
+        "PATCH",
+        &path,
+        Some(json!({"endpoint": "http://localhost:18098", "description": "same place"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(stored().await["contextSourceInfo"], csi);
 }
 
 /// 5.16.6 sends a Snapshot's receiverInfo as headers: a read answers it

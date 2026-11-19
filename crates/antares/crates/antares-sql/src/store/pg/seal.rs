@@ -8,7 +8,9 @@
 //! every read, so every caller above the store sees the plaintext and a dump
 //! or a `SELECT` sees none. A dead letter keeps the resolved pairs it would
 //! have sent (`receiverInfo`, and `headers` in letters from before the sink
-//! registry) and is sealed the same way.
+//! registry) and is sealed the same way, and so is a Context Source
+//! Registration's `contextSourceInfo` (clause 4.3.6, item 5): the headers every forward
+//! to its endpoint carries, credentials among them.
 //!
 //! A value without the prefix is read as it is, so rows written before the
 //! key was set stay readable; [`super::doc::PgDocStore::seal_plaintext`]
@@ -16,9 +18,9 @@
 //! another key, is an error: a notification never goes out with ciphertext in
 //! its headers.
 //!
-//! ponytail: the memory/file store and the bus KV mirror keep plaintext; the
-//! Pg store is the one deployments run (ANTARES_BUS=local), seal those when a
-//! deployment runs them.
+//! ponytail: the memory/file store keeps plaintext; the Pg store is the one
+//! deployments run, seal that one when a deployment runs it. The bus mirrors
+//! carry ids only and read each document from the store.
 
 use base64::Engine as _;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
@@ -120,7 +122,7 @@ pub struct Unreadable;
 impl From<Unreadable> for sqlx::Error {
     fn from(_: Unreadable) -> Self {
         tracing::error!(
-            "a stored notification credential (receiverInfo) cannot be opened: \
+            "a stored credential (receiverInfo, contextSourceInfo) cannot be opened: \
              ANTARES_SECRET_KEY is unset or differs from the key it was sealed with"
         );
         sqlx::Error::Configuration(Box::new(antares_model::NgsiError::InternalError(
@@ -129,11 +131,23 @@ impl From<Unreadable> for sqlx::Error {
     }
 }
 
+/// Where a client-written document of `kind` keeps its `{key, value}`
+/// header pairs.
+fn pairs_pointer(kind: DocKind) -> Option<&'static str> {
+    match kind {
+        DocKind::Subscription | DocKind::CSourceSubscription => {
+            Some("/notification/endpoint/receiverInfo")
+        }
+        DocKind::Registration => Some("/contextSourceInfo"),
+        _ => None,
+    }
+}
+
 /// The string values of `doc` that hold a credential of `kind`.
 fn credentials(kind: DocKind, doc: &mut Value) -> Vec<&mut Value> {
     match kind {
-        DocKind::Subscription | DocKind::CSourceSubscription => doc
-            .pointer_mut("/notification/endpoint/receiverInfo")
+        DocKind::Subscription | DocKind::CSourceSubscription | DocKind::Registration => doc
+            .pointer_mut(pairs_pointer(kind).unwrap_or_default())
             .and_then(Value::as_array_mut)
             .map(|pairs| {
                 pairs
@@ -162,7 +176,10 @@ fn credentials(kind: DocKind, doc: &mut Value) -> Vec<&mut Value> {
 pub(crate) fn holds_credentials(kind: DocKind) -> bool {
     matches!(
         kind,
-        DocKind::Subscription | DocKind::CSourceSubscription | DocKind::DeadLetter
+        DocKind::Subscription
+            | DocKind::CSourceSubscription
+            | DocKind::DeadLetter
+            | DocKind::Registration
     )
 }
 
@@ -183,6 +200,7 @@ impl Row<'_> {
             DocKind::Subscription => "subscription",
             DocKind::CSourceSubscription => "csource-subscription",
             DocKind::DeadLetter => "dead-letter",
+            DocKind::Registration => "registration",
             _ => "other",
         };
         // NUL never occurs in a tenant name or an id, so the parts cannot
@@ -195,7 +213,8 @@ impl Row<'_> {
 /// value the client sent already starting with `enc:v1:` is sealed like any
 /// other text, so it reads back as that literal text, never decrypted. No
 /// key, or nothing to seal, writes the doc as it came, except that a
-/// subscription's value starting with `enc:v1:` is refused (400): stored
+/// subscription's or registration's value starting with `enc:v1:` is
+/// refused (400): stored
 /// as it came, every read would take it for a sealed value and fail.
 pub(crate) fn sealed<'a>(
     key: Option<&SecretKey>,
@@ -216,14 +235,20 @@ pub(crate) fn sealed<'a>(
     Ok(std::borrow::Cow::Owned(out))
 }
 
-/// Without a key, a client-written subscription whose credential starts
-/// with [`PREFIX`]. Dead letters are the broker's own copies and pass.
+/// Without a key, a client-written subscription or registration whose
+/// credential starts with [`PREFIX`]. Dead letters are the broker's own
+/// copies and pass.
 fn refuse_prefixed(kind: DocKind, doc: &Value) -> Result<(), sqlx::Error> {
-    if !matches!(kind, DocKind::Subscription | DocKind::CSourceSubscription) {
+    let Some(pointer) = pairs_pointer(kind) else {
         return Ok(());
-    }
+    };
+    let member = if matches!(kind, DocKind::Registration) {
+        "contextSourceInfo"
+    } else {
+        "notification receiverInfo"
+    };
     let prefixed = doc
-        .pointer("/notification/endpoint/receiverInfo")
+        .pointer(pointer)
         .and_then(Value::as_array)
         .is_some_and(|pairs| {
             pairs.iter().any(|p| {
@@ -235,7 +260,7 @@ fn refuse_prefixed(kind: DocKind, doc: &Value) -> Result<(), sqlx::Error> {
     if prefixed {
         return Err(sqlx::Error::Configuration(Box::new(
             antares_model::NgsiError::BadRequestData(format!(
-                "a notification receiverInfo value must not start with {PREFIX:?}"
+                "a {member} value must not start with {PREFIX:?}"
             )),
         )));
     }
@@ -322,6 +347,9 @@ pub(crate) fn plaintext_path(kind: DocKind) -> Option<&'static str> {
     match kind {
         DocKind::Subscription | DocKind::CSourceSubscription => Some(
             "$.notification.endpoint.receiverInfo[*].value ? (@.type() == \"string\" && !(@ starts with \"enc:v1:\"))",
+        ),
+        DocKind::Registration => Some(
+            "$.contextSourceInfo[*].value ? (@.type() == \"string\" && !(@ starts with \"enc:v1:\"))",
         ),
         DocKind::DeadLetter => Some(
             "$ ? (exists(@.receiverInfo[*][1] ? (@.type() == \"string\" && !(@ starts with \"enc:v1:\"))) \
@@ -455,6 +483,39 @@ mod tests {
         let mut back = stored.into_owned();
         open(Some(&k), row(DocKind::DeadLetter), &mut back).expect("open");
         assert_eq!(back, doc);
+    }
+
+    /// A registration's contextSourceInfo goes on every forward to its
+    /// endpoint, so its values are sealed under the registration's row and
+    /// a client-sent `enc:v1:` text is refused without a key.
+    #[test]
+    fn a_registration_seals_its_context_source_info() {
+        let k = key(2);
+        let doc = json!({"id": "urn:ngsi-ld:ContextSourceRegistration:r",
+                         "endpoint": "http://cs.example",
+                         "contextSourceInfo": [{"key": "Authorization", "value": "Bearer r"}]});
+        let stored = sealed(Some(&k), row(DocKind::Registration), &doc).expect("seal");
+        assert_eq!(stored["contextSourceInfo"][0]["key"], "Authorization");
+        assert!(!stored.to_string().contains("Bearer r"), "{stored}");
+        let mut moved = stored.clone().into_owned();
+        assert!(
+            open(
+                Some(&k),
+                Row {
+                    id: "urn:ngsi-ld:ContextSourceRegistration:other",
+                    ..row(DocKind::Registration)
+                },
+                &mut moved
+            )
+            .is_err(),
+            "a registration's value opens only in its own row"
+        );
+        let mut back = stored.into_owned();
+        open(Some(&k), row(DocKind::Registration), &mut back).expect("open");
+        assert_eq!(back, doc);
+        let prefixed = json!({"contextSourceInfo": [{"key": "A", "value": "enc:v1:x"}]});
+        assert!(sealed(None, row(DocKind::Registration), &prefixed).is_err());
+        assert!(plaintext_path(DocKind::Registration).is_some());
     }
 
     #[test]

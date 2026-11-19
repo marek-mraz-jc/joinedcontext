@@ -187,15 +187,17 @@ pub async fn wire_nats(
     let mut durables: Vec<&'static str> = Vec::new();
 
     if roles.api {
-        // Subscription write side: subscription CUD → KV (tombstone = null doc).
+        // Subscription write side: subscription CUD → KV. The value names the
+        // row and whether it is there; the watcher reads the document from
+        // the store, so the credentials it holds stay in the sealed row.
         let kv = bus.subs_kv().await?;
         let kv_for_hook = kv.clone();
         state.sub_sync = Some(Arc::new(
-            move |tenant: &TenantId, kind: Kind, id: &str, doc| {
+            move |tenant: &TenantId, kind: Kind, id: &str, doc: Option<&serde_json::Value>| {
                 let kv = kv_for_hook.clone();
                 let key = kv_key(tenant.as_str(), kind, id);
                 let value = serde_json::json!({
-                    "tenant": tenant.as_str(), "id": id, "doc": doc,
+                    "tenant": tenant.as_str(), "id": id, "present": doc.is_some(),
                     "csub": kind == Kind::CSourceSubscription,
                 });
                 tokio::spawn(async move {
@@ -223,37 +225,41 @@ pub async fn wire_nats(
             },
         ));
 
-        // Registration write side: registration CUD → ANTARES_REGISTRY delta.
+        // Registration write side: registration CUD → ANTARES_REGISTRY delta,
+        // ids only like the subscription mirror (contextSourceInfo stays in
+        // the sealed row).
         let bus_for_reg = bus.clone();
-        state.reg_sync = Some(Arc::new(move |tenant: &TenantId, id: &str, doc| {
-            let bus = bus_for_reg.clone();
-            let delta = serde_json::json!({
-                "tenant": tenant.as_str(), "id": id, "doc": doc,
-            });
-            let tenant = tenant.as_str().to_owned();
-            let id = id.to_owned();
-            tokio::spawn(async move {
-                // Same contract as the subscription mirror: the row is
-                // committed, so a lost delta makes the registration invisible
-                // to every federation path until a restart re-hydrates.
-                for attempt in 0..MIRROR_SYNC_ATTEMPTS {
-                    match bus.publish_registry(&tenant, &delta).await {
-                        Ok(()) => return,
-                        Err(e) => {
-                            tracing::warn!(
-                                "registry delta publish attempt {} failed: {e}",
-                                attempt + 1
-                            );
-                            tokio::time::sleep(mirror_sync_backoff(attempt)).await;
+        state.reg_sync = Some(Arc::new(
+            move |tenant: &TenantId, id: &str, doc: Option<&serde_json::Value>| {
+                let bus = bus_for_reg.clone();
+                let delta = serde_json::json!({
+                    "tenant": tenant.as_str(), "id": id, "present": doc.is_some(),
+                });
+                let tenant = tenant.as_str().to_owned();
+                let id = id.to_owned();
+                tokio::spawn(async move {
+                    // Same contract as the subscription mirror: the row is
+                    // committed, so a lost delta makes the registration invisible
+                    // to every federation path until a restart re-hydrates.
+                    for attempt in 0..MIRROR_SYNC_ATTEMPTS {
+                        match bus.publish_registry(&tenant, &delta).await {
+                            Ok(()) => return,
+                            Err(e) => {
+                                tracing::warn!(
+                                    "registry delta publish attempt {} failed: {e}",
+                                    attempt + 1
+                                );
+                                tokio::time::sleep(mirror_sync_backoff(attempt)).await;
+                            }
                         }
                     }
-                }
-                tracing::error!(
-                    "registry delta publish gave up for {id} — this registration is not \
+                    tracing::error!(
+                        "registry delta publish gave up for {id} — this registration is not \
                      mirrored until the next restart"
-                );
-            });
-        }));
+                    );
+                });
+            },
+        ));
 
         // 5.2.34 write side: a cooldown stamp is broadcast to the other api
         // pods on the registry stream (seconds-scale state, deliberately not
@@ -318,7 +324,13 @@ pub async fn wire_nats(
                                     .reg_record(rid, delta["ok"].as_bool().unwrap_or(false));
                                 continue;
                             }
-                            apply_delta(reg_mirror.as_ref(), &delta);
+                            apply_delta(
+                                reg_mirror.as_ref(),
+                                &*store_for_reg,
+                                Kind::Registration,
+                                &delta,
+                            )
+                            .await;
                         }
                     }
                     Err(e) => tracing::warn!("registry broadcast consumer stream failed: {e}"),
@@ -468,6 +480,7 @@ pub async fn wire_nats(
                  matching falls back to a store scan per change"
             ),
         }
+        let store = state.store.clone();
         tokio::spawn(async move {
             // Same restart contract as the registry consumer: the watch ends
             // on a NATS restart, and a task that returns there stops seeing
@@ -480,7 +493,7 @@ pub async fn wire_nats(
                 while let Some(entry) = watch.next().await {
                     let Ok(entry) = entry else { continue };
                     if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&entry.value) {
-                        apply_delta(sub_mirror.as_ref(), &v);
+                        apply_delta(sub_mirror.as_ref(), &*store, Kind::Subscription, &v).await;
                     }
                 }
                 tracing::warn!("subscription KV watch ended — reopening");
@@ -594,20 +607,33 @@ fn mirror_sync_backoff(attempt: u32) -> std::time::Duration {
     std::time::Duration::from_millis(200u64 << attempt.min(4))
 }
 
-/// Apply one `{tenant, id, doc|null, csub}` delta to a mirror. A Context
-/// Source Registration Subscription carries no document into the mirror: it
-/// is matched against registrations rather than entities, so the delta only
-/// wakes the interval sweep (5.11.7).
-fn apply_delta(mirror: &dyn antares_api::mirror::Mirror, delta: &serde_json::Value) {
+/// What one mirror delta asks for.
+#[derive(Debug, PartialEq)]
+enum Delta<'a> {
+    /// A Context Source Registration Subscription was written: it is matched
+    /// against registrations rather than entities, so the delta only wakes
+    /// the interval sweep (5.11.7).
+    Csub,
+    /// The row `id` of `tenant` was written (`present`) or deleted.
+    Row {
+        tenant: &'a str,
+        id: &'a str,
+        present: bool,
+    },
+}
+
+/// Decode one `{tenant, id, present, csub}` delta. A delta from a pod that
+/// predates `present` carries `doc` (null for a tombstone) and is read as
+/// present when that is not null; its document is not used either.
+fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
     if delta.get("csub").and_then(serde_json::Value::as_bool) == Some(true) {
-        mirror.csub_written();
-        return;
+        return Some(Delta::Csub);
     }
     let (Some(tenant), Some(id)) = (
         delta.get("tenant").and_then(serde_json::Value::as_str),
         delta.get("id").and_then(serde_json::Value::as_str),
     ) else {
-        return;
+        return None;
     };
     // Hydration validates the tenant before it touches the mirror; the delta
     // path must agree. A name outside the grammar can only add entries that no
@@ -617,11 +643,55 @@ fn apply_delta(mirror: &dyn antares_api::mirror::Mirror, delta: &serde_json::Val
     // (5.5.15) carries the synthetic tenant a client may not name — refusing
     // that one would drop the mirror delta the snapshot-scoped subscription
     // matches on.
-    if TenantId::new_internal(tenant).is_err() {
+    TenantId::new_internal(tenant).ok()?;
+    let present = delta
+        .get("present")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or_else(|| delta.get("doc").is_some_and(|d| !d.is_null()));
+    Some(Delta::Row {
+        tenant,
+        id,
+        present,
+    })
+}
+
+/// Apply one delta to a mirror of `kind`: a written row is read from the
+/// store, which opens its sealed credentials, so the bus never carries
+/// them. A row the store no longer has is a delete. A store that keeps
+/// failing leaves the entry as it was and logs it, the divergence the
+/// write side's retry ladder names.
+async fn apply_delta(
+    mirror: &dyn antares_api::mirror::Mirror,
+    store: &dyn antares_store::CurrentStateDriver,
+    kind: Kind,
+    delta: &serde_json::Value,
+) {
+    let (tenant, id) = match decode_delta(delta) {
+        None => return,
+        Some(Delta::Csub) => return mirror.csub_written(),
+        Some(Delta::Row {
+            tenant,
+            id,
+            present: false,
+        }) => return mirror.apply(tenant, id, None),
+        Some(Delta::Row { tenant, id, .. }) => (tenant, id),
+    };
+    let Ok(t) = TenantId::new_internal(tenant) else {
         return;
+    };
+    for attempt in 0..MIRROR_SYNC_ATTEMPTS {
+        match store.get(&t, kind, id).await {
+            Ok(doc) => return mirror.apply(tenant, id, doc),
+            Err(e) => {
+                tracing::warn!(
+                    "mirror read of {kind:?} {id} attempt {} failed: {e}",
+                    attempt + 1
+                );
+                tokio::time::sleep(mirror_sync_backoff(attempt)).await;
+            }
+        }
     }
-    let doc = delta.get("doc").filter(|d| !d.is_null()).cloned();
-    mirror.apply(tenant, id, doc);
+    tracing::error!("mirror read of {kind:?} {id} gave up: its entry is stale until a restart");
 }
 
 /// Resolve claim-check references: bodies the bus could not carry come back
@@ -760,42 +830,97 @@ mod tests {
 
     /// A Context Source Registration Subscription delta carries no document:
     /// it wakes the interval sweep and touches nothing the matcher reads.
-    #[test]
-    fn a_csub_delta_only_wakes_the_sweep() {
+    #[tokio::test]
+    async fn a_csub_delta_only_wakes_the_sweep() {
+        let st = AppState::new("antares".into());
         let m = antares_api::mirror::SubMirror::default();
         apply_delta(
             &m,
+            &*st.store,
+            Kind::Subscription,
             &serde_json::json!({
                 "tenant": "default", "id": "urn:ngsi-ld:CSourceSubscription:1",
-                "doc": {"id": "urn:ngsi-ld:CSourceSubscription:1", "timeInterval": 5},
-                "csub": true,
+                "present": true, "csub": true,
             }),
-        );
+        )
+        .await;
         assert!(
             m.docs("default").is_empty(),
             "a csource subscription must not enter the candidate index"
         );
     }
 
+    /// T-7296: a delta names a row; the mirror takes the document the store
+    /// holds for it, never one the delta carries, and a row the store no
+    /// longer has leaves the mirror.
+    #[tokio::test]
+    async fn a_delta_takes_the_document_from_the_store() {
+        let st = AppState::new("antares".into());
+        let stored = json!({"id": "urn:x:1", "type": "ContextSourceRegistration",
+                            "endpoint": "http://cs.example"});
+        st.store
+            .create(
+                &TenantId::default(),
+                Kind::Registration,
+                "urn:x:1",
+                stored.clone(),
+            )
+            .await
+            .expect("seed");
+        let m = DocMirror::default();
+        // a delta from a pod before `present` still carries a document
+        apply_delta(
+            &m,
+            &*st.store,
+            Kind::Registration,
+            &json!({"tenant": "default", "id": "urn:x:1",
+                    "doc": {"id": "urn:x:1", "endpoint": "http://elsewhere"}}),
+        )
+        .await;
+        let docs = m.docs("default");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0]["endpoint"], stored["endpoint"], "{:?}", docs[0]);
+        st.store
+            .delete(&TenantId::default(), Kind::Registration, "urn:x:1")
+            .await
+            .expect("delete");
+        apply_delta(
+            &m,
+            &*st.store,
+            Kind::Registration,
+            &json!({"tenant": "default", "id": "urn:x:1", "present": true}),
+        )
+        .await;
+        assert!(m.docs("default").is_empty(), "a row gone from the store");
+    }
+
     /// The KV/registry mirrors are fed from the bus. A malformed or hostile
     /// delta must be dropped — never panic a consumer task, and never grow
     /// the mirror under a key no request can ever address (the tenant is
     /// validated on every request, so an unvalidated one is pure ballast).
-    #[test]
-    fn apply_delta_ignores_malformed_and_hostile_deltas() {
+    #[tokio::test]
+    async fn apply_delta_ignores_malformed_and_hostile_deltas() {
+        let st = AppState::new("antares".into());
+        st.store
+            .create(
+                &TenantId::default(),
+                Kind::Registration,
+                "urn:x:1",
+                json!({"id": "urn:x:1"}),
+            )
+            .await
+            .expect("seed");
         let m = DocMirror::default();
-        apply_delta(
-            &m,
-            &json!({"tenant": "default", "id": "urn:x:1", "doc": {"id": "urn:x:1"}}),
-        );
+        let apply = |delta: serde_json::Value| {
+            let (m, store) = (&m, st.store.clone());
+            async move { apply_delta(m, &*store, Kind::Registration, &delta).await }
+        };
+        apply(json!({"tenant": "default", "id": "urn:x:1", "present": true})).await;
         assert_eq!(m.docs("default").len(), 1, "a good delta must apply");
 
         // tombstone
-        apply_delta(
-            &m,
-            &json!({"tenant": "default", "id": "urn:x:1", "doc": null}),
-        );
-        assert!(m.docs("default").is_empty(), "null doc must delete");
+        apply(json!({"tenant": "default", "id": "urn:x:1", "present": false})).await;
+        assert!(m.docs("default").is_empty(), "a tombstone must delete");
         assert!(m.tenants().is_empty(), "an emptied tenant must not linger");
 
         // Shapes that must be ignored without panicking.
@@ -807,11 +932,11 @@ mod tests {
             json!([1, 2, 3]),
             json!({"tenant": "default"}),
             json!({"id": "urn:x:1"}),
-            json!({"tenant": 7, "id": "urn:x:1", "doc": {}}),
-            json!({"tenant": "default", "id": null, "doc": {}}),
+            json!({"tenant": 7, "id": "urn:x:1", "present": true}),
+            json!({"tenant": "default", "id": null, "present": true}),
             json!({"cooldownReg": "urn:reg:1", "ok": false}),
         ] {
-            apply_delta(&m, &junk);
+            apply(junk).await;
         }
         assert!(m.tenants().is_empty(), "junk deltas grew the mirror");
 
@@ -823,10 +948,7 @@ mod tests {
             "a b".into(),
             "".into(),
         ] {
-            apply_delta(
-                &m,
-                &json!({"tenant": hostile, "id": "urn:x:1", "doc": {"id": "urn:x:1"}}),
-            );
+            apply(json!({"tenant": hostile, "id": "urn:x:1", "present": true})).await;
         }
         assert!(
             m.tenants().is_empty(),
