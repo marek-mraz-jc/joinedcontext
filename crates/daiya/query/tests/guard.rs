@@ -148,6 +148,30 @@ async fn the_operator_timeout_caps_the_caller_timeout() {
 }
 
 #[tokio::test]
+async fn a_refused_name_answers_one_text_without_its_address() {
+    let guard = guard_with(|c| {
+        c.allow_hosts = vec!["localhost".into(), "daiya-test-host.invalid".into()];
+        c.allowed_networks = vec![];
+    });
+    let private = guard.resolve_checked("localhost", 443).await.unwrap_err();
+    let missing = guard
+        .resolve_checked("daiya-test-host.invalid", 443)
+        .await
+        .unwrap_err();
+    let strip = |e: &DsError, host: &str| e.to_string().replace(host, "<host>");
+    assert_eq!(
+        strip(&private, "localhost"),
+        strip(&missing, "daiya-test-host.invalid")
+    );
+    for text in [private.to_string(), missing.to_string()] {
+        assert!(
+            !text.contains("127.0.0.1") && !text.contains("::1"),
+            "{text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn names_resolve_once_and_every_address_is_checked() {
     let m = mock(vec![("/", Reply::raw(200, "ok"))]).await;
     // localhost resolves to loopback: refused unless loopback is opened.
@@ -159,7 +183,7 @@ async fn names_resolve_once_and_every_address_is_checked() {
         .send(get(format!("http://localhost:{}/", m.port)))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("loopback"), "{err}");
+    assert!(err.to_string().contains("outbound policy allows"), "{err}");
     let opened = guard_with(|c| {
         c.allow_hosts = vec!["LOCALHOST".into()];
         c.allowed_networks = vec![];
@@ -178,7 +202,7 @@ async fn names_resolve_once_and_every_address_is_checked() {
         .resolve_checked("daiya-test-host.invalid", 443)
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("DNS resolution failed"), "{err}");
+    assert!(err.to_string().contains("outbound policy allows"), "{err}");
 
     // An allow-list entry may pin a port; an IP literal is checked without DNS.
     let pinned = guard_with(|c| c.allow_hosts = vec![format!("127.0.0.1:{}", m.port)]);
