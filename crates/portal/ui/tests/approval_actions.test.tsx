@@ -69,6 +69,10 @@ function renderDetail(
     endpoint?: Record<string, unknown>;
     // A decision the server refuses (a grant withdrawn while the page was open).
     refuse?: string;
+    // The project's Organization's approval mode (T-7388).
+    approvalMode?: Record<string, unknown>;
+    // The approval answers 403 second-factor-required once (a one-time code too old).
+    stepUpFirst?: boolean;
   } = {},
 ) {
   const change = options.change ?? proposal();
@@ -87,6 +91,18 @@ function renderDetail(
       const approver = identity.roles?.includes("portal-approver") ?? false;
       return Promise.resolve(
         json({ project: "banskabystrica", bootstrap: approver, grants: [] }),
+      );
+    }
+    if (request.url.includes("/organization/approval-mode")) {
+      return Promise.resolve(json(options.approvalMode ?? { organization: "bb", singlePerson: false, peopleWithARole: 2 }));
+    }
+    if (request.method === "POST" && options.stepUpFirst && !approved) {
+      approved = true;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ type: "https://joinedcontext.com/errors/second-factor-required", title: "Second Factor Required", status: 403 }),
+          { status: 403, headers: { "Content-Type": "application/problem+json" } },
+        ),
       );
     }
     if (options.endpoint && request.url.includes("/endpoints/air-quality")) {
@@ -477,6 +493,43 @@ describe("approval actions", () => {
     ).toBeInTheDocument();
     await userEvent.click(approve);
     await waitFor(() => expect(posts(fetchMock)).toHaveLength(1));
+    expect(posts(fetchMock)[0].url).toContain("/changes/chg-1a2b3c4d/approve");
+  });
+
+  // T-7388: the one person of an Organization in single-person mode approves their own access
+  // change alone; the page says so, and the server's ask for a fresh code opens the step-up.
+  const OWN_BINDING = {
+    author: { name: "Jana Kováčová", email: APPROVER.email },
+    summary: { key: "change.summary.create", params: { kind: "RoleBinding", name: "jana-admin" } },
+    planFields: [],
+  };
+  const ADMIN_OF_ACCESS = {
+    project: "banskabystrica",
+    bootstrap: false,
+    grants: [{ role: "org-admin", binding: "admins", rule: { kinds: ["RoleBinding"], verbs: ["propose", "approve", "delete"] } }],
+  };
+
+  it("keeps the author of an access change from approving it while the mode is off (PF-58)", async () => {
+    const fetchMock = renderDetail({ change: proposal(OWN_BINDING), permissions: ADMIN_OF_ACCESS });
+    expectDenied(await screen.findByRole("button", { name: en.approvals.approve }), en.approvals.ownAccessChange);
+    expect(screen.queryByText(en.approvals.singlePerson.title)).not.toBeInTheDocument();
+    expect(posts(fetchMock)).toHaveLength(0);
+  });
+
+  it("lets the one person approve their access change in single-person mode, after a fresh code (T-7388)", async () => {
+    const fetchMock = renderDetail({
+      change: proposal(OWN_BINDING),
+      permissions: ADMIN_OF_ACCESS,
+      approvalMode: { organization: "bb", singlePerson: true, peopleWithARole: 1 },
+      stepUpFirst: true,
+    });
+    const approve = await screen.findByRole("button", { name: en.approvals.approve });
+    await waitFor(() => expect(approve).toBeEnabled());
+    expect(screen.getByText(en.approvals.singlePerson.title)).toBeInTheDocument();
+    expect(screen.getByText(i18n.t("approvals.singlePerson.body", { organization: "bb" }))).toBeInTheDocument();
+    await userEvent.click(approve);
+    // The code is too old: the server asks for it, and the step-up dialog offers the sign-in.
+    expect(await screen.findByRole("dialog", { name: en.app.stepUp.title })).toBeInTheDocument();
     expect(posts(fetchMock)[0].url).toContain("/changes/chg-1a2b3c4d/approve");
   });
 

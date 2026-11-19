@@ -20,6 +20,7 @@ import { OperatorOrganizations } from "../src/pages/operator/OperatorOrganizatio
 import { HOST_STATES, stateTone, when } from "../src/pages/operator/operatorApi";
 import { AdminNav } from "../src/pages/organization/AdminNav";
 import { expectNoAxeViolations, json, renderPage } from "./page_contract";
+import { expectDenied } from "./checks";
 
 const ME = "b7c1e0f4";
 const OPERATOR = { project: "org", bootstrap: true, grants: [] } as unknown as Effective;
@@ -180,14 +181,33 @@ describe("audit", () => {
 describe("organizations", () => {
   const ORGS = {
     items: [
-      { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 } },
-      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {} },
+      { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 1, "dns-ok": 1 }, approvals: { organization: "bbsk", singlePerson: false, peopleWithARole: 4 } },
+      { name: "presov", title: "Prešovský kraj", domain: null, hosts: {}, approvals: { organization: "presov", singlePerson: false, peopleWithARole: 1 } },
     ],
     ids: [
       { id: "sk_bbsk", domain: "bbsk.sk", recordName: "_joinedcontext.bbsk.sk", recordValue: "jc-verify=c0ffee", requestedAt: "2026-11-16T09:00:00Z", mintedAt: "2026-11-16T09:10:00Z", organizations: ["bbsk"] },
       { id: "sk_zilina", domain: "zilina.sk", recordName: "_joinedcontext.zilina.sk", recordValue: "jc-verify=beef", requestedAt: "2026-11-17T09:00:00Z", mintedAt: null, organizations: [] },
     ],
   };
+
+  // T-7388: single-person approvals turn on only where one person holds a role; the Change asked
+  // for names the Organization and the new value.
+  it("asks for single-person approvals where one person holds a role, and keeps them off elsewhere", async () => {
+    const seen = render(<OperatorOrganizations />, (path, method) => {
+      if (path === "/api/v1/operator/organizations") return json(ORGS);
+      if (path === "/api/v1/operator/changes" && method === "POST")
+        return json({ ...CHANGES.items[0], kind: "SinglePersonSet", state: "proposed" }, 201);
+      return undefined;
+    });
+    const turnOn = await screen.findAllByRole("button", { name: en.operator.organizations.turnOn });
+    // Desktop table and phone cards both render each row; bbsk (four people) stays shut.
+    expectDenied(turnOn[0], i18n.t("operator.organizations.onePersonOnly", { count: 4 }));
+    expect(screen.getAllByText(en.operator.organizations.turnOnHint).length).toBeGreaterThan(0);
+    fireEvent.click(turnOn[1]);
+    expect((await screen.findAllByText(en.operator.organizations.asked)).length).toBeGreaterThan(0);
+    const posted = seen.find((call) => call.method === "POST" && call.path === "/api/v1/operator/changes");
+    expect(JSON.parse(String(posted?.body))).toEqual({ kind: "SinglePersonSet", organization: "presov", singlePerson: true });
+  });
 
   it("lists the Organizations and each id's TXT record, and adds a domain and its first host", async () => {
     const seen = render(<OperatorOrganizations />, (path, method) => {

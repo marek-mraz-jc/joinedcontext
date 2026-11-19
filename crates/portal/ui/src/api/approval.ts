@@ -1,4 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
+import { api, unwrap } from "./client";
 import { allows, type Effective, type Rule, type Verb } from "./permissions";
+import type { components } from "./schema";
 
 /** Why the approve button is off, or `null` when the API would take the approval. */
 export type ApprovalBlock = "needsRole" | "ownProposal" | "ownAccessChange" | "ownModelChange" | "needsPublisher" | null;
@@ -76,6 +79,8 @@ export interface ApprovalStanding {
   block: ApprovalBlock;
   /** The caller wrote the change and approves it as an administrator of its kind (PF-58). */
   ownAsAdministrator: boolean;
+  /** The caller approves their own access change alone, in single-person mode (T-7388). */
+  alone?: boolean;
 }
 
 /** Whether the caller wrote the change: its author is the caller's own e-mail (CC-34). */
@@ -120,6 +125,8 @@ export function approvalStanding(
     planFields?: PlannedField[] | null;
     files?: { kind: string }[] | null;
   },
+  /** The Organization is in single-person mode: its one person approves access alone (T-7388). */
+  singlePerson = false,
 ): ApprovalStanding {
   // A secret's change names no manifest kind: the API judges it on DataSource (T-6359).
   const kind = changedKind(change) === "Secret" ? "DataSource" : changedKind(change);
@@ -136,7 +143,7 @@ export function approvalStanding(
   }
   // Every file counts, as the API judges every file: a new space carries its DataModel (PF-58).
   const second = [kind, ...(change.files ?? []).map((file) => file.kind)].filter(needsSecondPerson);
-  if (second.length > 0) {
+  if (second.length > 0 && !singlePerson) {
     return { block: second.some((one) => one !== "DataModel") ? "ownAccessChange" : "ownModelChange", ownAsAdministrator: false };
   }
   // The bootstrap group is not a binding, so it does not administer a kind (PF-58).
@@ -144,9 +151,8 @@ export function approvalStanding(
     permissions.data?.bootstrap !== true &&
     allows(permissions.data, kind, "approve") &&
     allows(permissions.data, kind, "delete");
-  return administers
-    ? { block: null, ownAsAdministrator: true }
-    : { block: "ownProposal", ownAsAdministrator: false };
+  if (!administers) return { block: "ownProposal", ownAsAdministrator: false };
+  return second.length > 0 ? { block: null, ownAsAdministrator: true, alone: true } : { block: null, ownAsAdministrator: true };
 }
 
 /** The kind of the manifest a change touches, as its summary names it; `*` when it names none. */
@@ -155,3 +161,19 @@ export function changedKind(change: { summary: { params: unknown } }): string {
   return typeof kind === "string" && kind !== "" ? kind : "*";
 }
 
+export type ApprovalMode = components["schemas"]["ApprovalMode"];
+
+/**
+ * Whether an Organization lets its one person approve their own access changes after a fresh
+ * one-time code (T-7388), asked by its name or by one of its projects. The API decides each
+ * approval on its own; this only says what the page shows.
+ */
+export function useApprovalMode(by: { organization: string } | { project: string } | null) {
+  const query = by === null ? {} : by;
+  return useQuery({
+    queryKey: ["approval-mode", query],
+    enabled: by !== null,
+    staleTime: 30_000,
+    queryFn: async () => unwrap(await api.GET("/api/v1/organization/approval-mode", { params: { query } })),
+  });
+}

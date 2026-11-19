@@ -380,7 +380,11 @@
     },
     "reasonFirst": "Najprv napíšte, prečo zmenu zamietate.",
     "publication": "Dataset {name} v CKAN po schválení",
-    "publicationPublic": "Po schválení tento dataset môže čítať ktokoľvek bez prihlásenia. Pred napísaním názvu si prečítajte stránku aj zmeny polí vyššie."
+    "publicationPublic": "Po schválení tento dataset môže čítať ktokoľvek bez prihlásenia. Pred napísaním názvu si prečítajte stránku aj zmeny polí vyššie.",
+    "singlePerson": {
+      "title": "Režim jednej osoby: túto zmenu schvaľujete sami",
+      "body": "{organization} má jednu osobu, preto operátor inštalácie zapol schvaľovanie jednou osobou. Svoju zmenu prístupu môžete schváliť po zadaní jednorazového kódu; Portál si ho vyžiada znova, ak je posledný starší ako 5 minút. Zmena vás zaznamená ako „self (single-person mode)“."
+    }
   },
   "lane": {
     "green": "Zelená",
@@ -9117,6 +9121,17 @@
         "mcp": "Každý MCP server odpovedá na tejto adrese, za ktorou nasleduje jeho projekt a názov, napr. …/api/mcp/doprava/cestovne-poriadky.",
         "sign-in": "Poskytovateľ identity, kde sa jej ľudia prihlasujú; heslá a druhé faktory sa zadávajú len tam."
       }
+    },
+    "approvals": {
+      "title": "Schvaľovanie",
+      "lead": "Kto schvaľuje zmenu, ktorá udeľuje prístup alebo mení dátový model. Schvaľuje ju druhá osoba (štyri oči), ak operátor inštalácie nezapol režim jednej osoby.",
+      "mode": "Režim jednej osoby",
+      "on": "Zapnutý: jediná osoba organizácie schvaľuje svoje zmeny prístupu po čerstvom jednorazovom kóde (najviac 5 minút starom).",
+      "off": "Vypnutý: každú zmenu prístupu schvaľuje druhá osoba (štyri oči).",
+      "people": "Osoby s rolou",
+      "offReason": "Vypol ho Portál: {reason}",
+      "operatorOnly": "Zmeniť ho môže len operátor inštalácie v Administrácii, Operátori, Organizácie. Vypne sa sám, keď rolu dostane druhá osoba.",
+      "failed": "Režim schvaľovania sa nenačítal."
     }
   },
   "projectDelete": {
@@ -13663,7 +13678,17 @@
       "driftLead": "Ľuďom nemožno prideliť roly v týchto organizáciách, kým repozitár a register neuvádzajú rovnaké názvy. Nič sa nepremenuje automaticky.",
       "driftForge": "Len v registri",
       "driftRegistry": "Len v repozitári",
-      "driftFix": "Otvoriť nastavenia organizácie"
+      "driftFix": "Otvoriť nastavenia organizácie",
+      "approvals": "Schvaľovanie jednou osobou",
+      "approvalsOn": "Zapnuté",
+      "approvalsOff": "Vypnuté",
+      "people": "{count} s rolou",
+      "turnOn": "Zapnúť",
+      "turnOff": "Vypnúť",
+      "turnOnHint": "Len pre organizáciu, v ktorej má rolu práve jedna osoba, napr. prvý administrátor mesta. Schvaľuje ho druhý operátor; s jedným operátorom platí hneď.",
+      "onePersonOnly": "Rolu má {count} osôb: štyri oči sú možné, režim zostáva vypnutý.",
+      "asked": "Požiadané: schváli to druhý operátor v Zmenách operátorov.",
+      "applied": "Použité."
     },
     "ids": {
       "title": "Domény a ich TXT záznamy",

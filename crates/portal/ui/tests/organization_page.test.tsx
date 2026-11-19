@@ -93,6 +93,7 @@ const BARE_ADMIN = {
 
 interface World {
   permissions?: Effective;
+  approvalMode?: Record<string, unknown>;
 }
 
 function renderAt(tab: OrganizationTab, world: World = {}) {
@@ -106,6 +107,9 @@ function renderAt(tab: OrganizationTab, world: World = {}) {
       if (url.pathname === "/api/v1/projects") return json(list([{ name: "helsinki" }, { name: "espoo" }]));
       if (url.pathname === "/api/v1/projects/org/organizations") return json(list([ORGANIZATION]));
       if (url.pathname === "/api/v1/organization/limits") return json({ entries: [], projects: [] });
+      if (url.pathname === "/api/v1/organization/approval-mode") {
+        return json(world.approvalMode ?? { organization: url.searchParams.get("organization"), singlePerson: false, peopleWithARole: 3 });
+      }
       if (url.pathname === "/api/v1/projects/org/rolebindings") return json(list(BINDINGS));
       if (url.pathname === "/api/v1/projects/org/roles") {
         return json(list([role("viewer", "org"), role("air-analyst", "org")]));
@@ -239,6 +243,23 @@ describe("the Organization page", () => {
     expect(screen.getByText(en.organization.visibility.members)).toBeInTheDocument();
     expect(screen.getByText(/Data protection: Tietosuoja/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Edit hel\.fi/ })).toBeInTheDocument();
+  });
+
+  // T-7388: who approves access, in words, and that only an operator changes it.
+  it("says who approves access: four eyes, or the one person in single-person mode", async () => {
+    renderAt("settings");
+    expect(await screen.findByText(en.organization.approvals.off)).toBeInTheDocument();
+    expect(screen.getByText(en.organization.approvals.operatorOnly)).toBeInTheDocument();
+    cleanup();
+    renderAt("settings", { approvalMode: { organization: "hel", singlePerson: true, peopleWithARole: 1 } });
+    expect(await screen.findByText(en.organization.approvals.on)).toBeInTheDocument();
+    cleanup();
+    renderAt("settings", {
+      approvalMode: { organization: "hel", singlePerson: false, peopleWithARole: 2, offReason: "2 people hold a role in the Organization now" },
+    });
+    expect(
+      await screen.findByText(i18n.t("organization.approvals.offReason", { reason: "2 people hold a role in the Organization now" })),
+    ).toBeInTheDocument();
   });
 
   it("says so when the installation has written no Organization manifest", async () => {

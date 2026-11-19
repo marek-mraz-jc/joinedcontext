@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useDecision } from "../api/decision";
 import { Link } from "@tanstack/react-router";
-import { approvalStanding, changedKind, expectedNameOf, isOwn, rejectWords } from "../api/approval";
+import { approvalStanding, changedKind, expectedNameOf, isOwn, rejectWords, useApprovalMode } from "../api/approval";
 import { usePermissions } from "../api/permissions";
 import { queryKeys } from "../api/client";
 import { useAuth } from "../auth/AuthProvider";
@@ -127,8 +127,9 @@ export function ApprovalDetailPage({
 
   // Approve on the change's kind, and on someone else's change unless the caller administers
   // that kind (PF-50, PF-58); the API checks the same.
+  const approvalMode = useApprovalMode({ project });
   const standing = proposal
-    ? approvalStanding(permissions, identity?.email ?? undefined, proposal)
+    ? approvalStanding(permissions, identity?.email ?? undefined, proposal, approvalMode.data?.singlePerson === true)
     : { block: null, ownAsAdministrator: false };
   const decision = useDecision(project, id);
   const disabledReason = standing.block
@@ -398,7 +399,11 @@ export function ApprovalDetailPage({
             />
           ) : null}
 
-          {standing.ownAsAdministrator && isPendingApproval ? (
+          {standing.alone ? (
+            <Alert role="note" tone="warning" title={t("approvals.singlePerson.title")}>
+              {t("approvals.singlePerson.body", { organization: approvalMode.data?.organization ?? "" })}
+            </Alert>
+          ) : standing.ownAsAdministrator && isPendingApproval ? (
             <p role="note" className="text-sm text-fg-muted">
               {t("approvals.ownAsAdministrator", { kind: changedKind(proposal) })}
             </p>

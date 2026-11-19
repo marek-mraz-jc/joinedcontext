@@ -105,8 +105,15 @@ export function OperatorOrganizations(): JSX.Element {
               ),
           },
           { key: "hosts", label: t("operator.organizations.hosts"), text: (row) => hostSummary(row, t) },
+          {
+            key: "approvals",
+            label: t("operator.organizations.approvals"),
+            text: (row) => t(row.approvals.singlePerson ? "operator.organizations.approvalsOn" : "operator.organizations.approvalsOff"),
+            cell: (row) => <SinglePersonCell row={row} />,
+          },
         ]}
       />
+      <p className="text-caption text-fg-muted">{t("operator.organizations.turnOnHint")}</p>
       <IdList ids={ids} organizations={items} />
       <AddDomain organizations={items} />
     </section>
@@ -119,6 +126,52 @@ function hostSummary(row: OperatorOrganization, t: (key: string, options?: Recor
     .filter(([state]) => state !== "served" && state !== "removed")
     .reduce((sum, [, n]) => sum + n, 0);
   return served + waiting === 0 ? t("operator.organizations.noHost") : t("operator.organizations.hostCount", { served, waiting });
+}
+
+/**
+ * An Organization's single-person approvals (T-7388) and the Change that turns them on or off:
+ * on only where one person holds a role (the server checks again), off always.
+ */
+function SinglePersonCell({ row }: { row: OperatorOrganization }): JSX.Element {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const on = row.approvals.singlePerson;
+  const people = row.approvals.peopleWithARole;
+  const set = useMutation({
+    mutationFn: () => proposeChange({ kind: "SinglePersonSet", organization: row.name, singlePerson: !on }),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: operatorKeys.organizations }),
+  });
+  const crowded = !on && people > 1;
+  return (
+    <span className="flex flex-col items-start gap-1">
+      <span className="flex flex-wrap items-center gap-2">
+        <Badge tone={on ? "warning" : "neutral"}>
+          {t(on ? "operator.organizations.approvalsOn" : "operator.organizations.approvalsOff")}
+        </Badge>
+        <span className="text-caption text-fg-muted">{t("operator.organizations.people", { count: people })}</span>
+      </span>
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={crowded}
+        disabledReason={crowded ? t("operator.organizations.onePersonOnly", { count: people }) : undefined}
+        loading={set.isPending}
+        onClick={() => set.mutate()}
+      >
+        {t(on ? "operator.organizations.turnOff" : "operator.organizations.turnOn")}
+      </Button>
+      {set.isSuccess ? (
+        <span role="status" className="text-caption text-fg-muted">
+          {t(set.data.state === "applied" ? "operator.organizations.applied" : "operator.organizations.asked")}
+        </span>
+      ) : null}
+      {set.isError ? (
+        <span role="alert" className="text-caption text-danger-fg">
+          {reasonOf(set.error, t("app.error.generic"))}
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 /** Each Organization id and its TXT record; an id not minted yet is checked again here. */
