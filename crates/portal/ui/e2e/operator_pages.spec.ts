@@ -222,6 +222,14 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await expect(alert.getByRole("link", { name: "Open Organization settings" })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-organizations-drift-${width}`);
+
+      // One side only: its label alone, every name of a long list wrapping inside the notice.
+      registry.drift = { missingFromForge: [], missingFromRegistry: ["barcelona", "bratislava", "hel", "zilina", "kosice", "presov", "nitra", "trnava"] };
+      await page.reload();
+      await expect(alert.getByRole("term")).toHaveText(["Only in the repository"]);
+      await expect(alert.getByRole("definition").locator("code")).toHaveCount(8);
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `operator-organizations-drift-one-side-${width}`);
     });
 
     test(`an empty registry says where to start at ${width} px`, async ({ page }) => {

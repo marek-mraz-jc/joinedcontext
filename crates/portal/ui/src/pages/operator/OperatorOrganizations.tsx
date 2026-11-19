@@ -62,7 +62,7 @@ export function OperatorOrganizations(): JSX.Element {
                 </div>
               ))}
           </dl>
-          <Link to="/organization/$tab" params={{ tab: "settings" }} className="mt-2 inline-block underline">
+          <Link to="/organization/$tab" params={{ tab: "settings" }} className="mt-1 inline-block py-2 underline">
             {t("operator.organizations.driftFix")}
           </Link>
         </Alert>
