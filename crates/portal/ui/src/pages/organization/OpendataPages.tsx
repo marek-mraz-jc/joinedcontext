@@ -216,7 +216,7 @@ function PageList({
 }
 
 /** The preview the catalogue's renderer draws of `markdown`, asked again a moment after typing stops. */
-function usePreview(markdown: string) {
+export function usePreview(markdown: string) {
   const [asked, setAsked] = useState(markdown);
   useEffect(() => {
     const timer = setTimeout(() => setAsked(markdown), 400);
@@ -481,15 +481,29 @@ function touchesPages(fields: { path: string; from?: unknown; to?: unknown }[] |
  * who proposed each and when it closed. ponytail: the forge's first history page only; the
  * Approvals history holds the rest.
  */
-function PagesHistory({ organization }: { organization: string }): JSX.Element {
+export function PagesHistory({
+  organization,
+  kind = "Organization",
+  touches = touchesPages,
+  heading,
+  empty,
+}: {
+  /** The manifest whose Changes are listed: the Organization, or one of its Portals. */
+  organization: string;
+  kind?: "Organization" | "Portal";
+  /** Which closed Changes belong here, read from their plan's fields. */
+  touches?: (fields: { path: string; from?: unknown; to?: unknown }[] | null | undefined) => boolean;
+  heading?: string;
+  empty?: string;
+}): JSX.Element {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language ?? "sk";
   const history = useQuery({
-    queryKey: [...queryKeys.changes(ORG_NAMESPACE), "opendataPagesHistory", organization],
+    queryKey: [...queryKeys.changes(ORG_NAMESPACE), "opendataPagesHistory", kind, organization, touches.name],
     queryFn: async () =>
       (await door("portal_organization_change_history", {
         page: 1,
-        kind: "Organization",
+        kind,
         name: organization,
       })) as RestAnswer<"list_change_history">,
   });
@@ -505,18 +519,18 @@ function PagesHistory({ organization }: { organization: string }): JSX.Element {
         })) as RestAnswer<"get_change">,
     })),
   });
-  const shown = closed.filter((_, at) => touchesPages(details[at]?.data?.planFields));
+  const shown = closed.filter((_, at) => touches(details[at]?.data?.planFields));
   const loading = history.isPending || details.some((detail) => detail.isPending);
   const when = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
   return (
     <section aria-labelledby="opendata-pages-history" className="flex flex-col gap-2">
       <h3 id="opendata-pages-history" className="text-body font-semibold text-fg">
-        {t("opendataPages.history")}
+        {heading ?? t("opendataPages.history")}
       </h3>
       {history.isError ? <InlineError>{problem(history.error)}</InlineError> : null}
       {loading && !history.isError ? <p className="text-caption text-fg-muted">{t("app.loading")}</p> : null}
       {!loading && shown.length === 0 ? (
-        <p className="text-caption text-fg-muted">{t("opendataPages.historyEmpty")}</p>
+        <p className="text-caption text-fg-muted">{empty ?? t("opendataPages.historyEmpty")}</p>
       ) : null}
       {shown.length > 0 ? (
         <ul
