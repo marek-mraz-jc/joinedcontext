@@ -294,6 +294,7 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(await within(access).findAllByText(en.catalogue.access.noProject)).toHaveLength(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/belong to none of its projects/)).not.toBeInTheDocument();
+    expect(screen.getByText("2 datasets; you are not in a project of this organization yet")).toBeInTheDocument();
   });
 
   it("says a failed check of the granted datasets in the Access filter, and still lists the public ones (T-7317)", async () => {

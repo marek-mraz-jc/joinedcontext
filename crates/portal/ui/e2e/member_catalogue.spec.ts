@@ -191,7 +191,7 @@ test.describe("a member's catalogue", () => {
       );
       await page.goto("/catalogue?lang=en");
       await listAtTop(page);
-      await expect(page.getByText("3 datasets, none granted to you yet")).toBeVisible();
+      await expect(page.getByText("3 datasets; you are not in a project of this organization yet")).toBeVisible();
       if (width < 768) await shot(page, `member-catalogue-no-project-page-en-${width}`);
       const access = await accessFilter(page, width);
       await expect(access.locator("p", { hasText: /A project owner or an administrator of this organization can add you/ })).toBeVisible();
