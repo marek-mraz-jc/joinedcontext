@@ -129,6 +129,8 @@ test.describe("the catalogue's filters (T-7317)", () => {
     await expect(page.getByRole("group", { name: "Chosen filters" }).getByRole("button", { name: /^Remove filter/ })).toHaveCount(2);
     await shot(page, "facets-two-chosen-400");
     await page.goto("/catalogue?lang=en");
+    await expect(page.getByRole("status").filter({ hasText: "48 datasets" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Filters", exact: true })).toBeVisible();
     await shot(page, "facets-none-400");
     await page.getByRole("button", { name: "Filters", exact: true }).click();
     const sheet = page.getByRole("dialog", { name: "Filters" });

@@ -169,9 +169,14 @@ function Results({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const pages = Math.max(1, Math.ceil(answer.total / answer.pageSize));
   const chosen = FACETS.reduce((sum, facet) => sum + (search[facet]?.length ?? 0), 0);
-  // A filter every listed dataset already passes (Format, mostly) narrows nothing: last, closed (T-7317).
+  // A filter whose every value nearly every listed dataset has (Format: 625 of 626 on prod) narrows
+  // nothing: last, closed (T-7317). Publisher and Theme, the filters people pick by, stay open.
   const idle = (facet: FacetName) =>
-    !search[facet]?.length && answer.total > 0 && answer.facets[facet].every((v) => v.count >= answer.total);
+    facet !== "publisher" &&
+    facet !== "theme" &&
+    !search[facet]?.length &&
+    answer.total > 0 &&
+    answer.facets[facet].every((v) => v.count >= answer.total * IDLE_SHARE);
   const groups = [...FACETS.filter((f) => !idle(f)), ...FACETS.filter(idle)].map((facet) => (
     <FacetGroup
       key={facet}
@@ -294,6 +299,9 @@ function Results({
   );
 }
 
+/** The share of the listed datasets a value must cover for its filter to count as narrowing nothing. */
+const IDLE_SHARE = 0.95;
+
 /** How many options a facet shows before "Show all"; a facet longer than SEARCHABLE gets a search field. */
 const FIRST_OPTIONS = 6;
 const SEARCHABLE = 10;
@@ -403,6 +411,7 @@ function FacetGroup({
         {idle ? <p className="text-caption text-fg-muted">{t("catalogue.facets.everywhere")}</p> : null}
         {options.length > SEARCHABLE ? (
           <Input
+            className="mb-1"
             type="search"
             value={needle}
             onChange={(event) => setNeedle(event.target.value)}
