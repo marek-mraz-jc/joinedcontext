@@ -409,25 +409,31 @@ async fn count_wrong_code(
 ) -> Result<()> {
     let key = format!("device:{user_id}");
     let now = TimestampTz::now();
-    let mut rec = state
+    let update = |current: Option<LoginFailureRecord>| {
+        let mut rec = current
+            .filter(|r| {
+                r.window_started_at + SignedDuration::from_secs(WRONG_CODE_WINDOW_SECS) > now
+            })
+            .unwrap_or_else(|| LoginFailureRecord {
+                id: uuid::Uuid::now_v7().to_string(),
+                realm_id: realm.id.clone(),
+                target_key: key.clone(),
+                num_failures: 0,
+                last_failure_ms: 0,
+                last_ip_failure: String::new(),
+                locked_until: None,
+                window_started_at: now,
+            });
+        rec.num_failures += 1;
+        rec.last_failure_ms = now.as_millis();
+        client_ip.clone_into(&mut rec.last_ip_failure);
+        rec
+    };
+    state
         .store
-        .get_login_failure(&realm.id, &key)
-        .await?
-        .filter(|r| r.window_started_at + SignedDuration::from_secs(WRONG_CODE_WINDOW_SECS) > now)
-        .unwrap_or_else(|| LoginFailureRecord {
-            id: uuid::Uuid::now_v7().to_string(),
-            realm_id: realm.id.clone(),
-            target_key: key,
-            num_failures: 0,
-            last_failure_ms: 0,
-            last_ip_failure: String::new(),
-            locked_until: None,
-            window_started_at: now,
-        });
-    rec.num_failures += 1;
-    rec.last_failure_ms = now.as_millis();
-    client_ip.clone_into(&mut rec.last_ip_failure);
-    state.store.upsert_login_failure(rec).await
+        .update_login_failure(&realm.id, &key, &update)
+        .await
+        .map(drop)
 }
 
 /// `POST /realms/{realm}/device`: a signed-in person enters a user code, then allows or denies.

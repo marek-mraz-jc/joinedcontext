@@ -184,6 +184,7 @@ impl OutboxDispatcher {
             actions: row.actions.clone(),
             client_id: row.client_id.clone(),
             redirect_uri: row.redirect_uri.clone(),
+            email: Some(crate::email::email_binding(&row.to_address)),
             iat: now,
             exp: now + ttl,
         };

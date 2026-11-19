@@ -127,6 +127,32 @@ fn jwks_publishes_live_keys_only_and_rotation_stages_keys() {
     }
 }
 
+#[test]
+fn staged_key_becomes_active_at_its_activation_time() {
+    let kek = Kek::generate_for_tests();
+    let old = KeyManager::generate_es256("dev", &kek, 100, "ACTIVE").unwrap();
+    let other = KeyManager::generate_eddsa("dev", &kek, 80, "ACTIVE").unwrap();
+    let mut due = KeyManager::generate_es256("dev", &kek, 100, "PASSIVE").unwrap();
+    due.activate_at = Some(TimestampTz::now() - SignedDuration::from_secs(1));
+    let mut not_yet = KeyManager::generate_eddsa("dev", &kek, 80, "PASSIVE").unwrap();
+    not_yet.activate_at = Some(TimestampTz::now() + SignedDuration::from_hours(1));
+    let mut keys = vec![old.clone(), other.clone(), due.clone(), not_yet.clone()];
+    let changed = KeyManager::promote_due(&mut keys, 60);
+    let mut changed_kids: Vec<_> = changed.iter().map(|k| k.kid.clone()).collect();
+    changed_kids.sort();
+    let mut want = vec![old.kid.clone(), due.kid.clone()];
+    want.sort();
+    assert_eq!(changed_kids, want);
+    let by = |kid: &str| keys.iter().find(|k| k.kid == kid).unwrap().clone();
+    assert_eq!(by(&due.kid).status, "ACTIVE");
+    assert_eq!(by(&due.kid).activate_at, None);
+    assert_eq!(by(&old.kid).status, "PASSIVE");
+    assert!(by(&old.kid).expires_at.unwrap() > TimestampTz::now());
+    assert_eq!(by(&other.kid).status, "ACTIVE");
+    assert_eq!(by(&not_yet.kid).status, "PASSIVE");
+    assert!(KeyManager::promote_due(&mut keys, 60).is_empty());
+}
+
 fn header_b64(v: Value) -> String {
     URL_SAFE_NO_PAD.encode(v.to_string())
 }
@@ -195,6 +221,11 @@ fn verification_names_every_refusal() {
     let mut retired = es.clone();
     retired.status = "RETIRED".into();
     assert!(refuse(&good, &[retired]).contains("unknown or retired kid"));
+    // A key rotated out and past its expires_at no longer verifies (SEC-16).
+    let mut rotated_out = es.clone();
+    rotated_out.status = "PASSIVE".into();
+    rotated_out.expires_at = Some(TimestampTz::now() - SignedDuration::from_secs(1));
+    assert!(refuse(&good, &[rotated_out]).contains("unknown or retired kid"));
     let mut stored_hs = es.clone();
     stored_hs.algorithm = "HS256".into();
     assert!(refuse(&good, &[stored_hs]).contains("unsupported signing algorithm"));

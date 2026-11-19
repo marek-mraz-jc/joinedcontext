@@ -230,7 +230,11 @@ async fn pages_follow_accept_language_and_the_client_display_name() {
     )
     .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    assert_eq!(page_id(&html), "expired");
+    assert_eq!(page_id(&html), "action-link-unusable");
+    assert!(
+        html.contains("Dieser Link funktioniert nicht mehr"),
+        "{html}"
+    );
 }
 
 /// Organization memberships feed the picker, and an organization pinned on the session that
@@ -410,6 +414,15 @@ async fn malformed_webauthn_json_is_refused() {
 }
 
 async fn mint(store: &Arc<MemoryStore>, user_id: &str, actions: &[&str]) -> String {
+    mint_with_ttl(store, user_id, actions, None).await
+}
+
+async fn mint_with_ttl(
+    store: &Arc<MemoryStore>,
+    user_id: &str,
+    actions: &[&str],
+    lifespan_secs: Option<i64>,
+) -> String {
     let dynstore: Arc<dyn Store> = store.clone();
     let token = EmailSender::mint_action_token(
         &dynstore,
@@ -420,7 +433,7 @@ async fn mint(store: &Arc<MemoryStore>, user_id: &str, actions: &[&str]) -> Stri
         actions.iter().map(|a| (*a).to_owned()).collect(),
         Some("edge".into()),
         Some(CALLBACK.into()),
-        None,
+        lifespan_secs,
     )
     .await
     .unwrap();
@@ -465,7 +478,7 @@ async fn action_links_apply_direct_actions_and_refuse_disabled_people() {
         &["VERIFY_EMAIL", "TERMS_AND_CONDITIONS"],
     )
     .await;
-    let (st, h, _) = send(&app, Method::GET, &link, None, None, None).await;
+    let (st, h, _) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert_eq!(h[header::LOCATION], CALLBACK);
     let after = user(&store, MEMBER).await;
@@ -476,8 +489,93 @@ async fn action_links_apply_direct_actions_and_refuse_disabled_people() {
     let mut disabled = user(&store, MEMBER).await;
     disabled.enabled = false;
     store.update_user(disabled).await.unwrap();
-    let (st, _, _) = send(&app, Method::GET, &link, None, None, None).await;
+    let (st, _, _) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+/// A verify-e-mail link verifies only the address it was sent to, and only from the confirm
+/// page's POST: the GET a mail scanner sends changes nothing.
+#[tokio::test]
+async fn verify_email_links_verify_the_address_they_were_sent_to_on_confirm_only() {
+    let (app, store) = app().await;
+    let mut member = user(&store, MEMBER).await;
+    member.email_verified = false;
+    let member = store.update_user(member).await.unwrap();
+    let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
+
+    let (st, _, _) = send(&app, Method::GET, &link, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!user(&store, MEMBER).await.email_verified);
+
+    let mut moved = user(&store, MEMBER).await;
+    moved.email = Some("someone-else@example.org".into());
+    store.update_user(moved).await.unwrap();
+    let (st, _, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(page_id(&html), "action-link-unusable");
+    assert!(!user(&store, MEMBER).await.email_verified);
+
+    let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
+    let (st, _, _) = open_action_link(&app, &link).await;
+    assert!(st.is_success() || st.is_redirection(), "{st}");
+    assert!(user(&store, MEMBER).await.email_verified);
+}
+
+/// A link that no longer works says whether it expired or was used, and offers the next step
+/// that fits its action: "Forgot your password?" only for a password link, a new link from the
+/// administrator for an e-mail or authenticator link.
+#[tokio::test]
+async fn unusable_action_links_name_the_cause_and_the_next_step_for_their_action() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let reset = "/realms/dev/login-actions/reset-credentials";
+    let unusable = |html: &str| {
+        assert_eq!(page_id(html), "action-link-unusable", "{html}");
+        assert!(html.contains("/realms/dev/account"), "{html}");
+    };
+
+    let link = mint_with_ttl(&store, &member.id, &["UPDATE_PASSWORD"], Some(-120)).await;
+    let (st, _, html) = send(&app, Method::GET, &link, None, None, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    unusable(&html);
+    assert!(html.contains("This link has expired"), "{html}");
+    assert!(
+        html.contains(reset) && html.contains("Forgot your password?"),
+        "{html}"
+    );
+
+    let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
+    let (st, _, _) = open_action_link(&app, &link).await;
+    assert!(st.is_success() || st.is_redirection(), "{st}");
+    let (st, _, html) = send(&app, Method::GET, &link, None, None, None).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    unusable(&html);
+    assert!(html.contains("This link no longer works"), "{html}");
+    assert!(html.contains("ask your administrator"), "{html}");
+    assert!(!html.contains(reset), "{html}");
+
+    let link = mint_with_ttl(&store, &member.id, &["CONFIGURE_TOTP"], Some(-120)).await;
+    let (_, _, html) = send(&app, Method::GET, &link, None, None, Some("sk")).await;
+    unusable(&html);
+    assert!(html.contains("Platnosť tohto odkazu vypršala"), "{html}");
+    assert!(html.contains("požiadajte správcu"), "{html}");
+    assert!(!html.contains(reset), "{html}");
+
+    let (_, _, html) = send(
+        &app,
+        Method::GET,
+        &format!("{ACTION}?key=not-a-token"),
+        None,
+        None,
+        None,
+    )
+    .await;
+    unusable(&html);
+    assert!(
+        html.contains("We cannot tell what this link was for"),
+        "{html}"
+    );
+    assert!(html.contains(reset), "{html}");
 }
 
 /// An UPDATE_PASSWORD + CONFIGURE_TOTP link renders one form; a wrong code is refused, the
@@ -489,7 +587,7 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let open = |link: String| {
         let app = app.clone();
         async move {
-            let (st, h, html) = send(&app, Method::GET, &link, None, None, None).await;
+            let (st, h, html) = open_action_link(&app, &link).await;
             assert_eq!(st, StatusCode::OK, "{html}");
             assert_eq!(page_id(&html), "action-token-form");
             (

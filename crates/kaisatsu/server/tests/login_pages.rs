@@ -1127,7 +1127,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .strip_prefix("https://idm.dev.example.test")
         .unwrap()
         .to_owned();
-    let (st_link, _, _) = get(&app, &ve_link, None).await;
+    let (st_link, _, _) = open_action_link(&app, &ve_link).await;
     assert!(
         st_link.is_success() || st_link == StatusCode::SEE_OTHER,
         "{st_link}"
@@ -1179,6 +1179,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         None,
     )
     .await;
+    queued_mails_settle().await;
     assert_eq!(
         dispatcher
             .dispatch_realm_batch(&mount(), "dev", 50)
@@ -1194,8 +1195,14 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .strip_prefix("https://idm.dev.example.test")
         .unwrap();
 
+    // Opening the link changes nothing: a prefetch leaves it usable (K10).
+    let (st_peek, _, html_peek) = get(&app, link_path, None).await;
+    assert_eq!(st_peek, StatusCode::OK);
+    assert_eq!(page_id(&html_peek), "action-token-confirm");
+    assert!(html_peek.contains("name=\"key\""), "{html_peek}");
+
     // Consume action-token once -> renders password form + sets auth cookie
-    let (st_at, h_at, html_at) = get(&app, link_path, None).await;
+    let (st_at, h_at, html_at) = open_action_link(&app, link_path).await;
     assert_eq!(st_at, StatusCode::OK);
     assert_eq!(page_id(&html_at), "action-token-form");
     let at_cookie = h_at[header::SET_COOKIE]
@@ -1209,9 +1216,13 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     let at_session = extract_hidden_input(&html_at, "session_code");
 
     // Second use of the same action-token link is refused
-    let (st_at_replay, _, html_at_replay) = get(&app, link_path, None).await;
+    let (st_at_replay, _, html_at_replay) = open_action_link(&app, link_path).await;
     assert_eq!(st_at_replay, StatusCode::BAD_REQUEST);
-    assert_eq!(page_id(&html_at_replay), "expired");
+    assert_eq!(page_id(&html_at_replay), "action-link-unusable");
+    assert!(
+        html_at_replay.contains("href=\"/realms/dev/account\""),
+        "a used link offers the way to sign in: {html_at_replay}"
+    );
 
     // The reset form offers "sign out other devices", checked as on Keycloak's form: whoever
     // held the old password loses their sessions with it.
@@ -1405,6 +1416,41 @@ async fn reset_credentials_never_says_whether_the_account_exists() {
         h.replace(&h[i..(i + 22).min(h.len())], "")
     };
     assert_eq!(strip(&known).len(), strip(&unknown).len());
+}
+
+/// The reset mail is queued after the answer; let that task run.
+async fn queued_mails_settle() {
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// LIM-06: the public reset form queues at most three mails per person per hour, however often
+/// it is posted.
+#[tokio::test]
+async fn reset_credentials_caps_the_mails_queued_per_person() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    for _ in 0..6 {
+        let (st, _, html) = post_form(
+            &app,
+            "/realms/dev/login-actions/reset-credentials",
+            &[("username", MEMBER)],
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(page_id(&html), "reset-credentials-sent");
+        queued_mails_settle().await;
+    }
+    let queued = store
+        .list_outbox_rows("dev", None)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.user_id == member.id && r.template_kind == "RESET_CREDENTIALS")
+        .count();
+    assert_eq!(queued, 3);
 }
 
 /// K7: a recovery code whose single use is already recorded (a concurrent submit that won the

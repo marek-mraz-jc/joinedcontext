@@ -30,7 +30,6 @@ use kaisatsu_oidc::{ClientIp, OidcState};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 
 /// The client the console signs in through, provisioned by jc in each realm it serves.
 pub const ACCOUNT_CONSOLE_CLIENT: &str = "account-console";
@@ -404,22 +403,6 @@ struct PersonalInfoUpdate {
     attributes: Option<BTreeMap<String, Vec<String>>>,
 }
 
-/// Every user attribute a protocol mapper of the realm (client or client scope) puts into a
-/// token: a person who could set one would grant themselves a claim.
-async fn claim_bearing_attributes(store: &Arc<dyn Store>, realm_id: &str) -> Result<Vec<String>> {
-    let mut mappers: Vec<ProtocolMapperRepresentation> = Vec::new();
-    for c in store.list_clients(realm_id, None, None, false).await? {
-        mappers.extend(c.protocol_mappers);
-    }
-    for s in store.list_client_scopes(realm_id).await? {
-        mappers.extend(s.protocol_mappers);
-    }
-    Ok(mappers
-        .iter()
-        .filter_map(|m| m.config.get("user.attribute").cloned())
-        .collect())
-}
-
 fn clean_text(raw: &str, max: usize) -> std::result::Result<Option<String>, &'static str> {
     let v = raw.trim();
     if v.chars().count() > max {
@@ -555,7 +538,9 @@ async fn update_personal_info(
         }
     }
     if let Some(attrs) = &req.attributes {
-        let claim_bearing = claim_bearing_attributes(&state.store, &c.realm.id).await?;
+        let claim_bearing =
+            kaisatsu_core::claims::claim_bearing_attributes(state.store.as_ref(), &c.realm.id)
+                .await?;
         for (key, values) in attrs {
             if user.attributes.get(key) == Some(values) {
                 continue;

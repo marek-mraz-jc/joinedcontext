@@ -25,4 +25,4 @@ pub use error::{KaisatsuError, OAuthErrorResponse, ProblemDetails, Result};
 pub use model::*;
 pub use odata_defs::{kaisatsu_odata_service, scope_for_context};
 pub use ops::{ODataKind, ODataOperation, ODataParam, OperationDef, OperationRegistry};
-pub use store::Store;
+pub use store::{LoginFailureUpdate, Store};

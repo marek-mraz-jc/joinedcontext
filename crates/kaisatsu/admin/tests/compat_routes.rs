@@ -702,6 +702,179 @@ async fn another_organizations_objects_are_404_to_an_org_admin() {
     }
 }
 
+/// ISO-03: list routes answer an Organization's admin with what its single-object routes would:
+/// another Organization's client scopes and a person's groups in another Organization stay out.
+#[tokio::test]
+async fn list_routes_leave_out_another_organizations_objects() {
+    let f = fixture().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "sc-esp".into(),
+            realm_id: "dev".into(),
+            org_id: Some("espoo".into()),
+            name: "esp-scope".into(),
+            protocol: "openid-connect".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, scopes) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/client-scopes"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{scopes}");
+    let names: Vec<&str> = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert!(names.contains(&"hel-scope"), "{names:?}");
+    assert!(!names.contains(&"esp-scope"), "{names:?}");
+    let (_, _, all) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/client-scopes"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert!(
+        all.as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "esp-scope")
+    );
+
+    f.store
+        .add_user_to_group("dev", "hel-user", "esp-group")
+        .await
+        .unwrap();
+    f.store
+        .add_user_to_group("dev", "hel-user", "hel-group")
+        .await
+        .unwrap();
+    let (st, _, groups) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user/groups"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{groups}");
+    let ids: Vec<&str> = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|g| g["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["hel-group"]);
+    let (_, _, person) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    let paths = person["groups"].as_array().cloned().unwrap_or_default();
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.as_str().is_some_and(|p| p.starts_with("/espoo"))),
+        "{person}"
+    );
+    let (_, _, groups) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user/groups"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert_eq!(groups.as_array().unwrap().len(), 2);
+}
+
+/// ADM-04: an Organization admin's person and group bodies cannot mark an unproven address
+/// verified, write an attribute a protocol mapper copies into tokens or an identity-provider
+/// link, or create a transient person; a realm admin still can set attributes.
+#[tokio::test]
+async fn org_admin_bodies_cannot_write_claims_verification_or_transient() {
+    let f = fixture().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "sc-dept".into(),
+            realm_id: "dev".into(),
+            name: "dept".into(),
+            protocol: "openid-connect".into(),
+            protocol_mappers: vec![ProtocolMapperRepresentation {
+                id: "m-dept".into(),
+                name: "department".into(),
+                protocol: "openid-connect".into(),
+                protocol_mapper: "oidc-usermodel-attribute-mapper".into(),
+                config: [("user.attribute".to_owned(), "department".to_owned())].into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let u = format!("{R}/users/hel-user");
+    let put = |body: Value| {
+        let (app, token, u) = (f.app.clone(), f.hel_admin.clone(), u.clone());
+        async move { call(&app, &Method::PUT, &u, Some(&token), Some(&body)).await }
+    };
+    let (st, _, _) = put(json!({ "username": "hel-user", "email": "new@example.test", "emailVerified": true, "enabled": true })).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let stored = f
+        .store
+        .get_user_by_id("dev", None, "hel-user")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.email.as_deref(), Some("new@example.test"));
+    assert!(!stored.email_verified);
+    for attr in ["department", "kaisatsu.idp.github.sub"] {
+        let (st, _, ans) =
+            put(json!({ "username": "hel-user", "enabled": true, "attributes": { attr: ["x"] } }))
+                .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{attr}: {ans}");
+    }
+    let (st, _, ans) = put(
+        json!({ "username": "hel-user", "enabled": true, "attributes": { "nickname": ["x"] } }),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{ans}");
+    let (st, _, ans) = call(&f.app, &Method::PUT, &u, Some(&f.admin), Some(&json!({ "username": "hel-user", "enabled": true, "attributes": { "department": ["x"] } }))).await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{ans}");
+
+    let (st, _, ans) = call(&f.app, &Method::POST, &format!("{R}/users"), Some(&f.hel_admin), Some(&json!({ "username": "ghost", "email": "ghost@example.test", "emailVerified": true, "transient": true, "enabled": true }))).await;
+    assert_eq!(st, StatusCode::CREATED, "{ans}");
+    let ghost = f
+        .store
+        .get_user_by_username_or_email("dev", None, "ghost")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!ghost.transient);
+    assert!(!ghost.email_verified);
+
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/groups/hel-group"),
+        Some(&f.hel_admin),
+        Some(&json!({ "name": "members", "attributes": { "department": ["x"] } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{ans}");
+}
+
 #[tokio::test]
 async fn people_lifecycle_through_the_compat_routes() {
     let f = fixture().await;

@@ -24,6 +24,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 subtle = "2.6"
 thiserror = "2.0"
+tokio = { version = "1.54", features = ["rt"] }
 tracing = "0.1"
 url = "2.5"
 # TOTP enrolment QR code (inline SVG); pure Rust, no dependencies.

@@ -365,7 +365,7 @@ fn realm_admins_realm_appliers_and_the_realm_object() {
     kc_admin
         .client_roles
         .insert("realm-management".into(), vec!["realm-admin".into()]);
-    assert!(kc_admin.is_realm_admin() && kc_admin.is_realm_applier());
+    assert!(kc_admin.is_realm_admin());
     let mut department_admin = org_member("hel", &[]);
     department_admin.realm_roles = vec!["admin".into(), "platform-admin".into()];
     assert!(!department_admin.is_realm_admin());
@@ -377,13 +377,15 @@ fn realm_admins_realm_appliers_and_the_realm_object() {
     let mut applier = Principal::anonymous();
     applier.subject = Some("ci".into());
     applier.realm_roles = vec!["realm-apply".into()];
-    assert!(check(&applier, None, Action::Apply, &realm).allowed);
-    assert!(check(&applier, None, Action::Read, &realm).allowed);
-    let d = check(&applier, None, Action::Update, &realm);
+    // ADM-06: applying a realm document writes users, roles, clients and identity providers,
+    // so `realm-apply` and `manage-realm` alone apply nothing: only `realm-admin` does.
+    for action in [Action::Apply, Action::Read, Action::Update] {
+        assert!(!check(&applier, None, action, &realm).allowed, "{action:?}");
+    }
+    let d = check(&mgmt(&["manage-users"]), None, Action::Update, &realm);
     assert!(!d.allowed && d.visible, "a realm refusal is a visible 403");
     let manage_realm = mgmt(&["manage-realm"]);
-    assert!(manage_realm.is_realm_applier());
-    assert!(check(&manage_realm, None, Action::Apply, &realm).allowed);
+    assert!(!check(&manage_realm, None, Action::Apply, &realm).allowed);
     // Reaching realm-level objects gives an applier no rights on them, nor on organizations.
     expect(&applier, None, None, [(false, false); 7]);
     expect(&applier, None, Some("hel"), [(false, false); 7]);

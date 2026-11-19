@@ -115,10 +115,11 @@ async fn a_realm_update_keeps_what_its_body_leaves_out() {
         ..Default::default()
     });
     f.store.upsert_realm(stored).await.unwrap();
+    // Realm objects are realm-admin only (`manage-realm` alone applies nothing).
     let applier = f
         .token(
             "svc-apply",
-            json!({ "resource_access": { "realm-management": { "roles": ["manage-realm"] } } }),
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
         )
         .await;
     let realm_call = |method: Method, body: Option<Value>| {

@@ -552,6 +552,45 @@ pub(crate) fn merge_user_update(
     user
 }
 
+/// The user attribute prefix of an identity-provider link (`kaisatsu.idp.{alias}.sub`), which the
+/// broker trusts to sign a person in.
+const IDP_LINK_ATTRIBUTE_PREFIX: &str = "kaisatsu.idp.";
+
+/// What a person create (`existing` None) or update may carry beyond the authorization of the
+/// person itself:
+/// - `transient` is never set by a body: a transient person is unreachable by list, get and
+///   delete yet keeps its username and e-mail taken;
+/// - an Organization-scoped caller cannot mark an address verified it did not prove (a changed
+///   or new address is unverified), nor set or change an attribute a protocol mapper copies into
+///   tokens or an identity-provider link, as the account console refuses for self-edits.
+pub(crate) async fn guard_user_write(
+    store: &dyn Store,
+    ctx: &RequestCtx,
+    existing: Option<&UserRepresentation>,
+    user: &mut UserRepresentation,
+) -> Result<()> {
+    user.transient = existing.is_some_and(|e| e.transient);
+    if ctx.allowed_orgs().is_none() {
+        return Ok(());
+    }
+    user.email_verified =
+        user.email_verified && existing.is_some_and(|e| e.email_verified && e.email == user.email);
+    let claim_bearing =
+        kaisatsu_core::claims::claim_bearing_attributes(store, &ctx.realm_id).await?;
+    let empty = HashMap::new();
+    let before = existing.map_or(&empty, |e| &e.attributes);
+    for key in user.attributes.keys().chain(before.keys()) {
+        let reserved =
+            key.starts_with(IDP_LINK_ATTRIBUTE_PREFIX) || claim_bearing.iter().any(|a| a == key);
+        if reserved && user.attributes.get(key) != before.get(key) {
+            return Err(KaisatsuError::Forbidden(format!(
+                "attributes.{key}: only a realm-wide manager sets this attribute, it reaches tokens or sign-in"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// The Authorizer's decision on an application (client) and its sub-resources: mappers, scope
 /// links, role holders.
 fn check_application(
@@ -1101,6 +1140,7 @@ async fn compat_create_user(
         .unwrap_or_default();
     user.realm_roles = default_roles;
     user.client_roles.clear();
+    guard_user_write(state.oidc.store.as_ref(), &ctx, None, &mut user).await?;
     // As Keycloak's POST /users: each `groups` path names a group the person joins; an unknown
     // path is 404 and a group the caller may not manage members of is 403, both before the
     // person exists. Joining goes through `member_add`, the PUT /users/{id}/groups/{gid} path.
@@ -1184,11 +1224,17 @@ async fn compat_get_user(
         &ctx,
         Action::Read,
         &ObjectTarget::Person {
-            realm_id: realm,
+            realm_id: realm.clone(),
             org_id: user.org_id.clone(),
             person_id: user.id.clone(),
         },
     ))?;
+    let mut user = user;
+    if !user.groups.is_empty() && !ctx.principal.is_realm_admin() {
+        let visible = visible_user_groups(&state, &ctx, &realm, &user.id).await?;
+        user.groups
+            .retain(|path| visible.iter().any(|g| &g.path == path));
+    }
     Ok(Json(user))
 }
 
@@ -1220,7 +1266,8 @@ async fn compat_update_user(
     crate::operations::ensure_person_ceiling(&state, &ctx, &existing).await?;
     user.id = id.clone();
     user.realm_id = realm;
-    let user = merge_user_update(&existing, user, &ctx);
+    let mut user = merge_user_update(&existing, user, &ctx);
+    guard_user_write(state.oidc.store.as_ref(), &ctx, Some(&existing), &mut user).await?;
     let updated = state.oidc.store.update_user(user).await?;
     // Disabling ends the person's sessions now, as SCIM deactivation does (S-4-10).
     if !updated.enabled {
@@ -1552,8 +1599,37 @@ async fn compat_list_user_groups(
             person_id: user.id.clone(),
         },
     ))?;
-    let groups = state.oidc.store.list_user_groups(&realm, &user.id).await?;
-    Ok(Json(groups))
+    Ok(Json(
+        visible_user_groups(&state, &ctx, &realm, &user.id).await?,
+    ))
+}
+
+/// The groups of person `user_id` the caller may read: a person's membership of another
+/// Organization's group stays out of an Organization manager's answer (ISO-03), as the group
+/// itself does on the single-group routes.
+async fn visible_user_groups(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    realm: &str,
+    user_id: &str,
+) -> Result<Vec<GroupRepresentation>> {
+    let mut groups = state.oidc.store.list_user_groups(realm, user_id).await?;
+    groups.retain(|g| {
+        state
+            .authorizer
+            .check(
+                ctx,
+                Action::Read,
+                &ObjectTarget::Group {
+                    realm_id: realm.to_owned(),
+                    org_id: g.org_id.clone(),
+                    group_id: g.id.clone(),
+                    managed_by: g.managed_by.clone(),
+                },
+            )
+            .allowed
+    });
+    Ok(groups)
 }
 
 async fn compat_add_user_to_group(
@@ -1731,6 +1807,7 @@ fn guard_group_write(
     ctx: &RequestCtx,
     group: &mut GroupRepresentation,
     existing: Option<&GroupRepresentation>,
+    claim_bearing: &[String],
 ) -> Result<()> {
     // The path is built from the name, and the path's root names the group's Organization.
     if group.name.contains('/') || group.name.chars().any(char::is_control) {
@@ -1742,7 +1819,13 @@ fn guard_group_write(
     group.client_roles = existing.map(|e| e.client_roles.clone()).unwrap_or_default();
     group.sub_groups = Vec::new();
     if ctx.allowed_orgs().is_some() {
-        for key in MEMBERSHIP_ATTRIBUTES {
+        let keys = group
+            .attributes
+            .keys()
+            .chain(existing.into_iter().flat_map(|e| e.attributes.keys()))
+            .filter(|k| claim_bearing.contains(k))
+            .map(String::as_str);
+        for key in MEMBERSHIP_ATTRIBUTES.into_iter().chain(keys) {
             let before = existing.and_then(|e| e.attributes.get(key));
             if group.attributes.get(key) != before {
                 return Err(KaisatsuError::Forbidden(format!(
@@ -1782,7 +1865,9 @@ async fn compat_create_group(
             managed_by: group.managed_by.clone(),
         },
     ))?;
-    guard_group_write(&ctx, &mut group, None)?;
+    let claim_bearing =
+        kaisatsu_core::claims::claim_bearing_attributes(state.oidc.store.as_ref(), &realm).await?;
+    guard_group_write(&ctx, &mut group, None, &claim_bearing)?;
     // The store upserts by id or path: a create names neither, or it would replace another
     // (possibly another organization's) group. As Keycloak, a taken top-level name is 409.
     group.id = String::new();
@@ -1873,7 +1958,9 @@ async fn compat_update_group(
         },
     ))?;
     group.id = id.clone();
-    guard_group_write(&ctx, &mut group, Some(&existing))?;
+    let claim_bearing =
+        kaisatsu_core::claims::claim_bearing_attributes(state.oidc.store.as_ref(), &realm).await?;
+    guard_group_write(&ctx, &mut group, Some(&existing), &claim_bearing)?;
     // The stored path stays (a move has its own route in Keycloak): a body path naming another
     // group would make the store's upsert replace that group.
     group.path.clone_from(&existing.path);
@@ -3298,6 +3385,22 @@ async fn compat_list_client_scopes(
         },
     ))?;
     let mut scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    // Each scope as its single-scope GET checks it: another Organization's scopes stay out.
+    scopes.retain(|s| {
+        state
+            .authorizer
+            .check(
+                &ctx,
+                Action::Read,
+                &ObjectTarget::ClientScope {
+                    realm_id: realm.clone(),
+                    org_id: s.org_id.clone(),
+                    scope_id: s.id.clone(),
+                    managed_by: None,
+                },
+            )
+            .allowed
+    });
     // The built-in scopes the realm does not store, as a client's scope list shows them
     // (`resolve_scope_objects`): workload_clients.rs finds `basic` here to link it back.
     let unstored: Vec<ClientScopeRepresentation> = BUILTIN_CLIENT_SCOPES

@@ -1636,6 +1636,17 @@ async fn select_signing_key(
         .get(attr_key)
         .map(String::as_str)
         .filter(|alg| !alg.is_empty());
+    // A key a non-immediate rotation staged signs from its activation time on.
+    let mut promoted = keys.to_vec();
+    let changed = KeyManager::promote_due(&mut promoted, realm.access_token_lifespan);
+    for key in &changed {
+        state.store.upsert_signing_key(key.clone()).await?;
+    }
+    let keys = if changed.is_empty() {
+        keys
+    } else {
+        promoted.as_slice()
+    };
     let active = |keys: &[SigningKeyRecord], alg: &str| {
         keys.iter()
             .find(|k| k.status == "ACTIVE" && k.algorithm == alg)

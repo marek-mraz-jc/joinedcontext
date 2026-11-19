@@ -20,5 +20,6 @@ tokio = { version = "1.54", features = ["sync", "time", "rt"] }
 uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
+kaisatsu-oidc = { path = "../oidc" }
 kaisatsu-store-memory = { path = "../store-memory" }
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }

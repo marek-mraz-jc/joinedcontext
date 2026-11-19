@@ -6,6 +6,7 @@ use crate::model::{
     ClientRepresentation, ClientScopeRepresentation, GroupRepresentation,
     ProtocolMapperRepresentation, RealmConfig, RoleRepresentation, UserRepresentation,
 };
+use crate::store::Store;
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -837,6 +838,28 @@ pub fn compute_subject_for_client(
         }
     }
     Ok(local_sub.to_owned())
+}
+
+/// The user and group attribute names a protocol mapper of the realm (on a client or a client
+/// scope) copies into tokens: whoever writes one of them writes a claim of that person or of the
+/// group's members.
+pub async fn claim_bearing_attributes(store: &dyn Store, realm_id: &str) -> Result<Vec<String>> {
+    let mut names = Vec::new();
+    for c in store.list_clients(realm_id, None, None, false).await? {
+        names.extend(
+            c.protocol_mappers
+                .iter()
+                .filter_map(|m| m.config.get("user.attribute").cloned()),
+        );
+    }
+    for s in store.list_client_scopes(realm_id).await? {
+        names.extend(
+            s.protocol_mappers
+                .iter()
+                .filter_map(|m| m.config.get("user.attribute").cloned()),
+        );
+    }
+    Ok(names)
 }
 
 #[cfg(test)]

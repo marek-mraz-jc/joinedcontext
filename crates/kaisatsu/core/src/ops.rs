@@ -321,7 +321,7 @@ impl OperationRegistry {
                 "Apply Realm Configuration",
                 "Declaratively applies JSON/YAML realm configuration (W1b).",
                 Action::Apply,
-                "realm-apply",
+                "realm-admin",
                 "REALM_APPLY",
                 "POST",
                 "/api/v1/realms/{realm}/apply",

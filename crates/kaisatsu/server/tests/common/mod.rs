@@ -131,6 +131,33 @@ pub async fn post_form(
     )
 }
 
+/// Opens an e-mailed action link as a person does: the GET renders a confirm page and changes
+/// nothing; its button POSTs the link's key. Returns the GET's answer when it is no confirm page.
+pub async fn open_action_link(
+    app: &axum::Router,
+    link: &str,
+) -> (StatusCode, axum::http::HeaderMap, String) {
+    let resp = app
+        .clone()
+        .oneshot(Request::builder().uri(link).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let (status, headers) = (resp.status(), resp.headers().clone());
+    let html = String::from_utf8(
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    if !html.contains("data-page-id=\"login-action-token-confirm\"") {
+        return (status, headers, html);
+    }
+    let key = extract_hidden_input(&html, "key");
+    let path = link.split('?').next().unwrap_or(link);
+    post_form(app, path, &[("key", &key)], None).await
+}
+
 pub fn extract_hidden_input(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\" value=\"");
     let start = html.find(&marker).expect("find input marker") + marker.len();

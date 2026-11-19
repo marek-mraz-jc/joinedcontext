@@ -269,6 +269,7 @@ pub async fn execute(
             user.service_account_client_id = None;
             user.created_timestamp = Some(TimestampTz::now().as_millis());
             check_decision(authz.check(ctx, Action::Create, &person_target(ctx, &user)))?;
+            crate::compat::guard_user_write(store.as_ref(), ctx, None, &mut user).await?;
             let created = store.create_user(user).await?;
             record_admin_write(
                 state,
@@ -293,7 +294,9 @@ pub async fn execute(
             }
             let incoming: UserRepresentation = serde_json::from_value(incoming)
                 .map_err(|e| KaisatsuError::BadRequest(format!("invalid person: {e}")))?;
-            let merged = merge_user_update(&existing, incoming, ctx);
+            let mut merged = merge_user_update(&existing, incoming, ctx);
+            crate::compat::guard_user_write(store.as_ref(), ctx, Some(&existing), &mut merged)
+                .await?;
             let updated = store.update_user(merged).await?;
             // Disabling ends the person's sessions now, as SCIM deactivation does (S-4-10).
             if !updated.enabled {
