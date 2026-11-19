@@ -123,7 +123,7 @@ impl AdminAuth {
 /// Equal length and equal bytes, every byte visited: the time taken tells
 /// a caller the length at most, which the configured minimum makes public
 /// anyway.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
     a.len() == b.len() && std::hint::black_box(diff) == 0
 }
