@@ -8,13 +8,11 @@ use antares_ical::mapping::{
     is_language_tag, is_output_name, reason, CompiledOutput, IcalMapping, Outcome, Output, Plan,
     Window,
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::{json, Value};
 
-fn now() -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-10-18T00:00:00Z")
-        .expect("time")
-        .with_timezone(&Utc)
+fn now() -> Timestamp {
+    "2026-10-18T00:00:00Z".parse().expect("time")
 }
 
 fn plan(ical: &Value) -> Result<Plan, String> {

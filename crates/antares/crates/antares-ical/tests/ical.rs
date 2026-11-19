@@ -171,15 +171,11 @@ async fn the_feed_is_rfc_5545_and_round_trips_through_a_parser() {
     // a multi-day event: its last day inclusive in the SDM, the day after it in DTEND
     assert_eq!(
         jarmok.get_start(),
-        Some(DatePerhapsTime::Date(
-            chrono::NaiveDate::from_ymd_opt(2026, 9, 10).expect("date")
-        ))
+        Some(DatePerhapsTime::Date("2026-09-10".parse().expect("date")))
     );
     assert_eq!(
         jarmok.get_end(),
-        Some(DatePerhapsTime::Date(
-            chrono::NaiveDate::from_ymd_opt(2026, 9, 13).expect("date")
-        ))
+        Some(DatePerhapsTime::Date("2026-09-13".parse().expect("date")))
     );
     assert_eq!(jarmok.get_location(), Some("Námestie SNP, Banská Bystrica"));
     assert_eq!(

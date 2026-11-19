@@ -98,11 +98,11 @@ async fn fixture_with(broker: TestBroker) -> Router {
         let (status, body) = send(&app, "PUT", &format!("/q/views/{id}"), &view.to_string()).await;
         assert_eq!(status, StatusCode::CREATED, "view {id}: {body}");
     }
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let stamp = |age: i64| {
-        now.checked_sub_signed(chrono::Duration::seconds(age))
+        now.checked_sub(jiff::SignedDuration::from_secs(age))
             .expect("a time")
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+            .to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
     };
     let bus = |id: &str, at: String, route: bool| {
         let mut v = json!({"id": format!("urn:ngsi-ld:Vehicle:{id}"), "type": "Vehicle",
