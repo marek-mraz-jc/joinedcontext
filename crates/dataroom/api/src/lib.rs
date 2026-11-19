@@ -197,6 +197,8 @@ pub struct DataroomState {
     pub portals: PortalTables,
     /// Profile verdicts of the public feeds, kept between pages ([`feeds::FeedConformance`]).
     pub feed_conformance: Arc<feeds::FeedConformance>,
+    /// The portals' uploaded files (T-7417); `None`: this installation stores none.
+    pub files: Option<Arc<dataroom_core::files::FileStore>>,
 }
 
 /// Where a request came in, as the host's router resolved it (`jc_router::Mount`: the scheme
@@ -288,6 +290,7 @@ impl DataroomState {
             catalogue_bases: Arc::default(),
             portals: PortalTables::default(),
             feed_conformance: Arc::default(),
+            files: None,
         }
     }
 
@@ -366,6 +369,12 @@ impl DataroomState {
     }
 
     /// The default catalogue's public URL, e.g. `http://city.test/opendata`.
+    /// Stores and serves the portals' uploaded files under `files` (T-7417).
+    pub fn with_files(mut self, files: Arc<dataroom_core::files::FileStore>) -> Self {
+        self.files = Some(files);
+        self
+    }
+
     pub fn with_public_base(mut self, base: impl Into<String>) -> Self {
         self.public_base = Some(base.into());
         self
@@ -664,6 +673,7 @@ pub fn router(state: DataroomState) -> Router {
         )
         .route("/api/v1/assets/logo", post(handle_upload_logo))
         .route("/assets/{name}", get(handle_serve_asset))
+        .route("/files/{sha256}/{name}", get(handle_serve_file))
         // Built-in theme static assets
         .route("/jc-theme.css", get(handle_jc_theme_css))
         .route("/jc-enums.json", get(handle_jc_enums_json))
@@ -1331,6 +1341,72 @@ async fn handle_serve_asset(
             .into_response(),
         None => problem_response(DataroomError::NotFound(format!("asset '{name}' not found"))),
     }
+}
+
+/// A portal's uploaded file (T-7417), on its own catalogue's hosts only: the file of this
+/// catalogue, else the Organization-wide one of this catalogue's Organization. Never another
+/// Organization's. Raster images inline; every other type as an attachment that runs nothing.
+async fn handle_serve_file(
+    State(state): State<DataroomState>,
+    headers: HeaderMap,
+    Path((sha256, _name)): Path<(String, String)>,
+) -> Response {
+    let not_found = || problem_response(DataroomError::NotFound("no such file here".into()));
+    let Some(files) = state.files.clone() else {
+        return not_found();
+    };
+    let (ctx, _) = match state.resolve_context(&headers).await {
+        Ok(v) => v,
+        Err(e) => return problem_response(e),
+    };
+    let own = state
+        .organization_catalogues
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .find(|(org, _)| *org == ctx.org_id)
+        .map(|(_, cat)| *cat);
+    let mut keys = vec![(ctx.org_id, ctx.catalogue_id)];
+    keys.extend(
+        own.filter(|c| *c != ctx.catalogue_id)
+            .map(|c| (ctx.org_id, c)),
+    );
+    let found = tokio::task::spawn_blocking(move || {
+        keys.into_iter()
+            .find_map(|key| files.read(key, &sha256).transpose())
+            .transpose()
+    })
+    .await;
+    let (entry, bytes) = match found {
+        Ok(Ok(Some(hit))) => hit,
+        Ok(Ok(None)) => return not_found(),
+        Ok(Err(e)) => return problem_response(e.client_safe()),
+        Err(_) => return problem_response(DataroomError::Storage("file read stopped".into())),
+    };
+    let disposition = format!(
+        "{}; filename*=UTF-8''{}",
+        if entry.inline() {
+            "inline"
+        } else {
+            "attachment"
+        },
+        entry.path().rsplit('/').next().unwrap_or("file")
+    );
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, entry.content_type.clone()),
+            (header::CONTENT_DISPOSITION, disposition),
+            (
+                header::CACHE_CONTROL,
+                "public, max-age=31536000, immutable".to_owned(),
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_owned()),
+            (header::CONTENT_SECURITY_POLICY, SVG_CSP.to_owned()),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 async fn handle_jc_theme_css() -> Response {

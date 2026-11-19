@@ -194,6 +194,65 @@ describe("the sources tab", () => {
     await expectAxeClean(container);
   });
 
+  it("previews the first records of a source as dataset cards, written nowhere", async () => {
+    const records = [
+      { name: "ke-ovzdusie", title: "Ovzdušie Košice", description: "Merania kvality ovzdušia", keywords: ["ovzdušie"], formats: ["CSV", "JSON"], licence: "CC-BY-4.0" },
+      { name: "ke-skoly", title: "Školy", description: "", keywords: [], formats: [], licence: null },
+    ];
+    const { container } = await openTab("Sources", { sources: [KOSICE] }, (path) =>
+      path.endsWith("/sources/kosice/test") ? jsonResponse({ outcome: "ok", records, partial: false }) : undefined,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Test connection of kosice" }));
+    const preview = await screen.findByRole("region", { name: "Preview of the first records" });
+    expect(within(preview).getByText("The first 2 records a run would write, read now and stored nowhere.")).toBeInTheDocument();
+    expect(within(preview).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(preview).getByText("Ovzdušie Košice")).toBeInTheDocument();
+    expect(within(preview).getByText("CSV")).toBeInTheDocument();
+    expect(within(preview).getByText("Licence: CC-BY-4.0")).toBeInTheDocument();
+    await expectAxeClean(container);
+  });
+
+  it("says a preview past its limit read nothing yet", async () => {
+    await openTab("Sources", { sources: [KOSICE] }, (path) =>
+      path.endsWith("/sources/kosice/test") ? jsonResponse({ outcome: "ok", records: [], partial: true }) : undefined,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Test connection of kosice" }));
+    expect(await screen.findByText(/took longer than the preview's 20 s/)).toBeInTheDocument();
+  });
+
+  it("removes a source only after a confirm naming how many datasets it withdraws", async () => {
+    const user = userEvent.setup();
+    const sent: { spec: { sources: unknown[] } }[] = [];
+    const rendered = await openTab("Sources", { sources: [KOSICE, { ...KOSICE, name: "praha", url: "https://data.praha.eu/catalog.ttl", allowedHosts: ["data.praha.eu"] }] }, (path, request) => {
+      if (path === "/api/v1/projects/org/portals/bbsk-mobility/datasets") {
+        return jsonResponse({
+          total: 3,
+          items: [
+            { name: "ke-ovzdusie", title: "Ovzdušie", source: "kosice", hidden: false },
+            { name: "ke-skoly", title: "Školy", source: "kosice", hidden: false },
+            { name: "pr-bus", title: "Bus", source: "praha", hidden: false },
+          ],
+        });
+      }
+      if (path === "/api/v1/projects/org/portals/bbsk-mobility" && request.method === "PUT") {
+        return request.json().then((body) => {
+          sent.push(body);
+          return jsonResponse(request.url.includes("dryRun") ? { valid: true, verdict: { ok: true } } : CHANGE);
+        });
+      }
+      return undefined;
+    });
+    await user.click(await screen.findByRole("button", { name: "Remove source kosice" }));
+    expect(await screen.findByText("2 datasets this source harvested are withdrawn from the portal when the change is approved.")).toBeInTheDocument();
+    expect(rendered.calls().filter((call) => call.startsWith("PUT"))).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/datasets this source harvested/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Remove source kosice" }));
+    await user.click(await screen.findByRole("button", { name: "Remove and withdraw" }));
+    await waitFor(() => expect(sent.length).toBe(2));
+    expect(sent[1].spec.sources.map((s) => (s as { name: string }).name)).toEqual(["praha"]);
+  });
+
   it("says when the installation serves no catalogue", async () => {
     await openTab("Sources", { sources: [KOSICE] }, (path) =>
       path.endsWith("/sources/kosice/test") ? problem(503, "this installation serves no open data catalogue") : undefined,

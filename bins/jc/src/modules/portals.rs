@@ -13,12 +13,18 @@
 //! ponytail: polled every [`super::appearance::FOLLOW_EVERY`] from the one Portal of this
 //! process, as the appearance is; upgrade path: the Portal's reconciler calls the writer.
 
+use dataroom_core::files::FileEntry;
 use dataroom_core::{
     CatalogueId, Dataset, HarvestBudget, HarvestSource, OrgId, Publisher, RecordState,
 };
-use dataroom_server::{CatalogueSpec, CatalogueWriter, PortalRoute};
-use jc_core::kinds::{PortalSource, PortalSourceType, PortalSpec};
-use joinedcontext_portal::api::portal_sources::{DeskDataset, DeskError, DeskFuture, SourceDesk};
+use dataroom_server::{CatalogueSpec, CatalogueWriter, FileWrite, PortalRoute};
+use jc_core::kinds::{PortalSource, PortalSourceType, PortalSpec, http_url_host};
+use joinedcontext_portal::api::portal_files::{
+    FileDesk, FileFuture, FileLimits, FileRefusal, PortalFile,
+};
+use joinedcontext_portal::api::portal_sources::{
+    DeskDataset, DeskError, DeskFuture, SourceDesk, SourceTestAnswer,
+};
 use joinedcontext_portal::store::{ListOptions, Mirror};
 use std::collections::{BTreeMap, BTreeSet};
 use tokio_util::sync::CancellationToken;
@@ -219,11 +225,13 @@ pub(crate) fn harvest_sources_of(
         if source.kind == PortalSourceType::Endpoints {
             continue;
         }
-        if let Some(host) = source
-            .allowed_hosts
-            .iter()
-            .find(|h| !org.harvest_hosts.iter().any(|a| a.eq_ignore_ascii_case(h)))
-        {
+        // The url's own host is the admin's (the Portal's propose door refused an address or
+        // an internal name); the harvest guard carries it. A further host is the operator's.
+        let own = source.url.as_deref().and_then(http_url_host);
+        if let Some(host) = source.allowed_hosts.iter().find(|h| {
+            own.as_deref().is_none_or(|o| !o.eq_ignore_ascii_case(h))
+                && !org.harvest_hosts.iter().any(|a| a.eq_ignore_ascii_case(h))
+        }) {
             return Err(format!(
                 "source {}: {host} is not in the deployment's harvest allow-list",
                 source.name
@@ -407,13 +415,13 @@ pub(crate) fn follow(
                 let orgs = named(&orgs, installation);
                 let names: Vec<String> = orgs.iter().map(|o| o.name.clone()).collect();
                 if handed.as_ref() != Some(&names) {
-                    joinedcontext_portal::api::portal_sources::hand_desk_to(std::sync::Arc::new(
-                        Desk {
-                            writer: writer.clone(),
-                            orgs: orgs.clone(),
-                            active: std::sync::Arc::default(),
-                        },
-                    ));
+                    let desk = std::sync::Arc::new(Desk {
+                        writer: writer.clone(),
+                        orgs: orgs.clone(),
+                        active: std::sync::Arc::default(),
+                    });
+                    joinedcontext_portal::api::portal_sources::hand_desk_to(desk.clone());
+                    joinedcontext_portal::api::portal_files::hand_file_desk_to(desk);
                     handed = Some(names);
                 }
                 apply(&writer, &orgs, &mut served, in_mirror(&state.mirror)).await;
@@ -465,13 +473,21 @@ fn desk_error(e: dataroom_core::DataroomError) -> DeskError {
 }
 
 impl SourceDesk for Desk {
-    fn test<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, String> {
+    fn test<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        source: &'a str,
+    ) -> DeskFuture<'a, SourceTestAnswer> {
         Box::pin(async move {
-            let answer = self.op(portal, "harvest_source.test", source).await?;
-            answer["outcome"]
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| DeskError::Failed("a source test answered no outcome".into()))
+            let (org, id) = self.key(portal)?;
+            let input = serde_json::json!({ "source": source, "preview": true });
+            let answer = self
+                .writer
+                .run_op(org, id, "harvest_source.test", input)
+                .await
+                .map_err(desk_error)?;
+            serde_json::from_value(answer)
+                .map_err(|e| DeskError::Failed(format!("a source test answered no outcome: {e}")))
         })
     }
 
@@ -540,6 +556,116 @@ impl SourceDesk for Desk {
                 })
                 .collect())
         })
+    }
+}
+
+fn portal_file(e: FileEntry) -> PortalFile {
+    PortalFile {
+        path: e.path(),
+        id: e.id,
+        name: e.name,
+        content_type: e.content_type,
+        size: e.size,
+        sha256: e.sha256,
+        uploaded_by: e.uploaded_by,
+        uploaded_at: e.uploaded_at.to_rfc3339(),
+        used_by: Vec::new(),
+    }
+}
+
+fn file_refusal(e: dataroom_core::DataroomError) -> FileRefusal {
+    match e {
+        dataroom_core::DataroomError::Validation { message, .. } => FileRefusal::Invalid(message),
+        other => FileRefusal::Desk(desk_error(other)),
+    }
+}
+
+impl Desk {
+    async fn write_file(
+        &self,
+        portal: &PortalSpec,
+        by: &str,
+        write: FileWrite,
+    ) -> Result<PortalFile, FileRefusal> {
+        let (org, id) = self.key(portal)?;
+        self.writer
+            .write_file(org, id, by, write)
+            .await
+            .map(portal_file)
+            .map_err(file_refusal)
+    }
+}
+
+/// The Portal's files routes on this process's catalogues (T-7417): each portal's files under
+/// its catalogue's key, so one portal's call reaches its own files alone.
+impl FileDesk for Desk {
+    fn list<'a>(&'a self, portal: &'a PortalSpec) -> DeskFuture<'a, (Vec<PortalFile>, FileLimits)> {
+        Box::pin(async move {
+            let (org, id) = self.key(portal)?;
+            let (files, usage) = self.writer.files(org, id).await.map_err(desk_error)?;
+            Ok((
+                files.into_iter().map(portal_file).collect(),
+                FileLimits {
+                    files: usage.files,
+                    bytes: usage.bytes,
+                    max_files: usage.max_files,
+                    max_bytes: usage.max_bytes,
+                    max_file_bytes: usage.max_file_bytes,
+                },
+            ))
+        })
+    }
+
+    fn upload<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        by: &'a str,
+        name: &'a str,
+        bytes: Vec<u8>,
+    ) -> FileFuture<'a, PortalFile> {
+        let write = FileWrite::Upload {
+            name: name.to_owned(),
+            bytes,
+        };
+        Box::pin(self.write_file(portal, by, write))
+    }
+
+    fn rename<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        by: &'a str,
+        id: &'a str,
+        name: &'a str,
+    ) -> FileFuture<'a, PortalFile> {
+        let write = FileWrite::Rename {
+            id: id.to_owned(),
+            name: name.to_owned(),
+        };
+        Box::pin(self.write_file(portal, by, write))
+    }
+
+    fn replace<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        by: &'a str,
+        id: &'a str,
+        bytes: Vec<u8>,
+    ) -> FileFuture<'a, PortalFile> {
+        let write = FileWrite::Replace {
+            id: id.to_owned(),
+            bytes,
+        };
+        Box::pin(self.write_file(portal, by, write))
+    }
+
+    fn delete<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        by: &'a str,
+        id: &'a str,
+    ) -> FileFuture<'a, ()> {
+        let write = FileWrite::Delete { id: id.to_owned() };
+        Box::pin(async move { self.write_file(portal, by, write).await.map(|_| ()) })
     }
 }
 
@@ -867,14 +993,18 @@ mod tests {
         let mut region = portal("region", None);
         region.sources = serde_json::from_value(serde_json::json!([
             { "name": "far", "type": "dcat-ap", "url": "https://data.praha.eu/catalog.ttl",
-              "allowedHosts": ["data.praha.eu"] },
+              "allowedHosts": ["data.praha.eu", "files.praha.eu"] },
         ]))
         .unwrap();
         let err = harvest_sources_of(&region, &orgs).unwrap_err();
         assert!(
-            err.contains("data.praha.eu is not in the deployment's harvest allow-list"),
+            err.contains("files.praha.eu is not in the deployment's harvest allow-list"),
             "{err}"
         );
+        // The url's own host alone is the admin's, no operator listing (T-7416).
+        region.sources[0].allowed_hosts = vec!["data.praha.eu".into()];
+        let sources = harvest_sources_of(&region, &orgs).expect("own host");
+        assert_eq!(sources[0].0.allowed_hosts, ["data.praha.eu"]);
     }
 
     #[test]

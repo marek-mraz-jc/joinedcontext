@@ -17,7 +17,8 @@ use tower::ServiceExt;
 use common::doors::http;
 use common::envelope;
 use joinedcontext_portal::api::portal_sources::{
-    hand_desk_to, DeskDataset, DeskError, DeskFuture, SourceDesk,
+    hand_desk_to, DeskDataset, DeskError, DeskFuture, SourceDesk, SourcePreviewRecord,
+    SourceTestAnswer,
 };
 use joinedcontext_portal::auth::session::Identity;
 use joinedcontext_portal::config::Config;
@@ -41,8 +42,25 @@ fn key(portal: &PortalSpec, source: &str) -> (String, String, String) {
 }
 
 impl SourceDesk for Fake {
-    fn test<'a>(&'a self, _portal: &'a PortalSpec, _source: &'a str) -> DeskFuture<'a, String> {
-        Box::pin(async { Ok("ok".to_owned()) })
+    fn test<'a>(
+        &'a self,
+        _portal: &'a PortalSpec,
+        _source: &'a str,
+    ) -> DeskFuture<'a, SourceTestAnswer> {
+        Box::pin(async {
+            Ok(SourceTestAnswer {
+                outcome: "ok".to_owned(),
+                records: vec![SourcePreviewRecord {
+                    name: "ke-air".into(),
+                    title: "Ovzdušie".into(),
+                    description: "Merania".into(),
+                    keywords: vec!["air".into()],
+                    formats: vec!["CSV".into()],
+                    licence: None,
+                }],
+                partial: false,
+            })
+        })
     }
     fn start<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, ()> {
         let fresh = self.active.lock().unwrap().insert(key(portal, source));
@@ -307,7 +325,9 @@ async fn test_connection_is_rate_limited_per_person() {
     for _ in 0..3 {
         let ok = http(&state, admin.clone(), "POST", &uri, None).await;
         assert_eq!(ok.status, StatusCode::OK, "{}", ok.body);
-        assert_eq!(ok.body, json!({ "outcome": "ok" }));
+        assert_eq!(ok.body["outcome"], "ok");
+        assert_eq!(ok.body["records"][0]["title"], "Ovzdušie");
+        assert_eq!(ok.body["partial"], false);
     }
     let config = state.config.clone();
     let limited = joinedcontext_portal::server::app(state.clone())

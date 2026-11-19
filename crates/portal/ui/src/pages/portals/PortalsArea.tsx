@@ -35,6 +35,7 @@ import {
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
+import { PortalFilesTab } from "./PortalFiles";
 import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
 type PortalOrganization = components["schemas"]["PortalOrganization"];
@@ -381,7 +382,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   );
 }
 
-type PortalTab = "settings" | "sources" | "datasets";
+type PortalTab = "settings" | "sources" | "datasets" | "files";
 
 /** The views of an existing portal (ODP-15): its settings, its sources and run log, its datasets. */
 function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalManifest; form: JSX.Element }): JSX.Element {
@@ -398,10 +399,19 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
           { value: "settings", label: t("portals.tabs.settings") },
           { value: "sources", label: t("portals.tabs.sources") },
           { value: "datasets", label: t("portals.tabs.datasets") },
+          { value: "files", label: t("portals.tabs.files") },
         ]}
       />
       <div {...tabPanelProps("portal", tab)}>
-        {tab === "settings" ? form : tab === "sources" ? <PortalSourcesTab name={name} spec={manifest.spec} /> : <PortalDatasetsTab name={name} spec={manifest.spec} onSources={() => setTab("sources")} />}
+        {tab === "settings" ? (
+          form
+        ) : tab === "sources" ? (
+          <PortalSourcesTab name={name} spec={manifest.spec} />
+        ) : tab === "files" ? (
+          <PortalFilesTab name={name} spec={manifest.spec} />
+        ) : (
+          <PortalDatasetsTab name={name} spec={manifest.spec} onSources={() => setTab("sources")} />
+        )}
       </div>
     </div>
   );

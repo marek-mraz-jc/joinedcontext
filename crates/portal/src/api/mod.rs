@@ -103,6 +103,7 @@ pub mod pipeline_source_check;
 pub mod pipeline_templates;
 pub mod pipeline_test;
 pub mod pipelines;
+pub mod portal_files;
 pub mod portal_hosts;
 pub mod portal_sources;
 pub mod preferences;
@@ -220,6 +221,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .merge(health_checks::router())
         .merge(portal_hosts::router())
         .merge(portal_sources::router())
+        .merge(portal_files::router())
         .merge(endpoint_usage::router())
         .merge(visualization_templates::router())
         .merge(organization_limits::router())

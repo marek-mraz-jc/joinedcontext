@@ -266,7 +266,18 @@ function SourceCard({
 }): JSX.Element {
   const { t } = useTranslation();
   const [showRuns, setShowRuns] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [notice, setNotice] = useState<{ tone: "success" | "danger" | "info"; text: string } | null>(null);
+  const [preview, setPreview] = useState<RestAnswer<"test_portal_source"> | null>(null);
+  // The records the removal withdraws: the ones this source harvested (T-7416).
+  const records = useQuery({
+    queryKey: ["portalDatasets", portal],
+    enabled: confirming,
+    retry: false,
+    queryFn: () => readDatasets(portal),
+  });
+  const harvestedHere = records.data?.items.filter((d) => d.source === source.name).length ?? 0;
+  const beyond = records.data !== undefined && records.data.total > records.data.items.length;
   const harvested = source.type !== "endpoints";
   const path = { name: portal, source: source.name };
   const queryClient = useQueryClient();
@@ -277,8 +288,12 @@ function SourceCard({
     onSuccess: (answer) => {
       const outcome = answer.outcome;
       setNotice({ tone: outcome === "ok" ? "success" : "danger", text: t(outcomeKey(outcome), { type: source.type }) });
+      setPreview(outcome === "ok" ? answer : null);
     },
-    onError: (error) => setNotice({ tone: "danger", text: refusalText(error, t) }),
+    onError: (error) => {
+      setPreview(null);
+      setNotice({ tone: "danger", text: refusalText(error, t) });
+    },
   });
   const run = useMutation({
     mutationFn: async () => {
@@ -324,18 +339,91 @@ function SourceCard({
               </Button>
             </>
           ) : null}
-          <Button size="sm" variant="secondary" className="text-danger" aria-label={t("portals.sources.removeNamed", { name: source.name })} loading={removing} onClick={onRemove}>
+          <Button size="sm" variant="secondary" className="text-danger" aria-label={t("portals.sources.removeNamed", { name: source.name })} aria-expanded={confirming} loading={removing} onClick={() => setConfirming(true)}>
             {t("portals.sources.remove")}
           </Button>
         </div>
       </div>
+      {confirming ? (
+        <Alert tone="danger" role="alert" title={t("portals.sources.removeTitle", { name: source.name })}>
+          <div className="space-y-3">
+            <p>
+              {!harvested
+                ? t("portals.sources.removeEndpoints")
+                : records.isPending
+                  ? t("portals.sources.removeCounting")
+                  : records.isError
+                    ? t("portals.sources.removeUncounted")
+                    : t(beyond ? "portals.sources.removeCountAtLeast" : "portals.sources.removeCount", { count: harvestedHere })}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                loading={removing}
+                disabled={harvested && records.isPending}
+                title={harvested && records.isPending ? t("portals.sources.removeCounting") : undefined}
+                onClick={() => {
+                  setConfirming(false);
+                  onRemove();
+                }}
+              >
+                {t("portals.sources.removeConfirm")}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+                {t("portals.sources.cancel")}
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      ) : null}
       {notice ? (
         <Alert tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>
           {notice.text}
         </Alert>
       ) : null}
+      {preview ? <PreviewCards preview={preview} /> : null}
       {showRuns ? <RunLog queryKey={runsKey} portal={portal} source={source.name} /> : null}
     </Card>
+  );
+}
+
+/** The records a dry run of a source parsed, as dataset cards: nothing of them is written (T-7416). */
+function PreviewCards({ preview }: { preview: RestAnswer<"test_portal_source"> }): JSX.Element {
+  const { t } = useTranslation();
+  const records = preview.records ?? [];
+  return (
+    <section aria-label={t("portals.sources.previewTitle")} className="space-y-2">
+      <h3 className="text-body font-semibold text-fg">{t("portals.sources.previewTitle")}</h3>
+      <p className="text-caption text-fg-muted">
+        {records.length === 0
+          ? t(preview.partial ? "portals.sources.previewPartialEmpty" : "portals.sources.previewEmpty")
+          : t(preview.partial ? "portals.sources.previewPartial" : "portals.sources.previewHint", { count: records.length })}
+      </p>
+      {records.length > 0 ? (
+        <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {records.map((record) => (
+            <li key={record.name} className="space-y-1 rounded-md border border-border bg-surface p-3">
+              <p className="break-words font-semibold text-fg">{record.title}</p>
+              {record.description ? <p className="line-clamp-3 text-caption text-fg-muted">{record.description}</p> : null}
+              <div className="flex flex-wrap gap-1">
+                {record.formats.map((format) => (
+                  <Badge key={format} tone="info">
+                    {format}
+                  </Badge>
+                ))}
+                {record.keywords.map((keyword) => (
+                  <Badge key={keyword} tone="neutral">
+                    {keyword}
+                  </Badge>
+                ))}
+              </div>
+              {record.licence ? <p className="break-all text-caption text-fg-muted">{t("portals.sources.previewLicence", { licence: record.licence })}</p> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -519,6 +607,11 @@ function AddSourceForm({
             <Field id="source-url" label={t("portals.sources.field.url")} description={t(`portals.sources.hint.url.${draft.type}`)} required errors={errorOf("url")}>
               <Input id="source-url" type="url" value={draft.url} spellCheck={false} placeholder="https://data.example.org/catalog.ttl" onChange={(event) => set({ url: event.target.value })} />
             </Field>
+            {hostOf(draft.url) ? (
+              <p className="text-caption text-fg-muted" aria-live="polite">
+                {t("portals.sources.ownHost", { host: hostOf(draft.url) })}
+              </p>
+            ) : null}
             <Field id="source-allowedHosts" label={t("portals.sources.field.allowedHosts")} description={t("portals.sources.hint.allowedHosts")} errors={errorOf("allowedHosts")}>
               <Input id="source-allowedHosts" value={draft.allowedHosts} spellCheck={false} placeholder="files.example.org" onChange={(event) => set({ allowedHosts: event.target.value })} />
             </Field>
@@ -562,6 +655,20 @@ interface DatasetRow {
   hidden: boolean;
 }
 
+/** The portal's datasets, its first {@link MOST}, page by page. */
+async function readDatasets(name: string): Promise<{ total: number; items: DatasetRow[] }> {
+  const read = async (offset: number) =>
+    (await door("portal_portal_datasets", { name, offset, limit: PAGE })) as RestAnswer<"list_portal_datasets">;
+  const first = await read(0);
+  const items = [...first.items];
+  while (items.length < Math.min(first.total, MOST)) {
+    const next = await read(items.length);
+    if (next.items.length === 0) break;
+    items.push(...next.items);
+  }
+  return { total: first.total, items: items as DatasetRow[] };
+}
+
 /**
  * The Datasets tab of a portal (ODP-15, T-6876): its catalogue's datasets with the source of each,
  * hidden or listed; hiding or listing one again proposes a Change of `spec.hidden`.
@@ -574,18 +681,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
   const datasets = useQuery({
     queryKey: ["portalDatasets", name],
     retry: false,
-    queryFn: async () => {
-      const read = async (offset: number) =>
-        (await door("portal_portal_datasets", { name, offset, limit: PAGE })) as RestAnswer<"list_portal_datasets">;
-      const first = await read(0);
-      const items = [...first.items];
-      while (items.length < Math.min(first.total, MOST)) {
-        const next = await read(items.length);
-        if (next.items.length === 0) break;
-        items.push(...next.items);
-      }
-      return { total: first.total, items };
-    },
+    queryFn: () => readDatasets(name),
   });
   if (datasets.isPending) return <PageLoading label={t("app.loading")} />;
   if (datasets.isError) {

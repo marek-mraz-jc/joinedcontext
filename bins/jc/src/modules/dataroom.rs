@@ -345,6 +345,10 @@ pub async fn build_with_writer(
         .with_loopback_default(organizations.is_empty())
         .with_sources_by_portal(cfg!(feature = "portal"))
         .with_public_base(mount.public_base())
+        // The portals' files, each Organization under its own OrgId (T-7417).
+        .with_files(Arc::new(dataroom_core::files::FileStore::new(
+            setup.dir.join("opendata-files"),
+        )))
         .with_mount_prefix(mount.path_prefix);
     #[cfg(feature = "portal")]
     let state = with_dashboards(organizations, state).map_err(|e| err(&e))?;

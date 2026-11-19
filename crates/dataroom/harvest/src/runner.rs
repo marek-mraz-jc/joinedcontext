@@ -6,7 +6,7 @@ use crate::guard::{validate_and_pin_url, ValidatedTarget, MAX_HARVEST_BYTES, MAX
 use crate::sources::{
     parse_arcgis_hub_items, parse_ckan_search_page, parse_dcat_page, parse_nkod_sparql_bindings,
 };
-use dataroom_core::ops::{HarvestRunner, SourceTest};
+use dataroom_core::ops::{HarvestRunner, PreviewRecord, SourcePreview, SourceTest, PREVIEW_MAX};
 use dataroom_core::store::BoxFuture;
 use dataroom_core::{
     ActivityRow, DataroomError, Dataset, HarvestLogLine, HarvestRun, HarvestRunState,
@@ -943,6 +943,9 @@ enum Stop {
 /// The longest a source test waits, every hop included (ODP-15).
 pub const SOURCE_TEST_CAP: Duration = Duration::from_secs(10);
 
+/// Longest a source preview lists for (T-7416): the test's read, then up to this for the listing.
+pub const SOURCE_PREVIEW_CAP: Duration = Duration::from_secs(20);
+
 impl HarvestEngine {
     /// The first page of `source` as a run reads it, and what it is asked to answer in.
     fn first_page(source: &HarvestSource) -> Result<(String, &'static str)> {
@@ -1122,6 +1125,72 @@ impl HarvestRunner for HarvestEngine {
             };
             tracing::info!(source = %source.name, outcome = ?outcome, "harvest source tested");
             Ok(outcome)
+        })
+    }
+
+    fn preview_source<'a>(
+        &'a self,
+        ctx: &'a RequestCtx,
+        store: &'a dyn Store,
+        source: &'a HarvestSource,
+    ) -> BoxFuture<'a, Result<SourcePreview>> {
+        Box::pin(async move {
+            let outcome = self.test_source(ctx, store, source).await?;
+            if outcome != SourceTest::Ok {
+                return Ok(SourcePreview {
+                    outcome,
+                    records: Vec::new(),
+                    partial: false,
+                });
+            }
+            let cat = store
+                .get_catalogue(ctx.org_id, ctx.catalogue_id)
+                .await?
+                .ok_or_else(|| DataroomError::NotFound("catalogue not found".into()))?;
+            let budget = source
+                .budget
+                .map_or(self.max_bytes, |b| {
+                    usize::try_from(b.bytes).unwrap_or(usize::MAX)
+                })
+                .min(self.max_bytes);
+            let probe = HarvestEngine {
+                fetcher: self.fetcher.clone(),
+                resolve_dns: self.resolve_dns,
+                custom_dns: self.custom_dns.clone(),
+                max_bytes: budget,
+                timeout: self.timeout.min(SOURCE_PREVIEW_CAP),
+                deadline: SOURCE_PREVIEW_CAP,
+                own_gateway: self.own_gateway.clone(),
+                retry_waits: Vec::new(),
+            };
+            // The same listing a run reads, stopped before any write (T-7416).
+            let gathered = tokio::time::timeout(
+                SOURCE_PREVIEW_CAP,
+                probe.gather_items(
+                    ctx,
+                    store,
+                    source,
+                    &cat.allowed_outbound_hosts,
+                    &cat.default_language,
+                ),
+            )
+            .await;
+            let (records, partial) = match gathered {
+                Ok(Ok((kept, _))) => (
+                    kept.iter()
+                        .take(PREVIEW_MAX)
+                        .map(|(_, ds)| PreviewRecord::of(ds, &cat.default_language))
+                        .collect(),
+                    false,
+                ),
+                Err(_) | Ok(Err(_)) => (Vec::new(), true),
+            };
+            tracing::info!(source = %source.name, records = records.len(), partial, "harvest source previewed");
+            Ok(SourcePreview {
+                outcome,
+                records,
+                partial,
+            })
         })
     }
 }
@@ -1514,7 +1583,7 @@ fn non_http_link(ds: &Dataset) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::guard::validate_outbound_url;
+    use crate::guard::{is_private_or_internal_ip, validate_outbound_url};
     use dataroom_core::{
         Catalogue, CatalogueId, HarvestBudget, OrgId, Publisher, Subject, ThemeTokens,
     };
@@ -1794,6 +1863,58 @@ mod tests {
         ) -> BoxFuture<'a, Result<FetchResponse>> {
             Box::pin(std::future::pending())
         }
+    }
+
+    #[tokio::test]
+    async fn a_preview_shows_the_parsed_records_and_writes_nothing() {
+        let (_, _, ctx, store) = test_setup();
+        let fetcher = MapFetcher::new();
+        let features: Vec<Value> = (0..25)
+            .map(|i| {
+                hub_item(
+                    &format!("item{i}"),
+                    &format!("Cesty {i}"),
+                    "https://hub.bbsk.sk/a",
+                )
+            })
+            .collect();
+        let items = json!({ "numberMatched": 25, "features": features });
+        let sources = hub_world(&store, &ctx, &[("hub", "hub.bbsk.sk", 0)], &fetcher, items).await;
+        fetcher.insert(
+            "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=1",
+            Some("application/json"),
+            json!({ "numberMatched": 25, "features": [] }).to_string(),
+        );
+        let engine = HarvestEngine::new(Arc::new(fetcher.clone())).with_dns_resolution(false);
+        let preview = engine
+            .preview_source(&ctx, &store, &sources[0])
+            .await
+            .unwrap();
+        assert_eq!(preview.outcome, SourceTest::Ok, "{preview:?}");
+        assert!(!preview.partial);
+        assert_eq!(preview.records.len(), PREVIEW_MAX);
+        assert_eq!(preview.records[0].title, "Cesty 0");
+        assert_eq!(preview.records[0].description, "Popis");
+        assert!(
+            store.list_datasets(&ctx).await.unwrap().is_empty(),
+            "nothing written"
+        );
+        assert!(
+            store
+                .list_harvest_runs(&ctx, Some(&sources[0].id))
+                .await
+                .unwrap()
+                .is_empty(),
+            "no run recorded"
+        );
+        // A refused source previews nothing past the one word.
+        let mut far = sources[0].clone();
+        far.url = "https://evil.example.org".into();
+        let refused = engine.preview_source(&ctx, &store, &far).await.unwrap();
+        assert_eq!(
+            (refused.outcome, refused.records.len()),
+            (SourceTest::RefusedHost, 0)
+        );
     }
 
     #[tokio::test]
@@ -2253,6 +2374,100 @@ mod tests {
             .error
             .as_deref()
             .is_some_and(|e| e.contains("past its budget"))));
+    }
+
+    /// A source whose only allowed host is its url's own (T-7416: the admin names it, no
+    /// operator listing): every way off that host, or onto an internal address behind it, is
+    /// refused and the run writes nothing.
+    #[tokio::test]
+    async fn a_source_allowed_only_its_own_host_reaches_nothing_else_and_writes_nothing() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        const ITEMS: &str =
+            "https://hub.bbsk.sk/api/search/v1/collections/dataset/items?limit=100&sortBy=properties.created";
+        let public = |port| vec![SocketAddr::from(([93, 184, 216, 34], port))];
+        let cases: [(&str, Option<&str>, &str); 6] = [
+            (
+                "redirect to another host",
+                Some("https://evil.example.org/items"),
+                "public",
+            ),
+            (
+                "redirect to a private address",
+                Some("https://10.0.0.7/items"),
+                "public",
+            ),
+            (
+                "redirect to the metadata address",
+                Some("https://169.254.169.254/latest/meta-data/"),
+                "public",
+            ),
+            (
+                "redirect to an IPv4-mapped IPv6 address",
+                Some("https://[::ffff:10.0.0.7]/items"),
+                "public",
+            ),
+            (
+                "own host answers an IPv4-mapped private address",
+                None,
+                "mapped",
+            ),
+            (
+                "own host rebinds to loopback after the check",
+                Some("https://hub.bbsk.sk/again"),
+                "rebind",
+            ),
+        ];
+        for (case, redirect, dns) in cases {
+            let (_, _, ctx, store) = test_setup();
+            let fetcher = MapFetcher::new();
+            let items = json!({ "numberMatched": 1, "features": [
+                hub_item("item1", "Cesty", "https://hub.bbsk.sk/a"),
+            ] });
+            let sources =
+                hub_world(&store, &ctx, &[("hub", "hub.bbsk.sk", 0)], &fetcher, items).await;
+            assert_eq!(sources[0].allowed_hosts, ["hub.bbsk.sk"]);
+            if let Some(to) = redirect {
+                fetcher.insert_redirect(ITEMS, 302, to);
+            }
+            let asked = Arc::new(AtomicUsize::new(0));
+            let seen = asked.clone();
+            let engine =
+                HarvestEngine::new(Arc::new(fetcher.clone())).with_custom_dns(move |host, port| {
+                    let n = seen.fetch_add(1, Ordering::SeqCst);
+                    match (dns, host) {
+                        ("mapped", "hub.bbsk.sk") => Ok(vec![SocketAddr::new(
+                            std::net::Ipv4Addr::new(10, 0, 0, 7).to_ipv6_mapped().into(),
+                            port,
+                        )]),
+                        ("rebind", "hub.bbsk.sk") if n > 0 => {
+                            Ok(vec![SocketAddr::from(([127, 0, 0, 1], port))])
+                        }
+                        (_, "hub.bbsk.sk") => Ok(public(port)),
+                        _ => Ok(vec![SocketAddr::from(([93, 184, 216, 35], port))]),
+                    }
+                });
+            let err = engine
+                .run_source(&ctx, &store, &sources[0])
+                .await
+                .expect_err(case);
+            assert!(
+                matches!(err, DataroomError::OutboundRefused(_))
+                    || err.to_string().contains("refused"),
+                "{case}: {err}"
+            );
+            assert!(
+                store.list_datasets(&ctx).await.unwrap().is_empty(),
+                "{case}: nothing written"
+            );
+            // Every connection went to the one checked public address.
+            for (host, addrs) in fetcher.pinned_seen() {
+                assert_eq!(host, "hub.bbsk.sk", "{case}");
+                assert!(
+                    addrs.iter().all(|a| !is_private_or_internal_ip(a.ip())),
+                    "{case}: {addrs:?}"
+                );
+            }
+        }
     }
 
     #[tokio::test]

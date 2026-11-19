@@ -6,6 +6,7 @@ pub mod auth;
 pub mod branding;
 pub mod ckan_compat;
 pub mod error;
+pub mod files;
 pub mod model;
 pub mod odata_defs;
 pub mod ops;
