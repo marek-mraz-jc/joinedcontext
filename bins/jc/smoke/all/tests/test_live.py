@@ -123,8 +123,10 @@ def test_a_host_outside_the_domain_is_refused(tmp_path):
             g.route(host, "/")
     with pytest.raises(SystemExit, match="base_host"):
         live.config("t", "other.test", "127.0.0.1", TOML, tmp_path)
-    with pytest.raises(SystemExit, match="host-mode"):
+    with pytest.raises(SystemExit, match="no host to probe"):  # slug mode needs Organizations on own hosts
         live.config("t", "city.test", "127.0.0.1", TOML.replace('mode = "host"', 'mode = "slug"'), tmp_path)
+    with pytest.raises(SystemExit, match="host-mode"):
+        live.config("t", "city.test", "127.0.0.1", TOML.replace('mode = "host"', 'mode = "path"'), tmp_path)
 
 
 def test_only_anonymous_reads_and_the_named_posts_reach_the_edge(guard, tmp_path, edge):
