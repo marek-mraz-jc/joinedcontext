@@ -561,21 +561,38 @@ async fn every_keyed_table_has_forced_row_level_security_on_the_key_alone() {
     }
 }
 
+/// Runs a test's CREATE ROLE / GRANT statements. Roles live in the cluster's shared catalog, so
+/// parallel tests granting at once can fail with XX000 "tuple concurrently updated", even on
+/// roles of their own (each test has its own database, so an advisory lock would not serialize
+/// them): try again a few times.
+async fn setup_role(pool: &sqlx::PgPool, sql: &'static str) {
+    for attempt in 1.. {
+        match sqlx::raw_sql(sql).execute(pool).await {
+            Ok(_) => return,
+            Err(sqlx::Error::Database(e))
+                if e.code().as_deref() == Some("XX000") && attempt < 5 =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(50 * attempt)).await;
+            }
+            Err(e) => panic!("the role: {e:?}"),
+        }
+    }
+}
+
 /// A transaction as the role `pk_rls_reader`, which owns nothing and has no BYPASSRLS, as the
 /// serving role of T-7179; `key` set as `db::tenant_tx` sets it.
 async fn as_reader(
     pool: &sqlx::PgPool,
     key: Option<jc_types::ProjectKey>,
 ) -> sqlx::Transaction<'static, sqlx::Postgres> {
-    sqlx::raw_sql(
+    setup_role(
+        pool,
         "DO $$ BEGIN CREATE ROLE pk_rls_reader NOLOGIN NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON organization_backup_log TO pk_rls_reader; \
          GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO pk_rls_reader",
     )
-    .execute(pool)
-    .await
-    .expect("the reader role");
+    .await;
     let mut tx = match key {
         Some(key) => joinedcontext_portal::db::tenant_tx(pool, key)
             .await
@@ -687,14 +704,13 @@ async fn a_runs_events_answer_only_under_its_organizations_key() {
         .expect("key")
         .expect("a key");
     // A role of its own: GRANTs racing on one role's catalog rows fail a parallel test.
-    sqlx::raw_sql(
+    setup_role(
+        &pool,
         "DO $$ BEGIN CREATE ROLE ev_rls_reader NOLOGIN NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON agent_runs, agent_run_events TO ev_rls_reader",
     )
-    .execute(&pool)
-    .await
-    .expect("the reader role");
+    .await;
     let as_reader = |pool: sqlx::PgPool, key: Option<jc_types::ProjectKey>| async move {
         let mut tx = match key {
             Some(key) => joinedcontext_portal::db::tenant_tx(&pool, key)
@@ -806,14 +822,13 @@ async fn sync_state_answers_only_under_its_projects_key() {
     );
 
     // A role of its own: GRANTs racing on one role's catalog rows fail a parallel test.
-    sqlx::raw_sql(
+    setup_role(
+        &pool,
         "DO $$ BEGIN CREATE ROLE sy_rls_reader NOLOGIN NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON sync_source_state TO sy_rls_reader",
     )
-    .execute(&pool)
-    .await
-    .expect("the reader role");
+    .await;
     let as_reader = |pool: sqlx::PgPool, key: Option<jc_types::ProjectKey>| async move {
         let mut tx = match key {
             Some(key) => joinedcontext_portal::db::tenant_tx(&pool, key)
@@ -1106,16 +1121,15 @@ async fn a_persons_rows_answer_only_in_their_organization() {
     // The store serves as the Portal does: a role row-level security binds (the test's own
     // connection is a superuser, which bypasses it).
     let admin = pool;
-    sqlx::raw_sql(
+    setup_role(
+        &admin,
         "DO $$ BEGIN CREATE ROLE pr_serving LOGIN PASSWORD 'pr-serving' NOBYPASSRLS; \
          EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON connectors, connector_calls, user_preferences, \
                organizations, project_ids TO pr_serving; \
          GRANT USAGE ON SEQUENCE connector_calls_id_seq TO pr_serving",
     )
-    .execute(&admin)
-    .await
-    .expect("the serving role");
+    .await;
     let mut serving = url::Url::parse(
         &std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL"),
     )
