@@ -13329,7 +13329,7 @@
         "name": "Verwenden Sie Kleinbuchstaben, Ziffern und Bindestriche.",
         "nameTaken": "Das Portal hat bereits eine Quelle dieses Namens.",
         "type": "Wählen Sie einen Typ.",
-        "url": "Schreiben Sie eine https-Adresse, zum Beispiel https://data.kosice.sk/catalog.ttl.",
+        "url": "Schreiben Sie eine https-Adresse wie im Beispiel unter dem Feld.",
         "allowedHosts": "Schreiben Sie nur Hostnamen.",
         "number": "Schreiben Sie eine ganze Zahl über 0.",
         "schedule": "Schreiben Sie fünf Cron-Felder.",

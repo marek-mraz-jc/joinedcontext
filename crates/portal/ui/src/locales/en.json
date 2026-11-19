@@ -13329,7 +13329,7 @@
         "name": "Use lower-case letters, digits and dashes.",
         "nameTaken": "The portal already has a source of this name.",
         "type": "Choose a type.",
-        "url": "Write an https address, for example https://data.kosice.sk/catalog.ttl.",
+        "url": "Write an https address, like the example under the field.",
         "allowedHosts": "Write host names only.",
         "number": "Write a whole number above 0.",
         "schedule": "Write five cron fields.",

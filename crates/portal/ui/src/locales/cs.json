@@ -13329,7 +13329,7 @@
         "name": "Použijte malá písmena, číslice a pomlčky.",
         "nameTaken": "Portál už má zdroj s tímto názvem.",
         "type": "Vyberte typ.",
-        "url": "Napište adresu https, například https://data.kosice.sk/catalog.ttl.",
+        "url": "Napište adresu https, jako v příkladu pod polem.",
         "allowedHosts": "Napište jen názvy hostitelů.",
         "number": "Napište celé číslo větší než 0.",
         "schedule": "Napište pět polí cron.",
