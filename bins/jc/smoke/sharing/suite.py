@@ -524,6 +524,10 @@ class Suite(mo.Suite):
                 why = sc.get("title") or sc.get("detail") or next((c.get("text") for c in r.get("content") or []
                                                                    if isinstance(c, dict)), "")
                 return f"isError {sc.get('status', '')} {str(why)[:100]}"
+            # a refusal's detail names which gate refused (no Policy, a read-only token, a
+            # reason, another owner's URN), the one thing a 403 title cannot (T-7424)
+            if isinstance(doc.get("title"), str) and isinstance(doc.get("detail"), str):
+                return f"title: {doc['title'][:100]}, detail: {doc['detail'][:160]}"
             for k in ("title", "type", "detail"):
                 if isinstance(doc.get(k), str) and k != "type" or (k == "type" and "problem" in str(doc.get(k, ""))):
                     return f"{k}: {doc[k][:100]}"
