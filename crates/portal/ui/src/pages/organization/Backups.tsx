@@ -477,15 +477,32 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
 /** The identity field of a restore: a password field, never kept past the request. */
 function IdentityField({ id, value, onChange, error }: { id: string; value: string; onChange: (v: string) => void; error?: string }): JSX.Element {
   const { t } = useTranslation();
+  // Shown on request only, so a pasted public key or a cut-off line can be seen and fixed.
+  const [shown, setShown] = useState(false);
   return (
-    <Field
-      id={id}
-      label={t("backups.data.identity")}
-      help={t("backups.data.identityHint")}
-      errors={error ? [t("backups.data.identityRefused", { reason: error })] : undefined}
-    >
-      <Input id={id} type="password" autoComplete="off" spellCheck={false} value={value} onChange={(e) => onChange(e.target.value)} />
-    </Field>
+    <div className="flex flex-col gap-2">
+      <Field
+        id={id}
+        label={t("backups.data.identity")}
+        help={t("backups.data.identityHint")}
+        errors={error ? [t("backups.data.identityRefused", { reason: error })] : undefined}
+      >
+        <Input
+          id={id}
+          type={shown ? "text" : "password"}
+          className="font-mono"
+          autoComplete="off"
+          spellCheck={false}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </Field>
+      <div>
+        <Button variant="ghost" size="sm" type="button" aria-controls={id} aria-pressed={shown} onClick={() => setShown((s) => !s)}>
+          {shown ? t("backups.data.identityHide") : t("backups.data.identityShow")}
+        </Button>
+      </div>
+    </div>
   );
 }
 

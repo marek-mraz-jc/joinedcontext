@@ -245,7 +245,12 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       await restore.getByLabel("Identity that opens the archive").fill("not-a-key");
       await restore.getByRole("button", { name: "Check this version" }).click();
       await expect(restore.getByText(/not an age identity; paste the one line that starts with AGE-SECRET-KEY-1/)).toBeVisible();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("aria-invalid", "true");
+      await restore.getByRole("button", { name: "Show the identity" }).click();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("type", "text");
       await shot(page, `backups-restore-key-${width}`);
+      await restore.getByRole("button", { name: "Hide the identity" }).click();
+      await expect(restore.getByLabel("Identity that opens the archive")).toHaveAttribute("type", "password");
       await restore.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
       await restore.getByRole("button", { name: "Check this version" }).click();
       await expect(page.getByText("Nothing in the configuration to restore.")).toBeVisible();

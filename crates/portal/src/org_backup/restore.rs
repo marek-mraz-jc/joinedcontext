@@ -134,14 +134,24 @@ fn unreadable() -> ApiError {
 const IDENTITY_REFUSED: &str =
     "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
 
+/// Why a pasted public key is refused: it encrypts, it never opens.
+const PUBLIC_KEY_PASTED: &str = "identity: this is a public key (age1…), which cannot open a \
+     backup; paste the secret line of the same key file, the one that starts with \
+     AGE-SECRET-KEY-1";
+
 /// The identity an administrator pasted, parsed; the text stays in its zeroizing buffer.
 pub fn identity_of(text: &Zeroizing<String>) -> Result<age::x25519::Identity, ApiError> {
-    text.trim()
-        .parse::<age::x25519::Identity>()
-        .map_err(|_| ApiError::Unprocessable {
-            detail: IDENTITY_REFUSED.into(),
-            errors: vec![IDENTITY_REFUSED.into()],
-        })
+    let refused = |why: &str| ApiError::Unprocessable {
+        detail: why.into(),
+        errors: vec![why.into()],
+    };
+    let text = text.trim();
+    // The public key sits beside the identity on the page: the likeliest wrong paste.
+    if text.starts_with("age1") {
+        return Err(refused(PUBLIC_KEY_PASTED));
+    }
+    text.parse::<age::x25519::Identity>()
+        .map_err(|_| refused(IDENTITY_REFUSED))
 }
 
 /// The run log's word on `version`: one of this Organization's own data runs wrote it, and the
@@ -1068,7 +1078,17 @@ mod tests {
         let Err(refused) = identity_of(&Zeroizing::new("age1notasecret".into())) else {
             panic!("a public key is no identity");
         };
-        assert!(refused.to_string().contains("identity"), "{refused}");
+        assert!(
+            refused.to_string().contains("this is a public key"),
+            "{refused}"
+        );
+        let Err(refused) = identity_of(&Zeroizing::new("not-a-key".into())) else {
+            panic!("a word is no identity");
+        };
+        assert!(
+            refused.to_string().contains("not an age identity"),
+            "{refused}"
+        );
         let id = age::x25519::Identity::generate();
         let text =
             Zeroizing::new(age::secrecy::ExposeSecret::expose_secret(&id.to_string()).to_owned());

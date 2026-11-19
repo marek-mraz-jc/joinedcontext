@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 
 /** What every text control shares: the height of a button, the border of a card, one ring. */
 export const CONTROL =
-  "focus-ring w-full rounded-md border border-border bg-surface text-body text-fg shadow-1 transition-colors placeholder:text-fg-subtle hover:border-border-strong focus-visible:border-ring disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-60 aria-[invalid=true]:border-danger read-only:bg-surface-subtle";
+  "focus-ring w-full rounded-md border border-border bg-surface text-body text-fg shadow-1 transition-colors placeholder:text-fg-subtle hover:border-border-strong focus-visible:border-ring disabled:cursor-not-allowed disabled:bg-surface-muted disabled:opacity-60 aria-[invalid=true]:border-danger aria-[invalid=true]:focus-visible:border-danger read-only:bg-surface-subtle";
 
 /** The one checkbox of the Portal: the form theme and every hand-placed tick box share it. */
 export const CHECKBOX =
