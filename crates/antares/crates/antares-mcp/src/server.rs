@@ -1209,10 +1209,10 @@ impl ServerHandler for Server {
         }
         let lifetime = tokio::time::sleep(LIFETIME);
         tokio::pin!(lifetime);
-        let mut recheck = tokio::time::interval_at(
-            tokio::time::Instant::now() + listen::RECHECK,
-            listen::RECHECK,
-        );
+        let first = tokio::time::Instant::now()
+            .checked_add(listen::RECHECK)
+            .unwrap_or_else(tokio::time::Instant::now);
+        let mut recheck = tokio::time::interval_at(first, listen::RECHECK);
         loop {
             tokio::select! {
                 () = context.cancelled() => return Ok(()),
