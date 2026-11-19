@@ -110,6 +110,14 @@ fn configuration_defaults_and_refusals() {
     let no_kind = config(opened("10.43.0.0/16", json!([" "]))).unwrap();
     let err = no_kind.outbound_policy().unwrap_err();
     assert!(err.to_string().contains("kind"), "{err}");
+    // A Grafana type name is no driver kind: the operator names `postgres`, not the record's type.
+    let grafana_kind = config(opened(
+        "10.43.0.0/16",
+        json!(["grafana-postgresql-datasource"]),
+    ))
+    .unwrap();
+    let err = grafana_kind.outbound_policy().unwrap_err();
+    assert!(err.to_string().contains("postgres, loki"), "{err}");
     let ok = config(opened(" 10.43.0.0/16 ", json!(["prometheus"]))).unwrap();
     let policy = ok.outbound_policy().unwrap();
     assert!(policy.allow_http);

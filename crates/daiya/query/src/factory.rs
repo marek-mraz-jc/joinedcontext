@@ -63,9 +63,10 @@ impl Default for OutboundPolicy {
 }
 
 /// One non-public network the operator opens (an in-cluster Prometheus or broker on the
-/// cluster's service network), to the datasources of one organization and of the kinds named
-/// (`prometheus`, `ngsild`, `postgres`, as a record's `type` reads). The datasource's allow-list
-/// still applies and the cloud metadata addresses stay blocked.
+/// cluster's service network), to the datasources of one organization and of the driver kinds
+/// named ([`DRIVER_KINDS`]: a Grafana-kind record opens under its driver's kind, so
+/// `grafana-postgresql-datasource` under `postgres`). The datasource's allow-list still applies
+/// and the cloud metadata addresses stay blocked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenedNetwork {
     pub network: IpNet,
@@ -84,7 +85,22 @@ impl OpenedNetwork {
     }
 
     fn opens_to(&self, record: &DatasourceRecord) -> bool {
-        self.org_id == record.org_id && self.kinds.contains(&record.kind)
+        self.org_id == record.org_id
+            && driver_kind(&record.kind).is_some_and(|kind| self.kinds.iter().any(|k| k == kind))
+    }
+}
+
+/// The driver kinds [`build_driver`] builds, the names an [`OpenedNetwork`] accepts.
+pub const DRIVER_KINDS: [&str; 5] = ["prometheus", "ngsild", "odata", "postgres", "loki"];
+
+/// The driver kind a record's `type` builds (`grafana-postgresql-datasource` builds `postgres`),
+/// `None` for a kind no built-in driver serves.
+#[must_use]
+pub fn driver_kind(record_kind: &str) -> Option<&'static str> {
+    match record_kind {
+        "ngsild-grafana-datasource" => Some("ngsild"),
+        "grafana-postgresql-datasource" => Some("postgres"),
+        other => DRIVER_KINDS.into_iter().find(|k| *k == other),
     }
 }
 

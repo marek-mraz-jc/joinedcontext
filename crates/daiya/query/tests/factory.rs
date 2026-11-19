@@ -226,6 +226,50 @@ async fn an_opened_network_reaches_only_its_organizations_datasources_of_its_kin
     );
 }
 
+#[test]
+fn an_opened_network_names_driver_kinds_and_grafana_kinds_open_under_them() {
+    let loopback = std::net::IpAddr::from([127, 0, 0, 1]);
+    let policy = |kinds: &[&str]| OutboundPolicy {
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            kinds,
+        )],
+        ..OutboundPolicy::default()
+    };
+    let reach = |kind: &str, kinds: &[&str]| {
+        guard_for(
+            &record("ds", kind, "127.0.0.1:5432", json!({})),
+            &policy(kinds),
+            5432,
+        )
+        .unwrap()
+        .check_ip(loopback)
+    };
+    for (kind, driver) in [
+        ("grafana-postgresql-datasource", "postgres"),
+        ("postgres", "postgres"),
+        ("ngsild-grafana-datasource", "ngsild"),
+        ("prometheus", "prometheus"),
+    ] {
+        assert_eq!(daiya_query::driver_kind(kind), Some(driver));
+        reach(kind, &[driver]).unwrap_or_else(|e| panic!("{kind} under {driver}: {e:?}"));
+    }
+    for (kind, kinds) in [
+        (
+            "grafana-postgresql-datasource",
+            &["grafana-postgresql-datasource"][..],
+        ),
+        ("grafana-postgresql-datasource", &["prometheus"][..]),
+        ("wasm:abc", &["postgres"][..]),
+    ] {
+        assert!(
+            matches!(reach(kind, kinds), Err(DsError::GuardRefused(_))),
+            "{kind} under {kinds:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_operator_reach_opens_one_address_to_one_organizations_prometheus() {
     let body = json!({ "status": "success", "data": { "resultType": "vector", "result": [
