@@ -196,6 +196,35 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(screen.getByRole("link", { name: "Catalogue", current: "page" })).toBeInTheDocument();
   });
 
+  it("says a person in no project of this Organization host has nothing granted yet, not an error (T-7317)", async () => {
+    answers["/api/v1/catalogue/readable"] = {
+      status: 403,
+      body: {
+        type: "https://joinedcontext.com/errors/forbidden",
+        title: "Forbidden",
+        status: 403,
+        detail: "this Portal is bbsk's; you belong to none of its projects",
+      },
+    };
+    renderAt("/catalogue");
+    const readable = await screen.findByRole("region", { name: "Datasets you may read" });
+    expect(await within(readable).findByText("You are not in a project of this organization yet")).toBeInTheDocument();
+    expect(within(readable).getByText(/A project owner or an administrator of this organization can add you/)).toBeInTheDocument();
+    expect(within(readable).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(readable).queryByText(/belong to none of its projects/)).not.toBeInTheDocument();
+  });
+
+  it("still shows a failure of the readable datasets as an error (T-7317)", async () => {
+    answers["/api/v1/catalogue/readable"] = {
+      status: 500,
+      body: { type: "https://joinedcontext.com/errors/internal", title: "Internal Server Error", status: 500 },
+    };
+    renderAt("/catalogue");
+    const readable = await screen.findByRole("region", { name: "Datasets you may read" });
+    expect(await within(readable).findByRole("button", { name: /try again|retry/i })).toBeInTheDocument();
+    expect(within(readable).queryByText("You are not in a project of this organization yet")).not.toBeInTheDocument();
+  });
+
   it("ends a card in four key formats and counts the rest, which the dataset page lists (T-4995)", async () => {
     const all = ["JSON", "JSON Schema", "JSON-LD", "LinkML", "MCP", "Markdown", "NGSI-LD", "OData", "OGCFEAT", "CSV", "SHACL"];
     answers["/api/v1/catalogue"] = { status: 200, body: { ...PAGE, datasets: [{ ...PAGE.datasets[0], formats: all }] } };

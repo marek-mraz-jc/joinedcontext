@@ -9803,6 +9803,10 @@
         "title": "Zatím s vámi není sdílena žádná interní datová sada",
         "description": "Požádejte správce dat vaší organizace, aby vaší skupině udělil přístup. Veřejné datové sady níže jsou otevřené všem."
       },
+      "noProject": {
+        "title": "Zatím nejste v žádném projektu této organizace",
+        "description": "Vlastník projektu nebo správce této organizace vás může přidat do projektu; jeho interní datové sady se pak zobrazí zde. Veřejné datové sady níže jsou otevřené všem."
+      },
       "unanswered": "{count} datových sad se teď nepodařilo ověřit a nejsou uvedeny. Načtěte stránku znovu za minutu.",
       "access": {
         "public": "Veřejné",

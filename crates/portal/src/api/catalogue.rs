@@ -173,7 +173,8 @@ pub struct CatalogueDataset {
     pub modified: Option<String>,
 }
 
-/// The CKAN organization a dataset belongs to: one per project (Architecture/21 §1).
+/// Who publishes a dataset: the `dct:publisher` its project names (`name` its IRI, or the name
+/// itself when it has none), else the CKAN organization it is filed under (Architecture/21 §1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CataloguePublisher {
     pub name: String,
@@ -773,7 +774,17 @@ fn summary(dataset: &Value) -> CatalogueDataset {
     }
 }
 
+/// Who publishes `dataset`: the `dct:publisher` its publisher wrote (`publisher_name`, keyed by
+/// `publisher_uri` when it has one), else its CKAN organization. A project of the installation's
+/// Organization names its own publisher there, so its datasets are not credited to the
+/// organization's title (T-7317).
 fn publisher(dataset: &Value) -> Option<CataloguePublisher> {
+    if let Some(title) = extra(dataset, "publisher_name") {
+        return Some(CataloguePublisher {
+            name: extra(dataset, "publisher_uri").unwrap_or_else(|| title.clone()),
+            title,
+        });
+    }
     let organization = dataset.get("organization")?;
     let name = text(organization, "name")?;
     Some(CataloguePublisher {
@@ -2124,6 +2135,73 @@ mod tests {
                 .map(|(k, v)| json!({ "key": k, "value": v }))
                 .collect(),
         )
+    }
+
+    /// T-7317: a dataset of a project filed under the installation's organization names the
+    /// publisher its project declared, not that organization; one without names its organization.
+    #[test]
+    fn the_publisher_is_the_declared_one_before_the_organization() {
+        let declared = dataset(
+            "banskabystrica-pocasie",
+            "hel",
+            extras(&[
+                ("publisher_name", "Mesto Banská Bystrica"),
+                (
+                    "publisher_uri",
+                    "https://data.gov.sk/id/legal-subject/00313271",
+                ),
+            ]),
+            &[],
+            false,
+        );
+        let named = dataset(
+            "praha-ovzdusi",
+            "hel",
+            extras(&[("publisher_name", "Hlavní město Praha")]),
+            &[],
+            false,
+        );
+        let plain = dataset("helsinki-air", "hel", extras(&[]), &[], false);
+        let page = page_of(&[declared, named, plain], &Filters::parse(None), 2026);
+        let by = |name: &str| {
+            let d = page.datasets.iter().find(|d| d.name == name).unwrap();
+            d.publisher.clone().unwrap()
+        };
+        assert_eq!(
+            by("banskabystrica-pocasie"),
+            CataloguePublisher {
+                name: "https://data.gov.sk/id/legal-subject/00313271".into(),
+                title: "Mesto Banská Bystrica".into(),
+            }
+        );
+        assert_eq!(by("praha-ovzdusi").name, "Hlavní město Praha");
+        assert_eq!(by("helsinki-air").title, "hel title");
+        // Three publishers, so the facet tells them apart and filters each alone.
+        assert_eq!(page.facets.publisher.len(), 3);
+        let only = Filters::parse(Some(
+            "publisher=https%3A%2F%2Fdata.gov.sk%2Fid%2Flegal-subject%2F00313271",
+        ));
+        let one = page_of(
+            &[
+                dataset(
+                    "banskabystrica-pocasie",
+                    "hel",
+                    extras(&[
+                        ("publisher_name", "Mesto Banská Bystrica"),
+                        (
+                            "publisher_uri",
+                            "https://data.gov.sk/id/legal-subject/00313271",
+                        ),
+                    ]),
+                    &[],
+                    false,
+                ),
+                dataset("helsinki-air", "hel", extras(&[]), &[], false),
+            ],
+            &only,
+            2026,
+        );
+        assert_eq!(one.datasets.len(), 1);
     }
 
     /// T-6272: a hit names its Endpoint's slug only when it is a public Endpoint here; a

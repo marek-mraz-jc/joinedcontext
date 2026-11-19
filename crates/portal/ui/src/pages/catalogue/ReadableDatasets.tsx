@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { ApiError } from "../../api/client";
 import type { components } from "../../api/schema";
 import { Alert, Badge, Card, EmptyState, Icon, PageFailed, PageLoading } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -42,6 +43,18 @@ export function ReadableDatasets(): JSX.Element {
   const body = (() => {
     if (readable.isPending) {
       return <PageLoading label={t("catalogue.readable.loading")} />;
+    }
+    // On an Organization's own host the Portal refuses everyone who belongs to none of its
+    // projects (403): a newcomer's normal state, said as one, not a failure (T-7317).
+    if (readable.error instanceof ApiError && readable.error.status === 403) {
+      return (
+        <EmptyState
+          icon="lock"
+          bare
+          title={t("catalogue.readable.noProject.title")}
+          description={t("catalogue.readable.noProject.description")}
+        />
+      );
     }
     if (readable.isError || !Array.isArray(readable.data.datasets)) {
       return <PageFailed error={readable.error} onRetry={() => void readable.refetch()} />;

@@ -9803,6 +9803,10 @@
         "title": "No internal dataset is shared with you yet",
         "description": "Ask a data steward of your organization to grant your group access. The public datasets below are open to everyone."
       },
+      "noProject": {
+        "title": "You are not in a project of this organization yet",
+        "description": "A project owner or an administrator of this organization can add you to a project; its internal datasets are then listed here. The public datasets below are open to everyone."
+      },
       "unanswered": "{count} datasets could not be checked just now and are not listed. Reload the page in a minute.",
       "access": {
         "public": "Public",

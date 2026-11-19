@@ -9803,6 +9803,10 @@
         "title": "Noch kein interner Datensatz ist für Sie freigegeben",
         "description": "Bitten Sie eine Datenverantwortliche Ihrer Organisation, Ihrer Gruppe Zugriff zu geben. Die öffentlichen Datensätze unten sind für alle offen."
       },
+      "noProject": {
+        "title": "Sie sind noch in keinem Projekt dieser Organisation",
+        "description": "Eine Projektinhaberin oder ein Administrator dieser Organisation kann Sie einem Projekt hinzufügen; dessen interne Datensätze erscheinen dann hier. Die öffentlichen Datensätze unten sind für alle offen."
+      },
       "unanswered": "{count} Datensätze konnten gerade nicht geprüft werden und fehlen. Laden Sie die Seite in einer Minute neu.",
       "access": {
         "public": "Öffentlich",
