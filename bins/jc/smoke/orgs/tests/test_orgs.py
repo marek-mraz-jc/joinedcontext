@@ -583,7 +583,7 @@ def test_an_opened_incident_is_claimed_for_the_owner_and_closes_done(tmp_path):
 def test_an_incident_opened_before_the_claim_is_claimed_then_closed(tmp_path):
     b = board(tmp_path)
     f = tmp_path / "T-7365-incident-jc-prod-orgs-crawl-smartcity-bbsk-web.md"
-    f.write_text("---\nid: T-7365\nstatus: todo\nowner: prod-deployer\nincident: jc-prod/orgs/crawl.smartcity.bbsk/web\n---\n")
+    f.write_text("---\nid: T-7365\nstatus: todo\nadmitted: owner 2026-11-19 T-7309\nowner: prod-deployer\nincident: jc-prod/orgs/crawl.smartcity.bbsk/web\n---\n")
     b.close("T-7365", "crawl.smartcity.bbsk/web", "passes", "t2")
     assert "status: done" in (tmp_path / "finished" / f.name).read_text()
     assert (tmp_path / ".claims" / "T-7365" / "owner").read_text().strip() == "prod-deployer"
