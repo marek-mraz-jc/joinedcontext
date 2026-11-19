@@ -854,6 +854,91 @@ async fn a_bad_antares_environment_refuses_to_start() {
     assert!(!generated.exists(), "{}", generated.display());
 }
 
+/// T-7384: the jc-prod rollout of c5405e24 waited minutes on a module's migration behind a lock,
+/// and the bound listener answered no probe until every module was built, so the kubelet's
+/// startup probe timed out and restarted jc. Here kaisatsu's database accepts the connection and
+/// never answers: the build waits, the liveness ping answers meanwhile, and the Portal's health
+/// (the readiness probe) and every other path say 503.
+#[tokio::test]
+async fn the_liveness_ping_answers_while_a_module_build_waits() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let db = silent.local_addr().unwrap();
+    let held = tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((stream, _)) = silent.accept().await {
+            open.push(stream);
+        }
+    });
+    let url = fx.kek.with_file_name("kaisatsu-url");
+    std::fs::write(&url, format!("postgres://kaisatsu@{db}/jc\n")).unwrap();
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    cfg.kaisatsu.database_url_file = Some(url);
+    cfg.listen = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let addr = cfg.listen;
+    let shutdown = CancellationToken::new();
+    // Every check runs inside the probe: select! drops the start, and its listener, once one
+    // branch is done.
+    let probe = async {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(1))
+            .build()
+            .unwrap();
+        let mut ping = None;
+        for _ in 0..50 {
+            if let Ok(resp) = client
+                .get(format!("http://{addr}/streams/ping"))
+                .header("host", "city.test")
+                .send()
+                .await
+            {
+                ping = Some((resp.status(), resp.text().await.unwrap_or_default()));
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let ping = ping.unwrap_or_else(|| panic!("no answer on {addr} within 5 s of the start"));
+        assert_eq!(ping, (StatusCode::OK, "pong".to_owned()));
+        for path in [
+            "/api/v1/health",
+            "/id/realms/jc/.well-known/openid-configuration",
+            "/streams/files",
+        ] {
+            let (status, body) = get(addr, "city.test", path).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (StatusCode::SERVICE_UNAVAILABLE, "starting"),
+                "{path}"
+            );
+        }
+        let post = client
+            .post(format!("http://{addr}/streams/ping"))
+            .send()
+            .await
+            .expect("request");
+        assert_eq!(post.status(), StatusCode::SERVICE_UNAVAILABLE);
+    };
+    // jc's start future is not Send (Antares' build_state), so it runs on this task.
+    tokio::select! {
+        started = jc::start(&cfg, shutdown.clone()) => {
+            panic!("the start should wait on the silent database: {:?}", started.err());
+        }
+        () = probe => {}
+    }
+    // The dropped start stopped its listener with it.
+    shutdown.cancel();
+    held.abort();
+    assert!(
+        reqwest::get(format!("http://{addr}/streams/ping"))
+            .await
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn a_taken_port_is_reported() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
