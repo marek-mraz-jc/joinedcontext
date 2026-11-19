@@ -976,6 +976,11 @@ fn split_credentials(cfg: &Config) -> Vec<crate::setup::Secret> {
     if cfg.roles.contains(&Module::Portal) && cfg.remote_modules.contains_key(&Module::Shako) {
         out.push(crate::setup::Secret::ForgeWebhookSecret);
     }
+    // shako seals its hook and mirror secrets in Postgres under a subkey of the installation's
+    // KEK (T-7280), with or without kaisatsu beside it.
+    if cfg.roles.contains(&Module::Shako) && cfg.shako.database.is_some() {
+        out.push(crate::setup::Secret::KaisatsuKek);
+    }
     // The gateway apart from the Portal (T-7226): kaisatsu's `context-gateway` client on one side,
     // the gateway's token for the internal listener on the other, both from the given secret.
     if cfg.gateway.is_some() || cfg.remote_modules.contains_key(&Module::Gateway) {
@@ -1745,6 +1750,24 @@ mod tests {
         }
         assert!(split_credentials(&data).contains(&Secret::ShakoToken));
         assert!(!split_credentials(&core).contains(&Secret::ShakoToken));
+    }
+
+    /// T-7280: a shako keeping its records in Postgres holds the installation's KEK to seal its
+    /// hook and mirror secrets, with or without kaisatsu beside it; one in memory does not.
+    #[test]
+    fn a_shako_on_postgres_holds_the_kek_without_kaisatsu() {
+        let pg = dev_config(
+            "shako",
+            "[shako.database]\nurl = \"postgres://shako_app@db/jc_shako\"\npassword_file = \"/p\"\n",
+        );
+        let memory = dev_config("shako", "");
+        assert!(split_credentials(&pg).contains(&crate::setup::Secret::KaisatsuKek));
+        assert!(!split_credentials(&memory).contains(&crate::setup::Secret::KaisatsuKek));
+        let dir = tempfile::tempdir().unwrap();
+        let none = std::collections::BTreeMap::new();
+        let setup =
+            Setup::prepare_with(dir.path(), &pg.roles, &none, &split_credentials(&pg)).unwrap();
+        assert!(setup.value(crate::setup::Secret::KaisatsuKek).is_some());
     }
 
     /// Which module the planned router table sends `host` `path` to, and the path it hands over

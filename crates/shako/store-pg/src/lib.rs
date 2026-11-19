@@ -13,7 +13,8 @@ use shako_core::{
     BlobRecord, CommitStatusRecord, DeliveryRecord, InstanceId, InstanceRecord, OrgId, OutboxEvent,
     PackageFileRecord, PackageRecord, PackageVersionRecord, ProtectionRuleRecord,
     PullRequestRecord, PushMirrorRecord, QuotaUsageRecord, RepoId, RepoRecord, ReviewRecord,
-    ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId, WebhookRecord,
+    SecretStore, ShakoError, ShakoResult, Store, StoreFuture, TagProtectionRecord, WebhookId,
+    WebhookRecord,
 };
 use shako_store_memory::MemoryStore;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -26,6 +27,7 @@ use zeroize::Zeroizing;
 
 pub const MIGRATION_0001_SQL: &str = include_str!("../migrations/0001_init.sql");
 pub const MIGRATION_0002_SQL: &str = include_str!("../migrations/0002_store_log.sql");
+pub const MIGRATION_0003_SQL: &str = include_str!("../migrations/0003_secrets.sql");
 
 /// All 16 required tables in schema `shako` that MUST have `relrowsecurity` and `relforcerowsecurity` (S2).
 pub const REQUIRED_RLS_TABLES: &[&str] = &[
@@ -216,6 +218,7 @@ impl PgStore {
         let mut migrator = Migrator::with_migrations(vec![
             migration(1, "init", MIGRATION_0001_SQL),
             migration(2, "store_log", MIGRATION_0002_SQL),
+            migration(3, "secrets", MIGRATION_0003_SQL),
         ]);
         migrator.create_schema("shako_migrations");
         migrator.dangerous_set_table_name("shako_migrations._sqlx_migrations");
@@ -337,6 +340,125 @@ impl PgStore {
         .await
         .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
         Ok(tx)
+    }
+}
+
+/// The hook and mirror secrets in `shako.secret` (S6-09, T-7280), sealed with the installation's
+/// KEK (`kaisatsu_crypto::Kek`, under a subkey of its own): a restart and every replica read what
+/// one wrote, the table holds no plaintext, and forced RLS keeps each Organization to its rows.
+pub struct PgSecretStore {
+    pool: PgPool,
+    instance_id: InstanceId,
+    seal: kaisatsu_crypto::Kek,
+}
+
+impl PgSecretStore {
+    /// `kek` is the installation's key-encryption key; the secrets are sealed under its subkey
+    /// `shako-secrets`, never under the key kaisatsu seals its own rows with.
+    pub fn new(
+        store: &PgStore,
+        instance_id: InstanceId,
+        kek: &kaisatsu_crypto::Kek,
+    ) -> ShakoResult<Self> {
+        let seal = kaisatsu_crypto::Kek::from_raw_bytes(&kek.derive_subkey("shako-secrets"))
+            .map_err(|_| ShakoError::Storage("the secrets' key cannot be derived".into()))?;
+        Ok(Self {
+            pool: store.pool().clone(),
+            instance_id,
+            seal,
+        })
+    }
+
+    /// The associated data: a sealed value opens only for its tenant and reference.
+    fn aad(&self, org_id: OrgId, secret_ref: &str) -> Vec<u8> {
+        format!("shako-secret\0{}\0{org_id}\0{secret_ref}", self.instance_id).into_bytes()
+    }
+
+    async fn tenant_tx(&self, org_id: OrgId) -> ShakoResult<Transaction<'_, Postgres>> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| ShakoError::Storage(format!("begin tx failed: {e}")))?;
+        sqlx::query(
+            "SELECT set_config('shako.instance', $1, true), set_config('shako.org', $2, true)",
+        )
+        .bind(self.instance_id.to_string())
+        .bind(org_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| ShakoError::Storage(format!("set_config failed: {e}")))?;
+        Ok(tx)
+    }
+}
+
+impl SecretStore for PgSecretStore {
+    fn get_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+    ) -> StoreFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let mut tx = self.tenant_tx(org_id).await?;
+            let sealed: Option<Vec<u8>> = sqlx::query_scalar(
+                "SELECT sealed FROM shako.secret WHERE instance_id = $1 AND org_id = $2 AND secret_ref = $3",
+            )
+            .bind(self.instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(secret_ref)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
+            tx.commit()
+                .await
+                .map_err(|e| ShakoError::Storage(format!("secret read failed: {e}")))?;
+            let Some(sealed) = sealed else {
+                return Ok(None);
+            };
+            // The reference is never in the error: it names a repository, not the value, but a
+            // failing open says only that the key does not fit.
+            let plain = Zeroizing::new(
+                self.seal
+                    .decrypt(&self.aad(org_id, secret_ref), &sealed)
+                    .map_err(|_| {
+                        ShakoError::Storage(
+                            "a stored secret does not open with this installation's key".into(),
+                        )
+                    })?,
+            );
+            String::from_utf8(plain.to_vec())
+                .map(Some)
+                .map_err(|_| ShakoError::Storage("a stored secret is not text".into()))
+        })
+    }
+
+    fn put_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+        value: &'a str,
+    ) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let sealed = self
+                .seal
+                .encrypt(&self.aad(org_id, secret_ref), value.as_bytes())
+                .map_err(|_| ShakoError::Storage("the secret could not be sealed".into()))?;
+            let mut tx = self.tenant_tx(org_id).await?;
+            sqlx::query(
+                "INSERT INTO shako.secret (instance_id, org_id, secret_ref, sealed) VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (instance_id, org_id, secret_ref) DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = now()",
+            )
+            .bind(self.instance_id.as_uuid())
+            .bind(org_id.as_uuid())
+            .bind(secret_ref)
+            .bind(sealed)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))?;
+            tx.commit()
+                .await
+                .map_err(|e| ShakoError::Storage(format!("secret write failed: {e}")))
+        })
     }
 }
 

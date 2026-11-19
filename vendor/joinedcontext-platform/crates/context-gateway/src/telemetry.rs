@@ -119,6 +119,14 @@ pub fn held(before: &std::collections::HashSet<String>, now: &std::collections::
     }
 }
 
+/// The scrape's own router (S2-18, T-7279): `/metrics` alone, for the metrics listener
+/// (`JC_GATEWAY_METRICS_BIND`), never merged into the public [`crate::app::router`]. The series
+/// carry space, rule and Endpoint names.
+pub fn router() -> axum::Router {
+    install();
+    axum::Router::new().route("/metrics", axum::routing::get(metrics))
+}
+
 /// The scrape.
 pub async fn metrics() -> Response<Body> {
     ([(CONTENT_TYPE, TEXT_FORMAT)], handle().render()).into_response()

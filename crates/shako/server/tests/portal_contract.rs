@@ -136,10 +136,14 @@ impl World {
         state.register_owner_org(APPS_OWNER, apps_org);
         state
             .secret_store
-            .put_secret(org, "portal-webhook", WEBHOOK_SECRET);
+            .put_secret(org, "portal-webhook", WEBHOOK_SECRET)
+            .await
+            .expect("the secret is kept");
         state
             .secret_store
-            .put_secret(org, "another-webhook", "not-the-portal-secret");
+            .put_secret(org, "another-webhook", "not-the-portal-secret")
+            .await
+            .expect("the secret is kept");
 
         // The Portal itself, holding only the webhook secret, behind a recorder of its verdicts.
         let deliveries: Deliveries = Arc::default();

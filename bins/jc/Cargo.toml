@@ -17,6 +17,7 @@ path = "src/main.rs"
 [features]
 default = ["kaisatsu", "dataroom", "daiya", "ekiben", "antares", "gateway", "portal", "shako", "model-tools", "assistant", "viz", "jemalloc"]
 shako = [
+  "dep:kaisatsu-crypto",
   "dep:shako-server",
   "dep:shako-core",
   "dep:shako-store-memory",

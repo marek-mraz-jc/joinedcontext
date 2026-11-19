@@ -1400,6 +1400,7 @@ pub async fn add_push_mirror(
         if state
             .secret_store
             .get_secret(repo.org_id, &secret_ref)
+            .await?
             .is_some()
         {
             return Err(ShakoError::Conflict(
@@ -1410,7 +1411,8 @@ pub async fn add_push_mirror(
         let user = req.username.as_deref().unwrap_or("x-access-token");
         state
             .secret_store
-            .put_secret(repo.org_id, &secret_ref, &format!("{user}:{pw}"));
+            .put_secret(repo.org_id, &secret_ref, &format!("{user}:{pw}"))
+            .await?;
     }
     state
         .store()
@@ -1501,7 +1503,10 @@ pub async fn add_webhook(
                 ));
             }
             let r = format!("{}webhook-{id}", repo_secret_prefix(&repo));
-            state.secret_store.put_secret(repo.org_id, &r, &secret);
+            state
+                .secret_store
+                .put_secret(repo.org_id, &r, &secret)
+                .await?;
             r
         }
         HookSecret::Ref(r) if !r.trim().is_empty() => {

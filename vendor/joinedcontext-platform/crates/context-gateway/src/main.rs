@@ -62,6 +62,22 @@ async fn main() -> ExitCode {
         });
     }
 
+    // The scrape on a listener of its own (S2-18, T-7279): its series name tenants, so the
+    // public listener serves no `/metrics`.
+    let metrics = match tokio::net::TcpListener::bind(config.metrics_bind).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            tracing::error!(%error, bind = %config.metrics_bind, "cannot listen for the scrape");
+            return ExitCode::FAILURE;
+        }
+    };
+    tracing::info!(bind = %config.metrics_bind, "metrics listener");
+    tokio::spawn(async move {
+        if let Err(error) = axum::serve(metrics, context_gateway::telemetry::router()).await {
+            tracing::error!(%error, "the metrics listener stopped");
+        }
+    });
+
     let app = built.app;
     let listener = match tokio::net::TcpListener::bind(config.bind).await {
         Ok(listener) => listener,

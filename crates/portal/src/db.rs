@@ -212,11 +212,41 @@ async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Erro
 /// `jc.org` and `jc.project` are set for this transaction alone, so a table with forced
 /// row-level security answers only that key's rows and stamps new rows with it, and a statement
 /// run without this opener reads none of them.
+///
+/// A statement in it stops after [`REQUEST_STATEMENT_TIMEOUT`] (ISO-17, review S1-27): one
+/// Organization's slow query never holds a pooled connection the others wait for. The data
+/// backup's bulk copies open [`bulk_tenant_tx`] instead.
 pub async fn tenant_tx(
     pool: &PgPool,
     key: jc_types::ProjectKey,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    keyed_tx(pool, key, REQUEST_STATEMENT_TIMEOUT).await
+}
+
+/// [`tenant_tx`] for the data backup's export, restore and copy, whose single statements move a
+/// whole table of a project: bounded by [`BULK_STATEMENT_TIMEOUT`] instead.
+pub async fn bulk_tenant_tx(
+    pool: &PgPool,
+    key: jc_types::ProjectKey,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+    keyed_tx(pool, key, BULK_STATEMENT_TIMEOUT).await
+}
+
+/// The longest one statement of a request's [`tenant_tx`] runs.
+pub const REQUEST_STATEMENT_TIMEOUT: &str = "30s";
+/// The longest one statement of a backup's [`bulk_tenant_tx`] runs.
+pub const BULK_STATEMENT_TIMEOUT: &str = "15min";
+
+async fn keyed_tx(
+    pool: &PgPool,
+    key: jc_types::ProjectKey,
+    timeout: &'static str,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT set_config('statement_timeout', $1, true)")
+        .bind(timeout)
+        .execute(&mut *tx)
+        .await?;
     enter(&mut tx, key).await?;
     Ok(tx)
 }
@@ -788,8 +818,12 @@ pub async fn set_agent_run_merge_request(
 /// Portal's own status events and the proxy's relay are separate callers — and the primary key
 /// is what catches that; the retry is the whole handling, because the loser only needs the next
 /// number.
+///
+/// `conn` is a [`tenant_tx`] of the run's key (T-7278): the event takes that key, and a run of
+/// another key is invisible, so its stream is never extended. Each attempt runs under a
+/// savepoint, since a unique violation aborts the transaction it happens in.
 pub async fn append_agent_run_event(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     run_id: &str,
     kind: &str,
     payload: &serde_json::Value,
@@ -797,28 +831,43 @@ pub async fn append_agent_run_event(
     let statement = format!(
         "INSERT INTO agent_run_events (run_id, seq, kind, payload) \
          SELECT $1, COALESCE(MAX(seq), 0) + 1, $2, $3 FROM agent_run_events WHERE run_id = $1 \
+         HAVING EXISTS (SELECT 1 FROM agent_runs WHERE id = $1) \
          RETURNING {AGENT_EVENT_COLUMNS}"
     );
     let mut last = None;
     for _ in 0..3 {
+        sqlx::query("SAVEPOINT agent_run_event")
+            .execute(&mut *conn)
+            .await?;
         match sqlx::query_as::<_, AgentRunEvent>(AssertSqlSafe(statement.clone()))
             .bind(run_id)
             .bind(kind)
             .bind(payload)
-            .fetch_one(pool)
+            .fetch_one(&mut *conn)
             .await
         {
-            Ok(event) => return Ok(event),
-            Err(err) if is_unique_violation(&err) => last = Some(err),
+            Ok(event) => {
+                sqlx::query("RELEASE SAVEPOINT agent_run_event")
+                    .execute(&mut *conn)
+                    .await?;
+                return Ok(event);
+            }
+            Err(err) if is_unique_violation(&err) => {
+                sqlx::query("ROLLBACK TO SAVEPOINT agent_run_event")
+                    .execute(&mut *conn)
+                    .await?;
+                last = Some(err);
+            }
             Err(err) => return Err(err),
         }
     }
     Err(last.unwrap_or(sqlx::Error::RowNotFound))
 }
 
-/// Everything a stream missed, oldest first (`Last-Event-ID`, AG-45).
+/// Everything a stream missed, oldest first (`Last-Event-ID`, AG-45). `conn` is a [`tenant_tx`]
+/// of the run's key: another key's run answers no event (T-7278).
 pub async fn load_agent_run_events(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     run_id: &str,
     after_seq: i64,
 ) -> Result<Vec<AgentRunEvent>, sqlx::Error> {
@@ -828,14 +877,14 @@ pub async fn load_agent_run_events(
     )))
     .bind(run_id)
     .bind(after_seq)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
 }
 
 /// The events of several runs of the given kinds, by run and in order: what the agents' activity
-/// reads in one query (T-4851).
+/// reads in one query (T-4851), within the key of `conn`'s [`tenant_tx`] (T-7278).
 pub async fn load_agent_run_events_of(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     run_ids: &[String],
     kinds: &[&str],
 ) -> Result<Vec<AgentRunEvent>, sqlx::Error> {
@@ -845,7 +894,7 @@ pub async fn load_agent_run_events_of(
     )))
     .bind(run_ids)
     .bind(kinds)
-    .fetch_all(pool)
+    .fetch_all(conn)
     .await
 }
 
