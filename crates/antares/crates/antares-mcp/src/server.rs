@@ -127,6 +127,18 @@ impl Server {
         Names::new(types, attributes)
     }
 
+    /// [`Self::names`] less the types and Attributes the engine hides from
+    /// the caller: what a tool schema, the guide and the resource list name
+    /// to this caller (AUZ-06, MCP-03). A call keeps [`Self::names`]: its
+    /// own gate narrows the answer, with no third decision (MC3).
+    async fn caller_names(&self) -> Names {
+        if self.view.target_names().is_some() || self.view.shows_every_name() {
+            return self.names();
+        }
+        let (types, attributes) = self.view.readable_names(&self.caller).await;
+        Names::new(types, attributes)
+    }
+
     /// The tools the view and the engine offer this caller (D-3).
     async fn offered(&self) -> Vec<&'static ToolDef> {
         let ops: Vec<OperationId> = TOOLS.iter().map(|t| t.op).collect();
@@ -1197,11 +1209,24 @@ impl ServerHandler for Server {
         }
         let lifetime = tokio::time::sleep(LIFETIME);
         tokio::pin!(lifetime);
+        let mut recheck = tokio::time::interval_at(
+            tokio::time::Instant::now() + listen::RECHECK,
+            listen::RECHECK,
+        );
         loop {
             tokio::select! {
                 () = context.cancelled() => return Ok(()),
                 () = &mut lifetime => return Ok(()),
+                _ = recheck.tick() => {
+                    if !self.offers(OperationId::RetrieveEntity).await {
+                        return Ok(());
+                    }
+                }
                 () = wake.notified() => {
+                    // a caller who lost the read hears of no change (NET-08)
+                    if !self.offers(OperationId::RetrieveEntity).await {
+                        return Ok(());
+                    }
                     for uri in listen::streams().take(&stream) {
                         let updated = ResourceUpdatedNotification::new(
                             ResourceUpdatedNotificationParam::new(uri),
@@ -1223,7 +1248,7 @@ impl ServerHandler for Server {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        let names = self.names();
+        let names = self.caller_names().await;
         // The read tools carry how to ask each type the view names (T-4486).
         let guide = crate::guide::text(&names, jiff::Timestamp::now());
         let offered = self.offered().await;
@@ -1314,7 +1339,8 @@ impl ServerHandler for Server {
     ) -> Result<ListResourcesResult, ErrorData> {
         // ponytail: one page; a view names at most 256 types (MAX_NAMES)
         let resources = if self.offers(OperationId::RetrieveEntityTypeInfo).await {
-            self.names()
+            self.caller_names()
+                .await
                 .types
                 .into_iter()
                 .map(|t| {

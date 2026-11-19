@@ -2,10 +2,11 @@
 //! The policy engines the gate tests ask.
 
 use antares_ops::policy::{
-    Decision, DecisionFuture, NotifyDecision, Operation, PolicyEngine, Subject,
+    Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Rule, Subject,
 };
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// Allows everything and counts each decision.
 #[derive(Default)]
@@ -28,6 +29,19 @@ pub struct NoNamedTypes;
 /// Denies the information of a named type (clause 5.7.7), so the probe passes and
 /// `get_type` and `describe_type` are refused at their gate.
 pub struct NoTypeInfo;
+
+/// Narrows every read to `speed` of Car alone, as a member granted one
+/// Attribute of one type reads the `cars` view.
+pub struct SpeedOnly;
+
+/// Narrows every read to no type, as a member granted nothing of the
+/// view's types reads it.
+pub struct NoneOfTheTypes;
+
+/// Allows everything until revoked, then denies Retrieve Entity (clause
+/// 5.7.1), as a member removed from the grant reads.
+#[derive(Default)]
+pub struct Revocable(pub std::sync::atomic::AtomicBool);
 
 /// Denies Create Subscription (clause 5.8.1): a stream watches nothing.
 pub struct NoSubscriptions;
@@ -149,6 +163,65 @@ impl PolicyEngine for NoSubscriptions {
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         let d = if op.clause == "5.8.1" {
             Decision::Deny("no".into())
+        } else {
+            Decision::Allow
+        };
+        Box::pin(std::future::ready(d))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        notify()
+    }
+}
+
+/// A read (clause 5.7) narrowed to `rules`; anything else allowed, so the
+/// fixture's writes land.
+fn narrowed(op: &Operation<'_>, rules: Vec<Rule>) -> DecisionFuture<'static> {
+    if !op.clause.starts_with("5.7.") {
+        return Box::pin(std::future::ready(Decision::Allow));
+    }
+    let filter = Filter {
+        rules,
+        ..Filter::default()
+    };
+    Box::pin(std::future::ready(Decision::Filter(Arc::new(filter))))
+}
+
+impl PolicyEngine for SpeedOnly {
+    fn name(&self) -> &'static str {
+        "speed-only"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        const DC: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+        narrowed(op, vec![Rule {
+            types: vec![format!("{DC}Car")],
+            attributes: vec![format!("{DC}speed")],
+            ..Rule::default()
+        }])
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        notify()
+    }
+}
+
+impl PolicyEngine for NoneOfTheTypes {
+    fn name(&self) -> &'static str {
+        "none-of-the-types"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        narrowed(op, vec![Rule::default()])
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        notify()
+    }
+}
+
+impl PolicyEngine for Revocable {
+    fn name(&self) -> &'static str {
+        "revocable"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        let d = if op.clause == "5.7.1" && self.0.load(Ordering::SeqCst) {
+            Decision::Deny("revoked".into())
         } else {
             Decision::Allow
         };
