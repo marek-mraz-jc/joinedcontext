@@ -2342,27 +2342,29 @@ def test_up_sh_gives_dataroom_prods_publish_gate_hidden_list():
     assert rows > 50 and len(doc["dataroom"]["hidden"]) == rows and doc["dataroom"]["aliases"]
 
 
-def test_up_sh_gives_dataroom_prods_harvests_and_the_converted_list_beside_jc_toml():
-    """jc-catalogue-17: jc.toml carries prod's [[dataroom.harvest]] entries, they parse with the
-    aliases and the hidden list as one file, and each `converted_file` they name is copied beside
-    jc.toml."""
+def test_up_sh_gives_dataroom_prods_harvest_hosts_and_the_converted_list_beside_jc_toml():
+    """jc-catalogue-17, ODP-11: prod's two sources are the default Portal's (bins/jc/docs/
+    default-portal.yaml, as the imported organization repository holds them), so jc.toml carries
+    no [[dataroom.harvest]] (jc refuses it); [dataroom] lists every host the sources read
+    (ODP-10), and each `convertedFile` they name is copied beside jc.toml."""
     import tomllib
+    import yaml
     text = (HERE / "up.sh").read_text()
-    # dataroom_tail <dir of the toml>: the harvests, and their converted files into that dir.
-    m = re.search(r'^  cat "\$here/(\S+harvest-sources\.toml)"$', text, re.M)
-    assert m, "up.sh appends no [[dataroom.harvest]] to jc.toml"
+    assert "harvest-sources.toml" not in text and "[[dataroom.harvest]]" not in text
+    hosts = re.search(r"^harvest_hosts='(.+)'$", text, re.M)
+    assert hosts, "up.sh sets no harvest_hosts"
+    listed = tomllib.loads(f"h = [{hosts.group(1)}]")["h"]
+    assert "harvest_allowed_hosts = [%s]" in text and '"$harvest_hosts"' in text
+    # dataroom_tail <dir of the toml> copies the converted files into that dir.
     copied = re.findall(r'^  install -m 644 "\$here/(\S+)" "\$1/(\S+)"$', text, re.M)
-    aliases = subprocess.run([sys.executable, "-I", str(HERE / "rehearsal.py"), "aliases"],
-                             capture_output=True, text=True, check=True).stdout
-    hidden = (HERE / "../../bins/jc/docs/catalogue-hidden.toml").read_text()
-    doc = tomllib.loads(aliases + "\n" + hidden + "\n" + (HERE / m.group(1)).read_text())
-    harvests = doc["dataroom"]["harvest"]
-    assert {h["name"] for h in harvests} >= {"hub-bbsk", "nkod-banskabystrica"}
-    for h in harvests:
-        if "converted_file" in h:
-            src = [s for s, dst in copied if dst == h["converted_file"]]
-            assert src and (HERE / src[0]).is_file(), f"{h['name']}: {h['converted_file']} not copied beside jc.toml"
-            json.loads((HERE / src[0]).read_text())
+    portal = yaml.safe_load((HERE / "../../bins/jc/docs/default-portal.yaml").read_text())
+    sources = portal["spec"]["sources"]
+    assert {s["name"] for s in sources} == {"hub-bbsk", "nkod-banskabystrica"}
+    for s in sources:
+        assert set(s["allowedHosts"]) <= set(listed), f"{s['name']}: a host outside harvest_allowed_hosts"
+        src = [c for c, dst in copied if dst == s["convertedFile"]]
+        assert src and (HERE / src[0]).is_file(), f"{s['name']}: {s['convertedFile']} not copied beside jc.toml"
+        json.loads((HERE / src[0]).read_text())
 
 
 def test_up_sh_refuses_realm_lines_without_an_export_to_render(tmp_path):
