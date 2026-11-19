@@ -57,7 +57,10 @@ function start(projects: object, path: string) {
 
 const projectItems = async () => {
   await userEvent.setup().click(screen.getByRole("button", { name: "Projects" }));
-  const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent?.trim());
+  // The menu ends with "New project" (T-7404); only the projects are listed here.
+  const items = (await screen.findAllByRole("menuitem"))
+    .map((item) => item.textContent?.trim())
+    .filter((text) => text !== "New project");
   await userEvent.setup().keyboard("{Escape}");
   return items;
 };

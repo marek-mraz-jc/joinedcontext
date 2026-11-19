@@ -314,9 +314,11 @@ for (const width of [1440, 400]) {
       // Opening a project is the installation's: the control says why, and the API refuses anyway.
       if (width >= 1024) {
         await page.goto("/projects/ovzdusie/spaces?lang=en");
-        const create = page.getByRole("button", { name: "New project" });
+        await page.getByRole("button", { name: "Projects" }).click();
+        const create = page.getByRole("menuitem", { name: /New project/ });
         await expect(create).toHaveAttribute("aria-disabled", "true");
-        await expect(create).toHaveAccessibleDescription(NO_NEW_PROJECT);
+        await expect(create).toContainText(NO_NEW_PROJECT);
+        await page.keyboard.press("Escape");
       }
 
       // Refusals: an installation section, and a project of another Organization (404, PF-59).

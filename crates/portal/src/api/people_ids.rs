@@ -57,20 +57,41 @@ pub struct PersonNames {
 
 /// Who reads names behind ids: a holder of `update` on Person or `approve` on Group (ADR-N-061).
 /// Anyone else sees the ids alone.
+/// Whose names the caller may read: `None` for anyone the realm knows (who updates people or
+/// approves groups installation-wide), else the people holding a role in an Organization the
+/// caller administers (T-7403: an Organization's administrator reads their own members' names,
+/// whose grants are narrowed to that Organization and so never meet the unscoped checks).
 fn may_resolve(
     state: &AppState,
     identity: &crate::auth::session::Identity,
-) -> Result<(), ApiError> {
+) -> Result<Option<BTreeSet<String>>, ApiError> {
     let effective = crate::permissions::for_request(state, identity, ORG_NAMESPACE);
     if effective.check(PERSON, Verb::Update, None).is_ok()
         || effective.check("Group", Verb::Approve, None).is_ok()
     {
-        return Ok(());
+        return Ok(None);
     }
-    Err(ApiError::Denied(
-        "the names behind people's ids are read by whoever updates people or approves groups; \
-         ask an Organization Administrator (ADR-N-061)"
-            .into(),
+    let administered: BTreeSet<&str> = effective
+        .grants
+        .iter()
+        .filter(|grant| grant.rule.grants("RoleBinding", Verb::Approve))
+        .filter_map(|grant| grant.organization.as_deref())
+        .collect();
+    if administered.is_empty() {
+        return Err(ApiError::Denied(
+            "the names behind people's ids are read by whoever updates people or approves \
+             groups; ask an Organization Administrator (ADR-N-061)"
+                .into(),
+        ));
+    }
+    let now = jc_time::TimestampTz::now();
+    Ok(Some(
+        administered
+            .into_iter()
+            .flat_map(|organization| {
+                crate::permissions::people_with_a_role(&state.mirror, organization, now)
+            })
+            .collect(),
     ))
 }
 
@@ -78,7 +99,7 @@ fn may_resolve(
     get,
     path = "/api/v1/organization/people/names",
     summary = "Resolve Person Names",
-    description = "Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group.",
+    description = "Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group; an Organization administrator reads the names of the people holding a role in their Organization alone.",
     tag = "people",
     params(NamesQuery),
     responses(
@@ -93,7 +114,7 @@ pub async fn person_names(
     State(state): State<AppState>,
     Query(query): Query<NamesQuery>,
 ) -> Result<Json<PersonNames>, ApiError> {
-    may_resolve(&state, &user.0.identity)?;
+    let members = may_resolve(&state, &user.0.identity)?;
     let ids: BTreeSet<&str> = query
         .ids
         .split(',')
@@ -113,6 +134,14 @@ pub async fn person_names(
             detail: "the ids to resolve are not valid".into(),
             errors,
         });
+    }
+    // An id outside the administrator's Organizations is answered like one the realm lacks.
+    let ids: BTreeSet<&str> = match &members {
+        Some(members) => ids.into_iter().filter(|id| members.contains(*id)).collect(),
+        None => ids,
+    };
+    if ids.is_empty() {
+        return Ok(Json(PersonNames { items: Vec::new() }));
     }
     let admin = super::people::people(&state)?.admin().await?;
     // At most `LAST_SEEN_AT_ONCE` realm reads in flight, in the order asked (F-R2POR3-021).
@@ -658,6 +687,62 @@ mod tests {
         assert!(
             matches!(unavailable, Err(ApiError::Unavailable(_))),
             "{unavailable:?}"
+        );
+    }
+
+    /// T-7403: the administrator of `bbsk`, a second Organization whose grants are narrowed to
+    /// it, reads the names of `bbsk`'s members (the realm is asked) and nobody else's (an id of
+    /// `praha` is answered like one the realm lacks, without asking it).
+    #[tokio::test]
+    async fn an_organization_administrator_reads_their_own_members_names_alone() {
+        const EVA: &str = "00000000-0000-4000-8000-00000000000e";
+        const PETR: &str = "00000000-0000-4000-8000-00000000000f";
+        let state = state();
+        let m = &state.mirror;
+        for (name, spec) in [
+            (
+                "ops",
+                json!({ "domain": "ops.example", "installation": true }),
+            ),
+            ("bbsk", json!({ "domain": "bbsk.sk" })),
+            ("praha", json!({ "domain": "praha.eu" })),
+        ] {
+            m.upsert(envelope("Organization", name, ORG_NAMESPACE, spec));
+        }
+        m.upsert(envelope(
+            "Role",
+            "org-admin",
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": ["RoleBinding", "Group"], "verbs": ["read", "propose", "approve", "delete"] }] }),
+        ));
+        for (name, user, organization) in [
+            ("bbsk-admin", JANA, "bbsk"),
+            ("bbsk-eva", EVA, "bbsk"),
+            ("praha-petr", PETR, "praha"),
+        ] {
+            m.upsert(envelope(
+                "RoleBinding",
+                name,
+                ORG_NAMESPACE,
+                json!({ "subjects": [{ "user": user }], "role": "org-admin", "scope": { "organization": organization } }),
+            ));
+        }
+        let ask = |ids: &str| {
+            person_names(
+                caller(None, &[]),
+                State(state.clone()),
+                Query(NamesQuery {
+                    ids: ids.to_owned(),
+                }),
+            )
+        };
+        let outsider = ask(PETR).await.expect("answered");
+        assert!(outsider.0.items.is_empty());
+        // A member's id reaches Keycloak, which these tests do not configure.
+        let member = ask(EVA).await;
+        assert!(
+            matches!(member, Err(ApiError::Unavailable(_))),
+            "{member:?}"
         );
     }
 

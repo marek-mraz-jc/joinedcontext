@@ -578,7 +578,7 @@ routes:
     expect: [403, 403, 403, 403, 403, allow, 403, 403]
   - route: GET /organization/people/names
     rule: "people-admin or group-approver"
-    note: "update on Person or approve on Group at the organization reads the names behind a manifest's person ids (ADR-N-061); the approver role approves in projects only"
+    note: "update on Person or approve on Group at the organization reads the names behind a manifest's person ids (ADR-N-061); the approver role approves in projects only; a second Organization's administrator reads its own members' names alone (T-7403, src/api/people_ids.rs test)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]
   - route: POST /organization/people/name-by-id
     rule: "people-admin"

@@ -4278,6 +4278,7 @@
       "personHelp": "Wählen Sie eine Person der Organisation oder geben Sie die vollständige E-Mail einer Person ein, die sich noch nicht angemeldet hat, z. B. jana.novak@example.org.",
       "groupHelp": "Der Name einer unter Gruppen erklärten Gruppe. Die Rolle hält, wer Mitglied ist.",
       "roleHelp": "Was die Person darf: jede Rolle ist eine Menge von Verben auf einer Menge von Arten, aufgeführt unter Rollen.",
+      "roleEditHelp": "Die Rolle dieser Person hier, eine der unter Rollen aufgeführten. Eine Änderung wird als Änderung vorgeschlagen; das Portal lehnt eine Rolle über Ihren eigenen Rechten ab oder eine, nach der die Organisation keinen Administrator hätte.",
       "whereHelp": "Wie weit die Rolle reicht: dieses Projekt, die ganze Organisation, oder ein Kontextraum des Projekts.",
       "untilHelp": "Der letzte Tag, an dem die Rolle gilt. Leer gelassen endet sie nicht, was ein dauerhaftes Mitglied braucht.",
       "rolesEmpty": "Diese Organisation hat noch keine Rollen. Eine muss unter Rollen erklärt werden, bevor sie vergeben werden kann.",

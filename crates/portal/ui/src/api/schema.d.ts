@@ -1898,7 +1898,7 @@ export interface paths {
         };
         /**
          * Resolve Person Names
-         * @description Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group.
+         * @description Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group; an Organization administrator reads the names of the people holding a role in their Organization alone.
          */
         get: operations["person_names"];
         put?: never;
