@@ -425,7 +425,8 @@ export function OrganizationPage({
             // An Organization's own administrator asked for an installation section: their own
             // sections are beside it in the menu, and the installation's administrators decide this one.
             <AskAdmins
-              message={t("organization.installationOnly")}
+              // The refused section by name, so it is clear which one is the installation's (T-7380).
+              message={t("organization.installationOnly", { section: t(`organization.tab.${tab}`) })}
               back={anchor}
               installation
             />

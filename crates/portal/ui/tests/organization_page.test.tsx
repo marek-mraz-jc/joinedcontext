@@ -189,7 +189,10 @@ describe("the Organization page", () => {
         ],
       } as unknown as Effective,
     });
-    expect(await screen.findByText(en.organization.installationOnly)).toBeInTheDocument();
+    // The panel names the refused section (T-7380).
+    expect(
+      await screen.findByText(en.organization.installationOnly.replace("{section}", en.organization.tab.brokers)),
+    ).toBeInTheDocument();
     expect(screen.getByText(en.askAdmins.installationTitle)).toBeInTheDocument();
     expect(screen.getByText(en.organization.groupLead.platform)).toBeInTheDocument();
     expect(screen.queryByText(en.organization.adminOnly)).toBeNull();
@@ -198,6 +201,28 @@ describe("the Organization page", () => {
     expect(screen.getByText(/tietosuoja@hel\.fi/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.askAdmins.ownSections })).toHaveAttribute("href", "/organization/members");
     expect(own.requests).not.toContain("GET /api/v1/organization/brokers");
+  });
+
+  // T-7380: an Organization's own administrator opens its People, which the server lists inside
+  // that Organization alone; no "ask the installation" panel stands in the way.
+  it("opens People for an Organization's own administrator", async () => {
+    renderAt("people", {
+      permissions: {
+        project: "org",
+        bootstrap: false,
+        grants: [
+          {
+            role: "org-admin",
+            binding: "zilina-admins",
+            organization: "zilina",
+            rule: { kinds: ["RoleBinding", "Group", "Organization", "Person"], verbs: ["read", "propose", "approve"] },
+          },
+        ],
+      } as unknown as Effective,
+    });
+    expect(await screen.findByText(en.organization.groupLead.access)).toBeInTheDocument();
+    expect(screen.queryByText(en.askAdmins.installationTitle)).toBeNull();
+    expect(screen.queryByText(/belongs to the installation/)).toBeNull();
   });
 
   // T-4831 (D-environments): the API's 404 for a kind the role reads none of was the Portal's

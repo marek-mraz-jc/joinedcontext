@@ -6179,6 +6179,16 @@
     "nameNeeded": "Für ein neues Projekt wird ein verwendbarer Name benötigt.",
     "planLocked": "Schließen Sie den Dialog und beginnen Sie neu, um das zu ändern; der Plan wurde dafür erstellt."
   },
+  "projectsPage": {
+    "title": "Projekte",
+    "lead": "Die Projekte Ihrer Organisation, die Sie öffnen dürfen. Jedes enthält seine Kontexträume, Endpunkte und Pipelines.",
+    "firstTitle": "Legen Sie Ihr erstes Projekt an",
+    "firstLead": "Ein Projekt enthält Ihre Kontexträume, Endpunkte und Pipelines. Sie werden sein Datenverwalter und fügen Kolleginnen und Kollegen unter Mitglieder hinzu.",
+    "first": "Erstes Projekt anlegen",
+    "noneTitle": "Sie sind noch in keinem Projekt",
+    "noneLead": "Bitten Sie die Administratoren Ihrer Organisation, Sie einem Projekt hinzuzufügen. Öffentliche Datensätze stehen Ihnen im Katalog offen.",
+    "toCatalogue": "Katalog öffnen"
+  },
   "entities": {
     "type": "Entitätstyp",
     "scopeQ": "Bereich",
@@ -8153,7 +8163,7 @@
     },
     "title": "Verwaltung",
     "adminOnly": "Diese Seite ist für die Administratoren der Organisation. Bitten Sie einen von ihnen um das, was Sie hier brauchen.",
-    "installationOnly": "Dieser Bereich gehört der Installation: Nur ihre Administratoren öffnen ihn.",
+    "installationOnly": "Der Bereich {section} gehört der Installation: Nur ihre Administratoren öffnen ihn.",
     "lead": "Was in jedem Projekt gleich ist: die Einstellungen der Organisation, ihre Mitglieder, Rollen, Gruppen und Dienstkonten und ihre Projekte. Jede Änderung hier wird vorgeschlagen und genehmigt.",
     "tab": {
       "settings": "Einstellungen",
@@ -12328,7 +12338,9 @@
     "catalogue": "Katalog",
     "connectors": "KI-Konnektoren",
     "settings": "Einstellungen",
-    "signOut": "Abmelden"
+    "signOut": "Abmelden",
+    "projects": "Projekte",
+    "administration": "Verwaltung"
   },
   "dataAccess": {
     "title": "Datenzugriff",

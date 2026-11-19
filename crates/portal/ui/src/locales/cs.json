@@ -6179,6 +6179,16 @@
     "nameNeeded": "K otevření projektu je potřeba použitelné jméno.",
     "planLocked": "Chcete-li to změnit, zavřete okno a začněte znovu; plán byl připraven pro tuto hodnotu."
   },
+  "projectsPage": {
+    "title": "Projekty",
+    "lead": "Projekty vaší organizace, které můžete otevřít. Každý obsahuje své kontextové prostory, koncové body a pipeliny.",
+    "firstTitle": "Vytvořte svůj první projekt",
+    "firstLead": "Projekt obsahuje vaše kontextové prostory, koncové body a pipeliny. Stanete se jeho správcem dat a kolegy přidáte v části Členové.",
+    "first": "Vytvořit první projekt",
+    "noneTitle": "Zatím nejste v žádném projektu",
+    "noneLead": "Požádejte správce své organizace, aby vás přidali do projektu. Veřejné datové sady máte k dispozici v katalogu.",
+    "toCatalogue": "Otevřít katalog"
+  },
   "entities": {
     "type": "Typ entity",
     "scopeQ": "Oblast",
@@ -8153,7 +8163,7 @@
     },
     "title": "Administrace",
     "adminOnly": "Tato stránka je pro administrátory organizace. O to, co zde potřebujete, požádejte některého z nich.",
-    "installationOnly": "Tato část patří instalaci: otevírají ji jen její správci.",
+    "installationOnly": "Část {section} patří instalaci: otevírají ji jen její správci.",
     "lead": "Co je stejné v každém projektu: nastavení organizace, její členové, role, skupiny a servisní účty a její projekty. Každá změna se zde navrhuje a schvaluje.",
     "tab": {
       "settings": "Nastavení",
@@ -12328,7 +12338,9 @@
     "catalogue": "Katalog",
     "connectors": "AI konektory",
     "settings": "Nastavení",
-    "signOut": "Odhlásit se"
+    "signOut": "Odhlásit se",
+    "projects": "Projekty",
+    "administration": "Správa"
   },
   "dataAccess": {
     "title": "Přístup k datům",
