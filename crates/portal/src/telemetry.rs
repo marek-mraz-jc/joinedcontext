@@ -79,6 +79,10 @@ const MODEL_KEY_VALID: &str = "jc_model_key_valid";
 const MODEL_KEY_LIMIT: &str = "jc_model_key_limit";
 const MODEL_KEY_REMAINING: &str = "jc_model_key_remaining";
 
+/// Organizations on one side only of the forge mirror and the registry, by `side` (`forge`: in the
+/// registry, missing from the forge; `registry`: in the forge, missing from the registry; T-7319).
+const ORGANIZATION_DRIFT: &str = "jc_organization_drift";
+
 /// Run-and-delete pipelines waiting in the run queue, by lane (PL-78).
 const PIPELINE_QUEUE_DEPTH: &str = "jc_pipeline_queue_depth";
 /// Entities a snapshot pipeline wrote that its last complete run no longer read, by project and
@@ -197,6 +201,10 @@ fn handle() -> &'static PrometheusHandle {
             "the model key's limit, in provider credits"
         );
         metrics::describe_gauge!(MODEL_KEY_REMAINING, "the model key's credit left");
+        metrics::describe_gauge!(
+            ORGANIZATION_DRIFT,
+            "Organizations missing from the forge (side=forge) or from the registry (side=registry)"
+        );
         handle
     })
 }
@@ -326,6 +334,12 @@ pub fn pipeline_error_ratio(project: &str, pipeline: &str, ratio: f64) {
 /// One queued pipeline run ended: `finished`, `failed` or `timeout` (PL-78).
 pub fn pipeline_run(outcome: &'static str, seconds: f64) {
     metrics::histogram!(PIPELINE_RUN_SECONDS, "outcome" => outcome).record(seconds);
+}
+
+/// The drift [`crate::host_registry::report_drift`] found (T-7319).
+pub fn organization_drift(missing_from_forge: usize, missing_from_registry: usize) {
+    metrics::gauge!(ORGANIZATION_DRIFT, "side" => "forge").set(missing_from_forge as f64);
+    metrics::gauge!(ORGANIZATION_DRIFT, "side" => "registry").set(missing_from_registry as f64);
 }
 
 pub fn model_key(valid: bool, limit: Option<f64>, remaining: Option<f64>) {

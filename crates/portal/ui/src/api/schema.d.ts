@@ -1042,7 +1042,7 @@ export interface paths {
         };
         /**
          * List Organizations For Operators
-         * @description Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.
+         * @description Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012), and where the forge's Organizations and the registry's disagree (T-7319). For a person of the operators' group with a second factor.
          */
         get: operations["operator_organization_list"];
         put?: never;
@@ -10096,7 +10096,10 @@ export interface components {
             /** @description Catalogues that did not answer; the others still did. */
             unavailable: string[];
         };
-        /** @description The CKAN organization a dataset belongs to: one per project (Architecture/21 §1). */
+        /**
+         * @description Who publishes a dataset: the `dct:publisher` its project names (`name` its IRI, or the name
+         *     itself when it has none), else the CKAN organization it is filed under (Architecture/21 §1).
+         */
         CataloguePublisher: {
             name: string;
             title: string;
@@ -13001,6 +13004,11 @@ export interface components {
         };
         /** @description The Organizations and the Organization ids. */
         OperatorOrganizationList: {
+            /**
+             * @description The registry's Organizations the forge lacks and the forge's the registry lacks (T-7319);
+             *     both empty while they agree or the forge has not loaded.
+             */
+            drift: components["schemas"]["OrganizationDrift"];
             ids: components["schemas"]["OperatorOrganizationId"][];
             items: components["schemas"]["OperatorOrganization"][];
         };
@@ -13074,6 +13082,18 @@ export interface components {
             publisher?: string | null;
             /** @description Short name on sidebars and tabs, e.g. `BB`. */
             shortName?: string | null;
+        };
+        /**
+         * @description Where the forge mirror's Organizations and the registry's active ones disagree (T-7319): jc-prod
+         *     ran a forge holding barcelona, bratislava, hel and zilina beside a registry of smartcity,
+         *     marek-mraz, bbsk and slovensko, so every RoleBinding scoped to a registry Organization was
+         *     refused. Reported, never repaired: a rename is an operator's Change.
+         */
+        OrganizationDrift: {
+            /** @description Active registry Organizations the forge holds no Organization manifest of, by name. */
+            missingFromForge: string[];
+            /** @description Organization manifests of the forge the registry holds no active row of, by name. */
+            missingFromRegistry: string[];
         };
         OrganizationLimits: {
             entries: components["schemas"]["LimitEntry"][];

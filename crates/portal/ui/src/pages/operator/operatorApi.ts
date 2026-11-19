@@ -45,14 +45,8 @@ export function sentence(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-export async function operatorOrganizations(): Promise<{
-  items: OperatorOrganization[];
-  ids: OperatorOrganizationId[];
-}> {
-  return (await door("portal_operator_organizations", {})) as {
-    items: OperatorOrganization[];
-    ids: OperatorOrganizationId[];
-  };
+export async function operatorOrganizations(): Promise<components["schemas"]["OperatorOrganizationList"]> {
+  return (await door("portal_operator_organizations", {})) as components["schemas"]["OperatorOrganizationList"];
 }
 
 export async function operatorHosts(): Promise<OperatorHostList> {

@@ -196,6 +196,35 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(screen.getByRole("link", { name: "Catalogue", current: "page" })).toBeInTheDocument();
   });
 
+  it("says a person in no project of this Organization host has nothing granted yet, not an error (T-7317)", async () => {
+    answers["/api/v1/catalogue/readable"] = {
+      status: 403,
+      body: {
+        type: "https://joinedcontext.com/errors/forbidden",
+        title: "Forbidden",
+        status: 403,
+        detail: "this Portal is bbsk's; you belong to none of its projects",
+      },
+    };
+    renderAt("/catalogue");
+    const readable = await screen.findByRole("region", { name: "Datasets you may read" });
+    expect(await within(readable).findByText("You are not in a project of this organization yet")).toBeInTheDocument();
+    expect(within(readable).getByText(/A project owner or an administrator of this organization can add you/)).toBeInTheDocument();
+    expect(within(readable).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(readable).queryByText(/belong to none of its projects/)).not.toBeInTheDocument();
+  });
+
+  it("still shows a failure of the readable datasets as an error (T-7317)", async () => {
+    answers["/api/v1/catalogue/readable"] = {
+      status: 500,
+      body: { type: "https://joinedcontext.com/errors/internal", title: "Internal Server Error", status: 500 },
+    };
+    renderAt("/catalogue");
+    const readable = await screen.findByRole("region", { name: "Datasets you may read" });
+    expect(await within(readable).findByRole("button", { name: /try again|retry/i })).toBeInTheDocument();
+    expect(within(readable).queryByText("You are not in a project of this organization yet")).not.toBeInTheDocument();
+  });
+
   it("ends a card in four key formats and counts the rest, which the dataset page lists (T-4995)", async () => {
     const all = ["JSON", "JSON Schema", "JSON-LD", "LinkML", "MCP", "Markdown", "NGSI-LD", "OData", "OGCFEAT", "CSV", "SHACL"];
     answers["/api/v1/catalogue"] = { status: 200, body: { ...PAGE, datasets: [{ ...PAGE.datasets[0], formats: all }] } };
@@ -228,6 +257,74 @@ describe("the catalogue (EP-81, EP-82)", () => {
       expect(screen.queryByRole("dialog", { name: "Filters" })).not.toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Filters (3)" })).toBeInTheDocument();
+  });
+
+  it("shows the chosen filters as chips above the results, each removable, and clears them all (T-7317)", async () => {
+    renderAt("/catalogue?q=kraj&publisher=bbsk&theme=ECON");
+    const results = await screen.findByRole("region", { name: "Datasets" });
+    const chips = await within(results).findByRole("group", { name: "Chosen filters" });
+    fireEvent.click(within(chips).getByRole("button", { name: "Remove filter Publisher: Banskobystrický samosprávny kraj" }));
+    await waitFor(() => {
+      expect(catalogueCalls().at(-1)?.searchParams.getAll("publisher")).toEqual([]);
+    });
+    expect(catalogueCalls().at(-1)?.searchParams.getAll("theme")).toEqual(["ECON"]);
+    fireEvent.click(await within(results).findByRole("button", { name: "Clear all" }));
+    await waitFor(() => {
+      expect(catalogueCalls().at(-1)?.searchParams.getAll("theme")).toEqual([]);
+    });
+    // The search text is not a filter: Clear all keeps it.
+    expect(catalogueCalls().at(-1)?.searchParams.get("q")).toBe("kraj");
+    expect(within(results).queryByRole("group", { name: "Chosen filters" })).not.toBeInTheDocument();
+  });
+
+  it("shows six options of a long filter, all of them in place on request, and finds one by name (T-7317)", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => facet(`org-${i}`, `Publisher number ${i + 1}`, 12 - i));
+    answers["/api/v1/catalogue"] = {
+      status: 200,
+      body: { ...PAGE, total: 12, facets: { ...PAGE.facets, publisher: many, format: [facet("CSV", "CSV", 12)] } },
+    };
+    renderAt("/catalogue");
+    const filters = await screen.findByRole("complementary", { name: "Filters" });
+    const publisher = await within(filters).findByRole("group", { name: "Publisher" });
+    expect(within(publisher).getAllByRole("checkbox")).toHaveLength(6);
+    fireEvent.click(within(publisher).getByRole("button", { name: "Show all 12" }));
+    expect(within(publisher).getAllByRole("checkbox")).toHaveLength(12);
+    fireEvent.click(within(publisher).getByRole("button", { name: "Show fewer" }));
+    expect(within(publisher).getAllByRole("checkbox")).toHaveLength(6);
+    fireEvent.change(within(publisher).getByRole("searchbox", { name: "Find a Publisher value" }), { target: { value: "number 11" } });
+    expect(within(publisher).getAllByRole("checkbox").map((box) => box.closest("label")?.textContent)).toEqual(["Publisher number 112"]);
+    // Publisher and Theme open by default; a filter every dataset passes (Format here) comes last, closed.
+    expect(publisher.closest("details")).toHaveAttribute("open");
+    const format = within(filters).getByRole("group", { name: "Format" });
+    expect(format.closest("details")).not.toHaveAttribute("open");
+    expect(within(format).getByText(/narrows nothing now/)).toBeInTheDocument();
+    const sections = Array.from(filters.querySelectorAll("details"));
+    expect(sections.at(-1)).toBe(format.closest("details"));
+  });
+
+  it("lists a seven-option filter whole, and a ticked option first when the long list is open (T-7317)", async () => {
+    const seven = Array.from({ length: 7 }, (_, i) => facet(`org-${i}`, `Publisher number ${i + 1}`, 7 - i));
+    answers["/api/v1/catalogue"] = { status: 200, body: { ...PAGE, total: 7, facets: { ...PAGE.facets, publisher: seven } } };
+    renderAt("/catalogue?publisher=org-6");
+    const filters = await screen.findByRole("complementary", { name: "Filters" });
+    const publisher = await within(filters).findByRole("group", { name: "Publisher" });
+    await waitFor(() => {
+      expect(within(publisher).getAllByRole("checkbox")).toHaveLength(7);
+    });
+    expect(within(publisher).queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+    expect(within(publisher).getAllByRole("checkbox")[0]).toBeChecked();
+  });
+
+  it("clears every filter from the phone sheet (T-7317)", async () => {
+    renderAt("/catalogue?publisher=bbsk");
+    fireEvent.click(await screen.findByRole("button", { name: "Filters (1)" }));
+    const sheet = await screen.findByRole("dialog", { name: "Filters" });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Clear" }));
+    await waitFor(() => {
+      expect(catalogueCalls().at(-1)?.searchParams.getAll("publisher")).toEqual([]);
+    });
+    // The sheet stays open on the unfiltered answer; its button shows the whole list.
+    expect(await within(sheet).findByRole("button", { name: "Show 2 datasets" })).toBeInTheDocument();
   });
 
   it("filters by a facet through the address, and a second value of the same facet is an alternative", async () => {

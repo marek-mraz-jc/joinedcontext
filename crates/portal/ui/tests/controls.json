@@ -1227,7 +1227,7 @@
     },
     "src/pages/catalogue/CataloguePage.tsx": {
       "controls": {
-        "Button": 8,
+        "Button": 12,
         "Checkbox": 1
       },
       "tests": [

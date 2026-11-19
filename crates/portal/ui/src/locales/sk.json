@@ -9601,7 +9601,20 @@
       "hint": "Zaškrtnite hodnoty, ktoré musí dataset mať. Dve hodnoty jedného filtra znamenajú jednu alebo druhú, napr. dvaja vydavatelia.",
       "open": "{count, plural, =0 {Filtre} other {Filtre (#)}}",
       "close": "Zavrieť filtre",
-      "show": "{count, plural, =0 {Žiadny dataset} one {Zobraziť # dataset} few {Zobraziť # datasety} other {Zobraziť # datasetov}}"
+      "show": "{count, plural, =0 {Žiadny dataset} one {Zobraziť # dataset} few {Zobraziť # datasety} other {Zobraziť # datasetov}}",
+      "chosen": "Zvolené filtre",
+      "remove": "Odstrániť filter {facet}: {value}",
+      "clearAll": "Zrušiť všetko",
+      "clear": "Zrušiť",
+      "noneChosen": "Zatiaľ nie je zaškrtnutý žiadny filter.",
+      "everywhere": "Každá zobrazená dátová sada má tieto hodnoty, takže tento filter teraz nič nezužuje.",
+      "find": {
+        "label": "Nájsť hodnotu: {facet}",
+        "placeholder": "Píšte na zúženie, napr. {example}"
+      },
+      "noMatch": "Žiadna hodnota nezodpovedá.",
+      "all": "Zobraziť všetkých {count}",
+      "fewer": "Zobraziť menej"
     },
     "results": {
       "label": "Datasety",
@@ -9812,6 +9825,10 @@
       "empty": {
         "title": "Zatiaľ s vami nie je zdieľaná žiadna interná dátová sada",
         "description": "Požiadajte správcu údajov vašej organizácie, aby vašej skupine udelil prístup. Verejné dátové sady nižšie sú otvorené pre všetkých."
+      },
+      "noProject": {
+        "title": "Zatiaľ nie ste v žiadnom projekte tejto organizácie",
+        "description": "Vlastník projektu alebo správca tejto organizácie vás môže pridať do projektu; jeho interné dátové sady sa potom zobrazia tu. Verejné dátové sady nižšie sú otvorené pre všetkých."
       },
       "unanswered": "{count} dátových sád sa teraz nepodarilo overiť a nie sú uvedené. Načítajte stránku znova o minútu.",
       "access": {
@@ -13653,7 +13670,12 @@
       "hosts": "Hostitelia",
       "hostCount": "{served} v prevádzke, {waiting} na ceste",
       "setDomain": "Zapíšte jej preukázanú doménu v Nastaveniach",
-      "noHost": "Zatiaľ bez hostiteľa"
+      "noHost": "Zatiaľ bez hostiteľa",
+      "driftTitle": "Niektoré organizácie sú len na jednej strane",
+      "driftLead": "Ľuďom nemožno prideliť roly v týchto organizáciách, kým repozitár a register neuvádzajú rovnaké názvy. Nič sa nepremenuje automaticky.",
+      "driftForge": "Len v registri",
+      "driftRegistry": "Len v repozitári",
+      "driftFix": "Otvoriť nastavenia organizácie"
     },
     "ids": {
       "title": "Domény a ich TXT záznamy",

@@ -546,6 +546,7 @@ use crate::tools::model_tools::{
         crate::api::operator_changes::OperatorOrganizationId,
         crate::api::operator_changes::OperatorOrganization,
         crate::api::operator_changes::OperatorOrganizationList,
+        crate::host_registry::OrganizationDrift,
         crate::api::organization_addresses::OrganizationAddresses,
         crate::api::organization_addresses::OrganizationAddressList,
         crate::organization_host::OrganizationAddress,

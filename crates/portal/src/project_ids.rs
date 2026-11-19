@@ -133,14 +133,23 @@ pub async fn reserved(
 }
 
 /// The key of the installation Organization's reserved project (TEN-11): what an installation's
-/// own rows take, a connector event with project '' (T-7203). `None` while the mirror names no
-/// installation Organization or the registry holds no active one by that name.
+/// own rows take, a connector event with project '' (T-7203), and the Organization's own rows
+/// under [`ORG_NAMESPACE`]. The mirror's installation claim when the registry holds it as an
+/// active Organization, else the one the deployment configured ([`Mirror::configured_installation`],
+/// T-7319: a forge whose Organizations drifted from the registry kept every org draft unkeyed, so
+/// no check was kept and every proposal into org answered "has not been checked"). `None` when
+/// neither names an active Organization of the registry.
 pub async fn installation(
     pool: &PgPool,
     mirror: &Mirror,
 ) -> Result<Option<ProjectKey>, sqlx::Error> {
-    match crate::permissions::installation_organization(mirror) {
-        Some(organization) => reserved(pool, &organization).await,
+    if let Some(organization) = crate::permissions::installation_organization(mirror) {
+        if let Some(key) = reserved(pool, &organization).await? {
+            return Ok(Some(key));
+        }
+    }
+    match mirror.configured_installation() {
+        Some(organization) => reserved(pool, organization).await,
         None => Ok(None),
     }
 }
@@ -224,17 +233,15 @@ pub async fn key_person_rows(
 /// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
 /// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.
 /// The Organization's own rows, filed under [`ORG_NAMESPACE`] (people, roles, an Organization
-/// draft), take the installation Organization's reserved project (TEN-11; T-7205).
+/// draft), take the installation Organization's reserved project ([`installation`]; TEN-11,
+/// T-7205, T-7319).
 pub async fn key_of(
     pool: &PgPool,
     mirror: &Mirror,
     project: &str,
 ) -> Result<Option<ProjectKey>, sqlx::Error> {
     if project == ORG_NAMESPACE {
-        return match crate::permissions::installation_organization(mirror) {
-            Some(organization) => reserved(pool, &organization).await,
-            None => Ok(None),
-        };
+        return installation(pool, mirror).await;
     }
     // A name never resolves to a branch (RTE-05, TEN-12): only the request its own id address
     // placed reaches it, so a branch named in a body or a tool argument answers like an unknown

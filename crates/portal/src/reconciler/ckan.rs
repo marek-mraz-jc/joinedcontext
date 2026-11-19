@@ -921,7 +921,11 @@ pub fn dashboard_fingerprint(
 ) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    format!("{:?}|{:?}", dashboard.spec, dashboard.endpoints).hash(&mut hasher);
+    format!(
+        "{:?}|{:?}|{:?}",
+        dashboard.spec, dashboard.endpoints, dashboard.publisher
+    )
+    .hash(&mut hasher);
     fingerprint(&dashboard.anchor, settings).hash(&mut hasher);
     hasher.finish()
 }
@@ -1334,7 +1338,7 @@ fn organization_count(repo: &Repository) -> usize {
         .count()
 }
 
-fn organization_in(repo: &Repository, project: &str) -> Option<String> {
+pub(super) fn organization_in(repo: &Repository, project: &str) -> Option<String> {
     let org_level = |id: &ResourceId| {
         id.namespace
             .as_deref()

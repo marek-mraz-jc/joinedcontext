@@ -248,6 +248,10 @@ impl AppState {
     }
 
     pub fn new(config: Config, oidc: Option<OidcClient>) -> Self {
+        let mirror = Arc::new(Mirror::new());
+        if let Some(installation) = config.installation_organization.as_ref() {
+            mirror.set_configured_installation(&installation.name);
+        }
         let sdm_mirror = config.sdm_mirror_dir.as_deref().and_then(|dir| {
             crate::tools::sdm_mirror::SdmMirror::open(std::path::Path::new(dir))
                 .inspect_err(
@@ -305,7 +309,7 @@ impl AppState {
             catalogue_http: crate::api::catalogue::CKAN_HTTP.clone(),
             config: Arc::new(config),
             oidc: oidc.map(Arc::new),
-            mirror: Arc::new(Mirror::new()),
+            mirror,
             shako: None,
             github_mirror: None,
             config_mirror: None,
@@ -396,6 +400,9 @@ impl AppState {
     }
 
     pub fn with_mirror(mut self, mirror: Arc<Mirror>) -> Self {
+        if let Some(installation) = self.config.installation_organization.as_ref() {
+            mirror.set_configured_installation(&installation.name);
+        }
         self.mirror = mirror;
         // The keyed stores place a project by the mirror (T-7197): they read this one.
         let db = self.db.clone();
@@ -528,6 +535,21 @@ impl AppState {
                 crate::people::People::new(&oidc.backchannel(), id, secret).map(Arc::new);
         }
         state.attach_wasm_apps();
+        // The forge's Organizations against the registry's, at start and every few minutes after
+        // (T-7319): a drift shows in the log, `jc_organization_drift` and the operators'
+        // Organizations page, never repaired here.
+        if let Some(pool) = state.db.clone() {
+            let mirror = Arc::clone(&state.mirror);
+            tokio::spawn(async move {
+                let mut every = tokio::time::interval(std::time::Duration::from_secs(300));
+                loop {
+                    every.tick().await;
+                    if let Err(err) = crate::host_registry::report_drift(&pool, &mirror).await {
+                        tracing::warn!(error = %err, "the Organization drift could not be read");
+                    }
+                }
+            });
+        }
         // Warm the key cache so the first bearer call does not pay for the fetch; a realm that
         // is down at startup only costs a warning, the next unknown `kid` fetches again.
         if let Some(bearer) = state.bearer.as_ref() {

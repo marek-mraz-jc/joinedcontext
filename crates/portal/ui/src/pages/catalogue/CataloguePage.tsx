@@ -145,7 +145,8 @@ function SearchForm({
       <Button type="submit" variant="primary" icon={<Icon name="search" className="size-4" />}>
         {t("catalogue.search.submit")}
       </Button>
-      {narrowed(search) ? (
+      {/* Filters alone have "Clear all" beside their chips; this one also empties the words. */}
+      {search.q ? (
         <Button type="button" variant="ghost" onClick={() => onSearch({})}>
           {t("catalogue.search.clear")}
         </Button>
@@ -169,21 +170,31 @@ function Results({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const pages = Math.max(1, Math.ceil(answer.total / answer.pageSize));
   const chosen = FACETS.reduce((sum, facet) => sum + (search[facet]?.length ?? 0), 0);
-  const groups = FACETS.map((facet) => (
+  // A filter whose every value nearly every listed dataset has (Format: 625 of 626 on prod) narrows
+  // nothing: last, closed (T-7317). Publisher and Theme, the filters people pick by, stay open.
+  const idle = (facet: FacetName) =>
+    facet !== "publisher" &&
+    facet !== "theme" &&
+    !search[facet]?.length &&
+    answer.total > 0 &&
+    answer.facets[facet].every((v) => v.count >= answer.total * IDLE_SHARE);
+  const groups = [...FACETS.filter((f) => !idle(f)), ...FACETS.filter(idle)].map((facet) => (
     <FacetGroup
       key={facet}
       facet={facet}
       values={answer.facets[facet]}
       selected={search[facet] ?? []}
+      idle={idle(facet)}
       onToggle={(value) => onSearch(toggled(search, facet, value))}
     />
   ));
+  const clearFilters = () => onSearch(search.q ? { q: search.q } : {});
   return (
     <div className="flex flex-col gap-6 md:flex-row md:items-start">
       {/* Under 768 px the facets wait behind a button, so the first dataset is on the first screen (T-4995). */}
       <aside
         aria-label={t("catalogue.facets.label")}
-        className="hidden flex-col gap-4 md:flex md:w-60 md:shrink-0 lg:w-72"
+        className="hidden flex-col gap-4 md:flex md:w-60 md:shrink-0 lg:w-72 xl:w-80"
       >
         {groups}
       </aside>
@@ -193,13 +204,26 @@ function Results({
         title={t("catalogue.facets.label")}
         description={t("catalogue.facets.hint")}
         closeLabel={t("catalogue.facets.close")}
+        className="h-screen"
         footer={
-          <Button variant="primary" onClick={() => setFiltersOpen(false)}>
+          <Button variant="primary" className="w-full" onClick={() => setFiltersOpen(false)}>
             {t("catalogue.facets.show", { count: answer.total })}
           </Button>
         }
       >
-        <div className="flex flex-col gap-4">{groups}</div>
+        <div className="flex flex-col gap-4">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="self-end"
+            disabled={chosen === 0}
+            disabledReason={t("catalogue.facets.noneChosen")}
+            onClick={clearFilters}
+          >
+            {t("catalogue.facets.clear")}
+          </Button>
+          {groups}
+        </div>
       </Dialog>
       <section aria-label={t("catalogue.results.label")} aria-busy={refreshing} className="flex min-w-0 flex-1 flex-col gap-4">
         {answer.unavailable.length > 0 ? (
@@ -213,14 +237,14 @@ function Results({
           </p>
           <Button
             variant="secondary"
-            size="sm"
-            className="md:hidden"
+            className="min-h-14 md:hidden"
             aria-haspopup="dialog"
             onClick={() => setFiltersOpen(true)}
           >
             {t("catalogue.facets.open", { count: chosen })}
           </Button>
         </div>
+        {chosen > 0 ? <ChosenFilters search={search} answer={answer} onSearch={onSearch} onClear={clearFilters} /> : null}
         {answer.datasets.length === 0 ? (
           <EmptyState
             icon="ckan"
@@ -275,55 +299,147 @@ function Results({
   );
 }
 
+/** The share of the listed datasets a value must cover for its filter to count as narrowing nothing. */
+const IDLE_SHARE = 0.95;
+
+/** How many options a facet shows before "Show all"; a facet longer than SEARCHABLE gets a search field. */
+const FIRST_OPTIONS = 6;
+const SEARCHABLE = 10;
+
+/** The name of one facet value in the reader's words: a theme's name, a region's, else its label. */
+function useOptionLabel(): (facet: FacetName, value: string, label: string) => string {
+  const themeLabel = useThemeLabel();
+  return (facet, value, label) =>
+    facet === "theme" ? themeLabel(value, label) : facet === "spatial" ? areaLabel(value) : label;
+}
+
+/** The chosen filters as removable chips above the results, with "Clear all" (T-7317). */
+function ChosenFilters({
+  search,
+  answer,
+  onSearch,
+  onClear,
+}: {
+  search: CatalogueSearch;
+  answer: CataloguePageAnswer;
+  onSearch: (next: CatalogueSearch) => void;
+  onClear: () => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const optionLabel = useOptionLabel();
+  return (
+    <div role="group" aria-label={t("catalogue.facets.chosen")} className="flex flex-wrap items-center gap-2">
+      {FACETS.flatMap((facet) =>
+        (search[facet] ?? []).map((value) => {
+          const label = optionLabel(facet, value, answer.facets[facet].find((v) => v.value === value)?.label ?? value);
+          return (
+            <Button
+              key={`${facet}:${value}`}
+              variant="secondary"
+              size="sm"
+              className="min-h-14 md:min-h-0"
+              aria-label={t("catalogue.facets.remove", { facet: t(`catalogue.facets.${facet}`), value: label })}
+              onClick={() => onSearch(toggled(search, facet, value))}
+            >
+              <span className="text-fg-muted">{t(`catalogue.facets.${facet}`)}:</span> {label}
+              <Icon name="close" className="size-3.5" />
+            </Button>
+          );
+        }),
+      )}
+      <Button variant="ghost" size="sm" className="min-h-14 md:min-h-0" onClick={onClear}>
+        {t("catalogue.facets.clearAll")}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * One filter as its own collapsible section (T-7317): open for Publisher and Theme or while one of
+ * its values is ticked; the first options in place and "Show all N" for the rest, never a scroll
+ * box inside the sidebar; a search field once it is long; each count a badge at the right edge.
+ */
 function FacetGroup({
   facet,
   values,
   selected,
+  idle,
   onToggle,
 }: {
   facet: FacetName;
   values: FacetValue[];
   selected: string[];
+  /** Every listed dataset already has each value: the filter narrows nothing. */
+  idle: boolean;
   onToggle: (value: string) => void;
 }): JSX.Element | null {
   const { t } = useTranslation();
-  const themeLabel = useThemeLabel();
+  const optionLabel = useOptionLabel();
+  const [all, setAll] = useState(false);
+  const [needle, setNeedle] = useState("");
   // A selected value the current search no longer counts stays, so it can be turned off again.
-  const shown = [
+  const options = [
     ...values,
     ...selected
       .filter((value) => !values.some((v) => v.value === value))
       .map((value) => ({ value, label: value, count: 0 })),
-  ];
-  if (shown.length === 0) {
+  ].map((v) => ({ ...v, label: optionLabel(facet, v.value, v.label) }));
+  if (options.length === 0) {
     return null;
   }
+  const word = needle.trim().toLocaleLowerCase();
+  const matching = word ? options.filter((v) => v.label.toLocaleLowerCase().includes(word)) : options;
+  // The ticked ones come first, so a cut list keeps them in sight.
+  const ordered = [...matching.filter((v) => selected.includes(v.value)), ...matching.filter((v) => !selected.includes(v.value))];
+  // A "Show all" that would hide a single option costs as much space as the option.
+  const cut = !word && matching.length > FIRST_OPTIONS + 1;
+  const shown = all || !cut ? ordered : ordered.slice(0, FIRST_OPTIONS);
+  const name = t(`catalogue.facets.${facet}`);
   return (
-    <fieldset className="flex flex-col gap-1.5">
-      <legend className="mb-1 text-caption font-semibold uppercase tracking-wide text-fg-muted">
-        {t(`catalogue.facets.${facet}`)}
-      </legend>
-      <div className="flex max-h-56 flex-col gap-1.5 overflow-y-auto">
-        {shown.map((value) => (
-          <Checkbox
-            key={value.value}
-            checked={selected.includes(value.value)}
-            onChange={() => onToggle(value.value)}
-            label={
-              facet === "theme" ? (
-                themeLabel(value.value, value.label)
-              ) : facet === "spatial" ? (
-                // The region's name, the code a hover away (T-4160 #13).
-                <span title={value.value}>{areaLabel(value.value)}</span>
-              ) : (
-                value.label
-              )
-            }
-            hint={`(${value.count})`}
-          />
-        ))}
-      </div>
-    </fieldset>
+    <Card flush>
+      <details
+        open={!idle && (facet === "publisher" || facet === "theme" || selected.length > 0) ? true : undefined}
+        className="group"
+      >
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-body font-semibold text-fg [&::-webkit-details-marker]:hidden">
+          <span>
+            {name}
+            {selected.length > 0 ? <Badge tone="primary" className="ml-2">{selected.length}</Badge> : null}
+          </span>
+          <Icon name="chevronDown" className="size-4 text-fg-muted transition-transform group-open:rotate-180" />
+        </summary>
+        <fieldset className="flex flex-col gap-2 border-t border-border px-4 pb-4 pt-3">
+          <legend className="sr-only">{name}</legend>
+          {idle ? <p className="text-caption text-fg-muted">{t("catalogue.facets.everywhere")}</p> : null}
+          {options.length > SEARCHABLE ? (
+            <Input
+              className="mb-1"
+              type="search"
+              value={needle}
+              onChange={(event) => setNeedle(event.target.value)}
+              aria-label={t("catalogue.facets.find.label", { facet: name })}
+              placeholder={t("catalogue.facets.find.placeholder", { example: options[0]?.label ?? "" })}
+            />
+          ) : null}
+          {shown.map((value) => (
+            <Checkbox
+              key={value.value}
+              className="flex w-full items-start py-1.5 md:py-0 [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
+              checked={selected.includes(value.value)}
+              onChange={() => onToggle(value.value)}
+              label={<span className="break-words" title={facet === "spatial" ? value.value : undefined}>{value.label}</span>}
+              hint={<Badge tone="neutral" className="tabular-nums">{value.count}</Badge>}
+            />
+          ))}
+          {word && matching.length === 0 ? <p className="text-caption text-fg-muted">{t("catalogue.facets.noMatch")}</p> : null}
+          {cut ? (
+            <Button variant="ghost" size="sm" className="self-start" aria-expanded={all} onClick={() => setAll(!all)}>
+              {all ? t("catalogue.facets.fewer") : t("catalogue.facets.all", { count: matching.length })}
+            </Button>
+          ) : null}
+        </fieldset>
+      </details>
+    </Card>
   );
 }
 

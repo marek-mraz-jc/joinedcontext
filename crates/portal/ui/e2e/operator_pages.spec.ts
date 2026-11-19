@@ -27,6 +27,7 @@ interface Registry {
   hosts: Record<string, unknown>[];
   changes: Record<string, unknown>[];
   audit: Record<string, unknown>[];
+  drift?: { missingFromForge: string[]; missingFromRegistry: string[] };
 }
 
 function fresh(): Registry {
@@ -82,7 +83,7 @@ async function stubApi(page: Page, registry: Registry, operator = true): Promise
         ),
       );
     if (path.startsWith("/api/v1/operator/") && !operator) return route.fulfill(json(FORBIDDEN, 403));
-    if (path === "/api/v1/operator/organizations") return route.fulfill(json({ items: registry.organizations, ids: registry.ids }));
+    if (path === "/api/v1/operator/organizations") return route.fulfill(json({ items: registry.organizations, ids: registry.ids, drift: registry.drift ?? { missingFromForge: [], missingFromRegistry: [] } }));
     if (path === "/api/v1/operator/hosts") {
       const day = registry.audit.filter((row) => row.action === "certificate.created").length + (registry.hosts.length > 0 ? 9 : 0);
       return route.fulfill(json({ items: registry.hosts, certificates: { usedToday: day, perDay: 10, perDomainWeek: 20, nextFreeAt: day >= 10 ? "2026-11-18T09:00:00Z" : null } }));
@@ -206,6 +207,29 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await expect(page.getByText(OTHER)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-audit-${width}`);
+    });
+
+    test(`a repository whose Organizations drifted from the registry is named on both sides at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const registry = fresh();
+      registry.drift = { missingFromForge: ["marek-mraz", "slovensko"], missingFromRegistry: ["barcelona", "hel"] };
+      await stubApi(page, registry);
+      await page.goto("/organization/operator-organizations?lang=en");
+      const alert = page.getByRole("status").filter({ hasText: "Some Organizations exist on one side only" });
+      await expect(alert).toBeVisible();
+      await expect(alert.getByRole("definition").first()).toHaveText("marek-mrazslovensko");
+      await expect(alert.getByRole("definition").last()).toHaveText("barcelonahel");
+      await expect(alert.getByRole("link", { name: "Open Organization settings" })).toBeVisible();
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `operator-organizations-drift-${width}`);
+
+      // One side only: its label alone, every name of a long list wrapping inside the notice.
+      registry.drift = { missingFromForge: [], missingFromRegistry: ["barcelona", "bratislava", "hel", "zilina", "kosice", "presov", "nitra", "trnava"] };
+      await page.reload();
+      await expect(alert.getByRole("term")).toHaveText(["Only in the repository"]);
+      await expect(alert.getByRole("definition").locator("code")).toHaveCount(8);
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `operator-organizations-drift-one-side-${width}`);
     });
 
     test(`an empty registry says where to start at ${width} px`, async ({ page }) => {

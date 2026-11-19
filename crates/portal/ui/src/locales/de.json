@@ -9601,7 +9601,20 @@
       "hint": "Haken Sie die Werte an, die ein Datensatz haben muss. Zwei Werte eines Filters bedeuten einen oder den anderen, z. B. zwei Herausgeber.",
       "open": "{count, plural, =0 {Filter} other {Filter (#)}}",
       "close": "Filter schließen",
-      "show": "{count, plural, =0 {Kein Datensatz} one {# Datensatz anzeigen} other {# Datensätze anzeigen}}"
+      "show": "{count, plural, =0 {Kein Datensatz} one {# Datensatz anzeigen} other {# Datensätze anzeigen}}",
+      "chosen": "Gewählte Filter",
+      "remove": "Filter entfernen {facet}: {value}",
+      "clearAll": "Alle entfernen",
+      "clear": "Zurücksetzen",
+      "noneChosen": "Noch ist kein Filter angehakt.",
+      "everywhere": "Jeder angezeigte Datensatz hat diese Werte, dieser Filter schränkt also gerade nichts ein.",
+      "find": {
+        "label": "Wert suchen: {facet}",
+        "placeholder": "Tippen zum Eingrenzen, z. B. {example}"
+      },
+      "noMatch": "Kein Wert passt.",
+      "all": "Alle {count} anzeigen",
+      "fewer": "Weniger anzeigen"
     },
     "results": {
       "label": "Datensätze",
@@ -9812,6 +9825,10 @@
       "empty": {
         "title": "Noch kein interner Datensatz ist für Sie freigegeben",
         "description": "Bitten Sie eine Datenverantwortliche Ihrer Organisation, Ihrer Gruppe Zugriff zu geben. Die öffentlichen Datensätze unten sind für alle offen."
+      },
+      "noProject": {
+        "title": "Sie sind noch in keinem Projekt dieser Organisation",
+        "description": "Eine Projektinhaberin oder ein Administrator dieser Organisation kann Sie einem Projekt hinzufügen; dessen interne Datensätze erscheinen dann hier. Die öffentlichen Datensätze unten sind für alle offen."
       },
       "unanswered": "{count} Datensätze konnten gerade nicht geprüft werden und fehlen. Laden Sie die Seite in einer Minute neu.",
       "access": {
@@ -13653,7 +13670,12 @@
       "hosts": "Hosts",
       "hostCount": "{served} in Betrieb, {waiting} unterwegs",
       "setDomain": "Tragen Sie die nachgewiesene Domain in den Einstellungen ein",
-      "noHost": "Noch kein Host"
+      "noHost": "Noch kein Host",
+      "driftTitle": "Einige Organisationen gibt es nur auf einer Seite",
+      "driftLead": "In diesen Organisationen können keine Rollen vergeben werden, bis Repository und Register dieselben Namen führen. Nichts wird automatisch umbenannt.",
+      "driftForge": "Nur im Register",
+      "driftRegistry": "Nur im Repository",
+      "driftFix": "Organisationseinstellungen öffnen"
     },
     "ids": {
       "title": "Domänen und ihre TXT-Einträge",
