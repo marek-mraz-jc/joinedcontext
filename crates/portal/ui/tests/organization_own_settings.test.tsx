@@ -102,14 +102,14 @@ describe("Administration of an Organization (T-5248, T-7151)", () => {
     expect((await screen.findAllByText("hel.fi", {}, { timeout: 5000 })).length).toBeGreaterThan(0);
   });
 
-  it("opens an Organization's own administrator its members, groups and settings alone", async () => {
+  it("opens an Organization's own administrator its people, members, groups and settings alone", async () => {
     // The server lists this administrator only Žilina's manifests.
     const own = list([manifest("Organization", "zilina", { domain: "zilina.sk" })]);
     start("/organization/settings", OWN_ADMIN, own, list([BINDINGS.items[1]]));
     expect((await screen.findAllByText("zilina.sk", {}, { timeout: 5000 })).length).toBeGreaterThan(0);
     const [nav] = await screen.findAllByRole("list", { name: "People and access" });
     const links = within(nav).getAllByRole("link").map((link) => link.textContent);
-    expect(links).toEqual(["Members", "Groups"]);
+    expect(links).toEqual(["People", "Members", "Groups"]);
     expect(screen.queryByRole("link", { name: "Brokers" })).not.toBeInTheDocument();
   });
 
@@ -118,7 +118,7 @@ describe("Administration of an Organization (T-5248, T-7151)", () => {
     expect(
       await screen.findByText(/only its administrators open it/i, {}, { timeout: 5000 }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/ask the installation's administrators/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Brokers is the installation's section" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Brokers" })).not.toBeInTheDocument();
   });
 });
