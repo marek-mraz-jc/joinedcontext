@@ -13399,7 +13399,7 @@
       "base": "Under",
       "baseHint": "A host your Organization serves",
       "whole": "Host",
-      "wholeHint": "A name under {domain}, e.g. data.{domain}; its DNS TXT proof is checked again when you add it",
+      "wholeHint": "Any name ending in .{domain}; its DNS TXT proof is checked again when you add it",
       "will": "Adds {host}",
       "add": "Add host",
       "adding": "Adding…",
@@ -13408,7 +13408,7 @@
       "removeOf": "Remove host {host}",
       "removeTitle": "Remove the host {host}?",
       "removeDescription": "The platform stops answering on it first, then deletes its certificate. The name cannot be added again. A portal that uses it must move to another host before.",
-      "nameFirst": "Type the host's name first, e.g. opendata2",
+      "nameFirst": "Type the host's name first.",
       "cannotAddLink": "Open Organization settings"
     }
   },

@@ -13399,7 +13399,7 @@
       "base": "Pod",
       "baseHint": "Adresa, na ktorej vaša organizácia odpovedá",
       "whole": "Adresa",
-      "wholeHint": "Meno pod {domain}, napr. data.{domain}; jej DNS TXT záznam sa pri pridaní overí znova",
+      "wholeHint": "Akékoľvek meno končiace na .{domain}; jeho DNS TXT záznam sa pri pridaní overí znova",
       "will": "Pridá {host}",
       "add": "Pridať adresu",
       "adding": "Pridáva sa…",
@@ -13408,7 +13408,7 @@
       "removeOf": "Odstrániť adresu {host}",
       "removeTitle": "Odstrániť adresu {host}?",
       "removeDescription": "Platforma na nej najprv prestane odpovedať a potom zmaže jej certifikát. To isté meno sa už nedá pridať znova. Portál, ktorý ju používa, musí najprv prejsť na inú adresu.",
-      "nameFirst": "Najprv zadajte názov adresy, napr. opendata2",
+      "nameFirst": "Najprv zadajte názov adresy.",
       "cannotAddLink": "Otvoriť nastavenia organizácie"
     }
   },
