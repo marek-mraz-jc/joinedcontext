@@ -18,9 +18,9 @@ pub mod render;
 pub mod state;
 
 pub use public::{
-    PublicDashboardCreateReq, PublicDashboardQueryReq, PublicDashboardViewDto, PublicRateLimiter,
-    create_or_update_public_dashboard, execute_public_dashboard_query, generate_256bit_token,
-    rotate_public_dashboard_token, view_public_dashboard,
+    PublicCaller, PublicDashboardCreateReq, PublicDashboardQueryReq, PublicDashboardViewDto,
+    PublicRateLimiter, create_or_update_public_dashboard, execute_public_dashboard_query,
+    generate_256bit_token, public_caller_of, rotate_public_dashboard_token, view_public_dashboard,
 };
 pub use render::{
     PanelTimeRange, PanelView, execute_targets_and_expressions, format_picked, panel_view,

@@ -167,6 +167,15 @@ async fn a_worker_pods_ops_router_carries_the_same_guard() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // the streamed import, mounted outside the bounds wall, keeps the guard
+    let (status, _, _) = call(
+        antares_api::ops_router(st.clone()),
+        "POST",
+        "/q/tenants/acme/import",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let good = format!("Bearer {SECRET}");
     let (status, _, _) = call(
         antares_api::ops_router(st),

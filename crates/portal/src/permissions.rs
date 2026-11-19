@@ -2201,10 +2201,18 @@ fn only_drops_grants(before: &Value, head: &ServiceAccountSpec) -> bool {
     })
 }
 
+/// Whether `identity` is in the bootstrap group `group`: by the group, or by a realm role of that
+/// name, which the installation realm assigns its operators through (PF-50). An Organization's
+/// realm never mints either (`auth::realms::confine`).
 pub(crate) fn in_group(identity: &Identity, group: &str) -> bool {
-    // Keycloak realm roles count as groups here: the dev realm assigns people through them
-    // and a realm role, like a group, says who somebody is, not what they may do (PF-50).
-    identity.groups.iter().any(|g| g == group) || identity.roles.iter().any(|r| r == group)
+    in_token_group(identity, group) || identity.roles.iter().any(|r| r == group)
+}
+
+/// Whether the token's groups hold `group`. A binding's group subject is a group: a realm role
+/// of the same name is realm-wide, shared by every Organization of the realm, and grants nothing
+/// through it (AUZ-12).
+fn in_token_group(identity: &Identity, group: &str) -> bool {
+    identity.groups.iter().any(|g| g == group)
 }
 
 /// A Keycloak user id as ADR-N-061 writes a person into a manifest: a lower-case hyphenated
@@ -2247,7 +2255,7 @@ fn names(identity: &Identity, user: Option<&str>, group: Option<&str>) -> bool {
             || identity.username.eq_ignore_ascii_case(user)
             || identity.subject == user;
     }
-    group.is_some_and(|g| in_group(identity, g))
+    group.is_some_and(|g| in_token_group(identity, g))
 }
 
 /// The audience of the manifest under approval, when it has one (EP-14).
@@ -2462,6 +2470,30 @@ mod tests {
         };
         assert!(in_group(&member, "helsinki"));
         assert!(!in_group(&member, "members"));
+    }
+
+    /// A realm role is realm-wide: one of the same name as a binding's group subject puts its
+    /// holder in no binding, while it still marks the installation's bootstrap group.
+    #[test]
+    fn a_realm_role_named_as_a_group_is_in_no_binding_group() {
+        let holder = Identity {
+            client: None,
+            subject: "f:1:eva".to_owned(),
+            username: "eva".to_owned(),
+            email: None,
+            name: None,
+            roles: vec!["editors".to_owned()],
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        assert!(!names(&holder, None, Some("editors")));
+        assert!(in_group(&holder, "editors"));
+        let member = Identity {
+            roles: Vec::new(),
+            groups: vec!["editors".to_owned()],
+            ..holder
+        };
+        assert!(names(&member, None, Some("editors")));
     }
 
     #[test]
