@@ -194,7 +194,7 @@ function Results({
       {/* Under 768 px the facets wait behind a button, so the first dataset is on the first screen (T-4995). */}
       <aside
         aria-label={t("catalogue.facets.label")}
-        className="hidden flex-col gap-4 md:flex md:w-60 md:shrink-0 lg:w-72"
+        className="hidden flex-col gap-4 md:flex md:w-60 md:shrink-0 lg:w-72 xl:w-80"
       >
         {groups}
       </aside>
@@ -237,7 +237,7 @@ function Results({
           </p>
           <Button
             variant="secondary"
-            className="md:hidden"
+            className="min-h-14 md:hidden"
             aria-haspopup="dialog"
             onClick={() => setFiltersOpen(true)}
           >
@@ -337,6 +337,7 @@ function ChosenFilters({
               key={`${facet}:${value}`}
               variant="secondary"
               size="sm"
+              className="min-h-14 md:min-h-0"
               aria-label={t("catalogue.facets.remove", { facet: t(`catalogue.facets.${facet}`), value: label })}
               onClick={() => onSearch(toggled(search, facet, value))}
             >
@@ -346,7 +347,7 @@ function ChosenFilters({
           );
         }),
       )}
-      <Button variant="ghost" size="sm" onClick={onClear}>
+      <Button variant="ghost" size="sm" className="min-h-14 md:min-h-0" onClick={onClear}>
         {t("catalogue.facets.clearAll")}
       </Button>
     </div>

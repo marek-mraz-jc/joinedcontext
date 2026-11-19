@@ -127,6 +127,9 @@ test.describe("the catalogue's filters (T-7317)", () => {
     await stub(page);
     await page.goto("/catalogue?lang=en&publisher=p6&theme=ENVI");
     await expect(page.getByRole("group", { name: "Chosen filters" }).getByRole("button", { name: /^Remove filter/ })).toHaveCount(2);
+    // A chip removes its filter anywhere on it: about 36 px (2.8 rem at the 12.8 px root) for a finger on a phone.
+    const chip = await page.getByRole("button", { name: /^Remove filter/ }).first().boundingBox();
+    expect(chip?.height ?? 0).toBeGreaterThanOrEqual(35);
     await shot(page, "facets-two-chosen-400");
     await page.goto("/catalogue?lang=en");
     await expect(page.getByRole("status").filter({ hasText: "48 datasets" })).toBeVisible();
