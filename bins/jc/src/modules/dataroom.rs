@@ -858,11 +858,13 @@ fn with_appearance(
         nav_links: look
             .nav_links
             .iter()
+            .filter(|l| jc_core::kinds::is_link_url(&l.url))
             .map(|l| (l.url.clone(), l.label.clone()))
             .collect(),
         footer_links: look
             .footer_links
             .iter()
+            .filter(|l| jc_core::kinds::is_link_url(&l.url))
             .map(|l| (l.url.clone(), l.label.clone()))
             .collect(),
     };
@@ -2595,6 +2597,19 @@ mod tests {
             shown.layout.footer_links,
             vec![("/about#api".to_owned(), "API".to_owned())]
         );
+        // Defence in depth: a link that skipped validate() still never reaches the template.
+        let unchecked: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "navLinks": [{ "label": "x", "url": "javascript:alert(1)" }, { "label": "Mesto", "url": "https://mesto.sk" }],
+                "footerLinks": [{ "label": "y", "url": "//evil.example" }],
+            }))
+            .expect("an appearance");
+        let shown_unchecked = with_appearance(configured.clone(), Some(&unchecked));
+        assert_eq!(
+            shown_unchecked.layout.nav_links,
+            vec![("https://mesto.sk".to_owned(), "Mesto".to_owned())]
+        );
+        assert!(shown_unchecked.layout.footer_links.is_empty());
         // Text alone passes jc-core (no background of its own) yet is unreadable on jc's white.
         let pale: jc_core::kinds::OrganizationAppearance =
             serde_json::from_value(serde_json::json!({
