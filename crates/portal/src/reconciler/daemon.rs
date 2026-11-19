@@ -302,6 +302,7 @@ pub struct Syncer {
         jc_core::kinds::OrganizationBounds,
         Option<String>,
         Option<String>,
+        Option<jc_core::kinds::MqttAllowance>,
     ),
     warned_members: super::warned::Warned,
     warned_unstaged: super::warned::Warned,
@@ -607,14 +608,16 @@ impl Syncer {
     /// Makes each run tell the activity feed what it applied (OPS-48, UI-31).
     /// The deployment's settings the Portal's judge reads when it judges what `main` holds
     /// (P-2): the bounds on an Organization's limits, the App host apex and the organization
-    /// domain, as the propose door reads them from the configuration.
+    /// domain and the MQTT allowance of an Organization that sets none (T-7407), as the propose
+    /// door reads them from the configuration.
     pub fn with_judge_settings(
         mut self,
         bounds: jc_core::kinds::OrganizationBounds,
         apex: Option<String>,
         domain: Option<String>,
+        mqtt_default: Option<jc_core::kinds::MqttAllowance>,
     ) -> Self {
-        self.judge_settings = (bounds, apex, domain);
+        self.judge_settings = (bounds, apex, domain, mqtt_default);
         self
     }
 
@@ -2117,8 +2120,13 @@ impl Syncer {
                 name: gone.metadata.name,
             });
         }
-        let (bounds, apex, domain) = &self.judge_settings;
-        let settings = (bounds, apex.as_deref(), domain.as_deref());
+        let (bounds, apex, domain, mqtt_default) = &self.judge_settings;
+        let settings = (
+            bounds,
+            apex.as_deref(),
+            domain.as_deref(),
+            mqtt_default.as_ref(),
+        );
         for (envelope, reason) in crate::judge::replay(&base, settings, changed) {
             let key = crate::resource::ResourceKey {
                 namespace: envelope.metadata.namespace.unwrap_or_default(),
@@ -3111,7 +3119,8 @@ impl Syncer {
         transitions: &super::transitions::Transitions,
     ) {
         if let Some(capture) = self.mqtt_capture.as_ref() {
-            let brokers = super::mqtt_brokers::declared(&self.mirror);
+            let brokers =
+                super::mqtt_brokers::declared(&self.mirror, self.judge_settings.3.as_ref());
             capture
                 .converge(
                     &brokers,
@@ -3120,7 +3129,8 @@ impl Syncer {
                 .await;
         }
         if self.mqtt_brokers.is_some() || self.mqtt_clients.is_some() {
-            let brokers = super::mqtt_brokers::declared(&self.mirror);
+            let brokers =
+                super::mqtt_brokers::declared(&self.mirror, self.judge_settings.3.as_ref());
             if let Ok(mut seen) = self.mqtt_warned.lock() {
                 super::mqtt_brokers::log_warnings(&brokers, &mut seen);
             }

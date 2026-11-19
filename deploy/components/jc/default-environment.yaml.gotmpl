@@ -31,6 +31,13 @@ jc:
     # (secretRef, never in Git): assistant: {modelKeySecret: jc-model-key}. Each Deployment's
     # costPerDayUsd (its project's manifest) caps what it spends.
     assistant: {}
+    # The MQTT allowance every Organization without its own spec.limits.mqtt runs on, once the
+    # mqtt-brokers component is on (T-7407): `brokers` counts every project of the Organization
+    # together. An org admin changes it per Organization in Organization settings > MQTT (a
+    # Change, no restart); the Portal refuses to start on a value outside the operator's bounds
+    # or one naming ports, customHostnames or clientCaRef, which are each project's own. {}: off
+    # until an org admin turns MQTT on.
+    mqttOrganizationDefault: {enabled: true, brokers: 10}
     # Secret (key `key`) with the age identity the projects' SOPS files name; unset: no secretRef
     # of a project resolves.
     ageKeySecret: ""

@@ -81,8 +81,12 @@ fn words<T: Serialize>(items: &[T]) -> Vec<String> {
 }
 
 /// The allowance of `project` as the route answers it.
-fn allowance(mirror: &crate::store::Mirror, project: &str) -> Allowance {
-    let (allowance, origin) = crate::mqtt_allowance::effective(mirror, project);
+fn allowance(
+    mirror: &crate::store::Mirror,
+    project: &str,
+    default: Option<&jc_core::kinds::MqttAllowance>,
+) -> Allowance {
+    let (allowance, origin) = crate::mqtt_allowance::effective(mirror, project, default);
     let brokers = crate::mqtt_allowance::brokers(mirror, project);
     let used = crate::mqtt_allowance::usage(&brokers, None);
     Allowance {
@@ -138,7 +142,11 @@ pub async fn get_allowance(
     if !crate::permissions::for_request(&state, &user.0.identity, &project).may_read_project() {
         return Err(ApiError::NotFound(format!("project '{project}' not found")));
     }
-    Ok(Json(allowance(&state.mirror, &project)))
+    Ok(Json(allowance(
+        &state.mirror,
+        &project,
+        state.config.mqtt_default.as_ref(),
+    )))
 }
 
 pub fn router() -> Router<AppState> {
