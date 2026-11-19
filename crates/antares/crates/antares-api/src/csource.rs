@@ -555,6 +555,31 @@ pub fn normalize_registration(
     Ok(out)
 }
 
+/// T-7306 (S4-11): a Registration's `tenant` member names the Tenant its
+/// forwards address. One that names a Tenant of an Organization names one of
+/// the registering Tenant's own Organization, so no Registration reaches
+/// another Organization's data through this or a peer broker. A member of no
+/// Organization's shape names a peer's own Tenant and is left to it.
+pub(crate) fn member_tenant_admitted(registering: &TenantId, member: Option<&Value>) -> bool {
+    match member
+        .and_then(Value::as_str)
+        .and_then(TenantId::organization_of)
+    {
+        Some(organization) => TenantId::organization_of(registering.as_str()) == Some(organization),
+        None => true,
+    }
+}
+
+fn check_member_tenant(registering: &TenantId, norm: &Map<String, Value>) -> Result<(), NgsiError> {
+    if member_tenant_admitted(registering, norm.get("tenant")) {
+        return Ok(());
+    }
+    Err(NgsiError::BadRequestData(
+        "tenant names a Tenant of another Organization than the registering Tenant's (5.2.9)"
+            .into(),
+    ))
+}
+
 /// ISO 8601 duration (5.2.9 refreshRate): `P[nY][nM][nW][nD][T[nH][nM][nS]]`,
 /// at least one component, digits (fraction allowed in seconds).
 fn valid_iso8601_duration(s: &str) -> bool {
@@ -1051,6 +1076,7 @@ pub async fn create_registration(
         // it is in hand here — see the same note on subscription create.
         let named = obj.get("id").and_then(Value::as_str);
         let mut norm = normalize_registration(obj, &parsed.ctx, false)?;
+        check_member_tenant(&tenant, &norm)?;
         let (types, attrs) = info_members(&norm);
         gate!(
             st, &tenant, &headers, "5.9.2",
@@ -1454,6 +1480,7 @@ pub async fn update_registration(
             "fragment must be a JSON object".into(),
         ))?;
         let mut norm = normalize_registration(obj, &parsed.ctx, true)?;
+        check_member_tenant(&tenant, &norm)?;
         let ts = now_iso();
         // The 5.9.3.4 re-checks below read the registration set that the
         // mutate then writes — the pair is atomic or a concurrent write can
@@ -1554,6 +1581,38 @@ pub async fn delete_registration(
         }
     };
     go.await.unwrap_or_else(|e| e.into_response())
+}
+
+#[cfg(test)]
+mod member_tenant_t7306 {
+    use super::*;
+    use serde_json::json;
+
+    /// S4-11: a Registration's `tenant` member stays inside the registering
+    /// Organization; a peer's own Tenant name of no Organization shape is
+    /// the peer's.
+    #[test]
+    fn a_registration_names_no_tenant_of_another_organization() {
+        let mine = TenantId::new("sk_b__x").expect("tenant");
+        let plain = TenantId::new("city").expect("tenant");
+        for (registering, member, admitted) in [
+            (&mine, json!("sk_b__y"), true),
+            (&mine, json!("city"), true),
+            (&mine, json!("sk_a__x"), false),
+            (&plain, json!("sk_a__x"), false),
+            (&plain, json!("other"), true),
+        ] {
+            let mut norm = Map::new();
+            norm.insert("tenant".into(), member.clone());
+            assert_eq!(
+                check_member_tenant(registering, &norm).is_ok(),
+                admitted,
+                "{} -> {member}",
+                registering.as_str()
+            );
+        }
+        assert!(check_member_tenant(&mine, &Map::new()).is_ok());
+    }
 }
 
 #[cfg(test)]
