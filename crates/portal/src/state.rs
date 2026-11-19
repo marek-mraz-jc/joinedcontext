@@ -620,7 +620,12 @@ impl AppState {
             // source as failing every minute (MF-27).
             match crate::sync::remote::HttpRemote::new() {
                 Ok(remote) => {
-                    let states = Arc::new(crate::sync::state::States::new(state.db.clone()));
+                    let states = Arc::new(crate::sync::state::States::new(
+                        state
+                            .db
+                            .clone()
+                            .map(|pool| (pool, Arc::clone(&state.mirror))),
+                    ));
                     if !states.is_durable() {
                         tracing::info!(
                             "no database: sync sources remember their runs only until this \
