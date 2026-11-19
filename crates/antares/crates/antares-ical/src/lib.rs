@@ -33,6 +33,7 @@
 #![forbid(unsafe_code)]
 
 pub mod mapping;
+pub mod text;
 pub mod zone;
 
 use antares_ops::percent::{decoded, encode};
@@ -374,16 +375,16 @@ fn header(out: &CompiledOutput, view: &str, mut push: impl FnMut(&str)) {
             .cloned()
     };
     for (tag, title) in &o.title {
-        push(&format!("NAME;LANGUAGE={tag}:{}", mapping::escape(title)));
+        push(&format!("NAME;LANGUAGE={tag}:{}", text::escape(title)));
     }
     for (tag, text) in &o.description {
         push(&format!(
             "DESCRIPTION;LANGUAGE={tag}:{}",
-            mapping::escape(text)
+            text::escape(text)
         ));
     }
     let name = preferred(&o.title).unwrap_or_else(|| view.to_owned());
-    push(&format!("X-WR-CALNAME:{}", mapping::escape(&name)));
+    push(&format!("X-WR-CALNAME:{}", text::escape(&name)));
     push("REFRESH-INTERVAL;VALUE=DURATION:PT6H");
     push("X-PUBLISHED-TTL:PT6H");
     push(&format!("X-WR-TIMEZONE:{}", out.zone.name()));

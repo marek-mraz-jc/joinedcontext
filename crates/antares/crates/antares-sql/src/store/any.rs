@@ -112,6 +112,68 @@ async fn tenant_tx(
     Ok(tx)
 }
 
+/// The current-state tables a Tenant purge empties, in delete order.
+#[cfg(feature = "postgres")]
+const PURGE_TABLES: &[&str] = &[
+    "entities",
+    // emptied by the delete trigger of `entities` (0024)
+    "entity_values",
+    "subscriptions",
+    "csource_subscriptions",
+    "csource_registrations",
+    "csource_index",
+    "outbox",
+    "snapshots",
+    "entity_map_docs",
+    // the old -> new id map of a remint (0033)
+    "entity_id_remap",
+    "dist_subs",
+    "dead_letters",
+    "views",
+    "entity_types",
+    "entity_attrs",
+    // ADR-0021: `tenant_id` is GENERATED from the row's kind
+    // and owner, so a Cached row's is NULL and this DELETE
+    // takes only what the Tenant stored itself.
+    "jsonld_contexts",
+    // and its uses of the shared Cached copies (0039)
+    "jsonld_context_usage",
+];
+
+/// Rows one purge statement takes at most (S5-04): a Tenant's whole share of
+/// a table in one DELETE outlives the pool's statement timeout once it holds
+/// millions of rows, so the purge never finished.
+#[cfg(feature = "postgres")]
+pub const PURGE_BATCH: i64 = 10_000;
+
+/// Delete one Tenant's rows through `sql` in committed batches of
+/// [`PURGE_BATCH`] until a batch comes back short. `sql` binds the tenant as
+/// `$1` and the batch size as `$2`. Each batch commits alone, so a purge cut
+/// off midway keeps what it deleted and a rerun goes on from there. On a
+/// partitioned table one ctid can name a row in each partition: the outer
+/// `tenant_id` predicate keeps an overshoot inside the same Tenant.
+#[cfg(feature = "postgres")]
+async fn purge_in_batches(
+    p: &PgBackend,
+    tenant: &TenantId,
+    sql: impl Fn() -> sqlx::query::Query<'static, sqlx::Postgres, sqlx::postgres::PgArguments>,
+) -> Result<(), NgsiError> {
+    loop {
+        let mut tx = tenant_tx(p, tenant).await?;
+        let n = sql()
+            .bind(tenant.as_str())
+            .bind(PURGE_BATCH)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?
+            .rows_affected();
+        tx.commit().await.map_err(db)?;
+        if n < PURGE_BATCH as u64 {
+            return Ok(());
+        }
+    }
+}
+
 /// Postgres backend bundle: one pool, three table-family stores, plus the
 /// change hook (the memory store emits its own; here the seam emits).
 #[cfg(feature = "postgres")]
@@ -1670,14 +1732,48 @@ impl AnyStore {
         }
     }
 
-    /// Purge the current-state half of one tenant in one transaction;
-    /// `false` when the tenant did not exist. The default tenant's row stays.
+    /// Purge the current-state half of one tenant; `false` when the tenant
+    /// did not exist. The default tenant's row stays. On Postgres the bulk
+    /// goes in committed batches first (S5-04); one fenced transaction then
+    /// takes what writes added meanwhile and the `tenants` row last, so a
+    /// purge cut off midway still lists the Tenant and a rerun finishes it.
     pub async fn purge_tenant(&self, tenant: &TenantId) -> Result<bool, NgsiError> {
         match self {
             AnyStore::Mem(s) => Ok(s.purge_tenant(tenant)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 async {
+                    // Behind the fence, so a write that is claiming the
+                    // Tenant right now counts; released again before the
+                    // batches, which writes may run beside. The row itself,
+                    // not `tenant_exists`: that one answers true for the
+                    // default tenant without a row.
+                    let mut tx = tenant_tx(p, tenant).await?;
+                    sqlx::query(crate::store::pg::PURGE_FENCE_SQL)
+                        .bind(tenant.as_str())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                    let listed =
+                        sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1")
+                            .bind(tenant.as_str())
+                            .fetch_optional(&mut *tx)
+                            .await
+                            .map_err(db)?
+                            .is_some();
+                    tx.commit().await.map_err(db)?;
+                    if !listed {
+                        return Ok(false);
+                    }
+                    for table in PURGE_TABLES {
+                        purge_in_batches(p, tenant, || {
+                            sqlx::query(sqlx::AssertSqlSafe(format!(
+                                "DELETE FROM {table} WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                                 SELECT ctid FROM {table} WHERE tenant_id = $1 LIMIT $2))"
+                            )))
+                        })
+                        .await?;
+                    }
                     let mut tx = tenant_tx(p, tenant).await?;
                     // Waits for every write holding the tenant's shared
                     // fence (`pg::claim_tenant`) and holds later ones off
@@ -1698,31 +1794,7 @@ impl AnyStore {
                     if !known {
                         return Ok(false);
                     }
-                    for table in [
-                        "entities",
-                        // emptied by the delete trigger of `entities` (0024)
-                        "entity_values",
-                        "subscriptions",
-                        "csource_subscriptions",
-                        "csource_registrations",
-                        "csource_index",
-                        "outbox",
-                        "snapshots",
-                        "entity_map_docs",
-                        // the old -> new id map of a remint (0033)
-                        "entity_id_remap",
-                        "dist_subs",
-                        "dead_letters",
-                        "views",
-                        "entity_types",
-                        "entity_attrs",
-                        // ADR-0021: `tenant_id` is GENERATED from the row's kind
-                        // and owner, so a Cached row's is NULL and this DELETE
-                        // takes only what the Tenant stored itself.
-                        "jsonld_contexts",
-                        // and its uses of the shared Cached copies (0039)
-                        "jsonld_context_usage",
-                    ] {
+                    for table in PURGE_TABLES {
                         sqlx::query(sqlx::AssertSqlSafe(format!(
                             "DELETE FROM {table} WHERE tenant_id = $1"
                         )))
@@ -2703,23 +2775,24 @@ impl antares_store::TemporalDriver for AnyStore {
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 async {
-                    let mut tx = tenant_tx(p, tenant).await?;
                     // whole statements, not a spliced table name: the
-                    // attr_instances tenant-predicate check reads literals
+                    // attr_instances tenant-predicate check reads literals.
+                    // In committed batches, as the current-state half
+                    // (S5-04): a Tenant's history runs to millions of rows.
                     for sql in [
-                        "DELETE FROM attr_instances WHERE tenant_id = $1",
-                        "DELETE FROM attr_rows WHERE tenant_id = $1",
-                        "DELETE FROM iri_ids WHERE tenant_id = $1",
-                        "DELETE FROM attr_versions WHERE tenant_id = $1",
-                        "DELETE FROM temporal_entities WHERE tenant_id = $1",
+                        "DELETE FROM attr_instances WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                         SELECT ctid FROM attr_instances WHERE tenant_id = $1 LIMIT $2))",
+                        "DELETE FROM attr_rows WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                         SELECT ctid FROM attr_rows WHERE tenant_id = $1 LIMIT $2))",
+                        "DELETE FROM iri_ids WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                         SELECT ctid FROM iri_ids WHERE tenant_id = $1 LIMIT $2))",
+                        "DELETE FROM attr_versions WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                         SELECT ctid FROM attr_versions WHERE tenant_id = $1 LIMIT $2))",
+                        "DELETE FROM temporal_entities WHERE tenant_id = $1 AND ctid = ANY(ARRAY(\
+                         SELECT ctid FROM temporal_entities WHERE tenant_id = $1 LIMIT $2))",
                     ] {
-                        sqlx::query(sql)
-                            .bind(tenant.as_str())
-                            .execute(&mut *tx)
-                            .await
-                            .map_err(db)?;
+                        purge_in_batches(p, tenant, || sqlx::query(sql)).await?;
                     }
-                    tx.commit().await.map_err(db)?;
                     p.temporal.forget_tenant(tenant);
                     Ok(())
                 }

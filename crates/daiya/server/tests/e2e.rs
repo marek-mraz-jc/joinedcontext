@@ -202,7 +202,12 @@ async fn spawn_mock_upstream() -> (
     (format!("http://{addr}"), call_count, last_auth)
 }
 
-async fn send_req(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, Value) {
+async fn send_req(app: &Router, mut req: Request<Body>) -> (StatusCode, HeaderMap, Value) {
+    // The source address the jc router (or the standalone layer) resolves for each request.
+    if req.extensions().get::<jc_router::ClientAddr>().is_none() {
+        req.extensions_mut()
+            .insert(jc_router::ClientAddr("203.0.113.9".parse().unwrap()));
+    }
     let resp = app.clone().oneshot(req).await.unwrap();
     let status = resp.status();
     let headers = resp.headers().clone();

@@ -1,7 +1,8 @@
 //! OData writes through an Endpoint pass the guards of the NGSI-LD view forward before the
 //! broker's view decides them (EP-104, EP-97, EP-61, T-3939): a form's key is minted, its day's
-//! creates are counted, a hidden attribute is never written, and the broker's refusals reach
-//! the caller as it answers them.
+//! creates are counted, a hidden attribute is never written, a body carries an NGSI-LD id and no
+//! access control, a kept attribute is kept as versions, and the broker's refusals reach the
+//! caller as it answers them.
 
 use crate::common;
 
@@ -108,7 +109,8 @@ fn csdl() -> Value {
 
 /// A broker view: `$metadata` as above, the set `Locked` read-only (405), the set `Refused`
 /// refused by the engine (403), `$crossjoin` not served (501), the set `Broken` failing (500),
-/// every other write taken. Records `METHOD path body`.
+/// every other write taken. Records `METHOD path body`, then `AUDIT path` for a write it is
+/// told to keep as versions.
 async fn broker() -> (String, Hops) {
     let hops: Hops = Arc::default();
     let recorder = Arc::clone(&hops);
@@ -120,11 +122,17 @@ async fn broker() -> (String, Hops) {
             let body = axum::body::to_bytes(body, 1024 * 1024)
                 .await
                 .unwrap_or_default();
-            recorder.lock().expect("the hop log").push(format!(
+            let mut log = recorder.lock().expect("the hop log");
+            log.push(format!(
                 "{} {path} {}",
                 parts.method,
                 String::from_utf8_lossy(&body)
             ));
+            // the broker keeps this write's changes as versions (DM-150)
+            if parts.headers.contains_key("jc-provenance-audit") {
+                log.push(format!("AUDIT {path}"));
+            }
+            drop(log);
             let answer = |status: u16, body: Value| {
                 let mut response = axum::Json(body).into_response();
                 *response.status_mut() = StatusCode::from_u16(status).expect("a status");
@@ -473,6 +481,56 @@ async fn a_hidden_attribute_is_never_written() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+}
+
+/// The body checks of the NGSI-LD view hold for OData (PF-43, GW29), and a write touching an
+/// attribute the grant keeps carries the audit mark while one touching others does not (DM-150).
+#[tokio::test]
+async fn an_odata_write_passes_the_body_checks_and_keeps_granted_versions() {
+    let realm = common::Realm::new();
+    let (upstream, hops) = broker().await;
+    let dir = repo("versions");
+    std::fs::write(
+        dir.join("keep.yaml"),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: keep-text\n  \
+         namespace: helsinki\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: helsinki }\n  \
+         assigner: did:web:hel.fi\n  assignee: { kind: group, id: editors }\n  \
+         operations: [mergeEntity]\n  information:\n    - entities:\n        - type: Feedback\n      \
+         propertyNames: [text, note]\n      attributes:\n        text: { versions: [keep] }\n",
+    )
+    .expect("write");
+    let app = app(&dir, &upstream, &realm);
+    for (method, body, want) in [
+        (Method::PATCH, json!({"acl": ["x"]}), StatusCode::FORBIDDEN),
+        (
+            Method::PATCH,
+            json!({"id": "not-a-urn"}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (Method::PATCH, json!({"id": 7}), StatusCode::BAD_REQUEST),
+    ] {
+        let rest = "/Feedback('urn:ngsi-ld:Feedback:x')";
+        let (status, _, answer) = send(&app, method, OPEN, rest, Some(body)).await;
+        assert_eq!(status, want, "{answer}");
+    }
+    assert!(writes(&hops).is_empty(), "{:?}", writes(&hops));
+    let rest = "/Feedback('urn:ngsi-ld:Feedback:x')";
+    let (status, _, answer) =
+        send(&app, Method::PATCH, OPEN, rest, Some(json!({"note": "n"}))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    assert!(
+        !writes(&hops).iter().any(|w| w.starts_with("AUDIT")),
+        "{:?}",
+        writes(&hops)
+    );
+    let (status, _, answer) =
+        send(&app, Method::PATCH, OPEN, rest, Some(json!({"text": "t"}))).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    assert!(
+        writes(&hops).iter().any(|w| w.starts_with("AUDIT")),
+        "{:?}",
+        writes(&hops)
+    );
 }
 
 /// The broker's view decides: its engine's 403 reaches the caller with the platform's slug, a

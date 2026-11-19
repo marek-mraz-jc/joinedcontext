@@ -23,6 +23,11 @@ pub const MAX_URIS: usize = 64;
 /// that dies leaves nothing behind for longer (MCP 5.2).
 pub const LIFETIME: Duration = Duration::from_secs(3600);
 
+/// How often an open stream asks again whether its caller may still read
+/// through the view, besides before each event; a caller who may not is
+/// closed out (NET-08).
+pub const RECHECK: Duration = Duration::from_secs(60);
+
 /// The bounds on open streams in one process (MCP section 8).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Caps {

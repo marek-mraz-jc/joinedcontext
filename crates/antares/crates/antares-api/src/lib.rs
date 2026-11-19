@@ -93,6 +93,7 @@ pub mod mirror;
 pub mod negotiate;
 pub mod notify;
 pub(crate) mod paging;
+pub(crate) mod pairs;
 pub mod policy;
 pub mod provenance;
 pub(crate) mod registry;

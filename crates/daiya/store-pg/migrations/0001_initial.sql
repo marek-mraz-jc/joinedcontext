@@ -254,8 +254,51 @@ BEGIN
 END
 $$;
 
--- The anonymous public-dashboard door knows a token, not an organization: one extra SELECT-only
--- policy shows exactly the row whose token hash the transaction names in `cr.public_token`.
+
+-- The anonymous public-dashboard door knows a token, not an organization. A token hash resolves
+-- to its organization only through `daiya_public_token_org` (owner-defined, EXECUTE granted to
+-- the application role); the index table itself grants nothing to `daiya_app`, so the role can
+-- neither list it nor widen what it sees by a session setting. The dashboard row is then read
+-- under the normal `cr.org` transaction.
 DROP POLICY IF EXISTS public_token_lookup ON cr_public_dashboard;
-CREATE POLICY public_token_lookup ON cr_public_dashboard FOR SELECT
-    USING (access_token_hash = NULLIF(current_setting('cr.public_token', true), ''));
+CREATE TABLE IF NOT EXISTS daiya_public_token (
+    access_token_hash TEXT PRIMARY KEY,
+    org_id UUID NOT NULL
+);
+ALTER TABLE daiya_public_token ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON daiya_public_token FROM PUBLIC, daiya_app;
+
+CREATE OR REPLACE FUNCTION daiya_public_token_sync() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        DELETE FROM daiya_public_token WHERE access_token_hash = OLD.access_token_hash;
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        INSERT INTO daiya_public_token (access_token_hash, org_id)
+        VALUES (NEW.access_token_hash, NEW.org_id)
+        ON CONFLICT (access_token_hash) DO UPDATE SET org_id = EXCLUDED.org_id;
+    END IF;
+    RETURN NULL;
+END
+$$;
+REVOKE ALL ON FUNCTION daiya_public_token_sync() FROM PUBLIC;
+DROP TRIGGER IF EXISTS daiya_public_token_sync ON cr_public_dashboard;
+CREATE TRIGGER daiya_public_token_sync
+    AFTER INSERT OR UPDATE OF access_token_hash, org_id OR DELETE ON cr_public_dashboard
+    FOR EACH ROW EXECUTE FUNCTION daiya_public_token_sync();
+
+CREATE OR REPLACE FUNCTION daiya_public_token_org(token_hash TEXT) RETURNS UUID
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+    SELECT org_id FROM daiya_public_token WHERE access_token_hash = token_hash
+$$;
+REVOKE ALL ON FUNCTION daiya_public_token_org(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION daiya_public_token_org(TEXT) TO daiya_app;
+
+-- Rows written before the index existed: the owner reads them once with forced RLS lifted
+-- inside this migration's transaction, then forces it again.
+ALTER TABLE cr_public_dashboard NO FORCE ROW LEVEL SECURITY;
+INSERT INTO daiya_public_token (access_token_hash, org_id)
+    SELECT access_token_hash, org_id FROM cr_public_dashboard
+    ON CONFLICT (access_token_hash) DO UPDATE SET org_id = EXCLUDED.org_id;
+ALTER TABLE cr_public_dashboard FORCE ROW LEVEL SECURITY;

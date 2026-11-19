@@ -774,6 +774,113 @@ async fn rls_scopes_hosted_contexts_and_shares_cached_ones() {
     }
 }
 
+/// S5-04: a purge deletes a Tenant's rows in bounded statements, so a Tenant
+/// with millions of rows is not one DELETE past the statement timeout. A
+/// statement trigger logs how many of the Tenant's rows each DELETE took,
+/// for one current-state and one history table.
+#[tokio::test(flavor = "multi_thread")]
+async fn purge_tenant_deletes_in_bounded_batches() {
+    use antares_sql::store::any::PURGE_BATCH;
+    use antares_store::TemporalDriver;
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let t = TenantId::new(&format!("batchpurge{run}")).expect("tenant");
+    let rows = 2 * PURGE_BATCH + 7;
+    let mut admin = pool.acquire().await.expect("conn");
+    for sql in [
+        // `tenant`, not `tenant_id`: the catalogue check of the purge test
+        // below reads every public table with a `tenant_id` column
+        "CREATE TABLE IF NOT EXISTS purge_statement_log (tbl text, tenant text, n bigint)",
+        "CREATE OR REPLACE FUNCTION purge_statement_log() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           INSERT INTO purge_statement_log
+             SELECT TG_TABLE_NAME, tenant_id, count(*) FROM old_rows GROUP BY tenant_id;
+           RETURN NULL;
+         END $$",
+    ] {
+        sqlx::query(sql)
+            .execute(&mut *admin)
+            .await
+            .expect("log setup");
+    }
+    for table in ["entity_id_remap", "iri_ids"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "CREATE OR REPLACE TRIGGER purge_statement_log AFTER DELETE ON {table} \
+             REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT \
+             EXECUTE FUNCTION purge_statement_log()"
+        )))
+        .execute(&mut *admin)
+        .await
+        .expect("trigger");
+    }
+    let mut tx = pool.begin().await.expect("begin");
+    pg::set_tenant(&mut tx, &t).await.expect("scope");
+    pg::claim_tenant(&mut tx, &t).await.expect("claim");
+    for sql in [
+        "INSERT INTO entity_id_remap (tenant_id, old_id, new_id) \
+         SELECT $1, 'urn:old:' || g, 'urn:new:' || g FROM generate_series(1, $2) g",
+        "INSERT INTO iri_ids (tenant_id, iri) SELECT $1, 'urn:iri:' || g FROM generate_series(1, $2) g",
+    ] {
+        sqlx::query(sql)
+            .bind(t.as_str())
+            .bind(rows)
+            .execute(&mut *tx)
+            .await
+            .expect("seed");
+    }
+    tx.commit().await.expect("commit seed");
+
+    TemporalDriver::purge_tenant(&store, &t)
+        .await
+        .expect("temporal purge");
+    assert!(
+        store.purge_tenant(&t).await.expect("purge"),
+        "the tenant existed"
+    );
+
+    let log: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT tbl, count(*), max(n), sum(n)::bigint FROM purge_statement_log \
+         WHERE tenant = $1 GROUP BY tbl ORDER BY tbl",
+    )
+    .bind(t.as_str())
+    .fetch_all(&mut *admin)
+    .await
+    .expect("log");
+    for (tbl, statements, most, total) in &log {
+        assert_eq!(*total, rows, "{tbl}: every row went");
+        assert!(
+            *most <= PURGE_BATCH,
+            "{tbl}: one DELETE took {most} of the Tenant's rows, over the {PURGE_BATCH} batch"
+        );
+        assert!(*statements >= 3, "{tbl}: {statements} statements");
+    }
+    assert_eq!(log.len(), 2, "both tables logged: {log:?}");
+    for table in ["entity_id_remap", "iri_ids"] {
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER IF EXISTS purge_statement_log ON {table}"
+        )))
+        .execute(&mut *admin)
+        .await
+        .expect("trigger cleanup");
+    }
+    for sql in [
+        "DROP TABLE IF EXISTS purge_statement_log",
+        "DROP FUNCTION IF EXISTS purge_statement_log()",
+    ] {
+        sqlx::query(sql)
+            .execute(&mut *admin)
+            .await
+            .expect("log cleanup");
+    }
+}
+
 /// Purging a tenant empties every tenant-bearing table for it in one
 /// transaction and touches no row of another tenant.
 #[tokio::test(flavor = "multi_thread")]
