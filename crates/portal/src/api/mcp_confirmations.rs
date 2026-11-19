@@ -306,6 +306,7 @@ mod tests {
                 expires_at: now + 60,
                 issued_at: now,
                 signed_in_at: None,
+                stepped_up_at: None,
                 id_token: "id".into(),
                 access_expires_at: now + 60,
                 refresh_token: None,

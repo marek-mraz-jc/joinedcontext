@@ -380,7 +380,11 @@
     },
     "reasonFirst": "Schreiben Sie zuerst, warum Sie die Änderung ablehnen.",
     "publication": "Die CKAN-Seite von {name} nach der Genehmigung",
-    "publicationPublic": "Nach Ihrer Genehmigung kann jede Person diesen Datensatz ohne Anmeldung lesen. Lesen Sie die Seite und die Feldänderungen oben, bevor Sie den Namen eingeben."
+    "publicationPublic": "Nach Ihrer Genehmigung kann jede Person diesen Datensatz ohne Anmeldung lesen. Lesen Sie die Seite und die Feldänderungen oben, bevor Sie den Namen eingeben.",
+    "singlePerson": {
+      "title": "Ein-Personen-Modus: Sie genehmigen dies allein",
+      "body": "Sie genehmigen Ihre eigene Zugriffsänderung allein, als einzige Person von {organization}. Das Portal fragt Ihren Einmalcode erneut ab, wenn der letzte älter als 5 Minuten ist, und verzeichnet die Genehmigung als „self (single-person mode)“."
+    }
   },
   "lane": {
     "green": "Grün",
@@ -9129,6 +9133,17 @@
         "mcp": "Jeder MCP-Server antwortet unter dieser Adresse, gefolgt von seinem Projekt und Namen, z. B. …/api/mcp/doprava/cestovne-poriadky.",
         "sign-in": "Der Identitätsanbieter, bei dem sich ihre Menschen anmelden; Passwörter und zweite Faktoren werden nur dort eingegeben."
       }
+    },
+    "approvals": {
+      "title": "Genehmigungen",
+      "lead": "Wer eine Änderung genehmigt, die Zugriff gewährt oder ein Datenmodell ändert. Eine zweite Person genehmigt sie (Vier-Augen-Prinzip), außer ein Betreiber der Installation hat den Ein-Personen-Modus eingeschaltet.",
+      "mode": "Ein-Personen-Modus",
+      "on": "Ein: Die einzige Person der Organisation genehmigt ihre eigenen Zugriffsänderungen nach einem frischen Einmalcode (höchstens 5 Minuten alt).",
+      "off": "Aus: Jede Zugriffsänderung genehmigt eine zweite Person (Vier-Augen-Prinzip).",
+      "people": "Personen mit einer Rolle",
+      "offReason": "Vom Portal ausgeschaltet: {reason}",
+      "operatorOnly": "Nur ein Betreiber der Installation ändert dies, unter Verwaltung, Betreiber, Organisationen. Der Modus schaltet sich selbst aus, sobald eine zweite Person eine Rolle erhält.",
+      "failed": "Der Genehmigungsmodus wurde nicht geladen."
     }
   },
   "projectDelete": {
@@ -13676,7 +13691,17 @@
       "driftLead": "In diesen Organisationen können keine Rollen vergeben werden, bis Repository und Register dieselben Namen führen. Nichts wird automatisch umbenannt.",
       "driftForge": "Nur im Register",
       "driftRegistry": "Nur im Repository",
-      "driftFix": "Organisationseinstellungen öffnen"
+      "driftFix": "Organisationseinstellungen öffnen",
+      "approvals": "Ein-Personen-Genehmigungen",
+      "approvalsOn": "Ein",
+      "approvalsOff": "Aus",
+      "people": "{count} mit Rolle",
+      "turnOn": "Einschalten",
+      "turnOff": "Ausschalten",
+      "turnOnHint": "Nur für eine Organisation, in der genau eine Person eine Rolle hat, z. B. die erste Administratorin einer Stadt. Ein zweiter Betreiber genehmigt es; mit einem Betreiber gilt es sofort.",
+      "onePersonOnly": "{count} Personen haben eine Rolle: Vier Augen sind möglich, der Modus bleibt aus.",
+      "asked": "Beantragt: Ein zweiter Betreiber genehmigt es unter Betreiber-Änderungen.",
+      "applied": "Übernommen."
     },
     "ids": {
       "title": "Domänen und ihre TXT-Einträge",

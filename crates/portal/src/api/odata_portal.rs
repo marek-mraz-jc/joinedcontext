@@ -237,6 +237,19 @@ pub static DOORS: &[Door] = &[
     // may read, a person of another Organization included (the home page asks on every visit,
     // an Endpoint page's viewer asks for the open data host), so they are `Own` (T-7130,
     // T-7167).
+    // The single-person approval mode of an Organization, by name or by one of its projects; the
+    // REST handler checks the caller belongs to it or reads the project (T-7388).
+    door(
+        "portal_approval_mode",
+        Org,
+        Method::GET,
+        "/organization/approval-mode",
+        &[
+            ("organization", Place::Query("Edm.String")),
+            ("project", Place::Query("Edm.String")),
+        ],
+        Who::Own,
+    ),
     door(
         "portal_organization_address_list",
         Org,
@@ -2745,6 +2758,7 @@ mod tests {
             expires_at: 9_999_999_999,
             issued_at: 1000,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: "dummy".into(),
             access_expires_at: 9_999_999_999,
             refresh_token: None,

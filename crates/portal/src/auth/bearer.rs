@@ -380,6 +380,7 @@ fn session_of(c: Claims) -> (Session, Option<String>) {
         expires_at: c.exp,
         issued_at: c.iat,
         signed_in_at: c.auth_time,
+        stepped_up_at: None,
         id_token: String::new(),
         access_expires_at: c.exp,
         refresh_token: None,

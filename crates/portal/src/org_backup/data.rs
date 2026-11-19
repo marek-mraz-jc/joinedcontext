@@ -653,6 +653,11 @@ pub const PORTAL_LEFT_OUT: &[(&str, &str)] = &[
     ),
     ("user_preferences", "a person's own settings"),
     (
+        "organization_approval_modes",
+        "an installation setting only the installation operator changes (T-7388): a restore never \
+         turns single-person approval on",
+    ),
+    (
         "project_branches",
         "a branch lives at most 30 days and its id stays a tombstone (CHG-15): a restore never \
          revives one",

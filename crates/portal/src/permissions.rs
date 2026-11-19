@@ -1508,6 +1508,21 @@ pub fn organization_scoped_people(
     members.readers.into_iter().chain(members.writers).collect()
 }
 
+/// Everyone a binding in force at `now` names anywhere in `organization`: at its own scope, a
+/// project of it or a space of one, by lower-case identifier (user id or e-mail, as the binding
+/// names them). A service account is no subject a person list holds; the operators' group is no
+/// binding (T-7388).
+pub fn people_with_a_role(
+    mirror: &Mirror,
+    organization: &str,
+    now: TimestampTz,
+) -> BTreeSet<String> {
+    let members = members_where(mirror, now, |reach| {
+        organization_of_reach(mirror, reach).as_deref() == Some(organization)
+    });
+    members.readers.into_iter().chain(members.writers).collect()
+}
+
 /// [`ProjectMembers`] by every binding in force at `now` whose scope `counts`.
 fn members_where(
     mirror: &Mirror,

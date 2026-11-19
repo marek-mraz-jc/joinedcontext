@@ -8,11 +8,12 @@ import { asManifests, localized, ORG_NAMESPACE } from "../../api/manifest";
 import { useOrganizationManifests } from "../../api/projects";
 import { EditResourceAction } from "../../components/EditResourceDialog";
 import type { EditableForm } from "../../components/EditResourceDialog";
-import { EmptyState, Skeleton } from "../../components/ui";
+import { Alert, Badge, EmptyState, Skeleton } from "../../components/ui";
 import { Swatch, svgImageUrl } from "../../components/forms/widgets/AppearanceWidgets";
 import { APP_SERVICES_UI, organizationSchema } from "../../schemas/kinds";
 import { OrganizationDomain } from "../access/OrganizationDomain";
 import { OrganizationLimitsView } from "./OrganizationLimitsView";
+import { useApprovalMode, type ApprovalMode } from "../../api/approval";
 import { ALLOWANCE_UI, withMqttDefault } from "../mqttbrokers/allowance";
 
 interface Contact {
@@ -308,7 +309,63 @@ export function OrganizationSettings(): JSX.Element {
           />
         )}
       </section>
+      {organizationName ? <ApprovalsSection organization={organizationName} /> : null}
       <OrganizationDomain />
+    </div>
+  );
+}
+
+/**
+ * Who approves access in this Organization (PF-58, T-7388): a second person, or its one person
+ * alone after a fresh one-time code when an installation operator turned single-person mode on.
+ * Read-only here: only the operators' door changes it.
+ */
+function ApprovalsSection({ organization }: { organization: string }): JSX.Element {
+  const { t } = useTranslation();
+  const mode = useApprovalMode({ organization });
+  return (
+    <section className="space-y-4" aria-labelledby="organization-approvals-heading">
+      <div>
+        <h2 id="organization-approvals-heading" className="text-title font-semibold text-fg">
+          {t("organization.approvals.title")}
+        </h2>
+        <p className="text-body text-fg-muted">{t("organization.approvals.lead")}</p>
+      </div>
+      {mode.isPending ? (
+        <div role="status">
+          <span className="sr-only">{t("app.loading")}</span>
+          <Skeleton className="h-4 w-1/2" />
+        </div>
+      ) : mode.isError ? (
+        <PageFailed error={mode.error} onRetry={() => void mode.refetch()} />
+      ) : (
+        <ApprovalsSummary mode={mode.data} />
+      )}
+    </section>
+  );
+}
+
+function ApprovalsSummary({ mode }: { mode: ApprovalMode }): JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-3">
+      <dl className="grid gap-x-6 gap-y-3 text-body sm:grid-cols-[max-content_1fr]">
+        <dt className="font-medium text-fg">{t("organization.approvals.mode")}</dt>
+        <dd className="flex flex-col items-start gap-1 text-fg sm:flex-row sm:gap-2">
+          <Badge tone={mode.singlePerson ? "info" : "neutral"}>
+            {t(mode.singlePerson ? "operator.organizations.approvalsOn" : "operator.organizations.approvalsOff")}
+          </Badge>
+          <span className="min-w-0 flex-1">{t(mode.singlePerson ? "organization.approvals.on" : "organization.approvals.off")}</span>
+        </dd>
+        <dt className="font-medium text-fg">{t("organization.approvals.people")}</dt>
+        <dd className="text-fg">{mode.peopleWithARole}</dd>
+      </dl>
+      {mode.offReason ? (
+        <Alert tone="info" role="status">
+          {t("organization.approvals.offReason", { reason: mode.offReason })}
+        </Alert>
+      ) : null}
+      <p className="text-caption text-fg-muted">{t("organization.approvals.operatorOnly")}</p>
     </div>
   );
 }

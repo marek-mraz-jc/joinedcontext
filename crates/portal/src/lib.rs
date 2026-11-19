@@ -53,6 +53,7 @@ pub mod ops;
 pub mod org_backup;
 pub mod personal_connectors;
 pub mod saved_charts;
+pub mod single_person;
 pub use ops::drafts;
 pub use ops::verdict;
 pub mod costs;

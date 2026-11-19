@@ -1173,6 +1173,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/approval-mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read The Approval Mode
+         * @description Whether an Organization is in single-person approval mode (T-7388): its one person approves their own access Changes after a fresh second factor. Off by default; an installation operator sets it, and a second person with a role turns it off.
+         */
+        get: operations["approval_mode_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/backups/configuration": {
         parameters: {
             query?: never;
@@ -9356,6 +9376,22 @@ export interface components {
             /** @description Every template, by name. */
             templates: components["schemas"]["Template"][];
         };
+        /** @description The mode of one Organization as its Administration page and an approval show it. */
+        ApprovalMode: {
+            /**
+             * Format: date-time
+             * @description When an operator or the Portal last changed the mode.
+             */
+            changedAt?: string | null;
+            /** @description Why the Portal turned the mode off by itself, e.g. a second person holds a role. */
+            offReason?: string | null;
+            /** @description The Organization's name, e.g. `marek-mraz`. */
+            organization: string;
+            /** @description How many people hold a role in the Organization now. */
+            peopleWithARole: number;
+            /** @description Whether its one person approves their own access Changes after a fresh second factor. */
+            singlePerson: boolean;
+        };
         /** @description Request body for approving or rejecting a change proposal. */
         ApproveBody: {
             confirm?: string | null;
@@ -10274,6 +10310,7 @@ export interface components {
             organizationId?: string | null;
             project?: string | null;
             role?: string | null;
+            singlePerson?: boolean | null;
             smtp?: null | components["schemas"]["SmtpSettings"];
             subject?: string | null;
         };
@@ -10349,6 +10386,11 @@ export interface components {
              *     `portal-site` or `host`.
              */
             role?: string | null;
+            /**
+             * @description `SinglePersonSet`: whether the `organization`'s one person approves their own access
+             *     Changes after a fresh second factor, e.g. `true`.
+             */
+            singlePerson?: boolean | null;
             smtp?: null | components["schemas"]["SmtpRequest"];
             /**
              * @description `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
@@ -12981,9 +13023,11 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove" | "SinglePersonSet";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
+            /** @description Its single-person approval mode (T-7388), which a `SinglePersonSet` Change sets. */
+            approvals: components["schemas"]["ApprovalMode"];
             domain?: string | null;
             /** @description Its hosts per registry state, e.g. `{"served": 3, "dns-ok": 1}`. */
             hosts: {
@@ -18997,6 +19041,67 @@ export interface operations {
             };
             /** @description The caller reads no project */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    approval_mode_get: {
+        parameters: {
+            query?: {
+                /** @description The Organization, e.g. `marek-mraz`: for a person who belongs to it. */
+                organization?: string | null;
+                /** @description A project, e.g. `ovzdusie`: its Organization's mode, for a person who reads the project. */
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The mode */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalMode"];
+                };
+            };
+            /** @description Neither or both of organization and project */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No Organization or project the caller belongs to or reads */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The database did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
