@@ -17,8 +17,8 @@ use antares_store::TemporalDriver;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use chrono::{DateTime, Duration, Utc};
 use http_body_util::BodyExt;
+use jiff::{SignedDuration as Duration, Timestamp};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -29,16 +29,16 @@ const WRITES: usize = 6336;
 const STEP_SECS: i64 = 86;
 const NUMBERS: [&str; 3] = ["availableBikeNumber", "freeSlotNumber", "totalSlotNumber"];
 
-fn start() -> DateTime<Utc> {
+fn start() -> Timestamp {
     "2026-10-11T00:00:00Z".parse().expect("an instant")
 }
 
-fn at(i: usize) -> DateTime<Utc> {
-    start() + Duration::seconds(STEP_SECS * i as i64)
+fn at(i: usize) -> Timestamp {
+    start() + Duration::from_secs(STEP_SECS * i as i64)
 }
 
-fn stamp(t: DateTime<Utc>) -> String {
-    t.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+fn stamp(t: Timestamp) -> String {
+    t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// `changes` distinct write indices (never the first) from a fixed LCG, so
@@ -160,7 +160,7 @@ async fn replayed(recording: Option<Recording>) -> (Router, u64) {
 }
 
 /// The value `attr` held just before `t`, as the temporal API answers it.
-async fn held_before(app: &Router, attr: &str, t: DateTime<Utc>) -> Value {
+async fn held_before(app: &Router, attr: &str, t: Timestamp) -> Value {
     let path = format!(
         "/ngsi-ld/v1/temporal/entities/{ID}?attrs={attr}&timerel=before&timeAt={}&lastN=1",
         stamp(t)
@@ -207,12 +207,12 @@ fn weighted_truth(column: usize) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     let mut bucket = start();
     while bucket < end {
-        let next = (bucket + Duration::hours(1)).min(end);
+        let next = (bucket + Duration::from_hours(1)).min(end);
         let (mut sum, mut span) = (0.0, 0.0);
         for (i, v) in values.iter().enumerate() {
             let (from, to) = (at(i).max(bucket), at(i + 1).min(next));
             if to > from {
-                let secs = (to - from).num_seconds() as f64;
+                let secs = to.duration_since(from).as_secs() as f64;
                 sum += v * secs;
                 span += secs;
             }
@@ -224,7 +224,7 @@ fn weighted_truth(column: usize) -> Vec<(String, f64)> {
 }
 
 /// The value `column` held just before `t`: the last write before it.
-fn held_truth(column: usize, t: DateTime<Utc>) -> Value {
+fn held_truth(column: usize, t: Timestamp) -> Value {
     let week = week();
     let last = (0..WRITES)
         .rev()

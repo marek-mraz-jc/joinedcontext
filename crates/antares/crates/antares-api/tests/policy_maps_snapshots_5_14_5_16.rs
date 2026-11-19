@@ -268,8 +268,8 @@ async fn another_component_may_still_extend_a_map_it_did_not_build() {
     let st = state(Decision::Allow);
     seed(&st).await;
     let mine = build_map(&st, "alice").await;
-    let later = (chrono::Utc::now() + chrono::Duration::seconds(600))
-        .format("%Y-%m-%dT%H:%M:%SZ")
+    let later = (jiff::Timestamp::now() + jiff::SignedDuration::from_secs(600))
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
 
     let (code, _, body) = call(

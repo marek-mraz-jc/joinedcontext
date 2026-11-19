@@ -654,7 +654,7 @@ pub(super) async fn tenant_usage(
         let mut v = serde_json::json!({
             "attrInstances": count,
             "estimated": estimated,
-            "measuredAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "measuredAt": crate::state::now_iso(),
         });
         if let (Some((e, _)), Some(m)) = (entities, v.as_object_mut()) {
             m.insert(

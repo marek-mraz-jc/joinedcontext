@@ -641,7 +641,7 @@ async fn clause_5_8_6_a_periodic_subscription_with_an_unparseable_q_reads_nothin
     let (st, spy) = seeded().await;
     let tenant = antares_model::TenantId::new("default").expect("tenant");
     let id = "urn:ngsi-ld:Subscription:stale-q";
-    let created = chrono::Utc::now() - chrono::Duration::seconds(10);
+    let created = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10);
     let sub = json!({"id": id, "type": "Subscription", "timeInterval": 1,
         "createdAt": created.to_rfc3339(),
         "entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}],
@@ -673,7 +673,7 @@ async fn an_unparseable_q_claims_no_periodic_firing() {
     st.nats = true;
     let tenant = antares_model::TenantId::new("default").expect("tenant");
     let id = "urn:ngsi-ld:Subscription:stale-q-claim";
-    let created = chrono::Utc::now() - chrono::Duration::seconds(10);
+    let created = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10);
     let sub = json!({"id": id, "type": "Subscription", "timeInterval": 1,
         "createdAt": created.to_rfc3339(),
         "entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}],

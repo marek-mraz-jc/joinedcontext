@@ -89,13 +89,13 @@ dependencies = [
  "async-trait",
  "axum",
  "brotli",
- "chrono",
  "flate2",
  "futures-util",
  "gloo-timers",
  "http-body-util",
  "icu_collator",
  "icu_locale_core",
+ "jc-time",
  "jiff",
  "metrics",
  "ngsild-jsonld",
@@ -2270,10 +2270,12 @@ dependencies = [
  "jiff-core",
  "jiff-static",
  "jiff-tzdb",
+ "js-sys",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
+ "wasm-bindgen",
 ]
 
 [[package]]

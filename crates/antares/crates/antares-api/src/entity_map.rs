@@ -29,10 +29,8 @@ pub(crate) const DEFAULT_LIFETIME_SECS: i64 = 3600;
 /// Source, possibly overriding the requested duration".
 pub(crate) const MAX_LIFETIME_SECS: i64 = 86_400;
 
-pub(crate) fn dt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|d| d.with_timezone(&chrono::Utc))
+pub(crate) fn dt(s: &str) -> Option<jiff::Timestamp> {
+    crate::state::instant(s)
 }
 
 /// Record whose map this is, so 5.5.14's "cannot be accessed" covers a map
@@ -72,7 +70,7 @@ fn map_live(doc: &Value) -> bool {
     doc.get("expiresAt")
         .and_then(Value::as_str)
         .and_then(dt)
-        .is_some_and(|e| e > chrono::Utc::now())
+        .is_some_and(|e| e > jiff::Timestamp::now())
 }
 
 /// 4.22 for EntityMaps: a map a read will not serve is a map nothing can
@@ -219,9 +217,9 @@ async fn trim_to_ceiling(st: &AppState, tenant: &TenantId, keep: &str) -> Result
 /// duration": every writer of a map's expiresAt goes through this. An
 /// absent or unreadable expiry is left alone: 5.5.14 keeps it unusable.
 fn clamp_expiry(doc: &mut Value) {
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let ceiling = now
-        .checked_add_signed(chrono::Duration::seconds(MAX_LIFETIME_SECS))
+        .checked_add(jiff::SignedDuration::from_secs(MAX_LIFETIME_SECS))
         .unwrap_or(now);
     if doc
         .get("expiresAt")
@@ -230,10 +228,7 @@ fn clamp_expiry(doc: &mut Value) {
         .is_some_and(|e| e > ceiling)
     {
         if let Some(o) = doc.as_object_mut() {
-            o.insert(
-                "expiresAt".into(),
-                json!(ceiling.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
-            );
+            o.insert("expiresAt".into(), json!(crate::state::stamp(ceiling)));
         }
     }
 }
@@ -344,12 +339,12 @@ pub(crate) fn expires_at(params: &HashMap<String, String>) -> Result<String, Ngs
             .clamp(1, MAX_LIFETIME_SECS),
         None => DEFAULT_LIFETIME_SECS,
     };
-    // `secs` is clamped to MAX_LIFETIME_SECS above, far inside chrono's range.
-    let now = chrono::Utc::now();
-    Ok(now
-        .checked_add_signed(chrono::Duration::seconds(secs))
-        .unwrap_or(now)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    // `secs` is clamped to MAX_LIFETIME_SECS above, far inside jiff's range.
+    let now = jiff::Timestamp::now();
+    Ok(crate::state::stamp(
+        now.checked_add(jiff::SignedDuration::from_secs(secs))
+            .unwrap_or(now),
+    ))
 }
 
 /// 5.14.1.4 / 5.14.2.4 / 5.14.3.4: every /entityMaps/{id} method opens the
@@ -734,20 +729,20 @@ mod tests {
     /// for; an unparseable duration is BadRequestData.
     #[test]
     fn clause_5_14_4_expires_at_is_broker_bounded() {
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let at = |p: &[(&str, &str)]| {
             let s = expires_at(&params(p)).expect("expiry");
             dt(&s).expect("RFC 3339 expiry")
         };
         let default = at(&[]);
         assert!(
-            (default - now).num_seconds() >= DEFAULT_LIFETIME_SECS - 5
-                && (default - now).num_seconds() <= DEFAULT_LIFETIME_SECS + 5,
+            default.duration_since(now).as_secs() >= DEFAULT_LIFETIME_SECS - 5
+                && default.duration_since(now).as_secs() <= DEFAULT_LIFETIME_SECS + 5,
             "no suggestion → the default lifetime"
         );
         let capped = at(&[("entityMapLifetime", "P30D")]);
         assert!(
-            (capped - now).num_seconds() <= MAX_LIFETIME_SECS,
+            capped.duration_since(now).as_secs() <= MAX_LIFETIME_SECS,
             "a client cannot exceed the broker ceiling"
         );
         let zero = at(&[("entityMapLifetime", "PT0S")]);
@@ -803,8 +798,8 @@ mod tests {
         doc["entityMap"] = json!({"urn:a": ["@none"], "urn:b": ["@none"]});
         map_put(&st, &t, doc).await.expect("stored");
         let read_by_page = map_read(&st, &t, id).await.expect("map");
-        let later = (chrono::Utc::now() + chrono::Duration::seconds(3000))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let later =
+            crate::state::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_secs(3000));
         assert!(map_set_expiry(&st, &t, id, &later).await.expect("update"));
         assert_ne!(read_by_page["expiresAt"], json!(later));
         map_prune(&st, &t, id, &["urn:a".to_owned()])
@@ -842,8 +837,7 @@ mod tests {
         json!({
             "id": id,
             "type": "EntityMap",
-            "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(600))
-                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            "expiresAt": crate::state::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_secs(600)),
             "entityMap": {},
             "linkedMaps": {},
         })
@@ -979,7 +973,7 @@ mod tests {
     async fn clause_5_5_14_stored_expiry_never_exceeds_the_broker_ceiling() {
         let st = AppState::new("antares-em-clamp".into());
         let t = TenantId::default();
-        let ceiling = chrono::Utc::now() + chrono::Duration::seconds(MAX_LIFETIME_SECS);
+        let ceiling = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(MAX_LIFETIME_SECS);
         let far = "urn:ngsi-ld:entitymap:far";
         let mut doc = live_map(far);
         doc["expiresAt"] = json!("2099-01-01T00:00:00.000Z");
@@ -989,10 +983,10 @@ mod tests {
             .expect("a clamped map is still live");
         let at = dt(stored["expiresAt"].as_str().expect("expiresAt")).expect("RFC 3339 expiry");
         assert!(
-            at <= ceiling + chrono::Duration::seconds(5),
+            at <= ceiling + jiff::SignedDuration::from_secs(5),
             "a client cannot pin an EntityMap past the broker ceiling: {at}"
         );
-        assert!(at > chrono::Utc::now(), "the map stays usable: {at}");
+        assert!(at > jiff::Timestamp::now(), "the map stays usable: {at}");
         // an expiry inside the ceiling is stored verbatim, not rewritten
         let near = "urn:ngsi-ld:entitymap:near";
         let doc = live_map(near);

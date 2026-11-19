@@ -78,8 +78,8 @@ async fn create_entity(st: &AppState, id: &str) {
 async fn state_with_a_seeded_map() -> AppState {
     let st = AppState::new("me".into());
     create_entity(&st, "urn:ngsi-ld:Vehicle:one").await;
-    let expires = (chrono::Utc::now() + chrono::Duration::hours(1))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let expires =
+        antares_api::state::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(1));
     st.store
         .create(
             &TenantId::default(),

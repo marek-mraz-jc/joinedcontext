@@ -68,7 +68,7 @@ pub(super) fn endpoint_timeout_ms(ep: &serde_json::Map<String, Value>) -> u32 {
 /// subsequent notification to the same endpoint after failure. If requests
 /// are received before the cooldown period has expired, no notification is
 /// sent." — i.e. matches inside the window are DROPPED, not queued.
-pub(super) fn in_cooldown(sub: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
+pub(super) fn in_cooldown(sub: &Value, now: jiff::Timestamp) -> bool {
     let n = sub.get("notification");
     let Some(cd) = n
         .and_then(|n| n.get("endpoint"))
@@ -86,12 +86,10 @@ pub(super) fn in_cooldown(sub: &Value, now: chrono::DateTime<chrono::Utc>) -> bo
     let Some(lf) = n.and_then(|n| n.get("lastFailure")).and_then(Value::as_str) else {
         return false;
     };
-    let Ok(t) = chrono::DateTime::parse_from_rfc3339(lf) else {
+    let Some(t) = crate::state::instant(lf) else {
         return false;
     };
-    let elapsed = now
-        .signed_duration_since(t.with_timezone(&chrono::Utc))
-        .num_milliseconds();
+    let elapsed = now.duration_since(t).as_millis();
     (elapsed as f64) < cd
 }
 
@@ -148,7 +146,7 @@ pub(super) async fn deliver_as(
     // endpoint.cooldown — drop (never queue) while the window is open.
     // Before any bookkeeping: a suppressed notification was never sent, so
     // timesSent/lastNotification must not move.
-    if in_cooldown(sub, chrono::Utc::now()) {
+    if in_cooldown(sub, jiff::Timestamp::now()) {
         tracing::debug!("subscription {sub_id} in cooldown; notification suppressed (5.2.15)");
         return;
     }

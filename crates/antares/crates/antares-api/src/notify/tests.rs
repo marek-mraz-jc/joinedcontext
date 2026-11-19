@@ -82,7 +82,7 @@ mod interval_tests {
             "type": "Subscription",
             "createdAt": "2026-01-01T00:00:00Z",
         });
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = jiff::Timestamp::now().as_millisecond();
         for interval in [1e18, 1e30, f64::MAX] {
             let due = due_at_ms(&sub, interval);
             assert!(
@@ -92,9 +92,10 @@ mod interval_tests {
         }
         // and an interval that DOES fit still schedules exactly one interval
         // past the anchor, so the guard costs the ordinary case nothing
-        let anchor = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        let anchor = "2026-01-01T00:00:00Z"
+            .parse::<jiff::Timestamp>()
             .expect("anchor")
-            .timestamp_millis();
+            .as_millisecond();
         assert_eq!(due_at_ms(&sub, 30.0), anchor + 30_000);
     }
 
@@ -130,7 +131,7 @@ mod interval_tests {
     /// subscription: `next_sub`/`next_csub` are process-wide minima.
     #[test]
     fn the_sweep_clock_offset_survives_an_unschedulable_interval() {
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        let now_ms = jiff::Timestamp::now().as_millisecond();
         for interval in [1e18, f64::MAX] {
             let next = now_ms.saturating_add(interval_offset_ms(interval));
             assert!(next > now_ms, "sweep clock went backwards for {interval}");
@@ -209,9 +210,10 @@ mod endpoint_tests {
     /// failure and closes once the window elapses or a success lands.
     #[test]
     fn cooldown_gates_only_failed_subscriptions_within_the_window() {
-        let now = chrono::Utc::now();
-        let recent = (now - chrono::Duration::milliseconds(500)).to_rfc3339();
-        let old = (now - chrono::Duration::milliseconds(5_000)).to_rfc3339();
+        let now = jiff::Timestamp::now();
+        let recent =
+            jc_time::TimestampTz(now - jiff::SignedDuration::from_millis(500)).to_rfc3339();
+        let old = jc_time::TimestampTz(now - jiff::SignedDuration::from_millis(5_000)).to_rfc3339();
         let sub = |status: &str, last_failure: &str| {
             json!({
                 "notification": {
@@ -2282,7 +2284,7 @@ mod clause_5_8_6_periodic_sweep {
     /// A periodic subscription created `age_s` seconds ago with a one-second
     /// interval — due on the next sweep.
     fn periodic(id: &str, uri: &str, entities: Value, age_s: i64) -> Value {
-        let created = chrono::Utc::now() - chrono::Duration::seconds(age_s);
+        let created = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(age_s);
         json!({
             "id": id,
             "type": "Subscription",
@@ -2454,7 +2456,7 @@ mod clause_5_8_6_periodic_sweep {
             10,
         );
         install(&st, &tenant, &sub).await;
-        let armed = chrono::Utc::now().timestamp_millis() + 60_000;
+        let armed = jiff::Timestamp::now().as_millisecond() + 60_000;
         mirror.next_sub_sweep_ms.store(armed, Relaxed);
 
         interval_tick(&st).await;
@@ -2487,7 +2489,7 @@ mod clause_5_8_6_periodic_sweep {
             "with the clock cleared the due subscription fires"
         );
         assert!(
-            mirror.next_sub_sweep_ms.load(Relaxed) > chrono::Utc::now().timestamp_millis(),
+            mirror.next_sub_sweep_ms.load(Relaxed) > jiff::Timestamp::now().as_millisecond(),
             "after firing, the clock points at the next due instant"
         );
     }
@@ -2501,7 +2503,7 @@ mod clause_5_8_6_periodic_sweep {
     async fn a_written_csource_subscription_clears_the_csub_sweep_clock() {
         use std::sync::atomic::Ordering::Relaxed;
         let (_st, mirror, _tenant) = state_with_mirror("antares-csub-clock");
-        let armed = chrono::Utc::now().timestamp_millis() + 600_000;
+        let armed = jiff::Timestamp::now().as_millisecond() + 600_000;
         mirror.next_csub_sweep_ms.store(armed, Relaxed);
         assert_eq!(
             mirror.next_csub_sweep_ms.load(Relaxed),
@@ -2531,7 +2533,7 @@ mod clause_5_8_6_periodic_sweep {
         interval_tick(&st).await;
 
         let parked = mirror.next_csub_sweep_ms.load(Relaxed);
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = jiff::Timestamp::now().as_millisecond();
         assert!(
             parked > now + 1_000,
             "an idle sweep parked until {parked} ({} ms out) — the poll is still the fast path",

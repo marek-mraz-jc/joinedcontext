@@ -68,19 +68,19 @@ fn expires_at(meta: &Map<String, Value>) -> Result<String, NgsiError> {
             .clamp(1, MAX_LIFETIME_SECS),
         None => DEFAULT_LIFETIME_SECS,
     };
-    // `secs` is clamped to MAX_LIFETIME_SECS above, far inside chrono's range.
-    let now = chrono::Utc::now();
-    Ok(now
-        .checked_add_signed(chrono::Duration::seconds(secs))
-        .unwrap_or(now)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    // `secs` is clamped to MAX_LIFETIME_SECS above, far inside jiff's range.
+    let now = jiff::Timestamp::now();
+    Ok(crate::state::stamp(
+        now.checked_add(jiff::SignedDuration::from_secs(secs))
+            .unwrap_or(now),
+    ))
 }
 
 fn expired(meta: &Value) -> bool {
     meta.get("expiresAt")
         .and_then(Value::as_str)
-        .and_then(|e| chrono::DateTime::parse_from_rfc3339(e).ok())
-        .is_some_and(|e| e < chrono::Utc::now())
+        .and_then(crate::state::instant)
+        .is_some_and(|e| e < jiff::Timestamp::now())
 }
 
 /// The internal tenant holding the synth-tenant -> (owner, snapshot id)
@@ -2095,13 +2095,11 @@ mod clause_5_16 {
     async fn clause_5_16_1_4_lifetime_is_clamped_and_expiry_removes_the_snapshot() {
         let mut o = Map::new();
         o.insert("snapshotLifetime".into(), json!("P10Y"));
-        let exp = chrono::DateTime::parse_from_rfc3339(&expires_at(&o).expect("expiresAt"))
-            .expect("rfc3339")
-            .with_timezone(&chrono::Utc);
-        let limit = chrono::Utc::now() + chrono::Duration::seconds(MAX_LIFETIME_SECS);
+        let exp = crate::state::instant(&expires_at(&o).expect("expiresAt")).expect("rfc3339");
+        let limit = jiff::Timestamp::now() + jiff::SignedDuration::from_secs(MAX_LIFETIME_SECS);
         assert!(exp <= limit, "the configured limit was not applied: {exp}");
         assert!(
-            exp > chrono::Utc::now() + chrono::Duration::days(6),
+            exp > jiff::Timestamp::now() + jiff::SignedDuration::from_hours(6 * 24),
             "the suggested lifetime was ignored: {exp}"
         );
         assert!(validate(

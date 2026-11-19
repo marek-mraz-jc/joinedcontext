@@ -311,11 +311,8 @@ async fn a_held_attribute_fills_no_period_past_now_and_refuses_too_many() {
     let (s, doc) = req(&st, "GET", &aggregated("P1D"), None).await;
     assert_eq!(s, 200, "{doc}");
     let days = doc["bikes"]["avg"].as_array().map_or(0, Vec::len);
-    let first = chrono::DateTime::parse_from_rfc3339("2026-10-18T07:00:00Z").expect("instant");
-    let since = chrono::Utc::now()
-        .fixed_offset()
-        .signed_duration_since(first)
-        .num_days();
+    let first: jiff::Timestamp = "2026-10-18T07:00:00Z".parse().expect("instant");
+    let since = jiff::Timestamp::now().duration_since(first).as_hours() / 24;
     assert!(
         days >= 1 && days <= usize::try_from(since + 2).unwrap_or(usize::MAX),
         "{days}: {doc}"

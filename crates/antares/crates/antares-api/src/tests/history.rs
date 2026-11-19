@@ -521,14 +521,9 @@ fn late_seconds_record_one_row_per_heartbeat_like_live_ones() {
         min_distance: None,
     };
     recording(&st, tn, ty[0], &[(LEVEL, mode)]);
-    let base = chrono::DateTime::parse_from_rfc3339("2026-10-21T22:00:00Z")
-        .expect("instant")
-        .to_utc();
+    let base: jiff::Timestamp = "2026-10-21T22:00:00Z".parse().expect("instant");
     let row = |millis: i64| {
-        let at = base
-            .checked_add_signed(chrono::Duration::milliseconds(millis))
-            .expect("instant");
-        let at = at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let at = crate::state::stamp(base + jiff::SignedDuration::from_millis(millis));
         admits_change(&st, &t, &ty, "urn:v", LEVEL, None, &level(5.0, &at))
     };
     let live = (0..=120)
