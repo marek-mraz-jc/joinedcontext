@@ -4,7 +4,7 @@
 //! JSON Feed `content_text` alone. No markup of an Entity reaches a reader.
 
 use crate::output::Entry;
-use chrono::{DateTime, SecondsFormat, Utc};
+use jc_time::{SecondsFormat, TimestampTz};
 use serde_json::{json, Map, Value};
 use std::fmt::Write as _;
 
@@ -54,7 +54,7 @@ pub struct Head {
     /// Its language.
     pub lang: Option<String>,
     /// The newest entry's `updated`.
-    pub updated: DateTime<Utc>,
+    pub updated: TimestampTz,
     /// This page's absolute URL.
     pub this: String,
     /// The first page's.
@@ -98,12 +98,13 @@ fn entry_id(entry: &Entry) -> &str {
     &entry.entity
 }
 
-fn rfc3339(t: DateTime<Utc>) -> String {
+fn rfc3339(t: TimestampTz) -> String {
     t.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn rfc822(t: DateTime<Utc>) -> String {
-    t.format("%a, %d %b %Y %H:%M:%S GMT").to_string()
+/// RFC 822 in GMT, as RSS and `Last-Modified` write it: `Fri, 23 Oct 2026 08:00:00 GMT`.
+pub(crate) fn rfc822(t: TimestampTz) -> String {
+    t.0.strftime("%a, %d %b %Y %H:%M:%S GMT").to_string()
 }
 
 /// The page in `format`.
@@ -308,6 +309,47 @@ mod tests {
         );
         assert_eq!(html_text("<script>"), "&amp;lt;script&amp;gt;");
     }
+
+    /// T-7247: the Atom/JSON Feed stamp (RFC 3339, UTC, `Z`, whole seconds) and the RSS one
+    /// (RFC 822 in GMT) of what `instant` reads, as the chrono build wrote them.
+    #[test]
+    fn stamps_keep_the_chrono_wire_format() {
+        let got: Vec<String> = [
+            "2026-10-23T08:00:00Z",
+            "2026-10-23T08:00:00.987654321+02:00",
+            "2026-03-29T01:30:00-01:00",
+            "2026-10-25t02:30:00z",
+            "2026-10-25 02:30:00Z",
+            "2026-10-23",
+            "0999-01-02",
+            "2026-02-29",
+            "2026-10-23T08:00",
+            "2026-10-23T08:00:00+0200",
+            "23 Oct 2026",
+        ]
+        .iter()
+        .map(|t| {
+            let shown =
+                crate::output::instant(t).map(|at| format!("{} | {}", rfc3339(at), rfc822(at)));
+            format!("{t} => {}", shown.unwrap_or_default())
+        })
+        .collect();
+        assert_eq!(got.join("\n").trim(), STAMPS.trim(), "\n{}", got.join("\n"));
+    }
+
+    const STAMPS: &str = r"
+2026-10-23T08:00:00Z => 2026-10-23T08:00:00Z | Fri, 23 Oct 2026 08:00:00 GMT
+2026-10-23T08:00:00.987654321+02:00 => 2026-10-23T06:00:00Z | Fri, 23 Oct 2026 06:00:00 GMT
+2026-03-29T01:30:00-01:00 => 2026-03-29T02:30:00Z | Sun, 29 Mar 2026 02:30:00 GMT
+2026-10-25t02:30:00z => 2026-10-25T02:30:00Z | Sun, 25 Oct 2026 02:30:00 GMT
+2026-10-25 02:30:00Z => 2026-10-25T02:30:00Z | Sun, 25 Oct 2026 02:30:00 GMT
+2026-10-23 => 2026-10-23T00:00:00Z | Fri, 23 Oct 2026 00:00:00 GMT
+0999-01-02 => 0999-01-02T00:00:00Z | Wed, 02 Jan 0999 00:00:00 GMT
+2026-02-29 => 
+2026-10-23T08:00 => 
+2026-10-23T08:00:00+0200 => 
+23 Oct 2026 => 
+";
 
     #[test]
     fn a_format_is_one_of_three_files() {
