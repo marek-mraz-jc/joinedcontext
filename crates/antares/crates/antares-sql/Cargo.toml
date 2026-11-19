@@ -18,7 +18,8 @@ antares-store = { workspace = true }
 antares-ql = { workspace = true }
 # T-6066: a count under idPatterns matches ids with the rule's own regex
 regex = { workspace = true }
-chrono = { workspace = true }
+jc-time = { workspace = true, features = ["sqlx"] }
+jiff = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 redb = { workspace = true }
 sqlx = { workspace = true, optional = true }

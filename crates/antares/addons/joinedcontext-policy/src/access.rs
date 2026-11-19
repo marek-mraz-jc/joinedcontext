@@ -9,7 +9,7 @@ use crate::document::{context, Policy, Selector, Table};
 use crate::names::{self, OPERATIONS};
 use crate::subject::{Caller, Platform};
 use antares_api::policy::{Rule, FILTERABLE};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,7 +29,7 @@ impl<'t> Grants<'t> {
     /// What `caller` holds in `table` at `now`. The cluster's own caller and
     /// a Tenant with no document hold nothing.
     #[must_use]
-    pub fn of(table: Option<&'t Table>, caller: &'t Caller, now: DateTime<Utc>) -> Self {
+    pub fn of(table: Option<&'t Table>, caller: &'t Caller, now: Timestamp) -> Self {
         let (prohibitions, permissions) = match (table, caller) {
             (Some(table), Caller::Platform(p)) => held(table, p, now).partition(|p| p.prohibit),
             _ => (Vec::new(), Vec::new()),
@@ -532,7 +532,7 @@ mod tests {
         let doc = authzen(
             &public,
             "air",
-            &Grants::of(Some(&t), &public, Utc::now()),
+            &Grants::of(Some(&t), &public, Timestamp::now()),
             &every,
         );
         assert_eq!(
@@ -580,7 +580,7 @@ mod tests {
     fn the_view_takes_off_the_actions_it_does_not_serve() -> Result<(), String> {
         let t = table()?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         let doc = authzen(&public, "air", &grants, &|r| r == "query_entities");
         assert_eq!(at(&doc, "/permissions/0/actions"), json!(["queryEntity"]));
         assert_eq!(
@@ -612,7 +612,7 @@ mod tests {
             (vec![], json!({"type": "internal"})),
         ] {
             let c = caller(&headers);
-            let doc = authzen(&c, "v", &Grants::of(Some(&t), &c, Utc::now()), &every);
+            let doc = authzen(&c, "v", &Grants::of(Some(&t), &c, Timestamp::now()), &every);
             assert_eq!(at(&doc, "/subject"), want);
             assert_eq!(at(&doc, "/permissions"), json!([]), "{headers:?}");
         }
@@ -620,7 +620,7 @@ mod tests {
         let doc = authzen(
             &steward,
             "v",
-            &Grants::of(Some(&t), &steward, Utc::now()),
+            &Grants::of(Some(&t), &steward, Timestamp::now()),
             &every,
         );
         assert_eq!(
@@ -630,7 +630,7 @@ mod tests {
         let none = authzen(
             &steward,
             "v",
-            &Grants::of(None, &steward, Utc::now()),
+            &Grants::of(None, &steward, Timestamp::now()),
             &every,
         );
         assert_eq!(
@@ -651,7 +651,7 @@ mod tests {
         let doc = authzen(
             &public,
             "v",
-            &Grants::of(Some(&t), &public, Utc::now()),
+            &Grants::of(Some(&t), &public, Timestamp::now()),
             &every,
         );
         assert_eq!(at(&doc, "/permissions/0/resource"), json!({"type": "*"}));
@@ -664,7 +664,7 @@ mod tests {
     {
         let t = table()?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         let yes = check(
             &grants,
             "queryEntity",
@@ -705,7 +705,7 @@ mod tests {
         });
         assert_eq!(not_served, json!({"decision": false}));
         let internal = caller(&[]);
-        let none = Grants::of(Some(&t), &internal, Utc::now());
+        let none = Grants::of(Some(&t), &internal, Timestamp::now());
         assert_eq!(
             at(
                 &check(&none, "queryEntity", None, None, &every),
@@ -720,7 +720,7 @@ mod tests {
     fn explain_names_the_deciding_policy_and_agrees_with_the_check() -> Result<(), String> {
         let t = table()?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         assert_eq!(
             explain(
                 &grants,
@@ -763,7 +763,7 @@ mod tests {
         // one verdict: the two answers never disagree on the decision
         let steward = caller(&[("x-jc-subject", "eva"), ("x-jc-roles", "steward")]);
         for who in [&public, &steward, &caller(&[])] {
-            let held = Grants::of(Some(&t), who, Utc::now());
+            let held = Grants::of(Some(&t), who, Timestamp::now());
             for (action, _) in OPERATIONS {
                 for ty in [None, Some("AirQualityObserved"), Some("InternalIncident")] {
                     assert_eq!(
@@ -801,7 +801,7 @@ mod tests {
              "operations": ["5.7.1"], "information": [{"entities": [{"type": "Bus"}]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         assert_eq!(may(&grants, "retrieveEntity", "speed"), true);
         assert_eq!(may(&grants, "updateAttrs", "speed"), true);
         // an IRI names the same Attribute
@@ -854,7 +854,7 @@ mod tests {
              "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         // T-5842: the prohibition names `speed` and takes back only `speed`, as the real read
         assert_eq!(may(&grants, "retrieveEntity", "speed"), false);
         assert_eq!(may(&grants, "retrieveEntity", "colour"), true);
@@ -884,7 +884,8 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = crate::decide::decide(Some(&t), &public, &op, Utc::now()) else {
+        let Decision::Filter(f) = crate::decide::decide(Some(&t), &public, &op, Timestamp::now())
+        else {
             return Err("a read narrowed by an Attribute".into());
         };
         assert_eq!(
@@ -906,9 +907,13 @@ mod tests {
              "information": [{"entities": [{"type": "Car"}], "propertyNames": ["speed"]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
-        let decided =
-            crate::decide::decide(Some(&t), &public, &Operation::new("5.7.2"), Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
+        let decided = crate::decide::decide(
+            Some(&t),
+            &public,
+            &Operation::new("5.7.2"),
+            Timestamp::now(),
+        );
         assert!(!matches!(decided, Decision::Deny(_)), "{decided:?}");
         assert_eq!(
             at(
@@ -935,7 +940,7 @@ mod tests {
              "operations": ["5.6.5"], "information": [{"entities": [{"type": "Car"}]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         let table = attributes_of(
             &grants,
             "Car",
@@ -969,7 +974,7 @@ mod tests {
         let other = attributes_of(&without, "Bus", &["speed"], &every);
         assert_eq!(at(&other, "/attributes/0/reason"), "no_grant");
         // deny by default: nothing held is false everywhere
-        let none = Grants::of(None, &public, Utc::now());
+        let none = Grants::of(None, &public, Timestamp::now());
         assert_eq!(
             attributes_of(&none, "Car", &["speed"], &every),
             json!({"type": "Car", "attributes": [
@@ -1006,7 +1011,7 @@ mod tests {
              "information": [{"entities": [{"type": "Air"}], "propertyNames": ["no2"]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         let table = attributes_of(&grants, "Air", &["pm10", "name", "no2"], &every);
         let history: Vec<Value> = (0..3)
             .map(|i| at(&table, &format!("/attributes/{i}/history")))
@@ -1028,7 +1033,7 @@ mod tests {
              "operations": ["5.7.1", "5.6.4"], "information": [{"entities": [{"type": "Car"}]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         assert_eq!(may(&grants, "updateAttrs", "speed"), true);
         // GW29: the whole-type grant still admits no write of `owner`
         assert_eq!(may(&grants, "updateAttrs", "owner"), false);
@@ -1046,7 +1051,7 @@ mod tests {
              "information": [{"entities": [{"type": "Car"}]}]}
         ]))?;
         let public = caller(&[("x-jc-roles", "")]);
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         // as `decide::admits`: the window is about reading history
         assert_eq!(
             at(
@@ -1077,7 +1082,7 @@ mod tests {
             ids: &ids,
             ..Operation::new(clause)
         };
-        match crate::decide::decide(Some(t), who, &op, Utc::now()) {
+        match crate::decide::decide(Some(t), who, &op, Timestamp::now()) {
             Decision::Allow => true,
             Decision::Deny(_) | Decision::AllowIf(_) => false,
             Decision::Filter(f) => {
@@ -1129,7 +1134,7 @@ mod tests {
                         }
                         let t = compiled(&Value::Array(policies))?;
                         let public = caller(&[("x-jc-roles", "")]);
-                        let grants = Grants::of(Some(&t), &public, Utc::now());
+                        let grants = Grants::of(Some(&t), &public, Timestamp::now());
                         for (_, action) in ATTRIBUTE_ACTIONS {
                             for attribute in ["a", "b", "c"] {
                                 assert_eq!(

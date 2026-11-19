@@ -12,6 +12,9 @@
 //! `(tenant_id, entity_id, attr_id, observed_at, instance_id)` index (0017).
 
 use antares_model::TenantId;
+use jc_time::TimestampTz;
+use jiff::tz::Offset;
+use jiff::Timestamp;
 use serde_json::Value;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
@@ -32,7 +35,7 @@ struct Keys {
     /// pod that started before a rolling deploy's migration sees it unset, so
     /// an unset value is read again on every write until it is set
     /// (F-ANT1-013). A test store pins it with `PgTemporalStore::with_cutover`.
-    cutover: tokio::sync::OnceCell<Option<chrono::DateTime<chrono::Utc>>>,
+    cutover: tokio::sync::OnceCell<Option<Timestamp>>,
     /// (Tenant, IRI) pairs a committed `iri_ids` row holds. A write sends the
     /// dictionary insert only for an IRI missing here, so a warm process
     /// sends no extra statement. An IRI this process inserted is added only
@@ -97,19 +100,14 @@ impl Keys {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    async fn cutover(
-        &self,
-        tx: &mut sqlx::PgConnection,
-    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, sqlx::Error> {
+    async fn cutover(&self, tx: &mut sqlx::PgConnection) -> Result<Option<Timestamp>, sqlx::Error> {
         if let Some(at) = self.cutover.get() {
             return Ok(*at);
         }
-        let at = sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
-            "SELECT at FROM history_cutover",
-        )
-        .fetch_optional(&mut *tx)
-        .await
-        .map(Option::flatten)?;
+        let at = sqlx::query_scalar::<_, Option<TimestampTz>>("SELECT at FROM history_cutover")
+            .fetch_optional(&mut *tx)
+            .await
+            .map(|at| at.flatten().map(Timestamp::from))?;
         if at.is_some() {
             // a racing writer may have set it first: both read the same row
             let _ = self.cutover.set(at);
@@ -455,27 +453,40 @@ const NEWEST_REPEATS: &str = "COALESCE((
 /// that matches a row by its `observed_at` (T-4906). The equality reaches
 /// the partition key only through a join, so a generic plan reads every
 /// weekly partition of the Entity; a bound parameter prunes them to the weeks
-/// the batch writes before the statement runs. A stamp chrono cannot read
-/// leaves the range open, as the cast in the statement judges it.
+/// the batch writes before the statement runs. A stamp RFC 3339 does not
+/// read leaves the range open, as the cast in the statement judges it. Each
+/// end keeps the offset it was written in.
 fn observed_range(rows: &[Value]) -> (String, String) {
-    let mut range: Option<(
-        chrono::DateTime<chrono::FixedOffset>,
-        chrono::DateTime<chrono::FixedOffset>,
-    )> = None;
+    let mut range: Option<((Timestamp, Offset), (Timestamp, Offset))> = None;
     for r in rows {
         let Some(t) = r["observed_at"]
             .as_str()
-            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .and_then(jc_time::parse_rfc3339_offset)
         else {
             return ("-infinity".into(), "infinity".into());
         };
         range = Some(match range {
             None => (t, t),
-            Some((lo, hi)) => (lo.min(t), hi.max(t)),
+            // the first of equal instants stays, as `Ord::min` and `max` kept it
+            Some((lo, hi)) => (
+                if t.0 < lo.0 { t } else { lo },
+                if t.0 > hi.0 { t } else { hi },
+            ),
         });
     }
+    let written = |(at, offset): (Timestamp, Offset)| {
+        let digits = match at.subsec_nanosecond() {
+            0 => 0,
+            n if n % 1_000_000 == 0 => 3,
+            n if n % 1_000 == 0 => 6,
+            _ => 9,
+        };
+        jiff::fmt::temporal::DateTimePrinter::new()
+            .precision(Some(digits))
+            .timestamp_with_offset_to_string(&at, offset)
+    };
     match range {
-        Some((lo, hi)) => (lo.to_rfc3339(), hi.to_rfc3339()),
+        Some((lo, hi)) => (written(lo), written(hi)),
         None => ("-infinity".into(), "infinity".into()),
     }
 }
@@ -574,8 +585,9 @@ async fn insert_rows(
         .iter()
         .filter(|r| !utc_observed(&r["data"]))
         .filter_map(|r| r["observed_at"].as_str())
-        .filter_map(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        .max();
+        .filter_map(jc_time::parse_rfc3339)
+        .max()
+        .map(TimestampTz);
     let (keyed, text): (Vec<Value>, Vec<Value>) = if short {
         (rows, Vec::new())
     } else {
@@ -639,20 +651,19 @@ fn utc_observed(data: &Value) -> bool {
         // spelling of the separator orders with the rest
         .filter(|t| t.ends_with('Z') && t.as_bytes().get(10) == Some(&b'T'))
         .is_some_and(|t| {
-            chrono::DateTime::parse_from_rfc3339(&antares_store::filter::canonical_datetime(t))
-                .is_ok()
+            jc_time::parse_rfc3339(&antares_store::filter::canonical_datetime(t)).is_some()
         })
 }
 
-/// Whether row `r` is observed at or after `cutover`. A stamp chrono cannot
-/// read stays in the text shape, where its cast judges it as before.
-fn is_keyed(r: &Value, cutover: Option<chrono::DateTime<chrono::Utc>>) -> bool {
+/// Whether row `r` is observed at or after `cutover`. A stamp RFC 3339 does
+/// not read stays in the text shape, where its cast judges it as before.
+fn is_keyed(r: &Value, cutover: Option<Timestamp>) -> bool {
     let Some(cut) = cutover else {
         return false;
     };
     r["observed_at"]
         .as_str()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .and_then(jc_time::parse_rfc3339)
         .is_some_and(|t| t >= cut)
 }
 
@@ -1324,7 +1335,7 @@ impl PgTemporalStore {
     /// A store that routes by `cutover` instead of `history_cutover`, so a
     /// test sets its own cut-over without moving every other test's rows.
     #[cfg(any(test, feature = "test-kit"))]
-    pub fn with_cutover(pool: PgPool, cutover: Option<chrono::DateTime<chrono::Utc>>) -> Self {
+    pub fn with_cutover(pool: PgPool, cutover: Option<Timestamp>) -> Self {
         let mut s = Self::new(pool);
         s.keys.cutover = tokio::sync::OnceCell::new_with(Some(cutover));
         s
@@ -2228,6 +2239,74 @@ mod tests {
     use super::*;
     use crate::compile::temporal::InstanceRange;
 
+    /// T-7249: the stamp readings of the history writer, pinned from the chrono build:
+    /// the partition range it binds, which rows go to the keyed shape, which `observedAt`
+    /// counts as UTC-ordered.
+    #[test]
+    fn stamps_read_as_the_chrono_build_did() {
+        use serde_json::json;
+        let row = |t: &str| json!({"observed_at": t});
+        let mut got = Vec::new();
+        for set in [
+            vec![
+                "2026-10-25T01:30:00Z",
+                "2026-10-25T03:30:00.5+02:00",
+                "2026-10-24T23:00:00.123Z",
+            ],
+            vec!["2026-10-25T01:30:00,5Z"],
+            vec!["2026-10-25t01:30:00z", "2026-10-25 01:30:00Z"],
+        ] {
+            let rows: Vec<Value> = set.iter().map(|t| row(t)).collect();
+            got.push(format!("{set:?} => {:?}", observed_range(&rows)));
+        }
+        let cut = "2026-10-25T01:30:00.5Z".parse().ok();
+        for t in [
+            "2026-10-25T01:30:00.5Z",
+            "2026-10-25T01:30:00.4Z",
+            "2026-10-25T03:30:00.6+02:00",
+            "2026-10-25T01:30Z",
+        ] {
+            got.push(format!(
+                "{t} => {} {}",
+                is_keyed(&row(t), cut),
+                is_keyed(&row(t), None)
+            ));
+        }
+        for t in [
+            "2026-10-25T01:30:00Z",
+            "2026-10-25T01:30:00,5Z",
+            "2026-10-25T03:30:00+02:00",
+            "2026-10-25 01:30:00Z",
+            "2026-10-25T01:30Z",
+        ] {
+            got.push(format!(
+                "{t} => {}",
+                utc_observed(&json!({"observedAt": t}))
+            ));
+        }
+        assert_eq!(
+            got.join("\n").trim(),
+            STAMP_READS.trim(),
+            "\n{}",
+            got.join("\n")
+        );
+    }
+
+    const STAMP_READS: &str = r#"
+["2026-10-25T01:30:00Z", "2026-10-25T03:30:00.5+02:00", "2026-10-24T23:00:00.123Z"] => ("2026-10-24T23:00:00.123+00:00", "2026-10-25T03:30:00.500+02:00")
+["2026-10-25T01:30:00,5Z"] => ("-infinity", "infinity")
+["2026-10-25t01:30:00z", "2026-10-25 01:30:00Z"] => ("2026-10-25T01:30:00+00:00", "2026-10-25T01:30:00+00:00")
+2026-10-25T01:30:00.5Z => true false
+2026-10-25T01:30:00.4Z => false false
+2026-10-25T03:30:00.6+02:00 => true false
+2026-10-25T01:30Z => false false
+2026-10-25T01:30:00Z => true
+2026-10-25T01:30:00,5Z => true
+2026-10-25T03:30:00+02:00 => false
+2026-10-25 01:30:00Z => false
+2026-10-25T01:30Z => false
+"#;
+
     fn pair(n: usize) -> (String, String) {
         ("t".to_owned(), format!("urn:ngsi-ld:E:{n}"))
     }
@@ -2284,9 +2363,7 @@ mod tests {
     /// unreadable stamp and no cut-over stay in the text shape.
     #[test]
     fn is_keyed_routes_by_observed_at_against_the_cut_over() {
-        let cut = chrono::DateTime::parse_from_rfc3339("2026-10-26T00:00:00Z")
-            .ok()
-            .map(|t| t.to_utc());
+        let cut = jc_time::parse_rfc3339("2026-10-26T00:00:00Z");
         let row = |at: &str| serde_json::json!({"observed_at": at});
         let got = [
             is_keyed(&row("2026-10-26T00:00:00Z"), cut),

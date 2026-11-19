@@ -18,18 +18,13 @@ fn shows(names: &Names, attribute: &str) -> bool {
 }
 
 /// Monday 00:00 UTC of the week holding `now`, and the Monday after, as `YYYY-MM-DDT00:00:00Z`.
-fn this_week(now: chrono::DateTime<chrono::Utc>) -> (String, String) {
-    use chrono::Datelike as _;
-    let today = now.date_naive();
-    let monday = today
-        .checked_sub_days(chrono::Days::new(u64::from(
-            today.weekday().num_days_from_monday(),
-        )))
-        .unwrap_or(today);
-    let next = monday
-        .checked_add_days(chrono::Days::new(7))
-        .unwrap_or(monday);
-    let stamp = |day: chrono::NaiveDate| format!("{}T00:00:00Z", day.format("%Y-%m-%d"));
+fn this_week(now: jiff::Timestamp) -> (String, String) {
+    let today = jiff::tz::Offset::UTC.to_datetime(now).date();
+    let days = |n: i64| jiff::Span::new().try_days(n).unwrap_or_default();
+    let back = i64::from(today.weekday().to_monday_zero_offset());
+    let monday = today.checked_sub(days(back)).unwrap_or(today);
+    let next = monday.checked_add(days(7)).unwrap_or(monday);
+    let stamp = |day: jiff::civil::Date| format!("{}T00:00:00Z", day.strftime("%Y-%m-%d"));
     (stamp(monday), stamp(next))
 }
 
@@ -94,7 +89,7 @@ fn line(guide: &Guide, names: &Names, week: &(String, String)) -> Option<String>
 
 /// The guide of every type the view names, one line each, or `None` when it names none the
 /// table knows; the example weeks are the one holding `now`.
-pub(crate) fn text(names: &Names, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+pub(crate) fn text(names: &Names, now: jiff::Timestamp) -> Option<String> {
     if names.every {
         // ponytail: a `*` view names no type; its schema-less guide is the primer's q grammar
         return None;
@@ -149,7 +144,7 @@ pub(crate) fn lean(args: &mut Args, names: &Names) {
 pub(crate) fn describe(
     names: &Names,
     entity_type: &str,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
 ) -> Option<(String, serde_json::Value)> {
     let guide = GUIDES.iter().find(|g| g.entity_type == entity_type)?;
     let text = line(guide, names, &this_week(now))?;
@@ -168,15 +163,39 @@ pub(crate) fn describe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone as _;
 
     /// Saturday 2026-10-17 12:00 UTC.
-    fn saturday() -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc
-            .with_ymd_and_hms(2026, 10, 17, 12, 0, 0)
-            .single()
-            .unwrap_or_default()
+    fn saturday() -> jiff::Timestamp {
+        "2026-10-17T12:00:00Z".parse().unwrap_or_default()
     }
+
+    /// T-7249: the week window as the chrono build wrote it, across a year end and a
+    /// Monday.
+    #[test]
+    fn this_week_keeps_the_chrono_wire_format() {
+        let got: Vec<String> = [
+            "2026-10-17T12:00:00Z",
+            "2026-10-19T00:00:00Z",
+            "2026-10-18T23:59:59.999Z",
+            "2027-01-01T00:00:00+02:00",
+            "2024-02-29T10:00:00Z",
+        ]
+        .iter()
+        .map(|t| {
+            let (a, b) = this_week(t.parse().unwrap_or_default());
+            format!("{t} => {a} {b}")
+        })
+        .collect();
+        assert_eq!(got.join("\n"), WEEKS.trim(), "\n{}", got.join("\n"));
+    }
+
+    const WEEKS: &str = r"
+2026-10-17T12:00:00Z => 2026-10-12T00:00:00Z 2026-10-19T00:00:00Z
+2026-10-19T00:00:00Z => 2026-10-19T00:00:00Z 2026-10-26T00:00:00Z
+2026-10-18T23:59:59.999Z => 2026-10-12T00:00:00Z 2026-10-19T00:00:00Z
+2027-01-01T00:00:00+02:00 => 2026-12-28T00:00:00Z 2027-01-04T00:00:00Z
+2024-02-29T10:00:00Z => 2024-02-26T00:00:00Z 2024-03-04T00:00:00Z
+";
 
     fn names(types: &[&str], attributes: &[&str]) -> Names {
         Names::new(

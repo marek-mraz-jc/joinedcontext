@@ -111,8 +111,7 @@ pub(crate) fn instance_instant(inst: &Value) -> Option<&str> {
 /// `a` before `b`, compared as instants (4.6.3 allows a comma fraction), by
 /// bytes when either does not parse.
 pub(crate) fn earlier(a: &str, b: &str) -> bool {
-    let instant =
-        |s: &str| chrono::DateTime::parse_from_rfc3339(&filter::canonical_datetime(s)).ok();
+    let instant = |s: &str| jc_time::parse_rfc3339(&filter::canonical_datetime(s));
     match (instant(a), instant(b)) {
         (Some(x), Some(y)) => x < y,
         _ => a < b,
@@ -122,7 +121,7 @@ pub(crate) fn earlier(a: &str, b: &str) -> bool {
 /// The 4.22 "now" the write paths judge `expiresAt` against — the same UTC-Z
 /// millisecond form the read boundary uses.
 fn now_stamp() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
 }
 
 const ALL_KINDS: [Kind; 10] = [

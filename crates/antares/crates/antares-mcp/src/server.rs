@@ -598,7 +598,8 @@ impl Server {
             }
             answer = CallToolResult::structured(json!({}));
         }
-        let Some((text, guide)) = crate::guide::describe(&names, &entity_type, chrono::Utc::now())
+        let Some((text, guide)) =
+            crate::guide::describe(&names, &entity_type, jiff::Timestamp::now())
         else {
             let none = format!("No query guide for {entity_type}; its Attributes follow.");
             answer.content.insert(0, ContentBlock::text(none));
@@ -637,7 +638,7 @@ impl Server {
         // after the digest: an `after` window's span moves with the clock
         let mut averaged = args.clone();
         let mut aggregated =
-            default_aggregation(tool, &mut averaged, chrono::Utc::now()).map(str::to_owned);
+            default_aggregation(tool, &mut averaged, jiff::Timestamp::now()).map(str::to_owned);
         let offset = match cursor {
             Some(Checked::One(c)) => match cursor::decode(&c, tool.name, digest) {
                 Ok(offset) => offset,
@@ -858,7 +859,7 @@ fn limits_note(tool: &str) -> Option<String> {
 fn default_aggregation(
     tool: &ToolDef,
     args: &mut schema::Args,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
 ) -> Option<&'static str> {
     let temporal = matches!(
         tool.op,
@@ -872,21 +873,20 @@ fn default_aggregation(
         return None;
     }
     let instant = |key: &str| match args.get(key) {
-        Some(Checked::One(t)) => chrono::DateTime::parse_from_rfc3339(t)
-            .ok()
-            .map(|t| t.to_utc()),
+        Some(Checked::One(t)) => jc_time::parse_rfc3339(t),
         _ => None,
     };
     let span = match args.get("timerel") {
         Some(Checked::One(rel)) if rel == "between" => {
-            instant("endTimeAt")?.signed_duration_since(instant("timeAt")?)
+            instant("endTimeAt")?.duration_since(instant("timeAt")?)
         }
-        Some(Checked::One(rel)) if rel == "after" => now.signed_duration_since(instant("timeAt")?),
+        Some(Checked::One(rel)) if rel == "after" => now.duration_since(instant("timeAt")?),
         _ => return None,
     };
-    let (period, note) = if span > chrono::Duration::days(31) {
+    // 31 days, 1 day
+    let (period, note) = if span > jiff::SignedDuration::from_hours(744) {
         ("P1D", "daily averages over this window of more than 31 days; ask format temporalValues for raw values")
-    } else if span > chrono::Duration::days(1) {
+    } else if span > jiff::SignedDuration::from_hours(24) {
         ("PT1H", "hourly averages over this window of more than a day; ask format temporalValues for raw values")
     } else {
         return None;
@@ -974,7 +974,7 @@ fn more(args: &schema::Args, range: Option<&str>, linked: bool) -> Option<Value>
             span.match_indices('-').map(|(i, _)| i).find_map(|i| {
                 let (a, b) = span.split_at(i);
                 let b = b.strip_prefix('-')?;
-                let ok = |t: &str| chrono::DateTime::parse_from_rfc3339(t).is_ok();
+                let ok = |t: &str| jc_time::parse_rfc3339(t).is_some();
                 (ok(a) && ok(b)).then(|| (a.to_owned(), b.to_owned()))
             })
         })?;
@@ -1225,7 +1225,7 @@ impl ServerHandler for Server {
     ) -> Result<ListToolsResult, ErrorData> {
         let names = self.names();
         // The read tools carry how to ask each type the view names (T-4486).
-        let guide = crate::guide::text(&names, chrono::Utc::now());
+        let guide = crate::guide::text(&names, jiff::Timestamp::now());
         let offered = self.offered().await;
         // `describe_type` is `get_type` answered with its guide: offered with it
         let describe = offered
@@ -1561,9 +1561,7 @@ mod tests {
     fn a_long_history_window_answers_aggregates_unless_raw_is_asked() {
         let one = |v: &str| Checked::One(v.to_owned());
         let retrieve = tools::named("retrieve_temporal").unwrap_or(&TOOLS[0]);
-        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T06:00:00Z")
-            .map(|t| t.to_utc())
-            .unwrap_or_default();
+        let now = jc_time::parse_rfc3339("2026-10-20T06:00:00Z").unwrap_or_default();
         let window =
             |rel: &str, at: &str| schema::Args::from([("timerel", one(rel)), ("timeAt", one(at))]);
         let mut week = window("after", "2026-10-13T06:00:00Z");

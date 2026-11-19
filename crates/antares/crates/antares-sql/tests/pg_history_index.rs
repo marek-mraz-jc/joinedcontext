@@ -105,8 +105,8 @@ async fn a_migrated_history_moves_onto_one_index_and_reads_the_same() {
     pg::ensure_tenant(&pool, &t).await.expect("tenant row");
     let id = "urn:ngsi-ld:Vehicle:oneindex";
     let speed = "https://uri.etsi.org/ngsi-ld/default-context/speed";
-    let now = chrono::Utc::now();
-    let at = |mins: i64| (now - chrono::Duration::minutes(mins)).to_rfc3339();
+    let now = jc_time::TimestampTz::now();
+    let at = |mins: i64| (now - jiff::SignedDuration::from_mins(mins)).to_rfc3339();
     let doc = json!({
         "id": id, "type": "Vehicle", "createdAt": at(0), "modifiedAt": at(0),
         speed: [

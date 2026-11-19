@@ -160,7 +160,7 @@ fn document(
     let grants = Grants::of(
         table.as_deref().map(|t| t.through(Some(id))),
         &who,
-        chrono::Utc::now(),
+        jiff::Timestamp::now(),
     )
     .through(shown(&view));
     let served = serves(&view);
@@ -280,7 +280,7 @@ fn decide(
     let grants = Grants::of(
         table.as_deref().map(|t| t.through(Some(id))),
         &who,
-        chrono::Utc::now(),
+        jiff::Timestamp::now(),
     )
     .through(shown(&view));
     let answered = answer(&grants, &query, &serves(&view));

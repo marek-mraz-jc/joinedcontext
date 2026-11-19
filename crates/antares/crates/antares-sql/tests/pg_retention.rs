@@ -41,8 +41,8 @@ fn ty(type_iri: &str) -> HistoryScope<'_> {
 }
 
 fn ago(minutes: i64) -> String {
-    (chrono::Utc::now() - chrono::Duration::minutes(minutes))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    (jc_time::TimestampTz::now() - jiff::SignedDuration::from_mins(minutes))
+        .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
 }
 
 async fn entity(

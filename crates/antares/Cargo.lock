@@ -96,6 +96,7 @@ dependencies = [
  "http-body-util",
  "icu_collator",
  "icu_locale_core",
+ "jiff",
  "metrics",
  "ngsild-jsonld",
  "ngsild-matcher",
@@ -324,8 +325,9 @@ version = "0.3.0"
 dependencies = [
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "rmcp",
  "serde_json",
@@ -446,8 +448,9 @@ dependencies = [
  "antares-store",
  "async-trait",
  "base64 0.23.1",
- "chrono",
  "futures-util",
+ "jc-time",
+ "jiff",
  "metrics",
  "ngsild-jsonld",
  "ngsild-model",
@@ -2254,6 +2257,7 @@ version = "0.1.0"
 dependencies = [
  "jiff",
  "serde",
+ "sqlx",
 ]
 
 [[package]]
@@ -2364,8 +2368,9 @@ dependencies = [
  "antares-api",
  "antares-ops",
  "axum",
- "chrono",
  "http-body-util",
+ "jc-time",
+ "jiff",
  "ngsild-jsonld",
  "ngsild-model",
  "ngsild-ql",

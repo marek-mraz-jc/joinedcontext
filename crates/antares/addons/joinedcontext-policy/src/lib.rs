@@ -100,7 +100,7 @@ impl JoinedcontextPolicy {
 
     fn decide_now(&self, subject: &Subject, op: &Operation<'_>) -> Decision {
         let table = self.table(subject.tenant.as_str());
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         memo::decided(table.as_ref(), subject, op, now, || {
             decide::decide(
                 table.as_deref().map(|t| t.through(subject.view())),
@@ -129,7 +129,7 @@ impl PolicyEngine for JoinedcontextPolicy {
         let table = self.table(subject.tenant.as_str());
         let table = table.as_deref().map(|t| t.through(subject.view()));
         let caller = Caller::of(subject);
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         Box::pin(std::future::ready(
             ops.iter()
                 .map(|op| decide::probe(table, &caller, op, now))

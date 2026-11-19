@@ -1148,8 +1148,8 @@ async fn bounded_probes_record_what_the_unbounded_ones_did() {
     let name = "https://uri.etsi.org/ngsi-ld/default-context/name";
     // minutes ago; 50400 is five weeks
     let at = |minutes: i64| {
-        (chrono::Utc::now() - chrono::Duration::minutes(minutes))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        (jc_time::TimestampTz::now() - jiff::SignedDuration::from_mins(minutes))
+            .to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
     };
     let shell =
         json!({"id": id, "type": "Vehicle", "createdAt": at(60000), "modifiedAt": at(60000)});

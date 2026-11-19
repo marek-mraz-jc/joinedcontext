@@ -367,9 +367,7 @@ async fn writes_route_by_the_cut_over_and_read_as_the_text_shape() {
         return;
     };
     let pool = pg::connect(&url, 5).await.expect("connect");
-    let cut = chrono::DateTime::parse_from_rfc3339(MOVED_FROM)
-        .expect("stamp")
-        .to_utc();
+    let cut = jc_time::parse_rfc3339(MOVED_FROM).expect("stamp");
     let mut text = PgTemporalStore::with_cutover(pool.clone(), None);
     let mut keyed = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
     // the appends need no current Entity in `entities`
@@ -466,9 +464,7 @@ async fn a_skipped_append_leaves_no_dictionary_row() {
         return;
     };
     let pool = pg::connect(&url, 5).await.expect("connect");
-    let cut = chrono::DateTime::parse_from_rfc3339(MOVED_FROM)
-        .expect("stamp")
-        .to_utc();
+    let cut = jc_time::parse_rfc3339(MOVED_FROM).expect("stamp");
     let keyed = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
     let t = TenantId::new("pgorphan").expect("tenant");
     let id = "urn:ngsi-ld:Tank:t5243-absent";
@@ -520,9 +516,7 @@ async fn short_history_lands_unlogged_and_reads_as_the_text_shape() {
     let pool = pg::connect(&url, 5).await.expect("connect");
     let mut text = PgTemporalStore::with_cutover(pool.clone(), None);
     // a cut-over before every row: short rows ignore it, long ones key by it
-    let cut = chrono::DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
-        .expect("stamp")
-        .to_utc();
+    let cut = jc_time::parse_rfc3339("2025-01-01T00:00:00Z").expect("stamp");
     let mut short = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
     text.temporal_only = true;
     short.temporal_only = true;
