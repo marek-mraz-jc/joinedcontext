@@ -523,12 +523,11 @@ pub async fn claim_tenant(
          gone AS (SELECT EXISTS (SELECT 1 FROM tenant_rename WHERE old = $1) AS gone \
              FROM fence), \
          claim AS (INSERT INTO tenants (tenant_id, organization_id) \
-             SELECT $1, $2 FROM gone WHERE NOT gone.gone \
+             SELECT $1, tenant_organization($1) FROM gone WHERE NOT gone.gone \
              ON CONFLICT (tenant_id) DO NOTHING) \
          SELECT gone FROM gone",
     )
     .bind(tenant.as_str())
-    .bind(TenantId::organization_of(tenant.as_str()))
     .fetch_one(&mut **tx)
     .await?;
     if renamed_away {
@@ -546,10 +545,10 @@ pub async fn claim_tenant(
 /// no document to pair it with (test seeds, the maintenance paths).
 pub async fn ensure_tenant(pool: &PgPool, tenant: &TenantId) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO tenants (tenant_id, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO tenants (tenant_id, organization_id) \
+         VALUES ($1, tenant_organization($1)) ON CONFLICT DO NOTHING",
     )
     .bind(tenant.as_str())
-    .bind(TenantId::organization_of(tenant.as_str()))
     .execute(pool)
     .await
     .map(|_| ())

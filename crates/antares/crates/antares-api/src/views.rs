@@ -604,6 +604,12 @@ pub struct ViewTable {
 /// shares a key with a schema.
 pub const SCHEMA_ID_PREFIX: &str = "schema:";
 
+/// The id prefixes of the documents stored once per Tenant beside the views
+/// in [`VIEW_TENANT`], each followed by the Tenant's name: its schema, and
+/// the retention and quality rules antares-ops keeps (`RETENTION_ID_PREFIX`,
+/// `QUALITY_ID_PREFIX` there). A Tenant purge deletes them (S4-30).
+pub const TENANT_DOC_PREFIXES: [&str; 3] = [SCHEMA_ID_PREFIX, "retention:", "quality:"];
+
 /// A Tenant's `LinkML` schema as written to `/q/schemas/{tenant}` (T-3628):
 /// JSON the broker checked for size and well-formedness only. A surface
 /// parses it and caches the parse per `revision`.

@@ -29,6 +29,58 @@ macro_rules! require_db {
     };
 }
 
+/// S5-48 (T-7306, migration 0040): the claim stores `tenant_organization()`, and the request
+/// door compares the stored value with `TenantId::organization_of`. The two rules give the
+/// same answer for every shape, or a fresh Tenant reads as reassigned under enforce.
+#[tokio::test(flavor = "multi_thread")]
+async fn tenant_organization_agrees_with_rust() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
+    // two ids of the 26-character key shape, built so no scanner reads a credential
+    let key = &format!("a{}", "b2".repeat(12) + "c");
+    let project = &format!("d{}", "e7".repeat(12) + "f");
+    let names = [
+        "sk_bbsk__mobility".to_owned(),
+        "a_b_c__d".to_owned(),
+        "_a__b".to_owned(),
+        "a___b".to_owned(),
+        "a_b___c".to_owned(),
+        "a_b__c_d".to_owned(),
+        "a_b__".to_owned(),
+        "__a".to_owned(),
+        "mobility".to_owned(),
+        "sk__mobility".to_owned(),
+        "default".to_owned(),
+        format!("{key}__{project}__mobility"),
+        format!("{key}__{project}__mob_ility"),
+        format!("{key}__{project}__"),
+        format!("{key}__{project}"),
+        format!("{key}__x__mobility"),
+        format!("i{}__{project}__mobility", &key[1..]),
+        format!("{key}__{project}__a__b"),
+        format!("{key}1__{project}__mobility"),
+    ];
+    for name in &names {
+        let sql: Option<String> = sqlx::query_scalar("SELECT tenant_organization($1)")
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .expect("tenant_organization");
+        assert_eq!(sql.as_deref(), TenantId::organization_of(name), "{name}");
+    }
+    // the claim stores the same value
+    let t =
+        TenantId::new(&format!("{key}__{project}__agree{}", std::process::id())).expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("claim");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT organization_id FROM tenants WHERE tenant_id = $1")
+            .bind(t.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("row");
+    assert_eq!(stored.as_deref(), Some(key.as_str()));
+}
+
 /// 5.5.10: tenant existence — false for a never-seen Tenant, true once its
 /// row exists. Regression: the Pg arm never bound $1, so EVERY call errored
 /// ("bind message supplies 0 parameters") and the NonexistentTenant

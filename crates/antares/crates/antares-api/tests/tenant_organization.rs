@@ -581,7 +581,7 @@ async fn a_channel_on_another_organizations_tenant_reads_as_an_unknown_tenant() 
     let st = channel_state(true, None).await;
     let owner = member("sk_b");
     let bind = json!({"entity": "urn:ngsi-ld:Bus:1", "attribute": "speed",
-                      "broker": "lo", "topic": "bus/1/speed", "retention": "mirror"});
+                      "broker": "lo", "topic": "sk_b__x/bus/1/speed", "retention": "mirror"});
     let unknown = send(&st, "GET", "/x/channels", Some("sk_b__x"), &owner, None).await;
     assert_eq!(unknown.0, StatusCode::NOT_FOUND);
     make_bus(&st).await;
@@ -619,7 +619,7 @@ async fn a_stored_channel_of_a_renamed_tenant_is_not_replayed() {
     let first = channel_state(true, None).await;
     make_bus(&first).await;
     let bind = json!({"entity": "urn:ngsi-ld:Bus:1", "attribute": "speed",
-                      "broker": "lo", "topic": "bus/1/speed", "retention": "mirror"});
+                      "broker": "lo", "topic": "sk_b__x/bus/1/speed", "retention": "mirror"});
     let (s, ..) = send(
         &first,
         "PUT",
@@ -649,7 +649,7 @@ async fn a_stored_channel_of_a_renamed_tenant_is_not_replayed() {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut landed = false;
         while tokio::time::Instant::now() < deadline {
-            lo.publish("bus/1/speed", value);
+            lo.publish("sk_b__x/bus/1/speed", value);
             if speed().await.is_some_and(|v| v.to_string().contains(value)) {
                 landed = true;
                 break;

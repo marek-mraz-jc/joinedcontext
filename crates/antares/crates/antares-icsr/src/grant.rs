@@ -49,6 +49,11 @@ pub struct ExportGrant {
     /// Read unless it says read-write (C6).
     #[serde(default)]
     pub access: Access,
+    /// The owner's mark that the two Tenants may sit in different
+    /// Organizations (T-7306); without it a grant joins only Tenants of one
+    /// Organization.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cross_organization: bool,
 }
 
 impl ExportGrant {
@@ -62,6 +67,12 @@ impl ExportGrant {
         for tenant in [&grant.target, &grant.source] {
             client_tenant(tenant)?;
         }
+        if !grant.same_organization() {
+            return Err(format!(
+                "{:?} and {:?} are Tenants of different Organizations; a grant across Organizations needs \"crossOrganization\": true",
+                grant.target, grant.source
+            ));
+        }
         if let Some(view) = &grant.view {
             let fine = (1..=63).contains(&view.len())
                 && view
@@ -72,6 +83,16 @@ impl ExportGrant {
             }
         }
         Ok(grant)
+    }
+
+    /// Whether target and source sit in one Organization, or the grant is
+    /// marked to cross them. Two Tenants of no Organization (the standalone
+    /// broker's) count as one.
+    #[must_use]
+    pub fn same_organization(&self) -> bool {
+        self.cross_organization
+            || antares_ops::TenantId::organization_of(&self.target)
+                == antares_ops::TenantId::organization_of(&self.source)
     }
 
     /// Whether it lets the source run a forward that writes when `write`.
@@ -107,7 +128,7 @@ pub async fn held(ops: &Ops, target: &str, source: &str) -> Result<Option<Export
         return Ok(None);
     };
     match serde_json::from_value::<ExportGrant>(doc) {
-        Ok(g) if g.target == target && g.source == source => Ok(Some(g)),
+        Ok(g) if g.target == target && g.source == source && g.same_organization() => Ok(Some(g)),
         _ => {
             tracing::warn!(
                 target_tenant = target,
@@ -252,6 +273,34 @@ mod tests {
             "v".repeat(64)
         );
         assert!(ExportGrant::parse(long.as_bytes()).is_err());
+    }
+
+    /// T-7306: a grant joins Tenants of one Organization unless the owner marks
+    /// it as crossing them.
+    #[test]
+    fn a_grant_across_organizations_needs_the_mark() {
+        let across = br#"{"target":"sk_bbsk__mobility","source":"sk_ba__mobility"}"#;
+        assert!(ExportGrant::parse(across).is_err());
+        let to_plain = br#"{"target":"sk_bbsk__mobility","source":"a"}"#;
+        assert!(ExportGrant::parse(to_plain).is_err());
+        let inside = br#"{"target":"sk_bbsk__mobility","source":"sk_bbsk__parking"}"#;
+        assert!(ExportGrant::parse(inside).is_ok());
+        let marked = br#"{"target":"sk_bbsk__mobility","source":"sk_ba__mobility","crossOrganization":true}"#;
+        let marked = ExportGrant::parse(marked).map(|g| {
+            (
+                g.same_organization(),
+                serde_json::to_value(&g)
+                    .ok()
+                    .and_then(|v| v.get("crossOrganization").cloned()),
+            )
+        });
+        assert_eq!(marked, Ok((true, Some(serde_json::json!(true)))));
+        let plain = ExportGrant::parse(br#"{"target":"b","source":"a"}"#).map(|g| {
+            serde_json::to_value(&g)
+                .ok()
+                .map(|v| v.get("crossOrganization").is_none())
+        });
+        assert_eq!(plain, Ok(Some(true)));
     }
 
     #[test]
