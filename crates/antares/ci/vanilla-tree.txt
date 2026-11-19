@@ -1918,7 +1918,7 @@ antares-broker v0.3.0
 │   │   │       │       │   │               ├── serde feature "derive" (*)
 │   │   │       │       │   │               ├── num-traits feature "libm" (*)
 │   │   │       │       │   │               └── heapless feature "default"
-│   │   │       │       │   │                   └── heapless v0.8.0
+│   │   │       │       │   │                   └── heapless v0.9.4
 │   │   │       │       │   │                       ├── stable_deref_trait v1.2.1
 │   │   │       │       │   │                       └── hash32 feature "default"
 │   │   │       │       │   │                           └── hash32 v0.3.1

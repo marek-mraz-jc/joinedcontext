@@ -57,7 +57,7 @@ members = [
 ]
 # Joined repositories keep their own workspace (lockfile, lints, standalone binaries) for now; jc
 # depends on their crates by path. Making them members is a later step (bins/jc/STATUS.md).
-exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste", "vendor/jaq-core", "vendor/jaq-json", "vendor/sqlx-sqlite", "vendor/ml-kem", "vendor/kem"]
+exclude = ["crates/ekiben", "crates/antares", "crates/portal", "vendor/joinedcontext-platform", "vendor/ngsild", "vendor/oxrdfxml", "vendor/tikv-jemalloc-ctl", "vendor/paste", "vendor/jaq-core", "vendor/jaq-json", "vendor/sqlx-sqlite", "vendor/ml-kem", "vendor/kem", "vendor/faster-hex"]
 
 # Antares pins rumqttc 0.25.1 with rustls-webpki 0.103 (crates/antares/vendor/rumqttc/README.md); a
 # patch only takes effect from the root manifest.
@@ -83,6 +83,12 @@ sqlx-sqlite = { path = "vendor/sqlx-sqlite" }
 # ml-kem 0.2.3 (age 0.12) on its own copy of kem 0.3.0-pre.0: russh 0.65 takes ml-kem 0.3 and kem
 # 0.3.0, and one lockfile holds one kem 0.3 per source (vendor/SOURCES.md).
 ml-kem = { path = "vendor/ml-kem" }
+# rstar 0.12.2 on heapless 0.9.4 and geo-types 0.7.20 without its unused rstar 0.8-0.11/0.13
+# options until geo releases rstar 0.14 (RUSTSEC-2026-0574..0582; crates/antares/vendor/rstar/README.md, T-7429).
+rstar = { path = "crates/antares/vendor/rstar" }
+geo-types = { path = "crates/antares/vendor/geo-types" }
+# faster-hex 0.10.1 on heapless 0.9.4 for gix (RUSTSEC-2026-0574..0582; vendor/SOURCES.md, T-7430).
+faster-hex = { path = "vendor/faster-hex" }
 
 [workspace.package]
 edition = "2024"
