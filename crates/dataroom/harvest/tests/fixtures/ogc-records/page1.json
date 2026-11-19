@@ -1,0 +1,317 @@
+{
+ "type": "FeatureCollection",
+ "features": [
+  {
+   "id": "35149dfb-31d3-431c-a8bc-12a4034dac48",
+   "conformsTo": [
+    "http://www.opengis.net/spec/ogcapi-records-1/1.0/conf/record-core"
+   ],
+   "type": "Feature",
+   "time": {
+    "interval": [
+     null,
+     null
+    ]
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       4.690751953125,
+       52.358740234375
+      ],
+      [
+       4.690751953125,
+       52.6333984375
+      ],
+      [
+       5.020341796875,
+       52.6333984375
+      ],
+      [
+       5.020341796875,
+       52.358740234375
+      ],
+      [
+       4.690751953125,
+       52.358740234375
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "created": "2021-12-08Z",
+    "updated": "2025-06-16T12:39:57Z",
+    "type": "dataset",
+    "title": "Kaartboeck 1635",
+    "description": "Data uit kaartboeken van de periode 1635 tot 1775. De kaartboeken werden door het waterschap gebruikt om er op toe te zien dat de eigenaren geen water in beslag namen door demping.\nDe percelen op de kaart zijn naar de huidige maatstaven vrij nauwkeurig gemeten en voorzien van een administratie met de eigenaren. bijzondere locaties van molens werven en beroepen worden in de boeken vermeld. Alle 97 kaarten aan een geven een zeer gedetailleerd beeld van de Voorzaan, Nieuwe Haven en de Achterzaan. De bladen Oost en West van de zaan zijn vrij nauwkeurig. De bladen aan de Voorzaan zijn een schetsmatige weergave van de situatie. De kaart van de Nieuwe Haven si weer nauwkeurig te noemen.",
+    "contacts": [
+     {
+      "name": "Team Geo",
+      "organization": "Gemeente Zaanstad",
+      "phones": [
+       {
+        "value": "14 075"
+       }
+      ],
+      "emails": [
+       {
+        "value": "geo-informatie@zaanstad.nl"
+       }
+      ],
+      "addresses": [
+       {
+        "deliveryPoint": [
+         "Stadhuisplein 100"
+        ],
+        "city": [
+         "Zaanstad"
+        ],
+        "administrativeArea": [
+         "Noord-Holland"
+        ],
+        "postalCode": [
+         "1506 MZ"
+        ],
+        "country": [
+         "Netherlands"
+        ]
+       }
+      ],
+      "roles": [
+       "custodian"
+      ]
+     }
+    ],
+    "externalIds": [
+     {
+      "scheme": "default",
+      "value": "35149dfb-31d3-431c-a8bc-12a4034dac48"
+     }
+    ],
+    "themes": [
+     {
+      "concepts": [
+       {
+        "id": "ARGEOLOGIE"
+       },
+       {
+        "id": "MONUMENTEN"
+       },
+       {
+        "id": "KADASTER"
+       },
+       {
+        "id": "KAARTBOEK"
+       },
+       {
+        "id": "KAARTBOECK"
+       },
+       {
+        "id": "HISTORIE"
+       }
+      ]
+     }
+    ]
+   },
+   "links": [
+    {
+     "href": "https://maps-intern.zaanstad.gem.local/geoserver/wms?SERVICE=WMS",
+     "rel": "item",
+     "title": "geo:kaartboeck",
+     "type": "OGC:WMS"
+    },
+    {
+     "href": "https://maps-intern.zaanstad.gem.local/geoserver/wfs?SERVICE=WFS",
+     "rel": "item",
+     "title": "geo:kaartboeck",
+     "type": "OGC:WFS"
+    },
+    {
+     "href": "https://maps-intern.zaanstad.gem.local/geoserver/wfs?SERVICE=WFS&version=1.0.0&request=GetFeature&typeName=geo:kaartboeck&outputFormat=csv",
+     "rel": "item",
+     "type": "download"
+    },
+    {
+     "href": "https://maps-intern.zaanstad.gem.local/geoserver/wfs?SERVICE=WFS&version=1.0.0&request=GetFeature&typeName=geo:kaartboeck&outputFormat=shape-zip",
+     "rel": "item",
+     "type": "download"
+    }
+   ]
+  },
+  {
+   "id": "ffffffaa-4087-59ec-9ea7-8416f58e99dd",
+   "conformsTo": [
+    "http://www.opengis.net/spec/ogcapi-records-1/1.0/conf/record-core"
+   ],
+   "type": "Feature",
+   "time": {
+    "interval": [
+     null,
+     null
+    ]
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       4.4552947,
+       52.3348457
+      ],
+      [
+       4.4552947,
+       53.388444
+      ],
+      [
+       7.135964,
+       53.388444
+      ],
+      [
+       7.135964,
+       52.3348457
+      ],
+      [
+       4.4552947,
+       52.3348457
+      ]
+     ]
+    ]
+   },
+   "properties": {
+    "created": "2022-06-01Z",
+    "updated": "2025-06-16T12:39:57Z",
+    "type": "dataset",
+    "title": "Diepteligging onderkant keileem (t.o.v. NAP)",
+    "description": "Diepteligging van de onderkant (basis) van keileem in Drenthe, in meters ten opzichte van NAP.",
+    "contacts": [
+     {
+      "name": "Team Gis/Cartografie",
+      "organization": "Provincie Drenthe",
+      "phones": [
+       {
+        "value": "0592-365555"
+       }
+      ],
+      "emails": [
+       {
+        "value": "post@drenthe.nl"
+       }
+      ],
+      "addresses": [
+       {
+        "deliveryPoint": [
+         "Westerbrink 1"
+        ],
+        "city": [
+         "Assen"
+        ],
+        "administrativeArea": [
+         "Drenthe"
+        ],
+        "postalCode": [
+         "9400AC"
+        ],
+        "country": [
+         "Nederland"
+        ]
+       }
+      ],
+      "links": [
+       {
+        "href": "https://www.provincie.drenthe.nl",
+        "rel": null,
+        "title": null,
+        "description": null
+       }
+      ],
+      "roles": [
+       "pointOfContact"
+      ]
+     }
+    ],
+    "externalIds": [
+     {
+      "scheme": "default",
+      "value": "ffffffaa-4087-59ec-9ea7-8416f58e99dd"
+     }
+    ],
+    "themes": [
+     {
+      "concepts": [
+       {
+        "id": "beleidsinstrument"
+       },
+       {
+        "id": "bodem"
+       },
+       {
+        "id": "grondwaterstand"
+       },
+       {
+        "id": "landbouw"
+       },
+       {
+        "id": "landbouwgrond"
+       },
+       {
+        "id": "waterhuishouding"
+       }
+      ],
+      "scheme": null
+     }
+    ]
+   },
+   "links": [
+    {
+     "href": "https://kaartportaal.drenthe.nl/server/services/GDB_actueel/GBI_KEILEEM_DIEPTE_ONDER_NAP_R/MapServer/WMSServer",
+     "rel": "item",
+     "title": "0",
+     "type": "OGC:WMS"
+    }
+   ]
+  }
+ ],
+ "numberMatched": 4,
+ "numberReturned": 2,
+ "links": [
+  {
+   "type": "application/geo+json",
+   "rel": "self",
+   "title": "This document as GeoJSON",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=json&limit=2"
+  },
+  {
+   "rel": "alternate",
+   "type": "application/ld+json",
+   "title": "This document as RDF (JSON-LD)",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=jsonld&limit=2"
+  },
+  {
+   "type": "text/html",
+   "rel": "alternate",
+   "title": "This document as HTML",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=html&limit=2"
+  },
+  {
+   "type": "text/csv; charset=utf-8",
+   "rel": "alternate",
+   "title": "This document as CSV",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=csv&limit=2"
+  },
+  {
+   "type": "application/geo+json",
+   "rel": "next",
+   "title": "Items (next)",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=json&offset=2&limit=100"
+  },
+  {
+   "type": "application/json",
+   "title": "Sample metadata records from Dutch Nationaal georegister",
+   "rel": "collection",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata"
+  }
+ ],
+ "timeStamp": "2026-11-19T19:09:31.569629Z"
+}

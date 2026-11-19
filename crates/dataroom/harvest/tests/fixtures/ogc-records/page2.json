@@ -1,0 +1,31 @@
+{
+ "type": "FeatureCollection",
+ "numberMatched": 4,
+ "numberReturned": 2,
+ "features": [
+  {
+   "id": "no-title-1",
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "description": "A record its publisher left without a title"
+   },
+   "links": []
+  },
+  {
+   "type": "Feature",
+   "geometry": null,
+   "properties": {
+    "title": "A record without an id"
+   },
+   "links": []
+  }
+ ],
+ "links": [
+  {
+   "rel": "self",
+   "type": "application/geo+json",
+   "href": "https://demo.pygeoapi.io/master/collections/dutch-metadata/items?f=json&offset=2&limit=100"
+  }
+ ]
+}

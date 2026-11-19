@@ -1,0 +1,14 @@
+{
+ "currentVersion": 10.91,
+ "folders": [],
+ "services": [
+  {
+   "name": "Elevation/GlacierBay",
+   "type": "MapServer"
+  },
+  {
+   "name": "Elevation/MtBaldy_Elevation",
+   "type": "ImageServer"
+  }
+ ]
+}
