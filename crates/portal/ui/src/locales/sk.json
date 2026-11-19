@@ -6181,9 +6181,9 @@
   },
   "projectsPage": {
     "title": "Projekty",
-    "lead": "Projekty vašej organizácie, ktoré môžete otvoriť. Každý obsahuje svoje kontextové priestory, koncové body a pipeliny.",
+    "lead": "Projekty vašej organizácie, ktoré môžete otvoriť. Každý obsahuje svoje kontextové priestory, endpointy a pipeliny.",
     "firstTitle": "Vytvorte svoj prvý projekt",
-    "firstLead": "Projekt obsahuje vaše kontextové priestory, koncové body a pipeliny. Stanete sa jeho správcom údajov a kolegov pridáte v časti Členovia.",
+    "firstLead": "Projekt obsahuje vaše kontextové priestory, endpointy a pipeliny. Stanete sa jeho správcom údajov a kolegov pridáte v časti Členovia.",
     "first": "Vytvoriť prvý projekt",
     "noneTitle": "Zatiaľ nie ste v žiadnom projekte",
     "noneLead": "Požiadajte správcov svojej organizácie, aby vás pridali do projektu. Verejné dátové sady máte k dispozícii v katalógu.",

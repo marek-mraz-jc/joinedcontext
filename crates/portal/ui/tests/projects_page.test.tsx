@@ -16,8 +16,9 @@ import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
 import { App } from "../src/App";
 import { homeOf } from "../src/api/permissions";
+import { ProjectsPage } from "../src/pages/projects/ProjectsPage";
 import { asOData, doorAsRest } from "./odata";
-import { expectNoAxeViolations } from "./page_contract";
+import { expectNoAxeViolations, json, renderPage } from "./page_contract";
 
 const REFUSED = "opening a project here needs propose on Project, which org-admin holds (PF-65)";
 
@@ -158,5 +159,19 @@ describe("the projects page (T-7380)", () => {
     expect(listed.getByRole("link", { name: /doprava/ })).toHaveAttribute("href", "/projects/doprava/home");
     expect(screen.queryByText(en.app.notFound.title)).toBeNull();
     expect(within(screen.getByRole("main")).getByRole("button", { name: en.projects.new })).toBeInTheDocument();
+  });
+});
+
+describe("the projects page when the list fails (T-7380)", () => {
+  it("keeps its heading and says what failed, with a retry", async () => {
+    renderPage(<ProjectsPage />, {
+      path: "/projects",
+      answer: (url) =>
+        url.pathname === "/api/v1/projects"
+          ? json({ type: "about:blank", title: "Service Unavailable", status: 503, detail: "the mirror is not ready" }, 503)
+          : undefined,
+    });
+    expect(await screen.findByRole("heading", { level: 1, name: en.projectsPage.title })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
   });
 });
