@@ -462,7 +462,7 @@ fn bypasses(probe: Result<bool, sqlx::Error>) -> bool {
 }
 
 /// Arm the transaction-scoped `antares.service` escape for the internal
-/// cross-tenant jobs: the outbox drain, the reaps and retention. Since 0040
+/// cross-tenant jobs: the outbox drain, the reaps and retention. Since 0042
 /// it opens anything only for a role that is a member of
 /// `antares_maintenance` or owns the tables, never for the request role of a
 /// split deployment. NEVER call from a request path — request queries carry
@@ -474,7 +474,7 @@ pub async fn set_service(tx: &mut Transaction<'_, Postgres>) -> Result<(), sqlx:
         .map(|_| ())
 }
 
-/// Whether this pool's role holds the cross-Tenant escape of 0040 once it
+/// Whether this pool's role holds the cross-Tenant escape of 0042 once it
 /// arms [`set_service`]: a member of `antares_maintenance`, or the tables'
 /// owner. The boot refuses a maintenance pool that does not, since its drain
 /// and reaps would then read nothing and fail silently.

@@ -425,7 +425,7 @@ async fn a_probe_past_its_cap_reads_no_ids() {
         .await
         .expect("explain");
         let plan = rows.join("\n");
-        // the policies' escape (0040) is an InitPlan `Result` the tenant
+        // the policies' escape (0042) is an InitPlan `Result` the tenant
         // arm short-circuits: never executed on every read, so not the signal
         let never = plan
             .lines()

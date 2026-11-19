@@ -361,7 +361,7 @@ fn seal_row<'a>(kind: DocKind, tenant: &'a TenantId, id: &'a str) -> super::seal
 
 pub struct PgDocStore {
     pool: PgPool,
-    /// The cross-Tenant work's pool (0040, T-7307): the outbox drain, the
+    /// The cross-Tenant work's pool (0042, T-7307): the outbox drain, the
     /// reaps and retention, and every write to a shared Cached @context. A
     /// deployment connects it as a member of `antares_maintenance` and the
     /// request pool as a role that is not; a single-role deployment shares
@@ -1286,7 +1286,7 @@ impl PgDocStore {
         kind: &str,
     ) -> Result<(), sqlx::Error> {
         // A Cached copy is shared: replacing and evicting one is maintenance
-        // work (0040), so its write-through runs on that pool.
+        // work (0042), so its write-through runs on that pool.
         let cached = kind == "Cached";
         let mut tx = if cached { &self.maint } else { &self.pool }
             .begin()
@@ -1385,7 +1385,7 @@ impl PgDocStore {
         f: impl FnOnce(&mut Value) -> Result<(), ()> + Send,
     ) -> Result<Option<Result<(), ()>>, sqlx::Error> {
         // The row may be a shared Cached copy, which only the maintenance
-        // role locks and rewrites (0040); the explicit Tenant predicate and
+        // role locks and rewrites (0042); the explicit Tenant predicate and
         // the per-Tenant belt keep a Tenant's own rows its own.
         let mut tx = self.maint.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;

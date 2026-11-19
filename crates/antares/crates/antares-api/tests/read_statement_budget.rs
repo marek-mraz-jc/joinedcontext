@@ -149,7 +149,7 @@ async fn app_url(admin: &sqlx::PgPool, url: &str) -> String {
 
 /// The maintenance role of pg_rls_pentest.rs: a member of
 /// `antares_maintenance`, which the Cached @context write-through takes
-/// (0040, T-7307).
+/// (0042, T-7307).
 async fn maint_url(admin: &sqlx::PgPool, url: &str) -> String {
     let mut tx = admin.begin().await.expect("begin");
     for stmt in [
@@ -320,7 +320,7 @@ async fn each_read_shape_sends_its_pinned_statements() {
     // one transaction of the @context write-through the hit still runs
     // (state.rs `set_cache_writer`: `context_mutate`'s two set_config calls,
     // the Tenant's and the maintenance escape a Cached row's lock needs
-    // (0040), SELECT ... FOR UPDATE, the Tenant's usage SELECT, the usage
+    // (0042), SELECT ... FOR UPDATE, the Tenant's usage SELECT, the usage
     // upsert, COMMIT),
     // then the page's own three. The counters are the Tenant's own row in
     // jsonld_context_usage (S5-10), read in a statement of its own after the

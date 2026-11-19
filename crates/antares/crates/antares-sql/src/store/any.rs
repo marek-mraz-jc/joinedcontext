@@ -146,7 +146,7 @@ impl PgBackend {
     }
 
     /// Run the cross-Tenant work on `maint`: a pool whose role is a member
-    /// of `antares_maintenance` while the request pool's is not (0040).
+    /// of `antares_maintenance` while the request pool's is not (0042).
     pub fn with_maintenance(mut self, maint: sqlx::postgres::PgPool) -> Self {
         self.docs = self.docs.with_maintenance(maint);
         self
@@ -1759,7 +1759,7 @@ impl AnyStore {
             // Pg answers the superset the contract allows: every known
             // tenant. Narrowing it would need a cross-tenant read of
             // `subscriptions`, and that table is deliberately outside the
-            // maintenance escape (0040) — a subscription document carries
+            // maintenance escape (0042) — a subscription document carries
             // endpoint.receiverInfo, i.e. the credentials the notification
             // is sent with. The callers list per tenant under set_tenant
             // afterwards, so the extra names cost one empty list each.

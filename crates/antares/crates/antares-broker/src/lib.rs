@@ -42,7 +42,7 @@ const KNOWN_KEYS: &[&str] = &[
     #[cfg(feature = "plugin-example")]
     antares_plugin_example::RULES_ENV,
     "ANTARES_DATABASE_URL",
-    // The cross-Tenant work's own role (0040, T-7307); unset = the request pool.
+    // The cross-Tenant work's own role (0042, T-7307); unset = the request pool.
     "ANTARES_MAINTENANCE_DATABASE_URL",
     "ANTARES_STORE",
     // Temporal driver: a store mode, or `none` — history off (temporal
@@ -552,7 +552,7 @@ struct PgSettings {
 }
 
 /// ANTARES_MAINTENANCE_DATABASE_URL → the pool the cross-Tenant work runs
-/// on (0040, T-7307). Unset or empty, `backend` comes back as it was and
+/// on (0042, T-7307). Unset or empty, `backend` comes back as it was and
 /// its request pool does that work too, which holds only when its role owns
 /// the tables. The
 /// role must hold the escape (a member of `antares_maintenance`) and, under
@@ -1182,7 +1182,7 @@ async fn build_builtin(
                         }
                         // T-7307: the outbox drain, the reaps, retention and
                         // the shared Cached @context writes on a role the
-                        // request role is not (0040).
+                        // request role is not (0042).
                         backend_pg =
                             with_maintenance_pool(backend_pg, pg.require_rls, statement_timeout)
                                 .await?;
