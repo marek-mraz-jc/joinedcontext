@@ -557,6 +557,11 @@ pub struct OrganizationSection {
     /// The CKAN API token the Portal publishes into this catalogue with; none, no Portal grant.
     #[serde(default)]
     pub portal_token_file: Option<PathBuf>,
+    /// The e-mail address of the Organization realm's first administrator (T-7283), e.g.
+    /// `it@bbsk.sk`: jc creates that one person once, with a one-time password they change and a
+    /// second factor they set up at the first sign-in. Needs `hosts.idm` (a realm of its own).
+    #[serde(default)]
+    pub first_admin: Option<String>,
 }
 
 /// The origins of one Organization (evidence/T-6991/design.md §1): its working host (Portal),
@@ -744,6 +749,22 @@ impl OrganizationSection {
     }
 }
 
+/// One plain address `local@domain.tld`: no space, no second `@`, a dotted domain, at most 254
+/// bytes (RFC 5321). ponytail: no quoted local parts; the person's realm takes it as username.
+fn is_email(address: &str) -> bool {
+    let Some((local, domain)) = address.split_once('@') else {
+        return false;
+    };
+    address.len() <= 254
+        && !local.is_empty()
+        && local.len() <= 64
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.contains('@')
+        && address.bytes().all(|b| b.is_ascii_graphic())
+}
+
 /// The registrable domain of `host` as its last two labels (`bbsk.sk`). ponytail: no public
 /// suffix list, so `a.co.uk` and `b.co.uk` read as one site: the check refuses more, never less.
 fn site_of(host: &str) -> String {
@@ -830,6 +851,20 @@ fn check_organizations(
             && !ids.insert(id.clone())
         {
             return bad(format!("{name}: id '{id}' is another Organization's id"));
+        }
+        if let Some(address) = org.first_admin.as_mut() {
+            *address = address.trim().to_ascii_lowercase();
+            if !is_email(address) {
+                return bad(format!(
+                    "{name}: first_admin '{address}' is not an e-mail address, e.g. it@bbsk.sk"
+                ));
+            }
+            if org.hosts.idm.is_none() {
+                return bad(format!(
+                    "{name}: first_admin needs a realm of the Organization's own: add hosts.idm, \
+                     e.g. idm = \"idm.bbsk.sk\""
+                ));
+            }
         }
         org.catalogue_id = org.catalogue_id.trim().to_ascii_lowercase();
         if !is_uuid(&org.catalogue_id) {
@@ -3071,6 +3106,36 @@ path_prefix = "/api/endpoint"
         );
         let err = orgs(&named_like_the_realm).unwrap_err().to_string();
         assert!(err.contains("installation's realm"), "{err}");
+    }
+
+    /// T-7283: `first_admin` is an e-mail address, kept lowercase, and only beside `hosts.idm`
+    /// (a realm of the Organization's own).
+    #[test]
+    fn a_first_admin_is_an_address_beside_a_sign_in_host() {
+        let with = |idm: &str, first_admin: &str| {
+            format!(
+                "base_host = \"city.example\"\n[[organizations]]\nname = \"zilina\"\n\
+                 catalogue_id = \"00000000-0000-7000-8000-0000000000c1\"\n\
+                 first_admin = \"{first_admin}\"\n\
+                 hosts = {{ portal = \"smartcity.zilina.sk\"{idm} }}\n"
+            )
+        };
+        let idm = ", idm = \"idm.zilina.sk\"";
+        let cfg = orgs(&with(idm, " IT@Zilina.sk ")).unwrap();
+        assert_eq!(
+            cfg.organizations[0].first_admin.as_deref(),
+            Some("it@zilina.sk")
+        );
+        for (idm, address, refused) in [
+            ("", "it@zilina.sk", "first_admin needs a realm"),
+            (idm, "zilina.sk", "is not an e-mail address"),
+            (idm, "it@zilina", "is not an e-mail address"),
+            (idm, "i t@zilina.sk", "is not an e-mail address"),
+            (idm, "it@@zilina.sk", "is not an e-mail address"),
+        ] {
+            let err = orgs(&with(idm, address)).unwrap_err().to_string();
+            assert!(err.contains(refused), "{address}: {err}");
+        }
     }
 
     /// T-7135 (T-7129 §1, §7): the registry's label rules hold on the jc.toml seed as at the

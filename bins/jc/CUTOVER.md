@@ -225,6 +225,13 @@ EP-186): on a shared host the Organization's first path segment is then `/{id}/`
 - Each host is the Organization's whole host: the Portal on `portal`, dataroom on `opendata`,
   the gateway on `api` and `mcp`, and the gateway's `/cs`, `/api/endpoint` and `/api/mcp` on
   `portal` too. jc adds these entries after each module's own address.
+- An optional `first_admin` (an e-mail address, e.g. `it@bbsk.sk`, beside `hosts.idm`) gives
+  the Organization's own realm its first administrator (T-7283): one person, created once, with a
+  one-time password, the actions to change it and to set up a second factor at the first sign-in,
+  and no group or role. The operators grant the Organization's administration through their door.
+  The one-time password is derived, never stored: `jc_core::Secret::for_realm` of jc-setup's
+  `first-admin-password` for the realm, client name `first-admin` (derived in memory like the
+  realm's client secrets, T-7267). A realm already holding that address is left as it is.
 - jc refuses to start on a name, catalogue or host given twice (hosts compared without the
   port), and on a host any other mount also names, a mode default included.
 - dataroom gets one catalogue per Organization, named after it on its `opendata` host, and in it
