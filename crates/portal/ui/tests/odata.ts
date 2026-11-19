@@ -530,6 +530,8 @@ const DOORS: Record<string, Door> = {
   ],
   portal_connector_list: ["GET", "/organization/connectors"],
   portal_connector_revoke: ["DELETE", "/organization/connectors/{connector}"],
+  portal_organization_repositories: ["GET", "/organization/repositories"],
+  portal_organization_repository_archive: ["GET", "/organization/repositories/{name}/archive"],
   portal_backup_configuration_get: ["GET", "/organization/backups/configuration"],
   portal_backup_configuration_set: ["PUT", "/organization/backups/configuration"],
   portal_backup_configuration_run: ["POST", "/organization/backups/configuration/run"],

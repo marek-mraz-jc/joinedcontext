@@ -47,6 +47,7 @@ import { OrganizationConnectors } from "./OrganizationConnectors";
 import { OpendataAppearance } from "./OpendataAppearance";
 import { OpendataPages } from "./OpendataPages";
 import { Backups } from "./Backups";
+import { Repositories } from "./Repositories";
 import { AskAdmins } from "./AskAdmins";
 import { DataAccessMatrix } from "./DataAccess";
 import { HealthLog } from "../health/HealthLog";
@@ -483,6 +484,7 @@ export function OrganizationPage({
         {tab === "opendata-pages" ? <OpendataPages /> : null}
         {tab === "opendata-appearance" ? <OpendataAppearance /> : null}
         {tab === "backups" ? <Backups /> : null}
+        {tab === "repositories" ? <Repositories /> : null}
         {operatorTab ? (
           <Suspense
             fallback={

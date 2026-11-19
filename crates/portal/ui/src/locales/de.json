@@ -7554,7 +7554,8 @@
         }
       },
       "repository": {
-        "read": "Repository gelesen"
+        "read": "Repository gelesen",
+        "downloaded": "Repository heruntergeladen"
       }
     },
     "sources": {
@@ -8218,6 +8219,7 @@
       "connectors": "Konnektoren",
       "data-access": "Datenzugriff",
       "backups": "Sicherungen",
+      "repositories": "Repositorys",
       "operator-organizations": "Organisationen",
       "operator-hosts": "Hosts und Zertifikate",
       "operator-installation": "Installation",
@@ -13581,6 +13583,33 @@
     "phase": {
       "merged": "veröffentlicht",
       "rejected": "abgelehnt"
+    }
+  },
+  "orgRepositories": {
+    "title": "Repositorys",
+    "loading": "Repositorys werden geladen…",
+    "lead": "Alle Git-Repositorys dieser Organisation: die Konfiguration ihrer Projekte und der Quellcode ihrer Apps. Laden Sie eines als .tar.gz seines Standardzweigs herunter.",
+    "hint": "Der Dateiname enthält Repository und Commit, z. B. air-quality-2c245c6.tar.gz. Archive bis {size} werden hier heruntergeladen; ein größeres Repository klonen Sie mit git. Den Fortschritt zeigt Ihr Browser.",
+    "toProjects": "Projekte öffnen",
+    "tooLarge": "Größer als {size}: klonen Sie es stattdessen mit git.",
+    "empty": "Noch keine Repositorys",
+    "emptyHint": "Ein Projekt erhält sein Repository beim Anlegen, eine App beim Bauen. Legen Sie zuerst unter Projekte ein Projekt an.",
+    "name": "Repository",
+    "what": "Inhalt",
+    "updated": "Letzte Änderung",
+    "size": "Größe",
+    "state": "Status",
+    "archived": "Archiviert",
+    "active": "Aktiv",
+    "download": "Herunterladen",
+    "downloadOne": "{name} als .tar.gz herunterladen",
+    "ofProject": "Projekt {project}",
+    "ofApp": "App {app} im Projekt {project}",
+    "ofOrganization": "die ganze Installation",
+    "role": {
+      "configuration": "Konfiguration",
+      "project": "Projektkonfiguration",
+      "application": "App-Quellcode"
     }
   },
   "opendataAppearance": {

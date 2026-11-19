@@ -28,6 +28,9 @@ on:
       - vendor/paste/**
       - vendor/joinedcontext-platform/vendor/kreuzberg/**
       - crates/antares/vendor/rumqttc/**
+      - crates/antares/vendor/rstar/**
+      - crates/antares/vendor/geo-types/**
+      - vendor/faster-hex/**
       - vendor/joinedcontext-platform/scripts/ci/pdfium.sh
       - vendor/joinedcontext-platform/scripts/ci/e5-small.sh
       - vendor/joinedcontext-platform/scripts/ci/onnxruntime.sh

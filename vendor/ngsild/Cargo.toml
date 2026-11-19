@@ -43,3 +43,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
 [workspace.lints.clippy]
 unwrap_used = "warn"
 needless_borrows_for_generic_args = "allow"
+
+[patch.crates-io]
+# rstar 0.12.2 on heapless 0.9.4 and geo-types 0.7.20 without its unused rstar 0.8-0.11/0.13
+# options until geo releases rstar 0.14 (RUSTSEC-2026-0574..0582; crates/antares/vendor/rstar/README.md, T-7429).
+rstar = { path = "../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../crates/antares/vendor/geo-types" }

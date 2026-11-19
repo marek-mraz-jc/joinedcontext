@@ -2137,6 +2137,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organization/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Organization Repositories
+         * @description Every forge repository of the request's Organization: its projects' repositories, their Apps' repositories and, for the installation's Organization, the configuration repository, with default branch, last change, size and whether it is archived. Administrators only (T-7409).
+         */
+        get: operations["organization_repositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/repositories/{name}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Organization Repository
+         * @description One repository of the request's Organization as a `.tar.gz` of its default branch's head commit, streamed; the file name carries the repository and the commit (`{name}-{commit}.tar.gz`) and `X-Commit` names it too. A repository of another Organization is 404, as an unknown one is. Every download is one `repository.downloaded` activity entry. Administrators only (T-7409).
+         */
+        get: operations["organization_repository_archive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization/setup": {
         parameters: {
             query?: never;
@@ -13279,6 +13319,32 @@ export interface components {
             kind: string;
             smartDataModels: components["schemas"]["CatalogueEntry"][];
         };
+        OrganizationRepositories: {
+            /**
+             * Format: int64
+             * @description The largest archive a download streams, in bytes.
+             */
+            maxArchiveBytes: number;
+            organization: string;
+            repositories: components["schemas"]["OrganizationRepository"][];
+        };
+        /** @description One repository as Administration > Repositories lists it. */
+        OrganizationRepository: {
+            /** @description The App whose source it is; `null` for any other repository. */
+            app?: string | null;
+            archived: boolean;
+            /** @description e.g. `main` */
+            defaultBranch: string;
+            /** @description The forge's name, e.g. `ovzdusie_air-map`; the download names it. */
+            name: string;
+            /** @description The project it belongs to; `null` for the configuration repository. */
+            project?: string | null;
+            role: components["schemas"]["RepositoryRole"];
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @description RFC 3339, when the repository last changed. */
+            updatedAt: string;
+        };
         /** @description The Organization of the Portal host: its name and its title. */
         OrganizationSummary: {
             name: string;
@@ -14617,6 +14683,11 @@ export interface components {
             /** @description `organization`, or the project whose own repository it is. */
             repository: string;
         };
+        /**
+         * @description What a repository holds for the Organization.
+         * @enum {string}
+         */
+        RepositoryRole: "configuration" | "project" | "application";
         /**
          * @description One Endpoint a pipeline may ask for, as the request form offers it (PL-90, T-4946): names
          *     and the model's types and attribute names, never the space's data.
@@ -21961,6 +22032,103 @@ export interface operations {
             };
             /** @description The caller makes portals in no Organization */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_repositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Organization's repositories */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationRepositories"];
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No forge, or the forge did not answer */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    organization_repository_archive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The repository, e.g. `ovzdusie_air-map` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/gzip": unknown;
+                };
+            };
+            /** @description Not an administrator of the Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such repository in this Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The archive is larger than the Portal streams */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No forge, or the forge did not answer */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -433,3 +433,101 @@ async fn icsr_the_engine_decides_a_grant_view_forward_through_that_view() {
     assert_eq!(ids(&read.body), ["urn:ngsi-ld:Car:b-1"], "{}", read.body);
     assert_eq!(seen(), [None], "a grant without a view is no view");
 }
+
+/// Records the subject header a forward reached Tenant `0` with.
+struct Callers(&'static str, Mutex<Vec<Option<String>>>);
+
+impl antares_ops::policy::PolicyEngine for Callers {
+    fn name(&self) -> &'static str {
+        "callers"
+    }
+    fn decide<'a>(
+        &'a self,
+        s: &'a antares_ops::policy::Subject,
+        _op: &'a antares_ops::policy::Operation<'a>,
+    ) -> antares_ops::policy::DecisionFuture<'a> {
+        if s.tenant.as_str() == self.0 {
+            let caller = s
+                .headers
+                .iter()
+                .find(|(k, _)| k == "x-subject")
+                .map(|(_, v)| v.clone());
+            self.1
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(caller);
+        }
+        Box::pin(std::future::ready(antares_ops::policy::Decision::Allow))
+    }
+    fn pre_notify(
+        &self,
+        _s: &antares_ops::policy::Subject,
+        _sub: &serde_json::Value,
+        _n: &mut serde_json::Value,
+    ) -> antares_ops::policy::NotifyDecision {
+        antares_ops::policy::NotifyDecision::Deliver
+    }
+}
+
+/// SHR-15 live, SHR-17 (T-7422): Organization A's Tenant grants Organization B's hub, through
+/// the view of A's shared Endpoint and as the caller the grant names. B's member reads A's
+/// rows with the Attribute the view leaves out absent, A's engine is asked about the grant's
+/// caller and never about B's member, and a third Organization's Tenant without a grant
+/// registers nothing and reads nothing.
+#[tokio::test]
+async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_as_that_caller() {
+    let (a, b, c) = ("sk_ba__shared", "sk_bbsk__hub", "sk_ke__other");
+    let engine = Arc::new(Callers(a, Mutex::default()));
+    let (_b, app) = broker(Some(engine.clone()), Vec::new()).await;
+    car(&app, a, 1).await;
+    let view = json!({"id": "a-shared", "tenant": a, "selector": ["Car"],
+                      "rules": [{"types": ["Car"], "attributes": ["speed"]}],
+                      "operations": ["query_entities", "retrieve_entity"]});
+    let put = send(&app, "PUT", "/q/views/a-shared", None, None, Some(view)).await;
+    assert_eq!(put.status, 201, "{}", put.body);
+    grant(
+        &app,
+        a,
+        b,
+        json!({"view": "a-shared", "crossOrganization": true,
+               "subject": {"x-subject": "public"}}),
+    )
+    .await;
+    let reg = register(&app, b, "r1", Some(a), json!({})).await;
+    assert_eq!(reg.status, 201, "{}", reg.body);
+    engine
+        .1
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
+
+    let read = cars(&app, b, Some("bob")).await;
+    assert_eq!(
+        ids(&read.body),
+        [format!("urn:ngsi-ld:Car:{a}-1")],
+        "{}",
+        read.body
+    );
+    let first = read.body.get(0).cloned().unwrap_or_default();
+    assert!(first.get("speed").is_some(), "{}", read.body);
+    assert!(
+        first.get("owner").is_none(),
+        "the view leaves owner out: {}",
+        read.body
+    );
+    let seen = std::mem::take(&mut *engine.1.lock().unwrap_or_else(PoisonError::into_inner));
+    assert!(!seen.is_empty(), "A's engine decided the forward");
+    assert!(
+        seen.iter().all(|s| s.as_deref() == Some("public")),
+        "A's engine saw only the grant's caller: {seen:?}"
+    );
+
+    assert_eq!(
+        register(&app, c, "r1", Some(a), json!({})).await.status,
+        403
+    );
+    assert_eq!(
+        ids(&cars(&app, c, Some("carol")).await.body),
+        Vec::<String>::new()
+    );
+}

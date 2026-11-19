@@ -7554,7 +7554,8 @@
         }
       },
       "repository": {
-        "read": "Čtení repozitáře"
+        "read": "Čtení repozitáře",
+        "downloaded": "Repozitář stažen"
       }
     },
     "sources": {
@@ -8218,6 +8219,7 @@
       "connectors": "Konektory",
       "data-access": "Přístup k datům",
       "backups": "Zálohy",
+      "repositories": "Repozitáře",
       "operator-organizations": "Organizace",
       "operator-hosts": "Hostitelé a certifikáty",
       "operator-installation": "Instalace",
@@ -13581,6 +13583,33 @@
     "phase": {
       "merged": "zveřejněno",
       "rejected": "zamítnuto"
+    }
+  },
+  "orgRepositories": {
+    "title": "Repozitáře",
+    "loading": "Načítají se repozitáře…",
+    "lead": "Všechny Git repozitáře této organizace: konfigurace jejích projektů a zdrojový kód jejich aplikací. Stáhněte si repozitář jako .tar.gz jeho výchozí větve.",
+    "hint": "Název souboru obsahuje repozitář a commit, např. air-quality-2c245c6.tar.gz. Archivy do {size} se stáhnou zde; větší repozitář naklonujte přes git. Průběh stahování ukazuje prohlížeč.",
+    "toProjects": "Otevřít Projekty",
+    "tooLarge": "Větší než {size}: naklonujte ho přes git.",
+    "empty": "Zatím žádné repozitáře",
+    "emptyHint": "Projekt dostane repozitář při vytvoření, aplikace při sestavení. Nejprve vytvořte projekt v části Projekty.",
+    "name": "Repozitář",
+    "what": "Obsah",
+    "updated": "Poslední změna",
+    "size": "Velikost",
+    "state": "Stav",
+    "archived": "Archivovaný",
+    "active": "Aktivní",
+    "download": "Stáhnout",
+    "downloadOne": "Stáhnout {name} jako .tar.gz",
+    "ofProject": "projekt {project}",
+    "ofApp": "aplikace {app} v {project}",
+    "ofOrganization": "celá instalace",
+    "role": {
+      "configuration": "Konfigurace",
+      "project": "Konfigurace projektu",
+      "application": "Zdrojový kód aplikace"
     }
   },
   "opendataAppearance": {

@@ -45,7 +45,7 @@ members = [
 ]
 # Fuzz harness: own lockfile/profile, built only by cargo-fuzz on
 # nightly (.github/workflows/fuzz.yml) — never part of the normal build.
-exclude = ["fuzz", "vendor/rumqttc"]
+exclude = ["fuzz", "vendor/rumqttc", "vendor/rstar", "vendor/geo-types"]
 
 [workspace.package]
 version = "0.3.0"
@@ -347,3 +347,7 @@ needless_borrows_for_generic_args = "allow"
 # rumqttc 0.25.1 with rustls-webpki 0.103 until a release has it (vendor/rumqttc/README.md, T-4129).
 [patch.crates-io]
 rumqttc = { path = "vendor/rumqttc" }
+# rstar 0.12.2 on heapless 0.9.4 and geo-types 0.7.20 without its unused rstar 0.8-0.11/0.13
+# options until geo releases rstar 0.14 (RUSTSEC-2026-0574..0582; vendor/rstar/README.md, T-7429).
+rstar = { path = "vendor/rstar" }
+geo-types = { path = "vendor/geo-types" }

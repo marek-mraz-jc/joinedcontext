@@ -417,6 +417,22 @@ pub static DOORS: &[Door] = &[
         Who::Administrator,
     ),
     door(
+        "portal_organization_repositories",
+        Org,
+        Method::GET,
+        "/organization/repositories",
+        &[],
+        Who::Administrator,
+    ),
+    door(
+        "portal_organization_repository_archive",
+        Org,
+        Method::GET,
+        "/organization/repositories/{name}/archive",
+        &[NAME],
+        Who::Administrator,
+    ),
+    door(
         "portal_backup_configuration_get",
         Org,
         Method::GET,

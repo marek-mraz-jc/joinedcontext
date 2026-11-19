@@ -78,7 +78,7 @@ export const STAY_REST: { why: string; shapes: string[] }[] = [
     ],
   },
   {
-    why: "file downloads: CSV exports and archives saved as files",
+    why: "file downloads: CSV exports and archives saved as files, streamed to disk by the browser",
     shapes: [
       "/api/v1/projects/{}/changes/history/export",
       "/api/v1/projects/{}/pipelines/{}/rejected/export",
@@ -87,6 +87,7 @@ export const STAY_REST: { why: string; shapes: string[] }[] = [
       "/api/v1/projects/{}/usage/endpoints/export",
       "/api/v1/projects/{}/knowledge/conversations/export",
       "/api/v1/organization/costs/export",
+      "/api/v1/organization/repositories/{}/archive",
     ],
   },
   {
