@@ -155,7 +155,10 @@ specification leaves to the broker:
   7.6.3.2). They add read paths and change no 1.9.1 operation.
 - **`POST /ex/v1/remote-notify`**: the callback of distributed subscriptions
   (5.8.1.4). The specification requires the forwarding and leaves the
-  callback URL to the broker; `/ex/` keeps it outside `/ngsi-ld/v1`.
+  callback URL to the broker; `/ex/` keeps it outside `/ngsi-ld/v1`. Each
+  copy carries an `Antares-Notify-Proof` receiverInfo header the Context
+  Source sends back; a notification without it, stale or replayed answers
+  401 (ADR-0019).
 
 CI holds the line: `dev/check-vanilla-symbols.sh` refuses a vanilla binary
 that links a surface crate or the `jc` code, `ci/vanilla-tree.txt` pins its

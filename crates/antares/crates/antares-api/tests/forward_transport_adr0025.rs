@@ -299,8 +299,9 @@ async fn run(
     wire.lock().unwrap().clone()
 }
 
-/// `raw` with every UUID masked: a distributed subscription's copy carries
-/// an id each broker mints anew (5.8.1.4).
+/// `raw` with every UUID and notification proof masked: a distributed
+/// subscription's copy carries an id and an `Antares-Notify-Proof` (64 hex
+/// digits in its receiverInfo) each broker mints anew (clause 5.8.1, step 4).
 fn unminted(raw: &str) -> String {
     let shape = |w: &[u8]| {
         w.iter().enumerate().all(|(i, c)| match i {
@@ -312,7 +313,10 @@ fn unminted(raw: &str) -> String {
     let mut out = String::new();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes.len() - i >= 36 && shape(&bytes[i..i + 36]) {
+        if bytes.len() - i >= 64 && bytes[i..i + 64].iter().all(u8::is_ascii_hexdigit) {
+            out.push_str("<proof>");
+            i += 64;
+        } else if bytes.len() - i >= 36 && shape(&bytes[i..i + 36]) {
             out.push_str("<uuid>");
             i += 36;
         } else {

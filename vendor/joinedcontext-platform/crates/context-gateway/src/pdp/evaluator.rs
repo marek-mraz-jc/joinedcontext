@@ -1005,4 +1005,36 @@ mod tests {
         let wrong_name = Principal::new(PrincipalKind::ServiceAccount, "city-kpis/pl-other");
         assert!(!account("city-kpis").is(&wrong_name));
     }
+
+    /// T-7424: a write grant narrowed by propertyNames passes for a person of another
+    /// Organization named by id, for a property it lists only.
+    #[test]
+    fn a_property_names_write_grant_holds_for_a_foreign_person() {
+        let eva = person_of(serde_json::json!({"jc_org": ["zilina"]}), Some("hel"));
+        let grant = spec(
+            "assignee: { kind: user, id: s }\n\
+             operations: [retrieveOps, upsertBatch, createBatch, queryBatch]\n\
+             information:\n  - entities: [{ type: ShareCheck }]\n    propertyNames: [level, note]\n",
+        );
+        let verdict = evaluate(
+            &eva,
+            Operation::UpsertBatch,
+            &Request::default(),
+            "sh-src",
+            std::slice::from_ref(&grant),
+            TimestampTz::now(),
+        );
+        let Verdict::Rewrite(c) = verdict else {
+            panic!("the grant writes: {verdict:?}")
+        };
+        let entity = |attr: &str| {
+            serde_json::json!({"id": "urn:ngsi-ld:ShareCheck:fi_hel:sh1", "type": "ShareCheck",
+                attr: {"type": "Property", "value": "x", "observedAt": "2026-11-19T00:00:00Z"}})
+        };
+        assert_eq!(
+            crate::pdp::write_guard::check_in(&entity("note"), &c, &[]),
+            Ok(())
+        );
+        assert!(crate::pdp::write_guard::check_in(&entity("secret"), &c, &[]).is_err());
+    }
 }
