@@ -515,7 +515,7 @@ pub(crate) fn is_time(text: &str) -> bool {
     if text.bytes().all(|b| b.is_ascii_digit()) {
         return true;
     }
-    if chrono::DateTime::parse_from_rfc3339(text).is_ok() {
+    if jc_time::parse_rfc3339(text).is_some() {
         return true;
     }
     let Some(rest) = text.strip_prefix("now") else {

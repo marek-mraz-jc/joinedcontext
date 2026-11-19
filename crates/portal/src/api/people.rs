@@ -276,8 +276,8 @@ fn locale(raw: &str) -> Result<String, ApiError> {
 
 fn rfc3339(millis: Option<i64>) -> Option<String> {
     millis
-        .and_then(chrono::DateTime::from_timestamp_millis)
-        .map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .and_then(jc_time::TimestampTz::from_millis)
+        .map(|at| at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true))
 }
 
 fn email_of(user: &KcUser) -> String {

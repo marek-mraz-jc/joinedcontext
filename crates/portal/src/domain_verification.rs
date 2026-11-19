@@ -423,7 +423,7 @@ impl<L: Lookup> Verifier<L> {
         domain: &str,
         now: TimestampTz,
     ) -> Result<DomainVerification, sqlx::Error> {
-        // `checked_at` travels as epoch seconds: the status type is chrono's, sqlx here speaks `time`.
+        // `checked_at` travels as epoch seconds: the status type is jc-time's, sqlx here speaks `time`.
         type Row = (
             String,
             String,

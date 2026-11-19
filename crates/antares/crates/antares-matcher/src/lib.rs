@@ -40,7 +40,9 @@ fn sub_str<'a>(sub: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    jiff::fmt::temporal::DateTimePrinter::new()
+        .precision(Some(3))
+        .timestamp_to_string(&jiff::Timestamp::now())
 }
 
 /// Every predicate at once: active, entities selector (5.2.33), `q` /
@@ -207,11 +209,8 @@ pub fn throttled(sub: &Value) -> bool {
     else {
         return false;
     };
-    chrono::DateTime::parse_from_rfc3339(last).is_ok_and(|t| {
-        chrono::Utc::now()
-            .signed_duration_since(t.with_timezone(&chrono::Utc))
-            .num_milliseconds()
-            < (secs * 1000.0) as i64
+    last.parse::<jiff::Timestamp>().is_ok_and(|t| {
+        jiff::Timestamp::now().duration_since(t).as_millis() < (secs * 1000.0) as i128
     })
 }
 
@@ -273,6 +272,15 @@ mod tests {
     /// that query: a term whose Attribute `expandValues` names is compared
     /// after JSON-LD type coercion, and a name `jsonKeys` carries as well is
     /// left uninterpreted (6.4.3.2, the broker's precedence).
+    /// lastNotification and friends as chrono wrote them before the move to jiff (T-7256):
+    /// RFC 3339 in UTC, three fraction digits, `Z`.
+    #[test]
+    fn notification_stamps_keep_the_chrono_wire_format() {
+        let at = now_iso();
+        assert_eq!((at.len(), &at[19..20], &at[23..]), (24, ".", "Z"), "{at}");
+        assert!(at.parse::<jiff::Timestamp>().is_ok(), "{at}");
+    }
+
     #[test]
     fn clause_5_2_12_expand_values_coerces_the_condition_value() {
         let c = ctx();
@@ -363,8 +371,7 @@ mod tests {
             "an old lastNotification is outside the window"
         );
         // the window is in seconds: 10 s ago is inside 60 s and outside 5 s
-        let ago = (chrono::Utc::now() - chrono::Duration::seconds(10))
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let ago = (jiff::Timestamp::now() - jiff::SignedDuration::from_secs(10)).to_string();
         s["notification"]["lastNotification"] = json!(ago);
         s["throttling"] = json!(60);
         assert!(throttled(&s), "10 s ago, 60 s window");

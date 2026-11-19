@@ -14,9 +14,9 @@ use std::time::Duration;
 use axum::extract::{Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, NaiveDateTime, Utc};
 use jc_core::kinds::mqtt_broker::release_name;
 use jc_core::kinds::MqttBrokerSpec;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -41,7 +41,7 @@ pub struct Measured {
     /// `false` when the broker did not answer; `reason` says why and no number is given.
     pub measured: bool,
     #[schema(value_type = String, format = DateTime)]
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: TimestampTz,
     /// `messages.publish` of the two newest samples, per second; `null` with fewer than two.
     pub messages_per_second: Option<f64>,
     /// Connected clients of the accounts whose roles may publish.
@@ -62,7 +62,7 @@ pub struct Measured {
 #[serde(rename_all = "camelCase")]
 pub struct RatePoint {
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub per_second: f64,
 }
 
@@ -74,7 +74,7 @@ pub struct AccountSeen {
     pub connected: u32,
     /// The newest `connected_at` of its connected clients; `null` when none is connected.
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<TimestampTz>,
 }
 
 #[derive(Deserialize)]
@@ -121,7 +121,7 @@ fn rates(history: &History) -> Vec<RatePoint> {
         .filter_map(|pair| {
             let (before, newer) = (pair.first()?, pair.get(1)?);
             let seconds = (newer.ts - before.ts) as f64 / 1000.0;
-            let at = DateTime::from_timestamp_millis(newer.ts)?;
+            let at = TimestampTz::from_millis(newer.ts)?;
             (seconds > 0.0).then(|| RatePoint {
                 at,
                 per_second: ((newer.published - before.published) / seconds).max(0.0),
@@ -159,9 +159,10 @@ fn tally(project: &str, spec: &MqttBrokerSpec, clients: &[Client]) -> (Vec<Accou
         };
         seen.connected += 1;
         // RMQTT writes `connected_at` in UTC without a zone.
-        let at = NaiveDateTime::parse_from_str(&client.connected_at, "%Y-%m-%d %H:%M:%S")
+        let at = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", &client.connected_at)
             .ok()
-            .map(|at| at.and_utc());
+            .and_then(|at| jiff::tz::Offset::UTC.to_timestamp(at).ok())
+            .map(TimestampTz);
         seen.since = seen.since.max(at);
     }
     let publishers = spec
@@ -207,7 +208,7 @@ async fn read<T: for<'de> Deserialize<'de>>(base: &str, path: &str) -> Result<T,
 
 /// Reads the broker at `base` (`http://host:port`) and counts what it holds for `spec`.
 pub async fn measure(base: &str, project: &str, spec: &MqttBrokerSpec) -> Measured {
-    let observed_at = Utc::now();
+    let observed_at = TimestampTz::now();
     let history = read::<History>(base, "/api/v1/metrics/history/sum");
     let clients_path = format!("/api/v1/clients?_limit={CLIENT_ROWS}");
     let clients = read::<Vec<Client>>(base, &clients_path);
@@ -229,7 +230,7 @@ pub async fn measure(base: &str, project: &str, spec: &MqttBrokerSpec) -> Measur
     }
 }
 
-fn not_measured(observed_at: DateTime<Utc>, reason: String) -> Measured {
+fn not_measured(observed_at: TimestampTz, reason: String) -> Measured {
     Measured {
         measured: false,
         observed_at,
@@ -291,7 +292,7 @@ pub(crate) async fn measured_now(
 ) -> Measured {
     let Some(namespace) = state.config.mqtt_namespace.as_deref() else {
         return not_measured(
-            Utc::now(),
+            TimestampTz::now(),
             "this instance runs no MQTT brokers namespace (JC_PORTAL_MQTT_NAMESPACE)".to_owned(),
         );
     };
@@ -366,7 +367,7 @@ mod tests {
         };
         let seen: Vec<(i64, f64)> = rates(&history)
             .iter()
-            .map(|point| (point.at.timestamp_millis(), point.per_second))
+            .map(|point| (point.at.as_millis(), point.per_second))
             .collect();
         assert_eq!(seen, [(5_000, 2.0), (10_000, 4.0), (15_000, 0.0)]);
         assert!(rates(&History {
@@ -455,6 +456,44 @@ mod tests {
         assert_eq!(accounts[2].connected, 1);
         // The dashboard only subscribes: it is no publisher.
         assert_eq!(publishers, 2);
+    }
+
+    /// The instants src/api writes and reads, pinned as the chrono build wrote them before the
+    /// move to jiff (T-7255): serde's `AutoSi` with `Z`, `to_rfc3339_opts(Secs, true)` (secrets,
+    /// erasures, Grafana, KPI checks, people), the `%Y-%m-%d` day (agent runs and registry, a
+    /// reserved project name), build_listener's `builtAt`, and the strict RFC 3339 read.
+    #[test]
+    fn instants_keep_the_chrono_wire_format() {
+        let t = TimestampTz(jiff::Timestamp::new(1_700_000_000, 123_000_000).expect("an instant"));
+        let point = RatePoint {
+            at: t,
+            per_second: 1.0,
+        };
+        assert_eq!(
+            serde_json::to_value(&point).expect("json")["at"],
+            "2023-11-14T22:13:20.123Z"
+        );
+        let whole = TimestampTz::from_second(1_700_000_000).expect("an instant");
+        assert_eq!(
+            serde_json::to_value(whole).expect("json"),
+            "2023-11-14T22:13:20Z"
+        );
+        assert_eq!(
+            t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
+            "2023-11-14T22:13:20Z"
+        );
+        assert_eq!(t.0.strftime("%Y-%m-%d").to_string(), "2023-11-14");
+        assert_eq!(
+            t.0.strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "2023-11-14T22:13:20Z"
+        );
+        // A `since` written with an offset reads as the same instant; chrono's strict read
+        // refuses a time without seconds, as before.
+        let since: TimestampTz =
+            serde_json::from_value(serde_json::json!("2023-11-14T23:13:20.123+01:00"))
+                .expect("an offset time");
+        assert_eq!(since, t);
+        assert!(jc_time::parse_rfc3339("2023-11-14T22:13Z").is_none());
     }
 
     #[test]

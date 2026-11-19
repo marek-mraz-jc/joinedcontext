@@ -2007,7 +2007,7 @@ async fn a_refusals_fields_and_hint_carry_into_the_odata_error() {
 /// `value` with each RFC 3339 instant as one token: two reads of a live reading differ in when.
 fn timeless(value: Value) -> Value {
     match value {
-        Value::String(text) if chrono::DateTime::parse_from_rfc3339(&text).is_ok() => {
+        Value::String(text) if jc_time::parse_rfc3339(&text).is_some() => {
             json!("<instant>")
         }
         Value::Array(items) => Value::Array(items.into_iter().map(timeless).collect()),

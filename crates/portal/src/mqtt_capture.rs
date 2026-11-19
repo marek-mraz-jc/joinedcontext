@@ -174,7 +174,7 @@ type Key = (String, String);
 /// A stored message: topic, client id, received and expires in milliseconds, payload.
 type Row = (String, Option<String>, i64, i64, Vec<u8>);
 
-/// A stored instant, in milliseconds since the epoch: this crate's sqlx reads no chrono type.
+/// A stored instant, in milliseconds since the epoch: this crate's sqlx reads no jiff type.
 fn at(millis: i64) -> TimestampTz {
     jc_time::TimestampTz::from_millis(millis).unwrap_or_default()
 }

@@ -822,7 +822,7 @@ async fn every_tool_result_is_grounded_in_the_revision_it_was_evaluated_against(
         assert_eq!(grounding["syncedAt"], Value::Null);
         let at = grounding["evaluatedAt"].as_str().expect("evaluatedAt");
         assert!(at.ends_with('Z'), "UTC: {at}");
-        chrono::DateTime::parse_from_rfc3339(at).expect("RFC 3339");
+        jc_time::parse_rfc3339(at).expect("RFC 3339");
         let text = grounding.to_string();
         assert!(!text.contains("http") && !text.contains("token"), "{text}");
     }

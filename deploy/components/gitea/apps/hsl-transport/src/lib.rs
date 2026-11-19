@@ -92,6 +92,19 @@ pub fn page_config(raw: &str) -> Result<String, String> {
         .replace('&', "\\u0026"))
 }
 
+/// `at` as the feed's lost-since stamp: RFC 3339 in UTC with `Z` and whole seconds, the
+/// fraction dropped (as chrono's `to_rfc3339_opts(SecondsFormat::Secs, true)` wrote it).
+fn stamp(at: jiff::Timestamp) -> String {
+    jiff::fmt::temporal::DateTimePrinter::new()
+        .precision(Some(0))
+        .timestamp_to_string(&at)
+}
+
+/// [`stamp`] of now.
+fn stamp_now() -> String {
+    stamp(jiff::Timestamp::now())
+}
+
 fn with_trailing_slash(url: &str) -> String {
     if url.ends_with('/') {
         url.to_owned()
@@ -140,10 +153,7 @@ impl App {
             http: reqwest::Client::new(),
             fleet: RwLock::new(BTreeMap::new()),
             changes: tokio::sync::broadcast::channel(BROADCAST_DEPTH).0,
-            feed: tokio::sync::watch::channel(Some(
-                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            ))
-            .0,
+            feed: tokio::sync::watch::channel(Some(stamp_now())).0,
             metrics: metrics::Metrics::default(),
             board: RwLock::new(None),
             headsigns: tokio::sync::Mutex::new((0, BTreeMap::new())),
@@ -438,4 +448,21 @@ async fn stream(State(app): State<Arc<App>>) -> Sse<impl Stream<Item = Result<Ev
             .data(json!({ "lostSince": lost }).to_string())
     });
     Sse::new(vehicles.merge(feed).map(Ok)).keep_alive(KeepAlive::default())
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    /// T-7248: the stamp as the chrono build wrote it, the fraction dropped, never rounded.
+    #[test]
+    fn the_stamp_keeps_the_chrono_wire_format() {
+        for (at, want) in [
+            ("2026-10-23T08:00:00Z", "2026-10-23T08:00:00Z"),
+            ("2026-10-23T08:00:00.999999999Z", "2026-10-23T08:00:00Z"),
+            ("2026-10-25T03:30:00.5+02:00", "2026-10-25T01:30:00Z"),
+        ] {
+            let at: jiff::Timestamp = at.parse().unwrap_or_default();
+            assert_eq!(super::stamp(at), want);
+        }
+        assert_eq!(super::stamp_now().len(), 20);
+    }
 }

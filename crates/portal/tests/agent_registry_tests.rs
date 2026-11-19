@@ -32,7 +32,7 @@ fn role(state: &AppState, name: &str, namespace: &str, kinds: &[&str], verbs: &[
 }
 
 fn run(id: &str, by: &str, status: &str, tokens: i64) -> AgentRun {
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let now = jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     AgentRun {
         id: id.to_owned(),
         project: "helsinki".to_owned(),

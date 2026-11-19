@@ -197,7 +197,7 @@ async fn a_branch_lives_renews_and_stays_a_tombstone() {
         .expect("branches");
     let mine: Vec<_> = listed.iter().filter(|(o, ..)| *o == org).collect();
     assert_eq!(mine.len(), 2, "{mine:?}");
-    let now = chrono::Utc::now().timestamp();
+    let now = jiff::Timestamp::now().as_second();
     for (_, name, key, expires_at) in mine {
         assert_eq!(*name, format!("b-{}", key.project.path_segment()));
         if key.project == expired {

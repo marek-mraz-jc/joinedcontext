@@ -628,6 +628,51 @@ pub fn organization_realm_files(
     Ok(files)
 }
 
+/// The client name an Organization realm's first administrator's password is derived under
+/// ([`organization_first_admin_env`]).
+const ORGANIZATION_FIRST_ADMIN: &str = "first-admin";
+
+/// The realm file of an Organization realm's first administrator (T-7283): the one person
+/// named by `address` (`[[organizations]] first_admin`, also the username), enabled, with a
+/// temporary password and the required actions to change it and to set up a second factor at
+/// the first sign-in. No group and no role: the Organization's administration is granted only
+/// through the operators' door with a second factor (T-7005). Applied while the realm holds no
+/// such person (kaisatsu `seed_organization_admin_once`), so a sign-in is never reset.
+#[must_use]
+pub fn organization_first_admin_file(realm: &Realm, address: &str) -> (String, Value) {
+    let file = json!({
+        "realm": realm.as_str(),
+        "users": [{
+            "username": address,
+            "enabled": true,
+            "email": address,
+            "emailVerified": false,
+            "requiredActions": ["UPDATE_PASSWORD", "CONFIGURE_TOTP"],
+            "credentials": [{
+                "type": "password",
+                "value": format!("$(env:{FIRST_ADMIN_PASSWORD_VAR})"),
+                "temporary": true
+            }]
+        }]
+    });
+    (FIRST_ADMIN_FILE.to_owned(), file)
+}
+
+/// The importer variable of an Organization realm's first administrator's one-time password:
+/// derived from the installation's first administrator's password for `realm`
+/// ([`jc_core::Secret::for_realm`] under the client name `first-admin`), so nothing more is
+/// stored and an operator who holds the installation's password derives it in memory. `None`
+/// when the installation has no first administrator's password.
+#[must_use]
+pub fn organization_first_admin_env(
+    installation: &BTreeMap<String, String>,
+    realm: &Realm,
+) -> Option<(String, String)> {
+    let own = jc_core::Secret::new(installation.get(FIRST_ADMIN_PASSWORD_VAR)?.as_str())
+        .for_realm(realm.as_str(), ORGANIZATION_FIRST_ADMIN);
+    Some((FIRST_ADMIN_PASSWORD_VAR.to_owned(), own.expose().to_owned()))
+}
+
 /// The gateway's client (`context-gateway`): client_credentials only, its tokens for the Portal's
 /// internal listener (audience `portal-internal`, where it reads revocations, connectors and
 /// usage), no realm role and no person's scope.
@@ -766,6 +811,25 @@ pub fn add_assistant_audience(files: &mut [(String, Value)]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7283: an Organization realm's first administrator's one-time password is its own per
+    /// realm, never the installation's, and the file names it only by reference.
+    #[test]
+    fn an_organizations_first_admin_password_is_its_own_per_realm() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let installation = realm_env(&setup);
+        let realm = |o: &str| Realm::parse(o).unwrap();
+        let (name, a) = organization_first_admin_env(&installation, &realm("a")).unwrap();
+        let (_, b) = organization_first_admin_env(&installation, &realm("b")).unwrap();
+        assert_eq!(name, FIRST_ADMIN_PASSWORD_VAR);
+        assert_ne!(a, b);
+        assert_ne!(Some(&a), installation.get(FIRST_ADMIN_PASSWORD_VAR));
+        assert!(organization_first_admin_env(&BTreeMap::new(), &realm("a")).is_none());
+        let (_, file) = organization_first_admin_file(&realm("a"), "it@a.test");
+        assert!(!file.to_string().contains(&a), "no literal password");
+        assert_eq!(file["users"][0]["credentials"][0]["temporary"], true);
+    }
 
     #[test]
     fn the_portals_client_gains_the_assistant_audience_once() {

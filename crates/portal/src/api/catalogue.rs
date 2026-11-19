@@ -18,7 +18,6 @@ use axum::extract::{Path, RawQuery, State};
 use axum::http::{header, HeaderMap};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::Datelike;
 use jc_core::kinds::ckan::CkanInstanceSpec;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1144,7 +1143,11 @@ pub async fn get_catalogue(
             unavailable.join(", ")
         )));
     }
-    let mut page = page_of(&datasets, &filters, chrono::Utc::now().year());
+    let mut page = page_of(
+        &datasets,
+        &filters,
+        i32::from(jc_time::TimestampTz::now().utc().year()),
+    );
     page.unavailable = unavailable;
     Ok(cached(&headers, page))
 }

@@ -324,7 +324,7 @@ pub(crate) async fn export_subject(
     let body = json!({
         "space": space,
         "subject": hash,
-        "exportedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "exportedAt": jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
         "entities": entities,
     });
     // An answer to this session only: never kept by a cache on the way.

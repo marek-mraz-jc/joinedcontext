@@ -436,7 +436,7 @@ async fn publish(
         "digest": digest,
         "commit": build.commit,
         "sdkVersion": sdk,
-        "builtAt": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        "builtAt": jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string(),
     }});
     let held = Held {
         project: build.project.clone(),

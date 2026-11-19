@@ -273,7 +273,7 @@ impl Harness {
             "name": format!("eval-{}", scenario.id.to_lowercase()),
             "segments": [scenario.segment],
             "scope": [{ "project": own, "access": "read" }],
-            "expiresAt": (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+            "expiresAt": (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24)).to_rfc3339(),
         });
         let token = self.token_for(&scenario.persona, AUDIENCE, AUDIENCE);
         let (status, body) = self

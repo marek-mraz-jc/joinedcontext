@@ -308,8 +308,9 @@ async fn apply_portal_realm(
 
 /// What an Organization's own realm is written from (T-7001): named like the Organization,
 /// `jc`'s own (no deployment import writes it), with the Portal's, the gateway's and the
-/// assistant's clients redirecting to that Organization's hosts alone. `None` while the Portal
-/// does not sign in through kaisatsu.
+/// assistant's clients redirecting to that Organization's working hosts alone, which come with
+/// its sign-in host from jc.toml or the host registry (`sign_in::SignIn::portals`, T-7284).
+/// `None` while the Portal does not sign in through kaisatsu.
 #[derive(Clone)]
 struct OrganizationRealmFiles {
     /// The installation realm's importer variables ([`setup::realm_env`]): each realm gets its
@@ -317,8 +318,11 @@ struct OrganizationRealmFiles {
     env_vars: BTreeMap<String, String>,
     gateway: bool,
     assistant: bool,
-    /// Each Organization's working hosts, as URLs (`{scheme}://{portal}`, `portals`).
-    bases: BTreeMap<String, Vec<String>>,
+    /// The scheme of the working hosts' URLs (`{scheme}://{portal}`).
+    scheme: String,
+    /// Each Organization's first administrator's address (`[[organizations]] first_admin`,
+    /// T-7283).
+    first_admins: BTreeMap<String, String>,
 }
 
 impl OrganizationRealmFiles {
@@ -342,28 +346,36 @@ impl OrganizationRealmFiles {
                 .setup
                 .value(setup::Secret::AssistantClientSecret)
                 .is_some(),
-            bases: organizations
+            scheme: scheme.to_owned(),
+            first_admins: organizations
                 .iter()
-                .map(|org| {
-                    let bases = std::iter::once(&org.hosts.portal)
-                        .chain(&org.hosts.portals)
-                        .map(|h| format!("{scheme}://{h}"))
-                        .collect();
-                    (org.name.clone(), bases)
-                })
+                .filter_map(|org| Some((org.name.clone(), org.first_admin.clone()?)))
                 .collect(),
         })
     }
 
-    /// Applies `organization`'s realm; idempotent, so applying it again changes nothing.
-    async fn apply(&self, store: &Arc<dyn Store>, organization: &str) -> Result<(), String> {
-        let bases = self
-            .bases
-            .get(organization)
-            .ok_or_else(|| format!("{organization}: not an Organization jc runs"))?;
+    /// Applies the realm of `own`'s Organization; idempotent, so applying it again changes
+    /// nothing. Refused while the Organization has no working host served: its clients would
+    /// have nowhere to redirect.
+    async fn apply(
+        &self,
+        store: &Arc<dyn Store>,
+        own: &super::sign_in::SignIn,
+    ) -> Result<(), String> {
+        let organization = own.organization.as_str();
+        if own.portals.is_empty() {
+            return Err(format!(
+                "{organization}: no working host is served, so its realm is not applied yet"
+            ));
+        }
+        let bases: Vec<String> = own
+            .portals
+            .iter()
+            .map(|h| format!("{}://{h}", self.scheme))
+            .collect();
         let realm = setup::Realm::parse(organization).map_err(|e| e.to_string())?;
         let mut files =
-            setup::organization_realm_files(bases, &realm).map_err(|e| e.to_string())?;
+            setup::organization_realm_files(&bases, &realm).map_err(|e| e.to_string())?;
         if self.gateway {
             files.push(setup::gateway_realm_file(&realm));
         }
@@ -371,8 +383,20 @@ impl OrganizationRealmFiles {
             setup::add_assistant_audience(&mut files);
             files.push(setup::assistant_realm_file(&realm));
         }
+        let mut env_vars = setup::organization_realm_env(&self.env_vars, &realm);
+        if let Some(address) = self.first_admins.get(organization) {
+            seed_organization_admin_once(
+                store,
+                &realm,
+                address,
+                &self.env_vars,
+                &mut files,
+                &mut env_vars,
+            )
+            .await?;
+        }
         let options = ApplyOptions {
-            env_vars: setup::organization_realm_env(&self.env_vars, &realm),
+            env_vars,
             ..ApplyOptions::default()
         };
         let report = apply_realm_files(store, &files, &options)
@@ -387,6 +411,43 @@ impl OrganizationRealmFiles {
     }
 }
 
+/// Adds the first administrator of an Organization realm to `files` while the realm holds no
+/// person of that address (T-7283), with the one-time password derived for that realm
+/// ([`setup::organization_first_admin_env`]). Once the person exists the file stays out, so a
+/// password they set and their second factor are never reset by the next apply.
+async fn seed_organization_admin_once(
+    store: &Arc<dyn Store>,
+    realm: &setup::Realm,
+    address: &str,
+    installation: &BTreeMap<String, String>,
+    files: &mut Vec<(String, serde_json::Value)>,
+    env_vars: &mut BTreeMap<String, String>,
+) -> Result<(), String> {
+    if store
+        .get_realm(realm.as_str())
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+        && store
+            .get_user_by_username_or_email(realm.as_str(), None, address)
+            .await
+            .map_err(|e| e.to_string())?
+            .is_some()
+    {
+        return Ok(());
+    }
+    let (name, password) =
+        setup::organization_first_admin_env(installation, realm).ok_or_else(|| {
+            format!(
+                "{realm}: the installation has no first administrator's password, so the first \
+             administrator of the Organization is not created; run jc setup again"
+            )
+        })?;
+    env_vars.insert(name, password);
+    files.push(setup::organization_first_admin_file(realm, address));
+    Ok(())
+}
+
 /// Applies the realm of each Organization with its own sign-in host (`hosts.idm`, T-7001).
 async fn apply_organization_realms(
     store: &Arc<dyn Store>,
@@ -398,58 +459,108 @@ async fn apply_organization_realms(
     };
     for own in sign_ins {
         files
-            .apply(store, &own.organization)
+            .apply(store, own)
             .await
             .map_err(|e| StartError::module(Module::Kaisatsu, &e))?;
     }
     Ok(())
 }
 
-/// Keeps kaisatsu on the host registry's sign-in hosts (T-7180): each set jc publishes replaces
-/// the pins, so a served sign-in host answers its realm and a removed one is refused from the
-/// next request on, under the issuer of the registry's host; and the realm of each Organization
-/// in the set is applied (idempotent), so a host served at run time has a realm to answer.
+/// Applies the realm of each sign-in of `set` (when kaisatsu writes them, `files`), then the
+/// sign-ins whose realm kaisatsu holds: those alone may be pinned. A realm that does not apply
+/// is logged and left out unless an earlier apply made it; `Err` when the store does not answer.
+async fn apply_set(
+    store: &Arc<dyn Store>,
+    files: Option<&OrganizationRealmFiles>,
+    set: &[super::sign_in::SignIn],
+) -> Result<Vec<super::sign_in::SignIn>, kaisatsu_core::KaisatsuError> {
+    if let Some(files) = files {
+        for own in set {
+            if let Err(e) = files.apply(store, own).await {
+                tracing::error!(error = %e, "kaisatsu: an Organization's realm is not applied");
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(set.len());
+    for own in set {
+        if store.get_realm(&own.organization).await?.is_some() {
+            out.push(own.clone());
+        }
+    }
+    Ok(out)
+}
+
+/// Keeps kaisatsu on the host registry's sign-in hosts (T-7180): for each set jc publishes the
+/// realm of each Organization in it is applied first (idempotent), then the pins are replaced by
+/// the set's hosts whose realm exists (T-7284), so a sign-in host never answers without its
+/// realm, and a removed one is refused from the next request on, under the issuer of the
+/// registry's host. `linked` takes the pinned Organizations for the Endpoint scope linker. A set
+/// published while an older one is still applying wins: the older one pins nothing.
 fn follow_sign_ins(
     store: Arc<dyn Store>,
     files: Option<OrganizationRealmFiles>,
     pins: kaisatsu_server::RealmHostsSwap,
     start: &[super::sign_in::SignIn],
     scheme: String,
+    linked: Linked,
     tasks: &TaskTracker,
 ) {
     let tasks = tasks.clone();
     // Every realm pinned in this process: one the registry drops stays refused (`close`).
-    let pinned = std::sync::Mutex::new(
+    let pinned = Arc::new(std::sync::Mutex::new(
         start
             .iter()
             .map(|own| own.organization.clone())
             .collect::<std::collections::BTreeSet<String>>(),
-    );
+    ));
+    let latest = Arc::new(std::sync::atomic::AtomicU64::new(0));
     super::sign_in::follow("kaisatsu", move |set| {
-        let mut ever = pinned
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        ever.extend(set.iter().map(|own| own.organization.clone()));
-        match realm_hosts(set, &scheme) {
-            Ok(hosts) => pins.replace(ever.iter().fold(hosts, |hosts, r| hosts.close(r))),
-            Err(e) => {
-                tracing::error!(error = %e, "kaisatsu: sign-in hosts kept");
+        let generation = latest.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let (store, files, pins, scheme) = (
+            Arc::clone(&store),
+            files.clone(),
+            pins.clone(),
+            scheme.clone(),
+        );
+        let (pinned, latest, linked, set) = (
+            Arc::clone(&pinned),
+            Arc::clone(&latest),
+            Arc::clone(&linked),
+            set.to_vec(),
+        );
+        tasks.spawn(async move {
+            let ready = match apply_set(&store, files.as_ref(), &set).await {
+                Ok(ready) => ready,
+                Err(e) => {
+                    tracing::error!(error = %e, "kaisatsu: sign-in hosts kept");
+                    return;
+                }
+            };
+            let mut ever = pinned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            ever.extend(set.iter().map(|own| own.organization.clone()));
+            if latest.load(std::sync::atomic::Ordering::SeqCst) != generation {
                 return;
             }
-        }
-        let Some(files) = files.clone() else {
-            return;
-        };
-        let (store, set) = (Arc::clone(&store), set.to_vec());
-        tasks.spawn(async move {
-            for own in &set {
-                if let Err(e) = files.apply(&store, &own.organization).await {
-                    tracing::error!(error = %e, "kaisatsu: an Organization's realm is not applied");
+            match realm_hosts(&ready, &scheme) {
+                Ok(hosts) => pins.replace(ever.iter().fold(hosts, |hosts, r| hosts.close(r))),
+                Err(e) => {
+                    tracing::error!(error = %e, "kaisatsu: sign-in hosts kept");
+                    return;
                 }
             }
+            *linked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                ready.into_iter().map(|own| own.organization).collect();
         });
     });
 }
+
+/// The Organizations whose realm the Endpoint scope linker keeps beside the installation's
+/// (T-7284): those pinned to a sign-in host.
+type Linked = Arc<std::sync::Mutex<Vec<String>>>;
 
 /// Leaves the first administrator out of `files` once the realm holds it: applied again on every
 /// start, its file would enable the account and put it back into the bootstrap group after an
@@ -611,20 +722,37 @@ async fn link_pass(
 /// Links each Endpoint's scope to the clients that need it, at start and every [`LINK_EVERY`]
 /// until `shutdown`: the realm-admin step the deployment runs as the
 /// keycloak-admin-permissions-sync CronJob. Only these clients get the scopes; no realm-wide
-/// optional scope is set (T-6301).
+/// optional scope is set (T-6301). Each pass covers the installation realm and every realm of
+/// `linked` (T-7284), each realm's scopes linked to that realm's clients alone.
 fn follow_endpoint_scopes(
     store: Arc<dyn Store>,
     realm: setup::Realm,
+    linked: Linked,
     shutdown: &CancellationToken,
     tasks: &TaskTracker,
 ) {
     let shutdown = shutdown.clone();
     tasks.spawn(async move {
         loop {
-            match link_pass(&store, &realm).await {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(clients = n, "kaisatsu: Endpoint scopes linked"),
-                Err(e) => tracing::warn!(error = %e, "kaisatsu: Endpoint scopes not linked"),
+            let organizations = linked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let realms = std::iter::once(realm.clone()).chain(
+                organizations
+                    .iter()
+                    .filter_map(|o| setup::Realm::parse(o).ok()),
+            );
+            for realm in realms {
+                match link_pass(&store, &realm).await {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        tracing::info!(realm = %realm, clients = n, "kaisatsu: Endpoint scopes linked");
+                    }
+                    Err(e) => {
+                        tracing::warn!(realm = %realm, error = %e, "kaisatsu: Endpoint scopes not linked");
+                    }
+                }
             }
             tokio::select! {
                 () = shutdown.cancelled() => return,
@@ -930,7 +1058,19 @@ pub async fn build(
         }
     }
     check_edge_client(&store, realm).await?;
-    follow_endpoint_scopes(store.clone(), realm.clone(), shutdown, tasks);
+    let linked: Linked = Arc::new(std::sync::Mutex::new(
+        sign_ins
+            .iter()
+            .map(|own| own.organization.clone())
+            .collect(),
+    ));
+    follow_endpoint_scopes(
+        store.clone(),
+        realm.clone(),
+        Arc::clone(&linked),
+        shutdown,
+        tasks,
+    );
     sweep_expired_rows(store.clone(), SWEEP_EVERY, shutdown, tasks);
     send_queued_mail(
         store.clone(),
@@ -966,6 +1106,7 @@ pub async fn build(
         state.realm_hosts(),
         &sign_ins,
         mount.scheme.clone(),
+        linked,
         tasks,
     );
     Ok(router(state, mount))
@@ -994,6 +1135,15 @@ fn realm_hosts(
 mod tests {
     use super::*;
     use crate::config::{Cli, Config};
+
+    /// Organization `o` signing in on `idm.{o}.test`, its working host `smartcity.{o}.test`.
+    fn own(o: &str) -> crate::modules::sign_in::SignIn {
+        crate::modules::sign_in::SignIn {
+            organization: o.into(),
+            host: format!("idm.{o}.test"),
+            portals: vec![format!("smartcity.{o}.test")],
+        }
+    }
 
     fn scope(name: &str, mark: Option<&str>, mapper: bool) -> ClientScopeRepresentation {
         let mut s = ClientScopeRepresentation {
@@ -1241,15 +1391,15 @@ mod tests {
         let kek = Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap();
         let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
         let installation = setup::realm_env(&setup);
-        let base = |o: &str| vec![format!("https://smartcity.{o}.test")];
         let files = OrganizationRealmFiles {
             env_vars: installation.clone(),
             gateway: true,
             assistant: true,
-            bases: BTreeMap::from([("a".to_owned(), base("a")), ("b".to_owned(), base("b"))]),
+            scheme: "https".into(),
+            first_admins: BTreeMap::new(),
         };
-        files.apply(&store, "a").await.unwrap();
-        files.apply(&store, "b").await.unwrap();
+        files.apply(&store, &own("a")).await.unwrap();
+        files.apply(&store, &own("b")).await.unwrap();
         let realm_env = |o: &str| {
             setup::organization_realm_env(&installation, &setup::Realm::parse(o).unwrap())
         };
@@ -1328,19 +1478,22 @@ mod tests {
             env_vars: setup::realm_env(&setup),
             gateway: false,
             assistant: false,
-            bases: BTreeMap::from([("a".to_owned(), vec!["https://smartcity.a.test".to_owned()])]),
+            scheme: "https".into(),
+            first_admins: BTreeMap::new(),
         };
-        files.apply(&store, "a").await.unwrap();
+        files.apply(&store, &own("a")).await.unwrap();
         let realm = store.get_realm("a").await.unwrap().expect("a's realm");
-        files.apply(&store, "a").await.unwrap();
+        files.apply(&store, &own("a")).await.unwrap();
         assert_eq!(
             store.get_realm("a").await.unwrap().map(|r| r.id),
             Some(realm.id),
             "applied once"
         );
+        let mut nowhere = own("zz");
+        nowhere.portals.clear();
         assert!(
-            files.apply(&store, "zz").await.is_err(),
-            "not an Organization jc runs"
+            files.apply(&store, &nowhere).await.is_err(),
+            "no working host served"
         );
         let state = KaisatsuState::new(
             store,
@@ -1364,6 +1517,7 @@ mod tests {
         let own = |organization: &str, host: &str| SignIn {
             organization: organization.into(),
             host: host.into(),
+            portals: Vec::new(),
         };
         pins.replace(realm_hosts(&[own("a", "idm.a.test")], "https").unwrap());
         let served = discover("idm.a.test").await.unwrap();
@@ -1451,6 +1605,156 @@ mod tests {
         assert_eq!(audience(&proxy), vec!["portal-internal".to_owned()]);
         let portal = client(setup::PORTAL_CLIENT).await;
         assert!(audience(&portal).contains(&setup::ASSISTANT_CLIENT.to_owned()));
+    }
+
+    /// T-7283: an Organization with a first administrator's address gets exactly that one
+    /// person in its realm, with a one-time password and the actions to change it and to set up
+    /// a second factor, no group and no role; an apply after their sign-in leaves them as they
+    /// are, and another Organization's realm holds no such person.
+    #[tokio::test]
+    async fn an_organizations_first_admin_is_created_once_and_never_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(
+            Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap(),
+        ));
+        let address = "it@a.test";
+        let files = OrganizationRealmFiles {
+            env_vars: setup::realm_env(&setup),
+            gateway: false,
+            assistant: false,
+            scheme: "https".into(),
+            first_admins: BTreeMap::from([("a".to_owned(), address.to_owned())]),
+        };
+        files.apply(&store, &own("a")).await.unwrap();
+        files.apply(&store, &own("b")).await.unwrap();
+        let realm = store.get_realm("a").await.unwrap().expect("a's realm");
+        let people: Vec<_> = store
+            .list_users(&realm.id, None, None, None, None, false, 0, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|u| u.service_account_client_id.is_none())
+            .collect();
+        assert_eq!(people.len(), 1, "one person only");
+        let mut person = people.into_iter().next().unwrap();
+        assert_eq!(person.username, address);
+        assert_eq!(person.email.as_deref(), Some(address));
+        assert!(person.enabled);
+        assert_eq!(
+            person.required_actions,
+            ["UPDATE_PASSWORD", "CONFIGURE_TOTP"]
+        );
+        assert!(person.groups.is_empty() && person.realm_roles.is_empty());
+        let credentials = store.list_credentials(&realm.id, &person.id).await.unwrap();
+        assert_eq!(credentials.len(), 1);
+        assert!(credentials[0].credential_type == "password" && credentials[0].temporary);
+        // The person signs in: sets a password of their own and a second factor.
+        person.required_actions.clear();
+        store.update_user(person.clone()).await.unwrap();
+        let mut own_password = credentials[0].clone();
+        own_password.temporary = false;
+        own_password.secret_data = format!("set-by-{}", person.id);
+        store.upsert_credential(own_password.clone()).await.unwrap();
+        files.apply(&store, &own("a")).await.unwrap();
+        let after = store
+            .get_user_by_username_or_email(&realm.id, None, address)
+            .await
+            .unwrap()
+            .expect("the person");
+        assert!(after.required_actions.is_empty(), "not reset");
+        assert_eq!(
+            store.list_credentials(&realm.id, &person.id).await.unwrap(),
+            [own_password],
+            "their own password stays"
+        );
+        let b = store.get_realm("b").await.unwrap().expect("b's realm");
+        assert!(
+            store
+                .get_user_by_username_or_email(&b.id, None, address)
+                .await
+                .unwrap()
+                .is_none(),
+            "B's realm holds nobody of A's"
+        );
+    }
+
+    /// T-7284: an Organization the host registry serves at run time (no jc.toml entry) gets its
+    /// realm before its sign-in host is pinned: discovery answers there, while an Organization
+    /// with no working host served stays unpinned (404), and an Endpoint scope the Portal made in
+    /// the Organization's realm is linked to that realm's Portal client, not the installation's.
+    #[tokio::test]
+    async fn a_registry_only_organization_gets_its_realm_before_its_host_is_pinned() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+        let dir = tempfile::tempdir().unwrap();
+        let setup = setup::Setup::prepare(dir.path(), &Module::ALL, &Default::default()).unwrap();
+        let kek = Kek::from_raw_bytes("07".repeat(32).as_bytes()).unwrap();
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(kek.clone()));
+        let files = OrganizationRealmFiles {
+            env_vars: setup::realm_env(&setup),
+            gateway: false,
+            assistant: false,
+            scheme: "https".into(),
+            first_admins: BTreeMap::new(),
+        };
+        let mut unserved = own("yy");
+        unserved.portals.clear();
+        let ready = apply_set(&store, Some(&files), &[own("zz"), unserved])
+            .await
+            .unwrap();
+        assert_eq!(ready, [own("zz")], "only a realm that applied is pinned");
+        let state = KaisatsuState::new(
+            store.clone(),
+            kek,
+            OutboundGuard::default(),
+            Arc::new(LocalAuthorizer),
+        );
+        state
+            .realm_hosts()
+            .replace(realm_hosts(&ready, "https").unwrap());
+        let idm = |h: &str| Mount::new("kaisatsu", "https", h, "").unwrap();
+        let app = router(state, idm("login.city.test"));
+        let discover = |realm: &str| {
+            let req = Request::get(format!("/realms/{realm}/.well-known/openid-configuration"))
+                .extension(idm(&format!("idm.{realm}.test")))
+                .body(Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        assert_eq!(discover("zz").await.unwrap().status(), StatusCode::OK);
+        assert_eq!(
+            discover("yy").await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
+        let zz = store.get_realm("zz").await.unwrap().expect("zz's realm");
+        store
+            .upsert_client_scope(ClientScopeRepresentation {
+                realm_id: zz.id.clone(),
+                name: "endpoint:air".into(),
+                protocol: "openid-connect".into(),
+                attributes: BTreeMap::from([("managed-by".into(), "joinedcontext".into())]),
+                ..ClientScopeRepresentation::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            link_pass(&store, &setup::Realm::parse("zz").unwrap())
+                .await
+                .unwrap()
+                > 0
+        );
+        let portal = store
+            .get_client_by_client_id(&zz.id, setup::PORTAL_CLIENT)
+            .await
+            .unwrap()
+            .expect("zz's Portal client");
+        assert!(
+            portal
+                .optional_client_scopes
+                .contains(&"endpoint:air".to_owned())
+        );
     }
 
     /// The first administrator is seeded on the first start only: one an administrator disabled

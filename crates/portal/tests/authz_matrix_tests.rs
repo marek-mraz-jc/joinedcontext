@@ -823,7 +823,7 @@ async fn the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read
         "promptDigest": "sha256:p", "dataNeeds": [], "allowsWrite": false, "branch": "b",
         "pathPrefix": "p/", "status": "building", "ticketHash": "x", "files": {},
         "steps": 0, "tokensUsed": 0, "createdBy": "other-member", "origin": "person",
-        "starter": null, "createdAt": chrono::Utc::now().to_rfc3339(),
+        "starter": null, "createdAt": jc_time::TimestampTz::now().to_rfc3339(),
         "expiresAt": "2099-01-01T00:00:00Z",
     }))
     .expect("a run");
