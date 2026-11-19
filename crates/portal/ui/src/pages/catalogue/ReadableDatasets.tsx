@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "../../api/client";
 import type { components } from "../../api/schema";
-import { Alert, Badge, Card, EmptyState, Icon, PageFailed, PageLoading } from "../../components/ui";
+import { Badge, Card, Checkbox, Icon } from "../../components/ui";
 import type { BadgeTone } from "../../components/ui/Badge";
 import { readableQuery } from "./queries";
 
@@ -32,87 +32,124 @@ export function AccessBadge({
   );
 }
 
+export type GrantedState = "off" | "loading" | "failed" | "noProject" | "ready";
+
+export interface Granted {
+  state: GrantedState;
+  /** The internal datasets granted to the person that match the search words. */
+  datasets: ReadableDataset[];
+  /** Endpoints the server could not ask in time, so their datasets are missing. */
+  unanswered: number;
+}
+
 /**
- * The internal datasets a signed-in person may read (ADR-N-067 §2.4, T-6411): the server asks
- * the gateway per Endpoint and lists only what it grants, so the page shows every row it gets.
- * The public ones are listed by the open-data search below, not here.
+ * The internal datasets a signed-in person may read (ADR-N-067 §2.4, T-6411): the server asks the
+ * gateway per Endpoint and lists only what it grants. The page shows them as a filter of its one
+ * list, never as a box of their own above it (T-7389); the search words narrow them by name.
  */
-export function ReadableDatasets(): JSX.Element {
-  const { t } = useTranslation();
-  const readable = useQuery(readableQuery());
-  const body = (() => {
-    if (readable.isPending) {
-      return <PageLoading label={t("catalogue.readable.loading")} />;
-    }
-    // On an Organization's own host the Portal refuses everyone who belongs to none of its
-    // projects (403): a newcomer's normal state, said as one, not a failure (T-7317).
-    if (readable.error instanceof ApiError && readable.error.status === 403) {
-      return (
-        <EmptyState
-          icon="lock"
-          bare
-          title={t("catalogue.readable.noProject.title")}
-          description={t("catalogue.readable.noProject.description")}
-        />
-      );
-    }
-    if (readable.isError || !Array.isArray(readable.data.datasets)) {
-      return <PageFailed error={readable.error} onRetry={() => void readable.refetch()} />;
-    }
-    const internal = readable.data.datasets.filter((dataset) => dataset.access !== "public");
-    return (
-      <>
-        {readable.data.unanswered > 0 ? (
-          <Alert tone="warning">{t("catalogue.readable.unanswered", { count: readable.data.unanswered })}</Alert>
-        ) : null}
-        {internal.length === 0 ? (
-          <EmptyState icon="lock" bare title={t("catalogue.readable.empty.title")} description={t("catalogue.readable.empty.description")} />
-        ) : (
-          <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {internal.map((dataset) => (
-              <ReadableRow key={dataset.slug} dataset={dataset} />
-            ))}
-          </ul>
-        )}
-      </>
+export function useGranted(signedIn: boolean, q: string | undefined): Granted {
+  const readable = useQuery({ ...readableQuery(), enabled: signedIn });
+  if (!signedIn) {
+    return { state: "off", datasets: [], unanswered: 0 };
+  }
+  if (readable.isPending) {
+    return { state: "loading", datasets: [], unanswered: 0 };
+  }
+  // On an Organization's own host the Portal refuses everyone who belongs to none of its
+  // projects (403): a newcomer's normal state, said as one, not a failure (T-7317).
+  if (readable.error instanceof ApiError && readable.error.status === 403) {
+    return { state: "noProject", datasets: [], unanswered: 0 };
+  }
+  if (readable.isError || !Array.isArray(readable.data.datasets)) {
+    return { state: "failed", datasets: [], unanswered: 0 };
+  }
+  const words = q?.trim().toLocaleLowerCase() ?? "";
+  const datasets = readable.data.datasets
+    .filter((dataset) => dataset.access !== "public")
+    .filter((dataset) =>
+      [dataset.title, dataset.name, dataset.description].some((text) => text?.toLocaleLowerCase().includes(words)),
     );
-  })();
+  return { state: "ready", datasets, unanswered: readable.data.unanswered };
+}
+
+/**
+ * The Access filter at the top of the sidebar (T-7389): the datasets granted to the person, or
+ * the public ones. With nothing granted the first option stays in place, refused, and says why.
+ */
+export function AccessFacet({
+  granted,
+  publicCount,
+  selected,
+  onSelect,
+}: {
+  granted: Granted;
+  publicCount: number;
+  selected: "granted" | "public" | undefined;
+  onSelect: (access: "granted" | "public" | undefined) => void;
+}): JSX.Element {
+  const { t } = useTranslation();
+  const none = granted.datasets.length === 0;
+  const why =
+    granted.state === "loading"
+      ? t("catalogue.access.loading")
+      : granted.state === "noProject"
+        ? t("catalogue.access.noProject")
+        : granted.state === "failed"
+          ? t("catalogue.access.failed")
+          : t("catalogue.access.none");
+  const option = (value: "granted" | "public", label: string, count: number, refused?: string) => (
+    <Checkbox
+      className="flex w-full items-start py-1.5 md:py-0 [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
+      checked={selected === value}
+      disabled={refused !== undefined}
+      disabledReason={refused}
+      onChange={() => onSelect(selected === value ? undefined : value)}
+      label={label}
+      hint={<Badge tone="neutral" className="tabular-nums">{count}</Badge>}
+    />
+  );
   return (
-    <Card>
-      <section aria-labelledby="readable-title" className="flex flex-col gap-3">
-        <div>
-          <h2 id="readable-title" className="text-title font-semibold text-fg">
-            {t("catalogue.readable.title")}
-          </h2>
-          <p className="text-body text-fg-muted">{t("catalogue.readable.lead")}</p>
-        </div>
-        {body}
-      </section>
+    <Card flush>
+      <fieldset className="flex flex-col gap-2 px-4 pb-4 pt-3">
+        <legend className="sr-only">{t("catalogue.access.label")}</legend>
+        <p aria-hidden="true" className="pb-1 text-body font-semibold text-fg">
+          {t("catalogue.access.label")}
+        </p>
+        {option("granted", t("catalogue.access.granted"), granted.datasets.length, none && selected !== "granted" ? why : undefined)}
+        {/* Seen by everyone; the refused box reads the same words to a screen reader itself. */}
+        {none ? (
+          <p aria-hidden="true" className="text-body text-fg-muted">
+            {why}
+          </p>
+        ) : null}
+        {option("public", t("catalogue.access.public"), publicCount)}
+      </fieldset>
     </Card>
   );
 }
 
-export function ReadableRow({ dataset }: { dataset: ReadableDataset }): JSX.Element {
+/** One granted dataset in the catalogue's list, marked "granted" and naming what grants it. */
+export function GrantedCard({ dataset }: { dataset: ReadableDataset }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <li className="flex min-w-0 flex-col gap-2 rounded-md border border-border p-3 transition-colors hover:border-primary">
+    <Card className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Link
-          to="/catalogue/endpoint/$slug"
-          params={{ slug: dataset.slug }}
-          className="focus-ring min-w-0 break-words rounded-sm text-body font-medium text-primary-soft-fg hover:underline"
-          aria-label={`${t("catalogue.readable.open")}: ${dataset.title ?? dataset.name}`}
-        >
-          {dataset.title ?? dataset.name}
-          <Icon name="chevronRight" className="ml-0.5 inline size-4 align-text-bottom" />
-        </Link>
-        <AccessBadge dataset={dataset} />
+        <h2 className="min-w-0 break-words font-heading text-title font-semibold">
+          <Link
+            to="/catalogue/endpoint/$slug"
+            params={{ slug: dataset.slug }}
+            className="focus-ring rounded-sm text-fg hover:underline"
+          >
+            {dataset.title ?? dataset.name}
+          </Link>
+        </h2>
+        <Badge tone="primary">{t("catalogue.access.badge")}</Badge>
       </div>
-      {dataset.description ? <p className="line-clamp-2 text-caption text-fg-muted">{dataset.description}</p> : null}
-      <p className="flex items-center gap-1 text-caption text-fg-subtle">
+      <p className="flex flex-wrap items-center gap-1 text-caption text-fg-muted">
         <Icon name="spaces" className="size-3.5" />
-        {dataset.project}
+        {dataset.project} · {t(`catalogue.readable.access.${dataset.access}`, { group: dataset.group ?? "" })}
       </p>
-    </li>
+      {dataset.description ? <p className="line-clamp-3 text-body text-fg">{dataset.description}</p> : null}
+    </Card>
   );
 }

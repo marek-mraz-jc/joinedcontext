@@ -9583,7 +9583,7 @@
   },
   "catalogue": {
     "title": "Catalogue",
-    "lead": "Every public dataset of this installation's open-data catalogues. Search, filter, open a dataset and use its data.",
+    "lead": "Search and filter every open dataset of this installation.",
     "loading": "Loading the catalogue…",
     "unavailable": "These catalogues did not answer, so their datasets are missing below: {catalogues}. Try again in a minute.",
     "search": {
@@ -9617,6 +9617,25 @@
       "noMatch": "No value matches.",
       "all": "Show all {count}",
       "fewer": "Show fewer"
+    },
+    "scope": {
+      "label": "Scope",
+      "project": "This project",
+      "organization": "Whole organization",
+      "organizationHint": "Every project of this organization",
+      "hint": "Which datasets the list holds, e.g. This project lists only {project}'s."
+    },
+    "access": {
+      "label": "Access",
+      "granted": "Granted to me",
+      "public": "Public",
+      "badge": "Granted",
+      "loading": "Checking which datasets are granted to you…",
+      "failed": "Your granted datasets could not be checked just now. Reload the page in a minute.",
+      "none": "Nothing internal is shared with you yet. A data steward of your organization can grant your group access, e.g. to its sensor readings.",
+      "noProject": "You are not in a project of this organization yet. A project owner or an administrator of this organization can add you to one.",
+      "countNone": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}, none granted to you yet",
+      "countNoProject": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}; you are not in a project of this organization yet"
     },
     "results": {
       "label": "Datasets",
@@ -9821,17 +9840,6 @@
       "calendarFileNamed": "Download {title} (.ics)"
     },
     "readable": {
-      "title": "Datasets you may read",
-      "lead": "Internal datasets of your organization that you have been granted, read live from their Endpoint.",
-      "loading": "Checking which datasets you may read…",
-      "empty": {
-        "title": "No internal dataset is shared with you yet",
-        "description": "Ask a data steward of your organization to grant your group access. The public datasets below are open to everyone."
-      },
-      "noProject": {
-        "title": "You are not in a project of this organization yet",
-        "description": "A project owner or an administrator of this organization can add you to a project; its internal datasets are then listed here. The public datasets below are open to everyone."
-      },
       "unanswered": "{count} datasets could not be checked just now and are not listed. Reload the page in a minute.",
       "access": {
         "public": "Public",
@@ -9839,7 +9847,6 @@
         "group": "Group {group}",
         "granted": "Granted to you"
       },
-      "open": "Open dataset",
       "endpoint": {
         "title": "Dataset",
         "lead": "This dataset is read live from its Endpoint with your own access.",
@@ -9849,7 +9856,7 @@
         "refusedLead": "It is not among the datasets shared with you. The box below says how to get access."
       }
     },
-    "leadSignedIn": "Datasets you may read, then every public dataset of this installation's open-data catalogues. Search, filter, open a dataset and use its data."
+    "leadSignedIn": "Search and filter the open datasets and the ones granted to you."
   },
   "dataagreements": {
     "field": {

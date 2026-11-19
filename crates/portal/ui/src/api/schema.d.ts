@@ -380,7 +380,7 @@ export interface paths {
         };
         /**
          * Search the Catalogue
-         * @description Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees.
+         * @description Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).
          */
         get: operations["get_catalogue"];
         put?: never;
@@ -16737,6 +16737,8 @@ export interface operations {
                 spatial?: string[];
                 /** @description Calendar years covered */
                 year?: string[];
+                /** @description Only the datasets of this project, which the caller must be able to read, e.g. pilot */
+                project?: string;
                 /** @description Page, from 1 */
                 page?: number;
             };
@@ -16753,6 +16755,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CataloguePage"];
+                };
+            };
+            /** @description `project` asked without signing in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description `project` names a project the caller may not read, or one of another Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description No catalogue answered */

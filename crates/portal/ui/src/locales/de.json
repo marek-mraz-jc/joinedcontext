@@ -9583,7 +9583,7 @@
   },
   "catalogue": {
     "title": "Katalog",
-    "lead": "Alle öffentlichen Datensätze der Open-Data-Kataloge dieser Installation. Suchen, filtern, einen Datensatz öffnen und seine Daten nutzen.",
+    "lead": "Alle offenen Datensätze dieser Installation durchsuchen und filtern.",
     "loading": "Katalog wird geladen…",
     "unavailable": "Diese Kataloge haben nicht geantwortet, ihre Datensätze fehlen deshalb unten: {catalogues}. In einer Minute erneut versuchen.",
     "search": {
@@ -9617,6 +9617,25 @@
       "noMatch": "Kein Wert passt.",
       "all": "Alle {count} anzeigen",
       "fewer": "Weniger anzeigen"
+    },
+    "scope": {
+      "label": "Umfang",
+      "project": "Dieses Projekt",
+      "organization": "Ganze Organisation",
+      "organizationHint": "Alle Projekte dieser Organisation",
+      "hint": "Welche Datensätze die Liste enthält, z. B. zeigt Dieses Projekt nur die von {project}."
+    },
+    "access": {
+      "label": "Zugriff",
+      "granted": "Für mich freigegeben",
+      "public": "Öffentlich",
+      "badge": "Freigegeben",
+      "loading": "Wir prüfen, welche Datensätze für Sie freigegeben sind…",
+      "failed": "Ihre freigegebenen Datensätze konnten gerade nicht geprüft werden. Laden Sie die Seite in einer Minute neu.",
+      "none": "Noch ist kein interner Datensatz für Sie freigegeben. Ein Datenverantwortlicher Ihrer Organisation kann Ihrer Gruppe Zugriff geben, z. B. auf ihre Sensordaten.",
+      "noProject": "Sie sind noch in keinem Projekt dieser Organisation. Eine Projektverantwortliche oder ein Administrator dieser Organisation kann Sie hinzufügen.",
+      "countNone": "{count, plural, =0 {Kein Datensatz} one {# Datensatz} other {# Datensätze}}, noch keiner für Sie freigegeben",
+      "countNoProject": "{count, plural, =0 {Kein Datensatz} one {# Datensatz} other {# Datensätze}}; Sie sind noch in keinem Projekt dieser Organisation"
     },
     "results": {
       "label": "Datensätze",
@@ -9821,17 +9840,6 @@
       "calendarFileNamed": "{title} herunterladen (.ics)"
     },
     "readable": {
-      "title": "Datensätze, die Sie lesen dürfen",
-      "lead": "Interne Datensätze Ihrer Organisation, für die Sie freigeschaltet sind, live aus ihrem Endpoint gelesen.",
-      "loading": "Prüfe, welche Datensätze Sie lesen dürfen…",
-      "empty": {
-        "title": "Noch kein interner Datensatz ist für Sie freigegeben",
-        "description": "Bitten Sie eine Datenverantwortliche Ihrer Organisation, Ihrer Gruppe Zugriff zu geben. Die öffentlichen Datensätze unten sind für alle offen."
-      },
-      "noProject": {
-        "title": "Sie sind noch in keinem Projekt dieser Organisation",
-        "description": "Eine Projektinhaberin oder ein Administrator dieser Organisation kann Sie einem Projekt hinzufügen; dessen interne Datensätze erscheinen dann hier. Die öffentlichen Datensätze unten sind für alle offen."
-      },
       "unanswered": "{count} Datensätze konnten gerade nicht geprüft werden und fehlen. Laden Sie die Seite in einer Minute neu.",
       "access": {
         "public": "Öffentlich",
@@ -9839,7 +9847,6 @@
         "group": "Gruppe {group}",
         "granted": "Ihnen freigegeben"
       },
-      "open": "Datensatz öffnen",
       "endpoint": {
         "title": "Datensatz",
         "lead": "Dieser Datensatz wird live aus seinem Endpoint mit Ihrem eigenen Zugriff gelesen.",
@@ -9849,7 +9856,7 @@
         "refusedLead": "Er gehört nicht zu den Datensätzen, die für Sie freigegeben sind. Das Feld unten sagt, wie Sie Zugriff erhalten."
       }
     },
-    "leadSignedIn": "Datensätze, die Sie lesen dürfen, dann jeder öffentliche Datensatz der Open-Data-Kataloge dieser Installation. Suchen, filtern, einen Datensatz öffnen und seine Daten nutzen."
+    "leadSignedIn": "Die offenen Datensätze und die für Sie freigegebenen durchsuchen und filtern."
   },
   "dataagreements": {
     "field": {

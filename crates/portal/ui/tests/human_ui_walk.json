@@ -1139,6 +1139,7 @@
     },
     "src/pages/catalogue/DatasetMap.tsx": null,
     "src/pages/catalogue/DatasetPage.tsx": null,
+    "src/pages/catalogue/ReadableDatasets.tsx": null,
     "src/pages/catalogue/SubscribeMenu.tsx": null,
     "src/pages/catalogue/PublishDataset.tsx": {
       "walkedBy": "deployer",
