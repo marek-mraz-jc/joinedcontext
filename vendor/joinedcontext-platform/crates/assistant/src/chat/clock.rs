@@ -141,7 +141,8 @@ pub fn quotes_reading(utc: OffsetDateTime, zone: Option<Zone>, text: &str) -> bo
         text.match_indices(at.as_str()).any(|(i, _)| {
             let before = text[..i].chars().next_back();
             let after = text[i + at.len()..].chars().next();
-            !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+            !before.is_some_and(|c| c.is_ascii_digit())
+                && !after.is_some_and(|c| c.is_ascii_digit())
         })
     })
 }
@@ -257,7 +258,11 @@ mod tests {
         // 07:00 UTC is 8:00 in Bratislava in November.
         let at = datetime!(2026-11-19 07:00 UTC);
         let zone = Some(Zone::Bratislava);
-        assert!(!quotes_reading(at, zone, "Knižnica je otvorená od 9:00 do 18:00 [1]."));
+        assert!(!quotes_reading(
+            at,
+            zone,
+            "Knižnica je otvorená od 9:00 do 18:00 [1]."
+        ));
         assert!(!quotes_reading(at, zone, "Vlak ide o 07:001."));
         assert!(quotes_reading(at, zone, "Je 8:00."));
         assert!(quotes_reading(at, zone, "Teraz je 08:00 [1]."));
