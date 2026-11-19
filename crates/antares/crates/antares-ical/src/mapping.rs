@@ -17,7 +17,7 @@
 //! without `DTEND`), a `GEO` off the globe or a `URL` that is not
 //! http(s) is no `VEVENT` at all, and its reason is counted (EP-126).
 
-use crate::text::escape;
+pub use crate::text::escape;
 use crate::zone::Zone as Tz;
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::Offset;
