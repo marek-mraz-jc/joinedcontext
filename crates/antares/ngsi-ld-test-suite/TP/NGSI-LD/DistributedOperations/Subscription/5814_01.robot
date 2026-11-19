@@ -91,6 +91,7 @@ ${sub_id}=      urn:ngsi-ld:Subscription:distsub5814
     Should Contain    ${body}    "splitEntities":true
     ${remote_id}=    Evaluate    __import__('json').loads($body)["id"]
     ${notify_url}=    Evaluate    __import__('json').loads($body)["notification"]["endpoint"]["uri"]
+    ${proof}=    Evaluate    {p["key"]: p["value"] for p in __import__('json').loads($body)["notification"]["endpoint"].get("receiverInfo", [])}.get("Antares-Notify-Proof", "")
     Reply By    201
 
     # the LOCAL part of the entity carries the brandName the q needs
@@ -100,9 +101,8 @@ ${sub_id}=      urn:ngsi-ld:Subscription:distsub5814
     Check Response Status Code    201    ${response.status_code}
 
     # inbound fragment (speed only) → merged with the local brandName → q passes
-    ${response}=    POST    url=${notify_url}
-    ...    data={"type": "Notification", "subscriptionId": "${remote_id}", "data": [{"id": "urn:ngsi-ld:Vehicle:split5814", "type": "Vehicle", "speed": {"type": "Property", "value": 99}}]}
-    ...    headers=${headers}    expected_status=any
+    ${response}=    Notify As Context Source    ${notify_url}    ${proof}
+    ...    {"type": "Notification", "subscriptionId": "${remote_id}", "data": [{"id": "urn:ngsi-ld:Vehicle:split5814", "type": "Vehicle", "speed": {"type": "Property", "value": 99}}]}
     Check Response Status Code    200    ${response.status_code}
     Wait For Request    ${15}
     ${npath}=    Get Request Url
@@ -116,9 +116,8 @@ ${sub_id}=      urn:ngsi-ld:Subscription:distsub5814
     Reply By    200
 
     # a fragment failing q after the merge (speed 10) is dropped entirely
-    ${response}=    POST    url=${notify_url}
-    ...    data={"type": "Notification", "subscriptionId": "${remote_id}", "data": [{"id": "urn:ngsi-ld:Vehicle:split5814", "type": "Vehicle", "speed": {"type": "Property", "value": 10}}]}
-    ...    headers=${headers}    expected_status=any
+    ${response}=    Notify As Context Source    ${notify_url}    ${proof}
+    ...    {"type": "Notification", "subscriptionId": "${remote_id}", "data": [{"id": "urn:ngsi-ld:Vehicle:split5814", "type": "Vehicle", "speed": {"type": "Property", "value": 10}}]}
     Check Response Status Code    200    ${response.status_code}
     Run Keyword And Expect Error    *    Wait For Request    ${3}
 
@@ -148,14 +147,14 @@ ${sub_id}=      urn:ngsi-ld:Subscription:distsub5814
     ${body}=    Evaluate    $body.decode('utf-8') if isinstance($body, bytes) else $body
     ${remote_id}=    Evaluate    __import__('json').loads($body)["id"]
     ${notify_url}=    Evaluate    __import__('json').loads($body)["notification"]["endpoint"]["uri"]
+    ${proof}=    Evaluate    {p["key"]: p["value"] for p in __import__('json').loads($body)["notification"]["endpoint"].get("receiverInfo", [])}.get("Antares-Notify-Proof", "")
     Reply By    201
 
     # the Context Source reports speed, isParked and label deleted, and a
     # live brandName on the same Entity
     ${notified}=    Set Variable
     ...    {"type": "Notification", "subscriptionId": "${remote_id}", "data": [{"id": "urn:ngsi-ld:Vehicle:splitnull5814", "type": "Vehicle", "speed": "urn:ngsi-ld:null", "isParked": {"object": "urn:ngsi-ld:null"}, "label": {"languageMap": {"@none": "urn:ngsi-ld:null"}}, "brandName": "Tesla"}]}
-    ${response}=    POST    url=${notify_url}
-    ...    data=${notified}    headers=${headers}    expected_status=any
+    ${response}=    Notify As Context Source    ${notify_url}    ${proof}    ${notified}
     Check Response Status Code    200    ${response.status_code}
 
     Wait For Request    ${15}
@@ -170,6 +169,16 @@ ${sub_id}=      urn:ngsi-ld:Subscription:distsub5814
 
 
 *** Keywords ***
+Notify As Context Source
+    [Documentation]    Posts a notification as the Context Source holding the copy: with the
+    ...    copy's receiverInfo proof header, a fresh notifiedAt and an id of its own
+    ...    (the inbound endpoint refuses anything else, 401).
+    [Arguments]    ${notify_url}    ${proof}    ${notification}
+    &{nheaders}=    Create Dictionary    Content-Type=application/json    Antares-Notify-Proof=${proof}
+    ${data}=    Evaluate    __import__('json').dumps({**__import__('json').loads($notification), "id": "urn:ngsi-ld:Notification:" + __import__('uuid').uuid4().hex, "notifiedAt": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")})
+    ${response}=    POST    url=${notify_url}    data=${data}    headers=${nheaders}    expected_status=any
+    RETURN    ${response}
+
 Setup Registration And Start Mock
     ${registration_id}=    Generate Random CSR Id
     Set Test Variable    ${registration_id}

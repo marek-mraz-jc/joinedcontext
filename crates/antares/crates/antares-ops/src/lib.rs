@@ -1279,15 +1279,26 @@ impl Ops {
         &self,
         path: &str,
         notification: &serde_json::Value,
+        receiver_info: &[(String, String)],
     ) -> Result<(), String> {
         if antares_api::state::in_process_depth() >= antares_api::bounds::MAX_IN_PROCESS_CALL_DEPTH
         {
             return Err("in-process call depth exceeded".into());
         }
         let body = notification.to_string();
-        let req = axum::http::Request::builder()
+        let mut req = axum::http::Request::builder()
             .method(axum::http::Method::POST)
-            .uri(path)
+            .uri(path);
+        // of the endpoint's receiverInfo only the copy's notification proof
+        // travels (T-7421): the receiver checks it as it does over HTTP, and
+        // no other header changes what an in-process call is
+        if let Some((_, proof)) = receiver_info
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(antares_api::NOTIFY_PROOF_HEADER))
+        {
+            req = req.header(antares_api::NOTIFY_PROOF_HEADER, proof.as_str());
+        }
+        let req = req
             .header(axum::http::header::CONTENT_TYPE, "application/json")
             .header(axum::http::header::CONTENT_LENGTH, body.len())
             .body(Body::from(body))

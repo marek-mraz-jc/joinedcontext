@@ -584,7 +584,7 @@ pub(super) async fn send_outbound(
 ) -> Result<(), (bool, String)> {
     if let Some(transport) = in_process(st, uri) {
         return transport
-            .notify(tenant, uri, &outbound.body)
+            .notify(tenant, uri, &outbound.body, &outbound.receiver_info)
             .await
             .map_err(|e| (false, e));
     }

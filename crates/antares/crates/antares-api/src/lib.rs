@@ -79,6 +79,7 @@ pub mod conformance;
 pub(crate) mod contexts;
 pub(crate) mod csource;
 pub(crate) mod distsub;
+pub use distsub::NOTIFY_PROOF_HEADER;
 pub mod egress;
 pub(crate) mod entities;
 pub(crate) mod entity_map;

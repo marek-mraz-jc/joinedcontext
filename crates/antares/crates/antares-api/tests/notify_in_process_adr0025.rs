@@ -45,6 +45,7 @@ impl ForwardTransport for Inbox {
         tenant: &'a TenantId,
         uri: &'a str,
         notification: &'a Value,
+        _receiver_info: &'a [(String, String)],
     ) -> NotifyFuture<'a> {
         let refused = self.refuse.load(Ordering::SeqCst);
         if !refused {
@@ -222,7 +223,7 @@ async fn a_transport_that_takes_nothing_leaves_the_notification_on_the_wire() {
     // and asked directly, the default refuses rather than drops
     let acme = TenantId::new("acme").expect("tenant");
     assert!(!ForwardsOnly.notifies(&uri));
-    assert!(ForwardsOnly.notify(&acme, &uri, &got).await.is_err());
+    assert!(ForwardsOnly.notify(&acme, &uri, &got, &[]).await.is_err());
 }
 
 #[tokio::test]

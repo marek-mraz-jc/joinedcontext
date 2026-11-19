@@ -71,6 +71,7 @@ async fn an_in_process_notification_is_posted_without_a_subject() {
         .notify_in_process(
             "/ngsi-ld/v1/entities",
             &json!({"id": "urn:ngsi-ld:Car:n1", "type": "Car"}),
+            &[],
         )
         .await;
     assert_eq!(posted, Ok(()));
@@ -83,7 +84,7 @@ async fn an_in_process_notification_is_posted_without_a_subject() {
 }
 
 /// A notification no distributed Subscription maps: no receiver, and the
-/// receiver path answers 404, which is a failed attempt.
+/// receiver path refuses it (401, T-7421), which is a failed attempt.
 #[tokio::test]
 async fn an_unmapped_notification_is_a_failed_attempt() {
     let ops = ops(Arc::default()).await;
@@ -93,7 +94,8 @@ async fn an_unmapped_notification_is_a_failed_attempt() {
         .notify_in_process(
             "/ex/v1/remote-notify",
             &json!({"type": "Notification", "subscriptionId": copy, "data": []}),
+            &[],
         )
         .await;
-    assert_eq!(posted, Err("the receiver answered 404".to_owned()));
+    assert_eq!(posted, Err("the receiver answered 401".to_owned()));
 }
