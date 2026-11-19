@@ -150,6 +150,14 @@ async fn a_replayed_letter_goes_in_process_and_a_refusal_keeps_it() {
         .create(&acme, Kind::DeadLetter, id, letter(TAKEN))
         .await
         .expect("seed"));
+    // a replay goes only to a subscription that still names the endpoint
+    let sub = json!({"id": "urn:s:1", "type": "Subscription", "entities": [{"type": "Room"}],
+                     "notification": {"endpoint": {"uri": TAKEN}}});
+    assert!(st
+        .store
+        .create(&acme, Kind::Subscription, "urn:s:1", sub)
+        .await
+        .expect("subscription"));
     let replay = format!("/q/dead-letters/{id}/replay?tenant=acme");
 
     inbox.refuse.store(true, Ordering::SeqCst);

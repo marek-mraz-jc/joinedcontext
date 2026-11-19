@@ -1300,6 +1300,10 @@ pub async fn build_state(
     if let Some(value) = cfg.defaults.get("ANTARES_HISTORY_BACKFILL") {
         antares_api::history::default_backfill(value);
     }
+    // Before the first egress policy is built (state, @context loader, MQTT sink).
+    if let Some(value) = cfg.defaults.get("ANTARES_EGRESS_ALLOW_PRIVATE") {
+        antares_jsonld::private_egress_default(value);
+    }
     let subject_from = subject_from(cfg.var("ANTARES_POLICY_SUBJECT_FROM"))?;
     let drivers = build_drivers(
         &cfg.store_name,

@@ -31,17 +31,30 @@ pub(super) async fn retry_and_settle(
     let first_at = now_iso();
     let mut made = 1u32;
     let mut last_err = first_err.clone();
+    // the decision the first attempt went out under, read on the very body
+    // every retry re-sends, so each retry compares like with like
+    let Some(sub) = st.store.get(tenant, kind, sub_id).await.ok().flatten() else {
+        return;
+    };
+    let expected = decision_now(st, tenant, &sub, &outbound.body).await;
+    if expected == Some(crate::policy::NotifyDecision::Drop) {
+        return;
+    }
     while let Some(delay) = policy.next_delay(made, started.elapsed()) {
         tokio::time::sleep(delay).await;
-        // the subscription may have gone meanwhile
-        if st
-            .store
-            .get(tenant, kind, sub_id)
-            .await
-            .ok()
-            .flatten()
-            .is_none()
+        // the subscription may have gone, paused or narrowed meanwhile
+        if let Err(why) = still_deliverable(
+            st,
+            tenant,
+            kind,
+            sub_id,
+            uri,
+            &outbound.body,
+            expected.as_ref(),
+        )
+        .await
         {
+            tracing::debug!("retry for {sub_id} stopped: {why}");
             return;
         }
         made = made.saturating_add(1);
@@ -158,24 +171,124 @@ pub(super) fn letter_timeout_ms(letter: &Value) -> u32 {
         .map_or(5_000, |t| u32::try_from(t.min(30_000)).unwrap_or(30_000))
 }
 
-/// Replay one dead letter through the same binding, once. `Ok` = delivered
-/// (the caller deletes the letter); `Err` carries the failure text.
+/// The policy engine's decision for `body` as `sub`'s subscriber now; `None`
+/// with no engine attached.
+async fn decision_now(
+    st: &AppState,
+    tenant: &TenantId,
+    sub: &Value,
+    body: &Value,
+) -> Option<crate::policy::NotifyDecision> {
+    let engine = st.policy.as_ref()?;
+    let ctx = sub_context(st, tenant, sub).await;
+    Some(crate::policy::pre_notify(
+        engine.as_ref(),
+        &crate::policy::stored_subject(tenant, sub),
+        sub,
+        &mut body.clone(),
+        &ctx,
+    ))
+}
+
+/// Whether a notification built earlier may still go to `uri` now, as a
+/// retry or a dead-letter replay: its subscription is still there and
+/// active (5.2.12), still names `uri`, the view it was made through still
+/// exists (ADR-0023 rule 9), and the policy engine still decides `expected`
+/// for the stored body (`None`: an unnarrowed Deliver, all a replay can
+/// vouch for, since a body already sent cannot be narrowed again). `Err`
+/// says why not, in words for the operator.
+pub(crate) async fn still_deliverable(
+    st: &AppState,
+    tenant: &TenantId,
+    kind: Kind,
+    sub_id: &str,
+    uri: &str,
+    body: &Value,
+    expected: Option<&crate::policy::NotifyDecision>,
+) -> Result<(), String> {
+    let sub = st
+        .store
+        .get(tenant, kind, sub_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or("its subscription is gone")?;
+    if !is_active(&sub) {
+        return Err("its subscription is paused or expired".into());
+    }
+    let named = sub
+        .get("notification")
+        .and_then(|n| n.get("endpoint"))
+        .and_then(|e| e.get("uri"))
+        .and_then(Value::as_str);
+    if named != Some(uri) {
+        return Err("its subscription names another endpoint now".into());
+    }
+    #[cfg(feature = "views")]
+    if let Some(None) = crate::views::of_subscription(st, tenant, &sub) {
+        return Err("the view its subscription was made through is gone".into());
+    }
+    if let Some(now) = decision_now(st, tenant, &sub, body).await {
+        let wanted = expected.unwrap_or(&crate::policy::NotifyDecision::Deliver);
+        if &now != wanted {
+            return Err("the policy no longer allows this notification as it was built".into());
+        }
+    }
+    Ok(())
+}
+
+/// Why a dead letter was not delivered by [`replay_dead_letter`].
+#[derive(Debug)]
+pub(crate) enum Replay {
+    /// Not sent: it may not go now ([`still_deliverable`]).
+    Refused(String),
+    /// Sent or tried, and it failed; the text says how.
+    Failed(String),
+}
+
+/// Replay one dead letter through the same binding, once, if it may still
+/// go ([`still_deliverable`] with no decision to compare against). A letter
+/// keeps no kind: its subscription is looked up as a Subscription, then as
+/// the context source kind its id names. `Ok` = delivered (the caller
+/// deletes the letter).
 pub(crate) async fn replay_dead_letter(
     st: &AppState,
     tenant: &TenantId,
     letter: &Value,
-) -> Result<(), String> {
-    let uri = letter["uri"].as_str().ok_or("dead letter without uri")?;
+) -> Result<(), Replay> {
+    let uri = letter["uri"]
+        .as_str()
+        .ok_or_else(|| Replay::Failed("dead letter without uri".into()))?;
     let timeout_ms = letter_timeout_ms(letter);
-    let outbound = Outbound::from_dead_letter(letter)?;
+    let outbound = Outbound::from_dead_letter(letter).map_err(Replay::Failed)?;
+    let sub_id = letter["subscriptionId"]
+        .as_str()
+        .ok_or_else(|| Replay::Refused("dead letter without subscriptionId".into()))?;
+    let mut kind = Kind::Subscription;
+    for k in [Kind::Subscription, crate::registry::csr_kind(sub_id)] {
+        if st
+            .store
+            .get(tenant, k, sub_id)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            kind = k;
+            break;
+        }
+    }
+    still_deliverable(st, tenant, kind, sub_id, uri, &outbound.body, None)
+        .await
+        .map_err(Replay::Refused)?;
     // the egress policy of the moment applies, exactly as for a fresh send
     if in_process(st, uri).is_none() && st.sinks.sink_for_uri(uri).is_some_and(|s| s.network()) {
         st.egress
             .check_destination(uri)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Replay::Failed(e.to_string()))?;
     }
     send_outbound(st, tenant, uri, timeout_ms, &outbound)
         .await
-        .map_err(|(_, e)| e)
+        .map_err(|(_, e)| Replay::Failed(e))
 }

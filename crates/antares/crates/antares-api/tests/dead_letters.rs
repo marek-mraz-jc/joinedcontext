@@ -6,7 +6,7 @@
 
 use antares_api::AppState;
 use antares_model::TenantId;
-use antares_store::Kind;
+use antares_store::{CurrentStateDriverExt as _, Kind};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
@@ -91,13 +91,34 @@ fn letter(id: &str, sub: &str, uri: &str, last_at: &str) -> Value {
     })
 }
 
+/// The letter and the subscription it was written for, active and naming `uri`.
 async fn seed(st: &AppState, tenant: &str, id: &str, sub: &str, uri: &str, last_at: &str) {
     let t = TenantId::new(tenant).expect("tenant");
+    subscribe(st, &t, sub, uri).await;
     assert!(st
         .store
         .create(&t, Kind::DeadLetter, id, letter(id, sub, uri, last_at))
         .await
         .expect("seed"));
+}
+
+async fn subscribe(st: &AppState, t: &TenantId, sub: &str, uri: &str) {
+    let doc = json!({
+        "id": sub, "type": "Subscription", "entities": [{"type": "Room"}],
+        "notification": {"endpoint": {"uri": uri}},
+    });
+    if st
+        .store
+        .get(t, Kind::Subscription, sub)
+        .await
+        .expect("get")
+        .is_none()
+    {
+        st.store
+            .create(t, Kind::Subscription, sub, doc)
+            .await
+            .expect("subscription");
+    }
 }
 
 async fn stored(st: &AppState, tenant: &str, id: &str) -> Option<Value> {
@@ -410,9 +431,11 @@ async fn an_unknown_binding_or_unreadable_letter_is_a_502_not_a_send() {
     let st = state();
     let (uri, hits, _) = receiver(StatusCode::OK).await;
     let t = TenantId::new("acme").expect("tenant");
+    subscribe(&st, &t, "urn:s:smtp", "smtp://mail.example.org/queue").await;
+    subscribe(&st, &t, "urn:s:1", &uri).await;
     let mut l = letter(
         "urn:ngsi-ld:DeadLetter:1",
-        "urn:s:1",
+        "urn:s:smtp",
         "smtp://mail.example.org/queue",
         "2026-01-01T00:00:01Z",
     );
@@ -443,6 +466,58 @@ async fn an_unknown_binding_or_unreadable_letter_is_a_502_not_a_send() {
         assert!(stored(&st, "acme", id).await.is_some());
     }
     assert_eq!(hits.load(Ordering::SeqCst), 0);
+}
+
+/// A replay re-sends a body built earlier: a subscription that is gone,
+/// paused or names another endpoint now receives nothing, and the letter
+/// stays as it was (409, no attempt counted).
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_refuses_a_gone_paused_or_redirected_subscription() {
+    for change in ["delete", "pause", "redirect"] {
+        let st = state();
+        let (uri, hits, _) = receiver(StatusCode::OK).await;
+        seed(
+            &st,
+            "acme",
+            "urn:ngsi-ld:DeadLetter:1",
+            "urn:s:1",
+            &uri,
+            "2026-01-01T00:00:01Z",
+        )
+        .await;
+        let t = TenantId::new("acme").expect("tenant");
+        if change == "delete" {
+            st.store
+                .delete(&t, Kind::Subscription, "urn:s:1")
+                .await
+                .expect("delete");
+        } else {
+            st.store
+                .mutate(&t, Kind::Subscription, "urn:s:1", |doc| {
+                    if change == "pause" {
+                        doc["isActive"] = json!(false);
+                    } else {
+                        doc["notification"]["endpoint"]["uri"] =
+                            json!("http://127.0.0.1:9/elsewhere");
+                    }
+                    Ok::<(), antares_model::NgsiError>(())
+                })
+                .await
+                .expect("change");
+        }
+        let (s, b) = send(
+            &st,
+            "POST",
+            "/q/dead-letters/urn:ngsi-ld:DeadLetter:1/replay?tenant=acme",
+        )
+        .await;
+        assert_eq!(s, StatusCode::CONFLICT, "{change}: {b}");
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "{change}: nothing sent");
+        let l = stored(&st, "acme", "urn:ngsi-ld:DeadLetter:1")
+            .await
+            .expect("kept");
+        assert_eq!(l["attempts"], 2, "{change}: a refusal is no attempt");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

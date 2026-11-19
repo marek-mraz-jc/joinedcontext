@@ -172,13 +172,20 @@ pub async fn temporal_maintenance(
             // owning a savepoint to roll back to; without it the first
             // already-occupied range poisons the entire maintenance pass.
             let mut sp = tx.begin().await?;
-            match sqlx::query(sqlx::AssertSqlSafe(create_partition_sql(
+            let mut created = sqlx::query(sqlx::AssertSqlSafe(create_partition_sql(
                 keyed, &suffix, &lo, &hi,
             )))
             .execute(&mut *sp)
             .await
-            {
-                Ok(_) => {
+            .map(|_| ());
+            if created.is_ok() {
+                created = sqlx::query(sqlx::AssertSqlSafe(partition_rls_sql(keyed, &suffix)))
+                    .execute(&mut *sp)
+                    .await
+                    .map(|_| ());
+            }
+            match created {
+                Ok(()) => {
                     sp.commit().await?;
                     done.push(format!("partition {suffix}: ok"));
                     continue;
@@ -191,7 +198,10 @@ pub async fn temporal_maintenance(
             // lock_timeout, and a loser simply retries on the next tick.
             let mut sp = tx.begin().await?;
             let mut adopted = Ok(());
-            for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi) {
+            for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi)
+                .into_iter()
+                .chain([partition_rls_sql(keyed, &suffix)])
+            {
                 adopted = sqlx::query(sqlx::AssertSqlSafe(stmt))
                     .execute(&mut *sp)
                     .await
@@ -1191,6 +1201,7 @@ async fn drop_partitions(
     let mut any = false;
     for (name, hi) in &found {
         let mut tx = pool.begin().await?;
+        crate::store::pg::set_service(&mut tx).await?;
         let ok = droppable(&mut tx, name, hi, tenants, cuts).await?;
         tx.commit().await?;
         if ok {
@@ -1242,8 +1253,10 @@ async fn drop_partitions(
 
 /// Whether [`DROPPABLE`] admits the partition `name` with upper bound `hi`
 /// and it holds no audit row ([`audit_free`]). The partition is read
-/// directly: it carries no policy of its own, so the read sees every
-/// Tenant's rows whatever the role.
+/// directly, under its own copy of the parent's policies
+/// ([`partition_rls_sql`]): the caller's transaction runs as the service
+/// (`set_service`), or the read would see no Tenant's rows and call a full
+/// partition empty.
 async fn droppable(
     tx: &mut sqlx::PgConnection,
     name: &str,
@@ -1273,6 +1286,21 @@ async fn droppable(
 /// in `public`, and `search_path` is not what should decide which one.
 fn drop_partition_sql(name: &str) -> String {
     format!("DROP TABLE public.\"{}\"", name.replace('"', "\"\""))
+}
+
+/// Row-level security on the weekly partition `create_partition_sql` and
+/// `adopt_default_rows_sql` make for `suffix`: its parent's policies,
+/// ENABLEd and FORCEd (`antares_partition_rls`, migration 0041, which did the
+/// same for the partitions made before it). PostgreSQL applies a parent's
+/// policies only to statements that name the parent, so a statement naming
+/// the partition itself would otherwise read and write every Tenant's rows.
+/// A partition that has them already is left alone.
+fn partition_rls_sql(keyed: bool, suffix: &str) -> String {
+    if keyed {
+        format!("SELECT public.antares_partition_rls('public.attr_rows_{suffix}'::regclass)")
+    } else {
+        format!("SELECT public.antares_partition_rls('public.attr_instances_{suffix}'::regclass)")
+    }
 }
 
 /// One weekly partition, created directly under the parent: `attr_rows_long`,
@@ -1703,6 +1731,18 @@ mod tests {
             drop_partition_sql("a\"b"),
             "DROP TABLE public.\"a\"\"b\"",
             "a quote in the name closes nothing"
+        );
+    }
+
+    #[test]
+    fn a_new_partition_gets_the_parents_policies() {
+        assert_eq!(
+            partition_rls_sql(false, "2026w34"),
+            "SELECT public.antares_partition_rls('public.attr_instances_2026w34'::regclass)"
+        );
+        assert_eq!(
+            partition_rls_sql(true, "2026w34"),
+            "SELECT public.antares_partition_rls('public.attr_rows_2026w34'::regclass)"
         );
     }
 
