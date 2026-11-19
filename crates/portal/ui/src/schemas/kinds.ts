@@ -3459,6 +3459,75 @@ function appearanceProperty(t: (key: string) => string, widgets: readonly Widget
         t("organization.field.appearance.opendataWidgets"),
         widgets.filter((widget) => widget.public === true),
       ),
+      // T-7410: the open data portal's theme and layout, typed values only (no free CSS).
+      font: {
+        type: "string",
+        title: t("organization.field.appearance.font"),
+        oneOf: APPEARANCE_FONTS.map((font) => ({
+          const: font,
+          title: t(`organization.field.appearance.fontChoice.${font}`),
+        })),
+      },
+      radius: {
+        type: "integer",
+        title: t("organization.field.appearance.radius"),
+        minimum: 0,
+        maximum: 24,
+      },
+      hero: {
+        type: "object",
+        title: t("organization.field.appearance.hero"),
+        properties: {
+          title: line("heroTitle"),
+          intro: {
+            type: "string",
+            title: t("organization.field.appearance.heroIntro"),
+            minLength: 1,
+            maxLength: 2048,
+          },
+        },
+      },
+      datasetList: {
+        type: "string",
+        title: t("organization.field.appearance.datasetList"),
+        oneOf: ["cards", "table"].map((layout) => ({
+          const: layout,
+          title: t(`organization.field.appearance.datasetListChoice.${layout}`),
+        })),
+      },
+      navLinks: linkList(t, "navLinks"),
+      footerLinks: linkList(t, "footerLinks"),
+    },
+  } as JsonSchema;
+}
+
+/** The open data portal's typefaces: system font stacks only, no font host (T-7410). */
+const APPEARANCE_FONTS = ["system", "humanist", "serif", "mono"] as const;
+
+/** Up to 8 links of a label and an `https://` address or a path on the portal (T-7410). */
+function linkList(t: (key: string) => string, key: "navLinks" | "footerLinks"): JsonSchema {
+  return {
+    type: "array",
+    title: t(`organization.field.appearance.${key}`),
+    maxItems: 8,
+    items: {
+      type: "object",
+      required: ["label", "url"],
+      properties: {
+        label: {
+          type: "string",
+          title: t("organization.field.appearance.linkLabel"),
+          minLength: 1,
+          maxLength: 120,
+          pattern: PLAIN_LINE,
+        },
+        url: {
+          type: "string",
+          title: t("organization.field.appearance.linkUrl"),
+          maxLength: 512,
+          pattern: "^(https?://[^/?#@\\s\"'<>`\\\\]+([/?#][^\\s\"'<>`\\\\]*)?|/(?![/\\\\])[^\\s\"'<>`\\\\]*)$",
+        },
+      },
     },
   } as JsonSchema;
 }

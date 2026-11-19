@@ -8152,7 +8152,27 @@
         "homeWidgetsNone": "No dashboard to offer yet. Open a project of this organization, go to Dashboards and make one; it is offered here next time.",
         "homeWidgetsProjects": "Open the organization's projects",
         "opendataWidgets": "Open data portal dashboards",
-        "opendataWidgetsNone": "No public dashboard to offer yet: set a dashboard of this organization's projects to public first."
+        "opendataWidgetsNone": "No public dashboard to offer yet: set a dashboard of this organization's projects to public first.",
+        "font": "Typeface",
+        "fontChoice": {
+          "system": "System (default)",
+          "humanist": "Humanist sans serif",
+          "serif": "Serif",
+          "mono": "Monospace"
+        },
+        "radius": "Corner radius (px)",
+        "hero": "Home page hero",
+        "heroTitle": "Heading",
+        "heroIntro": "Introduction",
+        "datasetList": "Dataset list",
+        "datasetListChoice": {
+          "cards": "Cards (default)",
+          "table": "Table"
+        },
+        "navLinks": "Header links",
+        "footerLinks": "Footer links",
+        "linkLabel": "Label",
+        "linkUrl": "Address"
       }
     },
     "contactRole": {

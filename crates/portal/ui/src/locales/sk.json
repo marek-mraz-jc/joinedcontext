@@ -8152,7 +8152,27 @@
         "homeWidgetsNone": "Zatiaľ niet dashboardu na výber. Otvorte projekt tejto organizácie, prejdite na Dashboardy a vytvorte ho; nabudúce sa ponúkne tu.",
         "homeWidgetsProjects": "Otvoriť projekty organizácie",
         "opendataWidgets": "Dashboardy na portáli otvorených údajov",
-        "opendataWidgetsNone": "Zatiaľ niet verejného dashboardu na výber: najprv nastavte dashboard v projekte tejto organizácie ako verejný."
+        "opendataWidgetsNone": "Zatiaľ niet verejného dashboardu na výber: najprv nastavte dashboard v projekte tejto organizácie ako verejný.",
+        "font": "Písmo",
+        "fontChoice": {
+          "system": "Systémové (predvolené)",
+          "humanist": "Humanistické bezpätkové",
+          "serif": "Pätkové",
+          "mono": "Neproporcionálne"
+        },
+        "radius": "Zaoblenie rohov (px)",
+        "hero": "Úvod domovskej stránky",
+        "heroTitle": "Nadpis",
+        "heroIntro": "Úvodný text",
+        "datasetList": "Zoznam datasetov",
+        "datasetListChoice": {
+          "cards": "Karty (predvolené)",
+          "table": "Tabuľka"
+        },
+        "navLinks": "Odkazy v hlavičke",
+        "footerLinks": "Odkazy v pätičke",
+        "linkLabel": "Text",
+        "linkUrl": "Adresa"
       }
     },
     "contactRole": {

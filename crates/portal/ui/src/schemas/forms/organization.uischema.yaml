@@ -182,6 +182,72 @@ spec:
         sk: "Najviac 6 verejných násteniek z projektov tejto organizácie pre domovskú stránku jej portálu otvorených údajov, napríklad doprava/prehlad; vidí ich každý aj bez prihlásenia."
         cs: "Nejvýše 6 veřejných nástěnek z projektů této organizace pro domovskou stránku jejího portálu otevřených dat, například doprava/prehlad; vidí je kdokoli i bez přihlášení."
         de: "Bis zu 6 öffentliche Dashboards aus den Projekten dieser Organisation für die Startseite ihres Open-Data-Portals, zum Beispiel doprava/prehlad; jede Person sieht sie ohne Anmeldung."
+    appearance.font:
+      help:
+        en: "The open data portal's font, from system fonts only, e.g. Serif."
+        sk: "Písmo portálu otvorených dát, len zo systémových písiem, napr. Pätkové."
+        cs: "Písmo portálu otevřených dat, jen ze systémových písem, např. Patkové."
+        de: "Die Schrift des Open-Data-Portals, nur Systemschriften, z. B. Serifenschrift."
+    appearance.radius:
+      help:
+        en: "Rounding of cards, buttons and fields, 0 to 24 pixels, e.g. 8."
+        sk: "Zaoblenie kariet, tlačidiel a polí, 0 až 24 pixelov, napr. 8."
+        cs: "Zaoblení karet, tlačítek a polí, 0 až 24 pixelů, např. 8."
+        de: "Rundung von Karten, Schaltflächen und Feldern, 0 bis 24 Pixel, z. B. 8."
+    appearance.hero.title:
+      help:
+        en: "The open data portal's home page heading, e.g. Open data of Banská Bystrica."
+        sk: "Nadpis domovskej stránky portálu otvorených dát, napr. Otvorené dáta Banskej Bystrice."
+        cs: "Nadpis domovské stránky portálu otevřených dat, např. Otevřená data Brna."
+        de: "Die Überschrift der Startseite des Open-Data-Portals, z. B. Offene Daten Wien."
+    appearance.hero.intro:
+      help:
+        en: "Markdown under the heading, at most 2048 characters, e.g. City data in **one place**. HTML shows as text."
+        sk: "Markdown pod nadpisom, najviac 2048 znakov, napr. Dáta mesta na **jednom mieste**. HTML sa zobrazí ako text."
+        cs: "Markdown pod nadpisem, nejvýše 2048 znaků, např. Data města na **jednom místě**. HTML se zobrazí jako text."
+        de: "Markdown unter der Überschrift, höchstens 2048 Zeichen, z. B. Stadtdaten an **einem Ort**. HTML erscheint als Text."
+    appearance.datasetList:
+      help:
+        en: "How the portal lists datasets: cards with descriptions, or a compact table."
+        sk: "Ako portál zobrazí datasety: karty s popisom alebo kompaktná tabuľka."
+        cs: "Jak portál zobrazí datové sady: karty s popisem, nebo kompaktní tabulka."
+        de: "Wie das Portal Datensätze zeigt: Karten mit Beschreibung oder eine kompakte Tabelle."
+    appearance.navLinks:
+      help:
+        en: "Up to 8 links the portal header adds after its own, e.g. City → https://www.banskabystrica.sk."
+        sk: "Najviac 8 odkazov za vlastnými odkazmi hlavičky, napr. Mesto → https://www.banskabystrica.sk."
+        cs: "Nejvýše 8 odkazů za vlastními odkazy záhlaví, např. Město → https://www.brno.cz."
+        de: "Bis zu 8 Links nach den eigenen der Kopfzeile, z. B. Stadt → https://www.wien.gv.at."
+    appearance.footerLinks:
+      help:
+        en: "Up to 8 links the portal footer adds after its own, e.g. Accessibility → /accessibility."
+        sk: "Najviac 8 odkazov za vlastnými odkazmi pätičky, napr. Prístupnosť → /accessibility."
+        cs: "Nejvýše 8 odkazů za vlastními odkazy zápatí, např. Přístupnost → /accessibility."
+        de: "Bis zu 8 Links nach den eigenen der Fußzeile, z. B. Barrierefreiheit → /accessibility."
+    appearance.navLinks[].label:
+      help:
+        en: "The text of the link, e.g. City."
+        sk: "Text odkazu, napr. Mesto."
+        cs: "Text odkazu, např. Město."
+        de: "Der Text des Links, z. B. Stadt."
+    appearance.navLinks[].url:
+      help:
+        en: "An https:// address or a path on the portal starting with /, e.g. https://www.banskabystrica.sk or /about."
+        sk: "Adresa https:// alebo cesta na portáli začínajúca /, napr. https://www.banskabystrica.sk alebo /about."
+        cs: "Adresa https:// nebo cesta na portálu začínající /, např. https://www.brno.cz nebo /about."
+        de: "Eine https://-Adresse oder ein Pfad im Portal, der mit / beginnt, z. B. https://www.wien.gv.at oder /about."
+    appearance.footerLinks[].label:
+      help:
+        en: "The text of the link, e.g. City."
+        sk: "Text odkazu, napr. Mesto."
+        cs: "Text odkazu, např. Město."
+        de: "Der Text des Links, z. B. Stadt."
+    appearance.footerLinks[].url:
+      help:
+        en: "An https:// address or a path on the portal starting with /, e.g. https://www.banskabystrica.sk or /about."
+        sk: "Adresa https:// alebo cesta na portáli začínajúca /, napr. https://www.banskabystrica.sk alebo /about."
+        cs: "Adresa https:// nebo cesta na portálu začínající /, např. https://www.brno.cz nebo /about."
+        de: "Eine https://-Adresse oder ein Pfad im Portal, der mit / beginnt, z. B. https://www.wien.gv.at oder /about."
     policies.apps.services:
       help:
         en: The platform services an app may call beyond identity and data; a project or an app may only narrow the list.
