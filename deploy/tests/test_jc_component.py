@@ -16,6 +16,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 from conftest import TREE_IGNORE, need_environment
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -695,3 +696,16 @@ def test_beside_the_mqtt_brokers_the_proxy_holds_the_public_listener_for_the_edg
     for ports in ([{"protocol": "TCP", "port": 8080}], [{"protocol": "TCP", "port": "http"}], None):
         with pytest.raises(AssertionError, match="admits every pod"):
             check_only_the_edge_reaches_jc([*docs, planted(jc_ns, {"matchLabels": {"app.kubernetes.io/name": "jc-server"}}, ports)], "planted")
+
+
+
+@requires_helmfile
+def test_every_organization_runs_on_ten_brokers_once_the_brokers_are_on(rendered):
+    """T-7407: jc's defaults give every Organization without its own spec.limits.mqtt ten MQTT
+    brokers over all its projects; the Portal reads them only where the mqtt-brokers component
+    runs, so an environment without it renders none of it. jc-dev's render with the component is
+    the integrator's (a private environment)."""
+    defaults = (Path(__file__).parents[1] / "components/jc/default-environment.yaml.gotmpl").read_text()
+    (line,) = [line for line in defaults.splitlines() if line.strip().startswith("mqttOrganizationDefault:")]
+    assert yaml.safe_load(line.strip()) == {"mqttOrganizationDefault": {"enabled": True, "brokers": 10}}
+    assert env_values(rendered("addons"), "JC_PORTAL_MQTT_ORGANIZATION_DEFAULT") == []

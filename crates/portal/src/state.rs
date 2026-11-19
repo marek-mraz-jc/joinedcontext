@@ -574,6 +574,7 @@ impl AppState {
                         .app_settings
                         .as_ref()
                         .map(|s| s.org_domain.clone()),
+                    state.config.mqtt_default.clone(),
                 )
                 .with_notices(Arc::clone(&state.comments))
                 .with_pipeline_outcomes(

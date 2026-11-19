@@ -4974,7 +4974,7 @@ mod tests {
             let bounds = jc_core::kinds::OrganizationBounds::default();
             crate::judge::replay(
                 &state.mirror,
-                (&bounds, None, None),
+                (&bounds, None, None, None),
                 vec![endpoint(reference)],
             )
         };
