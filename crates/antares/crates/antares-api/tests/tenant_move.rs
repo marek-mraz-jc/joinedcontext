@@ -356,6 +356,44 @@ async fn an_export_in_one_byte_chunks_imports_like_one_piece() {
     );
 }
 
+/// S4-08: an import streams past the request body cap, chunked with no
+/// Content-Length, since a whole Tenant is larger than any one request.
+#[tokio::test]
+async fn an_import_larger_than_the_body_cap_streams_in_chunked() {
+    let (source, target) = (state().await, state().await);
+    let text = "x".repeat(1 << 20);
+    for n in 1..=5 {
+        let room = json!({"id": format!("urn:ngsi-ld:Room:big{n}"), "type": "Room",
+            "note": {"type": "Property", "value": text}});
+        assert_eq!(
+            ngsi(&source, "POST", "/ngsi-ld/v1/entities", room, "big").await,
+            StatusCode::CREATED
+        );
+    }
+    let stream = export(&source, "big").await;
+    assert!(stream.len() > *antares_api::bounds::MAX_BODY_BYTES);
+    let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = stream
+        .as_bytes()
+        .chunks(64 * 1024)
+        .map(|c| Ok(axum::body::Bytes::copy_from_slice(c)))
+        .collect();
+    let res = antares_api::router(target.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/q/tenants/big/import")
+                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        read(&target, "/q/tenants/big/digest", None).await,
+        read(&source, "/q/tenants/big/digest", None).await
+    );
+}
+
 /// F-R2ANT2-009: an Entity exported without history (retained away at the
 /// source) arrives without history, so both sides digest alike.
 #[tokio::test]

@@ -33,10 +33,23 @@ pub fn drain_errors() -> u64 {
 // immediately.
 #[cfg(not(target_arch = "wasm32"))]
 tokio::task_local! {
-    static BUFFER: std::cell::RefCell<Vec<TemporalEvent>>;
+    static BUFFER: Shared<TemporalEvent>;
     static STAGED: std::cell::RefCell<Vec<TemporalEvent>>;
-    static CHANGES: std::cell::RefCell<Vec<crate::mirror::Change>>;
+    static CHANGES: Shared<crate::mirror::Change>;
     static TENANT: Option<TenantId>;
+}
+
+/// A request's committed history events or matcher changes, shared with the
+/// layer's [`Pending`] guard so a dropped request still hands them on.
+#[cfg(not(target_arch = "wasm32"))]
+type Shared<T> = std::sync::Arc<std::sync::Mutex<Vec<T>>>;
+
+/// The vector behind `shared`; a panic while it was held leaves it usable.
+#[cfg(not(target_arch = "wasm32"))]
+fn lock<T>(shared: &Shared<T>) -> std::sync::MutexGuard<'_, Vec<T>> {
+    shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// `ANTARES_HISTORY_BACKFILL=on` (T-4665, ADR-N-054 2.1): a Core API write of
@@ -159,7 +172,7 @@ pub(crate) fn settle(id: &str, committed: bool) {
             })
             .unwrap_or_default();
         if committed && !mine.is_empty() {
-            let _ = BUFFER.try_with(|b| b.borrow_mut().extend(mine));
+            let _ = BUFFER.try_with(|b| lock(b).extend(mine));
         }
     }
     #[cfg(target_arch = "wasm32")]
@@ -312,7 +325,7 @@ pub(crate) fn buffer_change(change: crate::mirror::Change) -> Option<crate::mirr
         let mut slot = Some(change);
         let _ = CHANGES.try_with(|b| {
             if let Some(c) = slot.take() {
-                b.borrow_mut().push(c);
+                lock(b).push(c);
             }
         });
         slot
@@ -330,7 +343,7 @@ pub(crate) async fn push(st: &AppState, ev: TemporalEvent) {
         let buffered = BUFFER
             .try_with(|b| {
                 if let Some(ev) = slot.take() {
-                    b.borrow_mut().push(ev);
+                    lock(b).push(ev);
                 }
             })
             .is_ok();
@@ -847,6 +860,13 @@ pub(crate) async fn drain(st: &AppState, evs: Vec<TemporalEvent>) {
 /// response is built. Drained BEFORE the response is returned so
 /// read-your-writes holds at any store latency (the ETSI temporal suites
 /// read history straight after the write).
+///
+/// S4-07: the handler runs inline, in its caller's task-locals (a view's
+/// scope must reach the policy engine), and writes its events into buffers
+/// the layer shares with a [`Pending`] guard. Drain and flush run as one
+/// spawned task the layer awaits; a client that hangs up mid-handler drops
+/// the guard, which hands what the request had committed on, so history and
+/// the matcher keep a write the store holds.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn layer(
     axum::extract::State(st): axum::extract::State<AppState>,
@@ -855,33 +875,74 @@ pub(crate) async fn layer(
 ) -> axum::response::Response {
     let provenance = crate::provenance::of_request(req.headers(), st.provenance_from.as_deref());
     let tenant = crate::negotiate::tenant_from(req.headers()).ok();
-    let (resp, evs, changes) = BUFFER
-        .scope(std::cell::RefCell::new(Vec::new()), async {
-            STAGED
-                .scope(
-                    std::cell::RefCell::new(Vec::new()),
-                    CHANGES.scope(std::cell::RefCell::new(Vec::new()), async {
-                        PROVENANCE
-                            .scope(
-                                provenance,
-                                TENANT.scope(tenant, async {
-                                    let resp = next.run(req).await;
-                                    (resp, BUFFER.with(|b| b.take()), CHANGES.with(|c| c.take()))
-                                }),
-                            )
-                            .await
-                    }),
-                )
-                .await
-        })
+    let mut pending = Pending {
+        st,
+        buffer: Shared::default(),
+        changes: Shared::default(),
+    };
+    let resp = BUFFER
+        .scope(
+            pending.buffer.clone(),
+            STAGED.scope(
+                std::cell::RefCell::new(Vec::new()),
+                CHANGES.scope(
+                    pending.changes.clone(),
+                    PROVENANCE.scope(provenance, TENANT.scope(tenant, next.run(req))),
+                ),
+            ),
+        )
         .await;
-    drain(&st, evs).await;
-    if !changes.is_empty() {
-        if let Some(flush) = &st.change_flush {
-            flush(changes);
+    if let Some(finish) = pending.finish() {
+        // awaited for read-your-writes; spawned so a drop now cannot cut it
+        if let Err(e) = tokio::spawn(finish).await {
+            if e.is_panic() {
+                // the router's catch-panic layer answers it, as before
+                std::panic::resume_unwind(e.into_panic());
+            }
         }
     }
     resp
+}
+
+/// What a request in flight has committed, handed to history and the matcher
+/// when the layer finishes or, when the request is dropped first, on drop.
+#[cfg(not(target_arch = "wasm32"))]
+struct Pending {
+    st: AppState,
+    buffer: Shared<TemporalEvent>,
+    changes: Shared<crate::mirror::Change>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Pending {
+    /// Takes the buffers; None when the request committed nothing.
+    fn finish(&mut self) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        let evs = std::mem::take(&mut *lock(&self.buffer));
+        let changes = std::mem::take(&mut *lock(&self.changes));
+        if evs.is_empty() && changes.is_empty() {
+            return None;
+        }
+        let st = self.st.clone();
+        Some(tracing::Instrument::in_current_span(async move {
+            drain(&st, evs).await;
+            if !changes.is_empty() {
+                if let Some(flush) = &st.change_flush {
+                    flush(changes);
+                }
+            }
+        }))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Pending {
+    fn drop(&mut self) {
+        if let Some(finish) = self.finish() {
+            if let Ok(rt) = tokio::runtime::Handle::try_current() {
+                rt.spawn(finish);
+            }
+        }
+    }
 }
 
 /// No buffer on wasm (pushes drain on the spot): the layer is a pass-through
@@ -1037,14 +1098,14 @@ mod tests {
     #[tokio::test]
     async fn a_backfill_is_recorded_only_for_a_committed_write() {
         let buffered = BUFFER
-            .scope(std::cell::RefCell::new(Vec::new()), async {
+            .scope(Shared::default(), async {
                 STAGED
                     .scope(std::cell::RefCell::new(Vec::new()), async {
                         // refused: nothing reaches history
                         restage("urn:a");
                         assert!(stage(ev("urn:a")));
                         settle("urn:a", false);
-                        assert_eq!(BUFFER.with(|b| b.borrow().len()), 0);
+                        assert_eq!(BUFFER.with(|b| lock(b).len()), 0);
                         // rerun twice, then committed: one event
                         restage("urn:b");
                         assert!(stage(ev("urn:b")));
@@ -1054,12 +1115,104 @@ mod tests {
                         assert!(stage(ev("urn:c")));
                         settle_all::<(), ()>(&["urn:b".to_owned()], &[Some(Ok(()))]);
                         assert_eq!(STAGED.with(|b| b.borrow().len()), 1);
-                        BUFFER.with(|b| b.take())
+                        BUFFER.with(|b| std::mem::take(&mut *lock(b)))
                     })
                     .await
             })
             .await;
         let ids: Vec<&str> = buffered.iter().map(|e| e.entity_id.as_str()).collect();
         assert_eq!(ids, ["urn:b"]);
+    }
+
+    /// The caller's task-locals reach the handler through the layer: a
+    /// view's policy scope and an in-process call's depth are read there.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_callers_task_locals_reach_the_handler() {
+        use tower::ServiceExt;
+        let st = AppState::new("antares-history-inprocess".into());
+        let app = axum::Router::new()
+            .route(
+                "/r",
+                axum::routing::get(|| async {
+                    if crate::state::in_process_depth() == 1 {
+                        axum::http::StatusCode::NO_CONTENT
+                    } else {
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(st, layer));
+        let req = axum::http::Request::get("/r")
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let resp = crate::state::INPROCESS_DEPTH
+            .scope(1, app.oneshot(req))
+            .await
+            .expect("infallible");
+        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
+    }
+
+    /// S4-07: a client that hangs up after the store committed its write
+    /// still leaves the history event and the matcher change behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dropped_request_still_records_its_committed_write() {
+        use std::sync::{Arc, Mutex};
+        use tower::ServiceExt;
+        const ID: &str = "urn:ngsi-ld:T:dropped";
+        let mut st = AppState::new("antares-history-drop".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let (change_tx, mut change_rx) = tokio::sync::mpsc::unbounded_channel();
+        st.change_flush = Some(Arc::new(move |c| {
+            let _ = change_tx.send(c);
+        }));
+        let (committed_tx, committed_rx) = tokio::sync::oneshot::channel::<()>();
+        let committed_tx = Arc::new(Mutex::new(Some(committed_tx)));
+        let handler_st = st.clone();
+        let app = axum::Router::new()
+            .route(
+                "/w",
+                axum::routing::post(move || async move {
+                    // the committed write: history keeps only an Entity
+                    // the current state holds
+                    let tenant = TenantId::new("t").expect("tenant");
+                    let doc = serde_json::json!({"id": ID, "type": "T"});
+                    assert!(handler_st
+                        .store
+                        .create(&tenant, antares_store::Kind::Entity, ID, doc)
+                        .await
+                        .expect("create"));
+                    let mut event = ev(ID);
+                    event.op = antares_store::TemporalOp::AttrCreated;
+                    event.shell = serde_json::json!({"id": ID, "type": "T"});
+                    push(&handler_st, event).await;
+                    assert!(
+                        buffer_change((ID.to_owned(), None, Some(serde_json::json!({})))).is_none()
+                    );
+                    // the write is committed; the client goes before the reply
+                    if let Some(tx) = committed_tx.lock().ok().and_then(|mut g| g.take()) {
+                        let _ = tx.send(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    axum::http::StatusCode::NO_CONTENT
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(st.clone(), layer));
+        let req = axum::http::Request::post("/w")
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let call = tokio::spawn(app.oneshot(req));
+        committed_rx.await.expect("the handler ran");
+        call.abort();
+        let changes = tokio::time::timeout(std::time::Duration::from_secs(5), change_rx.recv())
+            .await
+            .expect("the matcher change was flushed")
+            .expect("flush hook alive");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, ID);
+        let tenant = TenantId::new("t").expect("tenant");
+        assert!(
+            st.temporal.get(&tenant, ID).await.expect("read").is_some(),
+            "the history event was drained"
+        );
     }
 }
