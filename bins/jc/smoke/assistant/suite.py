@@ -30,7 +30,6 @@ reason jc logged for anything else (--log-file reads the `assistant: off` line).
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import secrets
@@ -47,7 +46,16 @@ for p in (HERE, SMOKE, SMOKE / "endpoints"):
 
 import export as ex
 import modelstub
-from common import Http, Results, as_json, loopback_only, short
+from common import (  # noqa: F401  (zero_bits: tests)
+    Http,
+    Results,
+    as_json,
+    events,
+    loopback_only,
+    short,
+    solve,
+    zero_bits,
+)
 
 PROD_WIDGET = "https://assistant.smartcity.joinedcontext.com/d/data/widget"
 ANONYMOUS = {"public", "ckan"}
@@ -69,34 +77,6 @@ def load_deployments(files: Path) -> list[dict]:
                 out.append({"project": meta.get("namespace") or f.parts[-4], "name": meta["name"],
                             "publicId": spec.get("publicId") or meta["name"],
                             "channel": spec.get("channel") or "public", "spec": spec})
-    return out
-
-
-def zero_bits(digest: bytes) -> int:
-    bits = 0
-    for b in digest:
-        if b == 0:
-            bits += 8
-            continue
-        return bits + 8 - b.bit_length()
-    return bits
-
-
-def solve(challenge: str, bits: int) -> str:
-    n = 0
-    while zero_bits(hashlib.sha256(f"{challenge}:{n}".encode()).digest()) < bits:
-        n += 1
-    return str(n)
-
-
-def events(raw: bytes) -> list[tuple[str, object]]:
-    """The SSE events of a chat answer as (name, JSON data)."""
-    out = []
-    for block in raw.decode(errors="replace").split("\n\n"):
-        name = next((ln[7:] for ln in block.splitlines() if ln.startswith("event: ")), "")
-        data = "\n".join(ln[6:] for ln in block.splitlines() if ln.startswith("data: "))
-        if name:
-            out.append((name, as_json(data.encode()) if data else None))
     return out
 
 
