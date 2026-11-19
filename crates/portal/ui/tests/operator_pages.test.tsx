@@ -145,7 +145,8 @@ describe("changes", () => {
     render(<OperatorChanges />, (path) => (path === "/api/v1/operator/changes" ? json({ items: [move] }) : undefined));
     expect((await screen.findAllByText(en.operator.kind.ProjectMove)).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/^banskabystrica/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(`${en.operator.changes.organization}: banskabystrica`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(`${en.operator.changes.movesTo}: banskabystrica`).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(en.operator.changes.moveHint).length).toBeGreaterThan(0);
   });
 
   it("says what to do when nothing is asked for", async () => {
