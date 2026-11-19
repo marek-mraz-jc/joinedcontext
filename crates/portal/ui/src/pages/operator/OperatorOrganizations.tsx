@@ -145,7 +145,7 @@ function SinglePersonCell({ row }: { row: OperatorOrganization }): JSX.Element {
   return (
     <span className="flex flex-col items-start gap-1">
       <span className="flex flex-wrap items-center gap-2">
-        <Badge tone={on ? "warning" : "neutral"}>
+        <Badge tone={on ? "info" : "neutral"}>
           {t(on ? "operator.organizations.approvalsOn" : "operator.organizations.approvalsOff")}
         </Badge>
         <span className="text-caption text-fg-muted">{t("operator.organizations.people", { count: people })}</span>
@@ -160,6 +160,9 @@ function SinglePersonCell({ row }: { row: OperatorOrganization }): JSX.Element {
       >
         {t(on ? "operator.organizations.turnOff" : "operator.organizations.turnOn")}
       </Button>
+      {crowded ? (
+        <span className="text-caption text-fg-muted">{t("operator.organizations.onePersonOnly", { count: people })}</span>
+      ) : null}
       {set.isSuccess ? (
         <span role="status" className="text-caption text-fg-muted">
           {t(set.data.state === "applied" ? "operator.organizations.applied" : "operator.organizations.asked")}

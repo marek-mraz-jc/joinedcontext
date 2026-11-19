@@ -383,7 +383,7 @@
     "publicationPublic": "Nach Ihrer Genehmigung kann jede Person diesen Datensatz ohne Anmeldung lesen. Lesen Sie die Seite und die Feldänderungen oben, bevor Sie den Namen eingeben.",
     "singlePerson": {
       "title": "Ein-Personen-Modus: Sie genehmigen dies allein",
-      "body": "{organization} hat eine Person, daher hat ein Betreiber der Installation Ein-Personen-Genehmigungen eingeschaltet. Sie dürfen Ihre eigene Zugriffsänderung nach Eingabe Ihres Einmalcodes genehmigen; das Portal fragt ihn erneut ab, wenn der letzte älter als 5 Minuten ist. Die Änderung verzeichnet Sie als „self (single-person mode)“."
+      "body": "Sie genehmigen Ihre eigene Zugriffsänderung allein, als einzige Person von {organization}. Das Portal fragt Ihren Einmalcode erneut ab, wenn der letzte älter als 5 Minuten ist, und verzeichnet die Genehmigung als „self (single-person mode)“."
     }
   },
   "lane": {

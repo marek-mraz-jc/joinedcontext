@@ -46,27 +46,26 @@ pub async fn get_approval_mode(
     Query(query): Query<ModeQuery>,
 ) -> Result<Json<ApprovalMode>, ApiError> {
     let identity = &user.0.identity;
-    let organization = match (query.organization, query.project) {
-        (Some(organization), None) => Some(organization).filter(|organization| {
-            crate::permissions::belongs_to_organization(
-                &state.mirror,
-                &state.config.bootstrap_admins,
-                identity,
-                organization,
-            )
-        }),
-        (None, Some(project)) => crate::permissions::organization_of(&state.mirror, &project)
-            .filter(|_| {
-                crate::permissions::for_request(&state, identity, &project).may_read_project()
+    let organization =
+        match (query.organization, query.project) {
+            (Some(organization), None) => Some(organization).filter(|organization| {
+                crate::permissions::belongs_to_organization(
+                    &state.mirror,
+                    &state.config.bootstrap_admins,
+                    identity,
+                    organization,
+                )
             }),
-        _ => {
-            return Err(ApiError::BadRequest(
+            (None, Some(project)) => crate::permissions::organization_of(&state.mirror, &project)
+                .filter(|_| {
+                    crate::permissions::for_request(&state, identity, &project).may_read_project()
+                }),
+            _ => return Err(ApiError::BadRequest(
                 "name exactly one of organization (e.g. marek-mraz) and project (e.g. ovzdusie)"
                     .into(),
-            ))
+            )),
         }
-    }
-    .ok_or_else(|| ApiError::NotFound("no such Organization or project".into()))?;
+        .ok_or_else(|| ApiError::NotFound("no such Organization or project".into()))?;
     crate::single_person::mode(&state, &organization)
         .await
         .map(Json)

@@ -400,9 +400,13 @@ export function ApprovalDetailPage({
           ) : null}
 
           {standing.alone ? (
-            <Alert role="note" tone="warning" title={t("approvals.singlePerson.title")}>
+            <Alert role="note" tone="info" title={t("approvals.singlePerson.title")}>
               {t("approvals.singlePerson.body", { organization: approvalMode.data?.organization ?? "" })}
             </Alert>
+          ) : standing.block === "ownAccessChange" || standing.block === "ownModelChange" ? (
+            <p role="note" className="text-sm text-fg-muted">
+              {disabledReason}
+            </p>
           ) : standing.ownAsAdministrator && isPendingApproval ? (
             <p role="note" className="text-sm text-fg-muted">
               {t("approvals.ownAsAdministrator", { kind: changedKind(proposal) })}

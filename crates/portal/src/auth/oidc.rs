@@ -2267,7 +2267,7 @@ pub(crate) mod tests {
 
 #[cfg(test)]
 mod realm_roles_tests {
-    use super::{jwt_exp, realm_roles, second_factor};
+    use super::{jwt_exp, realm_roles, second_factor, second_factor_at};
     use base64::engine::{general_purpose::URL_SAFE_NO_PAD, Engine};
 
     /// Builds a JWT-shaped string around `payload`. Nothing here is signed: `realm_roles` runs
@@ -2324,7 +2324,9 @@ mod realm_roles_tests {
             Some(1_800_000_000)
         );
         assert_eq!(
-            second_factor_at(&token(r#"{"acr":"pwd","amr":["pwd"],"auth_time":1800000000}"#)),
+            second_factor_at(&token(
+                r#"{"acr":"pwd","amr":["pwd"],"auth_time":1800000000}"#
+            )),
             None
         );
         assert_eq!(second_factor_at(&token(r#"{"amr":["otp"]}"#)), None);

@@ -557,12 +557,9 @@ async fn single_person_holds(
     if payload.single_person != Some(true) {
         return Ok(());
     }
-    let people = crate::permissions::people_with_a_role(
-        &state.mirror,
-        organization,
-        TimestampTz::now(),
-    )
-    .len();
+    let people =
+        crate::permissions::people_with_a_role(&state.mirror, organization, TimestampTz::now())
+            .len();
     if people > 1 {
         return Err(invalid(
             "singlePerson",
@@ -1400,7 +1397,9 @@ pub async fn approve(
         OperatorKind::ProjectMove => {
             return apply_move(&state, tx, &found, &identity.subject, source(client)).await;
         }
-        OperatorKind::SinglePersonSet => apply_single_person(&state, &mut tx, payload, &identity.subject).await?,
+        OperatorKind::SinglePersonSet => {
+            apply_single_person(&state, &mut tx, payload, &identity.subject).await?
+        }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
     let ip = source(client);

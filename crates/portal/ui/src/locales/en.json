@@ -383,7 +383,7 @@
     "publicationPublic": "Anyone can read this dataset without signing in once you approve. Read the page and the field changes above before you type the name.",
     "singlePerson": {
       "title": "Single-person mode: you approve this alone",
-      "body": "{organization} has one person, so an installation operator turned single-person approvals on. You may approve your own access change after entering your one-time code; the Portal asks for it again when your last one is older than 5 minutes. The change records you as \"self (single-person mode)\"."
+      "body": "You approve your own access change alone, as the one person of {organization}. The Portal asks for your one-time code again when the last one is older than 5 minutes, and records the approval as \"self (single-person mode)\"."
     }
   },
   "lane": {

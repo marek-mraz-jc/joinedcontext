@@ -383,7 +383,7 @@
     "publicationPublic": "Po schválení tuto datovou sadu může číst kdokoli bez přihlášení. Před napsáním názvu si přečtěte stránku i změny polí výše.",
     "singlePerson": {
       "title": "Režim jedné osoby: tuto změnu schvalujete sami",
-      "body": "{organization} má jednu osobu, proto operátor instalace zapnul schvalování jednou osobou. Svou změnu přístupu můžete schválit po zadání jednorázového kódu; Portál si ho vyžádá znovu, pokud je poslední starší než 5 minut. Změna vás zaznamená jako „self (single-person mode)“."
+      "body": "Svou změnu přístupu schvalujete sami, jako jediná osoba organizace {organization}. Portál si vyžádá jednorázový kód znovu, pokud je poslední starší než 5 minut, a schválení zaznamená jako „self (single-person mode)“."
     }
   },
   "lane": {

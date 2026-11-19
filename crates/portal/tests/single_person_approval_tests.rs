@@ -94,10 +94,19 @@ async fn organization(state: &AppState, organization: &str, people: &[&str]) {
     ));
 }
 
-async fn propose(state: &AppState, who: Identity, organization: &str, on: bool) -> (StatusCode, Value) {
-    let change = json!({ "kind": "SinglePersonSet", "organization": organization, "singlePerson": on });
+async fn propose(
+    state: &AppState,
+    who: Identity,
+    organization: &str,
+    on: bool,
+) -> (StatusCode, Value) {
+    let change =
+        json!({ "kind": "SinglePersonSet", "organization": organization, "singlePerson": on });
     let answer = send(state, who, "POST", CHANGES, Some(change)).await;
-    (answer.status, serde_json::from_str(&answer.text).unwrap_or_default())
+    (
+        answer.status,
+        serde_json::from_str(&answer.text).unwrap_or_default(),
+    )
 }
 
 async fn mode(state: &AppState, who: Identity, organization: &str) -> Value {
@@ -119,20 +128,47 @@ async fn only_an_operator_turns_the_mode_on_and_a_second_one_approves_it() {
 
     let (status, proposed) = propose(&state, operator(&state, "op-a"), &org, true).await;
     assert_eq!(status, StatusCode::CREATED, "{proposed}");
-    assert_eq!(proposed["state"], "proposed", "turning on waits for a second operator");
-    assert_eq!(mode(&state, owner.clone(), &org).await["singlePerson"], false);
+    assert_eq!(
+        proposed["state"], "proposed",
+        "turning on waits for a second operator"
+    );
+    assert_eq!(
+        mode(&state, owner.clone(), &org).await["singlePerson"],
+        false
+    );
     let id = proposed["id"].as_str().expect("an id");
 
-    let own = send(&state, operator(&state, "op-a"), "POST", &format!("{CHANGES}/{id}/approve"), None).await;
+    let own = send(
+        &state,
+        operator(&state, "op-a"),
+        "POST",
+        &format!("{CHANGES}/{id}/approve"),
+        None,
+    )
+    .await;
     assert_eq!(own.status, StatusCode::FORBIDDEN, "{}", own.text);
-    let applied = send(&state, operator(&state, "op-b"), "POST", &format!("{CHANGES}/{id}/approve"), None).await;
+    let applied = send(
+        &state,
+        operator(&state, "op-b"),
+        "POST",
+        &format!("{CHANGES}/{id}/approve"),
+        None,
+    )
+    .await;
     assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
     let on = mode(&state, owner.clone(), &org).await;
-    assert_eq!((on["singlePerson"].clone(), on["peopleWithARole"].clone()), (json!(true), json!(1)));
+    assert_eq!(
+        (on["singlePerson"].clone(), on["peopleWithARole"].clone()),
+        (json!(true), json!(1))
+    );
 
     // Off restores PF-58: one operator, applied at once.
     let (status, off) = propose(&state, operator(&state, "op-a"), &org, false).await;
-    assert_eq!((status, off["state"].clone()), (StatusCode::CREATED, json!("applied")), "{off}");
+    assert_eq!(
+        (status, off["state"].clone()),
+        (StatusCode::CREATED, json!("applied")),
+        "{off}"
+    );
     assert_eq!(mode(&state, owner, &org).await["singlePerson"], false);
 }
 
@@ -144,7 +180,13 @@ async fn the_mode_turns_on_only_where_one_person_holds_a_role() {
     let (status, refused) = propose(&state, operator(&state, "op-a"), &org, true).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
     assert_eq!(refused["errors"][0]["path"], "singlePerson", "{refused}");
-    assert!(refused["detail"].as_str().unwrap_or_default().contains("2 people"), "{refused}");
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("2 people"),
+        "{refused}"
+    );
     let (status, unknown) = propose(&state, operator(&state, "op-a"), "no-such-org", true).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{unknown}");
     assert_eq!(unknown["errors"][0]["path"], "organization", "{unknown}");
@@ -160,7 +202,13 @@ async fn a_second_person_turns_the_mode_off_and_says_so() {
     organization(&state, &org, &[OWNER, SECOND]).await;
     let off = mode(&state, owner(), &org).await;
     assert_eq!(off["singlePerson"], false, "{off}");
-    assert!(off["offReason"].as_str().unwrap_or_default().contains("2 people"), "{off}");
+    assert!(
+        off["offReason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("2 people"),
+        "{off}"
+    );
     // The row says so too, not only this answer.
     let stored: (bool, Option<String>) = sqlx::query_as(
         "SELECT single_person, off_reason FROM organization_approval_modes WHERE organization = $1",
@@ -173,7 +221,13 @@ async fn a_second_person_turns_the_mode_off_and_says_so() {
 }
 
 async fn on(state: &AppState, organization: &str) {
-    let mut conn = state.db.as_ref().expect("db").acquire().await.expect("conn");
+    let mut conn = state
+        .db
+        .as_ref()
+        .expect("db")
+        .acquire()
+        .await
+        .expect("conn");
     joinedcontext_portal::single_person::set(&mut conn, organization, true, "op-b", None)
         .await
         .expect("mode on");
@@ -193,7 +247,9 @@ async fn forge(org: &str, people: &[&str]) -> (MockServer, AppState) {
     let file = resource::repository_path(info, ORG_NAMESPACE, None, BINDING).expect("a path");
     Mock::given(method("GET"))
         .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
-        .respond_with(ok(json!({ "Sha": "blob-1", "Content": STANDARD.encode(&yaml) })))
+        .respond_with(ok(
+            json!({ "Sha": "blob-1", "Content": STANDARD.encode(&yaml) }),
+        ))
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -217,7 +273,9 @@ async fn forge(org: &str, people: &[&str]) -> (MockServer, AppState) {
         .await;
     Mock::given(method("GET"))
         .and(path(format!("{repo}/PullRequests(1)/Files")))
-        .respond_with(ok(json!({ "value": [{ "Filename": file, "Status": "added" }] })))
+        .respond_with(ok(
+            json!({ "value": [{ "Filename": file, "Status": "added" }] }),
+        ))
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -225,8 +283,13 @@ async fn forge(org: &str, people: &[&str]) -> (MockServer, AppState) {
         .respond_with(ok(json!({})))
         .mount(&server)
         .await;
-    let client = ShakoClient::new(server.uri().parse().expect("url"), "test-owner", "test-repo", "token-xyz")
-        .expect("client");
+    let client = ShakoClient::new(
+        server.uri().parse().expect("url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
     let state = AppState::new(Config::for_tests(), None)
         .with_shako(Arc::new(client))
         .with_db(pool().await);
@@ -243,7 +306,11 @@ async fn merged(server: &MockServer) -> bool {
         .any(|r| r.url.path().ends_with("/PullRequests(1)/Shako.Merge"))
 }
 
-async fn approve(state: &AppState, by: ApprovedBy, stepped_up_at: Option<i64>) -> Result<(), ApiError> {
+async fn approve(
+    state: &AppState,
+    by: ApprovedBy,
+    stepped_up_at: Option<i64>,
+) -> Result<(), ApiError> {
     approve_change_as(
         state,
         &owner(),
@@ -273,7 +340,9 @@ async fn each_refusal_keeps_the_change_unmerged() {
     // Mode off: PF-58 as everywhere.
     let org = run("off");
     let (server, state) = forge(&org, &[OWNER]).await;
-    let err = approve(&state, ApprovedBy::Person, Some(now_unix())).await.expect_err("mode off");
+    let err = approve(&state, ApprovedBy::Person, Some(now_unix()))
+        .await
+        .expect_err("mode off");
     assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
     assert!(!merged(&server).await);
 
@@ -282,10 +351,17 @@ async fn each_refusal_keeps_the_change_unmerged() {
     let (server, state) = forge(&org, &[OWNER]).await;
     on(&state, &org).await;
     for stepped_up_at in [None, Some(now_unix() - 301)] {
-        let err = approve(&state, ApprovedBy::Person, stepped_up_at).await.expect_err("not fresh");
-        assert!(matches!(err, ApiError::SecondFactorRequired), "{stepped_up_at:?}: {err:?}");
+        let err = approve(&state, ApprovedBy::Person, stepped_up_at)
+            .await
+            .expect_err("not fresh");
+        assert!(
+            matches!(err, ApiError::SecondFactorRequired),
+            "{stepped_up_at:?}: {err:?}"
+        );
     }
-    let err = approve(&state, ApprovedBy::Operation, Some(now_unix())).await.expect_err("an agent");
+    let err = approve(&state, ApprovedBy::Operation, Some(now_unix()))
+        .await
+        .expect_err("an agent");
     assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
     assert!(!merged(&server).await);
 
@@ -293,7 +369,9 @@ async fn each_refusal_keeps_the_change_unmerged() {
     let org = run("two");
     let (server, state) = forge(&org, &[OWNER, SECOND]).await;
     on(&state, &org).await;
-    let err = approve(&state, ApprovedBy::Person, Some(now_unix())).await.expect_err("two people");
+    let err = approve(&state, ApprovedBy::Person, Some(now_unix()))
+        .await
+        .expect_err("two people");
     assert!(matches!(err, ApiError::SelfApproval(_)), "{err:?}");
     assert!(!merged(&server).await);
     assert_eq!(mode(&state, owner(), &org).await["singlePerson"], false);

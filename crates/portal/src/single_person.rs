@@ -89,18 +89,14 @@ pub fn others(state: &AppState, organization: &str, identity: &Identity) -> usiz
         identity.email.as_deref(),
         Some(identity.username.as_str()),
     ];
-    crate::permissions::people_with_a_role(
-        &state.mirror,
-        organization,
-        jc_time::TimestampTz::now(),
-    )
-    .iter()
-    .filter(|person| {
-        !me.iter()
-            .flatten()
-            .any(|mine| mine.trim().eq_ignore_ascii_case(person))
-    })
-    .count()
+    crate::permissions::people_with_a_role(&state.mirror, organization, jc_time::TimestampTz::now())
+        .iter()
+        .filter(|person| {
+            !me.iter()
+                .flatten()
+                .any(|mine| mine.trim().eq_ignore_ascii_case(person))
+        })
+        .count()
 }
 
 fn db(e: sqlx::Error) -> ApiError {
@@ -151,7 +147,7 @@ pub async fn set(
 /// The reason the Portal records when a second person turns the mode off.
 fn second_person_reason(people: usize) -> String {
     format!(
-        "{people} people hold a role in the Organization now; single-person approvals need exactly one, so the Portal turned the mode off and PF-58's second person approves again"
+        "{people} people hold a role in the Organization now, and single-person approvals need exactly one. A second person approves access changes again."
     )
 }
 
@@ -240,7 +236,10 @@ mod tests {
     #[test]
     fn a_fresh_second_factor_of_the_one_person_approves() {
         assert_eq!(verdict(true, true, Some(NOW - 10), NOW, 0), Ok(()));
-        assert_eq!(verdict(true, true, Some(NOW - FRESH_SECONDS), NOW, 0), Ok(()));
+        assert_eq!(
+            verdict(true, true, Some(NOW - FRESH_SECONDS), NOW, 0),
+            Ok(())
+        );
     }
 
     #[test]

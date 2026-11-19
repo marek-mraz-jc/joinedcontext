@@ -351,8 +351,8 @@ function ApprovalsSummary({ mode }: { mode: ApprovalMode }): JSX.Element {
     <div className="space-y-3">
       <dl className="grid gap-x-6 gap-y-3 text-body sm:grid-cols-[max-content_1fr]">
         <dt className="font-medium text-fg">{t("organization.approvals.mode")}</dt>
-        <dd className="flex flex-wrap items-start gap-2 text-fg">
-          <Badge tone={mode.singlePerson ? "warning" : "neutral"}>
+        <dd className="flex flex-col items-start gap-1 text-fg sm:flex-row sm:gap-2">
+          <Badge tone={mode.singlePerson ? "info" : "neutral"}>
             {t(mode.singlePerson ? "operator.organizations.approvalsOn" : "operator.organizations.approvalsOff")}
           </Badge>
           <span className="min-w-0 flex-1">{t(mode.singlePerson ? "organization.approvals.on" : "organization.approvals.off")}</span>
