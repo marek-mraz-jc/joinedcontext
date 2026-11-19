@@ -21,8 +21,8 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use jc_core::names::OrganizationId;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -83,7 +83,7 @@ pub struct Minted {
     /// The domain that proved it, e.g. `bbsk.sk`.
     pub domain: String,
     #[schema(value_type = String, format = DateTime)]
-    pub minted_at: DateTime<Utc>,
+    pub minted_at: TimestampTz,
 }
 
 /// The domain of the body and its id: 400 for a body that does not parse, 422 naming `domain`
@@ -120,7 +120,7 @@ fn minted_already(id: &OrganizationId) -> ApiError {
     ))
 }
 
-/// The challenge and, once minted, when (epoch seconds: sqlx here speaks `time`, the answer chrono).
+/// The challenge and, once minted, when (epoch seconds: sqlx here speaks `time`, the answer jc-time).
 type Row = (String, Option<i64>);
 
 async fn stored(pool: &sqlx::PgPool, id: &OrganizationId) -> Result<Option<Row>, ApiError> {
@@ -285,7 +285,7 @@ pub async fn mint(
     .await
     .map_err(|e| ApiError::Internal(format!("organization ids: {e}")))?
     .ok_or_else(|| minted_already(&id))?;
-    let minted_at = DateTime::from_timestamp(minted_at, 0).unwrap_or_else(Utc::now);
+    let minted_at = TimestampTz::from_second(minted_at).unwrap_or_else(TimestampTz::now);
     tracing::info!(organization_id = %id, subject = %user.0.identity.subject, "organization id minted");
     Ok((
         StatusCode::CREATED,

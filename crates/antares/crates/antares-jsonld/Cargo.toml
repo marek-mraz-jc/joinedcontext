@@ -20,7 +20,7 @@ role = "ngsild"
 [dependencies]
 antares-model = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true, optional = true }
 
 [features]
@@ -51,6 +51,8 @@ rustls = { workspace = true, optional = true }
 moka = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# jiff's Timestamp::now() reads Date.now() in the browser, as chrono's default `wasmbind` did.
+jiff = { workspace = true, features = ["js"] }
 tokio = { version = "1", default-features = false, features = ["sync", "macros"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json"], optional = true }
 web-time = { workspace = true, optional = true }

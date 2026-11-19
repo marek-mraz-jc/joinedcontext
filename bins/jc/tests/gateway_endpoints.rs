@@ -111,7 +111,7 @@ impl Jc {
     /// Puts the test's own step into the log's timeline, so a red run shows what jc had logged
     /// by then.
     fn mark(&self, step: &str) {
-        let at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
+        let at = jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Micros, true);
         self.log.lock().unwrap().push(format!("{at} TEST {step}"));
     }
 

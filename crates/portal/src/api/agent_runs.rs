@@ -1589,7 +1589,7 @@ pub(crate) async fn within_runs_per_day(state: &AppState, project: &str) -> Resu
     else {
         return Ok(());
     };
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let today = jiff::Timestamp::now().strftime("%Y-%m-%d").to_string();
     let recent = state
         .agents
         .list_runs(project, i64::from(max))

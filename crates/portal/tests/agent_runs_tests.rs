@@ -2626,9 +2626,9 @@ async fn a_run_waiting_for_approval_keeps_days_and_says_what_its_expiry_lost() {
         .expect("store")
         .expect("run");
     assert_eq!(run.status, "awaiting_approval");
-    let lease = chrono::DateTime::parse_from_rfc3339(&run.expires_at).expect("an RFC 3339 lease");
+    let lease = jc_time::parse_rfc3339(&run.expires_at).expect("an RFC 3339 lease");
     assert!(
-        lease.with_timezone(&chrono::Utc) - chrono::Utc::now() > chrono::Duration::days(6),
+        lease.duration_since(jiff::Timestamp::now()) > jiff::SignedDuration::from_hours(6 * 24),
         "the approval lease is days: {}",
         run.expires_at
     );

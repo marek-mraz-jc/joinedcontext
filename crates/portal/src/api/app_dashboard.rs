@@ -953,7 +953,7 @@ async fn commit(
             "the forge did not take the edit of '{name}': {err}"
         ))
     };
-    let branch = format!("{BRANCH_PREFIX}{}", chrono::Utc::now().timestamp_millis());
+    let branch = format!("{BRANCH_PREFIX}{}", jiff::Timestamp::now().as_millisecond());
     repo.create_branch(&branch, default)
         .await
         .map_err(refused)?;

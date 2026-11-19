@@ -316,7 +316,7 @@ impl ActivityHub {
     }
 }
 
-/// sqlx is built with the `time` crate, the rest of the Portal speaks `chrono`; the drafts store
+/// sqlx is built with the `time` crate, the rest of the Portal speaks `jc_time`; the drafts store
 /// converts the same way.
 pub(crate) fn odt_to_ts(odt: time::OffsetDateTime) -> TimestampTz {
     jiff::Timestamp::from_nanosecond(odt.unix_timestamp_nanos())

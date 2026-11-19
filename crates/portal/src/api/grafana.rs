@@ -7,8 +7,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
-use chrono::{SecondsFormat, Utc};
 use jc_core::kinds::Verb;
+use jc_time::{SecondsFormat, TimestampTz};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -527,7 +527,7 @@ pub async fn save_visualization(
         entity_type: new.entity_type,
         attribute: new.attribute,
         kind: new.kind,
-        created_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        created_at: TimestampTz::now().to_rfc3339_opts(SecondsFormat::Secs, true),
     };
     let source = Source {
         name: &new.endpoint,

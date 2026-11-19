@@ -681,7 +681,7 @@ pub(crate) async fn new_project_name(
     if let Some(free) = reserved_until(state, shako, name).await {
         return Err(ApiError::Conflict(format!(
             "project '{name}' was deleted and its name stays reserved until {} (PF-78)",
-            free.format("%Y-%m-%d")
+            free.0.strftime("%Y-%m-%d")
         )));
     }
     // A name reserved by an open change is taken, even though nothing is merged yet (PF-67).
@@ -1740,7 +1740,7 @@ async fn reserved_until(
     state: &AppState,
     shako: &crate::forge::ShakoClient,
     name: &str,
-) -> Option<chrono::DateTime<chrono::Utc>> {
+) -> Option<jc_time::TimestampTz> {
     let days = cooldown_days(state);
     if days == 0 {
         return None;
@@ -1758,14 +1758,19 @@ async fn reserved_until(
             .unwrap_or_default();
         if let Some(date) = history
             .first()
-            .and_then(|last| chrono::DateTime::parse_from_rfc3339(&last.date).ok())
+            .and_then(|last| jc_time::parse_rfc3339(&last.date))
         {
             removed = removed.max(Some(date));
         }
     }
     let removed = removed?;
-    let free = removed.with_timezone(&chrono::Utc) + chrono::Duration::days(days as i64);
-    (chrono::Utc::now() < free).then_some(free)
+    let free = jc_time::TimestampTz(removed)
+        + jiff::SignedDuration::from_secs(
+            i64::try_from(days)
+                .unwrap_or(i64::MAX)
+                .saturating_mul(86_400),
+        );
+    (jc_time::TimestampTz::now() < free).then_some(free)
 }
 
 /// `DELETE /api/v1/projects/{project}`: proposes the one red-lane change that removes a project

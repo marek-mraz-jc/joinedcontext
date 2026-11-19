@@ -12,10 +12,10 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use jc_core::kinds::data_source::DataSourceSpec;
 use jc_core::kinds::mqtt_broker::{release_name, MAX_MESSAGE_BYTES};
 use jc_core::kinds::{MqttBrokerSpec, PipelineSpec, Verb};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
@@ -557,14 +557,14 @@ pub struct WatchQuery {
     pub account: Option<String>,
     /// Only refusals after this time (RFC 3339), e.g. `2026-10-24T10:00:00Z`.
     #[param(value_type = Option<String>, format = DateTime)]
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<TimestampTz>,
 }
 
 /// One CONNECT the gateway refused, as its record keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Refusal {
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     /// `no_token`, `expired`, `wrong_audience`, `invalid_token`, `wrong_client`,
     /// `unknown_account`, `other_project`, `no_role`, `no_subscription`, `no_realm`,
     /// `source_address`, `token_not_allowed` or `certificate`.
@@ -582,7 +582,7 @@ struct Kept {
 #[serde(rename_all = "camelCase")]
 pub struct Watched {
     #[schema(value_type = String, format = DateTime)]
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: TimestampTz,
     /// Newest first; empty when `refusalsRead` is false.
     pub refusals: Vec<Refusal>,
     pub refusals_read: bool,
@@ -625,7 +625,7 @@ pub async fn refusals(base: &str, release: &str) -> Result<Vec<Refusal>, String>
 /// The refusals after `since` of `account`, when given.
 pub fn filtered(
     refusals: Vec<Refusal>,
-    since: Option<DateTime<Utc>>,
+    since: Option<TimestampTz>,
     account: Option<&str>,
 ) -> Vec<Refusal> {
     refusals
@@ -713,7 +713,7 @@ async fn watched(
             .sum()
     });
     Ok(Watched {
-        observed_at: Utc::now(),
+        observed_at: TimestampTz::now(),
         refusals: filtered(refused, query.since, account),
         refusals_read,
         connected,
@@ -830,11 +830,7 @@ mod tests {
 
     #[test]
     fn the_watch_keeps_refusals_after_since_of_the_account() {
-        let at = |s: &str| {
-            DateTime::parse_from_rfc3339(s)
-                .expect("a time")
-                .with_timezone(&Utc)
-        };
+        let at = |s: &str| TimestampTz(jc_time::parse_rfc3339(s).expect("a time"));
         let refusal = |time: &str, account: Option<&str>| Refusal {
             at: at(time),
             reason: "expired".into(),

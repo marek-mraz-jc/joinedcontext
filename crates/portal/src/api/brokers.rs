@@ -5,8 +5,8 @@
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use jc_core::kinds::{BrokerFeature, BrokerSize, ContextBrokerSpec, IMPLICIT_BROKER};
+use jc_time::TimestampTz;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -42,7 +42,7 @@ pub struct Broker {
     /// The load: the entities its spaces hold, as API/01 §29 counts them.
     pub entities: u64,
     #[schema(value_type = String, format = DateTime)]
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: TimestampTz,
 }
 
 /// Whether a broker answered its health.
@@ -131,7 +131,7 @@ async fn row(state: &AppState, name: String, spec: Option<ContextBrokerSpec>) ->
         reason,
         spaces,
         entities,
-        observed_at: Utc::now(),
+        observed_at: TimestampTz::now(),
     }
 }
 

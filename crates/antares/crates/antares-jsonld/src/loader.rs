@@ -622,13 +622,10 @@ fn ttl_from_headers(
     }
     if let Some(exp) = expires {
         // HTTP-date (RFC 7231); an unparsable or past Expires means "stale".
-        let when = chrono::DateTime::parse_from_rfc2822(exp).ok()?;
-        let delta = when
-            .with_timezone(&chrono::Utc)
-            .signed_duration_since(chrono::Utc::now());
+        let when = jiff::fmt::rfc2822::parse(exp).ok()?.timestamp();
+        let delta = when.duration_since(jiff::Timestamp::now());
         return Some(
-            delta
-                .to_std()
+            std::time::Duration::try_from(delta)
                 .unwrap_or(std::time::Duration::ZERO)
                 .min(MAX_CONTEXT_TTL),
         );
@@ -1005,7 +1002,9 @@ impl Loader {
     }
 
     fn now() -> String {
-        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        jiff::fmt::temporal::DateTimePrinter::new()
+            .precision(Some(3))
+            .timestamp_to_string(&jiff::Timestamp::now())
     }
 
     /// Bump usage stats (numberOfHits / lastUsage, 5.13.3.5) for one URL —
@@ -2059,6 +2058,21 @@ mod tests {
             Some(year),
             "far-future Expires clamps to one year"
         );
+        // RFC 2822's numeric offset reads as chrono's `parse_from_rfc2822` read it.
+        assert_eq!(
+            ttl_from_headers(None, Some("Tue, 01 Jan 2019 01:00:00 +0100")),
+            Some(std::time::Duration::ZERO)
+        );
+        assert_eq!(ttl_from_headers(None, Some("tomorrow")), None);
+    }
+
+    /// The usage stamps (createdAt, lastUsage) as chrono wrote them before the move to jiff
+    /// (T-7256): RFC 3339 in UTC, three fraction digits, `Z`.
+    #[test]
+    fn usage_stamps_keep_the_chrono_wire_format() {
+        let at = Loader::now();
+        assert_eq!((at.len(), &at[19..20], &at[23..]), (24, ".", "Z"), "{at}");
+        assert!(at.parse::<jiff::Timestamp>().is_ok(), "{at}");
     }
 
     #[tokio::test]
