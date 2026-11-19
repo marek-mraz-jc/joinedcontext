@@ -1743,15 +1743,25 @@ impl AnyStore {
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 async {
-                    // the row itself, not `tenant_exists`: that one
-                    // answers true for the default tenant without a row
+                    // Behind the fence, so a write that is claiming the
+                    // Tenant right now counts; released again before the
+                    // batches, which writes may run beside. The row itself,
+                    // not `tenant_exists`: that one answers true for the
+                    // default tenant without a row.
+                    let mut tx = tenant_tx(p, tenant).await?;
+                    sqlx::query(crate::store::pg::PURGE_FENCE_SQL)
+                        .bind(tenant.as_str())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
                     let listed =
                         sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1")
                             .bind(tenant.as_str())
-                            .fetch_optional(p.docs.pool())
+                            .fetch_optional(&mut *tx)
                             .await
                             .map_err(db)?
                             .is_some();
+                    tx.commit().await.map_err(db)?;
                     if !listed {
                         return Ok(false);
                     }
