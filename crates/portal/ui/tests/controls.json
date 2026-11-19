@@ -2285,6 +2285,15 @@
         "portals_area.test.tsx"
       ]
     },
+    "src/pages/portals/PortalFiles.tsx": {
+      "controls": {
+        "Button": 7,
+        "FilePicker": 1
+      },
+      "tests": [
+        "portal_files.test.tsx"
+      ]
+    },
     "src/pages/portals/PortalHosts.tsx": {
       "controls": {
         "Button": 2,
@@ -2296,7 +2305,7 @@
     },
     "src/pages/portals/PortalSources.tsx": {
       "controls": {
-        "Button": 10,
+        "Button": 12,
         "Checkbox": 1
       },
       "tests": [

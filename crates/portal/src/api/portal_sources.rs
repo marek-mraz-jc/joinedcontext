@@ -45,9 +45,13 @@ pub enum DeskError {
 
 /// The catalogue side of a portal's sources, run as the portal's catalogue's own principal.
 pub trait SourceDesk: Send + Sync {
-    /// One guarded read of `source`'s first page: `ok`, `unreachable`, `refused host`,
-    /// `not the expected format` or `too large`.
-    fn test<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, String>;
+    /// One guarded read of `source`'s first page (`ok`, `unreachable`, `refused host`,
+    /// `not the expected format` or `too large`) and, when `ok`, a dry run's first 20 records.
+    fn test<'a>(
+        &'a self,
+        portal: &'a PortalSpec,
+        source: &'a str,
+    ) -> DeskFuture<'a, SourceTestAnswer>;
     /// Starts a run of `source` and answers at once; [`DeskError::Busy`] while one is active.
     fn start<'a>(&'a self, portal: &'a PortalSpec, source: &'a str) -> DeskFuture<'a, ()>;
     /// The last runs of `source`, newest first, at most 50.
@@ -126,7 +130,7 @@ fn take_test(person: &str, now: Instant) -> Option<u64> {
 
 /// The Portal manifest `name` and its spec, when the caller belongs to its Organization and holds
 /// `verb` on it: 404 for one of another Organization or none, 403 for a member without the right.
-fn portal_for(
+pub(crate) fn portal_for(
     state: &AppState,
     identity: &Identity,
     name: &str,
@@ -201,24 +205,45 @@ fn desk_error(e: DeskError, source: &str) -> ApiError {
 }
 
 /// What a source test found.
-#[derive(Debug, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SourceTestAnswer {
     /// One word: `ok`, `unreachable`, `refused host`, `not the expected format` or `too large`.
     pub outcome: String,
+    /// When `ok`: the first 20 records a run would write, parsed and written nowhere (T-7416).
+    #[serde(default)]
+    pub records: Vec<SourcePreviewRecord>,
+    /// The listing passed the preview's 20 s or byte cap: the records may be fewer or none.
+    #[serde(default)]
+    pub partial: bool,
+}
+
+/// One record of a source preview, as a dataset card shows it: parsed metadata only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SourcePreviewRecord {
+    /// The record's name in the catalogue, e.g. `ke-ovzdusie`.
+    pub name: String,
+    pub title: String,
+    /// At most 280 characters.
+    pub description: String,
+    /// At most 5.
+    pub keywords: Vec<String>,
+    /// Its distributions' formats, e.g. `CSV`.
+    pub formats: Vec<String>,
+    pub licence: Option<String>,
 }
 
 #[utoipa::path(
     post,
     path = "/api/v1/projects/org/portals/{name}/sources/{source}/test",
     summary = "Test Portal Source",
-    description = "Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The answer is one word; no remote address, status, header or body is echoed. Limited to 6 tests a minute per person, 3 at once.",
+    description = "Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The outcome is one word; no remote address, status, header or body is echoed. When it is `ok`, a dry run lists the source as a run would (at most its byte budget and 20 s more) and answers its first 20 parsed records, still writing nothing (T-7416). Limited to 6 tests a minute per person, 3 at once.",
     tag = "system",
     params(
         ("name" = String, Path, description = "The Portal manifest's name, e.g. `bbsk-skoly`"),
         ("source" = String, Path, description = "A `spec.sources[].name` of it, e.g. `kosice`")
     ),
     responses(
-        (status = 200, description = "The outcome, one word", body = SourceTestAnswer),
+        (status = 200, description = "The outcome, one word, and the preview records", body = SourceTestAnswer),
         (status = 401, description = "Not signed in", body = ProblemDetails),
         (status = 403, description = "A member of the portal's Organization without propose on it", body = ProblemDetails),
         (status = 404, description = "No such portal or source in the caller's Organization", body = ProblemDetails),
@@ -246,11 +271,11 @@ pub async fn test_portal_source(
         }
         return Ok(answer);
     }
-    let outcome = desk
+    let answer = desk
         .test(&spec, &source)
         .await
         .map_err(|e| desk_error(e, &source))?;
-    Ok(Json(SourceTestAnswer { outcome }).into_response())
+    Ok(Json(answer).into_response())
 }
 
 #[utoipa::path(

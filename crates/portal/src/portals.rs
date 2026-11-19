@@ -9,7 +9,7 @@ use crate::error::ApiError;
 use crate::permissions::ORG_NAMESPACE;
 use crate::resource::ResourceEnvelope;
 use crate::store::{ListOptions, Mirror};
-use jc_core::kinds::{is_portal_host, PortalSpec};
+use jc_core::kinds::{http_url_host, is_portal_host, PortalSpec};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
@@ -256,11 +256,27 @@ pub fn check(
         }
     }
     for (i, source) in spec.sources.iter().enumerate() {
+        // The url's own host is the source's: the admin names it, the harvest guard (https,
+        // pinned public addresses, every redirect hop re-checked) carries it. A further host
+        // stays the operator's (ODP-10, SEC-05, T-7416).
+        let own = source.url.as_deref().and_then(http_url_host);
+        if let Some(own) = &own {
+            if is_internal_name(own) {
+                return Err(refused(
+                    &format!("spec.sources[{i}].url"),
+                    format!(
+                        "{own} is an address or an internal name; name the catalogue by its \
+                         public host name, e.g. https://data.kosice.sk/catalog.ttl"
+                    ),
+                ));
+            }
+        }
         if let Some(host) = source.allowed_hosts.iter().find(|h| {
-            !settings
-                .harvest_hosts
-                .iter()
-                .any(|a| a.eq_ignore_ascii_case(h))
+            own.as_deref().is_none_or(|o| !o.eq_ignore_ascii_case(h))
+                && !settings
+                    .harvest_hosts
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(h))
         }) {
             return Err(refused(
                 &format!("spec.sources[{i}].allowedHosts"),
@@ -283,6 +299,30 @@ pub fn check(
         }
     }
     Ok(())
+}
+
+/// An IP literal or a name only an internal resolver answers: never a source's own host.
+fn is_internal_name(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    host.trim_matches(|c| c == '[' || c == ']')
+        .parse::<std::net::IpAddr>()
+        .is_ok()
+        || host
+            .rsplit('.')
+            .next()
+            .is_some_and(|tld| tld.parse::<u32>().is_ok())
+        || host == "localhost"
+        || [
+            ".localhost",
+            ".local",
+            ".internal",
+            ".svc",
+            ".cluster.local",
+            ".nip.io",
+            ".sslip.io",
+        ]
+        .iter()
+        .any(|suffix| host.ends_with(suffix))
 }
 
 /// Whether `project` is a project of Organization `org`: its `Project` manifest names `org`,
@@ -594,10 +634,55 @@ mod tests {
             p
         };
         check(&mirror, Some(&s), &source("data.kosice.sk")).expect("a listed harvest host");
-        let detail = field(check(&mirror, Some(&s), &source("10.0.0.1.nip.io")).unwrap_err());
+        let further = |extra: &str| {
+            let mut p = source("data.kosice.sk");
+            p.spec["sources"][0]["allowedHosts"] = json!(["data.kosice.sk", extra]);
+            p
+        };
+        let detail = field(check(&mirror, Some(&s), &further("files.praha.eu")).unwrap_err());
         assert!(
-            detail.starts_with("spec.sources[0].allowedHosts: 10.0.0.1.nip.io is not in"),
+            detail.starts_with("spec.sources[0].allowedHosts: files.praha.eu is not in"),
             "{detail}"
         );
+    }
+
+    #[test]
+    fn the_url_s_own_public_host_needs_no_operator_listing() {
+        let mirror = mirror();
+        let s = settings(10);
+        let source = |url: &str, host: &str| {
+            let mut p = portal("ba-region", "ba", "region", None);
+            p.spec["sources"] = json!([{ "name": "ke", "type": "ckan-action",
+                "url": url, "allowedHosts": [host] }]);
+            p
+        };
+        check(
+            &mirror,
+            Some(&s),
+            &source("https://data.praha.eu/api/3", "data.praha.eu"),
+        )
+        .expect("the url's own host is the admin's");
+        for internal in [
+            "10.0.0.1.nip.io",
+            "127.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+            "broker.jc.svc",
+            "printer.local",
+            "localhost",
+        ] {
+            let detail = field(
+                check(
+                    &mirror,
+                    Some(&s),
+                    &source(&format!("https://{internal}/x"), internal),
+                )
+                .unwrap_err(),
+            );
+            assert!(
+                detail.starts_with(&format!("spec.sources[0].url: {internal} is an address")),
+                "{internal}: {detail}"
+            );
+        }
     }
 }

@@ -93,6 +93,7 @@ const CONVERSATION: (&str, Place) = ("conversation", Place::Path);
 const BROKER: (&str, Place) = ("broker", Place::Path);
 const UID: (&str, Place) = ("uid", Place::Path);
 const NAME: (&str, Place) = ("name", Place::Path);
+const FILE: (&str, Place) = ("id", Place::Path);
 const HOST: (&str, Place) = ("host", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
@@ -2467,6 +2468,31 @@ pub static DOORS: &[Door] = &[
             ("offset", Place::Query("Edm.Int32")),
             ("limit", Place::Query("Edm.Int32")),
         ],
+        Who::Person,
+    ),
+    // An open data portal's files (T-7417); the upload and the replace send bytes and stay REST.
+    door(
+        "portal_portal_files",
+        Org,
+        Method::GET,
+        "/projects/org/portals/{name}/files",
+        &[NAME],
+        Who::Person,
+    ),
+    door(
+        "portal_portal_file_rename",
+        Org,
+        Method::PATCH,
+        "/projects/org/portals/{name}/files/{id}",
+        &[NAME, FILE, BODY],
+        Who::Person,
+    ),
+    door(
+        "portal_portal_file_delete",
+        Org,
+        Method::DELETE,
+        "/projects/org/portals/{name}/files/{id}",
+        &[NAME, FILE],
         Who::Person,
     ),
 ];

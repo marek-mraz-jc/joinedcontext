@@ -7,7 +7,7 @@
 //! - `import-ckan`: imports datasets and organizations from a CKAN Action API JSON dump or URL.
 
 pub mod writer;
-pub use writer::{CatalogueSpec, CatalogueWriter, PortalRoute};
+pub use writer::{CatalogueSpec, CatalogueWriter, FileWrite, PortalRoute};
 
 use clap::{Parser, Subcommand};
 use dataroom_api::{router, DataroomState};

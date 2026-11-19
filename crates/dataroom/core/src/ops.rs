@@ -92,6 +92,86 @@ pub trait HarvestRunner: Send + Sync {
             "this harvest runner tests no source".into(),
         ))))
     }
+
+    /// A dry run of `source` (T-7416): the test's word, and when it is `ok` the first
+    /// [`PREVIEW_MAX`] records as a run would parse them, writing nothing.
+    fn preview_source<'a>(
+        &'a self,
+        _ctx: &'a RequestCtx,
+        _store: &'a dyn Store,
+        _source: &'a HarvestSource,
+    ) -> crate::store::BoxFuture<'a, Result<SourcePreview>> {
+        Box::pin(std::future::ready(Err(DataroomError::NotSupported(
+            "this harvest runner previews no source".into(),
+        ))))
+    }
+}
+
+/// Most records a source preview shows (T-7416).
+pub const PREVIEW_MAX: usize = 20;
+
+/// A dry run of a source (T-7416): the test's word and, when `ok`, the parsed records it would
+/// write. Records hold only parsed metadata, never an address, status, header or raw body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SourcePreview {
+    pub outcome: SourceTest,
+    pub records: Vec<PreviewRecord>,
+    /// The listing went past the preview's time or byte cap; the records may be fewer.
+    pub partial: bool,
+}
+
+/// One record of a [`SourcePreview`], as a dataset card shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PreviewRecord {
+    pub name: String,
+    pub title: String,
+    /// At most 280 characters.
+    pub description: String,
+    pub keywords: Vec<String>,
+    pub formats: Vec<String>,
+    pub licence: Option<String>,
+}
+
+impl PreviewRecord {
+    /// The card of `dataset` in `lang`.
+    pub fn of(dataset: &crate::model::Dataset, lang: &str) -> Self {
+        let text = |t: &crate::model::Texts| {
+            crate::model::text_in_lang(t, Some(lang))
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let mut description = text(&dataset.description);
+        if let Some((cut, _)) = description.char_indices().nth(280) {
+            description.truncate(cut);
+            description.push('…');
+        }
+        let mut formats: Vec<String> = dataset
+            .distributions
+            .iter()
+            .filter_map(|d| d.format.clone().or_else(|| d.media_type.clone()))
+            .collect();
+        formats.sort();
+        formats.dedup();
+        let keywords = dataset
+            .keywords
+            .get(lang)
+            .or_else(|| dataset.keywords.values().next())
+            .map(|k| k.iter().take(5).cloned().collect())
+            .unwrap_or_default();
+        Self {
+            name: dataset.name.clone(),
+            title: Some(text(&dataset.title))
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| dataset.name.clone()),
+            description,
+            keywords,
+            formats,
+            licence: dataset
+                .licence_id
+                .clone()
+                .or_else(|| dataset.licence_url.clone()),
+        }
+    }
 }
 
 /// What a source test found, one word each (ODP-15): no address, status line, header or body of
@@ -356,9 +436,9 @@ pub fn all_operations() -> Vec<OperationDef> {
             segment: "operate",
             permission: Action::Harvest,
             target_kind: "HarvestSource",
-            description: "Read a harvest source's first page once through the harvest guard, writing nothing; answers one word.",
-            input_schema: json!({"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}}}),
-            output_schema: json!({"type": "object", "properties": {"outcome": {"type": "string"}}}),
+            description: "Read a harvest source's first page once through the harvest guard, writing nothing; answers one word. With preview, also the first 20 records a run would parse, still writing nothing.",
+            input_schema: json!({"type": "object", "required": ["source"], "properties": {"source": {"type": "string"}, "preview": {"type": "boolean"}}}),
+            output_schema: json!({"type": "object", "properties": {"outcome": {"type": "string"}, "records": {"type": "array"}, "partial": {"type": "boolean"}}}),
         },
         OperationDef {
             name: "plugin.list",
@@ -1417,6 +1497,12 @@ pub async fn execute_operation(
                     "harvest runner not configured".into(),
                 ));
             };
+            if input.get("preview").and_then(Value::as_bool) == Some(true) {
+                let preview = harvester
+                    .preview_source(req_ctx, op_ctx.store.as_ref(), &source)
+                    .await?;
+                return Ok(serde_json::to_value(preview).unwrap_or(Value::Null));
+            }
             let outcome = harvester
                 .test_source(req_ctx, op_ctx.store.as_ref(), &source)
                 .await?;

@@ -47,6 +47,12 @@ const DATASETS = {
   ],
 };
 
+const PREVIEW = [
+  { name: "ke-ovzdusie", title: "Kvalita ovzdušia Košice", description: "Hodinové merania PM10, PM2.5 a NO2 zo staníc v Košiciach od roku 2019.", keywords: ["ovzdušie", "životné prostredie"], formats: ["CSV", "JSON"], licence: "CC-BY-4.0" },
+  { name: "ke-skoly", title: "Školy a školské zariadenia", description: "Zoznam materských, základných a stredných škôl s adresou a zriaďovateľom.", keywords: ["školstvo"], formats: ["XLSX"], licence: "CC0-1.0" },
+  { name: "ke-mhd-zastavky", title: "Zastávky MHD", description: "Zastávky mestskej hromadnej dopravy s polohou a linkami.", keywords: ["doprava", "MHD"], formats: ["GeoJSON", "CSV"], licence: null },
+];
+
 const CHANGE = {
   metadata: { name: "chg-1a2b3c4d", namespace: "org" },
   id: "c-1",
@@ -88,7 +94,9 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
     if (path === `${base}/sources/kosice/test`) {
       sent.push(`POST ${path}`);
       const outcome = tests.shift();
-      return outcome ? json({ outcome }) : json(problem(429, "6 source tests a minute, 3 at once; try again in 10 s"), 429);
+      return outcome
+        ? json({ outcome, records: outcome === "ok" ? PREVIEW : [], partial: false })
+        : json(problem(429, "6 source tests a minute, 3 at once; try again in 10 s"), 429);
     }
     if (path === `${base}/sources/kosice/runs` && request.method() === "POST") {
       sent.push(`POST ${path}`);
@@ -147,13 +155,15 @@ for (const width of [1440, 400]) {
 
       await page.getByRole("button", { name: "Add a source" }).click();
       await page.getByLabel(/^Type/).selectOption("dcat-ap");
-      await expect(page.getByLabel(/^Address/)).toBeVisible();
+      await page.getByLabel(/^Name/).fill("kosice");
+      await page.getByLabel(/^Address/).fill("https://data.kosice.sk/catalog.ttl");
+      await expect(page.getByText("Harvested from data.kosice.sk.", { exact: false })).toBeVisible();
       await shoot(page, width, info.outputPath(`sources-add-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
       await noOverflow(page);
 
       await page.unrouteAll();
-      await stub(page, { spec: { sources: [KOSICE, OWN] }, tests: ["ok", "unreachable"], runs: RUNS });
+      await stub(page, { spec: { sources: [KOSICE, OWN] }, tests: ["ok", "unreachable"], runs: RUNS, datasets: DATASETS });
       await openTab(page, "Sources");
       await page.getByRole("button", { name: "Test connection of kosice" }).click();
       await expect(page.getByText("The source answered in the expected format.")).toBeVisible();
@@ -162,6 +172,15 @@ for (const width of [1440, 400]) {
       await shoot(page, width, info.outputPath(`sources-filled-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
       await noOverflow(page);
+
+      await expect(page.getByRole("region", { name: "Preview of the first records" })).toBeVisible();
+      await shoot(page, width, info.outputPath(`sources-preview-${width}.png`));
+
+      await page.getByRole("button", { name: "Remove source kosice" }).click();
+      await expect(page.getByText(/datasets this source harvested are withdrawn/)).toBeVisible();
+      await shoot(page, width, info.outputPath(`sources-remove-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+      await page.getByRole("button", { name: "Cancel" }).click();
 
       await page.getByRole("button", { name: "Test connection of kosice" }).click();
       await expect(page.getByText(/The source did not answer/)).toBeVisible();

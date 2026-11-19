@@ -1087,6 +1087,7 @@ export interface Functions {
   portal_pipeline_stats: { pipeline: string };
   portal_pipeline_template_list: Record<string, never>;
   portal_portal_datasets: { name: string; offset?: number; limit?: number };
+  portal_portal_files: { name: string };
   portal_portal_host_list: Record<string, never>;
   portal_portal_source_runs: { name: string; source: string };
   portal_preferences_get: Record<string, never>;
@@ -1274,6 +1275,7 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_pipeline_stats: ["Project"],
   portal_pipeline_template_list: ["Project"],
   portal_portal_datasets: ["Organization"],
+  portal_portal_files: ["Organization"],
   portal_portal_host_list: ["Organization"],
   portal_portal_source_runs: ["Organization"],
   portal_preferences_get: ["Organization"],
@@ -1454,6 +1456,8 @@ export interface Actions {
   portal_pipeline_template_create: { body?: unknown };
   portal_pipeline_template_delete: { id: string };
   portal_pipeline_test: { body?: unknown };
+  portal_portal_file_delete: { name: string; id: string };
+  portal_portal_file_rename: { name: string; id: string; body?: unknown };
   portal_portal_host_add: { body?: unknown };
   portal_portal_host_remove: { host: string };
   portal_portal_source_run: { name: string; source: string };
@@ -1641,6 +1645,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_template_create: ["Project"],
   portal_pipeline_template_delete: ["Project"],
   portal_pipeline_test: ["Project"],
+  portal_portal_file_delete: ["Organization"],
+  portal_portal_file_rename: ["Organization"],
   portal_portal_host_add: ["Organization"],
   portal_portal_host_remove: ["Organization"],
   portal_portal_source_run: ["Organization"],

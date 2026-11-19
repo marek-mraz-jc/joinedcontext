@@ -2210,6 +2210,20 @@
         "evidence/T-6875/portals-editor-refusal-400.png"
       ]
     },
+    "src/pages/portals/PortalFiles.tsx": {
+      "walkedBy": "worker-t7416",
+      "date": "2026-11-19",
+      "screenshots": [
+        "evidence/T-7428/files-empty-1440.png",
+        "evidence/T-7428/files-empty-400.png",
+        "evidence/T-7428/files-uploading-1440.png",
+        "evidence/T-7428/files-uploading-400.png",
+        "evidence/T-7428/files-list-1440.png",
+        "evidence/T-7428/files-list-400.png",
+        "evidence/T-7428/files-error-1440.png",
+        "evidence/T-7428/files-error-400.png"
+      ]
+    },
     "src/pages/portals/PortalHosts.tsx": {
       "walkedBy": "worker-t7415",
       "date": "2026-11-19",

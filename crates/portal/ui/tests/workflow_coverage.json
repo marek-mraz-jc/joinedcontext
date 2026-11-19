@@ -1360,6 +1360,19 @@
           "POST /api/v1/projects/org/portals/{name}/sources/{source}/runs"
         ]
       },
+      "manage-portal-files": {
+        "live": {
+          "spec": "portals.spec.ts",
+          "test": "an administrator uploads, renames, replaces and deletes a portal file"
+        },
+        "personOnly": "a file is bytes a person picks on their own disk; the assistant holds no upload tool, and rename and delete answer on the Portal's OData doors for a client the person runs",
+        "routes": [
+          "POST /api/v1/projects/org/portals/{name}/files",
+          "PUT /api/v1/projects/org/portals/{name}/files/{id}",
+          "PATCH /api/v1/projects/org/portals/{name}/files/{id}",
+          "DELETE /api/v1/projects/org/portals/{name}/files/{id}"
+        ]
+      },
       "portal-own-host": {
         "live": {
           "spec": "portals.spec.ts",

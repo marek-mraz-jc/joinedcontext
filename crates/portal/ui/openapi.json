@@ -8065,6 +8065,471 @@
         }
       }
     },
+    "/api/v1/projects/org/portals/{name}/files": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Portal Files",
+        "description": "The portal's files by name, each with the portals that use it, and the Organization's file limits and usage over all its portals (T-7417).",
+        "operationId": "list_portal_files",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The files and the limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalFiles"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization who may not read it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation stores no portal files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Upload Portal File",
+        "description": "Stores the body as a new file of the portal. The type is read from the bytes (PNG, JPEG, WebP, SVG, PDF, CSV or XLSX), never from the name; an SVG with a script, an event handler, an external reference or an entity is refused, and any SVG is served as an attachment. Refused past 10 MiB a file, or past the Organization's 500 files or 200 MiB. Writes an audit row (T-7417).",
+        "operationId": "upload_portal_file",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "The file's display name, e.g. `hero.png`: one line without `/` or `\\`, at most 120\ncharacters. Its extension decides nothing; the type is read from the bytes.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The file's bytes",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string"
+              },
+              "example": "linka;smer\n1;centrum\n"
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The stored file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body past 10 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A type, name or limit refusal, naming the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "This installation stores no portal files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/org/portals/{name}/files/{id}": {
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Replace Portal File",
+        "description": "Stores new bytes for the file under the same id and name: a new hash and so a new immutable address, which a page naming the old address no longer reaches. Same type and limit rules as an upload; writes an audit row (T-7417).",
+        "operationId": "replace_portal_file",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The file's id, e.g. `f-0193...`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "The new bytes",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string"
+              },
+              "example": "linka;smer\n1;centrum\n2;nemocnica\n"
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The replaced file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or file in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The file is in use: its old address would break",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body past 10 MiB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A type or limit refusal, naming the limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Delete Portal File",
+        "description": "Deletes the file and its bytes; refused while a portal or the Organization names its address. Writes an audit row (T-7417).",
+        "operationId": "delete_portal_file",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The file's id, e.g. `f-0193...`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or file in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The file is in use, naming where",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Rename Portal File",
+        "description": "Gives the file a new display name; its bytes and hash stay. Writes an audit row (T-7417).",
+        "operationId": "rename_portal_file",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The Portal manifest's name, e.g. `bbsk-skoly`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The file's id, e.g. `f-0193...`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRename"
+              },
+              "example": {
+                "name": "Titulná fotka.png"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The renamed file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalFile"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "A member of the portal's Organization without propose on it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such portal or file in the caller's Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A name refusal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/org/portals/{name}/sources/{source}/runs": {
       "get": {
         "tags": [
@@ -8246,7 +8711,7 @@
           "system"
         ],
         "summary": "Test Portal Source",
-        "description": "Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The answer is one word; no remote address, status, header or body is echoed. Limited to 6 tests a minute per person, 3 at once.",
+        "description": "Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The outcome is one word; no remote address, status, header or body is echoed. When it is `ok`, a dry run lists the source as a run would (at most its byte budget and 20 s more) and answers its first 20 parsed records, still writing nothing (T-7416). Limited to 6 tests a minute per person, 3 at once.",
         "operationId": "test_portal_source",
         "parameters": [
           {
@@ -8270,7 +8735,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The outcome, one word",
+            "description": "The outcome, one word, and the preview records",
             "content": {
               "application/json": {
                 "schema": {
@@ -57593,6 +58058,56 @@
           }
         }
       },
+      "FileLimits": {
+        "type": "object",
+        "description": "The limits of the Organization's files and what it holds over all its portals.",
+        "required": [
+          "files",
+          "bytes",
+          "maxFiles",
+          "maxBytes",
+          "maxFileBytes"
+        ],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxFileBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxFiles": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "FileRename": {
+        "type": "object",
+        "description": "A new name for a file.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "e.g. `Titulná fotka.png`."
+          }
+        },
+        "additionalProperties": false
+      },
       "Filter": {
         "type": "object",
         "description": "One filter: an attribute compared with a value, or matched against a variable's picks.",
@@ -63471,6 +63986,79 @@
           }
         }
       },
+      "PortalFile": {
+        "type": "object",
+        "description": "One stored file of a portal.",
+        "required": [
+          "id",
+          "name",
+          "contentType",
+          "size",
+          "sha256",
+          "path",
+          "uploadedBy",
+          "uploadedAt"
+        ],
+        "properties": {
+          "contentType": {
+            "type": "string",
+            "description": "Read from the bytes, never the name: `image/png`, `image/jpeg`, `image/webp`,\n`image/svg+xml`, `application/pdf`, `text/csv` or the XLSX type."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable across a rename or a replace, e.g. `f-0193...`."
+          },
+          "name": {
+            "type": "string",
+            "description": "e.g. `hero.png`."
+          },
+          "path": {
+            "type": "string",
+            "description": "The address on the portal's hosts, immutable for these bytes: `/files/{sha256}/{name}`."
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "uploadedAt": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "uploadedBy": {
+            "type": "string"
+          },
+          "usedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The portals whose manifest names this file's address; a file in use is not deleted."
+          }
+        }
+      },
+      "PortalFiles": {
+        "type": "object",
+        "description": "The files of a portal.",
+        "required": [
+          "items",
+          "limits"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PortalFile"
+            }
+          },
+          "limits": {
+            "$ref": "#/components/schemas/FileLimits"
+          }
+        }
+      },
       "PortalHosts": {
         "type": "object",
         "description": "The Organizations the caller makes portals in, by name.",
@@ -66766,6 +67354,50 @@
           }
         }
       },
+      "SourcePreviewRecord": {
+        "type": "object",
+        "description": "One record of a source preview, as a dataset card shows it: parsed metadata only.",
+        "required": [
+          "name",
+          "title",
+          "description",
+          "keywords",
+          "formats"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "At most 280 characters."
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Its distributions' formats, e.g. `CSV`."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 5."
+          },
+          "licence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "The record's name in the catalogue, e.g. `ke-ovzdusie`."
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "SourceRuns": {
         "type": "object",
         "description": "A source's last runs, newest first.",
@@ -66792,6 +67424,17 @@
           "outcome": {
             "type": "string",
             "description": "One word: `ok`, `unreachable`, `refused host`, `not the expected format` or `too large`."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "The listing passed the preview's 20 s or byte cap: the records may be fewer or none."
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourcePreviewRecord"
+            },
+            "description": "When `ok`: the first 20 records a run would write, parsed and written nowhere (T-7416)."
           }
         }
       },

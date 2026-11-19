@@ -435,6 +435,9 @@ const OPERATIONS: Record<string, Door> = {
   portal_portal_source_run: ["POST", "/projects/org/portals/{name}/sources/{source}/runs"],
   portal_portal_source_runs: ["GET", "/projects/org/portals/{name}/sources/{source}/runs"],
   portal_portal_datasets: ["GET", "/projects/org/portals/{name}/datasets"],
+  portal_portal_files: ["GET", "/projects/org/portals/{name}/files"],
+  portal_portal_file_rename: ["PATCH", "/projects/org/portals/{name}/files/{id}"],
+  portal_portal_file_delete: ["DELETE", "/projects/org/portals/{name}/files/{id}"],
   // A project's copies (T-7116): the registry's workspace operations, run by the REST doors' handlers.
   jc_workspace_open: ["POST", "/projects/{project}/workspaces", ["name", "title", "ttlDays", "scope"]],
   jc_workspace_compare: ["GET", "/projects/{project}/workspaces/{name}/compare"],

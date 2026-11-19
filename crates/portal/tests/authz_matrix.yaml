@@ -349,6 +349,27 @@ routes:
     rule: "read on that Portal manifest, looked up in the caller's Organization only (ODP-15)"
     expect: [401, 404, 404, 404, 404, 404, 404, 404]
     note: "the fixture holds no Portal (404 for all); portal_sources_tests holds 401/403/404 per role and the isolation of datasets (T-6883)"
+  - route: GET /projects/org/portals/{name}/files
+    rule: "read on that Portal manifest, looked up in the caller's Organization only (T-7417)"
+    expect: [401, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all, before the body is read); portal_files_tests holds 403/404/409/422 per role (T-7417)"
+  - route: POST /projects/org/portals/{name}/files
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (T-7417)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    query: "name=hero.png"
+    note: "the fixture holds no Portal (404 for all, before the body is read); portal_files_tests holds 403/404/409/422 per role (T-7417)"
+  - route: PATCH /projects/org/portals/{name}/files/{id}
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (T-7417)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all, before the body is read); portal_files_tests holds 403/404/409/422 per role (T-7417)"
+  - route: PUT /projects/org/portals/{name}/files/{id}
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (T-7417)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all, before the body is read); portal_files_tests holds 403/404/409/422 per role (T-7417)"
+  - route: DELETE /projects/org/portals/{name}/files/{id}
+    rule: "propose on that Portal manifest, looked up in the caller's Organization only (T-7417)"
+    expect: [403, 404, 404, 404, 404, 404, 404, 404]
+    note: "the fixture holds no Portal (404 for all, before the body is read); portal_files_tests holds 403/404/409/422 per role (T-7417)"
   - route: GET /organization/health-checks
     rule: "org-admin"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

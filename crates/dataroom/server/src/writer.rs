@@ -5,9 +5,10 @@
 
 use dataroom_api::{portal_publisher_on, DataroomState, PortalAddress};
 use dataroom_core::auth::constant_time_eq;
+use dataroom_core::files::{FileEntry, FileStore, FileUsage};
 use dataroom_core::{
-    Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer, OrgId,
-    Publisher, RecordState, RequestCtx, Result, Subject,
+    ActivityRow, Catalogue, CatalogueId, DataroomError, Dataset, HarvestSource, LiveAuthorizer,
+    OrgId, Publisher, RecordState, RequestCtx, Result, Subject,
 };
 use dataroom_harvest::harvest_principal;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -272,19 +273,105 @@ impl CatalogueWriter {
         Ok(all)
     }
 
-    /// Deletes a harvest source and its runs; `false` when the catalogue has none of that name.
+    /// Deletes a harvest source and its runs and withdraws the active records it harvested
+    /// (T-7416: a removed source leaves no records behind); `false` when the catalogue has no
+    /// source of that name.
     pub async fn delete_harvest_source(
         &self,
         org: OrgId,
         id: CatalogueId,
-        id_or_name: &str,
+        name: &str,
     ) -> Result<bool> {
         let _serial = self.serial.lock().await;
         let ctx = self.live(org, id)?;
+        let store = self.state.store.as_ref();
+        for ds in store.list_datasets(&ctx).await? {
+            if ds.state == RecordState::Active && ds.harvest_source_id.as_deref() == Some(name) {
+                store.withdraw_dataset(&ctx, &ds.id).await?;
+            }
+        }
+        store.delete_harvest_source(&ctx, name).await
+    }
+
+    fn file_store(&self) -> Result<Arc<FileStore>> {
+        self.state
+            .files
+            .clone()
+            .ok_or_else(|| DataroomError::NotSupported("this installation stores no files".into()))
+    }
+
+    /// The files of catalogue `id` and what its Organization holds over all its portals (T-7417).
+    pub async fn files(&self, org: OrgId, id: CatalogueId) -> Result<(Vec<FileEntry>, FileUsage)> {
+        self.live(org, id)?;
+        let store = self.file_store()?;
+        blocking(move || Ok((store.list(org, id)?, store.usage(org)?))).await
+    }
+
+    /// One file write of catalogue `id` by person `by`, with its audit row (T-7417).
+    pub async fn write_file(
+        &self,
+        org: OrgId,
+        id: CatalogueId,
+        by: &str,
+        write: FileWrite,
+    ) -> Result<FileEntry> {
+        let _serial = self.serial.lock().await;
+        let ctx = self.live(org, id)?;
+        let store = self.file_store()?;
+        let (operation, summary, entry) = blocking({
+            let by = by.to_owned();
+            move || {
+                Ok(match write {
+                    FileWrite::Upload { name, bytes } => {
+                        let e = store.put((org, id), &name, &bytes, &by)?;
+                        ("file.upload", format!("Uploaded file {}", e.name), e)
+                    }
+                    FileWrite::Rename { id: file, name } => {
+                        let (was, e) = store.rename((org, id), &file, &name)?;
+                        (
+                            "file.rename",
+                            format!("Renamed file {} to {}", was.name, e.name),
+                            e,
+                        )
+                    }
+                    FileWrite::Replace { id: file, bytes } => {
+                        let (_, e) = store.replace((org, id), &file, &bytes, &by)?;
+                        (
+                            "file.replace",
+                            format!("Replaced the bytes of file {}", e.name),
+                            e,
+                        )
+                    }
+                    FileWrite::Delete { id: file } => {
+                        let e = store.delete((org, id), &file)?;
+                        ("file.delete", format!("Deleted file {}", e.name), e)
+                    }
+                })
+            }
+        })
+        .await?;
         self.state
             .store
-            .delete_harvest_source(&ctx, id_or_name)
-            .await
+            .record_activity(
+                &ctx,
+                ActivityRow {
+                    org_id: org,
+                    catalogue_id: id,
+                    id: format!("act-{}", uuid::Uuid::now_v7()),
+                    at: jc_time::TimestampTz::now(),
+                    actor: by.to_owned(),
+                    operation: operation.into(),
+                    object_type: "File".into(),
+                    object_id: entry.id.clone(),
+                    summary,
+                    details: serde_json::json!({
+                        "name": entry.name, "sha256": entry.sha256,
+                        "size": entry.size, "contentType": entry.content_type,
+                    }),
+                },
+            )
+            .await?;
+        Ok(entry)
     }
 
     /// Lists in catalogue `to` the active datasets of catalogue `from` (whose public base is
@@ -396,6 +483,22 @@ fn write<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// A change to one portal file (T-7417).
+#[derive(Debug, Clone)]
+pub enum FileWrite {
+    Upload { name: String, bytes: Vec<u8> },
+    Rename { id: String, name: String },
+    Replace { id: String, bytes: Vec<u8> },
+    Delete { id: String },
+}
+
+/// Runs a file store call off the async workers.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| DataroomError::Storage(format!("file store call stopped: {e}")))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +556,125 @@ mod tests {
                 redirect: false,
             }),
         }
+    }
+
+    #[tokio::test]
+    async fn each_file_write_leaves_an_audit_row_and_another_portal_reads_none() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let root = std::env::temp_dir().join(format!("jc-writer-files-{}", uuid::Uuid::now_v7()));
+        let (org, cat) = (
+            id(OrgId::parse_verified, 0xA1),
+            id(CatalogueId::parse_verified, 0xC0),
+        );
+        let authorizer = Arc::new(LiveAuthorizer::new(Vec::new()));
+        let state = DataroomState::new(store.clone(), authorizer.clone(), org, cat)
+            .with_files(Arc::new(FileStore::new(&root)));
+        let writer = CatalogueWriter::new(state, authorizer, Arc::default());
+        let spec = mobility(None);
+        writer.upsert(spec.clone()).await.expect("served");
+        let upload = FileWrite::Upload {
+            name: "linky.csv".into(),
+            bytes: b"linka;smer\n1;centrum\n".to_vec(),
+        };
+        let file = writer
+            .write_file(spec.org_id, spec.id, "ana", upload)
+            .await
+            .expect("uploaded");
+        let (listed, usage) = writer.files(spec.org_id, spec.id).await.expect("listed");
+        assert_eq!((listed.len(), usage.files), (1, 1));
+        let refused = writer
+            .write_file(
+                spec.org_id,
+                spec.id,
+                "ana",
+                FileWrite::Upload {
+                    name: "page.csv".into(),
+                    bytes: b"<html><script>x</script></html>".to_vec(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(refused, DataroomError::Validation { .. }),
+            "{refused}"
+        );
+        writer
+            .write_file(
+                spec.org_id,
+                spec.id,
+                "bo",
+                FileWrite::Delete {
+                    id: file.id.clone(),
+                },
+            )
+            .await
+            .expect("deleted");
+        let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
+        let rows: Vec<(String, String)> = store
+            .list_activity(&ctx, None, 50)
+            .await
+            .expect("activity")
+            .into_iter()
+            .filter(|r| r.object_type == "File")
+            .map(|r| (r.operation, r.actor))
+            .collect();
+        assert!(
+            rows.contains(&("file.upload".into(), "ana".into())),
+            "{rows:?}"
+        );
+        assert!(
+            rows.contains(&("file.delete".into(), "bo".into())),
+            "{rows:?}"
+        );
+        assert_eq!(rows.len(), 2, "a refused upload writes no row: {rows:?}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_deleted_source_withdraws_only_its_own_records() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new());
+        let spec = mobility(None);
+        let (_, writer) = started(store.clone());
+        writer.upsert(spec.clone()).await.expect("served");
+        let ctx = RequestCtx::new(spec.org_id, spec.id, Subject::anonymous());
+        for (name, source) in [
+            ("air", Some("kosice")),
+            ("bus", Some("praha")),
+            ("own", None),
+        ] {
+            let ds: dataroom_core::Dataset = serde_json::from_value(json!({
+                "orgId": spec.org_id, "catalogueId": spec.id, "id": "", "name": name,
+                "title": {"sk": name}, "description": {}, "publisherId": "city",
+                "visibility": "public", "state": "active", "tags": [], "distributions": [],
+                "harvestSourceId": source,
+                "issued": "2026-11-14T10:00:00Z", "modified": "2026-11-14T10:00:00Z"
+            }))
+            .expect("a dataset");
+            store.upsert_dataset(&ctx, ds).await.expect("stored");
+        }
+        writer
+            .delete_harvest_source(spec.org_id, spec.id, "kosice")
+            .await
+            .expect("deleted");
+        let states: Vec<(String, RecordState)> = store
+            .list_datasets(&ctx)
+            .await
+            .expect("listed")
+            .into_iter()
+            .map(|d| (d.name, d.state))
+            .collect();
+        assert!(
+            states.contains(&("air".into(), RecordState::Withdrawn)),
+            "{states:?}"
+        );
+        assert!(
+            states.contains(&("bus".into(), RecordState::Active)),
+            "{states:?}"
+        );
+        assert!(
+            states.contains(&("own".into(), RecordState::Active)),
+            "{states:?}"
+        );
     }
 
     #[tokio::test]

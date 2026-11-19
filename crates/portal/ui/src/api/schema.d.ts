@@ -2352,6 +2352,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/org/portals/{name}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Portal Files
+         * @description The portal's files by name, each with the portals that use it, and the Organization's file limits and usage over all its portals (T-7417).
+         */
+        get: operations["list_portal_files"];
+        put?: never;
+        /**
+         * Upload Portal File
+         * @description Stores the body as a new file of the portal. The type is read from the bytes (PNG, JPEG, WebP, SVG, PDF, CSV or XLSX), never from the name; an SVG with a script, an event handler, an external reference or an entity is refused, and any SVG is served as an attachment. Refused past 10 MiB a file, or past the Organization's 500 files or 200 MiB. Writes an audit row (T-7417).
+         */
+        post: operations["upload_portal_file"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/org/portals/{name}/files/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace Portal File
+         * @description Stores new bytes for the file under the same id and name: a new hash and so a new immutable address, which a page naming the old address no longer reaches. Same type and limit rules as an upload; writes an audit row (T-7417).
+         */
+        put: operations["replace_portal_file"];
+        post?: never;
+        /**
+         * Delete Portal File
+         * @description Deletes the file and its bytes; refused while a portal or the Organization names its address. Writes an audit row (T-7417).
+         */
+        delete: operations["delete_portal_file"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Portal File
+         * @description Gives the file a new display name; its bytes and hash stay. Writes an audit row (T-7417).
+         */
+        patch: operations["rename_portal_file"];
+        trace?: never;
+    };
     "/api/v1/projects/org/portals/{name}/sources/{source}/runs": {
         parameters: {
             query?: never;
@@ -2387,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Test Portal Source
-         * @description Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The answer is one word; no remote address, status, header or body is echoed. Limited to 6 tests a minute per person, 3 at once.
+         * @description Reads the source's first page once through the harvest guard (https, allowed hosts, public addresses only, every redirect hop checked), at most its byte budget and 10 s, and writes nothing (ODP-15). The outcome is one word; no remote address, status, header or body is echoed. When it is `ok`, a dry run lists the source as a run would (at most its byte budget and 20 s more) and answers its first 20 parsed records, still writing nothing (T-7416). Limited to 6 tests a minute per person, 3 at once.
          */
         post: operations["test_portal_source"];
         delete?: never;
@@ -11783,6 +11835,22 @@ export interface components {
             fields: components["schemas"]["FieldConflict"][];
             path: string;
         };
+        /** @description The limits of the Organization's files and what it holds over all its portals. */
+        FileLimits: {
+            /** Format: int64 */
+            bytes: number;
+            files: number;
+            /** Format: int64 */
+            maxBytes: number;
+            /** Format: int64 */
+            maxFileBytes: number;
+            maxFiles: number;
+        };
+        /** @description A new name for a file. */
+        FileRename: {
+            /** @description e.g. `Titulná fotka.png`. */
+            name: string;
+        };
         /** @description One filter: an attribute compared with a value, or matched against a variable's picks. */
         Filter: {
             attribute: string;
@@ -13968,6 +14036,33 @@ export interface components {
             items: components["schemas"]["PortalDataset"][];
             total: number;
         };
+        /** @description One stored file of a portal. */
+        PortalFile: {
+            /**
+             * @description Read from the bytes, never the name: `image/png`, `image/jpeg`, `image/webp`,
+             *     `image/svg+xml`, `application/pdf`, `text/csv` or the XLSX type.
+             */
+            contentType: string;
+            /** @description Stable across a rename or a replace, e.g. `f-0193...`. */
+            id: string;
+            /** @description e.g. `hero.png`. */
+            name: string;
+            /** @description The address on the portal's hosts, immutable for these bytes: `/files/{sha256}/{name}`. */
+            path: string;
+            sha256: string;
+            /** Format: int64 */
+            size: number;
+            /** @description RFC 3339. */
+            uploadedAt: string;
+            uploadedBy: string;
+            /** @description The portals whose manifest names this file's address; a file in use is not deleted. */
+            usedBy?: string[];
+        };
+        /** @description The files of a portal. */
+        PortalFiles: {
+            items: components["schemas"]["PortalFile"][];
+            limits: components["schemas"]["FileLimits"];
+        };
         /** @description The Organizations the caller makes portals in, by name. */
         PortalHosts: {
             items: components["schemas"]["PortalOrganization"][];
@@ -15279,6 +15374,19 @@ export interface components {
             severity: string;
             version: string;
         };
+        /** @description One record of a source preview, as a dataset card shows it: parsed metadata only. */
+        SourcePreviewRecord: {
+            /** @description At most 280 characters. */
+            description: string;
+            /** @description Its distributions' formats, e.g. `CSV`. */
+            formats: string[];
+            /** @description At most 5. */
+            keywords: string[];
+            licence?: string | null;
+            /** @description The record's name in the catalogue, e.g. `ke-ovzdusie`. */
+            name: string;
+            title: string;
+        };
         /** @description A source's last runs, newest first. */
         SourceRuns: {
             /**
@@ -15291,6 +15399,10 @@ export interface components {
         SourceTestAnswer: {
             /** @description One word: `ok`, `unreachable`, `refused host`, `not the expected format` or `too large`. */
             outcome: string;
+            /** @description The listing passed the preview's 20 s or byte cap: the records may be fewer or none. */
+            partial?: boolean;
+            /** @description When `ok`: the first 20 records a run would write, parsed and written nowhere (T-7416). */
+            records?: components["schemas"]["SourcePreviewRecord"][];
         };
         /** @description A space's storage in bytes, as the broker measures it in its store (T-2890). */
         SpaceBytes: {
@@ -22690,6 +22802,375 @@ export interface operations {
             };
         };
     };
+    list_portal_files: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The files and the limits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalFiles"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization who may not read it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation stores no portal files */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    upload_portal_file: {
+        parameters: {
+            query: {
+                /**
+                 * @description The file's display name, e.g. `hero.png`: one line without `/` or `\`, at most 120
+                 *     characters. Its extension decides nothing; the type is read from the bytes.
+                 */
+                name: string;
+            };
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+            };
+            cookie?: never;
+        };
+        /** @description The file's bytes */
+        requestBody: {
+            content: {
+                /**
+                 * @example linka;smer
+                 *     1;centrum
+                 */
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The stored file */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalFile"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A body past 10 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A type, name or limit refusal, naming the limit */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description This installation stores no portal files */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    replace_portal_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description The file's id, e.g. `f-0193...` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** @description The new bytes */
+        requestBody: {
+            content: {
+                /**
+                 * @example linka;smer
+                 *     1;centrum
+                 *     2;nemocnica
+                 */
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description The replaced file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalFile"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or file in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The file is in use: its old address would break */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A body past 10 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A type or limit refusal, naming the limit */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    delete_portal_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description The file's id, e.g. `f-0193...` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or file in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The file is in use, naming where */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    rename_portal_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The Portal manifest's name, e.g. `bbsk-skoly` */
+                name: string;
+                /** @description The file's id, e.g. `f-0193...` */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "name": "Titulná fotka.png"
+                 *     }
+                 */
+                "application/json": components["schemas"]["FileRename"];
+            };
+        };
+        responses: {
+            /** @description The renamed file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalFile"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A member of the portal's Organization without propose on it */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No such portal or file in the caller's Organization */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A name refusal */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     list_portal_source_runs: {
         parameters: {
             query?: never;
@@ -22842,7 +23323,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The outcome, one word */
+            /** @description The outcome, one word, and the preview records */
             200: {
                 headers: {
                     [name: string]: unknown;
