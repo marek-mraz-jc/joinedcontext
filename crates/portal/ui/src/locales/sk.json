@@ -13739,7 +13739,8 @@
       "HostRemove": "Odstrániť hostiteľa",
       "OperatorAdd": "Pridať operátora",
       "OperatorRemove": "Odstrániť operátora",
-      "SmtpSet": "Nastaviť e-mailový server"
+      "SmtpSet": "Nastaviť e-mailový server",
+      "ProjectMove": "Presunúť projekt do inej organizácie"
     },
     "changeState": {
       "proposed": "Čaká na schválenie",
@@ -13752,8 +13753,10 @@
       "caption": "Zmeny operátorov",
       "empty": "Zatiaľ žiadna zmena operátorov. Hostiteľ, o ktorého požiadate v Organizáciách alebo Hostiteľoch, sa ukáže tu.",
       "kind": "Zmena",
-      "target": "Hostiteľ alebo osoba",
+      "target": "Hostiteľ, osoba alebo projekt",
       "organization": "Organizácia",
+      "movesTo": "Presúva sa do",
+      "moveHint": "Schválením dostanú všetky záznamy projektu kľúč novej organizácie.",
       "proposedBy": "Požiadal",
       "state": "Stav",
       "actions": "Akcie",

@@ -13739,7 +13739,8 @@
       "HostRemove": "Remove a host",
       "OperatorAdd": "Add an operator",
       "OperatorRemove": "Remove an operator",
-      "SmtpSet": "Set the e-mail server"
+      "SmtpSet": "Set the e-mail server",
+      "ProjectMove": "Move a project to another Organization"
     },
     "changeState": {
       "proposed": "Waits for approval",
@@ -13752,8 +13753,10 @@
       "caption": "Operator Changes",
       "empty": "No operator Change yet. A host asked for under Organizations or Hosts shows here.",
       "kind": "Change",
-      "target": "Host or person",
+      "target": "Host, person or project",
       "organization": "Organization",
+      "movesTo": "Moves to",
+      "moveHint": "Approving gives every row of the project the new Organization's key.",
       "proposedBy": "Asked by",
       "state": "State",
       "actions": "Actions",

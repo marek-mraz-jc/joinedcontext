@@ -47,6 +47,7 @@ function fresh(): Registry {
     ],
     changes: [
       { id: "1c0e3a5f-2b3c-4d4e-9fa0-112233445566", kind: "HostAdd", payload: { host: "signin.bbsk.sk", organization: "bbsk", organizationId: "sk_bbsk", role: "signin" }, state: "proposed", proposedBy: OTHER, proposedByName: OTHER_NAME, proposedAt: "2026-11-17T08:30:00Z", decidedBy: null, decidedAt: null },
+      { id: "7d1e2f3a-4b5c-4d6e-8f70-112233445566", kind: "ProjectMove", payload: { project: "banskabystrica", organization: "banskabystrica" }, state: "proposed", proposedBy: OTHER, proposedByName: OTHER_NAME, proposedAt: "2026-11-19T08:00:00Z", decidedBy: null, decidedAt: null },
     ],
     audit: [
       { id: 3, at: "2026-11-17T09:00:00Z", actor: "reconciler", changeId: null, action: "certificate.created", before: null, after: { host: "opendata.bbsk.sk" }, sourceIp: null },
@@ -180,6 +181,7 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await page.goto("/organization/operator-changes?lang=en");
       await expect(page.getByText("Another operator approves this.").filter({ visible: true }).first()).toBeVisible();
       await expect(page.getByText(OTHER_NAME).filter({ visible: true }).first()).toBeVisible();
+      await expect(page.getByText("Move a project to another Organization").filter({ visible: true }).first()).toBeVisible();
       await page.getByRole("button", { name: "Approve" }).filter({ visible: true }).first().click();
       await expect(page.getByText("The Change for signin.bbsk.sk is applied.")).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);

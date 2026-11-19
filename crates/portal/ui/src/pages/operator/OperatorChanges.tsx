@@ -23,7 +23,7 @@ export function OperatorChanges(): JSX.Element {
     mutationFn: ({ id, verb }: { id: string; verb: "approve" | "reject" }) => decideChange(id, verb),
     onSettled: () => client.invalidateQueries({ queryKey: ["operator"] }),
   });
-  const target = (row: OperatorChange) => row.payload.host ?? row.payload.subject ?? row.payload.smtp?.host ?? "";
+  const target = (row: OperatorChange) => row.payload.host ?? row.payload.subject ?? row.payload.smtp?.host ?? row.payload.project ?? "";
   const asker = (row: OperatorChange) => (row.proposedBy === me ? t("operator.changes.you") : (row.proposedByName ?? row.proposedBy));
   return (
     <section className="space-y-6" aria-labelledby="operator-changes-heading">
@@ -65,7 +65,7 @@ export function OperatorChanges(): JSX.Element {
                 <span className="block font-mono [overflow-wrap:anywhere]">{target(row)}</span>
                 {row.payload.organization ? (
                   <span className="block text-caption text-fg-muted">
-                    {t("operator.changes.organization")}: {title(row.payload.organization)}
+                    {t(row.kind === "ProjectMove" ? "operator.changes.movesTo" : "operator.changes.organization")}: {title(row.payload.organization)}
                   </span>
                 ) : null}
               </span>
@@ -105,9 +105,12 @@ export function OperatorChanges(): JSX.Element {
                   {row.proposedBy === me ? (
                     <span className="text-caption text-fg-muted">{t("operator.changes.ownHint")}</span>
                   ) : (
-                    <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate({ id: row.id, verb: "approve" })}>
-                      {t("operator.changes.approve")}
-                    </Button>
+                    <>
+                      {row.kind === "ProjectMove" ? <span className="text-caption text-fg-muted">{t("operator.changes.moveHint")}</span> : null}
+                      <Button size="sm" loading={decide.isPending} onClick={() => decide.mutate({ id: row.id, verb: "approve" })}>
+                        {t("operator.changes.approve")}
+                      </Button>
+                    </>
                   )}
                   <Button size="sm" variant="secondary" loading={decide.isPending} onClick={() => decide.mutate({ id: row.id, verb: "reject" })}>
                     {t("operator.changes.reject")}

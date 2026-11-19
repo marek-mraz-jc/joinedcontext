@@ -71,6 +71,9 @@ pub enum OperatorKind {
     /// The installation's own look: names, colours, logo and favicon over the branding file, on
     /// the Portal and the sign-in pages (T-7188).
     BrandingSet,
+    /// A project and every row keyed by it move to another Organization (T-7305), once its
+    /// manifest names that Organization.
+    ProjectMove,
 }
 
 impl OperatorKind {
@@ -82,6 +85,7 @@ impl OperatorKind {
             Self::OperatorRemove => "OperatorRemove",
             Self::SmtpSet => "SmtpSet",
             Self::BrandingSet => "BrandingSet",
+            Self::ProjectMove => "ProjectMove",
         }
     }
 
@@ -93,6 +97,7 @@ impl OperatorKind {
             Self::OperatorRemove,
             Self::SmtpSet,
             Self::BrandingSet,
+            Self::ProjectMove,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -107,7 +112,8 @@ pub struct ChangeRequest {
     pub kind: OperatorKind,
     /// `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`.
     pub host: Option<String>,
-    /// `HostAdd`: the Organization's name, e.g. `bbsk`.
+    /// `HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the
+    /// project moves to, e.g. `bbsk`.
     pub organization: Option<String>,
     /// `HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a
     /// host outside the installation's domain.
@@ -124,6 +130,8 @@ pub struct ChangeRequest {
     /// its dashboards and page texts; `{}` shows the branding file again.
     #[schema(schema_with = crate::openapi::appearance_ref, example = json!({ "instanceName": "Smart City Banská Bystrica", "colours": { "primary": "#0b5394" } }))]
     pub branding: Option<OrganizationAppearance>,
+    /// `ProjectMove`: the name of the project that moves, e.g. `banskabystrica`.
+    pub project: Option<String>,
 }
 
 /// `SmtpSet`: the e-mail server as an operator types it.
@@ -179,6 +187,8 @@ pub struct ChangePayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(schema_with = crate::openapi::appearance_ref)]
     pub branding: Option<OrganizationAppearance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// One operator Change.
@@ -299,6 +309,12 @@ fn payload(
             format!("{} takes no branding", kind.as_str()),
         ));
     }
+    if kind != OperatorKind::ProjectMove && request.project.is_some() {
+        return Err(invalid(
+            "project",
+            format!("{} takes no project", kind.as_str()),
+        ));
+    }
     match kind {
         OperatorKind::HostAdd => {
             absent(kind, &[("subject", &request.subject)])?;
@@ -328,6 +344,7 @@ fn payload(
                     subject: None,
                     smtp: None,
                     branding: None,
+                    project: None,
                 },
                 host,
                 None,
@@ -439,6 +456,70 @@ fn payload(
                 None,
             ))
         }
+        OperatorKind::ProjectMove => {
+            absent(
+                kind,
+                &[
+                    ("host", &request.host),
+                    ("organizationId", &request.organization_id),
+                    ("role", &request.role),
+                    ("subject", &request.subject),
+                ],
+            )?;
+            let project = required("project", request.project, "banskabystrica")?;
+            if !project_name(&project) {
+                return Err(invalid(
+                    "project",
+                    format!("'{project}' is no project name: lowercase letters, digits and '-', at most 63"),
+                ));
+            }
+            let organization = required("organization", request.organization, "bbsk")?;
+            Ok((
+                kind,
+                ChangePayload {
+                    project: Some(project.clone()),
+                    organization: Some(organization),
+                    ..ChangePayload::default()
+                },
+                format!("project:{project}"),
+                None,
+            ))
+        }
+    }
+}
+
+/// A project's name as the registry holds it: a DNS label.
+fn project_name(name: &str) -> bool {
+    (1..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The move's plan when every rule holds; `422` with each blocker as an error otherwise.
+async fn move_holds(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    payload: &ChangePayload,
+) -> Result<crate::project_move::MovePlan, ApiError> {
+    let project = payload.project.as_deref().unwrap_or_default();
+    let to = payload.organization.as_deref().unwrap_or_default();
+    let plan = crate::project_move::plan(pool, &state.mirror, project, to)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| {
+            invalid(
+                "project",
+                format!("'{project}' is no live project of the registry"),
+            )
+        })?;
+    if plan.blockers.is_empty() {
+        Ok(plan)
+    } else {
+        Err(ApiError::Unprocessable {
+            detail: format!("the project cannot move now: {}", plan.blockers.join("; ")),
+            errors: plan.blockers,
+        })
     }
 }
 
@@ -659,6 +740,7 @@ async fn holds(
             Ok(())
         }
         OperatorKind::BrandingSet => Ok(()),
+        OperatorKind::ProjectMove => move_holds(state, pool, payload).await.map(drop),
     }
 }
 
@@ -1127,7 +1209,8 @@ pub async fn approve(
         OperatorKind::HostAdd
         | OperatorKind::HostRemove
         | OperatorKind::SmtpSet
-        | OperatorKind::BrandingSet,
+        | OperatorKind::BrandingSet
+        | OperatorKind::ProjectMove,
     ) = (state.people.as_deref(), found.kind)
     {
         proposer_holds(
@@ -1180,6 +1263,9 @@ pub async fn approve(
             state.installation_look().map(|look| look_summary(&look)),
             payload.branding.as_ref().map(look_summary),
         ),
+        OperatorKind::ProjectMove => {
+            return apply_move(&state, tx, &found, &identity.subject, source(client)).await;
+        }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
     let ip = source(client);
@@ -1197,6 +1283,53 @@ pub async fn approve(
     if found.kind == OperatorKind::BrandingSet {
         state.set_installation_look(payload.branding.clone().unwrap_or_default());
     }
+    Ok(Json(decided))
+}
+
+/// Applies an approved `ProjectMove` (T-7305) through migration 0089's `project_move`, which
+/// takes the Change itself, refuses it unless `by` is not its proposer, marks it applied and
+/// writes its audit row (counts per table, never a row's content) in this transaction.
+async fn apply_move(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    found: &OperatorChange,
+    by: &str,
+    ip: Option<String>,
+) -> Result<Json<OperatorChange>, ApiError> {
+    let project = found.payload.project.as_deref().unwrap_or_default();
+    let to = found.payload.organization.as_deref().unwrap_or_default();
+    let approval = crate::project_move::Approval {
+        id: &found.id,
+        approver: by,
+        source_ip: ip.as_deref(),
+    };
+    let moved = crate::project_move::apply(&mut tx, &state.mirror, &approval, project, to)
+        .await
+        .map_err(|e| match e {
+            crate::project_move::MoveError::Refused(message) => ApiError::Conflict(message),
+            crate::project_move::MoveError::Db(e) => db(e),
+        })?;
+    let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM operator_changes WHERE id = $1::uuid"
+    )))
+    .bind(&found.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db)?;
+    let decided = change(row)?;
+    tx.commit().await.map_err(db)?;
+    tracing::info!(
+        target: "operator_audit",
+        actor = by,
+        change = %found.id,
+        action = "applied ProjectMove",
+        project,
+        from = moved.from.as_deref().unwrap_or_default(),
+        to,
+        rows = moved.rows,
+        source = ip.as_deref().unwrap_or_default(),
+        "operator audit"
+    );
     Ok(Json(decided))
 }
 
@@ -1852,6 +1985,67 @@ pub async fn organizations(
     Ok(Json(OperatorOrganizationList { items, ids }))
 }
 
+/// `GET /operator/project-moves/plan`: the project and the Organization it would move to.
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct MovePlanQuery {
+    /// The project's name, e.g. `banskabystrica`.
+    pub project: String,
+    /// The Organization it would move to, e.g. `banskabystrica`.
+    pub organization: String,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/operator/project-moves/plan",
+    operation_id = "operator_project_move_plan",
+    summary = "Plan A Project Move",
+    description = "What a `ProjectMove` Change of the project to the Organization would do now (T-7305): the Organization the registry files it under, the one its manifest names, the rows per table that take the new key, the project's own RoleBindings that move with it, and each blocker with its next step. Reads only counts, never a row. For a person of the operators' group with a second factor.",
+    tag = "system",
+    params(MovePlanQuery),
+    responses(
+        (status = 200, description = "The plan; `blockers` is empty when the move can be approved", body = crate::project_move::MovePlan),
+        (status = 401, description = "Not signed in", body = ProblemDetails),
+        (status = 403, description = "Not an operator, or no second factor", body = ProblemDetails),
+        (status = 404, description = "No live project of that name", body = ProblemDetails),
+        (status = 422, description = "The project name is not one; the error names the field", body = ProblemDetails),
+        (status = 503, description = "No database", body = ProblemDetails)
+    )
+)]
+pub async fn project_move_plan(
+    user: CurrentUser,
+    State(state): State<AppState>,
+    query: Result<axum::extract::Query<MovePlanQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<crate::project_move::MovePlan>, ApiError> {
+    operator(&state, &user.0.identity)?;
+    let axum::extract::Query(query) = query.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    if !project_name(&query.project) {
+        return Err(invalid(
+            "project",
+            format!(
+                "'{}' is no project name, e.g. banskabystrica",
+                query.project
+            ),
+        ));
+    }
+    let pool = database(&state)?;
+    crate::project_move::plan(
+        pool,
+        &state.mirror,
+        &query.project,
+        query.organization.trim(),
+    )
+    .await
+    .map_err(db)?
+    .map(Json)
+    .ok_or_else(|| {
+        ApiError::NotFound(format!(
+            "the registry holds no live project '{}'",
+            query.project
+        ))
+    })
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/operator/changes", get(list).post(propose))
@@ -1860,6 +2054,7 @@ pub fn router() -> Router<AppState> {
         .route("/operator/hosts", get(hosts))
         .route("/operator/audit", get(audit_list))
         .route("/operator/organizations", get(organizations))
+        .route("/operator/project-moves/plan", get(project_move_plan))
         .route("/operator/installation", get(installation))
         .route("/operator/installation/test-email", post(test_email))
 }
