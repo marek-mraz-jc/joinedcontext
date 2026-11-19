@@ -68,7 +68,7 @@ pub async fn enqueue_many(
 /// Oldest-first page for the drain loop. `seq` is the dedup id.
 ///
 /// The drain is cross-tenant by nature — it runs under the transaction-scoped
-/// `antares.service` escape (0001_init.sql) so it stays correct under a
+/// `antares.service` escape (0040: held by the maintenance role) so it stays correct under a
 /// non-superuser role, where the plain tenant policy would silently return
 /// zero rows forever (the very failure this table exists to prevent).
 pub async fn peek(pool: &PgPool, limit: i64) -> Result<Vec<(i64, String, Value)>, sqlx::Error> {

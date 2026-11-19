@@ -164,3 +164,7 @@ note = "adds tenant_seal_alias and the tenant_pairs/tenant_contract functions an
 [0039]
 rollback = "compatible"
 note = "adds jsonld_context_usage and drops the shared counters from Cached rows; an older release never reads the table and counts into the row body again from zero"
+
+[0040]
+rollback = "compatible"
+note = "rewrites the cross-Tenant escape of every policy from the antares.service setting to antares_service() and closes Cached jsonld_contexts rows to UPDATE and DELETE by a Tenant; an older release arms the setting, which then opens nothing, so its drain and reaps work only as the tables' owner, which every release before this one connects as"
