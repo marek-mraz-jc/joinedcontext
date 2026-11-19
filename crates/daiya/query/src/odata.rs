@@ -67,6 +67,30 @@ impl ODataDatasource {
     }
 }
 
+/// The entity sets of an OData service document, as `{ "value": [{ "name", "kind", "url" }] }`
+/// with string members only: nothing else the answer holds reaches the caller, and an answer that
+/// is no service document lists nothing.
+fn service_document(body: &[u8]) -> Value {
+    let doc: Value = serde_json::from_slice(body).unwrap_or(Value::Null);
+    let sets: Vec<Value> = doc["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let name = item["name"].as_str()?;
+            let mut out = serde_json::Map::new();
+            out.insert("name".into(), json!(name));
+            for key in ["kind", "url"] {
+                if let Some(v) = item[key].as_str() {
+                    out.insert(key.into(), json!(v));
+                }
+            }
+            Some(Value::Object(out))
+        })
+        .collect();
+    json!({ "value": sets })
+}
+
 /// OData CSDL `SimpleIdentifier`, ASCII subset: a letter or `_`, then letters, digits or `_`,
 /// at most 128 characters.
 fn is_odata_identifier(s: &str) -> bool {
@@ -282,9 +306,15 @@ impl Datasource for ODataDatasource {
                     timeout: Some(ctx.timeout),
                 })
                 .await?;
-            let data: Value =
-                serde_json::from_slice(&resp.body).unwrap_or_else(|_| json!({ "value": [] }));
-            Ok(ResourceResp { data })
+            if !(200..300).contains(&resp.status) {
+                return Err(DsError::Upstream {
+                    status: resp.status,
+                    message: format!("OData service document returned HTTP {}", resp.status),
+                });
+            }
+            Ok(ResourceResp {
+                data: service_document(&resp.body),
+            })
         })
     }
 
@@ -554,6 +584,44 @@ mod tests {
                 .data,
             json!({"value": []})
         );
+        // A service document lists its entity sets and nothing else; an error status is an
+        // error, never its body.
+        let (doc_url, _) = mock(
+            200,
+            r#"{"@odata.context":"$metadata","value":[{"name":"Sets","kind":"EntitySet","url":"Sets","secret":"x"},{"other":1}],"admin":{"k":"v"}}"#,
+        )
+        .await;
+        let listed = ds(&doc_url)
+            .resource(
+                &ctx(),
+                ResourceReq {
+                    path: "sets".into(),
+                    params: BTreeMap::new(),
+                },
+            )
+            .await
+            .unwrap()
+            .data;
+        assert_eq!(
+            listed,
+            json!({"value": [{"name": "Sets", "kind": "EntitySet", "url": "Sets"}]})
+        );
+        let (refused_url, _) = mock(403, r#"{"value":[{"name":"internal"}]}"#).await;
+        let err = ds(&refused_url)
+            .resource(
+                &ctx(),
+                ResourceReq {
+                    path: "sets".into(),
+                    params: BTreeMap::new(),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, DsError::Upstream { status: 403, .. }),
+            "{err}"
+        );
+        assert!(!err.to_string().contains("internal"), "{err}");
 
         // A caller token is never forwarded as is: at the host's gateway, for the Endpoint of
         // the datasource's audience, the default exchanger refuses it.

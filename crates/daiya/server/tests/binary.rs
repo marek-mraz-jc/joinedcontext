@@ -205,7 +205,8 @@ async fn the_binary_serves_provisioned_dashboards_and_queries_with_a_configured_
             "store": store,
             "tokensFile": tokens,
             "provisioningDir": scratch.0.join("prov"),
-            "outbound": { "allowHttp": true, "allowedNetworks": ["127.0.0.0/8"] }
+            "outbound": { "allowHttp": true, "allowedNetworks": [
+                { "network": "127.0.0.0/8", "organization": org, "kinds": ["prometheus", "ngsild", "ngsild-grafana-datasource", "odata"] } ] }
         })
         .to_string(),
     );

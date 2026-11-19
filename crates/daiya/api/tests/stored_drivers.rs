@@ -7,7 +7,7 @@ use axum::Router;
 use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, PolicyAuthorizer, Subject};
-use daiya_query::{MapSecretResolver, OutboundPolicy};
+use daiya_query::{MapSecretResolver, OpenedNetwork, OutboundPolicy};
 use daiya_store_memory::MemoryStore;
 use http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -96,7 +96,18 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 fn loopback() -> OutboundPolicy {
     OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["127.0.0.0/8".parse().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &[
+                "prometheus",
+                "ngsild",
+                "ngsild-grafana-datasource",
+                "odata",
+                "postgres",
+                "grafana-postgresql-datasource",
+            ],
+        )],
         ..OutboundPolicy::default()
     }
 }

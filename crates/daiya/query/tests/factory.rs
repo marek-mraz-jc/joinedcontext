@@ -6,9 +6,9 @@
 
 use daiya_model::{DatasourceRecord, InstallationId, InstanceId, OrgId, Subject};
 use daiya_query::{
-    DenyTokenExchanger, DriverDeps, DsError, EndpointBase, MapSecretResolver, OperatorReach,
-    OutboundPolicy, PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq, build_driver,
-    guard_for,
+    DenyTokenExchanger, DriverDeps, DsError, EndpointBase, MapSecretResolver, OpenedNetwork,
+    OperatorReach, OutboundPolicy, PassthroughAudienceExchanger, Query, QueryCtx, ResourceReq,
+    build_driver, guard_for,
 };
 use ipnet::IpNet;
 use jc_time::TimestampTz;
@@ -76,7 +76,18 @@ fn record(uid: &str, kind: &str, url: &str, json_data: Value) -> DatasourceRecor
 fn loopback_policy() -> OutboundPolicy {
     OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["127.0.0.0/8".parse::<IpNet>().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &[
+                "prometheus",
+                "ngsild",
+                "ngsild-grafana-datasource",
+                "odata",
+                "postgres",
+                "grafana-postgresql-datasource",
+            ],
+        )],
         ..OutboundPolicy::default()
     }
 }
@@ -157,6 +168,61 @@ async fn stored_prometheus_record_queries_the_mock_with_its_secret_ref() {
     assert!(
         head.contains("authorization: bearer the-bearer-value"),
         "{head}"
+    );
+}
+
+/// A network the operator opens reaches only the datasources of the organization and the kinds
+/// it names: another organization's datasource, or another kind of the same organization, on
+/// that network is refused before any request leaves.
+#[tokio::test]
+async fn an_opened_network_reaches_only_its_organizations_datasources_of_its_kinds() {
+    let (url, seen) = mock(vec![(
+        "/api/v1/query",
+        json!({ "status": "success",
+        "data": { "resultType": "vector", "result": [] } }),
+    )])
+    .await;
+    let policy = OutboundPolicy {
+        allow_http: true,
+        allowed_networks: vec![OpenedNetwork::new(
+            "127.0.0.0/8".parse().unwrap(),
+            ORG,
+            &["prometheus"],
+        )],
+        ..OutboundPolicy::default()
+    };
+    let query = |rec: DatasourceRecord| {
+        let policy = policy.clone();
+        async move {
+            let driver = build_driver(&rec, &deps(policy, MapSecretResolver::new())).await?;
+            let mut ctx = ctx(Subject::anonymous());
+            ctx.org_id = rec.org_id;
+            driver
+                .query(&ctx, &q(json!({ "expr": "up", "instant": true })))
+                .await
+        }
+    };
+    query(record("prom", "prometheus", &url, json!({})))
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().len(), 1);
+
+    let mut other_org = record("prom", "prometheus", &url, json!({}));
+    other_org.org_id = OrgId::from_u128(7);
+    for (rec, why) in [
+        (other_org, "another organization"),
+        (
+            record("ld", "ngsild", &format!("{url}/api/endpoint/x"), json!({})),
+            "another kind",
+        ),
+    ] {
+        let err = query(rec).await.map(|_| ()).unwrap_err();
+        assert!(matches!(&err, DsError::GuardRefused(_)), "{why}: {err:?}");
+    }
+    assert_eq!(
+        seen.lock().len(),
+        1,
+        "no refused datasource reached the network"
     );
 }
 
@@ -493,7 +559,11 @@ async fn the_guard_of_a_built_driver_refuses_what_the_operator_did_not_open() {
     );
     let link_local = OutboundPolicy {
         allow_http: true,
-        allowed_networks: vec!["169.254.0.0/16".parse().unwrap()],
+        allowed_networks: vec![OpenedNetwork::new(
+            "169.254.0.0/16".parse().unwrap(),
+            ORG,
+            &["prometheus"],
+        )],
         ..OutboundPolicy::default()
     };
     let guard = guard_for(&meta, &link_local, 80).unwrap();
@@ -718,7 +788,7 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
         .parse()
         .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1]));
     let policy = OutboundPolicy {
-        allowed_networks: vec![IpNet::from(ip)],
+        allowed_networks: vec![OpenedNetwork::new(IpNet::from(ip), ORG, &["postgres"])],
         ..OutboundPolicy::default()
     };
     let driver = build_driver(&rec, &deps(policy, secrets.clone()))
@@ -771,9 +841,13 @@ async fn stored_postgres_record_runs_a_checked_select_on_a_real_server() {
     overlisted.uid = "pg-over".into();
     overlisted.json_data["allowedViews"] = json!(["daiya_ds_metrics", "daiya_ds_secret"]);
     let ip_policy = OutboundPolicy {
-        allowed_networks: vec![IpNet::from(
-            host.parse::<std::net::IpAddr>()
-                .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+        allowed_networks: vec![OpenedNetwork::new(
+            IpNet::from(
+                host.parse::<std::net::IpAddr>()
+                    .unwrap_or(std::net::IpAddr::from([127, 0, 0, 1])),
+            ),
+            ORG,
+            &["postgres"],
         )],
         ..OutboundPolicy::default()
     };
