@@ -80,7 +80,7 @@ PY
 start_broker() {
     local bin=$1 label=$2
     shift 2
-    env "$@" ANTARES_HTTP_PORT="$PORT" ANTARES_EGRESS_ALLOW_PRIVATE=true \
+    env "$@" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" ANTARES_EGRESS_ALLOW_PRIVATE=true \
         "$bin" > "$WORK/$label.log" 2>&1 &
     BROKER_PID=$!
     for _ in $(seq 1 120); do

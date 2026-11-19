@@ -77,6 +77,7 @@ services:
     volumes: ["antares1-data:/data"]
     environment:
       ANTARES_HTTP_PORT: "9090"
+      ANTARES_ADMIN_OPEN: "1"
       ANTARES_HOST_ALIAS: antares1
       # 5.8.1.4: handed to peer brokers as the dist-sub notification
       # endpoint; host-networked stack => container names do not resolve
@@ -106,6 +107,7 @@ services:
     volumes: ["antares2-data:/data"]
     environment:
       ANTARES_HTTP_PORT: "9091"
+      ANTARES_ADMIN_OPEN: "1"
       ANTARES_HOST_ALIAS: antares2
       # 5.8.1.4: handed to peer brokers as the dist-sub notification
       # endpoint; host-networked stack => container names do not resolve
@@ -131,6 +133,7 @@ services:
     volumes: ["antares3-data:/data"]
     environment:
       ANTARES_HTTP_PORT: "9092"
+      ANTARES_ADMIN_OPEN: "1"
       ANTARES_HOST_ALIAS: antares3
       # 5.8.1.4: handed to peer brokers as the dist-sub notification
       # endpoint; host-networked stack => container names do not resolve
@@ -156,6 +159,7 @@ services:
     volumes: ["antares4-data:/data"]
     environment:
       ANTARES_HTTP_PORT: "9093"
+      ANTARES_ADMIN_OPEN: "1"
       ANTARES_HOST_ALIAS: antares4
       # 5.8.1.4: handed to peer brokers as the dist-sub notification
       # endpoint; host-networked stack => container names do not resolve
@@ -181,6 +185,7 @@ services:
     volumes: ["antares5-data:/data"]
     environment:
       ANTARES_HTTP_PORT: "9094"
+      ANTARES_ADMIN_OPEN: "1"
       ANTARES_HOST_ALIAS: antares5
       # 5.8.1.4: handed to peer brokers as the dist-sub notification
       # endpoint; host-networked stack => container names do not resolve

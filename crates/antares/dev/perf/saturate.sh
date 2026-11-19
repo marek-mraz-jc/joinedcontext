@@ -23,7 +23,7 @@ command -v k6 >/dev/null || { echo "k6 missing"; exit 1; }
 [ -x "$BIN" ] || { echo "missing $BIN"; exit 1; }
 DATA=$(mktemp -d); trap 'rm -rf "$DATA"; [ -n "${PID:-}" ] && kill "$PID" 2>/dev/null' EXIT
 
-ANTARES_STORE="$STORE" ANTARES_DATA_DIR="$DATA" ANTARES_HTTP_PORT="$PORT" \
+ANTARES_STORE="$STORE" ANTARES_DATA_DIR="$DATA" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
   ANTARES_DATABASE_URL="${DATABASE_URL:-}" ANTARES_ALLOW_SHARED_LOCAL=1 \
   "$BIN" > "$OUT/saturate.log" 2>&1 & PID=$!
 until curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health"; do sleep 0.05; done

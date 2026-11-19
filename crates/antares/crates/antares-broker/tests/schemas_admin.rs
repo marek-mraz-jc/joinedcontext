@@ -42,6 +42,7 @@ fn start(max: Option<&str>) -> (Broker, u16) {
     let port = free_port();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_antares"));
     cmd.env("ANTARES_HTTP_PORT", port.to_string())
+        .env("ANTARES_ADMIN_OPEN", "1")
         .env_remove("ANTARES_SCHEMA_MAX_BYTES");
     if let Some(max) = max {
         cmd.env("ANTARES_SCHEMA_MAX_BYTES", max);

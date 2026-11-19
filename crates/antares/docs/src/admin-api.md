@@ -23,8 +23,10 @@ differing byte. `GET /q/metrics` is guarded too unless
 `ANTARES_METRICS_PORT` moves `GET /q/metrics` to a listener of its own that
 serves nothing else, so the scraper needs no path to the API port. The
 broker reads the file once at start, refuses to start when it is unreadable
-or too short, and never logs the secret. Unset, `/q/` asks for nothing and
-the broker logs one warning at start saying so.
+or too short, and never logs the secret. Unset, the same routes answer `401`
+to everyone (the broker makes a secret at start that nobody holds) and the
+broker logs one warning saying so; `ANTARES_ADMIN_OPEN=1` serves them without
+a credential instead, for a throwaway test stack only.
 
 The same routes as an OpenAPI document, with every status code and response
 schema: `docs/openapi/antares-admin.yaml`, rendered at
@@ -317,7 +319,7 @@ the pod's view table before they answer; every other pod reloads within
 `ANTARES_VIEWS_RELOAD_MS` (default 5000). `/q/health` lists each view
 (`loaded` with its tenant, operation count and loader notes, or `invalid`
 with the reason) under `views` to a caller with the admin bearer (or to
-everyone when no admin token is configured); an open caller gets
+everyone under `ANTARES_ADMIN_OPEN=1`); an open caller gets
 `{"count": n}` there, under `schemas` and under `policy.documents`, since
 the reports name Tenants (F-ANT2-005). It lists each surface that serves through views
 as `open` or `closed` under `surfaces`: no view loaded, every route of such

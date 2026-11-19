@@ -52,7 +52,7 @@ run_build() {  # run_build <build> <binary> <memory budget or empty>
   local url="${DATABASE_URL%/*}/$db"
   # the image's allocator settings (Dockerfile): without them jemalloc keeps ~3x the live heap
   # resident and the RSS limit measures the allocator, not the broker
-  env _RJEM_MALLOC_CONF="$JEMALLOC" MALLOC_CONF="$JEMALLOC" ANTARES_STORE=postgres ANTARES_DATABASE_URL="$url" ANTARES_HTTP_PORT="$PORT" \
+  env _RJEM_MALLOC_CONF="$JEMALLOC" MALLOC_CONF="$JEMALLOC" ANTARES_STORE=postgres ANTARES_DATABASE_URL="$url" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
     ANTARES_ALLOW_SHARED_LOCAL=1 ANTARES_TELEMETRY=1 ANTARES_API_SURFACES=admin,views,odata,ogc,sta,mcp \
     ANTARES_SCHEMA_MAX_BYTES=65536 ${budget:+ANTARES_MEMORY_BUDGET=$budget} \
     "$bin" > "$OUT/$build-broker.log" 2>&1 & PID=$!
