@@ -166,7 +166,7 @@ pub struct ViewOps {
 
 /// The Entity types a caller may see through a view and the Attributes
 /// each may show, as IRIs (ADR-0023 rule 5): made by [`ViewOps::visible`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Visible {
     /// Each rule's types and the Attributes it shows; `None` for an
     /// engine's grant over the whole Entity (`Rule::every_attribute`), which
@@ -765,6 +765,14 @@ impl ViewOps {
     /// offering none of them, or an engine refusing them all, leaves the
     /// caller nothing (fail closed).
     pub async fn readable(&self, caller: &Caller) -> Visible {
+        self.read_grant(caller).await.unwrap_or_default()
+    }
+
+    /// [`Self::readable`], `None` when the view offers none of those reads
+    /// or the engine refuses them all: a surface that narrows its model by
+    /// the answer keeps the view's own then, so the gate of the read itself
+    /// answers the refusal.
+    pub async fn read_grant(&self, caller: &Caller) -> Option<Visible> {
         for op in [
             OperationId::RetrieveEntityTypeDetails,
             OperationId::QueryEntities,
@@ -774,10 +782,10 @@ impl ViewOps {
                 continue;
             }
             if let Ok(visible) = self.visible(caller, op, &[], &[]).await {
-                return visible;
+                return Some(visible);
             }
         }
-        Visible::default()
+        None
     }
 
     /// [`Self::shown_names`] less the types and Attributes the engine hides

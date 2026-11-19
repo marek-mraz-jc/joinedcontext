@@ -164,3 +164,7 @@ note = "adds tenant_seal_alias and the tenant_pairs/tenant_contract functions an
 [0039]
 rollback = "compatible"
 note = "adds jsonld_context_usage and drops the shared counters from Cached rows; an older release never reads the table and counts into the row body again from zero"
+
+[0040]
+rollback = "compatible"
+note = "fills tenants.organization_id for project-key names 0036 left NULL; an older release binds the same value from TenantId::organization_of and reads the column as before"

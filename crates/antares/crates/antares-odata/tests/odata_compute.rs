@@ -333,35 +333,35 @@ async fn a_computed_name_filters_orders_and_is_selected() -> Result<(), String> 
     Ok(())
 }
 
-/// Security (T-3936): the engine hides `owner`; a value computed from it is the value of an
-/// absent Attribute, and neither `$filter` nor `$orderby` on it tells the Cars apart.
+/// Security (T-3936, AUZ-06): the engine hides `owner`; `$compute`, and `$filter` or
+/// `$orderby` on a value computed from it, are refused as for a name the view hides (`note`):
+/// the same 400, so the answer tells a hidden name from an unknown one by nothing.
 #[tokio::test]
 async fn a_computed_value_never_reads_what_the_engine_hides() -> Result<(), String> {
     let (_b, app) = broker(true).await?;
-    let low = "$compute=tolower(owner) as low,concat(owner,label) as both&$orderby=id";
+    for query in [
+        "$compute=tolower(note) as low,concat(note,label) as both&$orderby=id",
+        "$compute=tolower(note) as low&$filter=low eq 'ana'",
+        "$compute=note as o&$filter=o eq null",
+        "$compute=note as o&$orderby=o desc,id",
+    ] {
+        let uri = |q: &str| format!("{ROOT}/Car?{}", q.replace(' ', "%20"));
+        let unknown = send(&app, Method::GET, &uri(query), None).await;
+        assert_eq!(unknown.0, StatusCode::BAD_REQUEST, "{query}: {}", unknown.1);
+        let hidden = send(
+            &app,
+            Method::GET,
+            &uri(&query.replace("note", "owner")),
+            None,
+        )
+        .await;
+        assert_eq!(hidden, unknown, "{query}");
+    }
+    let body = read(&app, "$compute=tolower(label) as low&$orderby=id").await?;
     assert_eq!(
-        json!(values(&app, low, "low").await?),
-        json!([null, null, null, null])
-    );
-    assert_eq!(
-        json!(values(&app, low, "both").await?),
-        json!([null, null, null, null])
-    );
-    let body = read(&app, "$compute=tolower(owner) as low&$filter=low eq 'ana'").await?;
-    assert_eq!(cars(&body), Vec::<u32>::new(), "{body}");
-    let body = read(&app, "$compute=owner as o&$filter=o eq null").await?;
-    assert_eq!(cars(&body), [1, 2, 3, 4], "{body}");
-    let ordered = values(&app, "$compute=owner as o&$orderby=o desc,id", "id").await?;
-    assert_eq!(
-        ordered,
-        [
-            "urn:ngsi-ld:Car:1",
-            "urn:ngsi-ld:Car:2",
-            "urn:ngsi-ld:Car:3",
-            "urn:ngsi-ld:Car:4"
-        ]
-        .map(Value::from),
-        "the hidden owners order nothing"
+        cars(&body),
+        [1, 2, 3, 4],
+        "a shown name still computes: {body}"
     );
     Ok(())
 }

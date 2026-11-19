@@ -344,32 +344,24 @@ async fn an_aggregate_never_counts_or_sums_what_the_view_or_the_engine_hides() -
         .await?,
         json!([{"n": 4, "s": 10, "d": 2}])
     );
-    // `owner` reads as absent on every Car the engine serves
-    assert_eq!(
-        rows(
-            &app,
-            "aggregate(owner with countdistinct as d,owner with max as m)"
-        )
-        .await?,
-        json!([{"d": 0, "m": null}])
-    );
-    assert_eq!(
-        rows(&app, "groupby((owner),aggregate($count as n))").await?,
-        json!([{"owner": null, "n": 4}])
-    );
-    assert_eq!(
-        ids(&app, "filter(owner eq 'Dan')").await?,
-        Vec::<String>::new()
-    );
-    // the view hides `note`: the 400 of an unknown name
+    // the view hides `note`, the engine `owner`: each the 400 of an unknown name (AUZ-06)
     for apply in [
         "aggregate(note with countdistinct as d)",
         "aggregate(note with sum as s)",
         "groupby((note))",
+        "groupby((note),aggregate($count as n))",
+        "filter(note eq 'Dan')",
     ] {
-        let uri = format!("{ROOT}/Car?$apply={}", apply.replace(' ', "%20"));
-        let (status, body) = send(&app, Method::GET, &uri, None).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{apply}: {body}");
+        let unknown = send(&app, Method::GET, &applied(apply), None).await;
+        assert_eq!(unknown.0, StatusCode::BAD_REQUEST, "{apply}: {}", unknown.1);
+        let hidden = send(
+            &app,
+            Method::GET,
+            &applied(&apply.replace("note", "owner")),
+            None,
+        )
+        .await;
+        assert_eq!(hidden, unknown, "{apply}");
     }
     Ok(())
 }
@@ -630,7 +622,6 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
         ids(&app, "toppercent(100,seats)").await?,
         ["4", "3", "2", "1"]
     );
-    assert_eq!(ids(&app, "topcount(9,owner)").await?, Vec::<String>::new());
     assert_eq!(
         ids(&app, "concat(identity,bottomcount(1,seats))").await?,
         ["1", "2", "3", "4", "1"]
@@ -644,17 +635,29 @@ async fn ranking_concat_and_search_never_reach_what_is_hidden() -> Result<(), St
         .await?,
         json!([{"s": 10, "n": 4}])
     );
-    // the view hides `note`: an unknown name
+    // the view hides `note`, the engine `owner`: each an unknown name (AUZ-06)
     for apply in [
         "topcount(1,note)",
         "compute(note as x)",
         "concat(identity,filter(note eq 'x'))",
     ] {
-        let uri = format!("{ROOT}/Car?$apply={}", apply.replace(' ', "%20"));
-        let (status, body) = send(&app, Method::GET, &uri, None).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{apply}: {body}");
+        let unknown = send(&app, Method::GET, &applied(apply), None).await;
+        assert_eq!(unknown.0, StatusCode::BAD_REQUEST, "{apply}: {}", unknown.1);
+        let hidden = send(
+            &app,
+            Method::GET,
+            &applied(&apply.replace("note", "owner")),
+            None,
+        )
+        .await;
+        assert_eq!(hidden, unknown, "{apply}");
     }
     Ok(())
+}
+
+/// The URL of `$apply={apply}` on the Cars.
+fn applied(apply: &str) -> String {
+    format!("{ROOT}/Car?$apply={}", apply.replace(' ', "%20"))
 }
 
 /// A plain-text answer (`$count`, `$value`) names its OData version as every answer does.
