@@ -315,7 +315,7 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
 
     // The serving role's direct call moves nothing without an approved ProjectMove Change: no
     // Change, the proposer approving their own, or a replay of one applied already.
-    let direct = |change: String, approver: &'static str| {
+    let direct = |change: String, approver: String| {
         let pool = pool(&state).clone();
         async move {
             sqlx::query("SELECT * FROM project_move($1::uuid, $2, NULL)")
@@ -325,20 +325,24 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
                 .await
         }
     };
-    let unknown = direct(uuid::Uuid::new_v4().to_string(), "ops-b").await;
+    let unknown = direct(uuid::Uuid::new_v4().to_string(), "sub-ops-b".into()).await;
     assert!(unknown.is_err(), "no Change, no move");
     let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
     assert_eq!(status, StatusCode::CREATED, "{made}");
     let id = made["id"].as_str().expect("an id").to_owned();
-    let self_approved = direct(id.clone(), "ops-a").await;
+    let self_approved = direct(
+        id.clone(),
+        made["proposedBy"].as_str().expect("a proposer").to_owned(),
+    )
+    .await;
     assert!(self_approved.is_err(), "the proposer never approves");
-    let unnamed = direct(id.clone(), "").await;
+    let unnamed = direct(id.clone(), String::new()).await;
     assert!(unnamed.is_err(), "an approver is named");
     let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
     assert_eq!(status, StatusCode::OK, "{applied}");
     assert_eq!(applied["state"], json!("applied"), "{applied}");
-    assert_eq!(applied["decidedBy"], json!("ops-b"), "{applied}");
-    let replay = direct(id.clone(), "ops-c").await;
+    assert_eq!(applied["decidedBy"], json!("sub-ops-b"), "{applied}");
+    let replay = direct(id.clone(), "sub-ops-c".into()).await;
     assert!(replay.is_err(), "an applied Change moves nothing again");
     let audited: i64 =
         sqlx::query_scalar("SELECT count(*) FROM operator_audit WHERE change_id = $1::uuid AND action = 'applied ProjectMove'")
