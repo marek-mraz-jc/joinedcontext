@@ -178,7 +178,19 @@ pub async fn temporal_maintenance(
             .execute(&mut *sp)
             .await
             .map(|_| ());
-            for stmt in partition_rls_sql(&partition_name(keyed, &suffix)) {
+            let rls = match created {
+                Ok(()) => partition_rls_missing(&mut sp, &partition_name(keyed, &suffix)).await,
+                Err(_) => Ok(false),
+            };
+            let stmts = match rls {
+                Ok(true) => partition_rls_sql(&partition_name(keyed, &suffix)),
+                Ok(false) => Vec::new(),
+                Err(e) => {
+                    created = Err(e);
+                    Vec::new()
+                }
+            };
+            for stmt in stmts {
                 if created.is_err() {
                     break;
                 }
@@ -1299,6 +1311,23 @@ fn partition_name(keyed: bool, suffix: &str) -> String {
     } else {
         format!("attr_instances_{suffix}")
     }
+}
+
+/// Whether partition `table` still lacks its policies ([`partition_rls_sql`]
+/// runs as one unit, so ENABLE and FORCE stand for all of them). A week that
+/// has them is left alone: each pass would otherwise rewrite its catalog rows
+/// and hold it `ACCESS EXCLUSIVE` again.
+async fn partition_rls_missing(
+    conn: &mut sqlx::PgConnection,
+    table: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT NOT coalesce((SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
+                              WHERE oid = to_regclass('public.' || quote_ident($1))), false)",
+    )
+    .bind(table)
+    .fetch_one(conn)
+    .await
 }
 
 /// Row-level security on one history partition, the parent's policies of

@@ -262,7 +262,7 @@ mod tests {
         ] {
             assert_eq!(d.get(key).map(String::as_str), Some(value), "{key}");
         }
-        assert_eq!(d.len(), 10);
+        assert_eq!(d.len(), 11);
     }
 
     #[test]
