@@ -11,8 +11,8 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use futures_util::StreamExt;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
@@ -42,7 +42,7 @@ pub struct Costs {
     pub currency: String,
     /// When the bytes were measured: storage is read now, not averaged over the month.
     #[schema(value_type = String, format = DateTime)]
-    pub measured_at: DateTime<Utc>,
+    pub measured_at: TimestampTz,
     pub prices: CostPrices,
     #[serde(flatten)]
     pub split: Split,
@@ -106,7 +106,7 @@ pub async fn export_costs(
 async fn costs(state: &AppState, user: &CurrentUser, query: CostQuery) -> Result<Costs, ApiError> {
     let identity = &user.0.identity;
     crate::permissions::require_organization_admin(state, identity, "the Costs page")?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let month = query.month.unwrap_or_else(|| crate::costs::last_month(now));
     let (from, to) = crate::costs::month(&month, now).map_err(ApiError::BadRequest)?;
     let prices = state.config.cost_prices.clone().ok_or_else(|| {

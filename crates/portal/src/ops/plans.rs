@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -110,7 +110,7 @@ struct Plan {
     project: String,
     workspace: Option<String>,
     items: Vec<Planned>,
-    expires_at: DateTime<Utc>,
+    expires_at: TimestampTz,
 }
 
 /// The plans waiting for their apply, in memory.
@@ -122,7 +122,7 @@ pub struct PlanStore {
 }
 
 impl PlanStore {
-    fn keep(&self, id: String, plan: Plan, now: DateTime<Utc>) {
+    fn keep(&self, id: String, plan: Plan, now: TimestampTz) {
         let mut plans = self.plans.lock().unwrap_or_else(|p| p.into_inner());
         plans.retain(|_, p| p.expires_at > now);
         if plans.len() >= MAX_PLANS {
@@ -146,7 +146,7 @@ impl PlanStore {
         owner: &str,
         project: &str,
         connector: Option<&str>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Option<Plan> {
         let mut plans = self.plans.lock().unwrap_or_else(|p| p.into_inner());
         let mine = plans.get(id).is_some_and(|p| {
@@ -166,7 +166,7 @@ impl PlanStore {
         id: &str,
         owner: &str,
         project: &str,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Option<Vec<PlanItem>> {
         let plans = self.plans.lock().unwrap_or_else(|p| p.into_inner());
         let plan = plans
@@ -964,8 +964,8 @@ async fn plan(
             errors,
         }));
     }
-    let now = Utc::now();
-    let expires_at = now + Duration::minutes(TTL_MINUTES);
+    let now = TimestampTz::now();
+    let expires_at = now + jiff::SignedDuration::from_mins(TTL_MINUTES);
     let base_etag = {
         let mut hash = Sha256::new();
         for item in &items {
@@ -1213,7 +1213,7 @@ async fn apply(
     input: ApplyInput,
 ) -> Result<Value, OpError> {
     let connector = caller.access.as_ref().and_then(|a| a.connector());
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let not_found = || {
         OpError::Api(ApiError::NotFound(format!(
             "plan '{}' is not there: it expired ({TTL_MINUTES} minutes), was applied, or was \
@@ -1951,7 +1951,7 @@ mod tests {
     /// the source the plan changes and not only its manifest.
     #[test]
     fn a_peek_carries_the_planned_model_source() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let store = PlanStore::default();
         let item = |name: &str, model: Option<ModelPlan>| Planned {
             kind: "DataModel".into(),
@@ -1983,7 +1983,7 @@ mod tests {
                 project: "helsinki".into(),
                 workspace: None,
                 items: vec![item("air", Some(model)), item("bus", None)],
-                expires_at: now + chrono::Duration::minutes(5),
+                expires_at: now + jiff::SignedDuration::from_mins(5),
             },
             now,
         );
@@ -2159,9 +2159,9 @@ mod tests {
                 project: "doprava".into(),
                 workspace: None,
                 items: vec![],
-                expires_at: Utc::now() + Duration::minutes(minutes),
+                expires_at: TimestampTz::now() + jiff::SignedDuration::from_mins(minutes),
             },
-            Utc::now(),
+            TimestampTz::now(),
         );
         id
     }
@@ -2170,7 +2170,7 @@ mod tests {
     #[test]
     fn a_plan_is_taken_once_by_its_owner_through_its_connector() {
         let store = PlanStore::default();
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let id = kept(&store, "sub-jana", Some("c1"), TTL_MINUTES);
         let take = |id: &str, owner: &str, project: &str, connector: Option<&str>| {
             store.take(id, owner, project, connector, now).is_some()
@@ -2246,12 +2246,12 @@ mod tests {
             kinds: None,
             writes: false,
             autonomous: false,
-            expires_at: Utc::now() + Duration::days(1),
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
             allowed_clients: vec![],
             client_is_boundary: false,
             state: "active".into(),
-            created_at: Utc::now(),
-            granted_at: Utc::now(),
+            created_at: TimestampTz::now(),
+            granted_at: TimestampTz::now(),
             last_used_at: None,
             url: "https://portal.test/c/c1".into(),
             limits: crate::connectors::DEFAULT_LIMITS,
@@ -2274,7 +2274,7 @@ mod tests {
         // The plan stays for the Portal.
         assert!(state
             .plans
-            .take(&id, "sub-jana", "doprava", Some("c1"), Utc::now())
+            .take(&id, "sub-jana", "doprava", Some("c1"), TimestampTz::now())
             .is_some());
     }
 
@@ -2471,7 +2471,7 @@ mod tests {
             project: "doprava".into(),
             workspace: None,
             items: vec![parking, item("ContextSpace", "spaces", "mobility", space)],
-            expires_at: Utc::now() + Duration::minutes(TTL_MINUTES),
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_mins(TTL_MINUTES),
         }
     }
 

@@ -391,61 +391,42 @@ pub struct Window {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeBound {
     /// This instant.
-    At(chrono::DateTime<chrono::Utc>),
-    /// This long before now.
-    Ago(chrono::Duration),
+    At(jiff::Timestamp),
+    /// This long before now; never negative.
+    Ago(jiff::SignedDuration),
 }
 
 impl TimeBound {
-    /// The bound at the jiff instant `t`; `None` outside chrono's range. ponytail: a shim
-    /// for callers already off chrono (joinedcontext-policy, T-7249); it goes when this
-    /// crate moves to jiff (T-7233's antares slices).
-    #[must_use]
-    pub fn instant(t: jiff::Timestamp) -> Option<Self> {
-        let (secs, nanos) = (t.as_second(), t.subsec_nanosecond());
-        let (secs, nanos) = if nanos < 0 {
-            (secs.checked_sub(1)?, nanos.checked_add(1_000_000_000)?)
-        } else {
-            (secs, nanos)
-        };
-        chrono::DateTime::from_timestamp(secs, u32::try_from(nanos).ok()?).map(Self::At)
-    }
-
-    /// The bound `d` before now; `None` for a negative `d` or one past chrono's range (the
-    /// same shim as [`Self::instant`]).
+    /// The bound `d` before now; `None` for a negative `d`.
     #[must_use]
     pub fn before_now(d: jiff::SignedDuration) -> Option<Self> {
-        let nanos = u32::try_from(d.subsec_nanos()).ok()?;
-        chrono::Duration::new(d.as_secs(), nanos)
-            .filter(|_| !d.is_negative())
-            .map(Self::Ago)
+        (!d.is_negative()).then_some(Self::Ago(d))
     }
 
-    fn at(self, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    fn at(self, now: jiff::Timestamp) -> jiff::Timestamp {
         match self {
             Self::At(t) => t,
-            Self::Ago(d) => now
-                .checked_sub_signed(d)
-                .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC),
+            Self::Ago(d) => now.checked_sub(d).unwrap_or(jiff::Timestamp::MIN),
         }
     }
 
     /// The bound at `now` in milliseconds, the precision 4.11 accepts: a
     /// start (`up`) rounds up and an end down, so rounding only narrows.
-    fn render(self, now: chrono::DateTime<chrono::Utc>, up: bool) -> String {
+    fn render(self, now: jiff::Timestamp, up: bool) -> String {
         #[cfg(test)]
         RENDERS.with(|n| n.set(n.get().saturating_add(1)));
         let t = self.at(now);
-        let sub = i64::from(t.timestamp_subsec_nanos() % 1_000_000);
+        // jiff's fraction is negative before 1970; chrono's never was
+        let sub = i64::from(t.subsec_nanosecond().rem_euclid(1_000_000));
         let t = if up && sub > 0 {
-            t.checked_add_signed(chrono::Duration::nanoseconds(
+            t.checked_add(jiff::SignedDuration::from_nanos(
                 1_000_000_i64.saturating_sub(sub),
             ))
             .unwrap_or(t)
         } else {
             t
         };
-        t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        jc_time::format_rfc3339(t, jc_time::SecondsFormat::Millis, true)
     }
 }
 
@@ -478,7 +459,7 @@ impl Resolved {
 impl Window {
     /// The bounds resolved against `now`.
     #[must_use]
-    pub fn resolve(&self, now: chrono::DateTime<chrono::Utc>) -> Resolved {
+    pub fn resolve(&self, now: jiff::Timestamp) -> Resolved {
         Resolved {
             from: self
                 .from
@@ -492,14 +473,14 @@ impl Window {
     /// Whether an instance observed at `observed_at` falls inside, the
     /// bounds resolved against `now`; 4.11's half-open comparison.
     #[must_use]
-    pub fn admits(&self, observed_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    pub fn admits(&self, observed_at: &str, now: jiff::Timestamp) -> bool {
         self.resolve(now).admits(observed_at)
     }
 
     /// Whether every instance observed at or after `start` is past this
     /// window's start, the bound resolved against `now`.
     #[must_use]
-    pub fn opens_by(&self, start: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    pub fn opens_by(&self, start: &str, now: jiff::Timestamp) -> bool {
         self.from.is_none_or(|b| {
             antares_model::dt_key(start) >= antares_model::dt_key(&b.render(now, true))
         })
@@ -985,7 +966,7 @@ impl Filter {
             },
             None => (None, None),
         };
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         for w in &self.temporal {
             if let Some(b) = w.from.map(|b| b.render(now, true)) {
                 from = Some(match from {
@@ -3409,8 +3390,8 @@ mod tests {
         // a relative start rounds up to the millisecond, an end down
         let slide = Filter {
             temporal: Box::new([Window {
-                from: Some(TimeBound::Ago(chrono::Duration::nanoseconds(1))),
-                to: Some(TimeBound::Ago(chrono::Duration::nanoseconds(1))),
+                from: Some(TimeBound::Ago(jiff::SignedDuration::from_nanos(1))),
+                to: Some(TimeBound::Ago(jiff::SignedDuration::from_nanos(1))),
             }]),
             ..Filter::default()
         };
@@ -3438,10 +3419,9 @@ mod tests {
     /// millisecond stays; a window is half-open on those renderings.
     #[test]
     fn a_bound_rounds_only_inward_and_a_window_is_half_open() {
-        let at = |ns: u32| {
-            TimeBound::At(chrono::DateTime::from_timestamp(1_767_225_600, ns).expect("an instant"))
-        };
-        let now = chrono::Utc::now();
+        let at =
+            |ns: i32| TimeBound::At(jiff::Timestamp::new(1_767_225_600, ns).expect("an instant"));
+        let now = jiff::Timestamp::now();
         for (ns, start, end) in [
             (0, "00.000", "00.000"),
             (500, "00.001", "00.000"),
@@ -3477,6 +3457,23 @@ mod tests {
             "the end is outside"
         );
         assert!(!w.admits("2026-01-01T00:00:00.003Z", now), "after the end");
+
+        // before 1970 the fraction still rounds inward (chrono's output, pinned)
+        let early = TimeBound::At(jiff::Timestamp::new(-1, 500).expect("an instant"));
+        assert_eq!(early.render(now, true), "1969-12-31T23:59:59.001Z");
+        assert_eq!(early.render(now, false), "1969-12-31T23:59:59.000Z");
+        // a start further back than jiff reaches clamps to its first instant, which
+        // every stamp sorts after, as chrono's MIN_UTC did
+        let all = TimeBound::Ago(jiff::SignedDuration::from_hours(24 * 366 * 13_000));
+        assert_eq!(all.render(now, true), "-009999-01-02T01:59:59.000Z");
+        assert!(
+            Window {
+                from: Some(all),
+                to: None
+            }
+            .admits("0001-01-01T00:00:00Z", now),
+            "the clamped start admits the earliest stamp"
+        );
     }
 
     /// T-3668: an evolution is judged as the Entity it now is, per

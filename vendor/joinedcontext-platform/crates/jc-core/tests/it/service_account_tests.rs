@@ -386,7 +386,6 @@ fn keys_belong_on_an_account_bound_to_no_workload() {
 /// and a window that ends before it starts is refused.
 #[test]
 fn a_grant_with_a_validity_window_is_in_force_only_inside_it() {
-    use chrono::{TimeZone, Utc};
     let timed = GOLDEN.replace(
         "operations: [createEntity, updateAttrs] }",
         "operations: [createEntity, updateAttrs], validity: { notAfter: \"2026-11-01T00:00:00Z\" } }",
@@ -394,9 +393,9 @@ fn a_grant_with_a_validity_window_is_in_force_only_inside_it() {
     let sa = ServiceAccount::from_yaml(&timed).expect("parses");
     sa.validate().expect("a grant with an end is valid");
     let grant = &sa.spec.roles[0];
-    let end = Utc.with_ymd_and_hms(2026, 11, 1, 0, 0, 0).unwrap();
+    let end: jiff::Timestamp = "2026-11-01T00:00:00Z".parse().expect("an instant");
     assert!(grant.in_force(end));
-    assert!(!grant.in_force(end + chrono::Duration::seconds(1)));
+    assert!(!grant.in_force(end + jiff::SignedDuration::from_secs(1)));
 
     let backwards = GOLDEN.replace(
         "operations: [createEntity, updateAttrs] }",

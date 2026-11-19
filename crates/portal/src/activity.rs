@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine as _;
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -91,7 +91,7 @@ fn severity_rank(severity: &str) -> Option<i32> {
 #[serde(rename_all = "camelCase")]
 pub struct ActivityEvent {
     #[schema(value_type = String, format = DateTime)]
-    pub time: DateTime<Utc>,
+    pub time: TimestampTz,
     pub project: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space: Option<String>,
@@ -175,7 +175,7 @@ pub struct ActivityFilter {
     pub kinds: Vec<String>,
     pub source: Option<String>,
     pub severity: Option<String>,
-    pub since: Option<DateTime<Utc>>,
+    pub since: Option<TimestampTz>,
     pub object: Option<String>,
     /// Only the calls and changes of one connector, by id (T-5973): `details.connector`.
     pub connector: Option<String>,
@@ -236,7 +236,7 @@ impl ActivityFilter {
 /// caller, because a page boundary is not a contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
-    pub time: DateTime<Utc>,
+    pub time: TimestampTz,
     pub id: i64,
 }
 
@@ -244,7 +244,7 @@ impl Cursor {
     pub fn encode(&self) -> String {
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
             "{}|{}",
-            self.time.timestamp_nanos_opt().unwrap_or(0),
+            i64::try_from(self.time.0.as_nanosecond()).unwrap_or(0),
             self.id
         ))
     }
@@ -256,7 +256,7 @@ impl Cursor {
         let text = String::from_utf8(raw).ok()?;
         let (nanos, id) = text.split_once('|')?;
         Some(Self {
-            time: DateTime::from_timestamp_nanos(nanos.parse().ok()?),
+            time: TimestampTz(jiff::Timestamp::from_nanosecond(nanos.parse::<i128>().ok()?).ok()?),
             id: id.parse().ok()?,
         })
     }
@@ -318,12 +318,13 @@ impl ActivityHub {
 
 /// sqlx is built with the `time` crate, the rest of the Portal speaks `chrono`; the drafts store
 /// converts the same way.
-pub(crate) fn odt_to_chrono(odt: time::OffsetDateTime) -> DateTime<Utc> {
-    DateTime::from_timestamp(odt.unix_timestamp(), odt.nanosecond()).unwrap_or_else(Utc::now)
+pub(crate) fn odt_to_ts(odt: time::OffsetDateTime) -> TimestampTz {
+    jiff::Timestamp::from_nanosecond(odt.unix_timestamp_nanos())
+        .map_or_else(|_| TimestampTz::now(), TimestampTz)
 }
 
-pub(crate) fn chrono_to_odt(dt: DateTime<Utc>) -> time::OffsetDateTime {
-    time::OffsetDateTime::from_unix_timestamp(dt.timestamp())
+pub(crate) fn ts_to_odt(dt: TimestampTz) -> time::OffsetDateTime {
+    time::OffsetDateTime::from_unix_timestamp(dt.as_second())
         .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
 }
 
@@ -351,7 +352,7 @@ pub struct ActivityStore {
     inner: Arc<Inner>,
     hub: Option<ActivityHub>,
     /// When this process last started a trim; `None` until its first.
-    trimmed_at: Arc<std::sync::Mutex<Option<DateTime<Utc>>>>,
+    trimmed_at: Arc<std::sync::Mutex<Option<TimestampTz>>>,
 }
 
 impl ActivityStore {
@@ -410,7 +411,7 @@ impl ActivityStore {
                         "INSERT INTO activity (time, project, space, kind, source, summary, severity, correlation_id, details) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                     )
-                    .bind(chrono_to_odt(event.time))
+                    .bind(ts_to_odt(event.time))
                     .bind(&event.project)
                     .bind(&event.space)
                     .bind(&event.kind)
@@ -570,7 +571,7 @@ impl ActivityStore {
             query = query.bind(severity_rank(severity).unwrap_or(0));
         }
         if let Some(since) = filter.since {
-            query = query.bind(chrono_to_odt(since));
+            query = query.bind(ts_to_odt(since));
         }
         if let Some(object) = &filter.object {
             query = query.bind(object);
@@ -579,7 +580,7 @@ impl ActivityStore {
             query = query.bind(connector);
         }
         if let Some(cursor) = &filter.cursor {
-            query = query.bind(chrono_to_odt(cursor.time)).bind(cursor.id);
+            query = query.bind(ts_to_odt(cursor.time)).bind(cursor.id);
         }
         let rows = query
             .bind(limit + 1)
@@ -592,7 +593,7 @@ impl ActivityStore {
                 (
                     row.get::<i64, _>("id"),
                     ActivityEvent {
-                        time: odt_to_chrono(row.get::<time::OffsetDateTime, _>("time")),
+                        time: odt_to_ts(row.get::<time::OffsetDateTime, _>("time")),
                         project: row.get("project"),
                         space: row.get("space"),
                         kind: row.get("kind"),
@@ -612,8 +613,8 @@ impl ActivityStore {
 
     /// Drops what is past the retention window (OPS-49). The Portal trims its own table on a
     /// timer ([`Self::trim_if_due`], from the leader's sync); there is no CronJob.
-    pub async fn trim(&self, now: DateTime<Utc>) -> Result<Trimmed, ActivityError> {
-        let floor = now - Duration::days(RETENTION_DAYS);
+    pub async fn trim(&self, now: TimestampTz) -> Result<Trimmed, ActivityError> {
+        let floor = now - jiff::SignedDuration::from_hours(24 * RETENTION_DAYS);
         match &*self.inner {
             Inner::Memory(rows) => {
                 let mut w = rows.write().await;
@@ -642,7 +643,7 @@ impl ActivityStore {
                             "DELETE FROM activity WHERE ctid IN \
                              (SELECT ctid FROM activity WHERE project = $3 AND time < $1 LIMIT $2)",
                         )
-                        .bind(chrono_to_odt(floor))
+                        .bind(ts_to_odt(floor))
                         .bind(TRIM_BATCH)
                         .bind(&project)
                         .execute(&mut *tx)
@@ -665,9 +666,9 @@ impl ActivityStore {
     }
 
     /// Claims the hourly trim: true at most once per [`TRIM_EVERY_MINUTES`] for this store.
-    fn trim_due(&self, now: DateTime<Utc>) -> bool {
+    fn trim_due(&self, now: TimestampTz) -> bool {
         let mut last = self.trimmed_at.lock().unwrap_or_else(|p| p.into_inner());
-        if last.is_some_and(|at| now - at < Duration::minutes(TRIM_EVERY_MINUTES)) {
+        if last.is_some_and(|at| now - at < jiff::SignedDuration::from_mins(TRIM_EVERY_MINUTES)) {
             return false;
         }
         *last = Some(now);
@@ -676,7 +677,7 @@ impl ActivityStore {
 
     /// The trim when an hour has passed since this process's last one, else `None`. A failed
     /// trim is retried at the next due hour, not at the next sync.
-    pub async fn trim_if_due(&self, now: DateTime<Utc>) -> Option<Result<Trimmed, ActivityError>> {
+    pub async fn trim_if_due(&self, now: TimestampTz) -> Option<Result<Trimmed, ActivityError>> {
         if !self.trim_due(now) {
             return None;
         }
@@ -691,7 +692,7 @@ mod tests {
 
     fn event(kind: &str, severity: &str, minutes: i64) -> ActivityEvent {
         ActivityEvent {
-            time: DateTime::from_timestamp(1_789_000_000 + minutes * 60, 0).expect("a time"),
+            time: TimestampTz::from_second(1_789_000_000 + minutes * 60).expect("a time"),
             project: "helsinki".into(),
             space: Some("air-quality".into()),
             kind: kind.into(),
@@ -850,9 +851,9 @@ mod tests {
 
     #[tokio::test]
     async fn what_is_past_the_retention_window_is_trimmed() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut old = event("config.applied", "info", 0);
-        old.time = now - Duration::days(RETENTION_DAYS + 1);
+        old.time = now - jiff::SignedDuration::from_hours(24 * (RETENTION_DAYS + 1));
         let mut fresh = event("config.applied", "info", 0);
         fresh.time = now;
         let store = store_with(vec![old, fresh]).await;
@@ -873,17 +874,17 @@ mod tests {
 
     #[tokio::test]
     async fn the_trim_runs_once_an_hour() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut old = event("config.applied", "info", 0);
-        old.time = now - Duration::days(RETENTION_DAYS + 1);
+        old.time = now - jiff::SignedDuration::from_hours(24 * (RETENTION_DAYS + 1));
         let store = store_with(vec![old.clone()]).await;
 
         let first = store.trim_if_due(now).await.expect("due").expect("trimmed");
         assert_eq!(first.rows, 1);
         store.append(&[old]).await.expect("appended");
-        let soon = now + Duration::minutes(TRIM_EVERY_MINUTES - 1);
+        let soon = now + jiff::SignedDuration::from_mins(TRIM_EVERY_MINUTES - 1);
         assert!(store.trim_if_due(soon).await.is_none());
-        let later = now + Duration::minutes(TRIM_EVERY_MINUTES);
+        let later = now + jiff::SignedDuration::from_mins(TRIM_EVERY_MINUTES);
         let second = store
             .trim_if_due(later)
             .await
@@ -926,7 +927,7 @@ mod tests {
     #[test]
     fn a_cursor_survives_a_round_trip_and_a_broken_one_is_not_a_cursor() {
         let cursor = Cursor {
-            time: DateTime::from_timestamp(1_789_000_000, 0).expect("a time"),
+            time: jc_time::TimestampTz::from_second(1_789_000_000).expect("a time"),
             id: 42,
         };
         assert_eq!(Cursor::decode(&cursor.encode()), Some(cursor));

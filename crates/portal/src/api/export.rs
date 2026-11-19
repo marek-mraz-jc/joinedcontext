@@ -347,7 +347,7 @@ fn bundle_index(
     description: Option<&Description>,
 ) -> Result<String, ApiError> {
     let spec = jc_core::kinds::BundleSpec {
-        exported_at: chrono::Utc::now(),
+        exported_at: jc_time::TimestampTz::now(),
         exported_by: header.exporter.to_owned(),
         source_instance: None,
         source_revision: header.revision.to_owned(),

@@ -139,7 +139,7 @@ async fn only_the_gateways_client_posts_and_a_bad_post_is_refused_whole() {
         post(&state, Some(&gateway), good).await,
         StatusCode::NO_CONTENT
     );
-    let today = chrono::Utc::now().date_naive();
+    let today = jc_time::TimestampTz::now().utc().date();
     let rows = state
         .endpoint_usage
         .read("mesto", today, today)
@@ -286,8 +286,8 @@ async fn the_export_holds_names_and_numbers_and_never_who_called() {
         .await,
         StatusCode::NO_CONTENT
     );
-    let today = chrono::Utc::now().date_naive();
-    let month = today.format("%Y-%m").to_string();
+    let today = jc_time::TimestampTz::now().utc().date();
+    let month = today.strftime("%Y-%m").to_string();
     let csv = get(
         &state,
         "jana",
@@ -329,8 +329,8 @@ async fn the_postgres_rows_add_up_and_age_out() {
         common::keyed_project(&state, &pool, project, "t5118org").await;
     }
     let store: &UsageStore = &state.endpoint_usage;
-    let today: chrono::NaiveDate = "2026-10-22".parse().expect("a day");
-    let old = today - chrono::Duration::days(KEEP_DAYS + 1);
+    let today: jiff::civil::Date = "2026-10-22".parse().expect("a day");
+    let old = today - jiff::SignedDuration::from_hours(24 * (KEEP_DAYS + 1));
     let key = |project: &str, day| {
         (
             project.to_owned(),

@@ -387,11 +387,9 @@ fn surface_of(rest: &str) -> Option<jc_core::kinds::Representation> {
 fn announce(
     deprecation: &jc_core::kinds::endpoint_deprecation::Deprecation,
 ) -> Vec<(HeaderName, HeaderValue)> {
-    let since = deprecation.since.and_time(chrono::NaiveTime::MIN).and_utc();
-    let sunset = deprecation.sunset.format("%a, %d %b %Y 00:00:00 GMT");
     let mut headers = vec![
-        (DEPRECATION, format!("@{}", since.timestamp())),
-        (SUNSET, sunset.to_string()),
+        (DEPRECATION, deprecation_header(deprecation.since)),
+        (SUNSET, sunset_header(deprecation.sunset)),
     ];
     if let Some(link) = &deprecation.link {
         headers.push((
@@ -403,6 +401,25 @@ fn announce(
         .into_iter()
         .filter_map(|(name, value)| Some((name, HeaderValue::from_str(&value).ok()?)))
         .collect()
+}
+
+/// `@<unix seconds>` of midnight UTC on `day` (the `Deprecation` header, RFC 9745).
+fn deprecation_header(day: jc_time::Date) -> String {
+    // A day jiff cannot turn into an instant (past 9999-12-30) is the end of its range.
+    let since = jc_time::TimestampTz::from_date(day.0)
+        .unwrap_or(jc_time::TimestampTz(jiff::Timestamp::MAX));
+    format!("@{}", since.as_second())
+}
+
+/// The HTTP-date of midnight on `day` (the `Sunset` header, RFC 8594), as chrono formatted it.
+fn sunset_header(day: jc_time::Date) -> String {
+    // The year as chrono's `%Y` wrote it: four digits, five with the sign before year 0 (jiff
+    // pads `-1` to `-001`).
+    let year = match day.0.year() {
+        y if y < 0 => format!("{y:05}"),
+        y => format!("{y:04}"),
+    };
+    format!("{} {year} 00:00:00 GMT", day.0.strftime("%a, %d %b"))
 }
 
 /// The endpoint whose data this path serves, or `None` where the path serves something else.
@@ -475,6 +492,34 @@ fn keep_out_of_shared_caches(headers: &mut axum::http::HeaderMap) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Deprecation` and `Sunset` name midnight UTC of their day as the chrono build wrote them
+    /// (T-7253): a leap day, the DST Sundays of Bratislava and Helsinki, days before 1970 and
+    /// before year 1000. Strings pasted from the chrono build.
+    #[test]
+    fn the_deprecation_headers_keep_the_chrono_wire_format() {
+        let golden = [
+            ("2026-03-29", "@1774742400", "Sun, 29 Mar 2026 00:00:00 GMT"),
+            ("2026-10-25", "@1792886400", "Sun, 25 Oct 2026 00:00:00 GMT"),
+            ("1969-12-31", "@-86400", "Wed, 31 Dec 1969 00:00:00 GMT"),
+            (
+                "0999-01-02",
+                "@-30641673600",
+                "Wed, 02 Jan 0999 00:00:00 GMT",
+            ),
+            ("2024-02-29", "@1709164800", "Thu, 29 Feb 2024 00:00:00 GMT"),
+            (
+                "-0001-01-01",
+                "@-62198755200",
+                "Fri, 01 Jan -0001 00:00:00 GMT",
+            ),
+        ];
+        for (day, deprecation, sunset) in golden {
+            let day: jc_time::Date = day.parse().expect("a day");
+            assert_eq!(deprecation_header(day), deprecation, "{day}");
+            assert_eq!(sunset_header(day), sunset, "{day}");
+        }
+    }
 
     /// A shared answer carries no caller's quota (F-R2PLT2-018).
     #[test]

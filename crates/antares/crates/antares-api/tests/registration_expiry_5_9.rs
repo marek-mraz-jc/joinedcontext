@@ -65,14 +65,14 @@ fn doc_expiring_in(ms: i64) -> Value {
     // validates `expiresAt` against the clock at the moment it runs, so on a
     // loaded machine a fixed few hundred milliseconds can already be past by
     // then and 5.9.2.4 rejects the document the test needs.
-    let at = chrono::Utc::now()
-        + chrono::Duration::milliseconds(ms * antares_api::state::slow_factor() as i64);
+    let at = jiff::Timestamp::now()
+        + jiff::SignedDuration::from_millis(ms * antares_api::state::slow_factor() as i64);
     json!({
         "id": ID,
         "type": "ContextSourceRegistration",
         "information": [{"entities": [{"type": "Vehicle"}]}],
         "endpoint": "http://127.0.0.1:9",
-        "expiresAt": at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "expiresAt": antares_api::state::stamp(at),
     })
 }
 

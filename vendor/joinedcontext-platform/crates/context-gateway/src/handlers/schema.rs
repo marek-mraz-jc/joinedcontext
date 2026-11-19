@@ -11,8 +11,8 @@
 use crate::auth::subject::Subject;
 use crate::pdp::evaluator::{effective, granted_attrs, granted_types, narrow, narrow_to_identity};
 use crate::resolver::{Endpoint, Model};
-use chrono::{DateTime, Utc};
 use jc_core::system_members::is_entity_system_member;
+use jc_time::TimestampTz;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -114,7 +114,7 @@ impl Visible {
 }
 
 /// The caller's visible surface, from the same policy set the data paths enforce.
-pub fn visible(subject: &Subject, endpoint: &Endpoint, now: DateTime<Utc>) -> Visible {
+pub fn visible(subject: &Subject, endpoint: &Endpoint, now: TimestampTz) -> Visible {
     let (prohibitions, grants): (Vec<_>, Vec<_>) = effective(subject, &endpoint.policies, now)
         .into_iter()
         .partition(|policy| policy.effect.is_prohibition());
@@ -417,10 +417,8 @@ mod visible_tests {
         spec
     }
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-09-18T00:00:00Z")
-            .expect("a fixed instant")
-            .with_timezone(&Utc)
+    fn now() -> TimestampTz {
+        "2026-09-18T00:00:00Z".parse().expect("a fixed instant")
     }
 
     /// EP-47: a caller none of the Endpoint's permissions reaches is described no class and no

@@ -84,8 +84,8 @@ fn as_run(state: &AppState, build: &Record) -> WorkflowRun {
         "succeeded" => ("completed", Some("success")),
         _ => ("completed", Some("failure")),
     };
-    let at = |time: Option<chrono::DateTime<chrono::Utc>>| {
-        time.map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+    let at = |time: Option<jc_time::TimestampTz>| {
+        time.map(|t| t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true))
     };
     WorkflowRun {
         status: status.to_owned(),
@@ -160,9 +160,12 @@ fn configuration_url(state: &AppState, user: &CurrentUser, project: &str) -> Opt
     let organization = crate::permissions::for_request(state, identity, ORG_NAMESPACE);
     let reads = organization.administers_organization()
         || if state.mirror.repository_of(project).is_some() {
-            let readers =
-                crate::permissions::project_members(&state.mirror, project, chrono::Utc::now())
-                    .readers;
+            let readers = crate::permissions::project_members(
+                &state.mirror,
+                project,
+                jc_time::TimestampTz::now(),
+            )
+            .readers;
             [Some(identity.username.as_str()), identity.email.as_deref()]
                 .into_iter()
                 .flatten()
@@ -395,7 +398,7 @@ async fn successful_builds(
             number: u64::try_from(build.id).ok(),
             completed_at: build
                 .finished_at
-                .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                .map(|t| t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)),
             commit: build.commit,
         });
     }
@@ -564,7 +567,10 @@ pub async fn restore(
         )));
     }
     let short = &commit[..commit.len().min(7)];
-    let branch = format!("restore/{short}-{}", chrono::Utc::now().timestamp());
+    let branch = format!(
+        "restore/{short}-{}",
+        jc_time::TimestampTz::now().as_second()
+    );
     repo.create_branch(&branch, &default)
         .await
         .map_err(refused)?;

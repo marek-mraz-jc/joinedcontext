@@ -8,8 +8,8 @@
 /// `addons/joinedcontext-policy/src/document.rs` `bound`): an instant, or a duration before now.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Bound {
-    At(chrono::DateTime<chrono::Utc>),
-    Ago(chrono::Duration),
+    At(jc_time::TimestampTz),
+    Ago(jiff::SignedDuration),
 }
 
 /// The window `[from, to)` of a `temporalQ`, each end with the text it was written as.
@@ -37,8 +37,8 @@ fn window(raw: &str) -> Result<Window<'_>, String> {
 }
 
 fn bound(raw: &str) -> Result<Bound, String> {
-    if let Ok(at) = chrono::DateTime::parse_from_rfc3339(raw) {
-        return Ok(Bound::At(at.with_timezone(&chrono::Utc)));
+    if let Some(at) = jc_time::parse_rfc3339(raw) {
+        return Ok(Bound::At(jc_time::TimestampTz(at)));
     }
     ago(raw)
         .map(Bound::Ago)
@@ -47,14 +47,14 @@ fn bound(raw: &str) -> Result<Bound, String> {
 
 /// `P-1D`, `-P1D`, `PT-2H30M`: how long before now, in weeks, days, hours, minutes and seconds
 /// (months and years have no fixed length, the engine refuses them too).
-fn ago(raw: &str) -> Option<chrono::Duration> {
+fn ago(raw: &str) -> Option<jiff::SignedDuration> {
     let (mut negative, rest) = match raw.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, raw),
     };
     let rest = rest.strip_prefix('P')?;
     let (date, time) = rest.split_once('T').unwrap_or((rest, ""));
-    let mut total = chrono::Duration::zero();
+    let mut total = jiff::SignedDuration::ZERO;
     let mut digits = String::new();
     let mut units = 0;
     for (part, allowed) in [(date, "WD"), (time, "HMS")] {
@@ -66,19 +66,26 @@ fn ago(raw: &str) -> Option<chrono::Duration> {
                     let n: i64 = digits.parse().ok()?;
                     digits.clear();
                     units += 1;
-                    total = total.checked_add(&match u {
-                        'W' => chrono::Duration::try_weeks(n)?,
-                        'D' => chrono::Duration::try_days(n)?,
-                        'H' => chrono::Duration::try_hours(n)?,
-                        'M' => chrono::Duration::try_minutes(n)?,
-                        _ => chrono::Duration::try_seconds(n)?,
-                    })?;
+                    let unit: i64 = match u {
+                        'W' => 604_800,
+                        'D' => 86_400,
+                        'H' => 3_600,
+                        'M' => 60,
+                        _ => 1,
+                    };
+                    total =
+                        total.checked_add(jiff::SignedDuration::from_secs(n.checked_mul(unit)?))?;
+                    // the range chrono's TimeDelta held (milliseconds in an i64), as the
+                    // engine's own reading still refuses past it
+                    if total.as_secs() > i64::MAX / 1000 {
+                        return None;
+                    }
                 }
                 _ => return None,
             }
         }
     }
-    (negative && units > 0 && digits.is_empty() && total > chrono::Duration::zero())
+    (negative && units > 0 && digits.is_empty() && total > jiff::SignedDuration::ZERO)
         .then_some(total)
 }
 

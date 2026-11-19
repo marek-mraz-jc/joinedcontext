@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::RwLock;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::Serialize;
 use serde_json::{json, Value};
 use utoipa::ToSchema;
@@ -112,7 +112,7 @@ pub fn with_taps(stream: &mut Value, url: &str, stream_id: &str) {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Sample {
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     #[schema(value_type = Object)]
     pub record: Value,
 }
@@ -147,7 +147,7 @@ impl SampleStore {
             kept.pop_front();
         }
         kept.push_back(Sample {
-            at: Utc::now(),
+            at: TimestampTz::now(),
             record,
         });
     }
@@ -157,7 +157,7 @@ impl SampleStore {
         &self,
         project: &str,
         pipeline: &str,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> BTreeMap<String, Vec<Sample>> {
         let Ok(map) = self.inner.read() else {
             return BTreeMap::new();
@@ -171,7 +171,7 @@ impl SampleStore {
                 let fresh: Vec<Sample> = kept
                     .iter()
                     .rev()
-                    .filter(|sample| (now - sample.at).num_seconds() < MAX_AGE_SECS)
+                    .filter(|sample| (now - sample.at).as_secs() < MAX_AGE_SECS)
                     .cloned()
                     .collect();
                 (node.clone(), fresh)
@@ -296,7 +296,7 @@ mod tests {
             "input",
             json!({ "blob": "x".repeat(MAX_RECORD_BYTES) }),
         );
-        let read = store.read("hel", "air", Utc::now());
+        let read = store.read("hel", "air", TimestampTz::now());
         assert_eq!(read["step_0"].len(), KEPT);
         assert_eq!(
             read["step_0"][0].record,
@@ -304,9 +304,9 @@ mod tests {
             "newest first"
         );
         assert!(read["input"][0].record["tooLarge"].as_u64().unwrap() > MAX_RECORD_BYTES as u64);
-        assert!(store.read("hel", "other", Utc::now()).is_empty());
-        assert!(store.read("esp", "air", Utc::now()).is_empty());
-        let later = Utc::now() + chrono::Duration::seconds(MAX_AGE_SECS + 1);
+        assert!(store.read("hel", "other", TimestampTz::now()).is_empty());
+        assert!(store.read("esp", "air", TimestampTz::now()).is_empty());
+        let later = TimestampTz::now() + jiff::SignedDuration::from_secs(MAX_AGE_SECS + 1);
         assert!(store.read("hel", "air", later).is_empty(), "samples expire");
     }
 

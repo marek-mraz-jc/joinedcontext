@@ -5,7 +5,7 @@
 //! deterministic digest of the input it judged. A draft's proposal is gated on having a fresh
 //! green verdict matching its manifest (PF-57).
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -44,7 +44,7 @@ pub struct Verdict {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<Value>,
     #[schema(value_type = String, format = DateTime)]
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: TimestampTz,
     pub input_digest: String,
     /// The open changes whose resources this manifest names (MF-48): it resolves once they are
     /// approved, and its own change cannot merge before them. Empty for every other verdict.
@@ -91,7 +91,7 @@ impl Verdict {
             ok,
             findings,
             trace,
-            checked_at: Utc::now(),
+            checked_at: TimestampTz::now(),
             input_digest: digest_of(input),
             waits_on: Vec::new(),
             records: None,

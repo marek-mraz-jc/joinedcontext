@@ -7,8 +7,8 @@ use axum::body::Body;
 use axum::http::{header, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use axum_extra::extract::cookie::PrivateCookieJar;
-use chrono::Utc;
 use http_body_util::BodyExt;
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -82,7 +82,7 @@ fn cookie(config: &Config, username: &str) -> String {
 
 fn event(kind: &str, severity: &str, object: &str) -> ActivityEvent {
     ActivityEvent {
-        time: Utc::now(),
+        time: TimestampTz::now(),
         project: PROJECT.into(),
         space: Some("air-quality".into()),
         kind: kind.into(),
@@ -318,19 +318,19 @@ async fn one_trim_tick_drops_what_is_past_retention_and_the_next_within_the_hour
     let Some((pool, project)) = activity_db().await else {
         return;
     };
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let store = ActivityStore::new(
         Some(pool.clone()),
         common::keyed_mirror(&pool, &[&project]).await,
     );
-    let at = |age: chrono::Duration| {
+    let at = |age: jiff::SignedDuration| {
         let mut e = event("config.applied", "info", "endpoints/public-air");
         e.project = project.clone();
         e.time = now - age;
         e
     };
-    let old = chrono::Duration::days(RETENTION_DAYS + 1);
-    let new = chrono::Duration::days(1);
+    let old = jiff::SignedDuration::from_hours(24 * (RETENTION_DAYS + 1));
+    let new = jiff::SignedDuration::from_hours(24);
     store
         .append(&[at(old), at(old), at(old), at(new), at(new)])
         .await
@@ -341,7 +341,7 @@ async fn one_trim_tick_drops_what_is_past_retention_and_the_next_within_the_hour
     assert_eq!(rows_of(&pool, &project).await, 2);
 
     store.append(&[at(old)]).await.expect("appended");
-    let soon = now + chrono::Duration::minutes(TRIM_EVERY_MINUTES - 1);
+    let soon = now + jiff::SignedDuration::from_mins(TRIM_EVERY_MINUTES - 1);
     assert!(store.trim_if_due(soon).await.is_none());
     assert_eq!(rows_of(&pool, &project).await, 3);
 }
@@ -374,7 +374,7 @@ async fn a_backlog_is_trimmed_in_bounded_batches() {
     tx.commit().await.expect("seeded");
 
     let done = ActivityStore::new(Some(pool.clone()), mirror)
-        .trim(Utc::now())
+        .trim(TimestampTz::now())
         .await
         .expect("trimmed");
     assert_eq!(rows_of(&pool, &project).await, 0);
@@ -389,19 +389,18 @@ async fn a_backlog_is_trimmed_in_bounded_batches() {
 
 #[tokio::test]
 async fn a_postgres_page_keeps_one_connectors_events_and_pages_on_by_cursor() {
-    use chrono::SubsecRound;
     use joinedcontext_portal::activity::{ActivityFilter, ActivityStore, Cursor};
     let Some((pool, project)) = activity_db().await else {
         return;
     };
     // The store keeps whole seconds (`chrono_to_odt`); the id orders events of one second.
-    let now = Utc::now().trunc_subsecs(0);
+    let now = TimestampTz::from_second(TimestampTz::now().as_second()).expect("an instant");
     let mirror = common::keyed_mirror(&pool, &[&project]).await;
     let store = ActivityStore::new(Some(pool), mirror);
     let call = |minutes: i64, connector: &str| {
         let mut e = event("mcp.tool", "info", "endpoints/public-air");
         e.project = project.clone();
-        e.time = now - chrono::Duration::minutes(minutes);
+        e.time = now - jiff::SignedDuration::from_mins(minutes);
         e.details = json!({ "connector": connector });
         e
     };

@@ -11,9 +11,9 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
 use base64::Engine;
-use chrono::{DateTime, Utc};
 use jc_core::kinds::mqtt_broker::MqttMode;
 use jc_core::kinds::MqttBrokerSpec;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::{IntoParams, ToSchema};
@@ -45,7 +45,7 @@ pub struct CapturedQuery {
 pub struct CapturedMessage {
     pub topic: String,
     #[schema(value_type = String, format = DateTime)]
-    pub received_at: DateTime<Utc>,
+    pub received_at: TimestampTz,
     /// The device, where a publish filter of the broker names it as `${clientid}`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
@@ -167,7 +167,13 @@ pub(crate) async fn get_captured(
     let (messages, truncated) = if capture.is_some() {
         state
             .mqtt_capture
-            .read(&project, &name, topic.as_deref(), limit, Utc::now())
+            .read(
+                &project,
+                &name,
+                topic.as_deref(),
+                limit,
+                jc_time::TimestampTz::now(),
+            )
             .await
             .map_err(unavailable)?
     } else {
@@ -213,7 +219,7 @@ pub(crate) async fn delete_captured(
         .map_err(unavailable)?;
     let actor = &user.0.identity.username;
     let event = crate::activity::ActivityEvent {
-        time: Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.clone(),
         space: None,
         kind: "mqtt.capture.deleted".to_owned(),
@@ -245,8 +251,8 @@ mod tests {
         let message = |payload: &[u8]| Message {
             topic: "t".to_owned(),
             client_id: None,
-            received_at: DateTime::from_timestamp(0, 0).unwrap_or_default(),
-            expires_at: DateTime::from_timestamp(60, 0).unwrap_or_default(),
+            received_at: jc_time::TimestampTz::from_second(0).unwrap_or_default(),
+            expires_at: jc_time::TimestampTz::from_second(60).unwrap_or_default(),
             payload: payload.to_vec(),
         };
         let text = shown(message(br#"{"seq": 1}"#));

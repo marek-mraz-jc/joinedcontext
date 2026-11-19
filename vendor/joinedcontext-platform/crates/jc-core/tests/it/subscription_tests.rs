@@ -5,7 +5,6 @@
 //! the address instead of named as a `secretRef`, and a subscription that cannot fire at all —
 //! one that watches nothing, or one whose expiry is already past.
 
-use chrono::{TimeZone, Utc};
 use jc_core::envelope::ResourceEnvelope;
 use jc_core::kinds::SubscriptionSpec;
 use jc_core::registry;
@@ -15,9 +14,9 @@ type Subscription = ResourceEnvelope<SubscriptionSpec>;
 const GOLDEN: &str = include_str!("../golden/027-Subscription-06-configuration-as-code.yaml");
 
 /// A moment before the golden manifest's `expiresAt`, so the expiry check has something to
-/// compare against without a clock (jc-core takes chrono without `clock` on purpose).
-fn before_expiry() -> chrono::DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 9, 17, 12, 0, 0).unwrap()
+/// compare against without a clock.
+fn before_expiry() -> jiff::Timestamp {
+    "2026-09-17T12:00:00Z".parse().expect("an instant")
 }
 
 #[test]
@@ -108,7 +107,7 @@ fn a_credential_header_is_refused_even_when_the_url_is_clean() {
 #[test]
 fn an_expiry_already_past_is_refused() {
     let subscription = Subscription::from_yaml(GOLDEN).expect("parses");
-    let after = Utc.with_ymd_and_hms(2027, 6, 1, 0, 0, 0).unwrap();
+    let after: jiff::Timestamp = "2027-06-01T00:00:00Z".parse().expect("an instant");
     let error = subscription
         .spec
         .validate_at(after)

@@ -7,13 +7,13 @@
 //! This is what the access surface (`/access`, EP-55) is built from, so a policy that leaks in here
 //! is a policy a caller is told about without holding it.
 
-use chrono::{DateTime, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::effective;
 use jc_core::kinds::{PolicySpec, Principal, PrincipalKind};
+use jc_time::TimestampTz;
 use std::collections::BTreeSet;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z".parse().expect("a fixed instant")
 }
 

@@ -1870,7 +1870,8 @@ impl Harness {
             .unwrap_or_else(|p| p.into_inner())
             .clone()
             .unwrap_or_default();
-        let in7days = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+        let in7days =
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
         let kept = self.kept.lock().unwrap_or_else(|p| p.into_inner()).clone();
         let fill = |text: &str| {
             let mut text = text
@@ -2368,7 +2369,8 @@ async fn a_broken_expect_and_an_allowed_deny_both_fail() {
 async fn the_connector_door_refuses_in_order_and_audits_without_secrets() {
     let harness = Harness::start(1).await;
     let own = project_of(1);
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let ask = |name: &str| {
         json!({ "name": name, "segments": ["data-read"],
                 "scope": [{ "project": own, "access": "read" }], "expiresAt": expires })
@@ -2812,7 +2814,8 @@ async fn the_connector_tree_lists_only_what_the_person_reads_and_create_asks_aga
         json!({ "id": "mcp-local", "isBoundary": false })
     );
 
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let ask = |endpoint: &str| {
         json!({ "name": "tree", "segments": ["data-read"], "expiresAt": expires,
                 "scope": [{ "project": own, "endpoint": endpoint, "access": "read" }] })
@@ -2881,7 +2884,8 @@ async fn the_connector_tree_lists_only_what_the_person_reads_and_create_asks_aga
         )
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
-    let later = (chrono::Utc::now() + chrono::Duration::days(20)).to_rfc3339();
+    let later =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 20)).to_rfc3339();
     let (status, edited) = harness
         .send_edge(
             "PATCH",
@@ -3190,7 +3194,7 @@ async fn the_connector_door_holds_its_budget_under_load() {
             ));
         }
     }
-    let expires_at = chrono::Utc::now() + chrono::Duration::days(1);
+    let expires_at = jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24);
     let mut connectors = Vec::new();
     for i in 0..PEOPLE {
         let owner = format!("sub-load-{i:02}");
@@ -3337,7 +3341,8 @@ async fn an_apply_through_a_connector_signs_its_commit_and_the_activity_filters_
                 "projects": [own], "segments": ["context"], "writes": true,
                 "maxExpiry": "P90D", "aboveCeiling": "queue" }),
     ));
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let portal = harness.token_for("steward", AUDIENCE, AUDIENCE);
     let ask = json!({ "name": "doprava-in-claude", "segments": ["context"], "writes": true,
                       "scope": [{ "project": own, "access": "write" }], "expiresAt": expires });
@@ -3451,7 +3456,8 @@ async fn an_apply_through_a_connector_signs_its_commit_and_the_activity_filters_
 async fn a_flood_passes_and_the_call_past_the_running_ones_answers_429() {
     let harness = Harness::start(1).await;
     let own = project_of(1);
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let portal = harness.token_for("viewer", AUDIENCE, AUDIENCE);
     let mut ids = Vec::new();
     for name in ["a", "b"] {
@@ -3687,7 +3693,8 @@ async fn the_overview_flags_a_refused_connector_and_an_administrator_alone_revok
     let harness = Harness::start(1).await;
     let own = project_of(1);
     let portal = |persona: &str| harness.token_for(persona, AUDIENCE, AUDIENCE);
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let (status, made) = harness
         .send_edge(
             "POST",
@@ -3904,7 +3911,8 @@ async fn chart_view_csp_connects_nowhere() {
     let token = harness.token("viewer").expect("a token");
     assert!(!text.contains(&token));
     // The connector door reads the same page under the same CSP; it lists no resources.
-    let expires = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+    let expires =
+        (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 7)).to_rfc3339();
     let (status, created) = harness
         .send_edge(
             "POST",

@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{odt_to_ts, ts_to_odt};
 
 /// The longest a workspace lives: two weeks, like a sandbox (CC-67, PF-19).
 pub const MAX_TTL_HOURS: i64 = 14 * 24;
@@ -135,9 +135,9 @@ pub struct Workspace {
     #[serde(skip)]
     pub preview: Option<PreviewAccess>,
     #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     #[schema(value_type = String, format = DateTime)]
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
 }
 
 /// What a preview's start fixes: the Keycloak user id of the person who started it, its first
@@ -164,7 +164,7 @@ impl Workspace {
     }
 
     /// Whether the workspace has outlived its TTL at `now` (CC-81).
-    pub fn expired(&self, now: DateTime<Utc>) -> bool {
+    pub fn expired(&self, now: TimestampTz) -> bool {
         self.expires_at <= now
     }
 }
@@ -327,8 +327,8 @@ fn row_to_workspace(row: sqlx::postgres::PgRow) -> Result<Workspace, WorkspaceEr
             (Some(salt), Some(author)) => Some(PreviewAccess { salt, author }),
             _ => None,
         },
-        created_at: odt_to_chrono(row.get("created_at")),
-        expires_at: odt_to_chrono(row.get("expires_at")),
+        created_at: odt_to_ts(row.get("created_at")),
+        expires_at: odt_to_ts(row.get("expires_at")),
     })
 }
 
@@ -361,7 +361,7 @@ impl WorkspaceStore {
             )));
         }
         opening.scope.validate()?;
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let workspace = Workspace {
             name: opening.name.to_owned(),
             title: opening.title.map(str::to_owned),
@@ -372,7 +372,7 @@ impl WorkspaceStore {
             preview_state: PreviewState::None,
             preview: None,
             created_at: now,
-            expires_at: now + Duration::hours(opening.ttl_hours),
+            expires_at: now + jiff::SignedDuration::from_hours(opening.ttl_hours),
         };
         match &*self.inner {
             Inner::Memory(map) => {
@@ -399,8 +399,8 @@ impl WorkspaceStore {
                 .bind(&workspace.owner)
                 .bind(&workspace.base_revision)
                 .bind(scope)
-                .bind(chrono_to_odt(workspace.created_at))
-                .bind(chrono_to_odt(workspace.expires_at))
+                .bind(ts_to_odt(workspace.created_at))
+                .bind(ts_to_odt(workspace.expires_at))
                 .bind(&workspace.title)
                 .fetch_optional(&mut *tx)
                 .await
@@ -440,7 +440,7 @@ impl WorkspaceStore {
     /// workspace takes nothing more (CC-81).
     pub async fn live(&self, name: &str) -> Result<Workspace, WorkspaceError> {
         match self.get(name).await? {
-            Some(workspace) if !workspace.expired(Utc::now()) => Ok(workspace),
+            Some(workspace) if !workspace.expired(TimestampTz::now()) => Ok(workspace),
             _ => Err(WorkspaceError::NotFound(name.to_owned())),
         }
     }
@@ -638,7 +638,7 @@ impl WorkspaceStore {
     }
 
     /// The workspaces whose TTL has passed at `now`, for the reaper (CC-81).
-    pub async fn expired(&self, now: DateTime<Utc>) -> Result<Vec<Workspace>, WorkspaceError> {
+    pub async fn expired(&self, now: TimestampTz) -> Result<Vec<Workspace>, WorkspaceError> {
         match &*self.inner {
             Inner::Memory(map) => Ok(map
                 .read()
@@ -653,7 +653,7 @@ impl WorkspaceStore {
                     mirror,
                     names,
                     "expires_at <= $2",
-                    Some(chrono_to_odt(now)),
+                    Some(ts_to_odt(now)),
                 )
                 .await
             }
@@ -869,12 +869,12 @@ pub fn owns(workspace: &Workspace, identity: &Identity) -> bool {
 /// The record goes last on purpose. A forge that cannot be reached leaves the record in place and
 /// the next pass tries again; a record deleted first would leave a branch nothing knows about.
 pub async fn reap_expired(state: &AppState) -> usize {
-    reap_expired_at(state, Utc::now()).await
+    reap_expired_at(state, TimestampTz::now()).await
 }
 
 /// The same, at an instant the caller names: the store reads expiry against a given `now`, so the
 /// rule is provable without a test that waits an hour.
-pub async fn reap_expired_at(state: &AppState, now: DateTime<Utc>) -> usize {
+pub async fn reap_expired_at(state: &AppState, now: TimestampTz) -> usize {
     let expired = match state.workspaces.expired(now).await {
         Ok(expired) => expired,
         Err(error) => {
@@ -1128,7 +1128,7 @@ pub async fn list(
     project: &str,
 ) -> Result<WorkspaceList, ApiError> {
     readable(state, identity, project)?;
-    let now = Utc::now();
+    let now = TimestampTz::now();
     let effective = crate::permissions::for_request(state, identity, project);
     let items = state
         .workspaces

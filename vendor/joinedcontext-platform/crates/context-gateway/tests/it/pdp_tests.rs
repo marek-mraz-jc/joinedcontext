@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Request, Verdict, NOTHING};
 use jc_core::kinds::{Operation, PolicySpec};
+use jc_time::TimestampTz;
 use std::collections::BTreeSet;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z"
         .parse()
         .expect("a fixed instant, so a verdict is reproducible")
@@ -542,8 +542,8 @@ temporalQ: "timerel=after;timeAt=P-1D"
 
     // The grant's last-day window, resolved against the same `now` as the decision: the
     // caller's ten years never reach the broker.
-    let yesterday =
-        (now() - chrono::Duration::days(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let yesterday = (now() - jiff::SignedDuration::from_hours(24))
+        .to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     for (dimension, value, granted) in [
         ("q", &constraints.q, "pm10>=0"),
         ("q", &constraints.q, r#"scope~="^/geo/SK/BB(/.*)?$""#),

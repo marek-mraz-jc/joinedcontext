@@ -29,9 +29,9 @@ pub(super) fn cap_keeps_shown(
 ) -> bool {
     // an `Ago` bound resolved an hour late: the rules resolve theirs after
     // the store answered, by then a little later than now
-    let late = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(1))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let late = jiff::Timestamp::now()
+        .checked_add(jiff::SignedDuration::from_hours(1))
+        .unwrap_or(jiff::Timestamp::MAX);
     rules.is_none_or(|r| {
         !replays_state(Some(r))
             && r.rules.iter().all(|rule| {
@@ -72,9 +72,9 @@ pub(super) fn page_attrs(
 ) -> Option<Option<Vec<String>>> {
     let first = rules.rules.first()?;
     let start = range_start(tq);
-    let late = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(1))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+    let late = jiff::Timestamp::now()
+        .checked_add(jiff::SignedDuration::from_hours(1))
+        .unwrap_or(jiff::Timestamp::MAX);
     let windows_hold = first.temporal.is_empty()
         || (tq.is_none_or(|t| t.timeproperty == "observedAt")
             && start.is_some_and(|s| {
@@ -161,7 +161,7 @@ pub(crate) fn rules_per_instance(doc: &Value, rules: &crate::policy::Filter) -> 
         .filter(|r| !per_instance(r))
         .flat_map(|r| r.attributes.iter().map(String::as_str))
         .collect();
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     // each rule's windows resolved once, not per instance (T-6612, R1-021)
     let conditional: Vec<(
         &crate::policy::Rule,

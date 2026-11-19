@@ -24,7 +24,7 @@ pub async fn take_counts(
     crate::auth::internal::authenticate_gateway(&state, &headers).await?;
     let post = parse(&body).map_err(ApiError::BadRequest)?;
     let slugs = endpoint_slugs(&state);
-    let today = chrono::Utc::now().date_naive();
+    let today = jc_time::TimestampTz::now().utc().date();
     let rows = rows(&post, today, |slug| slugs.get(slug).cloned());
     state
         .endpoint_usage

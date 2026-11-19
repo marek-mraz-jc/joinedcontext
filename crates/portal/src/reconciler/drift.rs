@@ -69,7 +69,7 @@ pub struct Difference {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Found {
     /// When the scan ran.
-    pub observed_at: chrono::DateTime<chrono::Utc>,
+    pub observed_at: jc_time::TimestampTz,
     /// Every drifted entity of the project, in repository order.
     pub entities: Vec<Drifted>,
 }
@@ -292,7 +292,7 @@ impl Watch {
     /// one pass of the reconciler, not one call per page view.
     pub async fn scan(&self, repo_dir: &Path) -> Result<BTreeMap<String, Found>, String> {
         let declared = seed_entities(repo_dir).map_err(|e| e.to_string())?;
-        let observed_at = chrono::Utc::now();
+        let observed_at = jc_time::TimestampTz::now();
         let mut found: BTreeMap<String, Found> = BTreeMap::new();
         if declared.is_empty() {
             return Ok(found);
@@ -476,7 +476,7 @@ mod tests {
         store.replace_all(BTreeMap::from([(
             "mesto".to_owned(),
             Found {
-                observed_at: chrono::Utc::now(),
+                observed_at: jc_time::TimestampTz::now(),
                 entities: vec![drifted],
             },
         )]));
@@ -487,7 +487,7 @@ mod tests {
         store.replace_all(BTreeMap::from([(
             "mesto".to_owned(),
             Found {
-                observed_at: chrono::Utc::now(),
+                observed_at: jc_time::TimestampTz::now(),
                 entities: Vec::new(),
             },
         )]));

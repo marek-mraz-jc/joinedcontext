@@ -3,10 +3,11 @@
 
 use crate::common;
 
-use chrono::{Duration, Utc};
 use common::{temp_dir, write, SPACE};
 use jc_core::kinds::Representation;
+use jc_time::TimestampTz;
 use jcctl::commands::changelog::{entries, markdown, Options};
+use jiff::SignedDuration;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -56,7 +57,7 @@ fn endpoint(name: &str, audience: &str, extra: &str) -> String {
 fn repository() -> PathBuf {
     let dir = temp_dir("changelog");
     git(&dir, None, &["init", "-q", "-b", "main"]);
-    let old = (Utc::now() - Duration::days(60)).to_rfc3339();
+    let old = (TimestampTz::now() - SignedDuration::from_hours(60 * 24)).to_rfc3339();
     write(&dir, "spaces/ovzdusie/space.yaml", SPACE);
     write(
         &dir,
@@ -111,7 +112,11 @@ fn repository() -> PathBuf {
 #[test]
 fn every_merged_public_change_in_the_window_is_listed_newest_first() {
     let dir = repository();
-    let list = entries(&dir, Utc::now() - Duration::days(30)).expect("the history reads");
+    let list = entries(
+        &dir,
+        TimestampTz::now() - SignedDuration::from_hours(30 * 24),
+    )
+    .expect("the history reads");
     let said: Vec<(&str, Vec<String>, Vec<Representation>)> = list
         .iter()
         .map(|e| (e.endpoint.as_str(), e.changes.clone(), e.surfaces.clone()))
@@ -147,14 +152,14 @@ fn every_merged_public_change_in_the_window_is_listed_newest_first() {
     let first = &list[list.len() - 1];
     assert_eq!(first.address, "/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y/");
     assert_eq!(first.title.as_deref(), Some("Air <b>quality</b>"));
-    assert_eq!(first.day, Utc::now().date_naive());
+    assert_eq!(first.day, jc_time::Date(TimestampTz::now().utc().date()));
 }
 
 #[test]
 fn the_page_groups_per_surface_and_carries_nothing_internal() {
     let dir = repository();
     let options = Options::parse(&["--repo-dir", dir.to_str().expect("utf-8")]).expect("parses");
-    let page = options.render(Utc::now()).expect("renders");
+    let page = options.render(TimestampTz::now()).expect("renders");
     assert!(page.contains("last 30 days"), "{page}");
     for section in ["## ngsi-ld", "## csv", "## ogc-features", "## mcp"] {
         assert!(page.contains(section), "{section} missing:\n{page}");
@@ -181,7 +186,7 @@ fn the_page_groups_per_surface_and_carries_nothing_internal() {
         "90",
     ])
     .expect("parses")
-    .render(Utc::now())
+    .render(TimestampTz::now())
     .expect("renders");
     let value: serde_json::Value = serde_json::from_str(&json).expect("json");
     let names: Vec<&str> = value
@@ -211,5 +216,5 @@ fn an_empty_window_says_so_and_bad_options_are_refused() {
         assert_eq!(Options::parse(bad), None, "{bad:?}");
     }
     let missing = Options::parse(&["--repo-dir", "/nonexistent-changelog-dir"]).expect("parses");
-    assert!(missing.render(Utc::now()).is_err());
+    assert!(missing.render(TimestampTz::now()).is_err());
 }

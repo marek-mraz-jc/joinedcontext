@@ -2279,8 +2279,8 @@ mod tests {
             norm(&sub(json!({"expiresAt": "2099-01-01T00:00:00,500Z"}))).is_ok(),
             "a comma fraction separator is legal (4.6.3)"
         );
-        let soon = (chrono::Utc::now() + chrono::Duration::seconds(30))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let soon = (jc_time::TimestampTz::now() + jiff::SignedDuration::from_secs(30))
+            .to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
         assert!(
             norm(&sub(json!({ "expiresAt": soon }))).is_ok(),
             "a whole-second DateTime 30s ahead is in the future: {soon}"

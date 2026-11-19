@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use joinedcontext_portal::mqtt_capture::{CaptureStore, Message, BROKER_MESSAGES};
 
 mod common;
@@ -25,12 +25,12 @@ fn fresh_project() -> String {
     format!("capture-{id}")
 }
 
-fn message(topic: &str, received_at: DateTime<Utc>, bytes: usize) -> Message {
+fn message(topic: &str, received_at: TimestampTz, bytes: usize) -> Message {
     Message {
         topic: topic.to_owned(),
         client_id: None,
         received_at,
-        expires_at: received_at + Duration::seconds(60),
+        expires_at: received_at + jiff::SignedDuration::from_secs(60),
         payload: vec![b'x'; bytes],
     }
 }
@@ -54,10 +54,11 @@ async fn the_caps_and_the_window_hold_in_postgres() {
     common::keyed_project(&state, &pool, &project, &format!("{project}-org")).await;
     let store: &CaptureStore = &state.mqtt_capture;
     // Stored to the millisecond.
-    let start =
-        DateTime::from_timestamp_millis((Utc::now() - Duration::seconds(30)).timestamp_millis())
-            .expect("an instant");
-    let second = |s: i64| start + Duration::seconds(s);
+    let start = jc_time::TimestampTz::from_millis(
+        (TimestampTz::now() - jiff::SignedDuration::from_secs(30)).as_millis(),
+    )
+    .expect("an instant");
+    let second = |s: i64| start + jiff::SignedDuration::from_secs(s);
 
     // Per topic: 5 of `a`, 2 of `b`, two kept per topic.
     let batch = (0..5)
@@ -72,7 +73,7 @@ async fn the_caps_and_the_window_hold_in_postgres() {
         .read(&project, "cams", None, 10, second(10))
         .await
         .expect("read");
-    let seen: Vec<(&str, DateTime<Utc>)> = kept
+    let seen: Vec<(&str, TimestampTz)> = kept
         .iter()
         .map(|m| (m.topic.as_str(), m.received_at))
         .collect();

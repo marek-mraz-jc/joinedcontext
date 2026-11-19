@@ -15,7 +15,7 @@ use crate::envelope::{Kind, ObjectMeta, Ref, Scope};
 use crate::error::{Error, Result};
 use crate::kinds::policy::RegistrationInfo;
 use crate::names;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -97,7 +97,7 @@ pub struct ContextSourceRegistrationSpec {
     pub operations: Vec<String>,
     /// When the registration stops being used, if it is not open-ended.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
     /// How often the source's schema surface is mirrored; 24 hours when absent (DM-49).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule: Option<crate::kinds::Schedule>,

@@ -15,7 +15,7 @@ use antares_api::policy::{
 use antares_api::AppState;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use jiff::{SignedDuration as Duration, Timestamp};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -41,11 +41,11 @@ impl PolicyEngine for Narrowing {
     }
 }
 
-fn stamp(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(SecondsFormat::Secs, true)
+fn stamp(t: Timestamp) -> String {
+    jc_time::format_rfc3339(t, jc_time::SecondsFormat::Secs, true)
 }
 
-fn at(s: &str) -> DateTime<Utc> {
+fn at(s: &str) -> Timestamp {
     s.parse().unwrap()
 }
 
@@ -80,7 +80,7 @@ async fn send(st: &AppState, method: &str, uri: &str, body: Option<Value>) -> (S
 }
 
 /// A broker narrowing by `filter`, holding one Vehicle observed at `times`.
-async fn seeded(filter: Filter, times: &[DateTime<Utc>]) -> AppState {
+async fn seeded(filter: Filter, times: &[Timestamp]) -> AppState {
     let mut st = AppState::new("me".into()).with_policy(Arc::new(Narrowing(filter)));
     antares_api::wire(&mut st).await;
     let speed: Vec<Value> = times
@@ -174,10 +174,10 @@ async fn the_callers_window_is_clamped_to_the_grant() {
 /// "The last 90 minutes" is resolved when the request is decided.
 #[tokio::test]
 async fn a_relative_grant_window_slides_with_now() {
-    let now = Utc::now();
-    let times = [now - Duration::hours(2), now - Duration::minutes(30)];
+    let now = Timestamp::now();
+    let times = [now - Duration::from_hours(2), now - Duration::from_mins(30)];
     let grant = windows(vec![Window {
-        from: Some(TimeBound::Ago(Duration::minutes(90))),
+        from: Some(TimeBound::Ago(Duration::from_mins(90))),
         to: None,
     }]);
     let st = seeded(grant, &times).await;

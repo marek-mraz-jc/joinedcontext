@@ -7,10 +7,10 @@
 //! number: the gateway sends no address, token, subject, client id or query, and nothing here
 //! could store one.
 
+use jiff::civil;
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-use chrono::{Datelike, Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -39,7 +39,7 @@ pub const MAX_LINES: usize = 5000;
 pub const MAX_COUNT: u64 = 10_000_000;
 
 /// One project, Endpoint name, surface, day and kind of caller.
-type Key = (String, String, String, NaiveDate, String);
+type Key = (String, String, String, civil::Date, String);
 
 /// One line of a gateway's post.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
@@ -102,7 +102,7 @@ pub fn check(post: &Post) -> Result<(), String> {
 /// by `resolve`; a slug no Endpoint has is dropped, so a row always names a configured Endpoint.
 pub fn rows(
     post: &Post,
-    day: NaiveDate,
+    day: civil::Date,
     resolve: impl Fn(&str) -> Option<(String, String)>,
 ) -> BTreeMap<Key, u64> {
     let mut rows = BTreeMap::new();
@@ -155,36 +155,34 @@ pub struct EndpointUsage {
 pub struct Stored {
     pub name: String,
     pub surface: String,
-    pub day: NaiveDate,
+    pub day: civil::Date,
     /// One of [`CALLERS`].
     pub caller: String,
     pub calls: u64,
 }
 
 /// The `days` days ending with `to`, oldest first.
-pub fn window(to: NaiveDate, days: i64) -> (NaiveDate, NaiveDate) {
-    (to - Duration::days(days.clamp(1, MAX_DAYS) - 1), to)
+pub fn window(to: civil::Date, days: i64) -> (civil::Date, civil::Date) {
+    (
+        to - jiff::SignedDuration::from_hours(24 * (days.clamp(1, MAX_DAYS) - 1)),
+        to,
+    )
 }
 
 /// The first and last day of `month` (`YYYY-MM`); `None` for anything else.
-pub fn month(text: &str) -> Option<(NaiveDate, NaiveDate)> {
+pub fn month(text: &str) -> Option<(civil::Date, civil::Date)> {
     let (year, month) = text.split_once('-')?;
     if year.len() != 4 || month.len() != 2 {
         return None;
     }
-    let first = NaiveDate::from_ymd_opt(year.parse().ok()?, month.parse().ok()?, 1)?;
-    let next = if first.month() == 12 {
-        NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)?
-    } else {
-        NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)?
-    };
-    Some((first, next - Duration::days(1)))
+    let first = civil::Date::new(year.parse().ok()?, month.parse().ok()?, 1).ok()?;
+    Some((first, first.last_of_month()))
 }
 
 /// `name`'s rows from `rows` laid out over the window, every day present.
-pub fn usage(name: &str, from: NaiveDate, to: NaiveDate, rows: &[Stored]) -> EndpointUsage {
+pub fn usage(name: &str, from: civil::Date, to: civil::Date, rows: &[Stored]) -> EndpointUsage {
     let mut days: Vec<Day> = from
-        .iter_days()
+        .series(jiff::Span::new().days(1))
         .take_while(|day| *day <= to)
         .map(|day| Day {
             day: day.to_string(),
@@ -195,8 +193,11 @@ pub fn usage(name: &str, from: NaiveDate, to: NaiveDate, rows: &[Stored]) -> End
     let mut callers = BTreeMap::new();
     let mut total = 0_u64;
     for row in rows.iter().filter(|row| row.name == name) {
-        let Some(day) = usize::try_from((row.day - from).num_days())
+        let Some(day) = row
+            .day
+            .since(from)
             .ok()
+            .and_then(|span| usize::try_from(span.get_days()).ok())
             .and_then(|i| days.get_mut(i))
         else {
             continue;
@@ -221,7 +222,7 @@ pub fn usage(name: &str, from: NaiveDate, to: NaiveDate, rows: &[Stored]) -> End
 /// The monthly export: one line per day, Endpoint and surface that had calls, every kind of
 /// caller summed, so the published columns stay as they were.
 pub fn csv(rows: &[Stored]) -> String {
-    let mut lines: BTreeMap<(NaiveDate, &str, &str), u64> = BTreeMap::new();
+    let mut lines: BTreeMap<(civil::Date, &str, &str), u64> = BTreeMap::new();
     for row in rows.iter().filter(|row| row.calls > 0) {
         let held = lines.entry((row.day, &row.name, &row.surface)).or_insert(0);
         *held = held.saturating_add(row.calls);
@@ -257,8 +258,12 @@ impl UsageStore {
 
     /// Adds `rows` and drops what is older than [`KEEP_DAYS`] before `today`, project by project
     /// in its key (STO-07); the calls of a project with no tenancy key are not kept.
-    pub async fn add(&self, rows: BTreeMap<Key, u64>, today: NaiveDate) -> Result<(), sqlx::Error> {
-        let oldest = today - Duration::days(KEEP_DAYS);
+    pub async fn add(
+        &self,
+        rows: BTreeMap<Key, u64>,
+        today: civil::Date,
+    ) -> Result<(), sqlx::Error> {
+        let oldest = today - jiff::SignedDuration::from_hours(24 * KEEP_DAYS);
         let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
                 let mut memory = memory.write().unwrap_or_else(|e| e.into_inner());
@@ -292,7 +297,7 @@ impl UsageStore {
         pool: &sqlx::PgPool,
         key: jc_types::ProjectKey,
         rows: &BTreeMap<&Key, &u64>,
-        oldest: NaiveDate,
+        oldest: civil::Date,
     ) -> Result<(), sqlx::Error> {
         let column = |f: fn(&Key) -> String| rows.keys().map(|k| f(k)).collect::<Vec<_>>();
         let calls: Vec<i64> = rows
@@ -326,8 +331,8 @@ impl UsageStore {
     pub async fn read(
         &self,
         project: &str,
-        from: NaiveDate,
-        to: NaiveDate,
+        from: civil::Date,
+        to: civil::Date,
     ) -> Result<Vec<Stored>, sqlx::Error> {
         let (pool, mirror) = match &self.inner {
             Inner::Memory(memory) => {
@@ -380,7 +385,7 @@ impl UsageStore {
 mod tests {
     use super::*;
 
-    fn date(text: &str) -> NaiveDate {
+    fn date(text: &str) -> civil::Date {
         text.parse().unwrap_or_default()
     }
 
@@ -578,7 +583,7 @@ mod tests {
                 "person".to_owned(),
             )
         };
-        let old = today - Duration::days(KEEP_DAYS + 1);
+        let old = today - jiff::SignedDuration::from_hours(24 * (KEEP_DAYS + 1));
         store
             .add(BTreeMap::from([(key(today), 2), (key(old), 9)]), today)
             .await

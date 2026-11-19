@@ -32,7 +32,7 @@ pub struct Account {
     /// When the account's last credential ends: the latest `expiresAt` of its credentials, or
     /// `None` while one of them has none (PF-36). A derived account has no credential of its own
     /// and never ends here.
-    pub credentials_end: Option<chrono::DateTime<chrono::Utc>>,
+    pub credentials_end: Option<jc_time::TimestampTz>,
 }
 
 /// One role and where it applies.
@@ -52,7 +52,7 @@ pub struct ScopedRole {
 
 impl Account {
     /// Whether every credential of the account has ended at `now` (PF-36).
-    pub fn has_ended(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
+    pub fn has_ended(&self, now: jc_time::TimestampTz) -> bool {
         self.credentials_end.is_some_and(|end| end <= now)
     }
 
@@ -71,7 +71,12 @@ impl Account {
         space: &str,
         same_organization: bool,
     ) -> BTreeSet<String> {
-        self.roles_in_at(project, space, same_organization, chrono::Utc::now())
+        self.roles_in_at(
+            project,
+            space,
+            same_organization,
+            jc_time::TimestampTz::now(),
+        )
     }
 
     /// [`Self::roles_in`] at `now`: a grant outside its validity window is no role, so an
@@ -81,7 +86,7 @@ impl Account {
         project: &str,
         space: &str,
         same_organization: bool,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> BTreeSet<String> {
         self.roles
             .iter()
@@ -121,7 +126,7 @@ impl ServiceAccounts {
 
     /// Whether the table holds the account `name` of `project` with a credential that has not
     /// ended at `now` (PF-36): what an open session admitted under it rechecks (S-3-12).
-    pub fn holds(&self, project: &str, name: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    pub fn holds(&self, project: &str, name: &str, now: jc_time::TimestampTz) -> bool {
         self.by_client_id.values().any(|account| {
             account.project == project && account.name == name && !account.has_ended(now)
         })
@@ -163,7 +168,7 @@ impl ServiceAccounts {
 /// The latest `expiresAt` of `credentials`, `None` when one never expires.
 fn credentials_end(
     credentials: &[jc_core::kinds::service_account::Credential],
-) -> Option<chrono::DateTime<chrono::Utc>> {
+) -> Option<jc_time::TimestampTz> {
     credentials
         .iter()
         .map(|credential| credential.expires_at)
@@ -448,8 +453,8 @@ mod tests {
     /// live credential, not once it left or its last credential ended.
     #[test]
     fn an_account_is_held_while_named_and_its_credential_lives() {
-        let now = chrono::Utc::now();
-        let account = |end: Option<chrono::DateTime<chrono::Utc>>| Account {
+        let now = jc_time::TimestampTz::now();
+        let account = |end: Option<jc_time::TimestampTz>| Account {
             name: "kpi".to_owned(),
             project: "espoo".to_owned(),
             roles: Vec::new(),
@@ -461,7 +466,10 @@ mod tests {
             apps: HashMap::new(),
         };
         assert!(table(account(None)).holds("espoo", "kpi", now));
-        assert!(table(account(Some(now + chrono::Duration::hours(1)))).holds("espoo", "kpi", now));
+        assert!(
+            table(account(Some(now + jiff::SignedDuration::from_hours(1))))
+                .holds("espoo", "kpi", now)
+        );
         assert!(!table(account(Some(now))).holds("espoo", "kpi", now));
         assert!(
             !table(account(None)).holds("vantaa", "kpi", now),

@@ -154,7 +154,7 @@ pub async fn handle_connector(
         judge(&state, &connector, identity.clone(), token, &message, body).await
     };
     let call = Call {
-        at: chrono::Utc::now(),
+        at: jc_time::TimestampTz::now(),
         subject: identity.subject,
         client: identity.client,
         tool,
@@ -379,7 +379,7 @@ async fn judge(
     }
     // The owner's DelegationPolicy ceiling, read again on this call (AG-150).
     let ceiling = connectors::Ceiling::of(&state.mirror, &identity);
-    if let Err(why) = ceiling.door(connector, client, chrono::Utc::now()) {
+    if let Err(why) = ceiling.door(connector, client, jc_time::TimestampTz::now()) {
         return (
             ApiError::Denied(why).into_response(),
             "refused: ceiling".to_owned(),
@@ -623,7 +623,7 @@ async fn follow_in_tab(
         "tool": call.tool,
         "project": project,
         "from": { "connector": connector.name, "client": call.client },
-        "at": chrono::Utc::now(),
+        "at": jc_time::TimestampTz::now(),
     });
     // A tab closed or reloading misses this one; the next call tells it again.
     let _ = state
@@ -680,7 +680,7 @@ fn tab_action(
         "tool": name,
         "project": project,
         "from": { "connector": connector.name, "client": identity.client },
-        "at": chrono::Utc::now(),
+        "at": jc_time::TimestampTz::now(),
     });
     let now = crate::auth::session::now_unix();
     match state

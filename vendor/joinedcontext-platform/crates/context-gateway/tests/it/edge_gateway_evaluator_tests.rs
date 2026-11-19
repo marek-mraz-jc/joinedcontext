@@ -10,13 +10,14 @@
 //! of the verdict reads it through — which is the only way out of a `Verdict`, so a `Deny` that
 //! handed back constraints would be a grant nobody wrote.
 
-use chrono::{DateTime, Duration, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Request, Verdict};
 use jc_core::kinds::{Operation, PolicySpec};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use std::collections::BTreeSet;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z"
         .parse()
         .expect("a fixed instant, so a verdict is reproducible")
@@ -48,7 +49,7 @@ fn set(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| (*name).to_owned()).collect()
 }
 
-fn verdict(subject: &Subject, policies: &[PolicySpec], at: DateTime<Utc>) -> Verdict {
+fn verdict(subject: &Subject, policies: &[PolicySpec], at: TimestampTz) -> Verdict {
     evaluate(
         subject,
         Operation::QueryEntity,
@@ -165,13 +166,13 @@ fn the_validity_window_opens_on_its_from_and_closes_before_its_to() {
         "public",
         "validity: { from: 2026-09-06T12:00:00Z, to: 2026-09-07T12:00:00Z }\n",
     );
-    let from: DateTime<Utc> = "2026-09-06T12:00:00Z".parse().expect("an instant");
-    let to: DateTime<Utc> = "2026-09-07T12:00:00Z".parse().expect("an instant");
+    let from: TimestampTz = "2026-09-06T12:00:00Z".parse().expect("an instant");
+    let to: TimestampTz = "2026-09-07T12:00:00Z".parse().expect("an instant");
 
     assert!(verdict(
         &Subject::anonymous(),
         std::slice::from_ref(&timed),
-        from - Duration::seconds(1)
+        from - SignedDuration::from_secs(1)
     )
     .is_deny());
     assert!(
@@ -181,7 +182,7 @@ fn the_validity_window_opens_on_its_from_and_closes_before_its_to() {
     assert!(!verdict(
         &Subject::anonymous(),
         std::slice::from_ref(&timed),
-        to - Duration::seconds(1)
+        to - SignedDuration::from_secs(1)
     )
     .is_deny());
     assert!(
@@ -198,8 +199,8 @@ fn a_window_with_only_one_end_is_open_at_the_other() {
         "validity: { from: 2026-09-06T12:00:00Z }\n",
     );
     let closes = grant_to("role", "public", "validity: { to: 2026-09-06T12:00:00Z }\n");
-    let far_future: DateTime<Utc> = "2099-01-01T00:00:00Z".parse().expect("an instant");
-    let long_ago: DateTime<Utc> = "2000-01-01T00:00:00Z".parse().expect("an instant");
+    let far_future: TimestampTz = "2099-01-01T00:00:00Z".parse().expect("an instant");
+    let long_ago: TimestampTz = "2000-01-01T00:00:00Z".parse().expect("an instant");
 
     assert!(!verdict(
         &Subject::anonymous(),
@@ -236,8 +237,8 @@ fn a_prohibition_outside_its_window_prohibits_nothing() {
     );
     let policies = vec![public_read(), forbid];
 
-    let before: DateTime<Utc> = "2026-09-06T12:00:00Z".parse().expect("an instant");
-    let after: DateTime<Utc> = "2026-09-07T00:00:00Z".parse().expect("an instant");
+    let before: TimestampTz = "2026-09-06T12:00:00Z".parse().expect("an instant");
+    let after: TimestampTz = "2026-09-07T00:00:00Z".parse().expect("an instant");
     assert!(!verdict(&Subject::anonymous(), &policies, before).is_deny());
     assert!(
         verdict(&Subject::anonymous(), &policies, after).is_deny(),

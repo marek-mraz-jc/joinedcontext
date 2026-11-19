@@ -16,7 +16,6 @@
 //! `auth::token::verify` has checked them before `subject` is reached (T-1901), and a token
 //! that failed there never gets this far.
 
-use chrono::{DateTime, TimeZone, Utc};
 use context_gateway::auth::dataspace_token::{
     agreements_of, presented, subject, Agreements, Refused, IAT_LEEWAY, MAX_LIFETIME,
 };
@@ -24,6 +23,7 @@ use context_gateway::auth::token::Claims;
 use context_gateway::resolver::Endpoint;
 use jc_core::kinds::{Audience, PolicySpec, Representation};
 use jc_manifest::loader::Repository;
+use jc_time::TimestampTz;
 use serde_json::{json, Value};
 
 const SLUG: &str = "d7m2xq9vkt4zc6wrb8shj5nfp3";
@@ -34,9 +34,9 @@ const CONSUMER: &str = "did:web:helsinki.fi";
 const AGREEMENT: &str = "urn:uuid:9a1f-air-quality";
 const CONNECTOR: &str = "banskabystrica-dataspace-connector";
 /// A fixed instant inside the fixture's validity window, so nothing here depends on the clock.
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0)
-        .single()
+fn now() -> TimestampTz {
+    "2026-06-01T12:00:00Z"
+        .parse::<TimestampTz>()
         .expect("a real instant")
 }
 
@@ -147,8 +147,8 @@ fn transfer(lifetime: i64, participant: &str, agreement: &str) -> Value {
         "sub": "service-account-dataspace-connector",
         "aud": SLUG,
         "azp": CONNECTOR,
-        "iat": now().timestamp(),
-        "exp": now().timestamp() + lifetime,
+        "iat": now().as_second(),
+        "exp": now().as_second() + lifetime,
         "agreementId": agreement,
         "participant": participant,
     })
@@ -192,8 +192,8 @@ fn a_token_minted_for_exactly_the_longest_life_is_accepted_and_one_second_more_i
 fn a_token_issued_in_the_future_is_refused_past_the_clock_skew() {
     let at = |ahead: i64| {
         let mut claims = transfer(600, CONSUMER, AGREEMENT);
-        claims["iat"] = json!(now().timestamp() + ahead);
-        claims["exp"] = json!(now().timestamp() + ahead + 600);
+        claims["iat"] = json!(now().as_second() + ahead);
+        claims["exp"] = json!(now().as_second() + ahead + 600);
         establish(&claims)
     };
     assert_eq!(at(365 * 86_400), Err(Refused::TooLong));
@@ -223,7 +223,7 @@ fn the_lifetime_is_measured_before_the_agreement_is_looked_up() {
 #[test]
 fn a_lifetime_that_runs_backwards_neither_panics_nor_passes_for_a_long_one() {
     let mut claims = transfer(0, CONSUMER, AGREEMENT);
-    claims["exp"] = json!(now().timestamp() - 86_400);
+    claims["exp"] = json!(now().as_second() - 86_400);
     assert!(
         establish(&claims).is_ok(),
         "expiry is the verifier's business"

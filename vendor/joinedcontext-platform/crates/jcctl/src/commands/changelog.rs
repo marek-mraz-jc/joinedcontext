@@ -6,9 +6,10 @@
 //! public on either side gets an entry. What changed is computed from the two manifests, in a
 //! consumer's terms; a commit message, an author, a policy or a role never reaches the page.
 
-use chrono::{DateTime, NaiveDate, Utc};
 use jc_core::kinds::endpoint_deprecation::Deprecation;
 use jc_core::kinds::{Audience, EndpointSpec, Representation};
+use jc_time::{Date, TimestampTz};
+use jiff::SignedDuration;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +24,7 @@ pub const MAX_DAYS: u32 = 366;
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     /// The day the change merged, UTC.
-    pub day: NaiveDate,
+    pub day: Date,
     /// The Endpoint's `metadata.name`.
     pub endpoint: String,
     /// The Endpoint's title, English first.
@@ -76,9 +77,8 @@ impl Options {
     }
 
     /// The page, or its JSON, for the window ending at `now`.
-    pub fn render(&self, now: DateTime<Utc>) -> Result<String, ChangelogError> {
-        let since = now - chrono::Duration::days(i64::from(self.days));
-        let list = entries(&self.repo_dir, since)?;
+    pub fn render(&self, now: TimestampTz) -> Result<String, ChangelogError> {
+        let list = entries(&self.repo_dir, window_start(now, self.days))?;
         Ok(match self.json {
             true => serde_json::to_string_pretty(&list).unwrap_or_default(),
             false => markdown(&list, self.days),
@@ -125,7 +125,7 @@ fn file_at(dir: &Path, rev: &str, path: &str) -> Option<String> {
 
 /// Every public Endpoint change merged on the checkout's first-parent history since `since`,
 /// newest first.
-pub fn entries(repo: &Path, since: DateTime<Utc>) -> Result<Vec<Entry>, ChangelogError> {
+pub fn entries(repo: &Path, since: TimestampTz) -> Result<Vec<Entry>, ChangelogError> {
     let log = git(
         repo,
         &[
@@ -144,10 +144,9 @@ pub fn entries(repo: &Path, since: DateTime<Utc>) -> Result<Vec<Entry>, Changelo
         let mut shas = shas.split(' ');
         let commit = shas.next().unwrap_or_default();
         let parent = shas.next().filter(|p| !p.is_empty());
-        let Ok(day) = DateTime::parse_from_rfc3339(date.trim()) else {
+        let Some(day) = day_of(date.trim()) else {
             continue;
         };
-        let day = day.with_timezone(&Utc).date_naive();
         let changed = match parent {
             Some(parent) => git(
                 repo,
@@ -166,6 +165,16 @@ pub fn entries(repo: &Path, since: DateTime<Utc>) -> Result<Vec<Entry>, Changelo
         }
     }
     Ok(out)
+}
+
+/// `days` whole days of 86 400 s before `now`, as chrono's `Duration::days` counted.
+fn window_start(now: TimestampTz, days: u32) -> TimestampTz {
+    now - SignedDuration::from_hours(24 * i64::from(days))
+}
+
+/// The UTC day of a commit time git wrote as strict ISO 8601 (`%cI`).
+fn day_of(text: &str) -> Option<Date> {
+    jc_time::parse_rfc3339(text).map(|at| Date(TimestampTz(at).utc().date()))
 }
 
 fn is_manifest(path: &str) -> bool {
@@ -211,7 +220,7 @@ fn public(seen: Option<&Seen>) -> Option<&Seen> {
 }
 
 fn compare(
-    day: NaiveDate,
+    day: Date,
     before: &BTreeMap<String, Seen>,
     after: &BTreeMap<String, Seen>,
 ) -> Vec<Entry> {
@@ -385,6 +394,44 @@ fn escaped(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `git log --since=` gets the window start as chrono's `to_rfc3339` wrote it, and a commit's
+    /// day is its UTC day across the DST nights of Bratislava and Helsinki (T-7252). Strings
+    /// pasted from the chrono build.
+    #[test]
+    fn the_window_and_the_day_keep_the_chrono_wire_format() {
+        for (now, want) in [
+            (
+                "2026-10-25T01:30:00.987654321Z",
+                "2026-09-25T01:30:00.987654321+00:00",
+            ),
+            ("2026-10-25T01:30:00Z", "2026-09-25T01:30:00+00:00"),
+            (
+                "2026-03-29T03:30:00.5+02:00",
+                "2026-02-27T01:30:00.500+00:00",
+            ),
+        ] {
+            let now = now.parse().expect("an instant");
+            assert_eq!(window_start(now, 30).to_rfc3339(), want);
+        }
+        for (text, want) in [
+            ("2026-03-29T01:30:00+01:00", Some("2026-03-29")),
+            ("2026-03-29T03:30:00+02:00", Some("2026-03-29")),
+            ("2026-10-25T00:30:00+03:00", Some("2026-10-24")),
+            ("2026-10-25T03:30:00+02:00", Some("2026-10-25")),
+            ("2026-12-31T23:59:59-01:00", Some("2027-01-01")),
+            ("2026-01-01 00:00:00Z", Some("2026-01-01")),
+            ("2026-01-01T00:00:00", None),
+            (" 2026-01-01T00:00:00Z", None),
+            ("x", None),
+        ] {
+            assert_eq!(
+                day_of(text).map(|d| d.to_string()).as_deref(),
+                want,
+                "{text}"
+            );
+        }
+    }
 
     #[test]
     fn markup_in_a_title_stays_text() {

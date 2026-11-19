@@ -388,7 +388,7 @@ mod tests {
             touched_by: "steward".into(),
             touched_kind: "person".into(),
             event: "put".into(),
-            updated_at: chrono::Utc::now(),
+            updated_at: jc_time::TimestampTz::now(),
             space: None,
         };
         let sse = sse_draft_event(&event);

@@ -4,10 +4,11 @@ use crate::envelope::{Kind, ObjectMeta, Scope};
 use crate::error::{Error, Result};
 use crate::kinds::policy::OperationRef;
 use crate::names;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::SystemTime;
 
 /// Desired specification of a [`ServiceAccount`][crate::kinds::ServiceAccount] resource (PF-34, PF-35, PF-47).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -72,8 +73,10 @@ pub struct RoleBinding {
 }
 
 impl RoleBinding {
-    /// Whether the grant is in force at `now`: no window, or `now` inside it (AG-131).
-    pub fn in_force(&self, now: DateTime<Utc>) -> bool {
+    /// Whether the grant is in force at `now`: no window, or `now` inside it (AG-131). `now`
+    /// is any instant with a `SystemTime` conversion (jiff's `Timestamp`, chrono's `DateTime`).
+    pub fn in_force(&self, now: impl Into<SystemTime>) -> bool {
+        let now = now.into();
         self.validity.as_ref().is_none_or(|v| v.contains(now))
     }
 }
@@ -135,7 +138,7 @@ pub struct Credential {
     pub name: String,
     /// Optional expiration timestamp (UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
     /// Whitelist of allowed client IP CIDR blocks (PF-36).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ip_allow_list: Vec<String>,
@@ -646,17 +649,20 @@ fn validate_cidr(cidr: &str) -> Result<()> {
 pub struct BindingValidity {
     /// Not in force before this instant (UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_before: Option<DateTime<Utc>>,
+    pub not_before: Option<TimestampTz>,
     /// Not in force after this instant (UTC).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub not_after: Option<DateTime<Utc>>,
+    pub not_after: Option<TimestampTz>,
 }
 
 /// Whether the binding is in force at `now`.
 impl BindingValidity {
     /// `true` when `now` is inside the window (bounds inclusive).
-    pub fn contains(&self, now: DateTime<Utc>) -> bool {
-        self.not_before.is_none_or(|from| from <= now) && self.not_after.is_none_or(|to| now <= to)
+    pub fn contains(&self, now: impl Into<SystemTime>) -> bool {
+        let now = now.into();
+        self.not_before
+            .is_none_or(|from| SystemTime::from(from) <= now)
+            && self.not_after.is_none_or(|to| now <= SystemTime::from(to))
     }
 }
 

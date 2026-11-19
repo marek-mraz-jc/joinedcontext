@@ -431,7 +431,7 @@ impl Client {
         body: Vec<u8>,
         operation: &'static str,
     ) -> Result<(), Error> {
-        let now = chrono::Utc::now();
+        let now = jc_time::TimestampTz::now();
         let headers = self.sign("PUT", path, query, &body, now);
 
         let query_string = canonical_query(query);
@@ -464,7 +464,7 @@ impl Client {
         path: &str,
         query: &[(&str, String)],
         body: &[u8],
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> Vec<(&'static str, String)> {
         self.sign_with(method, path, query, body, &[], now)
     }
@@ -478,10 +478,10 @@ impl Client {
         query: &[(&str, String)],
         body: &[u8],
         extra: &[(&str, String)],
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> Vec<(&'static str, String)> {
-        let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-        let date = now.format("%Y%m%d").to_string();
+        let amz_date = now.0.strftime("%Y%m%dT%H%M%SZ").to_string();
+        let date = now.0.strftime("%Y%m%d").to_string();
         let payload_hash = hex(&Sha256::digest(body));
 
         let mut headers: BTreeMap<String, String> = BTreeMap::new();
@@ -535,7 +535,7 @@ impl Client {
         length: Option<u64>,
         expires: u32,
         origin: &str,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jc_time::TimestampTz,
     ) -> String {
         presigned(
             &self.settings,
@@ -555,10 +555,10 @@ fn presigned(
     (method, path, length): (&str, &str, Option<u64>),
     expires: u32,
     origin: &str,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> String {
-    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
-    let date = now.format("%Y%m%d").to_string();
+    let amz_date = now.0.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let date = now.0.strftime("%Y%m%d").to_string();
     let scope = format!("{date}/{}/s3/aws4_request", settings.region);
     let origin = origin.trim_end_matches('/');
     let host = origin.split_once("://").map_or(origin, |(_, host)| host);
@@ -620,7 +620,7 @@ impl Client {
             &[],
             &body,
             extra,
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         let url = format!("{}{path}", self.settings.endpoint.trim_end_matches('/'));
         let mut request = self.http.request(method, &url);
@@ -741,7 +741,7 @@ impl Client {
             if let Some(token) = &token {
                 query.push(("continuation-token", token.clone()));
             }
-            let headers = self.sign("GET", &path, &query, &[], chrono::Utc::now());
+            let headers = self.sign("GET", &path, &query, &[], jc_time::TimestampTz::now());
             let url = format!(
                 "{}{path}?{}",
                 self.settings.endpoint.trim_end_matches('/'),
@@ -1322,6 +1322,39 @@ mod tests {
         .is_err());
     }
 
+    /// The instants the Portal outside `src/api` writes, as the chrono build wrote them
+    /// (pinned before the move to jiff, T-7254): the S3 signing date and day, the UTC line of
+    /// a quota message, RFC 3339 whole seconds with `Z`, chrono's `to_rfc3339` and its serde.
+    #[test]
+    fn instants_keep_the_chrono_wire_format() {
+        let t = jc_time::TimestampTz(
+            jiff::Timestamp::new(1_763_514_123, 456_789_000).expect("an instant"),
+        );
+        assert_eq!(
+            t.0.strftime("%Y%m%dT%H%M%SZ").to_string(),
+            "20251119T010203Z"
+        );
+        assert_eq!(t.0.strftime("%Y%m%d").to_string(), "20251119");
+        assert_eq!(
+            t.0.strftime("%Y-%m-%d %H:%M UTC").to_string(),
+            "2025-11-19 01:02 UTC"
+        );
+        assert_eq!(
+            t.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true),
+            "2025-11-19T01:02:03Z"
+        );
+        assert_eq!(t.to_rfc3339(), "2025-11-19T01:02:03.456789+00:00");
+        assert_eq!(
+            serde_json::to_string(&t).expect("json"),
+            "\"2025-11-19T01:02:03.456789Z\""
+        );
+        let day = jc_time::TimestampTz(jiff::Timestamp::new(1_763_510_400, 0).expect("an instant"));
+        assert_eq!(
+            serde_json::to_string(&day).expect("json"),
+            "\"2025-11-19T00:00:00Z\""
+        );
+    }
+
     #[test]
     fn a_presigned_url_is_signed_as_aws_documents_it_for_the_host_a_browser_sends() {
         // The example of SigV4's query-parameter page: the bucket's own host, no bucket segment.
@@ -1332,9 +1365,8 @@ mod tests {
             root_access_key: "AKIAIOSFODNN7EXAMPLE".into(),
             root_secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
         };
-        let may_24 = chrono::DateTime::parse_from_rfc3339("2013-05-24T00:00:00Z")
-            .expect("a date")
-            .with_timezone(&chrono::Utc);
+        let may_24 =
+            jc_time::TimestampTz(jc_time::parse_rfc3339("2013-05-24T00:00:00Z").expect("a date"));
         assert_eq!(
             presigned(
                 &settings,

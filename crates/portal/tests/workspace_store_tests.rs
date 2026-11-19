@@ -1,7 +1,7 @@
 //! The workspace registry: one record per branch, unique by name, gone when its TTL is
 //! (CC-76, CC-81; T-1232).
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
 use joinedcontext_portal::ops::workspaces::{
     Opening, PreviewAccess, PreviewState, Scope, ScopedResource, WorkspaceError, WorkspaceStore,
 };
@@ -30,7 +30,7 @@ async fn a_workspace_is_created_read_listed_and_deleted() {
         .expect("created");
     assert_eq!(made.branch(), "workspace/bikes-v2");
     assert_eq!(made.preview_state, PreviewState::None);
-    assert!(made.expires_at - made.created_at == Duration::hours(24));
+    assert!(made.expires_at - made.created_at == jiff::SignedDuration::from_hours(24));
 
     assert_eq!(store.get("bikes-v2").await.unwrap(), Some(made.clone()));
     assert_eq!(store.live("bikes-v2").await.unwrap(), made);
@@ -95,7 +95,7 @@ async fn an_expired_workspace_is_listed_for_the_reaper_and_takes_nothing_more() 
     let store = WorkspaceStore::new(None, Default::default());
     store.create(opening("short", "helsinki", 1)).await.unwrap();
     store.create(opening("long", "helsinki", 48)).await.unwrap();
-    let later = Utc::now() + Duration::hours(2);
+    let later = TimestampTz::now() + jiff::SignedDuration::from_hours(2);
     let expired: Vec<String> = store
         .expired(later)
         .await
@@ -104,7 +104,7 @@ async fn an_expired_workspace_is_listed_for_the_reaper_and_takes_nothing_more() 
         .map(|w| w.name)
         .collect();
     assert_eq!(expired, ["short"]);
-    assert!(store.expired(Utc::now()).await.unwrap().is_empty());
+    assert!(store.expired(TimestampTz::now()).await.unwrap().is_empty());
 }
 
 #[tokio::test]

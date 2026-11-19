@@ -66,7 +66,7 @@ impl Deliveries {
             notification
                 .get(key)
                 .and_then(Value::as_str)
-                .filter(|at| chrono::DateTime::parse_from_rfc3339(at).is_ok())
+                .filter(|at| jc_time::parse_rfc3339(at).is_some())
                 .map(str::to_owned)
         };
         Self {
@@ -298,7 +298,7 @@ impl SubscriptionSync {
         if let Some(expires) = spec.expires_at {
             body.insert(
                 "expiresAt".to_owned(),
-                json!(expires.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+                json!(expires.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)),
             );
         }
         body.insert("isActive".to_owned(), json!(spec.is_active));

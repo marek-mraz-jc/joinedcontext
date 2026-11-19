@@ -1302,7 +1302,7 @@ async fn an_uploaded_csv_drafts_the_endpoint_and_the_persons_write_grant() {
             &request,
             "room-bookings",
             &policies,
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         )
         .is_deny()
     };

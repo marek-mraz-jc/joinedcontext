@@ -12,7 +12,7 @@
 use std::sync::Mutex;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use utoipa::ToSchema;
@@ -21,7 +21,7 @@ use jc_core::envelope::Kind as _;
 use jc_core::kinds::delegation_policy::{validate_kind_verbs, verbs_allow};
 use jc_core::kinds::{AboveCeiling, ConnectorVerb, DelegationPolicySpec, KindVerbs, Segment};
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::error::ApiError;
 use crate::ops::Operation;
 use crate::permissions::ORG_NAMESPACE;
@@ -220,7 +220,7 @@ pub fn is_segment(segment: &str) -> bool {
 /// person's own, one segment, the run's project, no writes, never stored. Its [`Connector::access`]
 /// narrows every call the conversation makes exactly as `/c/{id}` narrows a client's.
 pub fn of_conversation(run_id: &str, owner: &str, project: &str, segment: &str) -> Connector {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     Connector {
         id: format!("conversation-{run_id}"),
         name: format!("assistant {segment}"),
@@ -237,7 +237,7 @@ pub fn of_conversation(run_id: &str, owner: &str, project: &str, segment: &str) 
         kinds: None,
         writes: false,
         autonomous: false,
-        expires_at: now + Duration::hours(1),
+        expires_at: now + jiff::SignedDuration::from_hours(1),
         allowed_clients: Vec::new(),
         client_is_boundary: false,
         state: "active".to_owned(),
@@ -619,12 +619,12 @@ impl Ceiling {
         &self,
         connector: &Connector,
         client: &str,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<(), String> {
         if self.honours(connector) {
             return Ok(());
         }
-        if now > connector.granted_at + Duration::days(self.max_days()) {
+        if now > connector.granted_at + jiff::SignedDuration::from_hours(24 * self.max_days()) {
             return Err(format!(
                 "{} lets a connector live {} days, and this one is older; create a new one on the My connectors page",
                 self.named(),
@@ -668,7 +668,9 @@ impl Ceiling {
         if connector.writes && !self.writes() {
             marks.push("writes".to_owned());
         }
-        if connector.expires_at > connector.granted_at + Duration::days(self.max_days()) {
+        if connector.expires_at
+            > connector.granted_at + jiff::SignedDuration::from_hours(24 * self.max_days())
+        {
             marks.push(format!("expiry: at most {} days", self.max_days()));
         }
         for client in &connector.allowed_clients {
@@ -814,7 +816,7 @@ pub struct NewConnector {
     pub autonomous: bool,
     /// RFC 3339, e.g. `2026-11-27T00:00:00Z`.
     #[schema(value_type = String, format = DateTime)]
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
     /// OAuth client ids the connector answers, e.g. a CIMD URL `https://claude.ai/oauth/mcp-client-metadata`.
     #[serde(default)]
     pub allowed_clients: Vec<String>,
@@ -833,7 +835,7 @@ struct GrantDoc {
     /// Absent on a record kept before T-6552: off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     autonomous: bool,
-    expires_at: DateTime<Utc>,
+    expires_at: TimestampTz,
     allowed_clients: Vec<String>,
     /// Above the ceiling, waiting for an administrator (AG-150); a record kept before T-5953 has
     /// none of the three members below.
@@ -847,7 +849,7 @@ struct GrantDoc {
     /// When an edit last judged the grant against the ceiling; absent: at its creation. A
     /// renewal's age counts from here (JC2-45).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    granted_at: Option<DateTime<Utc>>,
+    granted_at: Option<TimestampTz>,
 }
 
 /// Who let a request above the ceiling through, and when.
@@ -858,7 +860,7 @@ pub struct Approval {
     /// The approver's Keycloak user id.
     pub by: String,
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -867,9 +869,9 @@ struct Record {
     owner: String,
     name: String,
     grant: GrantDoc,
-    created_at: DateTime<Utc>,
-    last_used_at: Option<DateTime<Utc>>,
-    revoked_at: Option<DateTime<Utc>>,
+    created_at: TimestampTz,
+    last_used_at: Option<TimestampTz>,
+    revoked_at: Option<TimestampTz>,
 }
 
 /// A connector as its owner reads it (API/14 §1).
@@ -889,7 +891,7 @@ pub struct Connector {
     /// Whether the changes it applies are approved at once as its owner (T-6552).
     pub autonomous: bool,
     #[schema(value_type = String, format = DateTime)]
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
     pub allowed_clients: Vec<String>,
     /// Whether the allowed clients bind the connector (claude.ai, ChatGPT) or only say whom it
     /// is meant for (Claude Code, `mcp-local`): AG-153.
@@ -909,13 +911,13 @@ pub struct Connector {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub narrowed_by: Vec<String>,
     #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     /// When the grant was last judged against the ceiling (created or edited): its age for the
     /// ceiling's longest life counts from here (JC2-45).
     #[serde(skip)]
-    pub granted_at: DateTime<Utc>,
+    pub granted_at: TimestampTz,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<TimestampTz>,
     /// The MCP address a client adds: `https://portal.{domain}/c/{id}`.
     pub url: String,
     /// What the connector may spend; shown on My connectors.
@@ -1427,7 +1429,7 @@ pub fn binds(client: &str) -> bool {
 }
 
 impl Record {
-    fn view(&self, base: &str, now: DateTime<Utc>) -> Connector {
+    fn view(&self, base: &str, now: TimestampTz) -> Connector {
         let state = if self.revoked_at.is_some() {
             "revoked"
         } else if self.grant.pending {
@@ -1517,7 +1519,7 @@ fn above_ceiling(field: &str, detail: String) -> ApiError {
 pub fn validate(
     new: &NewConnector,
     ceiling: &Ceiling,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<Vec<String>, ApiError> {
     if !is_dns1123(&new.name) || new.name.len() > 63 {
         return Err(invalid(
@@ -1536,7 +1538,7 @@ pub fn validate(
         ));
     }
     let most = i64::from(jc_core::kinds::delegation_policy::MAX_EXPIRY_DAYS);
-    if new.expires_at > now + Duration::days(most) {
+    if new.expires_at > now + jiff::SignedDuration::from_hours(24 * most) {
         return Err(invalid(
             "expiresAt",
             format!("a connector lives at most {most} days"),
@@ -1555,7 +1557,7 @@ pub fn validate(
 }
 
 /// What a well-formed request asks above the ceiling, field by field, in field order.
-fn above(new: &NewConnector, ceiling: &Ceiling, now: DateTime<Utc>) -> Vec<(String, String)> {
+fn above(new: &NewConnector, ceiling: &Ceiling, now: TimestampTz) -> Vec<(String, String)> {
     let named = ceiling.named();
     let mut above = Vec::new();
     for (i, segment) in new.segments.iter().enumerate() {
@@ -1623,12 +1625,12 @@ fn above(new: &NewConnector, ceiling: &Ceiling, now: DateTime<Utc>) -> Vec<(Stri
         ));
     }
     let days = ceiling.max_days();
-    if new.expires_at > now + Duration::days(days) {
+    if new.expires_at > now + jiff::SignedDuration::from_hours(24 * days) {
         // The asked date is part of the line, so an approval of it covers no later one (JC2-06).
         let why = format!(
             "{named} lets a connector live at most {days} days; asked until {}",
             new.expires_at
-                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                .to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
         );
         above.push(("expiresAt".into(), why));
     }
@@ -1822,7 +1824,7 @@ fn refused(verdict: &str) -> bool {
 #[schema(as = ConnectorCall)]
 pub struct Call {
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     /// The Keycloak subject of the token, the owner's unless the call was refused for it.
     pub subject: String,
     pub client: Option<String>,
@@ -1889,9 +1891,9 @@ fn record((id, owner, name, grant, created_at, last_used_at, revoked_at): Row) -
         owner,
         name,
         grant: grant.0,
-        created_at: odt_to_chrono(created_at),
-        last_used_at: last_used_at.map(odt_to_chrono),
-        revoked_at: revoked_at.map(odt_to_chrono),
+        created_at: odt_to_ts(created_at),
+        last_used_at: last_used_at.map(odt_to_ts),
+        revoked_at: revoked_at.map(odt_to_ts),
     }
 }
 
@@ -1936,7 +1938,7 @@ impl ConnectorStore {
         above: Vec<String>,
         base: &str,
     ) -> Result<Connector, ApiError> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let record = Record {
             id: new_id(),
             owner: owner.to_owned(),
@@ -1983,7 +1985,7 @@ impl ConnectorStore {
                 .bind(owner)
                 .bind(&record.name)
                 .bind(sqlx::types::Json(&record.grant))
-                .bind(chrono_to_odt(now))
+                .bind(ts_to_odt(now))
                 .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
@@ -2032,7 +2034,7 @@ impl ConnectorStore {
             pending: !above.is_empty() && approval.is_none(),
             above,
             approval,
-            granted_at: Some(Utc::now()),
+            granted_at: Some(TimestampTz::now()),
         };
         match &self.inner {
             Inner::Postgres(pool) => {
@@ -2060,7 +2062,7 @@ impl ConnectorStore {
 
     /// The connector `id`, whoever owns it: the caller compares the owner.
     pub async fn get(&self, id: &str, base: &str) -> Result<Option<Connector>, ApiError> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         match &self.inner {
             Inner::Postgres(pool) => {
                 let row: Option<Row> = sqlx::query_as(concat!(
@@ -2084,7 +2086,7 @@ impl ConnectorStore {
 
     /// The owner's connectors, newest first, revoked ones included.
     pub async fn of_owner(&self, owner: &str, base: &str) -> Result<Vec<Connector>, ApiError> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         match &self.inner {
             Inner::Postgres(pool) => {
                 let rows: Vec<Row> = sqlx::query_as(concat!(
@@ -2113,7 +2115,7 @@ impl ConnectorStore {
 
     /// Every live connector waiting for an administrator, oldest first (AG-150).
     pub async fn pending(&self, base: &str) -> Result<Vec<Connector>, ApiError> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         match &self.inner {
             Inner::Postgres(pool) => {
                 let rows: Vec<Row> = sqlx::query_as(concat!(
@@ -2144,7 +2146,7 @@ impl ConnectorStore {
     pub async fn approve(&self, id: &str, by: &str) -> Result<bool, ApiError> {
         let approval = Approval {
             by: by.to_owned(),
-            at: Utc::now(),
+            at: TimestampTz::now(),
         };
         match &self.inner {
             Inner::Postgres(pool) => {
@@ -2195,7 +2197,9 @@ impl ConnectorStore {
                     .0
                     .iter_mut()
                     .find(|r| r.id == id && r.owner == owner && r.revoked_at.is_none());
-                Ok(found.map(|r| r.revoked_at = Some(Utc::now())).is_some())
+                Ok(found
+                    .map(|r| r.revoked_at = Some(TimestampTz::now()))
+                    .is_some())
             }
         }
     }
@@ -2203,7 +2207,7 @@ impl ConnectorStore {
     /// Every connector of the organization with its last day's calls and denials, live ones first
     /// and then newest first, at most `OVERVIEW_PAGE` (T-5975).
     pub async fn overview(&self, base: &str) -> Result<Vec<Overview>, ApiError> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         match &self.inner {
             Inner::Postgres(pool) => {
                 let rows: Vec<OverviewRow> = sqlx::query_as(concat!(
@@ -2231,7 +2235,7 @@ impl ConnectorStore {
             }
             Inner::Memory(rows) => {
                 let rows = Self::memory(rows);
-                let since = now - Duration::days(1);
+                let since = now - jiff::SignedDuration::from_hours(24);
                 let mut records: Vec<&Record> = rows.0.iter().rev().collect();
                 records.sort_by_key(|r| r.revoked_at.is_some());
                 Ok(records
@@ -2264,7 +2268,7 @@ impl ConnectorStore {
             .map_err(db_error)?
             .rows_affected()),
             Inner::Memory(rows) => {
-                let now = Utc::now();
+                let now = TimestampTz::now();
                 let mut rows = Self::memory(rows);
                 let mut done = 0;
                 for r in rows
@@ -2290,7 +2294,7 @@ impl ConnectorStore {
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
                 )
                 .bind(connector)
-                .bind(chrono_to_odt(call.at))
+                .bind(ts_to_odt(call.at))
                 .bind(&call.subject)
                 .bind(&call.client)
                 .bind(&call.tool)
@@ -2311,7 +2315,7 @@ impl ConnectorStore {
                 if used {
                     sqlx::query("UPDATE connectors SET last_used_at = $2 WHERE id = $1")
                         .bind(connector)
-                        .bind(chrono_to_odt(call.at))
+                        .bind(ts_to_odt(call.at))
                         .execute(pool)
                         .await
                         .map_err(db_error)?;
@@ -2324,7 +2328,7 @@ impl ConnectorStore {
                         r.last_used_at = Some(call.at);
                     }
                 }
-                let oldest = call.at - Duration::days(CALLS_KEPT_DAYS);
+                let oldest = call.at - jiff::SignedDuration::from_hours(24 * CALLS_KEPT_DAYS);
                 rows.1.retain(|(_, c)| c.at >= oldest);
                 rows.1.push((connector.to_owned(), call));
             }
@@ -2350,7 +2354,7 @@ impl ConnectorStore {
                     .into_iter()
                     .map(
                         |(at, subject, client, tool, target, verdict, duration_ms)| Call {
-                            at: odt_to_chrono(at),
+                            at: odt_to_ts(at),
                             subject,
                             client,
                             tool,
@@ -2427,18 +2431,18 @@ pub(crate) mod tests {
                 kinds: None,
                 writes: false,
                 autonomous: false,
-                expires_at: Utc::now() + Duration::days(1),
+                expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
                 allowed_clients: vec![],
                 pending: false,
                 above: vec![],
                 approval: None,
                 granted_at: None,
             },
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             last_used_at: None,
             revoked_at: None,
         }
-        .view("https://portal.test", Utc::now())
+        .view("https://portal.test", TimestampTz::now())
     }
 
     /// T-6533: the operate segment pauses a SyncSource with `writes` on, a write item reaching it
@@ -3060,7 +3064,7 @@ pub(crate) mod tests {
             kinds: None,
             writes,
             autonomous: false,
-            expires_at: Utc::now() + Duration::days(days),
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24 * days),
             allowed_clients: vec![],
         }
     }
@@ -3252,7 +3256,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_default_ceiling_refuses_more_than_data_read_for_thirty_days() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         assert!(validate(
             &new(&["data-read"], false, 29),
             &Ceiling::of_policies(vec![]),
@@ -3295,7 +3299,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_personal_data_tick_needs_a_ceiling_that_allows_it() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut ticked = new(&["data-read"], false, 1);
         ticked.scope[0].personal_data = true;
         match validate(&ticked, &Ceiling::of_policies(Vec::new()), now) {
@@ -3374,23 +3378,23 @@ pub(crate) mod tests {
                 kinds: None,
                 writes: false,
                 autonomous: false,
-                expires_at: Utc::now() - Duration::seconds(1),
+                expires_at: TimestampTz::now() - jiff::SignedDuration::from_secs(1),
                 allowed_clients: vec![],
                 pending: false,
                 above: vec![],
                 approval: None,
                 granted_at: None,
             },
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
             last_used_at: None,
             revoked_at: None,
         };
-        let view = record.view("https://portal.test/", Utc::now());
+        let view = record.view("https://portal.test/", TimestampTz::now());
         assert_eq!((view.state.as_str(), view.is_active()), ("expired", false));
         assert_eq!(view.url, format!("https://portal.test/c/{}", record.id));
-        record.revoked_at = Some(Utc::now());
+        record.revoked_at = Some(TimestampTz::now());
         assert_eq!(
-            record.view("https://portal.test", Utc::now()).state,
+            record.view("https://portal.test", TimestampTz::now()).state,
             "revoked"
         );
     }
@@ -3438,7 +3442,7 @@ pub(crate) mod tests {
         );
 
         let call = |verdict: &str| Call {
-            at: Utc::now(),
+            at: TimestampTz::now(),
             subject: "jana".into(),
             client: Some("mcp-local".into()),
             tool: "tools/list".into(),
@@ -3542,7 +3546,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_delegation_policy_binds_by_group_and_bounds_each_field() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let (mirror, jana) = analysts("refuse");
         let ceiling = Ceiling::of(&mirror, &jana);
         assert!(
@@ -3623,14 +3627,14 @@ pub(crate) mod tests {
         let ceiling = Ceiling::of(&mirror, &jana);
         let mut writes = ask(&["data-read"], Some("counters"), 1);
         writes.writes = true;
-        let above = validate(&writes, &ceiling, Utc::now()).expect("queued");
+        let above = validate(&writes, &ceiling, TimestampTz::now()).expect("queued");
         assert_eq!(above.len(), 1);
         assert!(above[0].starts_with("writes: "), "{above:?}");
         // A field out of shape is still refused, never queued.
         let mut bad = ask(&["data-read"], Some("counters"), 1);
         bad.name = "Bad Name".into();
         assert!(matches!(
-            validate(&bad, &ceiling, Utc::now()),
+            validate(&bad, &ceiling, TimestampTz::now()),
             Err(ApiError::Invalid { .. })
         ));
     }
@@ -3758,7 +3762,7 @@ pub(crate) mod tests {
         assert_eq!(ceiling.admits(&live, get, "doprava", &counters), Ok(()));
         assert!(ceiling.lists(&live, metrics, "doprava"));
         assert!(ceiling.narrowing(&live).is_empty());
-        assert_eq!(ceiling.door(&live, CLAUDE, Utc::now()), Ok(()));
+        assert_eq!(ceiling.door(&live, CLAUDE, TimestampTz::now()), Ok(()));
         // The administrator drops `pipeline` and the Endpoint from the policy: the same
         // connector loses them at the next call, and its marks say so.
         let narrowed = Ceiling::of_policies(vec![(
@@ -3787,17 +3791,21 @@ pub(crate) mod tests {
         // A project the policy does not list is refused at the call.
         assert!(ceiling.admits(&live, get, "skolstvo", &counters).is_err());
         // The door: a client the policy does not list, and a connector older than its maxExpiry.
-        assert!(ceiling.door(&live, "mcp-local", Utc::now()).is_err());
+        assert!(ceiling
+            .door(&live, "mcp-local", TimestampTz::now())
+            .is_err());
         let mut old = live.clone();
-        old.created_at = Utc::now() - Duration::days(91);
+        old.created_at = TimestampTz::now() - jiff::SignedDuration::from_hours(24 * 91);
         old.granted_at = old.created_at;
-        let why = ceiling.door(&old, CLAUDE, Utc::now()).expect_err("too old");
+        let why = ceiling
+            .door(&old, CLAUDE, TimestampTz::now())
+            .expect_err("too old");
         assert!(why.contains("90 days"), "{why}");
         // JC2-45: an edit judged against the ceiling today renews it; its age counts from there.
         let mut renewed = old.clone();
-        renewed.granted_at = Utc::now();
-        renewed.expires_at = renewed.granted_at + Duration::days(89);
-        assert!(ceiling.door(&renewed, CLAUDE, Utc::now()).is_ok());
+        renewed.granted_at = TimestampTz::now();
+        renewed.expires_at = renewed.granted_at + jiff::SignedDuration::from_hours(24 * 89);
+        assert!(ceiling.door(&renewed, CLAUDE, TimestampTz::now()).is_ok());
         assert!(!ceiling
             .narrowing(&renewed)
             .iter()
@@ -3810,15 +3818,15 @@ pub(crate) mod tests {
         let mut approved = connector(&["access"], vec![item("doprava", None)]);
         approved.approval = Some(Approval {
             by: "sub-admin".into(),
-            at: Utc::now(),
+            at: TimestampTz::now(),
         });
         let queued = Ceiling::of(&mirror, &jana);
         assert!(queued.honours(&approved));
-        assert_eq!(queued.door(&approved, "", Utc::now()), Ok(()));
+        assert_eq!(queued.door(&approved, "", TimestampTz::now()), Ok(()));
         let (mirror, jana) = analysts("refuse");
         let refused = Ceiling::of(&mirror, &jana);
         assert!(!refused.honours(&approved));
-        assert!(refused.door(&approved, "", Utc::now()).is_err());
+        assert!(refused.door(&approved, "", TimestampTz::now()).is_err());
     }
 
     #[tokio::test]
@@ -3926,7 +3934,7 @@ pub(crate) mod tests {
     #[test]
     fn a_kinds_list_is_checked_and_held_to_the_ceiling() {
         use ConnectorVerb::{Create, Delete, Edit, Read, Run};
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let invalid =
             |n: NewConnector, field: &str| match validate(&n, &Ceiling::of_policies(vec![]), now) {
                 Err(ApiError::Invalid { errors, .. }) => assert_eq!(errors, vec![field.to_owned()]),
@@ -4021,7 +4029,7 @@ pub(crate) mod tests {
     /// so an edit to it waits for a new approval.
     #[test]
     fn an_above_ceiling_line_names_what_was_asked() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let mut policy = default_policy();
         policy.projects = vec!["doprava".into()];
         policy.segments = Some(vec![Segment::Context]);
@@ -4035,7 +4043,7 @@ pub(crate) mod tests {
         ask.scope = vec![item("doprava", Some("parking"))];
         let first = above(&ask, &ceiling, now);
         assert!(first.iter().any(|(f, _)| f == "kinds"), "{first:?}");
-        ask.expires_at = now + Duration::days(300);
+        ask.expires_at = now + jiff::SignedDuration::from_hours(24 * 300);
         ask.scope = vec![item("doprava", Some("bikes"))];
         let later = above(&ask, &ceiling, now);
         for field in ["expiresAt", "scope[0].endpoint"] {

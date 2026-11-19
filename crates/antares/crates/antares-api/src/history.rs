@@ -76,9 +76,9 @@ pub(crate) fn backfilled(doc: &Value, attr: &str, current: &Value, incoming: &Va
         return false;
     }
     let at = |i: &Value| {
-        i.get("observedAt").and_then(Value::as_str).and_then(|s| {
-            chrono::DateTime::parse_from_rfc3339(&antares_store::filter::canonical_datetime(s)).ok()
-        })
+        i.get("observedAt")
+            .and_then(Value::as_str)
+            .and_then(|s| crate::state::instant(&antares_store::filter::canonical_datetime(s)))
     };
     let (Some(was), Some(now)) = (at(current), at(incoming)) else {
         return false;
@@ -184,7 +184,7 @@ pub(crate) fn provenance(operation: &str) -> Value {
     let base = request.unwrap_or_else(|| serde_json::json!({"channel": "api"}));
     let mut out = crate::provenance::with_operation(&base, operation);
     if let Some(o) = out.as_object_mut() {
-        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let now = crate::state::now_iso();
         o.insert("writtenAt".into(), Value::String(now));
     }
     out
@@ -459,12 +459,12 @@ type LastRows = std::collections::HashMap<(String, String, String, String), Last
 /// An attribute's newest row, and the last late row written below it.
 struct LastRow {
     payload: Kept,
-    at: chrono::DateTime<chrono::Utc>,
+    at: jiff::Timestamp,
     /// A late instance (older than `at`) is judged against the last late row,
     /// or against `at` before there is one, so a replayed or retried batch
     /// of older seconds records one row per heartbeat, not one per second
     /// (T-5157: a Vehicle wrote one row in 4.5 s under a 30 s heartbeat).
-    late: Option<(Kept, chrono::DateTime<chrono::Utc>)>,
+    late: Option<(Kept, jiff::Timestamp)>,
 }
 
 /// What [`LAST_ROWS`] keeps of a row's payload: the `value` [`moved`] weighs (a number or a
@@ -625,7 +625,7 @@ pub(crate) fn admits_change(
         RecordMode::Observed => return newly_observed(before, instance),
         RecordMode::OnChange(mode) => mode,
     };
-    let at = observed_at(instance).unwrap_or_else(chrono::Utc::now);
+    let at = observed_at(instance).unwrap_or_else(jiff::Timestamp::now);
     let payload = Kept::of(&payload_of(instance));
     let key = (
         tenant.as_str().to_owned(),
@@ -640,12 +640,12 @@ pub(crate) fn admits_change(
     let mut last = LAST_ROWS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let admits = |was: &Kept, when: chrono::DateTime<chrono::Utc>| {
+    let admits = |was: &Kept, when: jiff::Timestamp| {
         if at == when {
             return payload.digest != was.digest;
         }
-        let apart = at.signed_duration_since(when).abs();
-        apart.to_std().is_ok_and(|d| d >= mode.heartbeat) || moved(&mode, was, &payload)
+        let apart = at.duration_since(when).unsigned_abs();
+        apart >= mode.heartbeat || moved(&mode, was, &payload)
     };
     match last.get_mut(&key) {
         Some(row) if at < row.at => {
@@ -678,11 +678,9 @@ pub(crate) fn admits_change(
 }
 
 /// The instant `instance` was observed at, if it says.
-fn observed_at(instance: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
+fn observed_at(instance: &Value) -> Option<jiff::Timestamp> {
     let s = instance.get("observedAt")?.as_str()?;
-    chrono::DateTime::parse_from_rfc3339(&antares_store::filter::canonical_datetime(s))
-        .ok()
-        .map(|t| t.with_timezone(&chrono::Utc))
+    crate::state::instant(&antares_store::filter::canonical_datetime(s))
 }
 
 /// `record: observed`: whether `instance` carries an `observedAt` newer than

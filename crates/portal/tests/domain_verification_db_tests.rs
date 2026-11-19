@@ -6,7 +6,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use joinedcontext_portal::domain_verification::{
     gate_states, Lookup, Method, State, Unanswered, Verifier,
 };
@@ -58,8 +58,8 @@ async fn pool(url: &str) -> sqlx::PgPool {
         .expect("the test database answers and migrates")
 }
 
-fn now() -> DateTime<Utc> {
-    Utc::now()
+fn now() -> TimestampTz {
+    TimestampTz::now()
 }
 
 /// PF-41: the first look mints the Organization's challenge and fails until it is published;
@@ -87,7 +87,7 @@ async fn the_challenge_is_minted_once_and_verifies_once_published() {
 
     // Another replica, or this one after a restart: the same challenge, not a new one.
     let published = Published::new(&[format!("jc-verify={}", first.challenge)]);
-    let later = now() + Duration::minutes(11);
+    let later = now() + jiff::SignedDuration::from_mins(11);
     let second = Verifier::new(pool(&url).await, &published, "portal.hel.fi")
         .verify(&organization, "hel.fi", later)
         .await
@@ -117,13 +117,17 @@ async fn a_look_happens_only_when_due_and_a_new_domain_starts_over() {
     let verifier = Verifier::new(pool, &published, "portal.hel.fi");
     // A failed domain waits ten minutes before the next look.
     let soon = verifier
-        .verify(&organization, "hel.fi", now() + Duration::minutes(5))
+        .verify(
+            &organization,
+            "hel.fi",
+            now() + jiff::SignedDuration::from_mins(5),
+        )
         .await
         .expect("stored");
     assert_eq!(soon.state, State::Failed);
     assert_eq!(published.looks.load(Ordering::SeqCst), 0);
 
-    let checked = now() + Duration::minutes(11);
+    let checked = now() + jiff::SignedDuration::from_mins(11);
     let verified = verifier
         .verify(&organization, "hel.fi", checked)
         .await
@@ -133,12 +137,20 @@ async fn a_look_happens_only_when_due_and_a_new_domain_starts_over() {
 
     // Twenty-nine days on it is still the stored answer; at thirty it is looked at again.
     verifier
-        .verify(&organization, "hel.fi", checked + Duration::days(29))
+        .verify(
+            &organization,
+            "hel.fi",
+            checked + jiff::SignedDuration::from_hours(24 * 29),
+        )
         .await
         .expect("stored");
     assert_eq!(published.looks.load(Ordering::SeqCst), 1);
     verifier
-        .verify(&organization, "hel.fi", checked + Duration::days(30))
+        .verify(
+            &organization,
+            "hel.fi",
+            checked + jiff::SignedDuration::from_hours(24 * 30),
+        )
         .await
         .expect("stored");
     assert_eq!(published.looks.load(Ordering::SeqCst), 2);
@@ -146,7 +158,11 @@ async fn a_look_happens_only_when_due_and_a_new_domain_starts_over() {
     // Another domain is looked at at once, with the Organization's own challenge and a record
     // named for the new domain.
     let moved = verifier
-        .verify(&organization, "espoo.fi", checked + Duration::days(30))
+        .verify(
+            &organization,
+            "espoo.fi",
+            checked + jiff::SignedDuration::from_hours(24 * 30),
+        )
         .await
         .expect("stored");
     assert_eq!(moved.challenge, minted.challenge);
@@ -176,7 +192,11 @@ async fn the_gate_reads_the_stored_state_for_the_declared_domain() {
         .expect("stored");
     let published = Published::new(&[format!("jc-verify={}", first.challenge)]);
     Verifier::new(pool.clone(), &published, "portal.hel.fi")
-        .verify(&organization, "hel.fi", now() + Duration::minutes(11))
+        .verify(
+            &organization,
+            "hel.fi",
+            now() + jiff::SignedDuration::from_mins(11),
+        )
         .await
         .expect("stored");
 

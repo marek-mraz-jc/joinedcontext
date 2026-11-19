@@ -709,7 +709,6 @@ dependencies = [
  "arc-swap",
  "axum",
  "base64 0.22.1",
- "chrono",
  "futures-util",
  "http-body",
  "http-body-util",
@@ -722,7 +721,9 @@ dependencies = [
  "jc-ngsi-input",
  "jc-relationships",
  "jc-tabular",
+ "jc-time",
  "jc-types",
+ "jiff",
  "jsonschema",
  "jsonwebtoken",
  "metrics",
@@ -2670,11 +2671,12 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
- "chrono",
  "form_urlencoded",
  "hmac 0.12.1",
  "hyper-util",
+ "jc-time",
  "jc-types",
+ "jiff",
  "jsonschema",
  "jsonwebtoken",
  "ngsild-ql",
@@ -2773,6 +2775,7 @@ name = "jc-time"
 version = "0.1.0"
 dependencies = [
  "jiff",
+ "schemars 0.8.22",
  "serde",
 ]
 
@@ -2791,10 +2794,11 @@ dependencies = [
  "aes-gcm",
  "age",
  "base64 0.22.1",
- "chrono",
  "getrandom 0.3.4",
  "jc-core",
  "jc-manifest",
+ "jc-time",
+ "jiff",
  "jsonschema",
  "minijinja",
  "ngsild-jsonld",
@@ -2933,8 +2937,10 @@ dependencies = [
  "jc-chart",
  "jc-core",
  "jc-router",
+ "jc-time",
  "jc-types",
  "jcctl",
+ "jiff",
  "jsonschema",
  "jsonwebtoken",
  "lettre",
@@ -3370,7 +3376,8 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 name = "ngsild-jsonld"
 version = "0.3.0"
 dependencies = [
- "chrono",
+ "jc-time",
+ "jiff",
  "ngsild-model",
  "serde_json",
 ]
@@ -3379,7 +3386,8 @@ dependencies = [
 name = "ngsild-matcher"
 version = "0.3.0"
 dependencies = [
- "chrono",
+ "jc-time",
+ "jiff",
  "ngsild-jsonld",
  "ngsild-model",
  "ngsild-ql",
@@ -5115,7 +5123,6 @@ version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
 dependencies = [
- "chrono",
  "dyn-clone",
  "schemars_derive",
  "serde",

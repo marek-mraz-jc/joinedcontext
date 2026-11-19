@@ -8,7 +8,7 @@
 
 use crate::error::{Error, Result};
 use crate::names;
-use chrono::{DateTime, FixedOffset};
+use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -135,7 +135,7 @@ pub enum End {
     /// The write time plus this.
     Rolling(u64),
     /// This instant.
-    At(DateTime<FixedOffset>),
+    At(Timestamp),
 }
 
 impl LifetimeMode {
@@ -199,9 +199,9 @@ impl LifetimeMode {
             return Ok(End::Rolling(duration("rolling", text)?));
         }
         let text = self.at.as_deref().unwrap_or_default();
-        DateTime::parse_from_rfc3339(text)
+        jc_time::parse_rfc3339(text)
             .map(End::At)
-            .map_err(|_| Error::Invalid {
+            .ok_or_else(|| Error::Invalid {
                 field: format!("{path}.at"),
                 reason: format!(
                     "`{}` is not an RFC 3339 instant with an offset, such as \

@@ -1,6 +1,5 @@
 //! T-0117: `kind: DataModel` (DM-01, DM-02, DM-03, DM-08, DM-22, DM-26, DM-48).
 
-use chrono::{DateTime, Utc};
 use jc_core::error::Error;
 use jc_core::kinds::data_model::{
     DataModelLifecycle, DataModelOrigin, DataModelSource, RemoteSource, SemVer,
@@ -31,8 +30,8 @@ spec:
     example: ./examples/bb-air-quality.example.jsonld
 "#;
 
-fn at(s: &str) -> DateTime<Utc> {
-    s.parse().expect("fixed timestamp")
+fn at(s: &str) -> jc_time::TimestampTz {
+    jc_time::TimestampTz(s.parse().expect("fixed timestamp"))
 }
 
 #[test]

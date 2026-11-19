@@ -340,7 +340,7 @@ impl Ledger {
                     row.last_run = run.to_owned();
                     if wrote {
                         book.written
-                            .insert(id.to_owned(), chrono::Utc::now().timestamp());
+                            .insert(id.to_owned(), jc_time::TimestampTz::now().as_second());
                     }
                 }
             }
@@ -755,7 +755,7 @@ impl Ledger {
         if let Some(mut map) = self.memory() {
             map.entry((project.to_owned(), pipeline.to_owned()))
                 .or_default()
-                .complete = Some((run.to_owned(), chrono::Utc::now().to_rfc3339()));
+                .complete = Some((run.to_owned(), jc_time::TimestampTz::now().to_rfc3339()));
         }
         Ok(())
     }
@@ -831,7 +831,7 @@ impl Ledger {
             let book = map
                 .entry((project.to_owned(), pipeline.to_owned()))
                 .or_default();
-            let at = chrono::Utc::now().to_rfc3339();
+            let at = jc_time::TimestampTz::now().to_rfc3339();
             for id in ids {
                 book.removed.retain(|(_, removal)| &removal.id != id);
                 let removal = Removal {
@@ -1204,7 +1204,7 @@ pub async fn marked_at_source(
         return Ok(());
     }
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "pipeline.source-delete".to_owned(),
@@ -1603,7 +1603,7 @@ fn feed_event(
     }
     let quiet = failed.is_empty() && edited.is_empty();
     Some(crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "pipeline.source-delete".to_owned(),

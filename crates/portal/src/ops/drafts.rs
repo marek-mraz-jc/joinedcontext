@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -26,7 +26,7 @@ use super::Caller;
 use super::OpError;
 use super::Operation;
 use super::OperationAnnotations;
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::change::Lane;
 use crate::error::ApiError;
 use crate::ops::verdict::Verdict;
@@ -50,7 +50,7 @@ pub struct Draft {
     pub touched_kind: String,
     pub version: i64,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
 }
 
 /// One line of a draft list (AG-61, API/01 §Drafts): what a caller needs to pick one, and never
@@ -68,7 +68,7 @@ pub struct DraftLine {
     pub touched_kind: String,
     pub version: i64,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
     /// The draft's own check, as a line: whether it passed and how much it found.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<VerdictLine>,
@@ -81,7 +81,7 @@ pub struct VerdictLine {
     pub ok: bool,
     pub findings: usize,
     #[schema(value_type = String, format = DateTime)]
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: TimestampTz,
 }
 
 impl From<&Draft> for DraftLine {
@@ -114,7 +114,7 @@ pub struct DraftEvent {
     pub touched_kind: String,
     pub event: String,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
     /// The draft's context space, so a stream filters what it forwards by the reader's binding
     /// (PF-59, T-1455). In-process only: never sent.
     #[serde(skip)]
@@ -431,7 +431,7 @@ impl DraftStore {
             return Err(DraftError::Secret(secret_field));
         }
 
-        let now = Utc::now().timestamp();
+        let now = TimestampTz::now().as_second();
         let last = self.swept.load(std::sync::atomic::Ordering::Relaxed);
         if now - last >= SWEEP_EVERY
             && self
@@ -479,7 +479,7 @@ impl DraftStore {
                     touched_by: touched_by.to_string(),
                     touched_kind: touched_kind.to_string(),
                     version: new_version,
-                    updated_at: Utc::now(),
+                    updated_at: TimestampTz::now(),
                 };
                 w.insert(key, draft.clone());
                 draft
@@ -604,7 +604,7 @@ impl DraftStore {
                     name: name.to_string(),
                 })?;
                 draft.verdict = Some(verdict.keeping_records(draft.verdict.as_ref()));
-                draft.updated_at = Utc::now();
+                draft.updated_at = TimestampTz::now();
                 draft.clone()
             }
             DraftStoreInner::Db(pool, mirror) => {
@@ -737,7 +737,7 @@ impl DraftStore {
                             touched_by: removed.touched_by,
                             touched_kind: removed.touched_kind,
                             event: "drop".to_string(),
-                            updated_at: Utc::now(),
+                            updated_at: TimestampTz::now(),
                         }),
                     )
                 } else {
@@ -779,7 +779,7 @@ impl DraftStore {
                             touched_by,
                             touched_kind,
                             event: "drop".to_string(),
-                            updated_at: odt_to_chrono(odt),
+                            updated_at: odt_to_ts(odt),
                         }),
                     )
                 } else {
@@ -796,7 +796,11 @@ impl DraftStore {
     }
 
     pub async fn sweep(&self, idle: Duration) -> Result<(), DraftError> {
-        let cutoff = Utc::now() - idle;
+        let cutoff = TimestampTz(
+            jiff::Timestamp::now()
+                .checked_sub(idle)
+                .unwrap_or(jiff::Timestamp::MIN),
+        );
         match &*self.inner {
             DraftStoreInner::Memory(map) => {
                 let mut w = map.write().await;
@@ -804,7 +808,7 @@ impl DraftStore {
                 Ok(())
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let cutoff_odt = chrono_to_odt(cutoff);
+                let cutoff_odt = ts_to_odt(cutoff);
                 // Project by project, each in its own key (STO-07).
                 for (project, key) in crate::project_ids::keyed_projects(pool, mirror)
                     .await
@@ -848,7 +852,7 @@ fn row_to_draft(row: sqlx::postgres::PgRow) -> Result<Draft, DraftError> {
         touched_by,
         touched_kind,
         version,
-        updated_at: odt_to_chrono(updated_at_odt),
+        updated_at: odt_to_ts(updated_at_odt),
     })
 }
 
@@ -1449,7 +1453,7 @@ mod tests {
             touched_by: "steward".into(),
             touched_kind: "person".into(),
             event: "put".into(),
-            updated_at: chrono::Utc::now(),
+            updated_at: jc_time::TimestampTz::now(),
             space: Some("mobility".into()),
         };
         let notice = |origin: &str| {

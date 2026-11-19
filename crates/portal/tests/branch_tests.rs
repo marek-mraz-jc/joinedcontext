@@ -299,7 +299,7 @@ fn rights(state: &AppState, who: &str, project: &str) -> Effective {
         &state.config.bootstrap_admins,
         &person(who),
         project,
-        chrono::Utc::now(),
+        jc_time::TimestampTz::now(),
     )
 }
 

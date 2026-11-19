@@ -666,7 +666,7 @@ pub fn unified(old: &str, new: &str) -> String {
 async fn record(state: &AppState, caller: &Caller, project: &str, repository: &str, what: &str) {
     let actor = &caller.identity.username;
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "repository.read".to_owned(),

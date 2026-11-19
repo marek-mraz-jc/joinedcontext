@@ -8,7 +8,7 @@
 use crate::envelope::TypedRef;
 use crate::error::{Error, Result};
 use crate::names;
-use chrono::NaiveDate;
+use jc_time::Date;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -160,10 +160,10 @@ pub struct Source {
 pub struct Temporal {
     /// The first day covered: `dcat:startDate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<NaiveDate>,
+    pub start: Option<Date>,
     /// The last day covered: `dcat:endDate`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<NaiveDate>,
+    pub end: Option<Date>,
 }
 
 /// What a licence asks of whoever uses the data, as ODRL duties (EP-79).

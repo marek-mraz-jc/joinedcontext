@@ -70,7 +70,7 @@ impl Driver {
     /// The copy the person is working in: their newest live workspace of this project (CC-76).
     /// Its drafts and pages are the copy's; without one, drafts are the project's own.
     pub(super) async fn active_workspace(&self) -> Option<String> {
-        let now = chrono::Utc::now();
+        let now = jc_time::TimestampTz::now();
         self.state
             .workspaces
             .list(&self.project)
@@ -92,7 +92,11 @@ impl Driver {
     /// when continuations should share it.
     pub(super) async fn second_resource(&self, kind: &str, name: &str) -> Option<String> {
         let drafts = self.state.drafts.list(&self.project).await.ok()?;
-        let since = chrono::Utc::now() - self.started.elapsed();
+        let since = jc_time::TimestampTz(
+            jiff::Timestamp::now()
+                .checked_sub(self.started.elapsed())
+                .unwrap_or(jiff::Timestamp::MIN),
+        );
         let other = drafts.into_iter().find(|draft| {
             draft.workspace.is_none()
                 && draft.touched_kind == "assistant"

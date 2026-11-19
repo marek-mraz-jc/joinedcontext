@@ -1737,7 +1737,7 @@ async fn activity_rows_are_keyed_and_read_only_under_their_key() {
         rows_keyed_and_read_only_under_their_key(ACTIVITY_ROWS_0077, "ac").await;
     let pool = state.db.clone().expect("a database");
     let event = |project: &str| ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "config.applied".into(),
@@ -2343,12 +2343,12 @@ async fn notification_and_build_rows_are_keyed_and_read_only_under_their_key() {
         .iter()
         .any(|build| build.id == id));
     assert!(
-        !build_records::start(&pool, &orphan, id, "t", chrono::Duration::minutes(5))
+        !build_records::start(&pool, &orphan, id, "t", jiff::SignedDuration::from_mins(5))
             .await
             .expect("start")
     );
     assert!(
-        build_records::start(&pool, &placed, id, "t", chrono::Duration::minutes(5))
+        build_records::start(&pool, &placed, id, "t", jiff::SignedDuration::from_mins(5))
             .await
             .expect("start")
     );

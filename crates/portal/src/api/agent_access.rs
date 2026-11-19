@@ -112,7 +112,11 @@ pub(crate) async fn account_access(
     let may_propose = effective.check(KIND, Verb::Propose, Some(&target)).is_ok();
     let may_approve = effective.check(KIND, Verb::Approve, Some(&target)).is_ok();
     Ok(Json(AccountAccess {
-        grants: crate::permissions::account_access(&state.mirror, &spec, chrono::Utc::now()),
+        grants: crate::permissions::account_access(
+            &state.mirror,
+            &spec,
+            jc_time::TimestampTz::now(),
+        ),
         no_secret: crate::api::account_secret::no_secret(&spec).map(|(code, _)| code.to_owned()),
         may_issue_secret: identity.client.is_none() && may_approve,
         delegates: spec.delegation.is_some(),
@@ -285,7 +289,7 @@ async fn remove_grants(
 
 /// The grants of `spec` the reaper removes at `now`: every expired one, but never the last grant
 /// standing, which an account must hold and which grants nothing once expired (AG-131).
-pub fn reapable(spec: &ServiceAccountSpec, now: chrono::DateTime<chrono::Utc>) -> Vec<usize> {
+pub fn reapable(spec: &ServiceAccountSpec, now: jc_time::TimestampTz) -> Vec<usize> {
     let mut expired: Vec<usize> = spec
         .roles
         .iter()
@@ -320,7 +324,7 @@ pub fn spawn_grant_reaper(state: AppState) {
             if !state.leads() {
                 continue;
             }
-            reap_expired_grants(&state, chrono::Utc::now(), &mut tried).await;
+            reap_expired_grants(&state, jc_time::TimestampTz::now(), &mut tried).await;
         }
     });
 }
@@ -329,8 +333,8 @@ pub fn spawn_grant_reaper(state: AppState) {
 /// Change still pending (the forge refused the merge) is not proposed again for an hour.
 pub async fn reap_expired_grants(
     state: &AppState,
-    now: chrono::DateTime<chrono::Utc>,
-    tried: &mut std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+    now: jc_time::TimestampTz,
+    tried: &mut std::collections::HashMap<String, jc_time::TimestampTz>,
 ) {
     let portal = crate::auth::Identity {
         subject: "joinedcontext-portal".to_owned(),
@@ -359,7 +363,7 @@ pub async fn reap_expired_grants(
             let key = format!("{project}/{name}");
             if tried
                 .get(&key)
-                .is_some_and(|at| now - *at < chrono::Duration::hours(1))
+                .is_some_and(|at| now - *at < jiff::SignedDuration::from_hours(1))
             {
                 continue;
             }
@@ -402,7 +406,7 @@ async fn record(
     change: &crate::change::Change,
 ) {
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "access.revoked".to_owned(),
@@ -497,7 +501,7 @@ mod tests {
     #[test]
     fn the_reaper_takes_expired_grants_and_never_the_last_one() {
         use super::reapable;
-        let now: chrono::DateTime<chrono::Utc> = "2026-10-21T12:00:00Z".parse().unwrap();
+        let now: jc_time::TimestampTz = "2026-10-21T12:00:00Z".parse().unwrap();
         let ended = json!({ "role": "writer", "scope": { "project": "p" }, "validity": { "notAfter": "2026-10-21T11:59:59Z" } });
         let ends_now = json!({ "role": "writer", "scope": { "project": "q" }, "validity": { "notAfter": "2026-10-21T12:00:00Z" } });
         let open = json!({ "role": "reader", "scope": { "project": "p" } });

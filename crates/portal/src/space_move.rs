@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -60,9 +60,9 @@ pub struct Move {
     pub source: Option<Digest>,
     pub target: Option<Digest>,
     #[schema(value_type = String, format = DateTime)]
-    pub started_at: DateTime<Utc>,
+    pub started_at: TimestampTz,
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub ended_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<TimestampTz>,
 }
 
 /// Everything one move needs, resolved before it starts.
@@ -141,7 +141,7 @@ impl Moves {
             reason: None,
             source: None,
             target: None,
-            started_at: Utc::now(),
+            started_at: TimestampTz::now(),
             ended_at: None,
         };
         {
@@ -175,7 +175,7 @@ impl Moves {
                 MoveState::Done
             };
             job.reason = reason;
-            job.ended_at = Some(Utc::now());
+            job.ended_at = Some(TimestampTz::now());
         });
     }
 

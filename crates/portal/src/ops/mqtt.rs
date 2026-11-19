@@ -280,12 +280,11 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
     use crate::api::mqtt_captured::CapturedMessage;
-    use chrono::DateTime;
 
     fn message(payload: &str, encoding: &'static str) -> CapturedMessage {
         CapturedMessage {
             topic: "sensors/s-12/air".to_owned(),
-            received_at: DateTime::from_timestamp(0, 0).unwrap_or_default(),
+            received_at: jc_time::TimestampTz::from_second(0).unwrap_or_default(),
             client_id: None,
             bytes: payload.len(),
             payload: payload.to_owned(),

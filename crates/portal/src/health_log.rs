@@ -13,23 +13,23 @@
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{odt_to_ts, ts_to_odt};
 use crate::alerts::{rfc3339, Event, Signal};
 use crate::resource::{Condition, Phase, ResourceEnvelope};
 use crate::store::Mirror;
 
 /// How long the history is kept.
-pub const KEEP: Duration = Duration::days(90);
+pub const KEEP: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 90);
 /// A status that holds gets a history point once an hour.
-const SAMPLE: Duration = Duration::hours(1);
+const SAMPLE: jiff::SignedDuration = jiff::SignedDuration::from_hours(1);
 /// The leader writes the log at most this often; a broken surface turns red within it.
-pub const EVERY: Duration = Duration::minutes(2);
+pub const EVERY: jiff::SignedDuration = jiff::SignedDuration::from_mins(2);
 /// The history one row carries: the last 7 days.
-const SHOWN: Duration = Duration::days(7);
+const SHOWN: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
 /// The longest detail kept, in characters.
 const MAX_DETAIL: usize = 500;
 
@@ -583,20 +583,20 @@ pub fn derive(
 #[derive(Debug, Clone)]
 struct Latest {
     finding: Finding,
-    since: DateTime<Utc>,
-    last_ok: Option<DateTime<Utc>>,
-    checked_at: DateTime<Utc>,
+    since: TimestampTz,
+    last_ok: Option<TimestampTz>,
+    checked_at: TimestampTz,
 }
 
 #[derive(Default)]
 struct Memory {
     latest: BTreeMap<Key, Latest>,
-    history: Vec<(Key, DateTime<Utc>, Status)>,
+    history: Vec<(Key, TimestampTz, Status)>,
 }
 
 impl Memory {
     /// The same rules the Postgres statements of [`HealthStore::record`] hold.
-    fn record(&mut self, now: DateTime<Utc>, findings: Vec<Finding>) {
+    fn record(&mut self, now: TimestampTz, findings: Vec<Finding>) {
         let mut latest = BTreeMap::new();
         for finding in findings {
             let key = finding.key();
@@ -632,7 +632,7 @@ impl Memory {
         self.history.retain(|(_, at, _)| *at >= now - KEEP);
     }
 
-    fn list(&self, project: Option<&str>, from: DateTime<Utc>) -> Vec<Check> {
+    fn list(&self, project: Option<&str>, from: TimestampTz) -> Vec<Check> {
         self.latest
             .iter()
             .filter(|(key, _)| project.is_none_or(|p| key.0 == p))
@@ -690,7 +690,7 @@ type Row = (
 /// The health log, durable with a database, in memory without one.
 pub struct HealthStore {
     inner: Inner,
-    written: tokio::sync::Mutex<Option<DateTime<Utc>>>,
+    written: tokio::sync::Mutex<Option<TimestampTz>>,
 }
 
 impl HealthStore {
@@ -707,7 +707,7 @@ impl HealthStore {
     /// Writes the findings when the last write is [`EVERY`] old or older.
     pub async fn record_due(
         &self,
-        now: DateTime<Utc>,
+        now: TimestampTz,
         findings: Vec<Finding>,
     ) -> Result<(), sqlx::Error> {
         let mut written = self.written.lock().await;
@@ -725,7 +725,7 @@ impl HealthStore {
     /// keeps no row.
     pub async fn record(
         &self,
-        now: DateTime<Utc>,
+        now: TimestampTz,
         findings: Vec<Finding>,
     ) -> Result<(), sqlx::Error> {
         let (pool, mirror) = match &self.inner {
@@ -748,11 +748,11 @@ impl HealthStore {
     async fn record_project(
         pool: &sqlx::PgPool,
         key: jc_types::ProjectKey,
-        now: DateTime<Utc>,
+        now: TimestampTz,
         findings: &[&Finding],
     ) -> Result<(), sqlx::Error> {
         let column = |f: fn(&Finding) -> String| findings.iter().map(|x| f(x)).collect::<Vec<_>>();
-        let at = chrono_to_odt(now);
+        let at = ts_to_odt(now);
         let mut tx = crate::db::tenant_tx(pool, key).await?;
         sqlx::query(
             "INSERT INTO health_check AS h (project, kind, name, \"check\", status, since, last_ok, \
@@ -811,7 +811,7 @@ impl HealthStore {
     pub async fn list(
         &self,
         project: Option<&str>,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<Vec<Check>, sqlx::Error> {
         self.list_from(project, now - SHOWN).await
     }
@@ -821,7 +821,7 @@ impl HealthStore {
     pub async fn current(
         &self,
         project: &str,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<Vec<Check>, sqlx::Error> {
         self.list_from(Some(project), now).await
     }
@@ -831,7 +831,7 @@ impl HealthStore {
     async fn list_from(
         &self,
         project: Option<&str>,
-        from: DateTime<Utc>,
+        from: TimestampTz,
     ) -> Result<Vec<Check>, sqlx::Error> {
         let mut checks = match &self.inner {
             Inner::Memory(memory) => memory
@@ -864,7 +864,7 @@ impl HealthStore {
                      WHERE h.project = $1",
                     )
                     .bind(&project)
-                    .bind(chrono_to_odt(from))
+                    .bind(ts_to_odt(from))
                     .fetch_all(&mut *tx)
                     .await?);
                     tx.commit().await?;
@@ -877,9 +877,9 @@ impl HealthStore {
                             name: row.2,
                             check: row.3,
                             status: Status::parse(&row.4),
-                            since: rfc3339(odt_to_chrono(row.5)),
-                            last_ok: row.6.map(|at| rfc3339(odt_to_chrono(at))),
-                            checked_at: rfc3339(odt_to_chrono(row.7)),
+                            since: rfc3339(odt_to_ts(row.5)),
+                            last_ok: row.6.map(|at| rfc3339(odt_to_ts(at))),
+                            checked_at: rfc3339(odt_to_ts(row.7)),
                             detail: Text::from_columns(row.8, &row.13),
                             fix: Text::from_columns(row.9, &row.14),
                             evidence_url: row.10,
@@ -888,7 +888,7 @@ impl HealthStore {
                                 .into_iter()
                                 .zip(row.12)
                                 .map(|(at, status)| Point {
-                                    at: rfc3339(odt_to_chrono(at)),
+                                    at: rfc3339(odt_to_ts(at)),
                                     status: Status::parse(&status),
                                 })
                                 .collect(),
@@ -910,7 +910,7 @@ mod tests {
     use super::*;
     use crate::resource::{ObjectMeta, API_VERSION};
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         text.parse().expect("a time")
     }
 
@@ -1123,12 +1123,12 @@ mod tests {
             .record(t0, vec![finding(Status::Ok)])
             .await
             .expect("record");
-        let t1 = t0 + Duration::minutes(2);
+        let t1 = t0 + jiff::SignedDuration::from_mins(2);
         store
             .record(t1, vec![finding(Status::Error)])
             .await
             .expect("record");
-        let t2 = t1 + Duration::minutes(2);
+        let t2 = t1 + jiff::SignedDuration::from_mins(2);
         store
             .record(t2, vec![finding(Status::Error)])
             .await
@@ -1138,7 +1138,7 @@ mod tests {
         assert_eq!(held.since, rfc3339(t1));
         assert_eq!(held.last_ok.as_deref(), Some(rfc3339(t0).as_str()));
         assert_eq!(held.history.len(), 2, "one point per change, not per run");
-        let t3 = t2 + Duration::minutes(2);
+        let t3 = t2 + jiff::SignedDuration::from_mins(2);
         store
             .record(t3, vec![finding(Status::Ok)])
             .await
@@ -1162,7 +1162,9 @@ mod tests {
         let t0 = at("2026-07-01T00:00:00Z");
         for hour in 0..3 {
             for minute in [0, 20, 40] {
-                let now = t0 + Duration::hours(hour) + Duration::minutes(minute);
+                let now = t0
+                    + jiff::SignedDuration::from_hours(hour)
+                    + jiff::SignedDuration::from_mins(minute);
                 store
                     .record(now, vec![finding(Status::Ok)])
                     .await
@@ -1176,7 +1178,7 @@ mod tests {
                 "one point an hour"
             );
         }
-        let later = t0 + KEEP + Duration::days(1);
+        let later = t0 + KEEP + jiff::SignedDuration::from_hours(24);
         store
             .record(later, vec![finding(Status::Ok)])
             .await
@@ -1196,7 +1198,10 @@ mod tests {
             .await
             .expect("record");
         store
-            .record_due(t0 + Duration::minutes(1), vec![finding(Status::Error)])
+            .record_due(
+                t0 + jiff::SignedDuration::from_mins(1),
+                vec![finding(Status::Error)],
+            )
             .await
             .expect("record");
         let list = store.list(None, t0).await.expect("list");

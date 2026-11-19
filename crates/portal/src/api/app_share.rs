@@ -112,7 +112,7 @@ fn audience_of(
         .get("spec")
         .and_then(|spec| serde_json::from_value(spec.clone()).ok())
         .unwrap_or_default();
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let members = crate::permissions::project_members(&state.mirror, project, now);
     let groups = crate::permissions::group_members(&state.mirror);
     let roles = spec

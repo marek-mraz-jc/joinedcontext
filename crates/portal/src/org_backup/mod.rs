@@ -881,7 +881,7 @@ pub async fn build_bundle(
     organization: &str,
     actor: &str,
 ) -> Result<(Vec<u8>, Index), ApiError> {
-    let taken_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let taken_at = jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -1102,8 +1102,9 @@ async fn prune(
     bucket: &s3::Bucket,
     target: &Target,
 ) -> Result<usize, ApiError> {
-    let cutoff = (chrono::Utc::now() - chrono::Duration::days(i64::from(target.keep_days)))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let cutoff = (jc_time::TimestampTz::now()
+        - jiff::SignedDuration::from_hours(24 * i64::from(target.keep_days)))
+    .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
     let unavailable = |e: s3::S3Error| ApiError::Unavailable(e.to_string());
     let current = bucket
         .versions(http, &target.folder()?)

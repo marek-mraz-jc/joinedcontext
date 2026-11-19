@@ -432,7 +432,7 @@ fn index_of(project: &str, revision: &str, exported_by: &str, bundle: &Bundle) -
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     let spec = jc_core::kinds::BundleSpec {
-        exported_at: chrono::Utc::now(),
+        exported_at: jc_time::TimestampTz::now(),
         exported_by: exported_by.to_owned(),
         source_instance: None,
         source_revision: revision.to_owned(),

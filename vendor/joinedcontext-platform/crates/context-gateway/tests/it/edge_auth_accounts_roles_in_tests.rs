@@ -197,12 +197,18 @@ fn a_hundred_bindings_answer_only_the_ones_in_scope() {
 /// its `notAfter`, before the Portal removes it from the manifest.
 #[test]
 fn a_grant_outside_its_validity_is_not_a_role() {
-    use chrono::{TimeZone, Utc};
     use jc_core::kinds::role::BindingValidity;
-    let until = Utc.with_ymd_and_hms(2026, 10, 21, 12, 0, 0).unwrap();
+    use jc_time::TimestampTz;
+    let until = "2026-10-21T12:00:00Z"
+        .parse::<TimestampTz>()
+        .expect("an instant");
     let mut scoped = role("writer", Some("mobility"), None, false);
     scoped.validity = Some(BindingValidity {
-        not_before: Some(Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap()),
+        not_before: Some(
+            "2026-10-01T00:00:00Z"
+                .parse::<TimestampTz>()
+                .expect("an instant"),
+        ),
         not_after: Some(until),
     });
     let a = account(vec![scoped, role("reader", Some("mobility"), None, false)]);
@@ -215,7 +221,7 @@ fn a_grant_outside_its_validity_is_not_a_role() {
             "helsinki",
             "mobility",
             true,
-            until + chrono::Duration::seconds(1)
+            until + jiff::SignedDuration::from_secs(1)
         ),
         set(&["reader"])
     );
@@ -224,7 +230,9 @@ fn a_grant_outside_its_validity_is_not_a_role() {
             "helsinki",
             "mobility",
             true,
-            Utc.with_ymd_and_hms(2026, 9, 30, 23, 59, 59).unwrap()
+            "2026-09-30T23:59:59Z"
+                .parse::<TimestampTz>()
+                .expect("an instant")
         ),
         set(&["reader"])
     );

@@ -11,10 +11,10 @@
 
 use crate::auth::subject::Subject;
 use crate::pdp::evaluator;
-use chrono::{DateTime, Utc};
 use jc_core::kinds::policy::{MetadataMember, PrincipalKind};
 use jc_core::kinds::{Operation, PolicySpec};
 use jc_core::ProblemDetails;
+use jc_time::TimestampTz;
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -159,7 +159,7 @@ impl Passed {
         policies: &[PolicySpec],
         operation: Operation,
         versions: bool,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Option<Self> {
         let applying = || {
             policies

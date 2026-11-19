@@ -6,8 +6,10 @@
 //! (a string under a `range` rule), pass.
 
 use crate::kinds::{duration_seconds, QualityKind, QualityOutcome, QualityRule};
-use chrono::{DateTime, Duration, Utc};
+use jc_time::{format_rfc3339, from_system_time, parse_rfc3339, SecondsFormat};
+use jiff::{SignedDuration, Timestamp};
 use serde_json::{json, Map, Value};
+use std::time::SystemTime;
 
 /// The sub-Property a flagged attribute carries (DM-89).
 pub const QUALITY_FLAGS: &str = "qualityFlags";
@@ -58,11 +60,8 @@ fn value_of(instance: &Value) -> &Value {
     }
 }
 
-fn observed_at(instance: &Value) -> Option<DateTime<Utc>> {
-    let raw = instance.get("observedAt")?.as_str()?;
-    DateTime::parse_from_rfc3339(raw)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
+fn observed_at(instance: &Value) -> Option<Timestamp> {
+    parse_rfc3339(instance.get("observedAt")?.as_str()?)
 }
 
 /// Every `[lon, lat, ..]` position of a GeoJSON geometry, at any depth.
@@ -78,13 +77,13 @@ fn positions(coordinates: &Value, out: &mut Vec<(f64, f64)>) {
     }
 }
 
-fn seconds(raw: Option<&str>) -> Option<Duration> {
+fn seconds(raw: Option<&str>) -> Option<SignedDuration> {
     raw.and_then(duration_seconds)
-        .and_then(|s| Duration::try_seconds(i64::try_from(s).ok()?))
+        .and_then(|s| Some(SignedDuration::from_secs(i64::try_from(s).ok()?)))
 }
 
 /// Whether one instance breaks the write-time half of `rule`.
-fn breaks_on_write(rule: &QualityRule, instance: &Value, now: DateTime<Utc>) -> bool {
+fn breaks_on_write(rule: &QualityRule, instance: &Value, now: Timestamp) -> bool {
     match rule.kind {
         QualityKind::Range => {
             let Some(v) = value_of(instance).as_f64() else {
@@ -116,7 +115,8 @@ fn breaks_on_write(rule: &QualityRule, instance: &Value, now: DateTime<Utc>) -> 
         }
         QualityKind::Freshness => match (seconds(rule.max_ahead.as_deref()), observed_at(instance))
         {
-            (Some(ahead), Some(at)) => at > now + ahead,
+            // Past jiff's range nothing is later: chrono's `now + ahead` panicked there.
+            (Some(ahead), Some(at)) => now.checked_add(ahead).is_ok_and(|edge| at > edge),
             _ => false,
         },
     }
@@ -126,8 +126,9 @@ fn breaks_on_write(rule: &QualityRule, instance: &Value, now: DateTime<Utc>) -> 
 pub fn on_write<'a>(
     entity: &Value,
     rules: &'a [QualityRule],
-    now: DateTime<Utc>,
+    now: impl Into<SystemTime>,
 ) -> Vec<Verdict<'a>> {
+    let now = from_system_time(now.into());
     rules
         .iter()
         .filter(|rule| is_of_type(entity, &rule.entity_type))
@@ -147,8 +148,9 @@ pub fn on_write<'a>(
 pub fn on_sweep<'a>(
     entity: &Value,
     rules: &'a [QualityRule],
-    now: DateTime<Utc>,
+    now: impl Into<SystemTime>,
 ) -> Vec<Verdict<'a>> {
+    let now = from_system_time(now.into());
     rules
         .iter()
         .filter(|rule| rule.kind == QualityKind::Freshness && is_of_type(entity, &rule.entity_type))
@@ -158,7 +160,7 @@ pub fn on_sweep<'a>(
             broken: instances(entity, &rule.attribute)
                 .into_iter()
                 .filter_map(observed_at)
-                .any(|at| at < now - age)
+                .any(|at| now.checked_sub(age).is_ok_and(|edge| at < edge))
                 .then(|| rule.sweep_outcome()),
         })
         .collect()
@@ -176,7 +178,7 @@ pub fn rejection<'a>(verdicts: &[Verdict<'a>]) -> Option<&'a QualityRule> {
 /// (DM-89, DM-90). Every judged attribute loses the `qualityFlags` it came with, so a write
 /// that breaks nothing stores none and a writer never sets a flag of its own. Nothing is
 /// written when a verdict rejects: the write is refused instead.
-pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: DateTime<Utc>) {
+pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: impl Into<SystemTime>) {
     if rejection(verdicts).is_some() {
         return;
     }
@@ -226,12 +228,13 @@ pub fn mark(entity: &mut Value, verdicts: &[Verdict<'_>], now: DateTime<Utc>) {
 }
 
 /// The Properties that hide an entity from all but its space's owner and steward (DM-90).
-pub fn quarantine(entity: &mut Map<String, Value>, rules: &[&str], now: DateTime<Utc>) {
+pub fn quarantine(entity: &mut Map<String, Value>, rules: &[&str], now: impl Into<SystemTime>) {
+    let now = from_system_time(now.into());
     entity.insert(
         QUARANTINED_AT.into(),
         json!({
             "type": "Property",
-            "value": { "@type": "DateTime", "@value": now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true) }
+            "value": { "@type": "DateTime", "@value": format_rfc3339(now, SecondsFormat::Secs, true) }
         }),
     );
     entity.insert(
@@ -270,10 +273,8 @@ mod tests {
         .expect("rules")
     }
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-10-12T06:00:00Z")
-            .expect("time")
-            .with_timezone(&Utc)
+    fn now() -> Timestamp {
+        parse_rfc3339("2026-10-12T06:00:00Z").expect("time")
     }
 
     fn vehicle(speed: Value, lon: f64, observed: &str) -> Value {

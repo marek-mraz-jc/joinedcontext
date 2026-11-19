@@ -166,7 +166,79 @@ pub(super) fn render_aggregated(
     Ok(out)
 }
 
-type Moment = chrono::DateTime<chrono::FixedOffset>;
+/// An instant with the offset it was written in, ordered and compared by the
+/// instant alone (as chrono's `DateTime<FixedOffset>` was): month periods step
+/// in that offset's calendar, and [`stamp`] writes its wall time.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Moment {
+    ts: jiff::Timestamp,
+    off: jiff::tz::Offset,
+}
+
+impl PartialEq for Moment {
+    fn eq(&self, other: &Self) -> bool {
+        self.ts == other.ts
+    }
+}
+
+impl Eq for Moment {}
+
+impl PartialOrd for Moment {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Moment {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ts.cmp(&other.ts)
+    }
+}
+
+impl Moment {
+    /// The last instant: the open end of a period no date can close.
+    const OPEN: Self = Self {
+        ts: jiff::Timestamp::MAX,
+        off: jiff::tz::Offset::UTC,
+    };
+
+    fn plus_secs(self, secs: i64) -> Option<Self> {
+        let ts = self
+            .ts
+            .checked_add(jiff::SignedDuration::from_secs(secs))
+            .ok()?;
+        Some(Self { ts, ..self })
+    }
+
+    fn civil(self) -> jiff::civil::DateTime {
+        self.off.to_datetime(self.ts)
+    }
+
+    /// `months` calendar months later (earlier when negative) in this offset, the
+    /// day clamped to the month's last as chrono's `checked_add_months` did.
+    fn plus_months(self, months: i64) -> Option<Self> {
+        let span = jiff::Span::new().try_months(months).ok()?;
+        let civil = self.civil().checked_add(span).ok()?;
+        let ts = self.off.to_timestamp(civil).ok()?;
+        Some(Self { ts, ..self })
+    }
+
+    /// Milliseconds from `earlier` to this one.
+    fn millis_since(self, earlier: Self) -> i128 {
+        self.ts.duration_since(earlier.ts).as_millis()
+    }
+}
+
+/// A stored or requested RFC 3339 instant, with the offset it was written in.
+pub(super) fn moment(s: &str) -> Option<Moment> {
+    crate::state::instant_offset(s).map(|(ts, off)| Moment { ts, off })
+}
+
+/// A period edge as the aggregated representation writes it: the wall time in the
+/// offset the edge carries, then `Z` (byte for byte the chrono build's output).
+fn stamp(d: Moment) -> String {
+    d.civil().strftime("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
 /// One period: its start and its (exclusive) end.
 type Bucket = (Moment, Moment);
 /// The instances of one period, by their time.
@@ -196,9 +268,7 @@ fn aggregate_attr(
     let Some(&(earliest, _)) = times.first() else {
         return Ok(None);
     };
-    let anchor = tq
-        .and_then(|tq| chrono::DateTime::parse_from_rfc3339(&tq.time_at).ok())
-        .unwrap_or(earliest);
+    let anchor = tq.and_then(|tq| moment(&tq.time_at)).unwrap_or(earliest);
     // the row carried in from before the window holds from its start
     if held {
         for (t, _) in &mut times {
@@ -228,11 +298,7 @@ fn timed_rows<'a>(instances: &'a [Value], timeprop: &str) -> (Rows<'a>, Option<A
     let mut times: Rows<'a> = Vec::new();
     let mut class: Option<AggrClass> = None;
     for inst in instances {
-        let Some(t) = inst
-            .get(timeprop)
-            .and_then(Value::as_str)
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
-        else {
+        let Some(t) = inst.get(timeprop).and_then(Value::as_str).and_then(moment) else {
             continue;
         };
         if class.is_none() {
@@ -286,11 +352,9 @@ fn check_methods(
 /// edge of that range; 4.11 leaves the other open for `before` and
 /// `after`, so the data closes the open one. `times` is sorted.
 fn whole_range(times: &Rows<'_>, tq: Option<&TemporalQ>) -> Option<Bucket> {
-    let at = |s: &str| chrono::DateTime::parse_from_rfc3339(s).ok();
+    let at = moment;
     let (&(first, _), &(last_at, _)) = (times.first()?, times.last()?);
-    let last = last_at
-        .checked_add_signed(chrono::Duration::seconds(1))
-        .unwrap_or(last_at);
+    let last = last_at.plus_secs(1).unwrap_or(last_at);
     Some(match tq {
         Some(q) if q.timerel == "before" => (first, at(&q.time_at).unwrap_or(last)),
         Some(q) if q.timerel == "between" => (
@@ -306,49 +370,34 @@ fn whole_range(times: &Rows<'_>, tq: Option<&TemporalQ>) -> Option<Bucket> {
 /// an offset no representable date can hold puts the instant in one final
 /// open-ended bucket instead of panicking.
 fn seconds_bucket(anchor: Moment, sc: i64, t: Moment) -> Bucket {
-    let idx = t.signed_duration_since(anchor).num_seconds().div_euclid(sc);
+    let idx = t.ts.duration_since(anchor.ts).as_secs().div_euclid(sc);
     let bucket = idx
         .checked_mul(sc)
-        .and_then(chrono::Duration::try_seconds)
-        .and_then(|off| anchor.checked_add_signed(off))
-        .and_then(|start| {
-            chrono::Duration::try_seconds(sc)
-                .and_then(|w| start.checked_add_signed(w))
-                .map(|end| (start, end))
-        });
-    match bucket {
-        Some(b) => b,
-        None => (anchor, chrono::DateTime::<chrono::Utc>::MAX_UTC.into()),
-    }
+        .and_then(|off| anchor.plus_secs(off))
+        .and_then(|start| start.plus_secs(sc).map(|end| (start, end)));
+    bucket.unwrap_or((anchor, Moment::OPEN))
 }
 
 /// The period of `m` months and `sc` seconds from `anchor` holding `t`.
 fn months_bucket(anchor: Moment, m: u32, sc: i64, t: Moment) -> Bucket {
-    use chrono::Datelike;
     // start of the k-th period, O(1) in k. Negative k are
     // the periods BEFORE the anchor, which is what a
     // `before` query is made of.
     let step = |k: i64| -> Option<Moment> {
-        let n = k.unsigned_abs().checked_mul(u64::from(m))?;
-        let n = chrono::Months::new(u32::try_from(n).ok()?);
-        let base = if k < 0 {
-            anchor.checked_sub_months(n)?
-        } else {
-            anchor.checked_add_months(n)?
-        };
-        let off = chrono::Duration::try_seconds(k.checked_mul(sc)?)?;
-        base.checked_add_signed(off)
+        let n = k.checked_mul(i64::from(m))?;
+        anchor.plus_months(n)?.plus_secs(k.checked_mul(sc)?)
     };
     // The whole-month distance ignores the day and the time
     // of day, and one period is at least one month, so it
     // brackets the exact index within one step: binary-search
     // between it and the anchor instead of walking there,
     // which is O(log) however far the instant is.
-    let approx = i64::from(t.year())
-        .saturating_sub(i64::from(anchor.year()))
+    let (tc, ac) = (t.civil(), anchor.civil());
+    let approx = i64::from(tc.year())
+        .saturating_sub(i64::from(ac.year()))
         .saturating_mul(12)
-        .saturating_add(i64::from(t.month()))
-        .saturating_sub(i64::from(anchor.month()))
+        .saturating_add(i64::from(tc.month()))
+        .saturating_sub(i64::from(ac.month()))
         .div_euclid(i64::from(m));
     let (mut lo, mut hi) = (
         approx.min(0).saturating_sub(1),
@@ -363,14 +412,12 @@ fn months_bucket(anchor: Moment, m: u32, sc: i64, t: Moment) -> Bucket {
         }
     }
     // saturate instead of panic: a huge month period or a
-    // far-future timeAt overflows chrono's range — treat the
+    // far-future timeAt overflows jiff's range — treat the
     // remainder as one open-ended bucket
     match (step(lo), step(hi)) {
         (Some(start), Some(end)) if start <= t => (start, end),
-        (Some(start), None) if start <= t => {
-            (start, chrono::DateTime::<chrono::Utc>::MAX_UTC.into())
-        }
-        _ => (anchor, chrono::DateTime::<chrono::Utc>::MAX_UTC.into()),
+        (Some(start), None) if start <= t => (start, Moment::OPEN),
+        _ => (anchor, Moment::OPEN),
     }
 }
 
@@ -386,7 +433,10 @@ fn bucketed<'a>(
     bucket_of: &dyn Fn(Moment) -> Bucket,
 ) -> Option<Vec<(Bucket, Rows<'a>)>> {
     let mut buckets: Vec<(Bucket, Rows)> = Vec::new();
-    let edge = whole.1.min(chrono::Utc::now().fixed_offset());
+    let edge = whole.1.min(Moment {
+        ts: jiff::Timestamp::now(),
+        off: jiff::tz::Offset::UTC,
+    });
     let mut refused = false;
     let mut fill = |buckets: &mut Vec<(Bucket, Rows)>, until: Moment| {
         while let Some(end) = buckets.last().map(|((_, end), _)| *end) {
@@ -426,7 +476,6 @@ fn render_buckets(
     window_end: Moment,
     r: &TRepr,
 ) -> Map<String, Value> {
-    let fmt = |d: Moment| d.format("%Y-%m-%dT%H:%M:%SZ").to_string();
     // the value the last bucket with a row ended on holds into the next one
     let carried: Vec<Option<&Value>> = buckets
         .iter()
@@ -462,7 +511,11 @@ fn render_buckets(
                     };
                     aggregate_bucket(method, class, &vals)
                 });
-                Value::Array(vec![val, Value::String(fmt(*bs)), Value::String(fmt(*be))])
+                Value::Array(vec![
+                    val,
+                    Value::String(stamp(*bs)),
+                    Value::String(stamp(*be)),
+                ])
             })
             .collect();
         attr_out.insert(method.clone(), Value::Array(rows));
@@ -475,10 +528,10 @@ fn render_buckets(
 /// `None` for a class with no number or a bucket no value held for a moment.
 pub(super) fn time_weighted_avg(
     class: AggrClass,
-    rows: &[(chrono::DateTime<chrono::FixedOffset>, &Value)],
+    rows: &[(Moment, &Value)],
     before: Option<&Value>,
-    start: chrono::DateTime<chrono::FixedOffset>,
-    end: chrono::DateTime<chrono::FixedOffset>,
+    start: Moment,
+    end: Moment,
 ) -> Option<Value> {
     if class == AggrClass::TimeOfDay {
         return None;
@@ -494,7 +547,7 @@ pub(super) fn time_weighted_avg(
         .chain([end]);
     let (mut weighted, mut span) = (0.0, 0.0);
     for ((from, v), to) in held.zip(until) {
-        let secs = to.signed_duration_since(from).num_milliseconds() as f64 / 1000.0;
+        let secs = to.millis_since(from) as f64 / 1000.0;
         if let (Some(x), true) = (numeric_of(class, v), secs > 0.0) {
             weighted += x * secs;
             span += secs;
@@ -591,5 +644,87 @@ pub(super) fn aggregate_bucket(method: &str, class: AggrClass, vals: &[&Value]) 
         }
         "sumsq" => finite(nums.iter().map(|v| v * v).sum::<f64>()),
         _ => Value::Null,
+    }
+}
+
+#[cfg(test)]
+mod chrono_golden {
+    use super::{moment, months_bucket, seconds_bucket, stamp};
+
+    fn edges(b: (super::Moment, super::Moment)) -> (String, String) {
+        (stamp(b.0), stamp(b.1))
+    }
+
+    /// The period edges the chrono build wrote, pinned before the move to jiff
+    /// (T-7251): months clamp to the month's last day, arithmetic runs in the
+    /// anchor's offset across a DST change (Europe/Bratislava 2026-03-29,
+    /// Europe/Helsinki 2026-10-25), an offset no date holds opens the last period.
+    #[test]
+    fn period_edges_keep_the_chrono_wire_format() {
+        let m = |s: &str| moment(s).expect("instant");
+        let cases = [
+            months_bucket(
+                m("2026-01-31T10:00:00+02:00"),
+                1,
+                0,
+                m("2026-02-28T12:00:00Z"),
+            ),
+            months_bucket(
+                m("2026-01-31T10:00:00+02:00"),
+                1,
+                0,
+                m("2026-03-30T12:00:00Z"),
+            ),
+            months_bucket(
+                m("2026-05-15T00:00:00Z"),
+                2,
+                3600,
+                m("2026-01-20T00:00:00Z"),
+            ),
+            months_bucket(
+                m("2024-02-29T23:30:00-01:00"),
+                12,
+                0,
+                m("2025-03-01T01:00:00Z"),
+            ),
+            seconds_bucket(
+                m("2026-03-29T00:30:00+01:00"),
+                3600,
+                m("2026-03-29T03:10:00+02:00"),
+            ),
+            seconds_bucket(
+                m("2026-10-25T02:30:00+03:00"),
+                1800,
+                m("2026-10-25T03:40:00+02:00"),
+            ),
+            seconds_bucket(
+                m("2026-01-01T00:00:00.250Z"),
+                1,
+                m("2025-12-31T23:59:58.900Z"),
+            ),
+            seconds_bucket(
+                m("2026-01-01T00:00:00Z"),
+                i64::MAX / 2,
+                m("2400-01-01T00:00:00Z"),
+            ),
+        ];
+        let got: Vec<(String, String)> = cases.into_iter().map(edges).collect();
+        // chrono wrote "+262142-12-31T23:59:59Z" for the open end, its MAX_UTC; jiff's
+        // last instant is the year 9999 one, the same "no end" to every reader
+        let want = [
+            ("2026-02-28T10:00:00Z", "2026-03-31T10:00:00Z"),
+            ("2026-02-28T10:00:00Z", "2026-03-31T10:00:00Z"),
+            ("2026-01-14T22:00:00Z", "2026-03-14T23:00:00Z"),
+            ("2025-02-28T23:30:00Z", "2026-02-28T23:30:00Z"),
+            ("2026-03-29T01:30:00Z", "2026-03-29T02:30:00Z"),
+            ("2026-10-25T04:30:00Z", "2026-10-25T05:00:00Z"),
+            ("2025-12-31T23:59:59Z", "2026-01-01T00:00:00Z"),
+            ("2026-01-01T00:00:00Z", "9999-12-30T22:00:00Z"),
+        ];
+        let want: Vec<(String, String)> = want
+            .iter()
+            .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+            .collect();
+        assert_eq!(got, want);
     }
 }

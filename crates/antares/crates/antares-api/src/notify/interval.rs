@@ -17,9 +17,9 @@ pub(super) fn due_at_ms(sub: &Value, interval: f64) -> i64 {
         .and_then(|n| n.get("lastNotification"))
         .and_then(Value::as_str)
         .or_else(|| sub.get("createdAt").and_then(Value::as_str));
-    match anchor.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()) {
+    match anchor.and_then(crate::state::instant) {
         Some(last) => last
-            .timestamp_millis()
+            .as_millisecond()
             .saturating_add(interval_offset_ms(interval)),
         None => i64::MIN,
     }
@@ -64,7 +64,7 @@ pub(super) async fn claim_interval(
     let res = st
         .store
         .mutate(tenant, kind, id, |doc| {
-            if chrono::Utc::now().timestamp_millis() < due_at_ms(doc, interval) {
+            if jiff::Timestamp::now().as_millisecond() < due_at_ms(doc, interval) {
                 return Err(());
             }
             let Some(sub_doc) = doc.as_object_mut() else {
@@ -134,7 +134,7 @@ pub(super) async fn release_interval(
 /// its own selector can match instead of its tenant's entity set.
 pub async fn interval_tick(st: &AppState) {
     use std::sync::atomic::Ordering::Relaxed;
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     let clocks = st.sub_mirror.as_ref().map(|m| {
         (
             m.next_sub_sweep_ms.load(Relaxed),

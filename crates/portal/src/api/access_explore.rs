@@ -231,7 +231,7 @@ async fn record(
 ) {
     let named = subject.label();
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "access.explored".to_owned(),

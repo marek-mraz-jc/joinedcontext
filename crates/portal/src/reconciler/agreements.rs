@@ -23,11 +23,11 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use jc_core::kinds::{
     AgreementRole, AgreementState, DataAgreementSpec, DataOfferSpec, Operation, OperationGroup,
     OperationRef, PolicySpec, Principal, PrincipalKind, Validity,
 };
+use jc_time::TimestampTz;
 use serde_json::Value;
 
 /// Why an agreement compiles into nothing.
@@ -228,8 +228,8 @@ fn fence(
 
 /// The later start and the earlier end of the two periods.
 fn overlap(policy: Option<&Validity>, agreement: &Validity) -> Result<Validity, CompileError> {
-    let later = |a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>| a.max(b);
-    let earlier = |a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>| match (a, b) {
+    let later = |a: Option<TimestampTz>, b: Option<TimestampTz>| a.max(b);
+    let earlier = |a: Option<TimestampTz>, b: Option<TimestampTz>| match (a, b) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };

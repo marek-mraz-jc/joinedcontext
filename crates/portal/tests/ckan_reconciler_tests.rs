@@ -416,10 +416,7 @@ fn the_measurements_are_the_spaces_pass_rate_and_freshness() {
     use joinedcontext_portal::quality_checks::{Reading, Readings};
     use joinedcontext_portal::reconciler::ckan::measurements;
 
-    let at = |text: &str| {
-        text.parse::<chrono::DateTime<chrono::Utc>>()
-            .expect("a time")
-    };
+    let at = |text: &str| text.parse::<jc_time::TimestampTz>().expect("a time");
     let checks = Readings::new(None);
     assert_eq!(
         measurements(None, &checks.report("air", &[])),

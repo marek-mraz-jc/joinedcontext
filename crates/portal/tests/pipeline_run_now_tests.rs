@@ -141,7 +141,7 @@ async fn a_steward_runs_a_queued_pipeline_now_and_finds_it_in_the_run_list() {
     assert_eq!(json_of(&again.text)["run"], run.as_str());
 
     // The queue's next steps: the leftover is swept, then the run goes to the runner by its name.
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     deployer.tick_queue(now).await;
     deployer.tick_queue(now).await;
     let put = runner

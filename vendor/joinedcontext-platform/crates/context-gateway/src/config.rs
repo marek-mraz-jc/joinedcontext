@@ -611,16 +611,10 @@ fn urn_owner_prefix(
                     "`warn` needs the date it ends, e.g. 2026-11-20 (at most 14 days ahead)"
                         .to_owned(),
                 ))?;
-            let end = chrono::NaiveDate::parse_from_str(until, "%Y-%m-%d")
-                .ok()
-                .and_then(|day| day.succ_opt())
-                .and_then(|day| day.and_hms_opt(0, 0, 0))
-                .and_then(|end| u64::try_from(end.and_utc().timestamp()).ok())
-                .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
-                .ok_or((
-                    UNTIL,
-                    format!("`{until}` is no date YYYY-MM-DD, e.g. 2026-11-20"),
-                ))?;
+            let end = end_of_day(until).ok_or((
+                UNTIL,
+                format!("`{until}` is no date YYYY-MM-DD, e.g. 2026-11-20"),
+            ))?;
             if end > now + URN_OWNER_WARN_LIMIT + Duration::from_secs(24 * 3600) {
                 return Err((
                     UNTIL,
@@ -634,6 +628,14 @@ fn urn_owner_prefix(
             format!("`{other}` is none of `enforce`, `warn` or `off`"),
         )),
     }
+}
+
+/// The midnight (UTC) that ends the day `YYYY-MM-DD`, read as chrono's
+/// `NaiveDate::parse_from_str(.., "%Y-%m-%d")` read it; `None` for no such day or one before 1970.
+fn end_of_day(day: &str) -> Option<SystemTime> {
+    let end = jc_time::TimestampTz::from_date(jc_time::parse_date(day)?.tomorrow().ok()?)?;
+    let seconds = u64::try_from(end.as_second()).ok()?;
+    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
 /// `JC_GATEWAY_PUBLIC_MAX_AGE` as whole seconds from 0 to [`PUBLIC_MAX_AGE_LIMIT`]; 0 when unset.
@@ -773,6 +775,30 @@ fn token_endpoint(named: Option<&str>, issuer: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `JC_GATEWAY_URN_OWNER_WARN_UNTIL` ends at the midnight UTC after its day, read as the
+    /// chrono build read it (T-7253). Seconds pasted from the chrono build.
+    #[test]
+    fn the_warn_day_reads_as_the_chrono_build_did() {
+        let golden = [
+            ("2026-11-20", Some(1795219200)),
+            (" 2026-11-20", Some(1795219200)),
+            ("2026-1-2", Some(1767398400)),
+            ("2026-02-30", None),
+            ("2026-11-20 ", None),
+            ("+2026-11-20", Some(1795219200)),
+            ("2026-12-31", Some(1798761600)),
+            ("2026-11-20T00:00:00", None),
+        ];
+        for (day, want) in golden {
+            let got = end_of_day(day).map(|end| {
+                end.duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("after 1970")
+                    .as_secs()
+            });
+            assert_eq!(got, want, "{day:?}");
+        }
+    }
 
     /// T-7131: each Organization's realm once, never the installation's issuer or another's, and
     /// only beside the installation realm.

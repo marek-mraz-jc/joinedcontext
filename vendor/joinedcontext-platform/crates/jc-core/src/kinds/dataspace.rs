@@ -4,13 +4,13 @@ use crate::envelope::{Kind, ObjectMeta, Ref, Scope, SecretRef};
 use crate::error::{Error, Result};
 use crate::kinds::policy::Validity;
 use crate::names;
-use chrono::{DateTime, Utc};
 use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
+use std::time::SystemTime;
 
 static DID_WEB_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^did:web:(.*)$").expect("valid regex for did:web"));
@@ -567,7 +567,11 @@ impl DataAgreementSpec {
             if from > to {
                 return Err(Error::Name {
                     field: "spec.validity",
-                    value: format!("{from} > {to}"),
+                    value: format!(
+                        "{} > {}",
+                        crate::kinds::policy::chrono_display(from),
+                        crate::kinds::policy::chrono_display(to)
+                    ),
                     reason: "validity `from` must be less than or equal to `to`",
                 });
             }
@@ -582,17 +586,18 @@ impl DataAgreementSpec {
     }
 
     /// Returns `true` if the agreement is finalized and `now` falls within its validity window (DS-12).
-    pub fn is_active(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_active(&self, now: impl Into<SystemTime>) -> bool {
+        let now = now.into();
         if self.state != AgreementState::Finalized {
             return false;
         }
         if let Some(from) = self.validity.from {
-            if now < from {
+            if now < SystemTime::from(from) {
                 return false;
             }
         }
         if let Some(to) = self.validity.to {
-            if now > to {
+            if now > SystemTime::from(to) {
                 return false;
             }
         }

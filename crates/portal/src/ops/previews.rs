@@ -372,7 +372,7 @@ pub async fn start(
             "a preview of workspace '{name}' runs already"
         )));
     }
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let running: Vec<Workspace> = state
         .workspaces
         .previewing()
@@ -477,7 +477,7 @@ fn readers(
     state: &AppState,
     project: &str,
     author: String,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> BTreeSet<String> {
     let mut readers = crate::permissions::project_members(&state.mirror, project, now).approvers;
     readers.insert(author);
@@ -487,7 +487,7 @@ fn readers(
 /// Every running preview that has not expired, rendered, for the gateway (CC-81: an expired
 /// or discarded workspace is not in the list, so its Endpoints go on the next fetch).
 pub async fn served(state: &AppState) -> Result<ServedList, ApiError> {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let mut items = Vec::new();
     for workspace in state.workspaces.previewing().await? {
         if workspace.expired(now) || workspace.preview_state != PreviewState::Running {

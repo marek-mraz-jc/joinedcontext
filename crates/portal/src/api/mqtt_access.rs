@@ -9,9 +9,9 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, Utc};
 use jc_core::kinds::{MqttBrokerSpec, RoleBinding, ServiceAccountSpec};
 use jc_core::mqtt::Grant;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -45,7 +45,7 @@ pub struct HeldRole {
     /// When the last grant of the role ends; absent while one has no end.
     #[schema(value_type = Option<String>, format = DateTime)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub until: Option<DateTime<Utc>>,
+    pub until: Option<TimestampTz>,
 }
 
 /// One grant of this broker the account carries that is not in force now.
@@ -56,10 +56,10 @@ pub struct OutOfWindow {
     pub grant: String,
     #[schema(value_type = Option<String>, format = DateTime)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub not_before: Option<DateTime<Utc>>,
+    pub not_before: Option<TimestampTz>,
     #[schema(value_type = Option<String>, format = DateTime)]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub not_after: Option<DateTime<Utc>>,
+    pub not_after: Option<TimestampTz>,
 }
 
 /// The roles of a broker one account holds at `at`.
@@ -70,7 +70,7 @@ pub struct Access {
     pub account: String,
     /// The instant the roles were decided at.
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     /// Empty when the account holds no role: its devices are refused at CONNECT.
     pub roles: Vec<HeldRole>,
     /// Grants of this broker outside their validity window.
@@ -84,7 +84,7 @@ pub fn access(
     spec: &MqttBrokerSpec,
     name: &str,
     bindings: &[RoleBinding],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Access {
     let roles = crate::mqtt_roles::held(project, broker, spec, name, bindings, now)
         .into_iter()
@@ -220,7 +220,7 @@ fn explain(
         &spec,
         &account_name,
         &bindings,
-        Utc::now(),
+        TimestampTz::now(),
     ))
 }
 
@@ -248,7 +248,7 @@ mod tests {
         serde_json::from_value(roles).expect("bindings")
     }
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         text.parse().expect("an instant")
     }
 
@@ -307,7 +307,7 @@ mod tests {
             &broker(),
             "legacy-cam",
             &account(json!([])),
-            Utc::now(),
+            TimestampTz::now(),
         );
         assert_eq!(answer.roles.len(), 1);
         assert!(answer.roles[0].legacy && !answer.roles[0].bound);

@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use base64::Engine as _;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -96,7 +96,7 @@ pub struct DomainVerification {
     pub method: Option<Method>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub checked_at: Option<DateTime<Utc>>,
+    pub checked_at: Option<TimestampTz>,
     /// Why a `failed` domain failed, in words a person acts on; never a resolver's answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -154,7 +154,7 @@ pub fn did_names_host(document: &Value, host: &str) -> bool {
 }
 
 /// Whether a stored verification is due another look at `now`.
-pub fn due(verification: &DomainVerification, now: DateTime<Utc>) -> bool {
+pub fn due(verification: &DomainVerification, now: TimestampTz) -> bool {
     let Some(checked) = verification.checked_at else {
         return true;
     };
@@ -162,9 +162,8 @@ pub fn due(verification: &DomainVerification, now: DateTime<Utc>) -> bool {
         State::Verified => RECHECK_VERIFIED,
         State::Pending | State::Failed => RECHECK_UNVERIFIED,
     };
-    now.signed_duration_since(checked)
-        .to_std()
-        .is_ok_and(|elapsed| elapsed >= wait)
+    let elapsed = now - checked;
+    !elapsed.is_negative() && elapsed.unsigned_abs() >= wait
 }
 
 /// A lookup that did not answer: a timeout, a refusal, a document that is not JSON. An answer
@@ -193,7 +192,7 @@ pub async fn check(
     domain: &str,
     challenge: &str,
     host: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> DomainVerification {
     let verified = |method| DomainVerification {
         state: State::Verified,
@@ -422,7 +421,7 @@ impl<L: Lookup> Verifier<L> {
         &self,
         organization: &str,
         domain: &str,
-        now: DateTime<Utc>,
+        now: TimestampTz,
     ) -> Result<DomainVerification, sqlx::Error> {
         // `checked_at` travels as epoch seconds: the status type is chrono's, sqlx here speaks `time`.
         type Row = (
@@ -449,7 +448,7 @@ impl<L: Lookup> Verifier<L> {
                 DomainVerification {
                     state: State::parse(&state),
                     method: method.as_deref().and_then(Method::parse),
-                    checked_at: checked_at.and_then(|at| DateTime::from_timestamp(at, 0)),
+                    checked_at: checked_at.and_then(jc_time::TimestampTz::from_second),
                     reason,
                     record: record(domain, &challenge),
                     challenge,
@@ -475,7 +474,7 @@ impl<L: Lookup> Verifier<L> {
         .bind(&checked.challenge)
         .bind(checked.state.as_str())
         .bind(checked.method.map(Method::as_str))
-        .bind(checked.checked_at.map(|at| at.timestamp() as f64))
+        .bind(checked.checked_at.map(|at| at.as_second() as f64))
         .bind(&checked.reason)
         .execute(&self.pool)
         .await?;
@@ -536,10 +535,8 @@ mod tests {
 
     const HOST: &str = "portal.hel.fi";
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-09-21T12:00:00Z")
-            .expect("a time")
-            .with_timezone(&Utc)
+    fn now() -> TimestampTz {
+        "2026-09-21T12:00:00Z".parse().expect("a time")
     }
 
     /// PF-41: the challenge is 32 random bytes, so no two Organizations share one.
@@ -645,7 +642,7 @@ mod tests {
     fn a_verified_domain_is_rechecked_after_30_days() {
         let at = |state, ago: Duration| {
             DomainVerification {
-                checked_at: Some(now() - chrono::Duration::from_std(ago).expect("a duration")),
+                checked_at: Some(now() - jiff::SignedDuration::try_from(ago).expect("a duration")),
                 ..pending("hel.fi", "abc".to_owned())
             }
             .with_state(state)
@@ -659,7 +656,7 @@ mod tests {
         // A clock that went back is not a reason to look.
         assert!(!due(
             &at(State::Verified, Duration::ZERO),
-            now() - chrono::Duration::hours(1)
+            now() - jiff::SignedDuration::from_hours(1)
         ));
     }
 

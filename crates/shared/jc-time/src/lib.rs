@@ -115,6 +115,52 @@ impl From<TimestampTz> for Timestamp {
     }
 }
 
+/// chrono's `DateTime<Utc>: FromStr`: the [`parse_rfc3339_relaxed`] grammar, as the JSON read.
+impl std::str::FromStr for TimestampTz {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        parse_rfc3339_relaxed(s).map(Self).ok_or(ParseError)
+    }
+}
+
+/// chrono's `NaiveDate: FromStr`: [`parse_date`], trailing spaces allowed, as the JSON read.
+impl std::str::FromStr for Date {
+    type Err = ParseError;
+    fn from_str(s: &str) -> Result<Self, ParseError> {
+        parse_date(s.trim_end()).map(Self).ok_or(ParseError)
+    }
+}
+
+/// A text [`TimestampTz`] or [`Date`] does not read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ParseError;
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("not an RFC 3339 date and time or a YYYY-MM-DD date")
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<TimestampTz> for std::time::SystemTime {
+    fn from(ts: TimestampTz) -> Self {
+        ts.0.into()
+    }
+}
+
+/// `t` as a jiff instant, saturating at jiff's range (years -9999..=9999). An API that takes
+/// `now: impl Into<SystemTime>` reads chrono's and jiff's instants alike while its callers move
+/// (T-7233 plan); no clock reads outside that range, so the clamp is never hit by a real `now`.
+#[must_use]
+pub fn from_system_time(t: std::time::SystemTime) -> Timestamp {
+    Timestamp::try_from(t).unwrap_or(if t < std::time::SystemTime::UNIX_EPOCH {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    })
+}
+
 /// `self + d`, saturating at jiff's range (years -9999..=9999) where chrono's
 /// `DateTime + TimeDelta` panicked: an expiry from a configured lifespan of thousands of years
 /// reads as "never" instead of failing the request. [`TimestampTz::checked_add`] says when.
@@ -607,6 +653,35 @@ mod pg {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn from_str_reads_what_the_json_reads() {
+        for text in ["2026-01-01 00:00:00Z", " 2026-03-29T03:30:00.5+02:00", "x"] {
+            let json: Option<TimestampTz> = serde_json::from_value(serde_json::json!(text)).ok();
+            assert_eq!(text.parse::<TimestampTz>().ok(), json, "{text}");
+        }
+        for text in ["2026-03-29 ", " 2026-1-2", "2026-02-30"] {
+            let json: Option<Date> = serde_json::from_value(serde_json::json!(text)).ok();
+            assert_eq!(text.parse::<Date>().ok(), json, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_system_time_round_trips_and_clamps_past_jiffs_range() {
+        use std::time::{Duration, SystemTime};
+        let ts =
+            TimestampTz(Timestamp::from_nanosecond(1_761_355_800_987_654_321).expect("in range"));
+        assert_eq!(from_system_time(SystemTime::from(ts)), ts.0);
+        let far = Duration::from_secs(400_000 * 365 * 86_400);
+        assert_eq!(
+            from_system_time(SystemTime::UNIX_EPOCH + far),
+            Timestamp::MAX
+        );
+        assert_eq!(
+            from_system_time(SystemTime::UNIX_EPOCH - far),
+            Timestamp::MIN
+        );
+    }
+
     use super::*;
 
     // 2025-11-18T16:20:00Z with the fractions chrono 0.4.45 printed for them (pinned from chrono

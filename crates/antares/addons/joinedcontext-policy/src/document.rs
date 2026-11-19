@@ -804,7 +804,7 @@ fn bound(raw: &str) -> Result<TimeBound, String> {
         )
     };
     if let Some(at) = jc_time::parse_rfc3339(raw) {
-        return TimeBound::instant(at).ok_or_else(neither);
+        return Ok(TimeBound::At(at));
     }
     match duration(raw) {
         Some(d) if d.is_negative() => d
@@ -846,8 +846,8 @@ fn duration(raw: &str) -> Option<SignedDuration> {
                         _ => 1,
                     };
                     total = total.checked_add(SignedDuration::from_secs(n.checked_mul(unit)?))?;
-                    // chrono's TimeDelta range (milliseconds in an i64), which
-                    // `TimeBound::Ago` still holds
+                    // the range chrono's TimeDelta held (milliseconds in an
+                    // i64): a longer window is refused as it was before jiff
                     if total.as_secs() > i64::MAX / 1000 {
                         return None;
                     }
@@ -1231,7 +1231,20 @@ mod tests {
             "PT1H",
             "-P1M",
         ] {
-            let read = bound(at).map_err(|_| "refused");
+            // the bound written as the chrono build's Debug did, so the pins stay
+            let read = bound(at).map_err(|_| "refused").map(|b| match b {
+                TimeBound::At(t) => {
+                    format!(
+                        "At({})",
+                        jc_time::format_rfc3339(t, jc_time::SecondsFormat::AutoSi, true)
+                    )
+                }
+                TimeBound::Ago(d) => format!(
+                    "Ago(TimeDelta {{ secs: {}, nanos: {} }})",
+                    d.as_secs(),
+                    d.subsec_nanos()
+                ),
+            });
             got.push(format!("{at} => {read:?}"));
         }
         assert_eq!(got.join("\n").trim(), STAMPS.trim(), "\n{}", got.join("\n"));
@@ -1247,13 +1260,13 @@ mod tests {
 "2026-6-1T0:0:0Z" => Ok(true)
 "2026-06-01T00:00Z" => Err("the rule document: invalid value: string \"2026-06-01T00:00Z\", expected an RFC 3339 formatted date and time string")
 "2026-06-01" => Err("the rule document: invalid value: string \"2026-06-01\", expected an RFC 3339 formatted date and time string")
-2026-01-01T00:00:00Z => Ok(At(2026-01-01T00:00:00Z))
-2026-01-01T02:00:00.25+02:00 => Ok(At(2026-01-01T00:00:00.250Z))
-2026-01-01t00:00:00z => Ok(At(2026-01-01T00:00:00Z))
+2026-01-01T00:00:00Z => Ok("At(2026-01-01T00:00:00Z)")
+2026-01-01T02:00:00.25+02:00 => Ok("At(2026-01-01T00:00:00.250Z)")
+2026-01-01t00:00:00z => Ok("At(2026-01-01T00:00:00Z)")
 2026-01-01T00:00Z => Err("refused")
--P1W => Ok(Ago(TimeDelta { secs: 604800, nanos: 0 }))
-P-1DT2H => Ok(Ago(TimeDelta { secs: 93600, nanos: 0 }))
--PT90M => Ok(Ago(TimeDelta { secs: 5400, nanos: 0 }))
+-P1W => Ok("Ago(TimeDelta { secs: 604800, nanos: 0 })")
+P-1DT2H => Ok("Ago(TimeDelta { secs: 93600, nanos: 0 })")
+-PT90M => Ok("Ago(TimeDelta { secs: 5400, nanos: 0 })")
 PT1H => Err("refused")
 -P1M => Err("refused")
 "#;

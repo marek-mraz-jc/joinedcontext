@@ -13,8 +13,8 @@ use std::path::Path;
 use axum::extract::{Path as UrlPath, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, Duration, Utc};
 use jc_core::kinds::Verb;
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -66,7 +66,7 @@ pub struct Failure {
 #[serde(deny_unknown_fields)]
 pub struct Point {
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub pass: u32,
     pub fail: u32,
     pub error: u32,
@@ -79,7 +79,7 @@ pub struct Point {
 pub struct Digest {
     pub check: String,
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     pub every_hours: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
@@ -148,8 +148,8 @@ fn digest(name: &str, bytes: &[u8]) -> Option<Digest> {
     ok.then_some(digest)
 }
 
-fn state_of(digest: &Digest, now: DateTime<Utc>) -> CheckState {
-    if now - digest.at > Duration::hours(2 * i64::from(digest.every_hours)) {
+fn state_of(digest: &Digest, now: TimestampTz) -> CheckState {
+    if now - digest.at > jiff::SignedDuration::from_hours(2 * i64::from(digest.every_hours)) {
         CheckState::Stale
     } else if digest.counts.fail + digest.counts.error > 0 {
         CheckState::Red
@@ -171,7 +171,7 @@ fn read_capped(path: &Path) -> Option<Vec<u8>> {
 /// Every `{check}.json` under `dir`, by name. The kubelet's own `..data` links and anything
 /// that is not a JSON file are not checks. A directory that does not exist is an installation
 /// that has published nothing yet.
-pub fn read_dir(dir: &Path, now: DateTime<Utc>) -> std::io::Result<Vec<CheckHealth>> {
+pub fn read_dir(dir: &Path, now: TimestampTz) -> std::io::Result<Vec<CheckHealth>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -226,7 +226,7 @@ pub async fn get_health(
         ));
     }
     let mut checks = match state.config.health_dir.as_deref() {
-        Some(dir) => read_dir(Path::new(dir), Utc::now()).map_err(|err| {
+        Some(dir) => read_dir(Path::new(dir), TimestampTz::now()).map_err(|err| {
             tracing::warn!(error = %err, "the validation results directory cannot be read");
             ApiError::Unavailable(
                 "the validation results cannot be read: check the jc-validation-results mount"
@@ -237,7 +237,7 @@ pub async fn get_health(
     };
     // The configuration's copy off the pod, as this replica last pushed it (T-6892).
     if let Some(mirror) = &state.config_mirror {
-        let digest = mirror.digest(Utc::now());
+        let digest = mirror.digest(jc_time::TimestampTz::now());
         checks.push(CheckHealth {
             check: digest.check.clone(),
             state: if digest.counts.fail > 0 {
@@ -265,7 +265,7 @@ pub struct AppCheck {
     pub name: String,
     pub state: AppCheckState,
     #[schema(value_type = String, format = DateTime)]
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -276,7 +276,7 @@ pub struct AppChecks {
 }
 
 /// `project`'s share of the `apps` digest under `dir`: nothing when it is absent or unreadable.
-pub fn app_checks(dir: &Path, project: &str, now: DateTime<Utc>) -> Vec<AppCheck> {
+pub fn app_checks(dir: &Path, project: &str, now: TimestampTz) -> Vec<AppCheck> {
     let Some(digest) = read_capped(&dir.join(format!("{APPS_CHECK}.json")))
         .and_then(|bytes| digest(APPS_CHECK, &bytes))
     else {
@@ -338,7 +338,7 @@ pub async fn list_app_checks(
         .config
         .health_dir
         .as_deref()
-        .map(|dir| app_checks(Path::new(dir), &project, Utc::now()))
+        .map(|dir| app_checks(Path::new(dir), &project, TimestampTz::now()))
         .unwrap_or_default();
     Ok(Json(AppChecks { checks }))
 }
@@ -355,7 +355,7 @@ mod tests {
 
     const NOW: &str = "2026-09-25T10:00:00Z";
 
-    fn now() -> DateTime<Utc> {
+    fn now() -> TimestampTz {
         NOW.parse().unwrap()
     }
 

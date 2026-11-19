@@ -251,10 +251,9 @@ mod clause_6_3_10 {
 
     /// 5-minute readings: the i-th instant from 2026-10-12T00:00Z on.
     fn five_minute(i: usize) -> String {
-        let t0 = chrono::DateTime::parse_from_rfc3339("2026-10-12T00:00:00Z").expect("instant");
-        (t0 + chrono::Duration::minutes(5 * i as i64))
-            .to_utc()
-            .format("%Y-%m-%dT%H:%M:%SZ")
+        let t0: jiff::Timestamp = "2026-10-12T00:00:00Z".parse().expect("instant");
+        (t0 + jiff::SignedDuration::from_mins(5 * i as i64))
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
     }
 
@@ -1249,8 +1248,8 @@ mod t4794_held_values_scopes_and_versions {
     };
     use serde_json::{json, Map, Value};
 
-    fn at(s: &str) -> chrono::DateTime<chrono::FixedOffset> {
-        chrono::DateTime::parse_from_rfc3339(s).expect("instant")
+    fn at(s: &str) -> super::super::aggregate::Moment {
+        super::super::aggregate::moment(s).expect("instant")
     }
 
     /// ADR-N-054 2.5: an onChange value weighs by the time it held, the

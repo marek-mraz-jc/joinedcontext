@@ -342,7 +342,7 @@ async fn a_gone_branch_fails_the_start_and_an_expired_workspace_is_not_served() 
 
     let (_server, state) = world().await;
     send(&state, owner(), "POST", &preview_uri("air-v2"), None).await;
-    let past = chrono::Utc::now() + chrono::Duration::hours(25);
+    let past = jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(25);
     assert!(state
         .workspaces
         .get("air-v2")

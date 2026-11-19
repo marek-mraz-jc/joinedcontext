@@ -421,7 +421,7 @@ async fn record_rule(
         details["rule"] = json!(rule);
     }
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: ORG_NAMESPACE.to_owned(),
         space: None,
         kind: "person.changed".to_owned(),
@@ -821,7 +821,7 @@ async fn organization_page(
         let bound = crate::permissions::organization_scoped_people(
             &state.mirror,
             organization,
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         for user in admin.people_of(organization, &bound).await? {
             let fields = [

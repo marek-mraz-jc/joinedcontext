@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use chrono::{DateTime, Datelike, Duration, Timelike, Utc, Weekday};
+use jc_time::TimestampTz;
+use jiff::civil::Weekday;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::{IntoParams, ToSchema};
@@ -186,7 +187,7 @@ pub async fn list_agent_activity(
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<AgentActivity>, ApiError> {
     let filter = Filter::parse(&query)?;
-    let answer = activity(&state, &user, &filter, Utc::now()).await?;
+    let answer = activity(&state, &user, &filter, TimestampTz::now()).await?;
     tracing::info!(
         target: "audit",
         user = %user.0.identity.username,
@@ -204,10 +205,10 @@ const NO_PROJECT: &str = "Your roles read no project, so no agent run is yours t
 struct Filter<'a> {
     query: &'a ActivityQuery,
     refused: Option<bool>,
-    since: Option<DateTime<Utc>>,
-    until: Option<DateTime<Utc>>,
+    since: Option<TimestampTz>,
+    until: Option<TimestampTz>,
     limit: usize,
-    after: Option<(DateTime<Utc>, String)>,
+    after: Option<(TimestampTz, String)>,
 }
 
 impl<'a> Filter<'a> {
@@ -281,13 +282,11 @@ impl<'a> Filter<'a> {
     }
 }
 
-fn parse_time(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
+fn parse_time(text: &str) -> Option<TimestampTz> {
+    jc_time::parse_rfc3339(text).map(TimestampTz)
 }
 
-fn parse_cursor(text: &str) -> Result<(DateTime<Utc>, String), ApiError> {
+fn parse_cursor(text: &str) -> Result<(TimestampTz, String), ApiError> {
     text.split_once('|')
         .and_then(|(at, id)| Some((parse_time(at)?, id.to_owned())))
         .filter(|(_, id)| !id.is_empty())
@@ -355,7 +354,7 @@ async fn visible(
     Ok((seen, choices))
 }
 
-fn order_key(run: &AgentRun) -> (Option<DateTime<Utc>>, String) {
+fn order_key(run: &AgentRun) -> (Option<TimestampTz>, String) {
     (parse_time(&run.created_at), run.id.clone())
 }
 
@@ -363,7 +362,7 @@ async fn activity(
     state: &AppState,
     user: &CurrentUser,
     filter: &Filter<'_>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<AgentActivity, ApiError> {
     let (seen, choices) = visible(state, user, filter).await?;
     let ids: Vec<String> = seen.iter().map(|s| s.run.id.clone()).collect();
@@ -454,7 +453,7 @@ fn row(seen: Seen, events: &[AgentRunEvent]) -> ActivityRun {
         .or(Some(&run.created_at))
         .and_then(parse_time)
         .zip(run.finished_at.as_deref().and_then(parse_time))
-        .map(|(from, to)| (to - from).num_milliseconds());
+        .map(|(from, to)| i64::try_from((to - from).as_millis()).unwrap_or(i64::MAX));
     ActivityRun {
         spaces: spaces_of(&run),
         title: run.title.clone().unwrap_or_else(|| run.app_name.clone()),
@@ -533,9 +532,11 @@ fn clip(text: &str) -> String {
 }
 
 /// Whether a moment falls outside office hours (`OFFICE_HOURS_UTC`, Monday to Friday).
-pub fn off_hours(at: DateTime<Utc>) -> bool {
+pub fn off_hours(at: TimestampTz) -> bool {
     let (from, to) = OFFICE_HOURS_UTC;
-    matches!(at.weekday(), Weekday::Sat | Weekday::Sun) || at.hour() < from || at.hour() >= to
+    let at = at.utc();
+    let hour = u32::try_from(at.hour()).unwrap_or_default();
+    matches!(at.weekday(), Weekday::Saturday | Weekday::Sunday) || hour < from || hour >= to
 }
 
 /// The alerts over the rows: one refusal spike per agent profile with `REFUSAL_SPIKE` or more
@@ -544,9 +545,9 @@ pub fn off_hours(at: DateTime<Utc>) -> bool {
 fn alerts(
     rows: &[ActivityRun],
     cap: &dyn Fn(&str) -> Option<u64>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<AgentAlert> {
-    let hour_ago = now - Duration::hours(1);
+    let hour_ago = now - jiff::SignedDuration::from_hours(1);
     let mut spikes: BTreeMap<(String, String), (u64, String)> = BTreeMap::new();
     let mut found = Vec::new();
     let mut caps: HashMap<String, Option<u64>> = HashMap::new();
@@ -627,9 +628,9 @@ fn alert(kind: AlertKind, run: &ActivityRun, count: u64, at: &str) -> AgentAlert
 pub async fn signals(
     store: &AgentStore,
     mirror: &Mirror,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<Vec<Signal>, StoreError> {
-    let hour_ago = now - Duration::hours(1);
+    let hour_ago = now - jiff::SignedDuration::from_hours(1);
     let filter = RunFilter {
         origin: Some("person".into()),
         ..RunFilter::default()
@@ -703,7 +704,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn at(text: &str) -> DateTime<Utc> {
+    fn at(text: &str) -> TimestampTz {
         parse_time(text).expect("a time")
     }
 

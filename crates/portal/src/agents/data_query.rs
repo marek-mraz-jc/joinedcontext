@@ -486,7 +486,7 @@ applies the change themselves. You never write an entity.
         serde_json::to_string(&listed).unwrap_or_default(),
         serde_json::to_string(&others).unwrap_or_default(),
         facade_tools(),
-        today = chrono::Utc::now().format("%Y-%m-%d"),
+        today = jc_time::TimestampTz::now().0.strftime("%Y-%m-%d"),
     )
 }
 
@@ -870,7 +870,10 @@ mod tests {
     #[test]
     fn a_data_answer_reads_from_today_by_name_and_ends_on_the_grid() {
         let text = section(&[], &[], &[]);
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let today = jc_time::TimestampTz::now()
+            .0
+            .strftime("%Y-%m-%d")
+            .to_string();
         assert!(
             text.contains(&format!("`endDate>={today}T00:00:00Z`")),
             "{text}"

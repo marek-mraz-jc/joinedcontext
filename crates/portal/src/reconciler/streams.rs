@@ -423,7 +423,7 @@ impl StreamDeployer {
             every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 every.tick().await;
-                self.tick_queue(chrono::Utc::now()).await;
+                self.tick_queue(jc_time::TimestampTz::now()).await;
             }
         })
     }
@@ -431,7 +431,7 @@ impl StreamDeployer {
     /// One step of the run queue at `now`: what [`Self::spawn_queue`] does every few seconds.
     /// `now` is anything chrono's instant converts from, such as `SystemTime`, so a caller
     /// already off chrono (portal-dump, T-7240) passes the clock without it.
-    pub async fn tick_queue(&self, now: impl Into<chrono::DateTime<chrono::Utc>>) {
+    pub async fn tick_queue(&self, now: impl Into<jc_time::TimestampTz>) {
         run_queue::tick(&self.queue, self, now.into()).await;
     }
 
@@ -439,10 +439,7 @@ impl StreamDeployer {
     /// a scheduled one that never did runs on its first plan instead of at its next clock
     /// (T-4421), and one that missed its due time while no Portal held it runs under that time
     /// (T-5778).
-    pub fn ran(
-        &self,
-        ran: std::collections::HashMap<(String, String), chrono::DateTime<chrono::Utc>>,
-    ) {
+    pub fn ran(&self, ran: std::collections::HashMap<(String, String), jc_time::TimestampTz>) {
         self.queue
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -482,7 +479,10 @@ impl StreamDeployer {
         self.queue
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .run_now(&(project.to_owned(), name.to_owned()), chrono::Utc::now())
+            .run_now(
+                &(project.to_owned(), name.to_owned()),
+                jc_time::TimestampTz::now(),
+            )
     }
 
     /// Renders every stream with its own pipeline's identity (PL-19): set once the runner carries
@@ -983,7 +983,7 @@ impl StreamDeployer {
                 .collect();
             let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
             queue.rules(rules);
-            queue.plan(queued, chrono::Utc::now());
+            queue.plan(queued, jc_time::TimestampTz::now());
             for (ns, name, outcome) in outcomes.iter_mut() {
                 let key = (ns.clone(), name.clone());
                 if queued_keys.contains(&key) {
@@ -1709,7 +1709,7 @@ pub fn make_condition(
         status: status.to_string(),
         reason: Some(reason.to_string()),
         message: Some(message.to_string()),
-        last_transition_time: Some(chrono::Utc::now()),
+        last_transition_time: Some(jc_time::TimestampTz::now()),
     }
 }
 
@@ -4002,7 +4002,7 @@ output:
             ),
             "{outcomes:?}"
         );
-        run_queue::tick(&deployer.queue, &deployer, chrono::Utc::now()).await;
+        run_queue::tick(&deployer.queue, &deployer, jc_time::TimestampTz::now()).await;
         let sent = server.received_requests().await.expect("recorded");
         let put = sent
             .iter()

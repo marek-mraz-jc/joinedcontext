@@ -12,7 +12,7 @@
 //! [`ERROR_SHARE`] the pipeline is `failing` and alerted at once. A run that sent nothing stays
 //! with the streak, so one broken run alone still alerts nobody.
 
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -23,11 +23,11 @@ pub const ALERT_STREAK: usize = 3;
 /// A newest run at or under this share of the 7-day median is a drop (more than 80 % less).
 pub const DROP_SHARE: f64 = 0.2;
 /// The window of the median.
-const WEEK: Duration = Duration::days(7);
+const WEEK: jiff::SignedDuration = jiff::SignedDuration::from_hours(24 * 7);
 /// Failed and rejected records above this share of the window's records alert (T-5291).
 pub const ERROR_SHARE: f64 = 0.05;
 /// The runs the error ratio counts: those that ended within this time of the newest run.
-const ERROR_WINDOW: Duration = Duration::hours(1);
+const ERROR_WINDOW: jiff::SignedDuration = jiff::SignedDuration::from_hours(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -132,10 +132,8 @@ fn failed(run: &Run) -> bool {
     run.sent == 0 && run.failed + run.rejected > 0
 }
 
-fn at(text: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|t| t.with_timezone(&Utc))
+fn at(text: &str) -> Option<TimestampTz> {
+    jc_time::parse_rfc3339(text).map(TimestampTz)
 }
 
 fn median(mut values: Vec<u64>) -> Option<f64> {
@@ -241,7 +239,7 @@ mod tests {
     use super::*;
 
     fn run(hours_ago: i64, sent: u64, failed: u64) -> Run {
-        let at = (Utc::now() - Duration::hours(hours_ago)).to_rfc3339();
+        let at = (TimestampTz::now() - jiff::SignedDuration::from_hours(hours_ago)).to_rfc3339();
         Run {
             run: at.clone(),
             first_at: at.clone(),
@@ -362,7 +360,7 @@ mod tests {
         // The run half an hour back counts; the one two hours back and a run that sent nothing
         // (the streak's business) do not.
         let mut half = run(0, 40, 4);
-        half.last_at = (Utc::now() - Duration::minutes(30)).to_rfc3339();
+        half.last_at = (TimestampTz::now() - jiff::SignedDuration::from_mins(30)).to_rfc3339();
         let runs = [
             run(0, 60, 0),
             half,

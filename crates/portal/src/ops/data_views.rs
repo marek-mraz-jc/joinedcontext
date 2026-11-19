@@ -10,13 +10,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use argon2::password_hash::rand_core::{OsRng, RngCore};
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 
-use crate::activity::{chrono_to_odt, odt_to_chrono};
+use crate::activity::{odt_to_ts, ts_to_odt};
 
 /// The view kinds; `map` places the rows by a GeoProperty (T-4884).
 pub const KINDS: [&str; 7] = [
@@ -103,9 +103,9 @@ pub struct DataView {
     pub config: ViewConfig,
     pub version: i64,
     #[schema(value_type = String, format = DateTime)]
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     #[schema(value_type = String, format = DateTime)]
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: TimestampTz,
     /// The owner's Keycloak `sub`, the key ownership is checked by; never answered.
     #[serde(skip)]
     pub owner_subject: String,
@@ -410,8 +410,8 @@ fn row_to_view(row: sqlx::postgres::PgRow) -> Result<DataView, DataViewError> {
         // A row a later Portal wrote with a setting this one does not know reads as no setting.
         config: serde_json::from_value(config).unwrap_or_default(),
         version: row.get("version"),
-        created_at: odt_to_chrono(row.get("created_at")),
-        updated_at: odt_to_chrono(row.get("updated_at")),
+        created_at: odt_to_ts(row.get("created_at")),
+        updated_at: odt_to_ts(row.get("updated_at")),
     })
 }
 
@@ -526,7 +526,7 @@ impl DataViewStore {
         request: CreateView,
     ) -> Result<DataView, DataViewError> {
         request.validate()?;
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let view = DataView {
             id: new_id(),
             entity_type: request.entity_type,
@@ -584,7 +584,7 @@ impl DataViewStore {
                 .bind(&view.owner_subject)
                 .bind(&view.owner)
                 .bind(config)
-                .bind(chrono_to_odt(now))
+                .bind(ts_to_odt(now))
                 .bind(MAX_PER_PERSON)
                 .fetch_optional(&mut *tx)
                 .await
@@ -632,7 +632,7 @@ impl DataViewStore {
                 view.title = title;
                 view.config = request.config;
                 view.version += 1;
-                view.updated_at = Utc::now();
+                view.updated_at = TimestampTz::now();
                 Ok(view.clone())
             }
             Inner::Db(pool, mirror) => {
@@ -652,7 +652,7 @@ impl DataViewStore {
                 .bind(&request.mode)
                 .bind(&title)
                 .bind(config)
-                .bind(chrono_to_odt(Utc::now()))
+                .bind(ts_to_odt(TimestampTz::now()))
                 .bind(request.expected_version)
                 .fetch_optional(&mut *tx)
                 .await

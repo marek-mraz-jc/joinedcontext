@@ -94,7 +94,7 @@ fn refused_condition(revision: &str, reason: &str, served: &str) -> crate::resou
         message: Some(format!(
             "revision {short} fails this kind's validation, {served}: {reason}"
         )),
-        last_transition_time: Some(chrono::Utc::now()),
+        last_transition_time: Some(jc_time::TimestampTz::now()),
     }
 }
 
@@ -1125,7 +1125,7 @@ impl Syncer {
             .namespaces()
             .into_iter()
             .map(|project| ActivityEvent {
-                time: chrono::Utc::now(),
+                time: jc_time::TimestampTz::now(),
                 project,
                 space: None,
                 kind: "config.applied".to_string(),
@@ -1221,7 +1221,7 @@ impl Syncer {
             .as_ref()
             .map(|who| who.to_ascii_lowercase());
         self.record(vec![ActivityEvent {
-            time: chrono::Utc::now(),
+            time: jc_time::TimestampTz::now(),
             project: project.to_owned(),
             space: None,
             kind: "config.refused".to_owned(),
@@ -1283,7 +1283,7 @@ impl Syncer {
             .namespaces()
             .into_iter()
             .map(|project| ActivityEvent {
-                time: chrono::Utc::now(),
+                time: jc_time::TimestampTz::now(),
                 project,
                 space: None,
                 kind: "config.drifted".to_string(),
@@ -1307,7 +1307,7 @@ impl Syncer {
             .iter()
             .filter(|outcome| !outcome.drift.is_empty() || outcome.error.is_some())
             .map(|outcome| ActivityEvent {
-                time: chrono::Utc::now(),
+                time: jc_time::TimestampTz::now(),
                 project: crate::permissions::ORG_NAMESPACE.to_string(),
                 space: None,
                 kind: "config.drifted".to_string(),
@@ -2529,7 +2529,10 @@ impl Syncer {
         let Some(sources) = views.last_sources() else {
             return;
         };
-        let now = chrono::Utc::now().timestamp().try_into().unwrap_or(0);
+        let now = jc_time::TimestampTz::now()
+            .as_second()
+            .try_into()
+            .unwrap_or(0);
         self.space_retention
             .observe(&sources.spaces, &sources.brokers, held, now);
         for (tenant, retained) in self.space_retention.due(now) {
@@ -2549,7 +2552,7 @@ impl Syncer {
     async fn converge_groups(&self, fresh_mirror: &Mirror, projects: &BTreeMap<String, String>) {
         if let Some(groups) = self.groups.as_ref() {
             let generated =
-                super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
+                super::groups::derived_groups(fresh_mirror, projects, jc_time::TimestampTz::now());
             let outcomes = groups.converge_with(fresh_mirror, &generated).await;
             let members = outcomes.iter().flat_map(|outcome| {
                 outcome
@@ -2579,7 +2582,8 @@ impl Syncer {
         if self.organization_groups.is_empty() {
             return;
         }
-        let generated = super::groups::derived_groups(fresh_mirror, projects, chrono::Utc::now());
+        let generated =
+            super::groups::derived_groups(fresh_mirror, projects, jc_time::TimestampTz::now());
         for groups in &self.organization_groups {
             for outcome in groups.converge_with(fresh_mirror, &generated).await {
                 if let Some(err) = &outcome.error {
@@ -3272,7 +3276,10 @@ impl Syncer {
             return None;
         }
         let legacy = crate::artifact_store::Legacy::new(organization, project)?;
-        let at = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let at = jc_time::TimestampTz::now()
+            .0
+            .strftime("%Y%m%dT%H%M%SZ")
+            .to_string();
         match crate::artifact_store::move_artifacts(store, key, &legacy, &at).await {
             Ok(moved) => {
                 if moved.copied + moved.superseded > 0 {
@@ -3327,7 +3334,10 @@ impl Syncer {
                     continue;
                 };
                 let name = envelope.metadata.name.clone();
-                match domains.verify(&name, &domain, chrono::Utc::now()).await {
+                match domains
+                    .verify(&name, &domain, jc_time::TimestampTz::now())
+                    .await
+                {
                     Ok(verification) => {
                         if let Some(status) = envelope.status.as_mut() {
                             status.domain_verification = Some(verification);
@@ -3370,7 +3380,7 @@ impl Syncer {
         //     warning and the sync goes on.
         if let Some(activity) = self.activity.clone() {
             tokio::spawn(async move {
-                match activity.trim_if_due(chrono::Utc::now()).await {
+                match activity.trim_if_due(jc_time::TimestampTz::now()).await {
                     Some(Ok(done)) => {
                         tracing::info!(rows = done.rows, batches = done.batches, "activity trimmed")
                     }
@@ -3423,7 +3433,7 @@ impl Syncer {
             .iter()
             .filter(|(key, _)| !said.contains_key(*key))
             .map(|((project, name), reason)| ActivityEvent {
-                time: chrono::Utc::now(),
+                time: jc_time::TimestampTz::now(),
                 project: project.clone(),
                 space: None,
                 kind: "pipeline.error".to_string(),
@@ -4332,7 +4342,7 @@ fn published_events(reports: &[super::ckan::Report]) -> Vec<ActivityEvent> {
                 ),
             };
             Some(ActivityEvent {
-                time: chrono::Utc::now(),
+                time: jc_time::TimestampTz::now(),
                 project: report.project.clone(),
                 space: None,
                 kind: "catalogue.published".to_string(),

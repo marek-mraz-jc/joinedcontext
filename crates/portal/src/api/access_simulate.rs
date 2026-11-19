@@ -289,7 +289,7 @@ async fn record(
     let subject = &simulated.subject;
     let named = subject.label();
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "access.simulated".to_owned(),

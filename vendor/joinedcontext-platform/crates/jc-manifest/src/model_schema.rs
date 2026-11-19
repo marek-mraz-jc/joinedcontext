@@ -586,8 +586,7 @@ impl ModelSchema {
     /// The space's rules that reject `record` (DM-88), each named by the rule and the attribute,
     /// never the value. A flag or a quarantine is no problem: the gateway marks the write.
     pub fn quality_problems(&self, record: &Value) -> Vec<Problem> {
-        // `.into()`: jc-core takes chrono's `DateTime<Utc>` until its slice (T-7252).
-        jc_core::quality::on_write(record, &self.quality, std::time::SystemTime::now().into())
+        jc_core::quality::on_write(record, &self.quality, std::time::SystemTime::now())
             .iter()
             .filter(|v| v.broken == Some(jc_core::kinds::QualityOutcome::Reject))
             .map(|v| Problem {

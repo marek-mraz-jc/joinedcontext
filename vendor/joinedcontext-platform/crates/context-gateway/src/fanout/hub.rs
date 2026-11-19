@@ -712,7 +712,7 @@ impl Hub {
     /// table: an entity it no longer holds sends `x-out-of-scope` to each connection a filter of
     /// which matched it, an entity that differs is sent again as a change, a new one as created.
     /// The table is the read afterwards, so no row of the old scope outlives it.
-    pub fn rescope(&self, fresh: Vec<Value>, at: chrono::DateTime<chrono::Utc>) {
+    pub fn rescope(&self, fresh: Vec<Value>, at: jc_time::TimestampTz) {
         let mut state = self.state();
         let state = &mut *state;
         state.rescoping = false;
@@ -815,7 +815,7 @@ impl Hub {
     /// One change from the upstream, already cut to this hub's identity by the broker: the table
     /// keeps it, and each connection with a candidate filter is sent what its filters make of it
     /// (ADR-N-049 §2.5).
-    pub fn apply(&self, stamped: Value, at: chrono::DateTime<chrono::Utc>) {
+    pub fn apply(&self, stamped: Value, at: jc_time::TimestampTz) {
         let Some(id) = stamped.get("id").and_then(Value::as_str).map(str::to_owned) else {
             return;
         };
@@ -851,7 +851,7 @@ impl State {
         stamped: &Value,
         previous: Option<&Value>,
         created: bool,
-        at: chrono::DateTime<chrono::Utc>,
+        at: jc_time::TimestampTz,
     ) {
         let Some(full) = expanded(entity) else {
             return;
@@ -1011,16 +1011,16 @@ fn without_sys_attrs(entity: &mut Value) {
 }
 
 /// The NGSI-LD Notification (TS 104 175 §5.2.6.9.1) of one entity for one subscription.
-fn notification(subscription: &str, entity: Value, at: chrono::DateTime<chrono::Utc>) -> Value {
+fn notification(subscription: &str, entity: Value, at: jc_time::TimestampTz) -> Value {
     json!({
         // The id only has to differ per notification; it guards nothing.
         "id": format!(
             "urn:ngsi-ld:Notification:{}",
-            random_name().unwrap_or_else(|| at.timestamp_micros().to_string())
+            random_name().unwrap_or_else(|| at.0.as_microsecond().to_string())
         ),
         "type": "Notification",
         "subscriptionId": subscription,
-        "notifiedAt": at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "notifiedAt": at.to_rfc3339_opts(jc_time::SecondsFormat::Millis, true),
         "data": [entity],
     })
 }
@@ -1128,6 +1128,19 @@ pub(crate) mod tests_support {
 mod tests {
     use super::tests_support::endpoint;
     use super::*;
+
+    /// `notifiedAt` is RFC 3339 in UTC to the millisecond with `Z`, as the chrono build wrote
+    /// it (T-7253). Strings pasted from the chrono build.
+    #[test]
+    fn notified_at_keeps_the_chrono_wire_format() {
+        for (at, want) in [
+            ("2026-10-25T01:30:00.987654321Z", "2026-10-25T01:30:00.987Z"),
+            ("1970-01-01T00:00:00Z", "1970-01-01T00:00:00.000Z"),
+        ] {
+            let at = at.parse().expect("an instant");
+            assert_eq!(notification("s", json!({}), at)["notifiedAt"], json!(want));
+        }
+    }
 
     #[test]
     fn a_closed_debug_never_shows_the_resume_token() {
@@ -1253,7 +1266,7 @@ mod tests {
         assert_eq!(gone_queue.take().0, [Out::Closing("access-ended")]);
         hub.apply(
             bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"),
-            chrono::DateTime::UNIX_EPOCH,
+            jc_time::TimestampTz::UNIX_EPOCH,
         );
         assert!(gone_queue.take().0.is_empty(), "nothing follows the close");
         assert!(
@@ -1312,7 +1325,7 @@ mod tests {
     /// stops serving the WebSocket each end it, and a change applied after that sends nothing.
     #[test]
     fn a_reload_closes_what_changed_and_nothing_follows_the_close() {
-        let at = chrono::DateTime::UNIX_EPOCH;
+        let at = jc_time::TimestampTz::UNIX_EPOCH;
         let same = |_: &str| true;
         let reads = |_: &Subject, _: &Endpoint| true;
         let hub = Hub::new("s", 10);
@@ -1384,12 +1397,12 @@ mod tests {
         assert!(!hub.rescope_now(), "one read at a time");
         hub.rescope(
             vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         assert!(hub.rescope_now(), "and one more a tick later");
         hub.rescope(
             vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         assert!(!hub.rescope_now());
         assert!(queue.take().0.is_empty(), "an unchanged read sends nothing");
@@ -1411,7 +1424,7 @@ mod tests {
         let (hub, _, _, _) = seeded(&[one.clone(), two]);
         hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
         assert!(hub.rescope_now());
-        hub.rescope(vec![one], chrono::Utc::now());
+        hub.rescope(vec![one], jc_time::TimestampTz::now());
         let state = hub.state();
         assert_eq!(
             state.table.keys().collect::<Vec<_>>(),
@@ -1427,10 +1440,13 @@ mod tests {
         let two = bus("urn:ngsi-ld:Vehicle:2", 2.0, "y");
         let (hub, conn, queue, sub) = seeded(&[one.clone(), two.clone()]);
         subscribe(&hub, conn, json!({"q": "speed>1"}));
-        hub.apply(bus("urn:ngsi-ld:Vehicle:2", 3.0, "y"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:2", 3.0, "y"),
+            jc_time::TimestampTz::now(),
+        );
         hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
         assert!(hub.rescope_now());
-        hub.rescope(vec![one], chrono::Utc::now());
+        hub.rescope(vec![one], jc_time::TimestampTz::now());
         let (items, overflowed) = queue.take();
         assert!(!overflowed);
         let names = |items: &[Out]| -> Vec<(String, Vec<String>)> {
@@ -1462,7 +1478,7 @@ mod tests {
         assert!(hub.rescope_now());
         let mut cut = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
         cut.as_object_mut().map(|e| e.remove("secret"));
-        hub.rescope(vec![cut], chrono::Utc::now());
+        hub.rescope(vec![cut], jc_time::TimestampTz::now());
         let sent = data(&queue);
         assert_eq!(sent.len(), 1, "{sent:?}");
         assert!(sent[0].get("secret").is_none(), "{sent:?}");
@@ -1478,7 +1494,7 @@ mod tests {
         assert!(hub.rescope_now());
         hub.rescope(
             vec![one, bus("urn:ngsi-ld:Vehicle:3", 3.0, "z")],
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         let sent = data(&queue);
         assert_eq!(sent.len(), 1, "{sent:?}");
@@ -1533,7 +1549,7 @@ mod tests {
         narrowed.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
         other.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
         assert!(narrowed.rescope_now());
-        narrowed.rescope(vec![one], chrono::Utc::now());
+        narrowed.rescope(vec![one], jc_time::TimestampTz::now());
         assert_eq!(narrowed_queue.take().0.len(), 1);
         assert!(other_queue.take().0.is_empty());
         assert_eq!((other.entities(), other.subscriptions(other_conn)), (2, 1));
@@ -1585,7 +1601,10 @@ mod tests {
         let (fast, fast_queue) = open(&hub);
         subscribe(&hub, all, json!({}));
         subscribe(&hub, fast, json!({"q": "speed>50"}));
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         let whole = data(&all_queue);
         assert_eq!(whole.len(), 1);
         assert_eq!(
@@ -1593,7 +1612,10 @@ mod tests {
             "nothing is cut again: {whole:?}"
         );
         assert!(data(&fast_queue).is_empty());
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 60.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 60.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         assert_eq!(data(&fast_queue).len(), 1);
     }
 
@@ -1603,7 +1625,7 @@ mod tests {
     /// first-seen entity that was not created (an evicted or emptied table) send nothing.
     #[test]
     fn a_bare_create_reaches_a_filter_that_watches_nothing() {
-        let now = chrono::Utc::now();
+        let now = jc_time::TimestampTz::now();
         let t0 = "2026-11-09T12:00:00.000Z";
         let bare = |id: &str, modified: &str| json!({"id": id, "type": "Vehicle", "createdAt": t0, "modifiedAt": modified});
         let hub = Hub::new("s", 100);
@@ -1658,7 +1680,10 @@ mod tests {
             conn,
             json!({"notification": {"attributes": ["speed"]}}),
         );
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         let sent = data(&queue);
         assert_eq!(sent[0]["speed"]["value"], 10.0);
         assert!(sent[0].get("secret").is_none());
@@ -1669,11 +1694,17 @@ mod tests {
         let hub = Hub::new("s", 100);
         let (conn, queue) = open(&hub);
         let id = subscribe(&hub, conn, json!({"q": "speed>50"}));
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 10.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         assert!(data(&queue).is_empty());
         let updated = hub.subscribe(conn, Some(&id), &json!({"q": "speed>5"}), true);
         assert_eq!(updated.status, 204);
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 11.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 11.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         assert_eq!(data(&queue).len(), 1);
         let bad = hub.subscribe(conn, Some(&id), &json!({"q": "(speed"}), true);
         assert_eq!(bad.status, 400);
@@ -1727,7 +1758,7 @@ mod tests {
         let mut gone = bus("urn:ngsi-ld:Vehicle:149", 1.0, "x");
         gone["deletedAt"] = json!("2026-10-13T00:00:00Z");
         let before = hub.entities();
-        hub.apply(gone, chrono::Utc::now());
+        hub.apply(gone, jc_time::TimestampTz::now());
         assert_eq!(hub.entities(), before - 1);
     }
 
@@ -1735,7 +1766,10 @@ mod tests {
     fn a_hub_without_a_filter_holds_no_table() {
         let hub = Hub::new("s", 100);
         let (conn, _) = open(&hub);
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 1.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         hub.seed(bus("urn:ngsi-ld:Vehicle:2", 1.0, "x"));
         assert_eq!(hub.entities(), 0);
         assert!(!hub.snapshot_now(), "no filter, no snapshot");
@@ -1757,11 +1791,17 @@ mod tests {
         let hub = Hub::new("s", 100);
         let (conn, queue) = open(&hub);
         subscribe(&hub, conn, json!({"watchedAttributes": ["speed"]}));
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 20.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 20.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         hub.seed(bus("urn:ngsi-ld:Vehicle:1", 5.0, "x"));
         assert_eq!(data(&queue).len(), 1);
         // Against the newer state the same speed is no change.
-        hub.apply(bus("urn:ngsi-ld:Vehicle:1", 20.0, "x"), chrono::Utc::now());
+        hub.apply(
+            bus("urn:ngsi-ld:Vehicle:1", 20.0, "x"),
+            jc_time::TimestampTz::now(),
+        );
         assert!(data(&queue).is_empty());
     }
 

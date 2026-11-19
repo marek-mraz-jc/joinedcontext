@@ -100,7 +100,7 @@ async fn a_steward_reads_each_source_with_its_state_and_its_error_without_url_qu
             error: None,
         },
     )];
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let first = joinedcontext_portal::link_check::fold(None, &gone, 3, now);
     let links = joinedcontext_portal::link_check::fold(Some(&first), &gone, 3, now);
     state

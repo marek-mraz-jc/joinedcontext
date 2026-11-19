@@ -505,7 +505,7 @@ async fn record(
     principals: usize,
 ) {
     let event = crate::activity::ActivityEvent {
-        time: chrono::Utc::now(),
+        time: jc_time::TimestampTz::now(),
         project: project.to_owned(),
         space: None,
         kind: "access.simulated".to_owned(),

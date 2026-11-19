@@ -16,17 +16,17 @@
 //! `agreements_of` — so every case here goes through a repository written to disk, which is
 //! the table the gateway really serves from.
 
-use chrono::{DateTime, TimeZone, Utc};
 use context_gateway::auth::dataspace_token::{agreements_of, Agreements};
 use jc_manifest::loader::Repository;
+use jc_time::TimestampTz;
 
 const PROJECT: &str = "banskabystrica";
 const CONSUMER: &str = "did:web:helsinki.fi";
 const AGREEMENT: &str = "urn:uuid:9a1f-air-quality";
 
-fn at(year: i32, month: u32, day: u32) -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(year, month, day, 12, 0, 0)
-        .single()
+fn at(year: i32, month: u32, day: u32) -> TimestampTz {
+    format!("{year:04}-{month:02}-{day:02}T12:00:00Z")
+        .parse()
         .expect("a real instant")
 }
 
@@ -173,11 +173,7 @@ fn both_bounds_of_the_validity_window_are_inside_it() {
         validity: "{ from: 2026-01-01T00:00:00Z, to: 2026-12-31T23:59:59Z }",
         ..Written::default()
     }]);
-    let instant = |text: &str| {
-        DateTime::parse_from_rfc3339(text)
-            .expect("an instant")
-            .to_utc()
-    };
+    let instant = |text: &str| TimestampTz(jc_time::parse_rfc3339(text).expect("an instant"));
 
     assert!(
         table
@@ -229,7 +225,7 @@ fn an_agreement_with_no_window_at_all_is_served_at_any_instant() {
         ..Written::default()
     }]);
     for now in [at(1971, 1, 1), at(2026, 6, 1), at(2999, 12, 31)] {
-        assert!(table.serving(AGREEMENT, now).is_some(), "at {now}");
+        assert!(table.serving(AGREEMENT, now).is_some(), "at {now:?}");
     }
 }
 
@@ -241,11 +237,7 @@ fn a_window_of_a_single_instant_is_served_at_that_instant_only() {
         validity: "{ from: 2026-06-01T12:00:00Z, to: 2026-06-01T12:00:00Z }",
         ..Written::default()
     }]);
-    let instant = |text: &str| {
-        DateTime::parse_from_rfc3339(text)
-            .expect("an instant")
-            .to_utc()
-    };
+    let instant = |text: &str| TimestampTz(jc_time::parse_rfc3339(text).expect("an instant"));
 
     assert!(table
         .serving(AGREEMENT, instant("2026-06-01T12:00:00Z"))

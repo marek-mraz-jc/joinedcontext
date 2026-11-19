@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 
 use crate::resource::ResourceEnvelope;
 use crate::store::Mirror;
@@ -18,7 +18,7 @@ type Key = (String, String, String, String);
 
 /// The conditions a run started from: status, reason and the time of the last transition.
 #[derive(Debug, Default)]
-pub struct Transitions(HashMap<Key, (String, Option<String>, DateTime<Utc>)>);
+pub struct Transitions(HashMap<Key, (String, Option<String>, TimestampTz)>);
 
 fn key(envelope: &ResourceEnvelope, condition_type: &str) -> Key {
     (
@@ -95,7 +95,6 @@ impl Transitions {
 mod tests {
     use super::*;
     use crate::resource::{ObjectMeta, Phase, Status, API_VERSION};
-    use chrono::TimeZone;
 
     fn app(conditions: Vec<crate::resource::Condition>) -> ResourceEnvelope {
         ResourceEnvelope {
@@ -121,13 +120,13 @@ mod tests {
         }
     }
 
-    fn ready(status: &str, reason: &str, at: DateTime<Utc>) -> crate::resource::Condition {
+    fn ready(status: &str, reason: &str, at: TimestampTz) -> crate::resource::Condition {
         let mut condition = super::super::streams::make_condition("Ready", status, reason, "said");
         condition.last_transition_time = Some(at);
         condition
     }
 
-    fn time(envelope: &ResourceEnvelope) -> Option<DateTime<Utc>> {
+    fn time(envelope: &ResourceEnvelope) -> Option<TimestampTz> {
         envelope
             .status
             .as_ref()?
@@ -138,14 +137,8 @@ mod tests {
 
     #[test]
     fn a_condition_that_says_the_same_keeps_its_time_and_a_changed_one_moves() {
-        let first = Utc
-            .with_ymd_and_hms(2026, 9, 25, 20, 26, 28)
-            .single()
-            .expect("a time");
-        let now = Utc
-            .with_ymd_and_hms(2026, 9, 25, 20, 27, 28)
-            .single()
-            .expect("a time");
+        let first: TimestampTz = "2026-09-25T20:26:28Z".parse().expect("a time");
+        let now: TimestampTz = "2026-09-25T20:27:28Z".parse().expect("a time");
         let mirror = Mirror::new();
         mirror.upsert(app(vec![ready("False", "NoBuild", first)]));
         let before = Transitions::of(&mirror);
@@ -169,10 +162,7 @@ mod tests {
 
     #[test]
     fn a_condition_the_run_did_not_start_from_keeps_its_own_time() {
-        let now = Utc
-            .with_ymd_and_hms(2026, 9, 25, 20, 27, 28)
-            .single()
-            .expect("a time");
+        let now: TimestampTz = "2026-09-25T20:27:28Z".parse().expect("a time");
         let empty = Transitions::of(&Mirror::new());
         let mut new = app(vec![ready("False", "NoBuild", now)]);
         assert!(!empty.keep(&mut new));
@@ -183,7 +173,7 @@ mod tests {
         mirror.upsert(app(vec![ready("False", "NoBuild", now)]));
         let before = Transitions::of(&mirror);
         let fresh = Mirror::new();
-        let later = now + chrono::Duration::minutes(1);
+        let later: TimestampTz = "2026-09-25T20:28:28Z".parse().expect("a time");
         fresh.upsert(app(vec![ready("False", "NoBuild", later)]));
         before.keep_all(&fresh);
         let kept = fresh

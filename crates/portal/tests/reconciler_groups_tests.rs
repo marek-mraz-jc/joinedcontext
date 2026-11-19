@@ -710,7 +710,7 @@ async fn an_organization_requiring_a_second_factor_marks_its_group_and_one_that_
     let projects = [("tapiola".to_owned(), "tapiola".to_owned())]
         .into_iter()
         .collect();
-    let generated = derived_groups(&mirror, &projects, chrono::Utc::now());
+    let generated = derived_groups(&mirror, &projects, jc_time::TimestampTz::now());
     let bound = |organization: &str| {
         generated
             .iter()
@@ -809,7 +809,7 @@ fn an_organization_whose_policies_do_not_parse_keeps_the_second_factor() {
         let generated = derived_groups(
             &mirror,
             &std::collections::BTreeMap::new(),
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         assert!(
             generated
@@ -846,7 +846,7 @@ fn the_derived_groups_follow_the_bindings_of_their_organization_only() {
         .into_iter()
         .collect();
     let readers_of = |mirror: &Mirror| {
-        derived_groups(mirror, &projects, chrono::Utc::now())
+        derived_groups(mirror, &projects, jc_time::TimestampTz::now())
             .into_iter()
             .find(|group| group.name == "doprava-readers")
             .expect("the readers")
@@ -907,7 +907,7 @@ fn only_an_organization_scoped_binding_gives_the_organization() {
     ]
     .into_iter()
     .collect();
-    let groups = |mirror: &Mirror| derived_groups(mirror, &projects, chrono::Utc::now());
+    let groups = |mirror: &Mirror| derived_groups(mirror, &projects, jc_time::TimestampTz::now());
     let find = |groups: &[DerivedGroup], name: &str| {
         groups
             .iter()
@@ -964,7 +964,7 @@ fn a_service_account_in_an_organization_binding_joins_no_derived_group() {
     let projects = [("doprava".to_owned(), "doprava".to_owned())]
         .into_iter()
         .collect();
-    for group in derived_groups(&mirror, &projects, chrono::Utc::now()) {
+    for group in derived_groups(&mirror, &projects, jc_time::TimestampTz::now()) {
         assert_eq!(
             group.members.iter().collect::<Vec<_>>(),
             vec![LEAD],

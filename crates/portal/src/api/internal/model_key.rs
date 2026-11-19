@@ -163,7 +163,7 @@ pub async fn model_key(
     if let Some((severity, summary)) = event {
         tracing::warn!(state = ?report.state, %summary, "the model key changed");
         let event = crate::activity::ActivityEvent {
-            time: chrono::Utc::now(),
+            time: jc_time::TimestampTz::now(),
             project: crate::permissions::ORG_NAMESPACE.to_owned(),
             space: None,
             kind: "model.key".to_owned(),

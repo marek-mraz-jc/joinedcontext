@@ -191,7 +191,7 @@ async fn a_correction_shows_its_chain_only_to_a_caller_granted_read_versions() {
     for row in &rows {
         let at = row["provenance"]["writtenAt"].as_str().unwrap_or_default();
         assert!(
-            chrono::DateTime::parse_from_rfc3339(at).is_ok(),
+            jc_time::parse_rfc3339(at).is_some(),
             "writtenAt {at:?}: {all}"
         );
     }
@@ -403,7 +403,7 @@ async fn each_channel_is_stored_as_the_gateway_named_it() {
     for row in &rows {
         let at = row["provenance"]["writtenAt"].as_str().unwrap_or_default();
         assert!(
-            chrono::DateTime::parse_from_rfc3339(at).is_ok(),
+            jc_time::parse_rfc3339(at).is_some(),
             "writtenAt {at:?}: {all}"
         );
     }

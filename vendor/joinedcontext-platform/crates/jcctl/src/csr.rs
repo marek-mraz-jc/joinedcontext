@@ -196,7 +196,7 @@ pub fn registration(manifest: &RawManifest, endpoints: &impl Endpoints) -> Resul
     if let Some(expires) = spec.expires_at {
         // Through serde rather than chrono's own formatter: the manifest's timestamp is
         // serialised by the same code that parsed it, so the string the broker is told cannot
-        // drift from the string the repository holds. jcctl does not depend on chrono.
+        // drift from the string the repository holds.
         body.insert(
             "expiresAt".into(),
             serde_json::to_value(expires).map_err(|e| CsrError::Spec(e.to_string()))?,

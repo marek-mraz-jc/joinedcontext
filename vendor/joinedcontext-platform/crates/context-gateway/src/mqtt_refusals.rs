@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -83,7 +83,7 @@ impl Reason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Refusal {
     /// When the gateway refused it.
-    pub at: DateTime<Utc>,
+    pub at: TimestampTz,
     /// Why.
     pub reason: Reason,
     /// The broker's own ServiceAccount the username named (`{project}-{account}`), when it names
@@ -220,9 +220,9 @@ mod tests {
 
     fn refusal(minute: u32, reason: Reason) -> Refusal {
         Refusal {
-            at: DateTime::parse_from_rfc3339(&format!("2026-10-24T10:{minute:02}:00Z"))
-                .expect("a time")
-                .with_timezone(&Utc),
+            at: format!("2026-10-24T10:{minute:02}:00Z")
+                .parse()
+                .expect("a time"),
             reason,
             account: None,
         }

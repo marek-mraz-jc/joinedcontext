@@ -18,12 +18,12 @@ pub fn record_id() -> String {
 /// The instant of a stored member (an Entity or one of its Attributes) a
 /// re-applied erasure compares with its own: `observedAt`, else
 /// `modifiedAt`, else `createdAt`; `None` when it carries none.
-fn stamped(member: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+fn stamped(member: &Value) -> Option<jiff::Timestamp> {
     let one = |m: &Value| {
         ["observedAt", "modifiedAt", "createdAt"]
             .iter()
             .find_map(|k| m.get(*k).and_then(Value::as_str))
-            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .and_then(crate::state::instant)
     };
     match member {
         Value::Array(instances) => instances.iter().filter_map(one).max(),
@@ -51,8 +51,8 @@ pub async fn erase(
     // erase what was written after the erasure
     let cut = before
         .map(|b| {
-            chrono::DateTime::parse_from_rfc3339(b)
-                .map_err(|e| format!("erasure time {b:?} is no RFC 3339 instant: {e}"))
+            crate::state::instant(b)
+                .ok_or_else(|| format!("erasure time {b:?} is no RFC 3339 instant"))
         })
         .transpose()?;
     let goes = |member: &Value| match (cut, stamped(member)) {

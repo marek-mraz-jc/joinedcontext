@@ -647,8 +647,8 @@ async fn csr_expires_at_deletes_the_registration() {
     // time is reached" — after expiry the registration is gone from
     // retrieve and query.
     let app = app();
-    let soon = (chrono::Utc::now() + chrono::Duration::milliseconds(1100))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let soon =
+        crate::state::stamp(jiff::Timestamp::now() + jiff::SignedDuration::from_millis(1100));
     let reg = serde_json::json!({
         "id": "urn:ngsi-ld:ContextSourceRegistration:expiring",
         "type": "ContextSourceRegistration",

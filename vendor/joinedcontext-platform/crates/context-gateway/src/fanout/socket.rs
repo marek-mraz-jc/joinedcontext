@@ -328,7 +328,7 @@ fn ended(
         .zip(gateway.verifier.as_deref())
         .and_then(|(id, verifier)| verifier.revoked_at(id))
         .is_some_and(|mark| mark >= issued);
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     let account_gone = subject.service_account.as_deref().is_some_and(|name| {
         let project = subject
             .service_account_project
@@ -617,7 +617,7 @@ async fn run(
             }
             "x-notification" => {
                 seq = metadata.get("x-seq").and_then(Value::as_u64).unwrap_or(seq);
-                let now = chrono::Utc::now();
+                let now = jc_time::TimestampTz::now();
                 for entity in body
                     .as_ref()
                     .and_then(|b| b.get("data"))
@@ -684,7 +684,7 @@ async fn rescope(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
     let mut fresh = Vec::new();
     if read_view(&gateway, &hub.slug, headers, |entity| fresh.push(entity)).await {
         let before = hub.entities();
-        hub.rescope(fresh, chrono::Utc::now());
+        hub.rescope(fresh, jc_time::TimestampTz::now());
         tracing::info!(slug = %hub.slug, before, after = hub.entities(), "the fan-out read its view again under a changed scope");
     } else {
         tracing::warn!(slug = %hub.slug, "the fan-out could not read its view again; its connections close");

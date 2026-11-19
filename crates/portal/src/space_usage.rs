@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,19 +26,19 @@ const NO_TENANT: &str = "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound";
 use utoipa::ToSchema;
 
 /// How long one broker answer for a small space is shown before a read asks again.
-const FRESH: chrono::Duration = chrono::Duration::minutes(5);
+const FRESH: jiff::SignedDuration = jiff::SignedDuration::from_mins(5);
 /// How long the answer for a large space is kept: it is measured once an hour (T-6208).
-const KEPT: chrono::Duration = chrono::Duration::hours(1);
+const KEPT: jiff::SignedDuration = jiff::SignedDuration::from_hours(1);
 /// A space whose current state and history hold fewer rows than this is small: measuring it
 /// costs the broker little, so a read past [`FRESH`] measures it again.
 const SMALL_ROWS: u64 = 10_000;
 /// A recalculation takes an answer this young as its own: concurrent and repeated clicks share
 /// one broker read (T-6208).
-const RECALCULATED: chrono::Duration = chrono::Duration::seconds(30);
+const RECALCULATED: jiff::SignedDuration = jiff::SignedDuration::from_secs(30);
 /// How long a kept answer still stands in for a broker that did not answer: a count a few
 /// minutes old, with its `observedAt`, says more than a 503 (T-4825). It outlasts [`KEPT`], so a
 /// failed hourly measurement keeps the last one on the page.
-const STALE: chrono::Duration = chrono::Duration::hours(3);
+const STALE: jiff::SignedDuration = jiff::SignedDuration::from_hours(3);
 /// How long the Portal waits for the broker. Its first answer after a five-minute gap counts the
 /// tenant's history and measures its size under two 5 s statement bounds (Antares
 /// `SIZE_SCAN_TIMEOUT`), so 5 s here cut every Helsinki count off on dev (T-4825).
@@ -54,11 +54,11 @@ pub struct SpaceUsage {
     pub broker: String,
     /// When the broker answered.
     #[schema(value_type = String, format = DateTime)]
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: TimestampTz,
     /// When the broker measured the size: its own `measuredAt` (it keeps a size five minutes),
     /// else when it answered (T-6208).
     #[schema(value_type = String, format = DateTime)]
-    pub measured_at: DateTime<Utc>,
+    pub measured_at: TimestampTz,
     /// The storage the space takes, measured by the broker; absent when the broker cannot
     /// measure it or holds no tenant for the space yet.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,7 +95,7 @@ pub struct Counter {
     /// One lock per broker tenant: a second ask waits for the measurement in flight and takes its
     /// answer, so the broker counts a space once however many readers ask.
     measuring: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    surfaces: RwLock<Option<(DateTime<Utc>, BTreeSet<String>)>>,
+    surfaces: RwLock<Option<(TimestampTz, BTreeSet<String>)>>,
 }
 
 impl Counter {
@@ -126,8 +126,13 @@ impl Counter {
     /// broker named `broker` (PF-111, empty when its `brokerRef` resolves to none). `tenant`
     /// must already be a DNS-1123 name: it becomes a path segment.
     pub async fn usage(&self, broker_name: &str, tenant: &str) -> Result<SpaceUsage, String> {
-        self.measured(broker_name, tenant, |kept| current(kept, Utc::now()), true)
-            .await
+        self.measured(
+            broker_name,
+            tenant,
+            |kept| current(kept, TimestampTz::now()),
+            true,
+        )
+        .await
     }
 
     /// One broker read now, for a decision that must not stand on a kept number (a broker move,
@@ -143,7 +148,7 @@ impl Counter {
         self.measured(
             broker_name,
             tenant,
-            |kept| Utc::now() - kept.observed_at < RECALCULATED,
+            |kept| TimestampTz::now() - kept.observed_at < RECALCULATED,
             true,
         )
         .await
@@ -208,7 +213,7 @@ impl Counter {
                 let reason = unanswered(&err);
                 tracing::warn!(tenant, error = ?err.without_url(), "the broker did not answer a space's counts");
                 return self
-                    .kept(&key, Utc::now())
+                    .kept(&key, TimestampTz::now())
                     .filter(|_| fallback)
                     .ok_or(reason);
             }
@@ -217,7 +222,7 @@ impl Counter {
         let body: Value = response.json().await.unwrap_or(Value::Null);
         // the answer's time, not the ask's: a reader who asked while this read was in flight
         // takes it as a fresh one
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let (entities, bytes, attr_instances) = match status {
             status if status.is_success() => (
                 count_of(&body)?,
@@ -246,8 +251,8 @@ impl Counter {
         };
         let measured_at = body["measuredAt"]
             .as_str()
-            .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-            .map_or(now, |at| at.with_timezone(&Utc).min(now));
+            .and_then(jc_time::parse_rfc3339)
+            .map_or(now, |at| TimestampTz(at).min(now));
         let usage = SpaceUsage {
             entities,
             broker: broker_name.to_owned(),
@@ -324,7 +329,7 @@ impl Counter {
     }
 
     /// The last answer for `key` while it is younger than [`STALE`].
-    fn kept(&self, key: &str, now: DateTime<Utc>) -> Option<SpaceUsage> {
+    fn kept(&self, key: &str, now: TimestampTz) -> Option<SpaceUsage> {
         self.cache
             .read()
             .unwrap_or_else(|e| e.into_inner())
@@ -376,7 +381,7 @@ impl Counter {
     /// `surfaces` (T-4484), kept five minutes like a count. `None` when it did not answer, which
     /// is not kept, so the next ask tries again.
     pub async fn surfaces(&self) -> Option<BTreeSet<String>> {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         if let Some((_, kept)) = self
             .surfaces
             .read()
@@ -422,7 +427,7 @@ impl Counter {
 
 /// Whether a kept answer still stands for a read at `now`: five minutes for a small space, an
 /// hour for a large one, whose next measurement the hourly sweep makes (T-6208).
-fn current(kept: &SpaceUsage, now: DateTime<Utc>) -> bool {
+fn current(kept: &SpaceUsage, now: TimestampTz) -> bool {
     let rows = kept
         .entities
         .saturating_add(kept.attr_instances.unwrap_or(u64::MAX));
@@ -681,8 +686,8 @@ mod tests {
         let old = |minutes| SpaceUsage {
             entities: 42,
             broker: "main".into(),
-            observed_at: Utc::now() - chrono::Duration::minutes(minutes),
-            measured_at: Utc::now() - chrono::Duration::minutes(minutes),
+            observed_at: TimestampTz::now() - jiff::SignedDuration::from_mins(minutes),
+            measured_at: TimestampTz::now() - jiff::SignedDuration::from_mins(minutes),
             bytes: None,
             attr_instances: None,
             estimated: false,
@@ -736,11 +741,11 @@ mod tests {
     /// hour until the sweep measures it.
     #[test]
     fn a_small_space_is_kept_five_minutes_and_a_large_one_an_hour() {
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let row = |entities, history: Option<u64>, minutes| SpaceUsage {
             entities,
             broker: "main".into(),
-            observed_at: now - chrono::Duration::minutes(minutes),
+            observed_at: now - jiff::SignedDuration::from_mins(minutes),
             measured_at: now,
             bytes: None,
             attr_instances: history,
@@ -808,7 +813,7 @@ mod tests {
         let file = token_file("remeasure");
         let counter = Counter::new(Some(broker.uri()), Some(file.clone()));
         let key = format!("{}/air", broker.uri());
-        let at = Utc::now() - chrono::Duration::minutes(20);
+        let at = TimestampTz::now() - jiff::SignedDuration::from_mins(20);
         counter.cache.write().expect("cache").insert(
             key,
             SpaceUsage {

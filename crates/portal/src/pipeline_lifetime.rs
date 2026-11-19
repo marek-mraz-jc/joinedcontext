@@ -12,8 +12,8 @@ use crate::error::ApiError;
 use crate::pipeline_validation::ModelSchemas;
 use crate::state::AppState;
 use crate::store::Mirror;
-use chrono::{DateTime, Utc};
 use jc_core::kinds::PipelineSpec;
+use jc_time::TimestampTz;
 use jcctl::model_schema::ModelSchema;
 use serde_json::Value;
 
@@ -32,7 +32,7 @@ pub fn check(state: &AppState, project: &str, kind: &str, spec: &Value) -> Resul
         &state.mirror,
         project,
         &pipeline,
-        Utc::now(),
+        TimestampTz::now(),
     );
     if errors.is_empty() {
         return Ok(());
@@ -49,7 +49,7 @@ pub fn problems(
     mirror: &Mirror,
     project: &str,
     pipeline: &PipelineSpec,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<String> {
     let mut problems = Vec::new();
     for (index, entry) in pipeline.lifetime.iter().enumerate() {
@@ -82,7 +82,7 @@ pub fn problems(
             let Some(model) = schemas.get(project, &space) else {
                 continue;
             };
-            if let Err(error) = jcctl::lifetime::check(&alone, &model, now) {
+            if let Err(error) = jcctl::lifetime::check(&alone, &model, now.0) {
                 problems.push(explained(error, index, &entry.entity_type, &space, &model));
             }
         }
@@ -133,7 +133,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
-    use chrono::TimeZone;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -188,7 +187,11 @@ mod tests {
 
     fn refusals(state: &AppState, spec: &Value) -> Vec<String> {
         let pipeline: PipelineSpec = serde_json::from_value(spec.clone()).expect("a PipelineSpec");
-        let now = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let now = jc_time::TimestampTz(
+            jiff::tz::Offset::UTC
+                .to_timestamp(jiff::civil::datetime(2026, 10, 20, 12, 0, 0, 0))
+                .expect("an instant"),
+        );
         problems(
             &state.model_schemas,
             &state.mirror,

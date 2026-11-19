@@ -33,7 +33,7 @@ sonic-rs = { workspace = true, optional = true }
 futures-util = { workspace = true, features = ["std"] }
 # ADR-0030: the tenant digest.
 sha2 = { workspace = true }
-chrono = { workspace = true }
+jc-time = { workspace = true }
 jiff = { workspace = true }
 icu_collator = { workspace = true }
 icu_locale_core = { workspace = true }
@@ -67,6 +67,9 @@ wasm-bindgen-futures = { workspace = true }
 send_wrapper = { workspace = true }
 gloo-timers = { workspace = true }
 web-time = { workspace = true }
+# jiff's Timestamp::now() reads Date.now() on the browser target, as chrono's default
+# `wasmbind` feature did (T-7251)
+jiff = { workspace = true, features = ["js"] }
 
 [features]
 # Clause 7 MQTT notification binding; on by default — the 058 TPs need it.

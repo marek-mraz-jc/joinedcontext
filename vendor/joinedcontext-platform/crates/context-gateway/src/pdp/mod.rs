@@ -14,12 +14,11 @@ pub mod write_guard;
 
 use crate::auth::subject::Subject;
 use crate::resolver::Endpoint;
-use chrono::{DateTime, Utc};
 use evaluator::{Request, Verdict};
 use jc_core::kinds::Operation;
 use jc_core::system_members::is_entity_system_member;
+use jc_time::TimestampTz;
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// What decides. Every request passes it before anything is forwarded (GW1, ADR-N-003).
 ///
@@ -264,14 +263,7 @@ pub fn drop_types_that_may_not_be_filtered(
     Verdict::Rewrite(Box::new(constraints))
 }
 
-/// The wall clock, as a `chrono` instant.
-///
-/// `jc-core` builds `chrono` without its `clock` feature so that manifest parsing cannot
-/// depend on the time of day; the gateway does need the time of day, for policy validity
-/// windows and key expiry, and reads it here in one place.
-pub fn now() -> DateTime<Utc> {
-    let since = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    DateTime::from_timestamp(since.as_secs() as i64, since.subsec_nanos()).unwrap_or_default()
+/// The wall clock, read here in one place for policy validity windows and key expiry.
+pub fn now() -> TimestampTz {
+    TimestampTz::now()
 }

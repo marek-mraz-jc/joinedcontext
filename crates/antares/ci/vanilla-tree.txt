@@ -2336,8 +2336,6 @@ antares-broker v0.3.0
 │   ├── sha2 v0.10.9 (*)
 │   ├── ngsild-jsonld feature "default" (*)
 │   ├── ngsild-jsonld feature "fetch" (*)
-│   ├── chrono feature "default" (*)
-│   ├── chrono feature "serde" (*)
 │   ├── uuid feature "default" (*)
 │   ├── uuid feature "v4" (*)
 │   ├── uuid feature "v5" (*)
@@ -2361,6 +2359,7 @@ antares-broker v0.3.0
 │   ├── icu_locale_core feature "default"
 │   │   └── icu_locale_core v2.3.0 (*)
 │   ├── antares-store feature "default" (*)
+│   ├── jc-time feature "default" (*)
 │   ├── jiff feature "std" (*)
 │   ├── jiff feature "tzdb-bundle-always" (*)
 │   ├── ngsild-ql feature "default" (*)

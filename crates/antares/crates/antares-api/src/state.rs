@@ -1762,7 +1762,34 @@ impl HitBatch {
 
 /// Server-managed timestamp, ISO 8601 UTC with milliseconds.
 pub fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    stamp(jiff::Timestamp::now())
+}
+
+/// An RFC 3339 instant and the offset it was written in, by chrono's
+/// `parse_from_rfc3339` grammar. jiff's range ends at 9999-12-30T22:00Z and chrono's
+/// did not: a valid stamp in the hours after it (a query's "until 9999-12-31") reads
+/// as jiff's last instant instead of as no instant.
+#[must_use]
+pub fn instant_offset(s: &str) -> Option<(jiff::Timestamp, jiff::tz::Offset)> {
+    jc_time::parse_rfc3339_offset(s).or_else(|| {
+        let tail = s.strip_prefix("9999-12-3")?;
+        // the same day and time in a year jiff holds checks the grammar
+        jc_time::parse_rfc3339_offset(&format!("2000-12-3{tail}"))
+            .map(|(_, off)| (jiff::Timestamp::MAX, off))
+    })
+}
+
+/// [`instant_offset`] without the offset.
+#[must_use]
+pub fn instant(s: &str) -> Option<jiff::Timestamp> {
+    instant_offset(s).map(|(t, _)| t)
+}
+
+/// `t` as the broker writes its own instants (createdAt, expiresAt, writtenAt):
+/// RFC 3339 in UTC, `Z`, exactly three fraction digits, truncated.
+#[must_use]
+pub fn stamp(t: jiff::Timestamp) -> String {
+    jc_time::format_rfc3339(t, jc_time::SecondsFormat::Millis, true)
 }
 
 #[cfg(feature = "views")]
@@ -2445,5 +2472,37 @@ mod depth_tests {
         let inside = super::at_depth(3, async { super::in_process_depth() }).await;
         assert_eq!(inside, 3);
         assert_eq!(super::in_process_depth(), 0);
+    }
+}
+
+#[cfg(test)]
+mod stamp_golden {
+    /// The broker's own instants as the chrono build wrote them
+    /// (`to_rfc3339_opts(SecondsFormat::Millis, true)`), pinned before the move to jiff
+    /// (T-7251): three digits always, truncated, `Z`, four-digit years, before 1970 too.
+    #[test]
+    fn stamps_keep_the_chrono_wire_format() {
+        let at = |s: i64, ns: i32| super::stamp(jiff::Timestamp::new(s, ns).expect("an instant"));
+        assert_eq!(at(1_767_225_600, 0), "2026-01-01T00:00:00.000Z");
+        assert_eq!(at(1_767_225_600, 999_999_999), "2026-01-01T00:00:00.999Z");
+        assert_eq!(at(1_767_225_600, 1_500_000), "2026-01-01T00:00:00.001Z");
+        assert_eq!(at(-1, 500), "1969-12-31T23:59:59.000Z");
+        assert_eq!(at(-30_610_224_000, 0), "1000-01-01T00:00:00.000Z");
+        assert_eq!(
+            super::stamp(jiff::Timestamp::MAX),
+            "9999-12-30T22:00:00.999Z"
+        );
+        // the last hours of year 9999 chrono read stay readable, at jiff's end
+        let max = Some(jiff::Timestamp::MAX);
+        assert_eq!(super::instant("9999-12-31T00:00:00Z"), max);
+        assert_eq!(super::instant("9999-12-31T23:59:59.999-02:00"), max);
+        assert_eq!(super::instant("9999-12-32T00:00:00Z"), None);
+        assert_eq!(super::instant("9999-12-31T24:00:00Z"), None);
+        assert_eq!(super::instant("9999-12-31"), None);
+        let now = super::now_iso();
+        assert!(
+            jc_time::parse_rfc3339(&now).is_some() && now.len() == 24,
+            "{now}"
+        );
     }
 }

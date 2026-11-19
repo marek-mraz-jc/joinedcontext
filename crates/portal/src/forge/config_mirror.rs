@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use serde::Deserialize;
 use url::Url;
 
@@ -373,7 +373,7 @@ impl ConfigMirror {
     }
 
     /// The health page's row: every repository, green or with what its push failed with.
-    pub fn digest(&self, at: DateTime<Utc>) -> crate::api::validation::Digest {
+    pub fn digest(&self, at: TimestampTz) -> crate::api::validation::Digest {
         use crate::api::validation::{Counts, Digest, Failure, FailureVerdict};
         let statuses = self.statuses();
         let (failed, passed): (Vec<_>, Vec<_>) =
@@ -503,7 +503,7 @@ mod tests {
         assert!(statuses[0].last_error.contains("401"), "{statuses:?}");
         assert!(!format!("{statuses:?}{mirror:?}").contains(TOKEN));
         assert!(!mirror.remote_for("configuration").contains(TOKEN));
-        let digest = serde_json::to_string(&mirror.digest(Utc::now())).expect("json");
+        let digest = serde_json::to_string(&mirror.digest(TimestampTz::now())).expect("json");
         assert!(
             digest.contains("configuration") && !digest.contains(TOKEN),
             "{digest}"
@@ -553,7 +553,7 @@ mod tests {
         // Within its backoff a refused repository is not asked again.
         mirror.pass(&forge, &[]).await;
         assert_eq!(github.received_requests().await.expect("recorded").len(), 1);
-        let digest = mirror.digest(Utc::now());
+        let digest = mirror.digest(TimestampTz::now());
         assert_eq!((digest.counts.pass, digest.counts.fail), (0, 1));
     }
 }

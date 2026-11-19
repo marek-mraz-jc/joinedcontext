@@ -131,8 +131,8 @@ impl Inputs<'_> {
     }
 }
 
-fn rfc3339(at: chrono::DateTime<chrono::Utc>) -> String {
-    at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+fn rfc3339(at: jc_time::TimestampTz) -> String {
+    at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true)
 }
 
 /// `part / whole` as a whole percentage, rounded down so 99.6 % is not shown as perfect.
@@ -536,7 +536,7 @@ pub async fn of_endpoint(
     let types = space.and_then(|space| served_types(&policies, space, &endpoint.spec));
     let checks = state
         .health_log
-        .current(project, chrono::Utc::now())
+        .current(project, jc_time::TimestampTz::now())
         .await
         .unwrap_or_else(|err| {
             tracing::warn!(error = %err, project, "the health log could not be read for a score");
@@ -557,7 +557,7 @@ mod tests {
     use crate::health_log::Text as HealthText;
     use crate::quality::{AttributeQuality, Freshness, RuleCount, TypeQuality};
 
-    fn at(text: &str) -> chrono::DateTime<chrono::Utc> {
+    fn at(text: &str) -> jc_time::TimestampTz {
         text.parse().expect("a time")
     }
 
