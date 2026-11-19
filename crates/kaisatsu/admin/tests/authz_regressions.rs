@@ -1130,6 +1130,116 @@ async fn a_group_name_holds_no_path_separator() {
     assert_eq!(st, StatusCode::CREATED);
 }
 
+/// `GET`/`POST /groups/{id}/children` were missing, so the Portal's `/{organization}/members`
+/// sync answered 404 in every Organization realm (T-7385). A group's children are read and made
+/// only within its realm and organization.
+#[tokio::test]
+async fn group_children_stay_within_their_realm_and_organization() {
+    let f = Fixture::new().await;
+    for (realm, id, name) in [
+        ("dev", "g-root", "helsinki"),
+        ("master", "g-master", "helsinki"),
+    ] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: realm.into(),
+                name: name.into(),
+                path: format!("/{name}"),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    let admin = f
+        .token(
+            "dev",
+            "admin-1",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let children = "/admin/realms/dev/groups/g-root/children";
+    let members = json!({ "name": "members" });
+    let st = f
+        .send(Method::POST, children, &admin, Some(members.clone()))
+        .await;
+    assert_eq!(st, StatusCode::CREATED);
+    let st = f
+        .send(Method::POST, children, &admin, Some(members.clone()))
+        .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let made = f
+        .store
+        .get_group_by_path("dev", None, "/helsinki/members")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(made.parent_id.as_deref(), Some("g-root"));
+    assert_eq!(made.org_id.as_deref(), Some("helsinki"));
+
+    let req = Request::builder()
+        .uri(format!(
+            "{children}?briefRepresentation=true&first=0&max=1000"
+        ))
+        .header("authorization", format!("Bearer {admin}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = f.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body.as_array().map(Vec::len), Some(1), "{body}");
+    assert_eq!(body[0]["path"], "/helsinki/members");
+
+    // Another realm's group is not found through this realm, and nothing is made there.
+    let other = "/admin/realms/dev/groups/g-master/children";
+    assert_eq!(
+        f.send(Method::GET, other, &admin, None).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        f.send(Method::POST, other, &admin, Some(members.clone()))
+            .await,
+        StatusCode::NOT_FOUND
+    );
+    assert!(
+        f.store
+            .get_group_by_path("master", None, "/helsinki/members")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Another organization's admin neither reads nor adds children; the group's own admin reads.
+    let espoo = f
+        .token("dev", "org-admin-esp", json!({ "jc_org": ["espoo"] }))
+        .await;
+    for (method, body) in [
+        (Method::GET, None),
+        (Method::POST, Some(json!({ "name": "x" }))),
+    ] {
+        let st = f.send(method.clone(), children, &espoo, body).await;
+        assert!(
+            st == StatusCode::FORBIDDEN || st == StatusCode::NOT_FOUND,
+            "{method} answered {st} to another organization's admin"
+        );
+    }
+    assert!(
+        f.store
+            .get_group_by_path("dev", None, "/helsinki/x")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let hel = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    assert_eq!(
+        f.send(Method::GET, children, &hel, None).await,
+        StatusCode::OK
+    );
+}
+
 /// Scope links, mappers, role holders and group members of an application or group were served
 /// to any signed-in member of its organization, and a member could attach any client scope (an
 /// audience, a role) to an application of the organization.

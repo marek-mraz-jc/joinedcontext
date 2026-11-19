@@ -138,6 +138,10 @@ pub fn admin_router(state: AdminState) -> Router {
                 .delete(compat_delete_group),
         )
         .route(
+            "/admin/realms/{realm}/groups/{id}/children",
+            get(compat_list_group_children).post(compat_create_group_child),
+        )
+        .route(
             "/admin/realms/{realm}/groups/{id}/members",
             get(compat_list_group_members),
         )
@@ -1882,6 +1886,147 @@ async fn compat_create_group(
     {
         return Err(KaisatsuError::Conflict(format!(
             "Top level group named '{}' already exists.",
+            group.name
+        )));
+    }
+    let created = state.oidc.store.upsert_group(group).await?;
+    let location = format!(
+        "{}/admin/realms/{realm}/groups/{}",
+        mount.public_base(),
+        created.id
+    );
+    record_admin_write(
+        &state,
+        &ctx,
+        "CREATE",
+        "GROUP",
+        &format!("groups/{}", created.id),
+        serde_json::to_value(&created).ok(),
+    )
+    .await?;
+    Ok((StatusCode::CREATED, [(header::LOCATION, location)], "").into_response())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PageQuery {
+    #[serde(default)]
+    pub first: Option<usize>,
+    #[serde(default)]
+    pub max: Option<usize>,
+}
+
+/// The group `id` in a tree `list_groups` answered.
+fn find_in_tree<'a>(
+    groups: &'a [GroupRepresentation],
+    id: &str,
+) -> Option<&'a GroupRepresentation> {
+    groups.iter().find_map(|g| {
+        if g.id == id {
+            Some(g)
+        } else {
+            find_in_tree(&g.sub_groups, id)
+        }
+    })
+}
+
+/// The direct subgroups of `id`, as Keycloak's `GET /groups/{id}/children`: the parent is read
+/// within the caller's realm and organizations first, so another realm's or organization's group
+/// is 404 as on `GET /groups/{id}`.
+async fn compat_list_group_children(
+    State(state): State<AdminState>,
+    Path((realm, id)): Path<(String, String)>,
+    Query(q): Query<PageQuery>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+) -> Result<Json<Vec<GroupRepresentation>>> {
+    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let allowed = ctx.allowed_orgs();
+    let parent = state
+        .oidc
+        .store
+        .get_group(&realm, allowed.as_deref(), &id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("group not found".into()))?;
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Read,
+        &ObjectTarget::Group {
+            realm_id: realm.clone(),
+            org_id: parent.org_id.clone(),
+            group_id: parent.id.clone(),
+            managed_by: parent.managed_by.clone(),
+        },
+    ))?;
+    let tree = state
+        .oidc
+        .store
+        .list_groups(&realm, allowed.as_deref(), None, false)
+        .await?;
+    let children = find_in_tree(&tree, &parent.id)
+        .map(|g| g.sub_groups.clone())
+        .unwrap_or_default();
+    Ok(Json(
+        children
+            .into_iter()
+            .skip(q.first.unwrap_or(0))
+            // Keycloak's default page of children is 10.
+            .take(q.max.unwrap_or(10))
+            .collect(),
+    ))
+}
+
+/// Creates the subgroup the body names under `id`, as Keycloak's `POST /groups/{id}/children`
+/// (a body naming an existing group's id creates a new one; moving a group is not offered). The
+/// subgroup inherits the parent's realm and organization; a taken sibling name is 409.
+async fn compat_create_group_child(
+    State(state): State<AdminState>,
+    Path((realm, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    mount_ext: Option<Extension<Mount>>,
+    Json(mut group): Json<GroupRepresentation>,
+) -> Result<Response> {
+    let mount = state.oidc.mount_from(mount_ext.as_ref().map(|e| &e.0));
+    let ctx = extract_admin_ctx(&state, &mount, &realm, &headers).await?;
+    let allowed = ctx.allowed_orgs();
+    let parent = state
+        .oidc
+        .store
+        .get_group(&realm, allowed.as_deref(), &id)
+        .await?
+        .ok_or_else(|| KaisatsuError::NotFound("group not found".into()))?;
+    if let Some(vals) = group.attributes.get("managed-by")
+        && let Some(first) = vals.first()
+    {
+        group.managed_by = Some(first.clone());
+    }
+    check_decision(state.authorizer.check(
+        &ctx,
+        Action::Create,
+        &ObjectTarget::Group {
+            realm_id: realm.clone(),
+            org_id: parent.org_id.clone(),
+            group_id: "*".into(),
+            managed_by: group.managed_by.clone(),
+        },
+    ))?;
+    let claim_bearing =
+        kaisatsu_core::claims::claim_bearing_attributes(state.oidc.store.as_ref(), &realm).await?;
+    guard_group_write(&ctx, &mut group, None, &claim_bearing)?;
+    group.id = String::new();
+    group.realm_id = realm.clone();
+    group.org_id.clone_from(&parent.org_id);
+    group.parent_id = Some(parent.id.clone());
+    group.path = format!("{}/{}", parent.path.trim_end_matches('/'), group.name);
+    if state
+        .oidc
+        .store
+        .get_group_by_path(&realm, None, &group.path)
+        .await?
+        .is_some()
+    {
+        return Err(KaisatsuError::Conflict(format!(
+            "Sibling group named '{}' already exists.",
             group.name
         )));
     }

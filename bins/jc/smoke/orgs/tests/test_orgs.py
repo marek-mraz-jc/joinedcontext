@@ -394,6 +394,43 @@ def test_the_guard_refuses_writes_foreign_hosts_and_private_sources(tmp_path, ed
     assert seen == [("HEAD", "www.alpha.example", "/"), ("POST", "portal.alpha.test", "/api/v1/d/alpha-chat/chat")]
 
 
+SLUG = """
+mode = "slug"
+base_host = "jc.city.test"
+
+[mounts.portal]
+path_prefix = ""
+
+[[organizations]]
+name = "alpha"
+hosts = { portal = "portal.alpha.test", idm = "idm.alpha.test" }
+
+[[organizations]]
+name = "beta"
+hosts = { portal = "portal.beta.test" }
+"""
+
+
+def test_a_slug_mode_config_probes_its_organizations_hosts_and_base_host_paths_whole(tmp_path):
+    cfg = live.config("jc-dev", "jc.city.test", "127.0.0.1", SLUG, tmp_path)
+    assert cfg["routes"] == [("", "jc.city.test", "")]
+    assert cfg["hosts"] == ["idm.alpha.test", "jc.city.test", "portal.alpha.test", "portal.beta.test"]
+    g = live.Guard(cfg)
+    assert g.route(cfg["virtual"], "/login/realms/jc") == ("jc.city.test", "/login/realms/jc")
+    # Without an idm host the sign-in realm is the installation's, under slug mode's /login.
+    a = type("A", (), {"previous": None, "scheme": "https", "timeout": 5})()
+    s = orgs.Suite(orgs.tomllib.loads(SLUG), {}, common.Results("orgs", "jc-dev"), a)
+    assert (s.login, s.login_path) == ("jc.city.test", "/login")
+
+
+def test_a_slug_mode_config_without_an_organization_host_is_refused(tmp_path):
+    bare = SLUG.split("[[organizations]]")[0] + '[[organizations]]\nname = "auto"\nhost = "auto"\n'
+    with pytest.raises(SystemExit, match="no host to probe"):
+        live.config("jc-dev", "jc.city.test", "127.0.0.1", bare, tmp_path)
+    with pytest.raises(SystemExit, match="neither a host-mode nor a slug-mode"):
+        live.config("jc-dev", "jc.city.test", "127.0.0.1", SLUG.replace('"slug"', '"path"'), tmp_path)
+
+
 class FakeBoard(watch.Board):
     def __init__(self):
         super().__init__(None, "jc-dev", "deployer")
@@ -498,11 +535,7 @@ edge = "127.0.0.1"\ndomain = "city.test"\nstate = "{state}"\nowner = "deployer"\
 
 
 def test_the_board_task_lists_the_red_checks_and_the_update_rewrites_only_that_list(tmp_path):
-    (tmp_path / "newid").write_text("#!/bin/sh\necho T-9001\n")
-    (tmp_path / "note").write_text("#!/bin/sh\nexit 0\n")
-    for t in ("newid", "note"):
-        (tmp_path / t).chmod(0o755)
-    b = watch.Board(tmp_path, "jc-prod", "prod-deployer")
+    b = board(tmp_path)
     rows = [{"id": "portal.bbsk", "actual": "503", "expected": "200", "call": "GET /"},
             {"id": "mcp.bbsk", "actual": "503", "expected": "401", "call": "POST /api/v1/mcp"}]
     assert b.open("org/bbsk", rows, "t1") == "T-9001"
@@ -514,6 +547,59 @@ def test_the_board_task_lists_the_red_checks_and_the_update_rewrites_only_that_l
     b.update("T-9001", rows[:1], "t2")
     text = f.read_text()
     assert "Red checks as of t2 (1):" in text and "mcp.bbsk" not in text and "**prod-deployer**: looking" in text
+
+
+# tasks/claim's rule (tasks/claim on s1): a claim is the dir .claims/<id>; a status changes only
+# when .claims/<id>/owner names $AGENT_NAME; done moves the task to finished/.
+CLAIM = r"""#!/bin/sh
+cd "$(dirname "$0")"; id=$1; f=$(ls "$id"-*.md finished/"$id"-*.md 2>/dev/null | head -1)
+if [ -z "$2" ]; then
+  mkdir .claims/"$id" 2>/dev/null || { echo "$id already claimed" >&2; exit 1; }
+  echo "$AGENT_NAME" > .claims/"$id"/owner; sed -i "s/^status:.*/status: doing/" "$f"; exit 0
+fi
+[ "$(cat .claims/"$id"/owner 2>/dev/null)" = "$AGENT_NAME" ] || { echo "$id is not yours" >&2; exit 1; }
+sed -i "s/^status:.*/status: $2/" "$f"; [ "$2" = done ] && mkdir -p finished && mv "$f" finished/
+exit 0
+"""
+
+
+def board(tmp_path):
+    (tmp_path / ".claims").mkdir()
+    for name, body in (("newid", "#!/bin/sh\necho T-9001\n"), ("note", "#!/bin/sh\nexit 0\n"), ("claim", CLAIM)):
+        (tmp_path / name).write_text(body)
+        (tmp_path / name).chmod(0o755)
+    return watch.Board(tmp_path, "jc-prod", "prod-deployer")
+
+
+def test_an_opened_incident_is_claimed_for_the_owner_and_closes_done(tmp_path):
+    b = board(tmp_path)
+    tid = b.open("org/bbsk", [{"id": "portal.bbsk", "actual": "503", "expected": "200", "call": "GET /"}], "t1")
+    assert (tmp_path / ".claims" / tid / "owner").read_text().strip() == "prod-deployer"
+    b.close(tid, "org/bbsk", "all checks pass", "t2")
+    text = (tmp_path / "finished" / f"{tid}-incident-jc-prod-orgs-bbsk.md").read_text()
+    assert "status: done" in text and "Closed t2 by orgs/watch.py: org/bbsk all checks pass." in text
+
+
+def test_an_incident_opened_before_the_claim_is_claimed_then_closed(tmp_path):
+    b = board(tmp_path)
+    f = tmp_path / "T-7365-incident-jc-prod-orgs-crawl-smartcity-bbsk-web.md"
+    f.write_text("---\nid: T-7365\nstatus: todo\nadmitted: owner 2026-11-19 T-7309\nowner: prod-deployer\nincident: jc-prod/orgs/crawl.smartcity.bbsk/web\n---\n")
+    b.close("T-7365", "crawl.smartcity.bbsk/web", "passes", "t2")
+    assert "status: done" in (tmp_path / "finished" / f.name).read_text()
+    assert (tmp_path / ".claims" / "T-7365" / "owner").read_text().strip() == "prod-deployer"
+
+
+def test_the_watch_never_closes_a_task_it_did_not_open(tmp_path):
+    b = board(tmp_path)
+    other = tmp_path / "T-7000-feature.md"
+    other.write_text("---\nid: T-7000\nstatus: doing\nowner: worker-1\n---\n")
+    foreign = tmp_path / "T-7001-incident-jc-dev-orgs-bbsk.md"
+    foreign.write_text("---\nid: T-7001\nstatus: todo\nincident: jc-dev/orgs/bbsk\n---\n")
+    for tid in ("T-7000", "T-7001"):
+        with pytest.raises(RuntimeError, match="not this watch's incident"):
+            b.close(tid, "org/bbsk", "all checks pass", "t2")
+    assert not any((tmp_path / ".claims").iterdir())
+    assert "status: doing" in other.read_text() and "status: todo" in foreign.read_text()
 
 
 def test_the_line_names_each_organization_and_the_log_keeps_seven_days(tmp_path):
