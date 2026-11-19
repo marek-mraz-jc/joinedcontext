@@ -84,6 +84,9 @@ pub struct Gateway {
     publishers: ArcSwap<crate::store::Publishers>,
     /// Each Project's Organization and the audited Endpoints (ADR-N-054 2.3, 2.8).
     provenance: ArcSwap<crate::store::Provenance>,
+    /// The Organization jc runs each project under, by project (the Portal's project registry,
+    /// ARCH/TEN-04): who owns a project's Endpoints on an Organization's host. Empty without jc.
+    tenants: ArcSwap<std::collections::BTreeMap<String, String>>,
     /// The Mappings each Endpoint publishes beside its model, by slug (EP-53).
     mappings: ArcSwap<crate::handlers::mappings::Mappings>,
     /// The MQTT edge brokers, swapped whole with the rest (ADR-N-048, PL-75).
@@ -215,6 +218,7 @@ impl Gateway {
             servers: ArcSwap::from_pointee(Vec::new()),
             publishers: ArcSwap::from_pointee(Default::default()),
             provenance: ArcSwap::from_pointee(Default::default()),
+            tenants: ArcSwap::from_pointee(std::collections::BTreeMap::new()),
             mappings: ArcSwap::from_pointee(Default::default()),
             brokers: ArcSwap::from_pointee(crate::mqtt::Brokers::new()),
             public_url: None,
@@ -450,6 +454,12 @@ impl Gateway {
     /// Replaces each Project's Organization and the audited Endpoints: from the next request on.
     pub fn replace_provenance(&self, provenance: crate::store::Provenance) {
         self.provenance.store(Arc::new(provenance));
+    }
+
+    /// Replaces the Organization jc runs each project under (`jc`'s project registry, T-7411):
+    /// from the next request on.
+    pub fn replace_project_tenants(&self, tenants: std::collections::BTreeMap<String, String>) {
+        self.tenants.store(Arc::new(tenants));
     }
 
     /// The Organization `project` belongs to (ADR-N-054 2.3).
@@ -821,9 +831,14 @@ pub struct HostOrganization(pub String);
 
 impl Gateway {
     /// Whether `project`'s Endpoints show on a request's host: any on no Organization's host,
-    /// only that Organization's on one.
+    /// only that Organization's on one. The Organization jc runs the project under decides
+    /// (T-7411: one jc Organization's repository may name other Organizations in its Projects'
+    /// `organizationRef`); a project jc has not recorded yet goes by its `organizationRef`.
     pub(crate) fn on_host(&self, host: Option<&HostOrganization>, project: &str) -> bool {
-        host.is_none_or(|h| self.organization_of(project).as_deref() == Some(h.0.as_str()))
+        host.is_none_or(|h| {
+            let tenant = self.tenants.load().get(project).cloned();
+            tenant.or_else(|| self.organization_of(project)).as_deref() == Some(h.0.as_str())
+        })
     }
 }
 

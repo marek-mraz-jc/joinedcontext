@@ -300,6 +300,18 @@ async fn rebuild_hosts(pool: &sqlx::PgPool, run: &Run) -> Result<usize, String> 
             )
             .collect(),
     );
+    #[cfg(feature = "gateway")]
+    super::follow::PROJECT_TENANTS.publish(
+        projects
+            .iter()
+            .map(|(organization, name, _)| (name.clone(), organization.clone()))
+            .chain(
+                branches
+                    .iter()
+                    .map(|(organization, name, _, _)| (name.clone(), organization.clone())),
+            )
+            .collect(),
+    );
     if run.projects {
         let projects: Vec<(String, String, String, Option<i64>)> = projects
             .into_iter()
