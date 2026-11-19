@@ -8710,8 +8710,8 @@
         },
         "mqtt": {
           "brokers": {
-            "label": "MQTT brokerov na projekt",
-            "hint": "Koľko brokerov smie projekt deklarovať."
+            "label": "MQTT brokerov v organizácii",
+            "hint": "Počíta sa každý broker každého projektu, napr. 10. Vlastné povolenie projektu ho smie len zúžiť. Po znížení pod súčasný počet bežiace brokery zostanú a nové sa odmietnu."
           },
           "connections": {
             "label": "MQTT pripojení na projekt",
@@ -11756,7 +11756,7 @@
       "enabled": "MQTT brokery povolené",
       "enabledHint": "Vypnuté: projekt nemôže pridať broker.",
       "brokers": "Najviac brokerov",
-      "brokersHint": "Prázdne: predvolená hodnota organizácie.",
+      "brokersHint": "Prázdne: predvolená hodnota organizácie. Len zužuje celkový počet organizácie za všetky projekty, napr. 3.",
       "connections": "Pripojení zariadení spolu",
       "connectionsHint": "Súčet limitov pripojení všetkých brokerov.",
       "messagesPerSecond": "Správ za sekundu spolu",

@@ -365,6 +365,7 @@ mod tests {
         let ground = Ground {
             mirror,
             bounds: &bounds,
+            mqtt_default: None,
             apex: None,
             domain: None,
             portals: None,

@@ -661,6 +661,10 @@ env:
   JC_GATEWAY_MQTT_PORTAL_IDENTITY: "jc.{{ $jc.namespace }}"
   # Where the Portal stamps one release per MqttBroker from the chart's broker-template.
   JC_PORTAL_MQTT_NAMESPACE: {{ $brokers | quote }}
+{{- with $jc.mqttOrganizationDefault }}
+  # The MQTT allowance of every Organization that sets no spec.limits.mqtt of its own (T-7407).
+  JC_PORTAL_MQTT_ORGANIZATION_DEFAULT: {{ toJson . | quote }}
+{{- end }}
   # A DataSource on a platform broker reads tcp://<release>.${JC_MQTT_NAMESPACE}.svc:1883, so
   # ekiben's JC_MQTT_NAMESPACE is the brokers' namespace (it also keeps an outside broker's
   # client id apart per installation).
@@ -669,7 +673,7 @@ env:
   # its HTTP API (6060), which only the Portal reads; `project=` admits only that project's
   # streams. ponytail: one entry per MqttBroker the environment names (jc.server.mqttBrokers);
   # a broker added in the Portal needs a line there.
-  JC_EKIBEN_PRIVATE_HOSTS: {{ $hosts := list }}{{ range $jc.mqttBrokers | default list }}{{ $hosts = append $hosts (printf "%s=%s.%s.svc.cluster.local:1883" .project .release $brokers) }}{{ end }}{{ join "," $hosts | quote }}
+  JC_EKIBEN_PRIVATE_HOSTS: {{ $hosts := list }}{{ range dig "mqttBrokers" list $jc }}{{ $hosts = append $hosts (printf "%s=%s.%s.svc.cluster.local:1883" .project .release $brokers) }}{{ end }}{{ join "," $hosts | quote }}
 {{- end }}
 
 # The generated secrets of jc's first-start setup (bins/jc/src/setup.rs) live in Secret jc-setup,

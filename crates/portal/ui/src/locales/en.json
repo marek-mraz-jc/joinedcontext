@@ -8710,8 +8710,8 @@
         },
         "mqtt": {
           "brokers": {
-            "label": "MQTT brokers per project",
-            "hint": "How many brokers one project may declare."
+            "label": "MQTT brokers in the organization",
+            "hint": "Every broker of every project counts toward it, e.g. 10. A project's own allowance may only narrow it. Lowered below what runs, the existing brokers stay and new ones are refused."
           },
           "connections": {
             "label": "MQTT connections per project",
@@ -11756,7 +11756,7 @@
       "enabled": "MQTT brokers allowed",
       "enabledHint": "Off: the project cannot add a broker.",
       "brokers": "Brokers at most",
-      "brokersHint": "Empty: the organization's default.",
+      "brokersHint": "Empty: the organization's default. It only narrows the organization's total over all projects, e.g. 3.",
       "connections": "Device connections in total",
       "connectionsHint": "The sum of every broker's connection limit.",
       "messagesPerSecond": "Messages per second in total",
