@@ -101,10 +101,10 @@ static SINK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// The runner's environment as the last sync handed it.
 #[derive(Default)]
-struct Recorded(Mutex<Vec<BTreeMap<String, String>>>);
+struct Recorded(Mutex<Vec<BTreeMap<String, BTreeMap<String, String>>>>);
 
 impl RunnerSecrets for Recorded {
-    fn replace(&self, values: BTreeMap<String, String>) {
+    fn replace(&self, values: BTreeMap<String, BTreeMap<String, String>>) {
         self.0.lock().unwrap().push(values);
     }
 }
@@ -173,8 +173,13 @@ async fn a_host_runner_gets_a_projects_own_secret_and_never_another_projects() {
     std::fs::remove_file(&key).ok();
 
     let handed = recorded.0.lock().unwrap().last().cloned().expect("handed");
-    assert_eq!(handed.get("GOLEMIO_KEY").map(String::as_str), Some(VALUE));
+    // By project (T-7269): praha's credential sits in praha's map only.
+    assert_eq!(
+        handed["praha"].get("GOLEMIO_KEY").map(String::as_str),
+        Some(VALUE)
+    );
     assert_eq!(handed.len(), 1, "{:?}", handed.keys());
+    assert_eq!(handed["praha"].len(), 1, "{:?}", handed["praha"].keys());
 
     let (reason, message) = condition(&mirror, "brno");
     assert_eq!(reason, "SecretUnresolved", "{message}");
@@ -303,13 +308,20 @@ async fn a_project_made_after_start_has_its_pipeline_client_secret_on_the_runner
         .expect("the run loads");
 
     let handed = recorded.0.lock().unwrap().last().cloned().expect("handed");
+    // Each project's client secret in its own project's map only (T-7269).
     assert_eq!(
-        handed.get("JC_CLIENT_SECRET_PRAHA").map(String::as_str),
+        handed["praha"]
+            .get("JC_CLIENT_SECRET_PRAHA")
+            .map(String::as_str),
         Some("generated-praha")
     );
     assert_eq!(
-        handed.get("JC_CLIENT_SECRET_BRNO").map(String::as_str),
+        handed["brno"]
+            .get("JC_CLIENT_SECRET_BRNO")
+            .map(String::as_str),
         Some("generated-brno")
     );
+    assert!(!handed["praha"].contains_key("JC_CLIENT_SECRET_BRNO"));
+    assert!(!handed["brno"].contains_key("JC_CLIENT_SECRET_PRAHA"));
     assert_eq!(handed.len(), 2, "{:?}", handed.keys());
 }

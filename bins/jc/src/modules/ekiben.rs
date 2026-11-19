@@ -118,7 +118,9 @@ async fn build_with(
         files: per_project,
     };
     runner.org.replace_secrets(runner.given.clone());
-    runner.org.replace_scoped_secrets(runner.scopes(BTreeMap::new()));
+    runner
+        .org
+        .replace_scoped_secrets(runner.scopes(BTreeMap::new()));
     if portal_beside {
         hand_to_portal(runner);
     }
@@ -1061,7 +1063,10 @@ mod tests {
         let secret = |v: &str| jc_secret::Secret::new(v.to_owned());
         let (shared, files) = scoped_client_secrets(&BTreeMap::from([
             ("JC_CLIENT_SECRET".to_owned(), secret("harness")),
-            ("JC_CLIENT_SECRET_ZILINA_MESTO".to_owned(), secret("zilina-file")),
+            (
+                "JC_CLIENT_SECRET_ZILINA_MESTO".to_owned(),
+                secret("zilina-file"),
+            ),
             ("JC_CLIENT_SECRET_PRAHA".to_owned(), secret("praha-file")),
         ]));
         assert_eq!(shared.keys().collect::<Vec<_>>(), ["JC_CLIENT_SECRET"]);
@@ -1082,7 +1087,9 @@ mod tests {
         assert!(!praha.contains_key("JC_CLIENT_SECRET_ZILINA_MESTO"));
         let zilina = runner.org.secrets_snapshot_for("zilina-mesto.air");
         assert!(zilina.contains_key("JC_CLIENT_SECRET_ZILINA_MESTO"));
-        assert!(!zilina.contains_key("GOLEMIO_KEY") && !zilina.contains_key("JC_CLIENT_SECRET_PRAHA"));
+        assert!(
+            !zilina.contains_key("GOLEMIO_KEY") && !zilina.contains_key("JC_CLIENT_SECRET_PRAHA")
+        );
         assert!(runner.credential("zilina-mesto", "GOLEMIO_KEY").is_none());
         assert!(runner.credential("praha", "GOLEMIO_KEY").is_some());
         assert!(runner.credential("praha", "JC_CLIENT_SECRET").is_none());

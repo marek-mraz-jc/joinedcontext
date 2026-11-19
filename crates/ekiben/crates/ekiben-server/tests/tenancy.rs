@@ -443,7 +443,12 @@ async fn a_streams_variables_are_its_projects_and_the_organizations_only() {
             .send()
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::OK, "{id}: {}", res.text().await.unwrap());
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "{id}: {}",
+            res.text().await.unwrap()
+        );
     }
     // A stream of alfa naming bravo's variable, or a stream of no project naming alfa's.
     for (id, var) in [("alfa.theft", "BRAVO_TOKEN"), ("loose", "MQTT_PASSWORD")] {
@@ -455,13 +460,18 @@ async fn a_streams_variables_are_its_projects_and_the_organizations_only() {
             .unwrap();
         assert!(!res.status().is_success(), "{id} must not lint");
         let body = res.text().await.unwrap();
-        assert!(body.contains(&format!("'{var}' was not defined")), "{id}: {body}");
+        assert!(
+            body.contains(&format!("'{var}' was not defined")),
+            "{id}: {body}"
+        );
         assert!(!body.contains("-pw-e1"), "{id}: {body}");
     }
     let alfa = org.secrets_snapshot_for("alfa.own");
     assert!(alfa.contains_key("MQTT_PASSWORD") && alfa.contains_key("SHARED"));
     assert!(!alfa.contains_key("BRAVO_TOKEN"));
-    assert!(!org.secrets_snapshot_for("loose").contains_key("MQTT_PASSWORD"));
+    assert!(!org
+        .secrets_snapshot_for("loose")
+        .contains_key("MQTT_PASSWORD"));
 }
 
 #[test]
