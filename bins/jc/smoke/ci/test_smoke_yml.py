@@ -128,6 +128,21 @@ def test_only_a_green_verdict_on_the_merge_branch_fast_forwards_main_and_only_th
     assert ff["steps"][1]["env"]["SHA"] == "${{ github.sha }}"
 
 
+def test_a_dispatched_deploy_pin_waits_for_the_green_main_ci_before_it_pins():
+    # T-7420: ff-main's GITHUB_TOKEN dispatch of ci.yml fires no workflow_run, so ff-main dispatches
+    # deploy-pin too and only its `wait` job (main only, read-only) decides whether `pin` runs.
+    doc = yaml.safe_load((repo / ".github/workflows/deploy-pin.yml").read_text())
+    on = doc[True] if True in doc else doc["on"]
+    assert on["workflow_dispatch"]["inputs"]["sha"]["required"] is True
+    assert "concurrency" not in doc and doc["permissions"] == {"contents": "read", "packages": "read"}
+    wait, pin = doc["jobs"]["wait"], doc["jobs"]["pin"]
+    assert "github.ref == 'refs/heads/main'" in wait["if"] and wait["permissions"] == {"contents": "read", "actions": "read"}
+    assert wait["steps"][1]["run"].startswith("sh .github/scripts/ff-main.sh --await-main-ci")
+    assert pin["needs"] == "wait" and "needs.wait.outputs.ok == 'true'" in pin["if"]
+    assert pin["concurrency"] == {"group": "deploy-pin", "cancel-in-progress": False}
+    script = (repo / ".github/scripts/ff-main.sh").read_text()
+    assert "actions/workflows/deploy-pin.yml/dispatches" in script
+
 def test_every_action_is_pinned_by_sha_and_no_secret_reaches_a_job():
     text = workflow.read_text()
     uses = re.findall(r"uses: (\S+)", text)
