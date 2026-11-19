@@ -63,10 +63,10 @@ async fn send(
 }
 
 fn ago(minutes: i64) -> String {
-    let now = chrono::Utc::now();
-    now.checked_sub_signed(chrono::Duration::minutes(minutes))
+    let now = jc_time::TimestampTz::now();
+    now.checked_sub(jiff::SignedDuration::from_mins(minutes))
         .unwrap_or(now)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        .to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
 }
 
 fn positioned(id: &str, ty: &str, minutes_ago: i64) -> String {
@@ -182,7 +182,7 @@ async fn a_stale_entity_is_quarantined_and_lifted_when_fresh_and_nothing_else_is
     create(&app, "port", positioned("urn:v:old", V, 30)).await;
     let before = entity(&app, "city", "urn:v:old").await;
 
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(
         changed
             .iter()
@@ -234,7 +234,7 @@ async fn a_stale_entity_is_quarantined_and_lifted_when_fresh_and_nothing_else_is
     }
 
     // Marked once: a second sweep changes nothing.
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert!(changed.is_empty(), "{changed:?}");
 
     // A fresh observation: the next sweep lifts both Properties.
@@ -247,7 +247,7 @@ async fn a_stale_entity_is_quarantined_and_lifted_when_fresh_and_nothing_else_is
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(
         changed
             .iter()
@@ -265,7 +265,7 @@ async fn a_tenant_without_a_document_and_a_deleted_document_mark_nothing() {
     let b = TestBroker::new().await.expect("broker");
     let app = b.serve_mounted(Vec::new()).expect("app");
     create(&app, "city", positioned("urn:v:old", V, 30)).await;
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert!(changed.is_empty(), "{changed:?}");
 
     send(
@@ -277,7 +277,7 @@ async fn a_tenant_without_a_document_and_a_deleted_document_mark_nothing() {
     )
     .await;
     send(&app, Method::DELETE, "/q/quality/city", None, None).await;
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert!(changed.is_empty(), "{changed:?}");
     assert!(entity(&app, "city", "urn:v:old")
         .await
@@ -300,7 +300,7 @@ async fn a_mark_whose_rule_is_gone_is_lifted() {
     )
     .await;
     create(&app, "city", positioned("urn:v:old", V, 30)).await;
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(changed.len(), 1, "{changed:?}");
     assert!(entity(&app, "city", "urn:v:old")
         .await
@@ -308,7 +308,7 @@ async fn a_mark_whose_rule_is_gone_is_lifted() {
         .is_some());
 
     send(&app, Method::DELETE, "/q/quality/city", None, None).await;
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(
         changed
             .iter()

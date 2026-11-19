@@ -57,11 +57,13 @@ async fn send(
 }
 
 fn positioned(id: &str, ty: &str, minutes_ago: i64) -> String {
-    let now = chrono::Utc::now();
-    let at = now
-        .checked_sub_signed(chrono::Duration::minutes(minutes_ago))
-        .unwrap_or(now)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = jiff::Timestamp::now();
+    let at = jc_time::format_rfc3339(
+        now.checked_sub(jiff::SignedDuration::from_mins(minutes_ago))
+            .unwrap_or(now),
+        jc_time::SecondsFormat::Millis,
+        true,
+    );
     json!({"id": id, "type": ty, LOCATION: {"type": "Property", "value": 1, "observedAt": at}})
         .to_string()
 }
@@ -89,7 +91,7 @@ async fn unquarantined(app: &Router, tenant: &str) -> Vec<String> {
 /// A fresh observation of `urn:v:old`'s position in `tenant`.
 async fn observe_now(app: &Router, tenant: &str) {
     let fresh = json!({LOCATION: {"type": "Property", "value": 2,
-        "observedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)}});
+        "observedAt": jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)}});
     let (s, _) = send(
         app,
         Method::PATCH,
@@ -180,7 +182,7 @@ async fn a_stale_entity_is_quarantined_and_lifted_on_postgres() {
     };
     let before = get(city.clone(), "urn:v:old").await;
 
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(
         changed
             .iter()
@@ -207,12 +209,12 @@ async fn a_stale_entity_is_quarantined_and_lifted_on_postgres() {
     }
     assert_eq!(unquarantined(&app, &city).await, ["urn:v:new"]);
     assert!(
-        b.sweep_quality(chrono::Utc::now()).await.is_empty(),
+        b.sweep_quality(jiff::Timestamp::now()).await.is_empty(),
         "marked once"
     );
 
     observe_now(&app, &city).await;
-    let changed = b.sweep_quality(chrono::Utc::now()).await;
+    let changed = b.sweep_quality(jiff::Timestamp::now()).await;
     assert_eq!(
         changed
             .iter()
