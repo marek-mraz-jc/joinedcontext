@@ -145,7 +145,8 @@ function SearchForm({
       <Button type="submit" variant="primary" icon={<Icon name="search" className="size-4" />}>
         {t("catalogue.search.submit")}
       </Button>
-      {narrowed(search) ? (
+      {/* Filters alone have "Clear all" beside their chips; this one also empties the words. */}
+      {search.q ? (
         <Button type="button" variant="ghost" onClick={() => onSearch({})}>
           {t("catalogue.search.clear")}
         </Button>
@@ -205,7 +206,7 @@ function Results({
         closeLabel={t("catalogue.facets.close")}
         className="h-screen"
         footer={
-          <Button variant="primary" onClick={() => setFiltersOpen(false)}>
+          <Button variant="primary" className="w-full" onClick={() => setFiltersOpen(false)}>
             {t("catalogue.facets.show", { count: answer.total })}
           </Button>
         }
@@ -387,11 +388,11 @@ function FacetGroup({
   }
   const word = needle.trim().toLocaleLowerCase();
   const matching = word ? options.filter((v) => v.label.toLocaleLowerCase().includes(word)) : options;
-  // The ticked ones stay in sight when the list is cut.
-  const shown =
-    all || word
-      ? matching
-      : [...matching.filter((v) => selected.includes(v.value)), ...matching.filter((v) => !selected.includes(v.value))].slice(0, FIRST_OPTIONS);
+  // The ticked ones come first, so a cut list keeps them in sight.
+  const ordered = [...matching.filter((v) => selected.includes(v.value)), ...matching.filter((v) => !selected.includes(v.value))];
+  // A "Show all" that would hide a single option costs as much space as the option.
+  const cut = !word && matching.length > FIRST_OPTIONS + 1;
+  const shown = all || !cut ? ordered : ordered.slice(0, FIRST_OPTIONS);
   const name = t(`catalogue.facets.${facet}`);
   return (
     <Card flush>
@@ -422,7 +423,7 @@ function FacetGroup({
           {shown.map((value) => (
             <Checkbox
               key={value.value}
-              className="flex w-full items-start [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
+              className="flex w-full items-start py-1.5 md:py-0 [&>span:first-of-type]:min-w-0 [&>span:first-of-type]:flex-1"
               checked={selected.includes(value.value)}
               onChange={() => onToggle(value.value)}
               label={<span className="break-words" title={facet === "spatial" ? value.value : undefined}>{value.label}</span>}
@@ -430,7 +431,7 @@ function FacetGroup({
             />
           ))}
           {word && matching.length === 0 ? <p className="text-caption text-fg-muted">{t("catalogue.facets.noMatch")}</p> : null}
-          {!word && matching.length > FIRST_OPTIONS ? (
+          {cut ? (
             <Button variant="ghost" size="sm" className="self-start" aria-expanded={all} onClick={() => setAll(!all)}>
               {all ? t("catalogue.facets.fewer") : t("catalogue.facets.all", { count: matching.length })}
             </Button>

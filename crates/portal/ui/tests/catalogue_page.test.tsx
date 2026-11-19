@@ -302,6 +302,19 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(sections.at(-1)).toBe(format.closest("details"));
   });
 
+  it("lists a seven-option filter whole, and a ticked option first when the long list is open (T-7317)", async () => {
+    const seven = Array.from({ length: 7 }, (_, i) => facet(`org-${i}`, `Publisher number ${i + 1}`, 7 - i));
+    answers["/api/v1/catalogue"] = { status: 200, body: { ...PAGE, total: 7, facets: { ...PAGE.facets, publisher: seven } } };
+    renderAt("/catalogue?publisher=org-6");
+    const filters = await screen.findByRole("complementary", { name: "Filters" });
+    const publisher = await within(filters).findByRole("group", { name: "Publisher" });
+    await waitFor(() => {
+      expect(within(publisher).getAllByRole("checkbox")).toHaveLength(7);
+    });
+    expect(within(publisher).queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+    expect(within(publisher).getAllByRole("checkbox")[0]).toBeChecked();
+  });
+
   it("clears every filter from the phone sheet (T-7317)", async () => {
     renderAt("/catalogue?publisher=bbsk");
     fireEvent.click(await screen.findByRole("button", { name: "Filters (1)" }));
