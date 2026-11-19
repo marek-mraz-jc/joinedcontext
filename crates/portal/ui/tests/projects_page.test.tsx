@@ -140,7 +140,8 @@ describe("where / sends a signed-in person (T-7380)", () => {
   it("tells a member on /projects who opens projects and the way to the catalogue", async () => {
     start("/projects", { projects: [], creation: { allowed: false, reason: REFUSED } });
     expect(await screen.findByRole("heading", { level: 2, name: en.projectsPage.noneTitle })).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(REFUSED.replace(/[()]/g, "\\$&")))).toBeInTheDocument();
+    expect(screen.getByText(en.projectsPage.noneLead)).toBeInTheDocument();
+    expect(screen.queryByText(/PF-65/)).toBeNull();
     expect(screen.getByRole("link", { name: en.projectsPage.toCatalogue })).toHaveAttribute("href", "/catalogue");
     expect(screen.queryByRole("button", { name: en.projectsPage.first })).toBeNull();
   });

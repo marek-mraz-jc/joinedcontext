@@ -64,7 +64,8 @@ export function ProjectsPage(): JSX.Element {
             heading={2}
             icon="lock"
             title={t("projectsPage.noneTitle")}
-            description={[may.reason, t("projectsPage.noneLead")].filter(Boolean).join(" ")}
+            // In words, not the API's reason: that names verbs and requirement ids (UI judge, T-7380).
+            description={t("projectsPage.noneLead")}
             action={
               <Link to="/catalogue" className={buttonClass("secondary", "md")}>
                 {t("projectsPage.toCatalogue")}
@@ -93,7 +94,8 @@ export function ProjectsPage(): JSX.Element {
                 </span>
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate font-medium text-fg">{titleOf(name)}</span>
-                  <span className="truncate text-caption text-fg-muted">{name}</span>
+                  {/* The slug under a title that differs from it, never the same word twice. */}
+                  {titleOf(name) === name ? null : <span className="truncate text-caption text-fg-muted">{name}</span>}
                 </span>
               </Link>
             </Card>

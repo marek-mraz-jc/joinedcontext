@@ -236,13 +236,12 @@ export function useAdministers(): { known: boolean; administers: boolean; own?: 
  * an answer that says so counts: `/` sends a person with no project here on it, and a member who
  * may not would land on an empty page instead of the catalogue (T-7380). The API still decides.
  */
-export function useMayOpenProject(): { known: boolean; allowed: boolean; reason?: string } {
+export function useMayOpenProject(): { known: boolean; allowed: boolean } {
   const permissions = usePermissions(ORG_NAMESPACE);
   const creation = permissions.data?.projects?.creation;
   return {
     known: !permissions.checking,
     allowed: !permissions.denied && creation?.allowed === true,
-    reason: creation?.reason ?? undefined,
   };
 }
 

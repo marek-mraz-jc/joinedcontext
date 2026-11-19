@@ -453,6 +453,91 @@ async fn a_name_another_organization_holds_is_not_available_and_names_nothing_of
     assert!(written(&shako).await.is_empty(), "nothing was written");
 }
 
+/// T-7380: on an Organization's own Portal host its org-admin, who holds no project yet, opens
+/// the first one without naming the Organization, and the project belongs to it; a member of the
+/// same Organization without propose on Project is refused before anything is written.
+#[tokio::test]
+async fn an_organizations_admin_opens_its_first_project_on_its_host_and_a_member_is_refused() {
+    let shako = forge_with_no_open_projects().await;
+    let state = common::state_on(&shako);
+    let org = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    for (name, spec) in [
+        (
+            "ops",
+            json!({ "domain": "ops.example", "installation": true }),
+        ),
+        ("bbsk", json!({ "domain": "bbsk.sk" })),
+        ("praha", json!({ "domain": "praha.eu" })),
+    ] {
+        state
+            .mirror
+            .upsert(envelope("Organization", name, org, spec));
+    }
+    state.mirror.upsert(envelope(
+        "Role",
+        "org-admin",
+        org,
+        json!({ "rules": [{ "kinds": ["Project", "RoleBinding", "Group", "Organization"],
+                            "verbs": ["read", "propose", "approve", "delete"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "Role",
+        "reader",
+        org,
+        json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+    ));
+    for (name, user, role) in [
+        ("bbsk-admins", "bbadmin", "org-admin"),
+        ("bbsk-readers", "bbmember", "reader"),
+    ] {
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            name,
+            org,
+            json!({ "subjects": [{ "user": format!("{user}@hel.fi") }], "role": role,
+                    "scope": { "organization": "bbsk" } }),
+        ));
+    }
+    let host = |organization: &str, base: &str| {
+        joinedcontext_portal::organization_host::OrganizationHost {
+            organization: organization.to_owned(),
+            base: url::Url::parse(base).expect("a base"),
+        }
+    };
+    let on_bbsk = |who: &str, name: &str| {
+        joinedcontext_portal::organization_host::scope(
+            host("bbsk", "https://portal.bbsk.sk"),
+            open(&state, person(who), json!({ "name": name })),
+        )
+    };
+
+    let (status, body) = on_bbsk("bbmember", "bbsk-doprava").await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(written(&shako).await.is_empty(), "nothing was written");
+
+    // On another Organization's host the same administrator opens nothing there.
+    let (status, body) = joinedcontext_portal::organization_host::scope(
+        host("praha", "https://portal.praha.eu"),
+        open(
+            &state,
+            person("bbadmin"),
+            json!({ "name": "praha-doprava" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert!(written(&shako).await.is_empty(), "nothing was written");
+
+    let (status, body) = on_bbsk("bbadmin", "bbsk-doprava").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let project = bodies(&shako)
+        .await
+        .into_iter()
+        .find(|body| body.contains("kind: Project"))
+        .expect("the project's own file");
+    assert!(project.contains("organizationRef: bbsk"), "{project}");
+}
+
 #[tokio::test]
 async fn a_name_another_open_change_already_reserved_is_refused() {
     let shako = common::forge().await;
