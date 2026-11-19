@@ -263,7 +263,9 @@ pub fn effective(
     }
     // On an Organization's own Portal host (`organization_host`) only its projects exist, for
     // everyone, the bootstrap group included: another Organization's project reads as absent.
-    let pin = crate::organization_host::organization();
+    // The pin as the repository names it: the forge's installation claim for the configured
+    // installation it keeps under another name (T-7414).
+    let pin = crate::organization_host::repository_organization();
     if pin.is_some() && project != ORG_NAMESPACE && organization_of(mirror, project) != pin {
         return Effective {
             project: project.to_owned(),

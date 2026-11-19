@@ -233,6 +233,55 @@ async fn an_app_host_serves_its_app_at_the_root_and_under_the_old_path() {
     }
 }
 
+/// T-7401: a restarted Portal whose first run has not ended serves its Apps from the mirror the
+/// last completed run kept, and with no such copy answers a designed 503 with `Retry-After`,
+/// never the 404 of an App that does not exist.
+#[tokio::test]
+async fn a_restart_serves_its_apps_from_the_last_run_or_answers_starting() {
+    let bundles = Bundles::new("restart", &["air-quality"]);
+    let at = |mirror: Arc<Mirror>| {
+        let config = Config {
+            apps_dir: Some(bundles.0.to_string_lossy().into_owned()),
+            public_base_url: "https://portal.example.org".parse().unwrap(),
+            apps_url: Some("https://example.org".parse().unwrap()),
+            serve_app_hosts: true,
+            ..Config::for_tests()
+        };
+        server::app(AppState::new(config, None).with_mirror(mirror))
+    };
+    let host = "air-quality.apps.example.org";
+
+    let starting = at(Arc::new(Mirror::new()));
+    for (accept, kind) in [
+        ("text/html", "text/html"),
+        ("*/*", "application/problem+json"),
+    ] {
+        let (status, headers, body) = send(&starting, host, "/", &[("accept", accept)]).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{accept}");
+        assert_eq!(headers[header::RETRY_AFTER], "60", "{accept}");
+        assert!(
+            headers[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with(kind),
+            "{accept}"
+        );
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains("try again") || body.contains("try again later"),
+            "{body}"
+        );
+    }
+
+    let path = bundles.0.join("mirror.json");
+    mirror().save(&path).expect("saved");
+    let restored = Arc::new(Mirror::new());
+    assert!(restored.restore(&path).expect("restored") > 0);
+    let (status, _, got) = send(&at(restored), host, "/", &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(served(&got, INDEX));
+}
+
 #[tokio::test]
 async fn an_app_host_reaches_no_portal_route_and_no_other_app() {
     let bundles = Bundles::new("isolated", &["air-quality", "air-server"]);

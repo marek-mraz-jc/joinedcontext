@@ -211,15 +211,20 @@ args+=(--with "subscriptions=--realm-secrets-dir $home/secrets/realm")
 # assistant module being off prevents are named skips, never known failures.
 args+=(--with "assistant=--kept-component")
 # restore backs this environment up, restores it beside it (its own Postgres and ports) and compares;
-# on its own shard it first waits, at most 15 min, for the Pipelines' first runs the import queued
-# (a first run writes new types between its before and after run: smoke 43683591053).
-args+=(--with "restore=--home $home --drain 900")
+# on its own shard it first waits, at most 25 min, for the Pipelines' first runs the import queued
+# (a first run writes new types between its before and after run: smoke 43683591053). 15 min was
+# the edge: green trains drained after 875 s and 888 s, trains 44547322651 and 44551451935 had
+# 25 and 32 first runs left at 900 s; the wait is a precondition, the comparison after it unchanged.
+args+=(--with "restore=--home $home --drain 1500")
 # multiorg judges the composed bundle on its own two jcs (each --with wins over the common flags);
 # --composed makes a bundle that is missing or not composed a failure, never the setup skip.
 args+=(--with "multiorg=--base-url http://127.0.0.1:$mo_port --export $mo_export --composed
   --state $REHEARSAL_HOME/mo-hosts/smoke-state --hosts $mo_hosts")
 args+=(--with "multiorg@path=--base-url http://127.0.0.1:$mp_port --export $mo_export --composed
   --state $REHEARSAL_HOME/mo-path/smoke-state")
+# sharing makes its fixtures in hel (A) and zilina (B) on this jc and removes them; in the gate it
+# judges only the cells green on its last measured run (sharing/lane.json, T-7402).
+args+=(--with "sharing=--lane")
 # Bounded: each run is polled until it ends, so ten runs of five minutes outlast the job.
 args+=(--with "pipelines=--runs 3 --wait 120")
 # Failures the gate knows, each with where it is filed; only a new one turns the verdict red.

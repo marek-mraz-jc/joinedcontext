@@ -22,8 +22,6 @@ import {
 } from "../../components/ui";
 import { useThemeLabel } from "./labels";
 import { useAuthStatus } from "../../auth/AuthProvider";
-import { AccessFacet, GrantedCard, useGranted } from "./ReadableDatasets";
-import type { Granted } from "./ReadableDatasets";
 
 export { problemOf, useThemeLabel } from "./labels";
 
@@ -58,15 +56,14 @@ export function CataloguePage({
 }): JSX.Element {
   const { t } = useTranslation();
   const [publishing, setPublishing] = useState(false);
-  // Signed in: the internal datasets the gateway grants the person are an Access filter of the
-  // one list, and lead it on its first page (T-6411, T-7389).
+  // Signed in: the server adds the internal datasets the gateway grants the person to the one
+  // list, filed under their publisher (T-6411, T-7400).
   const signedIn = useAuthStatus() === "authenticated";
-  const granted = useGranted(signedIn, search.q);
   // Opened in a project, the catalogue starts at that project's datasets; outside one, or on
   // "Whole organization", it lists every project of the host's Organization (T-7389).
   const scope = project ? (search.scope ?? "project") : "organization";
   const catalogue = useQuery({
-    ...catalogueQuery(search, scope === "project" && project ? project : undefined),
+    ...catalogueQuery(search, scope === "project" && project ? project : undefined, signedIn),
     placeholderData: keepPreviousData,
   });
 
@@ -112,7 +109,6 @@ export function CataloguePage({
           search={search}
           onSearch={onSearch}
           refreshing={catalogue.isFetching}
-          granted={granted}
           publish={
             project ? (
               <PermissionGuard project={project} kind="Endpoint" verb="propose">
@@ -185,7 +181,6 @@ function Results({
   search,
   onSearch,
   refreshing,
-  granted,
   publish,
   scope,
 }: {
@@ -193,7 +188,6 @@ function Results({
   search: CatalogueSearch;
   onSearch: (next: CatalogueSearch) => void;
   refreshing: boolean;
-  granted: Granted;
   /** "Publish a dataset" for one who may, offered by an empty list. */
   publish: JSX.Element | null;
   /** The Scope filter, first in the sidebar, when the person works in a project. */
@@ -202,7 +196,7 @@ function Results({
   const { t } = useTranslation();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const pages = Math.max(1, Math.ceil(answer.total / answer.pageSize));
-  const chosen = FACETS.reduce((sum, facet) => sum + (search[facet]?.length ?? 0), search.access ? 1 : 0);
+  const chosen = FACETS.reduce((sum, facet) => sum + (search[facet]?.length ?? 0), 0);
   // A filter whose every value nearly every listed dataset has (Format: 625 of 626 on prod) narrows
   // nothing: last, closed (T-7317). Publisher and Theme, the filters people pick by, stay open.
   const idle = (facet: FacetName) =>
@@ -222,30 +216,11 @@ function Results({
     />
   ));
   const clearFilters = () => onSearch(search.q ? { q: search.q } : {});
-  // Granted datasets carry none of the public filters' values: "Granted to me" lists them alone,
-  // and with no filter they lead the first page; a public filter or "Public" leaves them out.
-  const onlyGranted = search.access === "granted";
-  const filtered = FACETS.some((facet) => (search[facet]?.length ?? 0) > 0);
-  const grantedShown =
-    onlyGranted || (!search.access && !filtered && answer.page <= 1) ? granted.datasets : [];
-  const publicShown = onlyGranted ? [] : answer.datasets;
-  const total = grantedShown.length + (onlyGranted ? 0 : answer.total);
-  const access =
-    granted.state === "off" ? null : (
-      <AccessFacet
-        granted={granted}
-        publicCount={answer.total}
-        selected={search.access}
-        onSelect={(next) =>
-          onSearch(next === "granted" ? { q: search.q, access: next } : { ...search, access: next, page: undefined })
-        }
-      />
-    );
+  const total = answer.total;
   const sidebar = (
     <>
       {scope}
-      {access}
-      {onlyGranted ? null : groups}
+      {groups}
     </>
   );
   return (
@@ -292,11 +267,7 @@ function Results({
         ) : null}
         <div className="flex items-center justify-between gap-2">
           <p role="status" className="text-body text-fg-muted">
-            {/* Signed in with nothing granted: said beside the count too, since a phone keeps
-                the Access filter behind its button (T-7389). */}
-            {granted.state !== "off" && granted.state !== "loading" && granted.datasets.length === 0 && !onlyGranted
-              ? t(granted.state === "noProject" ? "catalogue.access.countNoProject" : "catalogue.access.countNone", { count: total })
-              : t("catalogue.results.count", { count: total })}
+            {t("catalogue.results.count", { count: total })}
           </p>
           <Button
             variant="secondary"
@@ -308,10 +279,10 @@ function Results({
           </Button>
         </div>
         {chosen > 0 ? <ChosenFilters search={search} answer={answer} onSearch={onSearch} onClear={clearFilters} /> : null}
-        {grantedShown.length > 0 && granted.unanswered > 0 ? (
-          <Alert tone="warning">{t("catalogue.readable.unanswered", { count: granted.unanswered })}</Alert>
+        {answer.unanswered ? (
+          <Alert tone="warning">{t("catalogue.readable.unanswered", { count: answer.unanswered })}</Alert>
         ) : null}
-        {grantedShown.length + publicShown.length === 0 ? (
+        {answer.datasets.length === 0 ? (
           <EmptyState
             icon="ckan"
             title={narrowed(search) ? t("catalogue.results.noMatch") : t("catalogue.results.empty")}
@@ -330,19 +301,14 @@ function Results({
           />
         ) : (
           <ul className="flex flex-col gap-3">
-            {grantedShown.map((dataset) => (
-              <li key={`granted:${dataset.slug}`}>
-                <GrantedCard dataset={dataset} />
-              </li>
-            ))}
-            {publicShown.map((dataset) => (
-              <li key={dataset.name}>
+            {answer.datasets.map((dataset) => (
+              <li key={dataset.endpoint ? `internal:${dataset.endpoint}` : dataset.name}>
                 <DatasetCard dataset={dataset} />
               </li>
             ))}
           </ul>
         )}
-        {pages > 1 && !onlyGranted ? (
+        {pages > 1 ? (
           <nav aria-label={t("catalogue.pages.label")} className="flex items-center justify-between gap-2">
             <Button
               variant="secondary"
@@ -431,21 +397,6 @@ function ChosenFilters({
   const optionLabel = useOptionLabel();
   return (
     <div role="group" aria-label={t("catalogue.facets.chosen")} className="flex flex-wrap items-center gap-2">
-      {search.access ? (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="min-h-14 md:min-h-0"
-          aria-label={t("catalogue.facets.remove", {
-            facet: t("catalogue.access.label"),
-            value: t(`catalogue.access.${search.access}`),
-          })}
-          onClick={() => onSearch({ ...search, access: undefined, page: undefined })}
-        >
-          <span className="text-fg-muted">{t("catalogue.access.label")}:</span> {t(`catalogue.access.${search.access}`)}
-          <Icon name="close" className="size-3.5" />
-        </Button>
-      ) : null}
       {FACETS.flatMap((facet) =>
         (search[facet] ?? []).map((value) => {
           const label = optionLabel(facet, value, answer.facets[facet].find((v) => v.value === value)?.label ?? value);
@@ -581,15 +532,34 @@ function DatasetCard({ dataset }: { dataset: CatalogueDataset }): JSX.Element {
   const hidden = dataset.formats.filter((format) => !shown.includes(format));
   return (
     <Card className="flex flex-col gap-2">
-      <h2 className="font-heading text-title font-semibold">
-        <Link
-          to="/catalogue/$name"
-          params={{ name: dataset.name }}
-          className="focus-ring rounded-sm text-fg hover:underline"
-        >
-          {dataset.title}
-        </Link>
-      </h2>
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="min-w-0 break-words font-heading text-title font-semibold">
+          {/* An internal dataset is read live from its Endpoint with the person's own access. */}
+          {dataset.endpoint ? (
+            <Link
+              to="/catalogue/endpoint/$slug"
+              params={{ slug: dataset.endpoint }}
+              className="focus-ring rounded-sm text-fg hover:underline"
+            >
+              {dataset.title}
+            </Link>
+          ) : (
+            <Link
+              to="/catalogue/$name"
+              params={{ name: dataset.name }}
+              className="focus-ring rounded-sm text-fg hover:underline"
+            >
+              {dataset.title}
+            </Link>
+          )}
+        </h2>
+        {dataset.endpoint ? (
+          <Badge tone="primary" title={t("catalogue.access.badgeHint")}>
+            {t("catalogue.access.badge")}
+            <span className="sr-only">: {t("catalogue.access.badgeHint")}</span>
+          </Badge>
+        ) : null}
+      </div>
       <p className="text-caption text-fg-muted">
         {[
           dataset.publisher?.title,

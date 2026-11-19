@@ -298,6 +298,7 @@ pub struct RequestOrganization(pub String);
 
 tokio::task_local! {
     static PINNED: OrganizationHost;
+    static REPOSITORY: String;
 }
 
 /// The Organization the running request is pinned to, if any.
@@ -310,10 +311,56 @@ pub fn organization() -> Option<String> {
     PINNED.try_with(|pin| pin.organization.clone()).ok()
 }
 
+/// The name the repository gives the Organization the running request is pinned to
+/// ([`repository_name`]), if any: what the pin is compared with in the mirror's manifests.
+pub fn repository_organization() -> Option<String> {
+    REPOSITORY.try_with(Clone::clone).ok().or_else(organization)
+}
+
 /// Runs `f` pinned to `host`, as [`middleware`] does for a request; for tests and background
 /// work done on an Organization's behalf.
 pub async fn scope<F: std::future::Future>(host: OrganizationHost, f: F) -> F::Output {
     PINNED.scope(host, f).await
+}
+
+/// [`scope`] with the pin's [`repository_name`] read from `state`, as [`middleware`] pins a request.
+pub async fn scope_in<F: std::future::Future>(
+    state: &AppState,
+    host: OrganizationHost,
+    f: F,
+) -> F::Output {
+    let repository = repository_name(
+        &state.mirror,
+        &state.organization_hosts.current(),
+        &host.organization,
+    );
+    PINNED.scope(host, REPOSITORY.scope(repository, f)).await
+}
+
+/// The name the repository (the forge) gives the registry's Organization `organization` (T-7414).
+/// A forge can keep the installation Organization's manifest under another name (jc-prod: `hel`)
+/// than the registry and `JC_PORTAL_INSTALLATION_ORGANIZATION` give it (`smartcity`); its
+/// bindings, and the projects it owns, are then the configured installation's. Only while the
+/// repository holds no Organization of the configured name and its installation claim is no
+/// Organization this Portal serves a host of, so one Organization never reads as another.
+pub fn repository_name(
+    mirror: &crate::store::Mirror,
+    hosts: &[OrganizationHost],
+    organization: &str,
+) -> String {
+    let unnamed = mirror.configured_installation() == Some(organization)
+        && mirror
+            .get(
+                crate::permissions::ORG_NAMESPACE,
+                "Organization",
+                organization,
+            )
+            .is_none();
+    unnamed
+        .then(|| crate::permissions::installation_organization(mirror))
+        .flatten()
+        .filter(|claim| !hosts.iter().any(|h| &h.organization == claim))
+        .unwrap_or_else(|| organization.to_owned())
 }
 
 /// The public base of the running request: its Organization host's, else the configured one.
@@ -419,35 +466,59 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
     else {
         return next.run(request).await;
     };
+    let repository = repository_name(&state.mirror, &hosts, &pin.organization);
     PINNED
-        .scope(pin.clone(), async move {
-            if gated(request.uri().path()) {
-                let (mut parts, body) = request.into_parts();
-                let caller =
-                    <crate::auth::session::CurrentUser as axum::extract::FromRequestParts<
-                        AppState,
-                    >>::from_request_parts(&mut parts, &state)
-                    .await;
-                let foreign = caller.is_ok_and(|user| {
-                    !crate::permissions::belongs_to_organization(
-                        &state.mirror,
-                        &state.config.bootstrap_admins,
-                        &user.0.identity,
-                        &pin.organization,
-                    )
-                });
-                if foreign {
-                    return crate::error::ApiError::Denied(format!(
-                        "this Portal is {}'s; you belong to none of its projects",
-                        pin.organization
-                    ))
-                    .into_response();
+        .scope(
+            pin.clone(),
+            REPOSITORY.scope(repository.clone(), async move {
+                if gated(request.uri().path()) {
+                    let (mut parts, body) = request.into_parts();
+                    let caller =
+                        <crate::auth::session::CurrentUser as axum::extract::FromRequestParts<
+                            AppState,
+                        >>::from_request_parts(&mut parts, &state)
+                        .await;
+                    let foreign = caller.is_ok_and(|user| {
+                        !crate::permissions::belongs_to_organization(
+                            &state.mirror,
+                            &state.config.bootstrap_admins,
+                            &user.0.identity,
+                            &repository,
+                        )
+                    });
+                    // Before the first run's mirror nobody belongs anywhere: that is no refusal.
+                    if foreign && state.mirror.is_empty() {
+                        return starting(
+                            crate::error::ApiError::Unavailable(STARTING.into()).into_response(),
+                        );
+                    }
+                    if foreign {
+                        return crate::error::ApiError::Denied(format!(
+                            "this Portal is {}'s; you belong to none of its projects",
+                            pin.organization
+                        ))
+                        .into_response();
+                    }
+                    return next.run(Request::from_parts(parts, body)).await;
                 }
-                return next.run(Request::from_parts(parts, body)).await;
-            }
-            next.run(request).await
-        })
+                next.run(request).await
+            }),
+        )
         .await
+}
+
+/// What a request answers while this process has no mirror to serve: no completed run of an
+/// earlier process left one, and its own first run has not ended (T-7401).
+pub const STARTING: &str =
+    "this Portal is starting and has not loaded its projects yet; try again in a minute";
+
+/// `response` with the `Retry-After` of [`STARTING`].
+pub fn starting(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
 }
 
 /// The API a signed-in caller of another Organization is refused on this host: everything under

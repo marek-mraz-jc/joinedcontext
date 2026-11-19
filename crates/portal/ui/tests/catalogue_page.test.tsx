@@ -140,7 +140,6 @@ describe("the catalogue (EP-81, EP-82)", () => {
     answers = {
       "/api/v1/projects": { status: 200, body: { apiVersion: LIST, kind: "List", items: [{ name: "helsinki" }] } },
       "/api/v1/catalogue": { status: 200, body: PAGE },
-      "/api/v1/catalogue/readable": { status: 200, body: { datasets: [], unanswered: 0 } },
       "/api/v1/catalogue/datasets/bbsk-kpi": { status: 200, body: DETAIL },
       "/api/v1/catalogue/datasets/bbsk-kpi/map": { status: 200, body: { ...MAP, total: 0, features: [] } },
     };
@@ -186,7 +185,7 @@ describe("the catalogue (EP-81, EP-82)", () => {
     renderAt("/catalogue");
     expect(await screen.findByRole("heading", { level: 1, name: "Catalogue" })).toBeInTheDocument();
     const results = await screen.findByRole("region", { name: "Datasets" });
-    expect(await within(results).findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
+    expect(await within(results).findByText("2 datasets")).toBeInTheDocument();
     const link = within(results).getByRole("link", { name: "Ukazovatele kraja" });
     expect(link).toHaveAttribute("href", "/catalogue/bbsk-kpi");
     expect(within(results).getByText("Economy and finance")).toBeInTheDocument();
@@ -196,117 +195,73 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(screen.getByRole("link", { name: "Catalogue", current: "page" })).toBeInTheDocument();
   });
 
-  const grantedRow = (name: string, access: string, group?: string) => ({
-    project: "pilot",
-    name,
-    slug: `${name}zzzzzzzzzzzzzzzzzzzzzz`,
-    title: name.replace(/^./, (c) => c.toUpperCase()),
-    description: `${name} of the pilot`,
-    representations: ["ngsi-ld"],
-    access,
-    ...(group ? { group } : {}),
-  });
+  // The server's answer to a person the gateway grants one internal dataset of marek-mraz (T-7400):
+  // a row of the one list, first, counted, and filed under its Organization in Publisher.
+  const INTERNAL = {
+    name: "staffzzzzzzzzzzzzzzzzzzzzzz",
+    title: "Staff counts",
+    notes: "Counts of the pilot's staff.",
+    publisher: { name: "marek-mraz", title: "Marek Mraz" },
+    formats: [],
+    themes: [],
+    endpoint: "staffzzzzzzzzzzzzzzzzzzzzzz",
+  };
+  const WITH_INTERNAL = {
+    ...PAGE,
+    total: 3,
+    datasets: [INTERNAL, ...PAGE.datasets],
+    facets: { ...PAGE.facets, publisher: [...PAGE.facets.publisher, facet("marek-mraz", "Marek Mraz", 1)] },
+    unanswered: 1,
+  };
 
-  it("starts the page with the list: no box above it, Access a filter with Granted to me (0) refused and saying why (T-7389)", async () => {
+  it("starts the page with the list: no box above it and no Access filter (T-7389, T-7400)", async () => {
     renderAt("/catalogue");
     const results = await screen.findByRole("region", { name: "Datasets" });
-    expect(await within(results).findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
-    // Nothing between the search and the list: the old "Datasets you may read" card is gone.
-    expect(screen.queryByRole("region", { name: "Datasets you may read" })).not.toBeInTheDocument();
+    expect(await within(results).findByText("2 datasets")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Datasets you may read" })).not.toBeInTheDocument();
     const search = screen.getByRole("search");
-    const layout = results.parentElement;
-    expect(layout?.previousElementSibling).toBe(search);
-    // Scope, then Access, lead the sidebar.
+    expect(results.parentElement?.previousElementSibling).toBe(search);
     const filters = screen.getByRole("complementary", { name: "Filters" });
-    const access = await within(filters).findByRole("group", { name: "Access" });
-    expect(filters.children[1]?.contains(access)).toBe(true);
-    const mine = await within(access).findByRole("checkbox", { name: /Granted to me/ });
-    await waitFor(() => expect(mine).toHaveAttribute("aria-disabled", "true"));
-    expect(mine.closest("label")?.textContent).toBe("Granted to me0");
-    expect(within(access).getAllByText(en.catalogue.access.none)).toHaveLength(2);
-    expect(mine).toHaveAccessibleDescription(en.catalogue.access.none);
-    fireEvent.click(mine);
-    expect(mine).not.toBeChecked();
-    expect(within(access).getByRole("checkbox", { name: /Public/ }).closest("label")?.textContent).toBe("Public2");
+    expect(within(filters).queryByRole("group", { name: "Access" })).not.toBeInTheDocument();
+    expect(within(filters).queryByRole("checkbox", { name: /Granted to me/ })).not.toBeInTheDocument();
+    // The list comes from one answer: the page asks nothing of its own about grants.
+    expect(fetchMock.mock.calls.some((call) => new URL((call[0] as Request).url).pathname === "/api/v1/catalogue/readable")).toBe(false);
   });
 
-  it("lists the granted datasets first with a granted badge, counts them, and filters to them alone (T-7389)", async () => {
-    answers["/api/v1/catalogue/readable"] = {
-      status: 200,
-      body: { datasets: [grantedRow("bikes", "public"), grantedRow("counts", "organization"), grantedRow("incidents", "group", "traffic")], unanswered: 1 },
-    };
+  it("lists a granted internal dataset as a row of the one list with an Internal badge, counted (T-7400)", async () => {
+    answers["/api/v1/catalogue"] = { status: 200, body: WITH_INTERNAL };
     renderAt("/catalogue");
     const results = await screen.findByRole("region", { name: "Datasets" });
-    // Two granted (the public row is in the open-data list already) and two public.
-    expect(await within(results).findByText("4 datasets")).toBeInTheDocument();
-    const list = () => [...(results.querySelector("ul")?.children ?? [])] as HTMLElement[];
-    const cards = list();
-    expect(cards.map((card) => within(card).getByRole("link").textContent)).toEqual(["Counts", "Incidents", "Ukazovatele kraja", "City bikes"]);
-    expect(within(cards[0]!).getByText("Granted")).toBeInTheDocument();
-    expect(within(cards[0]!).getByRole("link")).toHaveAttribute("href", "/catalogue/endpoint/countszzzzzzzzzzzzzzzzzzzzzz");
-    expect(within(cards[1]!).getByText(/Group traffic/)).toBeInTheDocument();
-    expect(within(cards[2]!).queryByText("Granted")).not.toBeInTheDocument();
+    expect(await within(results).findByText("3 datasets")).toBeInTheDocument();
+    const cards = [...(results.querySelector("ul")?.children ?? [])] as HTMLElement[];
+    expect(cards.map((card) => within(card).getAllByRole("link")[0]?.textContent)).toEqual(["Staff counts", "Ukazovatele kraja", "City bikes"]);
+    expect(within(cards[0]!).getByRole("link", { name: "Staff counts" })).toHaveAttribute("href", "/catalogue/endpoint/staffzzzzzzzzzzzzzzzzzzzzzz");
+    expect(within(cards[0]!).getByText("Internal")).toBeInTheDocument();
+    expect(within(cards[0]!).getByText("Marek Mraz")).toBeInTheDocument();
+    expect(within(cards[1]!).queryByText("Internal")).not.toBeInTheDocument();
     expect(within(results).getByText(/1 datasets could not be checked/)).toBeInTheDocument();
-
-    const filters = screen.getByRole("complementary", { name: "Filters" });
-    const access = within(filters).getByRole("group", { name: "Access" });
-    const mine = within(access).getByRole("checkbox", { name: /Granted to me/ });
-    expect(mine.closest("label")?.textContent).toBe("Granted to me2");
-    fireEvent.click(mine);
-    await waitFor(() => expect(within(results).getByText("2 datasets")).toBeInTheDocument());
-    expect(list()).toHaveLength(2);
-    expect(window.location.search).toBe("?access=granted");
-    // The public filters describe the open-data list only: hidden while Granted to me is ticked.
-    expect(within(filters).queryByRole("group", { name: "Publisher" })).not.toBeInTheDocument();
-    // Public alone leaves the granted ones out; a public filter does too.
-    fireEvent.click(within(access).getByRole("checkbox", { name: /Public/ }));
-    await waitFor(() => expect(list()).toHaveLength(2));
-    expect(within(results).queryByText("Counts")).not.toBeInTheDocument();
-    const chips = within(results).getByRole("group", { name: "Chosen filters" });
-    fireEvent.click(within(chips).getByRole("button", { name: "Remove filter Access: Public" }));
-    await waitFor(() => expect(list()).toHaveLength(4));
+    // Signed in, the answer is asked past the browser's cache, which may hold a visitor's.
+    const asked = fetchMock.mock.calls.map((call) => call[0] as Request).find((request) => new URL(request.url).pathname === "/api/v1/catalogue");
+    expect(asked?.cache).toBe("no-store");
   });
 
-  it("narrows the granted datasets by the search words", async () => {
-    answers["/api/v1/catalogue/readable"] = {
-      status: 200,
-      body: { datasets: [grantedRow("counts", "organization"), grantedRow("incidents", "granted")], unanswered: 0 },
-    };
-    renderAt("/catalogue?q=incid&access=granted");
-    const results = await screen.findByRole("region", { name: "Datasets" });
-    await waitFor(() => expect(results.querySelector("ul")?.children).toHaveLength(1));
-    expect(within(results).getByRole("link", { name: "Incidents" })).toBeInTheDocument();
+  it("offers the internal dataset's publisher in Publisher with its count, and filters both kinds by it (T-7400)", async () => {
+    answers["/api/v1/catalogue"] = { status: 200, body: WITH_INTERNAL };
+    renderAt("/catalogue?scope=organization");
+    const filters = await screen.findByRole("complementary", { name: "Filters" });
+    const publisher = await within(filters).findByRole("group", { name: "Publisher" });
+    const marek = await within(publisher).findByRole("checkbox", { name: /Marek Mraz/ });
+    expect(marek.closest("label")?.textContent).toBe("Marek Mraz1");
+    fireEvent.click(marek);
+    await waitFor(() => expect(catalogueCalls().at(-1)?.searchParams.getAll("publisher")).toEqual(["marek-mraz"]));
+    expect(decodeURIComponent(window.location.search)).toContain("marek-mraz");
   });
 
-  it("says a person in no project of this Organization host has nothing granted yet, not an error (T-7317)", async () => {
-    answers["/api/v1/catalogue/readable"] = {
-      status: 403,
-      body: {
-        type: "https://joinedcontext.com/errors/forbidden",
-        title: "Forbidden",
-        status: 403,
-        detail: "this Portal is bbsk's; you belong to none of its projects",
-      },
-    };
-    renderAt("/catalogue");
-    const access = await screen.findByRole("group", { name: "Access" });
-    expect(await within(access).findAllByText(en.catalogue.access.noProject)).toHaveLength(2);
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByText(/belong to none of its projects/)).not.toBeInTheDocument();
-    expect(screen.getByText("2 datasets; you are not in a project of this organization yet")).toBeInTheDocument();
-  });
-
-  it("says a failed check of the granted datasets in the Access filter, and still lists the public ones (T-7317)", async () => {
-    answers["/api/v1/catalogue/readable"] = {
-      status: 500,
-      body: { type: "https://joinedcontext.com/errors/internal", title: "Internal Server Error", status: 500 },
-    };
-    renderAt("/catalogue");
-    const access = await screen.findByRole("group", { name: "Access" });
-    expect(await within(access).findAllByText(en.catalogue.access.failed)).toHaveLength(2);
-    expect(within(access).queryByText(/not in a project of this organization/)).not.toBeInTheDocument();
-    expect(await screen.findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
+  it("opens an old ?access= link on the unfiltered list and never sends it", async () => {
+    renderAt("/catalogue?access=granted&scope=organization");
+    expect(await screen.findByText("2 datasets")).toBeInTheDocument();
+    expect(catalogueCalls().every((url) => !url.searchParams.has("access"))).toBe(true);
+    expect(screen.queryByRole("group", { name: "Chosen filters" })).not.toBeInTheDocument();
   });
 
   it("starts in a project at that project's datasets, and widens to the whole organization through the address (T-7389)", async () => {
@@ -338,12 +293,13 @@ describe("the catalogue (EP-81, EP-82)", () => {
     expect(await within(results).findByRole("button", { name: "Publish a dataset" })).toBeInTheDocument();
   });
 
-  it("offers no Access and no Scope filter to a visitor", async () => {
+  it("offers no Scope filter to a visitor, and asks the cacheable public answer", async () => {
     signedIn = false;
     renderAt("/catalogue");
     await screen.findByText("2 datasets");
-    expect(screen.queryByRole("group", { name: "Access" })).not.toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Scope" })).not.toBeInTheDocument();
+    const asked = fetchMock.mock.calls.map((call) => call[0] as Request).find((request) => new URL(request.url).pathname === "/api/v1/catalogue");
+    expect(asked?.cache).not.toBe("no-store");
   });
 
   it("ends a card in four key formats and counts the rest, which the dataset page lists (T-4995)", async () => {

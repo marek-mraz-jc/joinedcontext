@@ -108,6 +108,22 @@ pub async fn middleware(State(state): State<AppState>, mut req: Request, next: N
         rest
     };
     let app = super::static_host::published_app(&state, &name);
+    if app.is_none() && state.mirror.is_empty() {
+        return crate::organization_host::starting(
+            super::roles::unavailable_page(
+                req.headers(),
+                &name,
+                None,
+                super::static_host::portal_origin(&state).as_deref(),
+            )
+            .unwrap_or_else(|| {
+                problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    crate::organization_host::STARTING,
+                )
+            }),
+        );
+    }
     let kind = app.as_ref().map(|(_, spec, _)| spec.class);
 
     if let Some(after) = rest.strip_prefix("/api/endpoint/") {

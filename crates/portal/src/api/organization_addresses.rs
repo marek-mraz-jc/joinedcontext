@@ -38,7 +38,7 @@ pub struct OrganizationAddresses {
 
 /// The title of Organization `name`: `metadata.title`, else `spec.appearance.instanceName`, else
 /// the name.
-fn title(state: &AppState, name: &str) -> String {
+pub(crate) fn title(state: &AppState, name: &str) -> String {
     state
         .mirror
         .get(ORG_NAMESPACE, "Organization", name)

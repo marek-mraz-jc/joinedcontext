@@ -296,6 +296,159 @@ async fn a_person_of_another_organization_signed_in_on_its_host_gets_403() {
     assert_ne!(st, StatusCode::FORBIDDEN);
 }
 
+/// T-7414 (jc-prod): the forge keeps the installation Organization's manifest as `hel` while the
+/// registry and `JC_PORTAL_INSTALLATION_ORGANIZATION` call it `smartcity`, and its projects name no
+/// `organizationRef`. Its org-admin, bound at `hel`, is a member on smartcity's host and lists its
+/// projects there; ba's person stays refused there, and the hel admin on ba's host.
+#[tokio::test]
+async fn the_installation_kept_under_another_name_in_the_forge_is_its_hosts_organization() {
+    const SMARTCITY: &str = "portal.smartcity.example";
+    let smartcity = OrganizationHost {
+        organization: "smartcity".to_owned(),
+        base: format!("https://{SMARTCITY}").parse().expect("url"),
+    };
+    let config = Config {
+        organization_hosts: vec![smartcity.clone(), host("ba")],
+        bootstrap_admins: ROOTS.to_owned(),
+        ..Config::for_tests()
+    };
+    let state = AppState::new(config, None);
+    let m = &state.mirror;
+    m.set_configured_installation("smartcity");
+    m.upsert(envelope(
+        "Role",
+        "reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "ContextSpace", "Endpoint", "Workspace"], "verbs": ["read", "propose"] }] }),
+    ));
+    m.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "installation": true }),
+    ));
+    m.upsert(envelope("Organization", "ba", ORG_NAMESPACE, json!({})));
+    m.upsert(envelope("Project", "helsinki", ORG_NAMESPACE, json!({})));
+    m.upsert(envelope(
+        "Project",
+        "bratislava",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "ba" }),
+    ));
+    for (who, org) in [("hel-admin", "hel"), ("ba-only", "ba")] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &format!("{who}-{org}"),
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{who}@hel.fi") }], "role": "reader",
+                    "scope": { "organization": org } }),
+        ));
+    }
+    let on_smartcity = organization_host::scope(
+        smartcity.clone(),
+        signed_in(&state.config, person("hel-admin", &[]), None),
+    )
+    .await;
+    let (st, list) = call(&state, SMARTCITY, &on_smartcity, "GET", "/api/v1/projects").await;
+    assert_eq!(
+        (st, names(&list)),
+        (StatusCode::OK, vec!["helsinki"]),
+        "the installation's admin on its own host: {list}"
+    );
+    let (st, body) = call(
+        &state,
+        SMARTCITY,
+        &on_smartcity,
+        "GET",
+        "/api/v1/projects/helsinki",
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+
+    let ba_there = organization_host::scope(
+        smartcity,
+        signed_in(&state.config, person("ba-only", &[]), None),
+    )
+    .await;
+    let (st, body) = call(&state, SMARTCITY, &ba_there, "GET", "/api/v1/projects").await;
+    assert_eq!(
+        st,
+        StatusCode::FORBIDDEN,
+        "ba's person on smartcity's host: {body}"
+    );
+    let hel_on_ba = signed_in(&state.config, person("hel-admin", &[]), Some("ba")).await;
+    for uri in ["/api/v1/projects", "/api/v1/projects/bratislava"] {
+        let (st, body) = call(&state, BA, &hel_on_ba, "GET", uri).await;
+        assert_eq!(
+            st,
+            StatusCode::FORBIDDEN,
+            "the hel admin on ba's host {uri}: {body}"
+        );
+    }
+}
+
+/// T-7401: a restarted Portal whose first run has not ended serves the mirror the last completed
+/// run kept, so a member keeps their projects; with no copy it answers a 503 with `Retry-After`,
+/// never "you belong to none of its projects"; and a binding the last run had removed stays
+/// removed in the copy.
+#[tokio::test]
+async fn a_restart_serves_the_last_runs_members_or_answers_starting() {
+    let dir = std::env::temp_dir().join(format!("jc-t7401-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("mirror.json");
+    let last = state();
+    last.mirror.save(&path).expect("saved");
+
+    let restarted = AppState::new((*last.config).clone(), None);
+    let on_ba = signed_in(&restarted.config, person("ba-only", &[]), Some("ba")).await;
+    let response = server::app(restarted.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/projects")
+                .header(header::HOST, BA)
+                .header(header::COOKIE, &on_ba.0)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let body = String::from_utf8_lossy(&body);
+    assert!(
+        body.contains("starting") && !body.contains("none of its projects"),
+        "{body}"
+    );
+
+    assert!(restarted.mirror.restore(&path).expect("restored") > 0);
+    let (st, list) = call(&restarted, BA, &on_ba, "GET", "/api/v1/projects").await;
+    assert_eq!((st, names(&list)), (StatusCode::OK, vec!["bratislava"]));
+
+    // The last run removed ba-only's binding: the copy grants it nothing.
+    last.mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "RoleBinding".to_owned(),
+            name: "ba-only-ba".to_owned(),
+        });
+    last.mirror.save(&path).expect("saved");
+    let again = AppState::new((*last.config).clone(), None);
+    assert!(again.mirror.restore(&path).expect("restored") > 0);
+    assert!(
+        again.mirror.removals_held(),
+        "a served copy holds every removal"
+    );
+    let (st, body) = call(&again, BA, &on_ba, "GET", "/api/v1/projects").await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "{body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// One cookie key seals every host's cookies: the session of hel's host, presented on ba's (or on
 /// the deployment's own address), is no session there.
 #[tokio::test]

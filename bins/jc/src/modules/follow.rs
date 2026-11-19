@@ -77,6 +77,11 @@ pub struct Organizations {
 #[cfg(feature = "portal")]
 pub static ORGANIZATIONS: Published<Organizations> = Published::new();
 
+/// The Organization jc runs each project and branch under, by name (the project registry,
+/// ARCH/TEN-04): the gateway keeps each Organization's host to its own projects by it (T-7411).
+#[cfg(all(feature = "portal", feature = "gateway"))]
+pub static PROJECT_TENANTS: Published<BTreeMap<String, String>> = Published::new();
+
 /// The token the Portal publishes into a run-time Organization's catalogue with (T-7185):
 /// minted here once per Organization and process, held only in memory and handed in process to
 /// dataroom's grant and the Portal's catalogue entry, so no token file exists for it. `Err` when

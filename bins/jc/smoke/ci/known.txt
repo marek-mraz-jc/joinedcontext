@@ -9,4 +9,5 @@
 
 ^kaisatsu/clients\.project\.  # service-account clients without jc.project (platform clients, imported pipeline clients): the row must be empty before JC_OIDC_REQUIRE_PROJECT (T-7211 step 4, T-7214 step 2); filed tasks/later/project-attribute-platform-clients.md
 ^mcp/hub\.search$  # search over an empty catalogue (jc-smoke-mcp, dataroom gap 2)
+^ui/dataroom\.page:[a-z]+:[0-9]+:/opendata/dataset/zilina-svietidla$  # types/Streetlight 404 on some runs: the type is absent from the dataset's view at that moment (smoke 44328861716, 44547322651); filed tasks/later/T-7231-dataroom-dataset-type-404-console-error.md
 ^pipelines/(status|history|held)$  # the runner refuses the helsinki streams: cache resource 'helsinki__gtfs' not found, and lstat <rehearsal>/gate/files/proto: no such file (smoke 42952387007; brief 122 jc-gate-rerun owns the pipelines suite)
