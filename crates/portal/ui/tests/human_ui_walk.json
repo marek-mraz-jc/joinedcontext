@@ -1810,6 +1810,20 @@
         "evidence/T-7168/ui/backups-restore-400.png"
       ]
     },
+    "src/pages/organization/Repositories.tsx": {
+      "walkedBy": "worker-t7409",
+      "date": "2026-11-19",
+      "screenshots": [
+        "evidence/T-7409/repositories-download-1440.png",
+        "evidence/T-7409/repositories-download-400.png",
+        "evidence/T-7409/repositories-empty-1440.png",
+        "evidence/T-7409/repositories-empty-400.png",
+        "evidence/T-7409/repositories-error-1440.png",
+        "evidence/T-7409/repositories-error-400.png",
+        "evidence/T-7409/repositories-filled-1440.png",
+        "evidence/T-7409/repositories-filled-400.png"
+      ]
+    },
     "src/pages/organization/Costs.tsx": {
       "walkedBy": "worker-t5126",
       "date": "2026-10-22",

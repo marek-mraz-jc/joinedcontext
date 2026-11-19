@@ -49,6 +49,11 @@ pub enum PortalSourceType {
     NkodSparql,
     /// An ArcGIS Hub site.
     ArcgisHub,
+    /// An ArcGIS REST services directory, folder, FeatureServer or MapServer, e.g.
+    /// `https://gis.example.sk/arcgis/rest/services`: one record per service.
+    ArcgisRest,
+    /// An OGC API Records collection, e.g. `https://data.example.sk/collections/metadata`.
+    OgcRecords,
 }
 
 /// The most a harvest run of a source reads before it fails and changes nothing (ODP-13).
@@ -464,6 +469,29 @@ mod tests {
         ))
         .expect_err("a source carries no credential");
         assert!(err.to_string().contains("secretRef"), "{err}");
+    }
+
+    #[test]
+    fn each_harvested_type_has_its_wire_name_and_an_unknown_one_is_refused() {
+        for (kind, wire) in [
+            (PortalSourceType::ArcgisHub, "arcgis-hub"),
+            (PortalSourceType::ArcgisRest, "arcgis-rest"),
+            (PortalSourceType::OgcRecords, "ogc-records"),
+        ] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), serde_json::json!(wire));
+            parse(&format!(
+                "{HEAD}spec:\n  organizationRef: ba\n  path: x\n  sources:\n    - {{name: a, \
+                 type: {wire}, url: 'https://gis.a.sk/arcgis/rest/services', allowedHosts: \
+                 [gis.a.sk]}}\n"
+            ))
+            .expect(wire);
+        }
+        let err = parse(&format!(
+            "{HEAD}spec:\n  organizationRef: ba\n  path: x\n  sources:\n    - {{name: a, type: \
+             arcgis-server, url: 'https://a.sk', allowedHosts: [a.sk]}}\n"
+        ))
+        .expect_err("unknown type");
+        assert!(err.to_string().contains("arcgis-server"), "{err}");
     }
 
     #[test]

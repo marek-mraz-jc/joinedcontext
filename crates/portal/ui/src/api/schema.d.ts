@@ -2130,32 +2130,48 @@ export interface paths {
          */
         get: operations["list_portal_hosts"];
         put?: never;
-        /**
-         * Add Portal Host
-         * @description An Organization's administrator adds a host its portals may answer on, without an operator, when it is one label under a host the Organization serves or a name under its DNS-verified domain (the TXT proof is read again now). The host enters the registry approved and turns served once DNS points at the edge and its own certificate is issued (paced; the state and detail say until when). Any other name is an operator HostAdd (T-7415).
-         */
-        post: operations["add_portal_host"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organization/portal-hosts/{host}": {
+    "/api/v1/organization/repositories": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List Organization Repositories
+         * @description Every forge repository of the request's Organization: its projects' repositories, their Apps' repositories and, for the installation's Organization, the configuration repository, with default branch, last change, size and whether it is archived. Administrators only (T-7409).
+         */
+        get: operations["organization_repositories"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/repositories/{name}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
         /**
-         * Remove Portal Host
-         * @description An Organization's administrator removes one of its portal hosts. The edge stops routing it first; its certificate is deleted after that. A removed name stays taken in the registry. Refused while a Portal answers on it, and for a host jc.toml seeded (the operator's) (T-7415).
+         * Download Organization Repository
+         * @description One repository of the request's Organization as a `.tar.gz` of its default branch's head commit, streamed; the file name carries the repository and the commit (`{name}-{commit}.tar.gz`) and `X-Commit` names it too. A repository of another Organization is 404, as an unknown one is. Every download is one `repository.downloaded` activity entry. Administrators only (T-7409).
          */
-        delete: operations["remove_portal_host"];
+        get: operations["organization_repository_archive"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -12747,19 +12763,6 @@ export interface components {
             until?: string | null;
         };
         /**
-         * @description A portal host to add.
-         * @example {
-         *       "host": "opendata2.bbsk.smartcity.joinedcontext.com",
-         *       "organization": "bbsk"
-         *     }
-         */
-        NewSiteHost: {
-            /** @description The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com` or `data.bbsk.sk`. */
-            host: string;
-            /** @description The Organization, e.g. `bbsk`. */
-            organization: string;
-        };
-        /**
          * @description A new visualization.
          * @example {
          *       "attribute": "pm25",
@@ -13247,6 +13250,32 @@ export interface components {
             items: components["schemas"]["OrganizationModel"][];
             kind: string;
             smartDataModels: components["schemas"]["CatalogueEntry"][];
+        };
+        OrganizationRepositories: {
+            /**
+             * Format: int64
+             * @description The largest archive a download streams, in bytes.
+             */
+            maxArchiveBytes: number;
+            organization: string;
+            repositories: components["schemas"]["OrganizationRepository"][];
+        };
+        /** @description One repository as Administration > Repositories lists it. */
+        OrganizationRepository: {
+            /** @description The App whose source it is; `null` for any other repository. */
+            app?: string | null;
+            archived: boolean;
+            /** @description e.g. `main` */
+            defaultBranch: string;
+            /** @description The forge's name, e.g. `ovzdusie_air-map`; the download names it. */
+            name: string;
+            /** @description The project it belongs to; `null` for the configuration repository. */
+            project?: string | null;
+            role: components["schemas"]["RepositoryRole"];
+            /** Format: int64 */
+            sizeBytes: number;
+            /** @description RFC 3339, when the repository last changed. */
+            updatedAt: string;
         };
         /** @description The Organization of the Portal host: its name and its title. */
         OrganizationSummary: {
@@ -13893,11 +13922,6 @@ export interface components {
         };
         /** @description One Organization the caller manages portals of. */
         PortalOrganization: {
-            /**
-             * @description The hosts it serves that a new portal host may sit one label under, e.g.
-             *     `bbsk.smartcity.joinedcontext.com`.
-             */
-            bases: string[];
             /** @description The hosts the operator listed for its portals, e.g. `mobility.bratislava.sk`. */
             hosts: string[];
             /**
@@ -13907,10 +13931,6 @@ export interface components {
             opendata?: string | null;
             /** @description The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`. */
             organization: string;
-            /** @description Its own portal hosts in the host registry, with their state (T-7415). */
-            sites: components["schemas"]["SiteHost"][];
-            /** @description The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`. */
-            verifiedDomain?: string | null;
         };
         Preferences: {
             /**
@@ -14569,6 +14589,11 @@ export interface components {
             repository: string;
         };
         /**
+         * @description What a repository holds for the Organization.
+         * @enum {string}
+         */
+        RepositoryRole: "configuration" | "project" | "application";
+        /**
          * @description One Endpoint a pipeline may ask for, as the request form offers it (PL-90, T-4946): names
          *     and the model's types and attribute names, never the space's data.
          */
@@ -15067,17 +15092,6 @@ export interface components {
             /** @description `policy_grant_matched`, `prohibited`, `no_grant` or `not_admitted`. */
             reason: string;
             subject: components["schemas"]["Resolved"];
-        };
-        /** @description One of the Organization's own portal hosts in the host registry. */
-        SiteHost: {
-            /** @description What the host wave last said of it, e.g. a DNS answer or until when a certificate waits. */
-            detail?: string | null;
-            /** @description e.g. `opendata2.bbsk.smartcity.joinedcontext.com`. */
-            host: string;
-            /** @description Whether this Portal can remove it (a host jc.toml seeded is the operator's). */
-            removable: boolean;
-            /** @description `approved`, `dns-ok`, `cert-issued` or `served`; only `served` answers. */
-            state: string;
         };
         /**
          * @description `SmtpSet`: the e-mail server as an operator types it.
@@ -21915,38 +21929,25 @@ export interface operations {
             };
         };
     };
-    add_portal_host: {
+    organization_repositories: {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["NewSiteHost"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            /** @description Added; the Organization's portal hosts now */
-            201: {
+            /** @description The Organization's repositories */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PortalOrganization"];
+                    "application/json": components["schemas"]["OrganizationRepositories"];
                 };
             };
-            /** @description Not signed in */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description The caller does not make portals in this Organization */
+            /** @description Not an administrator of the Organization */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -21955,34 +21956,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description The host is in the registry already (a removed host stays taken) */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description The host is not this Organization's to add, a reserved label, or its domain proof lapsed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description The Organization added its daily share of portal hosts */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description No database or the installation's domain is unknown here */
+            /** @description No forge, or the forge did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -21993,37 +21967,28 @@ export interface operations {
             };
         };
     };
-    remove_portal_host: {
+    organization_repository_archive: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                /** @description The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com` */
-                host: string;
+                /** @description The repository, e.g. `ovzdusie_air-map` */
+                name: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Removed; the Organization's portal hosts now */
+            /** @description The archive */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PortalOrganization"];
+                    "application/gzip": unknown;
                 };
             };
-            /** @description Not signed in */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProblemDetails"];
-                };
-            };
-            /** @description The caller does not make portals in the host's Organization, or jc.toml seeded the host */
+            /** @description Not an administrator of the Organization */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -22032,7 +21997,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No portal host of that name the caller may see */
+            /** @description No such repository in this Organization */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -22041,8 +22006,8 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description A Portal answers on the host; move or delete it first */
-            409: {
+            /** @description The archive is larger than the Portal streams */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -22050,7 +22015,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description No database here */
+            /** @description No forge, or the forge did not answer */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -360,6 +360,14 @@ routes:
     rule: "signed-in, the runs of each project the caller reads: their own, every person's where they approve; 403 for a caller who reads no project (AG-134)"
     expect: [401, allow, allow, allow, allow, allow, allow, allow]
     note: "the other member reads praha, a project its Project manifest registers (PF-05), so 200 with no run of helsinki (the_other_member_sees_no_agent_and_no_run_of_a_project_it_does_not_read); never a step's arguments or output; Stop is the existing cancel route (API/01 §49, T-4851)"
+  - route: GET /organization/repositories
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7409)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "the request's Organization's repositories only; no forge in the fixture: 503 for the administrator (T-7409)"
+  - route: GET /organization/repositories/{name}/archive
+    rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7409)"
+    expect: [401, 403, 403, 403, 403, allow, 403, 403]
+    note: "one repository of the request's Organization as a tar.gz of its head; another Organization's is 404 as an unknown one is (T-7409)"
   - route: GET /organization/backups/configuration
     rule: "org-admin (approve and delete on RoleBinding at the request's Organization, T-7154)"
     expect: [401, 403, 403, 403, 403, allow, 403, 403]

@@ -38,6 +38,7 @@ export const ACTIVITY_KINDS = [
   "personal-data",
   "mqtt.capture.deleted",
   "repository.read",
+  "repository.downloaded",
 ] as const;
 
 export const ACTIVITY_SOURCES = [

@@ -7429,6 +7429,117 @@
         }
       }
     },
+    "/api/v1/organization/repositories": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List Organization Repositories",
+        "description": "Every forge repository of the request's Organization: its projects' repositories, their Apps' repositories and, for the installation's Organization, the configuration repository, with default branch, last change, size and whether it is archived. Administrators only (T-7409).",
+        "operationId": "organization_repositories",
+        "responses": {
+          "200": {
+            "description": "The Organization's repositories",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationRepositories"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No forge, or the forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/repositories/{name}/archive": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Download Organization Repository",
+        "description": "One repository of the request's Organization as a `.tar.gz` of its default branch's head commit, streamed; the file name carries the repository and the commit (`{name}-{commit}.tar.gz`) and `X-Commit` names it too. A repository of another Organization is 404, as an unknown one is. Every download is one `repository.downloaded` activity entry. Administrators only (T-7409).",
+        "operationId": "organization_repository_archive",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "The repository, e.g. `ovzdusie_air-map`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The archive",
+            "content": {
+              "application/gzip": {}
+            }
+          },
+          "403": {
+            "description": "Not an administrator of the Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such repository in this Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The archive is larger than the Portal streams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No forge, or the forge did not answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization/setup": {
       "get": {
         "tags": [
@@ -61509,6 +61620,82 @@
           }
         }
       },
+      "OrganizationRepositories": {
+        "type": "object",
+        "required": [
+          "organization",
+          "repositories",
+          "maxArchiveBytes"
+        ],
+        "properties": {
+          "maxArchiveBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest archive a download streams, in bytes.",
+            "minimum": 0
+          },
+          "organization": {
+            "type": "string"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationRepository"
+            }
+          }
+        }
+      },
+      "OrganizationRepository": {
+        "type": "object",
+        "description": "One repository as Administration > Repositories lists it.",
+        "required": [
+          "name",
+          "role",
+          "defaultBranch",
+          "updatedAt",
+          "sizeBytes",
+          "archived"
+        ],
+        "properties": {
+          "app": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The App whose source it is; `null` for any other repository."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "defaultBranch": {
+            "type": "string",
+            "description": "e.g. `main`"
+          },
+          "name": {
+            "type": "string",
+            "description": "The forge's name, e.g. `ovzdusie_air-map`; the download names it."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The project it belongs to; `null` for the configuration repository."
+          },
+          "role": {
+            "$ref": "#/components/schemas/RepositoryRole"
+          },
+          "sizeBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "RFC 3339, when the repository last changed."
+          }
+        }
+      },
       "OrganizationSummary": {
         "type": "object",
         "description": "The Organization of the Portal host: its name and its title.",
@@ -64938,6 +65125,15 @@
             "description": "`organization`, or the project whose own repository it is."
           }
         }
+      },
+      "RepositoryRole": {
+        "type": "string",
+        "description": "What a repository holds for the Organization.",
+        "enum": [
+          "configuration",
+          "project",
+          "application"
+        ]
       },
       "Requestable": {
         "type": "object",

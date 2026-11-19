@@ -217,6 +217,29 @@ for (const width of [1440, 400]) {
       await expect(page.getByText("No portal praha-skoly in your Organizations")).toBeVisible();
       await shoot(page, "refusal", width, info.outputPath(`portals-editor-refusal-${width}.png`));
     });
+
+    test("the sources tab: an ArcGIS REST and an OGC API Records source with their hints, and a refused address", async ({ page }, info) => {
+      await stub(page, { portals: FILLED });
+      await page.goto("/portals/bbsk-mobility?lang=en");
+      await page.getByRole("tab", { name: "Sources" }).click();
+      await page.getByRole("button", { name: "Add a source" }).click();
+      await page.getByLabel(/^Type/).selectOption("arcgis-rest");
+      await page.getByLabel(/^Name/).fill("gis");
+      await page.getByLabel(/^Address/).fill("https://sampleserver6.arcgisonline.com/arcgis/rest/services");
+      await expect(page.getByText(/each service becomes one dataset/)).toBeVisible();
+      await shoot(page, "arcgis-rest", width, info.outputPath(`portals-sources-arcgis-rest-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+
+      await page.getByLabel(/^Type/).selectOption("ogc-records");
+      await page.getByLabel(/^Address/).fill("https://demo.pygeoapi.io/master/collections/dutch-metadata");
+      await expect(page.getByText(/each record becomes one dataset/)).toBeVisible();
+      await shoot(page, "ogc-records", width, info.outputPath(`portals-sources-ogc-records-${width}.png`));
+
+      await page.getByLabel(/^Address/).fill("http://demo.pygeoapi.io/master/collections/dutch-metadata");
+      await page.getByRole("button", { name: "Propose the source" }).click();
+      await expect(page.getByText(/Write an https address/)).toBeVisible();
+      await shoot(page, "error", width, info.outputPath(`portals-sources-error-${width}.png`));
+    });
   });
 }
 

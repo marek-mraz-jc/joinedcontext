@@ -7554,7 +7554,8 @@
         }
       },
       "repository": {
-        "read": "Čtení repozitáře"
+        "read": "Čtení repozitáře",
+        "downloaded": "Repozitář stažen"
       }
     },
     "sources": {
@@ -8218,6 +8219,7 @@
       "connectors": "Konektory",
       "data-access": "Přístup k datům",
       "backups": "Zálohy",
+      "repositories": "Repozitáře",
       "operator-organizations": "Organizace",
       "operator-hosts": "Hostitelé a certifikáty",
       "operator-installation": "Instalace",
@@ -13294,7 +13296,9 @@
         "dcat-ap": "Katalog DCAT-AP",
         "ckan-action": "Katalog CKAN",
         "nkod-sparql": "Národní katalog (SPARQL)",
-        "arcgis-hub": "ArcGIS Hub"
+        "arcgis-hub": "ArcGIS Hub",
+        "arcgis-rest": "Služby ArcGIS REST",
+        "ogc-records": "OGC API Records"
       },
       "field": {
         "type": "Typ",
@@ -13314,7 +13318,9 @@
           "dcat-ap": "Adresa https katalogu DCAT-AP v Turtle, RDF/XML nebo JSON-LD, například https://data.kosice.sk/catalog.ttl.",
           "ckan-action": "Adresa https CKAN Action API, například https://data.gov.sk/api/3/action.",
           "nkod-sparql": "Adresa https koncového bodu SPARQL, například https://data.slovensko.sk/sparql.",
-          "arcgis-hub": "Adresa https stránky ArcGIS Hub, například https://opendata.bratislava.sk."
+          "arcgis-hub": "Adresa https stránky ArcGIS Hub, například https://opendata.bratislava.sk.",
+          "arcgis-rest": "Adresa https adresáře služeb ArcGIS REST, složky nebo jedné mapové či prvkové služby, například https://sampleserver6.arcgisonline.com/arcgis/rest/services; každá služba bude jedna datová sada.",
+          "ogc-records": "Adresa https kolekce OGC API Records, například https://demo.pygeoapi.io/master/collections/dutch-metadata; každý záznam bude jedna datová sada."
         },
         "allowedHosts": "Hostitelé, ze kterých běh smí také číst, oddělení čárkou, například files.kosice.sk; hostitel adresy je povolen vždy. Každý musí být v seznamu povolených operátora.",
         "records": "Běh skončí po tomto počtu záznamů, například 5000.",
@@ -13326,7 +13332,7 @@
         "name": "Použijte malá písmena, číslice a pomlčky.",
         "nameTaken": "Portál už má zdroj s tímto názvem.",
         "type": "Vyberte typ.",
-        "url": "Napište adresu https, například https://data.kosice.sk/catalog.ttl.",
+        "url": "Napište adresu https, jako v příkladu pod polem.",
         "allowedHosts": "Napište jen názvy hostitelů.",
         "number": "Napište celé číslo větší než 0.",
         "schedule": "Napište pět polí cron.",
@@ -13550,6 +13556,33 @@
     "phase": {
       "merged": "zveřejněno",
       "rejected": "zamítnuto"
+    }
+  },
+  "orgRepositories": {
+    "title": "Repozitáře",
+    "loading": "Načítají se repozitáře…",
+    "lead": "Všechny Git repozitáře této organizace: konfigurace jejích projektů a zdrojový kód jejich aplikací. Stáhněte si repozitář jako .tar.gz jeho výchozí větve.",
+    "hint": "Název souboru obsahuje repozitář a commit, např. air-quality-2c245c6.tar.gz. Archivy do {size} se stáhnou zde; větší repozitář naklonujte přes git. Průběh stahování ukazuje prohlížeč.",
+    "toProjects": "Otevřít Projekty",
+    "tooLarge": "Větší než {size}: naklonujte ho přes git.",
+    "empty": "Zatím žádné repozitáře",
+    "emptyHint": "Projekt dostane repozitář při vytvoření, aplikace při sestavení. Nejprve vytvořte projekt v části Projekty.",
+    "name": "Repozitář",
+    "what": "Obsah",
+    "updated": "Poslední změna",
+    "size": "Velikost",
+    "state": "Stav",
+    "archived": "Archivovaný",
+    "active": "Aktivní",
+    "download": "Stáhnout",
+    "downloadOne": "Stáhnout {name} jako .tar.gz",
+    "ofProject": "projekt {project}",
+    "ofApp": "aplikace {app} v {project}",
+    "ofOrganization": "celá instalace",
+    "role": {
+      "configuration": "Konfigurace",
+      "project": "Konfigurace projektu",
+      "application": "Zdrojový kód aplikace"
     }
   },
   "opendataAppearance": {
