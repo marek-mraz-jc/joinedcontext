@@ -32,7 +32,10 @@ fn stamped(member: &Value) -> Option<jiff::Timestamp> {
 }
 
 /// Erases `attrs` (None: the whole Entity) of `entities` from the current
-/// state, the history and the dead letters; what went from each. `before`
+/// state, the history and the dead letters of `t` and of every Snapshot
+/// copy of `t` (5.16: a copy holds the Entities and their history under its
+/// own tenant, served through `NGSILD-Snapshot`); what went from each,
+/// summed over `t` and its copies. `before`
 /// (a re-applied erasure's own time) keeps what was written after it: an
 /// Entity created or an Attribute stamped later, a row observed later. A
 /// member with no stamp goes.
@@ -55,6 +58,29 @@ pub async fn erase(
                 .ok_or_else(|| format!("erasure time {b:?} is no RFC 3339 instant"))
         })
         .transpose()?;
+    let mut gone = erase_in(st, t, entities, attrs, before, cut).await?;
+    for copy in crate::snapshots::copies_of(st, t)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        let more = erase_in(st, &copy, entities, attrs, before, cut).await?;
+        for (k, v) in gone.iter_mut() {
+            *v = v.saturating_add(more.get(k).copied().unwrap_or(0));
+        }
+    }
+    Ok(json!(gone))
+}
+
+/// [`erase`] in one tenant: the counts under `entities`, `history` and
+/// `deadLetters`.
+async fn erase_in(
+    st: &AppState,
+    t: &TenantId,
+    entities: &[String],
+    attrs: Option<&[String]>,
+    before: Option<&str>,
+    cut: Option<jiff::Timestamp>,
+) -> Result<std::collections::BTreeMap<&'static str, u64>, String> {
     let goes = |member: &Value| match (cut, stamped(member)) {
         (Some(cut), Some(at)) => at <= cut,
         _ => true,
@@ -125,7 +151,12 @@ pub async fn erase(
             .map_err(|e| e.to_string())?;
         letters = letters.saturating_add(u64::from(gone));
     }
-    Ok(json!({"entities": current, "history": rows, "deadLetters": letters}))
+    Ok([
+        ("entities", current),
+        ("history", rows),
+        ("deadLetters", letters),
+    ]
+    .into())
 }
 
 /// The ids of the Entities a dead letter notified: `data` of its

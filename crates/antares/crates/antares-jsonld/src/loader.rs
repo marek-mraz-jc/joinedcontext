@@ -95,6 +95,23 @@ pub fn allow_private_egress(v: bool) {
     ALLOW_PRIVATE_OVERRIDE.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// What an unset `ANTARES_EGRESS_ALLOW_PRIVATE` stands for: allowed for a
+/// standalone broker (above), and what a host that embeds the broker sets
+/// with [`private_egress_default`] before it builds one.
+static PRIVATE_DEFAULT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// The host's default for an unset `ANTARES_EGRESS_ALLOW_PRIVATE`, spelled as
+/// that variable is (`false` or `0` deny): a host serving the public (jc)
+/// arms the private-range wall without touching the process environment.
+/// The variable, when set, still wins; it applies to policies created after
+/// this call.
+pub fn private_egress_default(value: &str) {
+    PRIVATE_DEFAULT.store(
+        EgressPolicy::allow_private_from(Some(value)),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
 impl EgressPolicy {
     /// Policy from `ANTARES_EGRESS_ALLOW_PRIVATE` or the programmatic
     /// override. One of several `from_env` constructors in the workspace
@@ -104,10 +121,9 @@ impl EgressPolicy {
         // read once per process: the list is a deployment's, not a request's
         static HOSTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
         Self {
-            allow_private: Self::allow_private_from(
-                std::env::var("ANTARES_EGRESS_ALLOW_PRIVATE")
-                    .ok()
-                    .as_deref(),
+            allow_private: std::env::var("ANTARES_EGRESS_ALLOW_PRIVATE").map_or_else(
+                |_| PRIVATE_DEFAULT.load(std::sync::atomic::Ordering::Relaxed),
+                |v| Self::allow_private_from(Some(&v)),
             ) || ALLOW_PRIVATE_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed),
             private_hosts: HOSTS.get_or_init(|| {
                 Self::private_hosts_from(

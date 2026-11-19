@@ -2060,6 +2060,83 @@ mod delivery_policy_tests {
         );
     }
 
+    /// A retry re-sends a body built earlier: it goes only while the
+    /// subscription is still active and still names the endpoint.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retries_stop_when_the_subscription_is_paused_or_redirected() {
+        for change in ["pause", "redirect"] {
+            let (st, t) = state(policy(4, 100));
+            let (uri, hits) = flaky_endpoint(usize::MAX).await;
+            let sub = subscribe(&st, &t, SUB_ID, &uri).await;
+            send(&st, &t, &sub).await;
+            st.store
+                .mutate(&t, Kind::Subscription, SUB_ID, |doc| {
+                    if change == "pause" {
+                        doc["isActive"] = json!(false);
+                    } else {
+                        doc["notification"]["endpoint"]["uri"] =
+                            json!("http://127.0.0.1:9/elsewhere");
+                    }
+                    Ok::<(), antares_model::NgsiError>(())
+                })
+                .await
+                .expect("change");
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            assert_eq!(hits.load(Ordering::SeqCst), 1, "{change}: no retry");
+            assert!(
+                letters(&st, &t).await.is_empty(),
+                "{change}: no dead letter"
+            );
+        }
+    }
+
+    /// A Deliver now, a Drop once `deny` is set.
+    struct Switch(std::sync::atomic::AtomicBool);
+    impl crate::policy::PolicyEngine for Switch {
+        fn name(&self) -> &str {
+            "switch"
+        }
+        fn decide<'a>(
+            &'a self,
+            _s: &'a crate::policy::Subject,
+            _op: &'a crate::policy::Operation<'a>,
+        ) -> crate::policy::DecisionFuture<'a> {
+            Box::pin(std::future::ready(crate::policy::Decision::Allow))
+        }
+        fn pre_notify(
+            &self,
+            _s: &crate::policy::Subject,
+            _sub: &Value,
+            _n: &mut Value,
+        ) -> crate::policy::NotifyDecision {
+            if self.0.load(Ordering::SeqCst) {
+                crate::policy::NotifyDecision::Drop
+            } else {
+                crate::policy::NotifyDecision::Deliver
+            }
+        }
+    }
+
+    /// A grant withdrawn after the first attempt stops the retries: each one
+    /// asks the policy engine again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn retries_stop_when_the_policy_withdraws_the_notification() {
+        let (mut st, t) = state(policy(4, 100));
+        let engine = Arc::new(Switch(std::sync::atomic::AtomicBool::new(false)));
+        st.policy = Some(engine.clone());
+        let (uri, hits) = flaky_endpoint(usize::MAX).await;
+        let sub = subscribe(&st, &t, SUB_ID, &uri).await;
+        send(&st, &t, &sub).await;
+        engine.0.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "no retry after the grant went"
+        );
+        assert!(letters(&st, &t).await.is_empty(), "no dead letter");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn an_egress_refusal_is_never_retried() {
         let (mut st, t) = state(policy(3, 50));

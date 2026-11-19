@@ -435,7 +435,15 @@ pub(super) async fn dead_letter_replay(
             Ok(_) => StatusCode::NO_CONTENT.into_response(),
             Err(e) => ApiError::from(e).into_response(),
         },
-        Err(why) => {
+        // the letter goes only where a fresh notification would still go: a
+        // gone, paused or redirected subscription, a removed view or a policy
+        // that decides otherwise now is no attempt, and the letter stays as it is
+        Err(notify::Replay::Refused(why)) => (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({"detail": format!("not replayed: {why}"), "id": id})),
+        )
+            .into_response(),
+        Err(notify::Replay::Failed(why)) => {
             let ts = state::now_iso();
             let w = why.clone();
             let _ = st

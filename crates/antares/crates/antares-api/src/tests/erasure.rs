@@ -96,6 +96,53 @@ async fn the_whole_entity_goes_with_the_dead_letters_that_name_it() {
     );
 }
 
+/// A Snapshot of the tenant holds its own copy of the Entity (5.16): the
+/// erasure reaches that copy too, and another tenant's copy stays.
+#[tokio::test]
+async fn an_erased_entity_goes_from_the_tenants_snapshot_copies() {
+    let st = AppState::new("antares-test".into());
+    let id = "urn:ngsi-ld:Bike:snap";
+    seed(&st, id, "2026-01-01T00:00:00Z", json!({})).await;
+    let other = TenantId::new("someone-else").expect("tenant");
+    for (owner, snap, copy) in [
+        (tenant(), "urn:ngsi-ld:Snapshot:1", "snap-erasure-1"),
+        (other.clone(), "urn:ngsi-ld:Snapshot:2", "snap-erasure-2"),
+    ] {
+        let meta = json!({"id": snap, "type": "Snapshot", "__tenant": copy});
+        st.store
+            .create(&owner, Kind::Snapshot, snap, meta)
+            .await
+            .expect("snapshot");
+        let synth = TenantId::new_internal(copy).expect("copy tenant");
+        st.store
+            .create(
+                &synth,
+                Kind::Entity,
+                id,
+                json!({"id": id, "type": "https://x/Bike"}),
+            )
+            .await
+            .expect("copy");
+    }
+    let gone = erase(&st, &tenant(), &ids(&[id]), None, None)
+        .await
+        .expect("erase");
+    assert_eq!(gone["entities"], 2, "the Entity and its one copy: {gone}");
+    let copy = |t: &str| {
+        let synth = TenantId::new_internal(t).expect("copy tenant");
+        let st = st.clone();
+        async move { st.store.get(&synth, Kind::Entity, id).await.expect("get") }
+    };
+    assert!(
+        copy("snap-erasure-1").await.is_none(),
+        "the tenant's copy went"
+    );
+    assert!(
+        copy("snap-erasure-2").await.is_some(),
+        "another tenant's Snapshot is not this erasure's"
+    );
+}
+
 #[tokio::test]
 async fn a_re_applied_erasure_keeps_what_was_written_after_it() {
     let st = AppState::new("antares-test".into());
