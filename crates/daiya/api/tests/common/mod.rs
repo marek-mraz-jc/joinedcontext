@@ -7,10 +7,10 @@ use axum::body::Body;
 use daiya_api::{DaiyaState, TokenBinding, api_router};
 use daiya_model::store::StoreFuture;
 use daiya_model::{
-    Authorizer, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
-    FolderRecord, GrafanaRole, ImportReportRecord, InstallationId, InstanceId, LibraryPanelRecord,
-    OrgId, OrgQuotas, PolicyAuthorizer, PublicDashboardRecord, QueryCacheStatRecord, RoleBinding,
-    Subject,
+    ApplyBundle, Authorizer, CrError, DaiyaStore, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, GrafanaRole, ImportReportRecord, InstallationId, InstanceId,
+    LibraryPanelRecord, OrgId, OrgQuotas, PlanRecord, PolicyAuthorizer, PublicDashboardRecord,
+    QueryCacheStatRecord, RoleBinding, Subject,
 };
 use daiya_query::{OpenedNetwork, OutboundPolicy};
 use daiya_store_memory::MemoryStore;
@@ -290,6 +290,15 @@ impl DaiyaStore for FlakyStore {
             "insert_import_report",
             self.inner.insert_import_report(report)
         )
+    }
+    fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()> {
+        guarded!(self, "insert_plan", self.inner.insert_plan(plan))
+    }
+    fn get_plan(&self, org_id: OrgId, digest: &str) -> StoreFuture<'_, Option<PlanRecord>> {
+        guarded!(self, "get_plan", self.inner.get_plan(org_id, digest))
+    }
+    fn apply_bundle(&self, bundle: ApplyBundle) -> StoreFuture<'_, Vec<DashboardRecord>> {
+        guarded!(self, "apply_bundle", self.inner.apply_bundle(bundle))
     }
 }
 

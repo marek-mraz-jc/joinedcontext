@@ -3,9 +3,7 @@
 //! `plan`, `apply`, `allowed`) and exit codes `0/1/2/3/4` (R2, R10a, R11).
 
 use clap::{Parser, Subcommand};
-use daiya_import::{
-    DashboardImportInput, DesiredBundle, ExitCode, PlanBundle, check_dashboards_offline,
-};
+use daiya_import::{DashboardImportInput, DesiredBundle, ExitCode, check_dashboards_offline};
 use daiya_model::{CrError, InputLimits};
 use daiya_server::config::{
     DaiyaConfig, build_state, cli_ctx, provisioning_vars_from, standalone_router,
@@ -68,10 +66,12 @@ enum Commands {
         #[arg(short = 'f', long)]
         file: PathBuf,
     },
-    /// Apply a verified plan bundle, refusing stale plans with exit code 3 (R2, §7.3).
+    /// Apply the plan the server keeps under the digest `plan` printed, refusing stale plans
+    /// with exit code 3 (R2, §7.3).
     Apply {
-        #[arg(short = 'f', long)]
-        file: PathBuf,
+        /// The `digest` of the plan output, e.g. `--digest 3f5a...e9` (64 hex characters).
+        #[arg(long)]
+        digest: String,
     },
     /// Check whether an operation on an object is allowed (R10, R10a).
     Allowed {
@@ -366,35 +366,22 @@ async fn main() {
                 ExitCode::StoreOrIoError.code()
             }
         },
-        Commands::Apply { file } => match tokio::fs::read_to_string(&file).await {
-            Ok(text) => match serde_json::from_str::<PlanBundle>(&text) {
-                Ok(plan) => {
-                    match execute_cli_command(&state, &ctx, "apply", json!({ "plan": plan })).await
-                    {
-                        Ok(rep) => {
-                            println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
-                            // The applied import's own verdict: refused dashboards are 1.
-                            rep["exitCode"]
-                                .as_i64()
-                                .and_then(|c| i32::try_from(c).ok())
-                                .unwrap_or(ExitCode::Ok.code())
-                        }
-                        Err(e) => {
-                            eprintln!("apply failed: {e}");
-                            exit_code_for(&e)
-                        }
-                    }
+        Commands::Apply { digest } => {
+            match execute_cli_command(&state, &ctx, "apply", json!({ "digest": digest })).await {
+                Ok(rep) => {
+                    println!("{}", serde_json::to_string_pretty(&rep).unwrap_or_default());
+                    // The applied import's own verdict: refused dashboards are 1.
+                    rep["exitCode"]
+                        .as_i64()
+                        .and_then(|c| i32::try_from(c).ok())
+                        .unwrap_or(ExitCode::Ok.code())
                 }
                 Err(e) => {
-                    eprintln!("invalid plan file: {e}");
-                    ExitCode::Refused.code()
+                    eprintln!("apply failed: {e}");
+                    exit_code_for(&e)
                 }
-            },
-            Err(e) => {
-                eprintln!("failed to read {}: {e}", file.display());
-                ExitCode::StoreOrIoError.code()
             }
-        },
+        }
         Commands::Allowed { operation, object } => {
             match execute_cli_command(
                 &state,

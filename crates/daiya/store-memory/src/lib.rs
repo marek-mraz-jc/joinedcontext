@@ -4,15 +4,16 @@
 //! verification (R8, §5.3).
 
 use daiya_model::{
-    CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord, DatasourceRecord,
-    FolderRecord, ImportReportRecord, LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord,
-    QueryCacheStatRecord, constant_time_eq, store::StoreFuture,
+    ApplyBundle, CrError, CrResult, DaiyaStore, DashboardRecord, DashboardVersionRecord,
+    DatasourceRecord, FolderRecord, ImportReportRecord, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId,
+    OrgQuotas, PlanRecord, PublicDashboardRecord, QueryCacheStatRecord, constant_time_eq,
+    org_state_etag, store::StoreFuture,
 };
 use jc_time::TimestampTz;
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct OrgState {
     quotas: OrgQuotas,
     folders: BTreeMap<String, FolderRecord>,
@@ -23,6 +24,7 @@ struct OrgState {
     public_dashboards: BTreeMap<String, PublicDashboardRecord>,
     cache_stats: BTreeMap<String, QueryCacheStatRecord>,
     import_reports: Vec<ImportReportRecord>,
+    plans: BTreeMap<String, PlanRecord>,
 }
 
 #[derive(Debug, Default)]
@@ -86,6 +88,184 @@ fn check_folder_depth<'a>(
     Ok(())
 }
 
+fn upsert_folder_in(org: &mut OrgState, mut folder: FolderRecord) -> CrResult<FolderRecord> {
+    if folder.uid == "general" {
+        return Err(CrError::BadRequest(
+            "cannot create or overwrite reserved folder uid 'general'".into(),
+        ));
+    }
+    check_folder_depth(&org.folders, &folder.uid, folder.parent_uid.as_deref())?;
+
+    let now = TimestampTz::now();
+    if let Some(existing) = org.folders.get(&folder.uid) {
+        folder.version = existing.version + 1;
+        folder.created_at = existing.created_at;
+        folder.updated_at = now;
+    } else {
+        folder.version = 1;
+        folder.created_at = now;
+        folder.updated_at = now;
+    }
+    org.folders.insert(folder.uid.clone(), folder.clone());
+    Ok(folder)
+}
+
+fn upsert_dashboard_in(
+    org: &mut OrgState,
+    mut dashboard: DashboardRecord,
+    msg: String,
+    overwrite: bool,
+) -> CrResult<DashboardRecord> {
+    if dashboard.panel_count as u64 > org.quotas.max_panels_per_dashboard {
+        return Err(CrError::QuotaExceeded {
+            resource: "panels_per_dashboard".into(),
+            limit: org.quotas.max_panels_per_dashboard,
+        });
+    }
+
+    let now = TimestampTz::now();
+    let parent_version;
+    if let Some(existing) = org.dashboards.get(&dashboard.uid) {
+        if !overwrite && dashboard.version != existing.version {
+            return Err(CrError::PreconditionFailed(format!(
+                "dashboard '{}' has been modified (stored version {}, given {})",
+                dashboard.uid, existing.version, dashboard.version
+            )));
+        }
+        if existing.is_provisioned && !existing.allow_ui_updates && !dashboard.is_provisioned {
+            return Err(CrError::Forbidden(
+                "cannot update provisioned dashboard when allowUiUpdates is false".into(),
+            ));
+        }
+        parent_version = existing.version;
+        dashboard.version = existing.version + 1;
+        dashboard.created_at = existing.created_at;
+        dashboard.updated_at = now;
+    } else {
+        if org.dashboards.len() as u64 >= org.quotas.max_dashboards {
+            return Err(CrError::QuotaExceeded {
+                resource: "dashboards".into(),
+                limit: org.quotas.max_dashboards,
+            });
+        }
+        parent_version = 0;
+        dashboard.version = 1;
+        dashboard.created_at = now;
+        dashboard.updated_at = now;
+    }
+
+    if let Some(obj) = dashboard.data.as_object_mut() {
+        obj.insert(
+            "version".to_owned(),
+            serde_json::Value::from(dashboard.version),
+        );
+        obj.insert(
+            "uid".to_owned(),
+            serde_json::Value::String(dashboard.uid.clone()),
+        );
+    }
+
+    let ver_record = DashboardVersionRecord {
+        installation_id: dashboard.installation_id,
+        org_id: dashboard.org_id,
+        instance_id: dashboard.instance_id,
+        dashboard_uid: dashboard.uid.clone(),
+        version: dashboard.version,
+        parent_version,
+        restored_from: 0,
+        message: if msg.is_empty() {
+            if parent_version == 0 {
+                "Initial save".into()
+            } else {
+                "Updated dashboard".into()
+            }
+        } else {
+            msg
+        },
+        data: dashboard.data.clone(),
+        created_by: dashboard.updated_by.clone(),
+        created_at: now,
+    };
+
+    org.versions
+        .entry(dashboard.uid.clone())
+        .or_default()
+        .push(ver_record);
+    org.dashboards
+        .insert(dashboard.uid.clone(), dashboard.clone());
+    Ok(dashboard)
+}
+
+fn upsert_datasource_in(
+    org: &mut OrgState,
+    mut ds: DatasourceRecord,
+) -> CrResult<DatasourceRecord> {
+    // One name per organization, as Grafana (`ErrDataSourceNameExists`) and the
+    // Postgres store's UNIQUE (org_id, name).
+    if org
+        .datasources
+        .values()
+        .any(|other| other.uid != ds.uid && other.name == ds.name)
+    {
+        return Err(CrError::Conflict(format!(
+            "already exists (data source name '{}')",
+            ds.name
+        )));
+    }
+    let is_new = !org.datasources.contains_key(&ds.uid);
+    if is_new {
+        if org.datasources.len() as u64 >= org.quotas.max_datasources {
+            return Err(CrError::QuotaExceeded {
+                resource: "datasources".into(),
+                limit: org.quotas.max_datasources,
+            });
+        }
+        if ds.kind.starts_with("wasm:") {
+            let wasm_count = org
+                .datasources
+                .values()
+                .filter(|d| d.kind.starts_with("wasm:"))
+                .count() as u64;
+            if wasm_count >= org.quotas.max_wasm_plugins {
+                return Err(CrError::QuotaExceeded {
+                    resource: "wasm_plugins".into(),
+                    limit: org.quotas.max_wasm_plugins,
+                });
+            }
+        }
+    }
+
+    if ds.is_default {
+        for other in org.datasources.values_mut() {
+            if other.uid != ds.uid {
+                other.is_default = false;
+            }
+        }
+    }
+
+    let now = TimestampTz::now();
+    if let Some(existing) = org.datasources.get(&ds.uid) {
+        ds.version = existing.version + 1;
+        ds.created_at = existing.created_at;
+        ds.updated_at = now;
+    } else {
+        ds.version = 1;
+        ds.created_at = now;
+        ds.updated_at = now;
+    }
+    org.datasources.insert(ds.uid.clone(), ds.clone());
+    Ok(ds)
+}
+
+/// The organization's state etag over the same orders the list methods answer.
+fn etag_of(org: &OrgState) -> String {
+    let folders: Vec<FolderRecord> = org.folders.values().cloned().collect();
+    let dashboards: Vec<DashboardRecord> = org.dashboards.values().cloned().collect();
+    let mut datasources: Vec<DatasourceRecord> = org.datasources.values().cloned().collect();
+    datasources.sort_by(|a, b| a.name.cmp(&b.name));
+    org_state_etag(&folders, &datasources, &dashboards)
+}
+
 impl DaiyaStore for MemoryStore {
     fn verify_rls_enforced(&self) -> StoreFuture<'_, ()> {
         Box::pin(async move {
@@ -143,29 +323,10 @@ impl DaiyaStore for MemoryStore {
         })
     }
 
-    fn upsert_folder(&self, mut folder: FolderRecord) -> StoreFuture<'_, FolderRecord> {
+    fn upsert_folder(&self, folder: FolderRecord) -> StoreFuture<'_, FolderRecord> {
         Box::pin(async move {
-            if folder.uid == "general" {
-                return Err(CrError::BadRequest(
-                    "cannot create or overwrite reserved folder uid 'general'".into(),
-                ));
-            }
             let mut guard = self.inner.write();
-            let org = guard.orgs.entry(folder.org_id).or_default();
-            check_folder_depth(&org.folders, &folder.uid, folder.parent_uid.as_deref())?;
-
-            let now = TimestampTz::now();
-            if let Some(existing) = org.folders.get(&folder.uid) {
-                folder.version = existing.version + 1;
-                folder.created_at = existing.created_at;
-                folder.updated_at = now;
-            } else {
-                folder.version = 1;
-                folder.created_at = now;
-                folder.updated_at = now;
-            }
-            org.folders.insert(folder.uid.clone(), folder.clone());
-            Ok(folder)
+            upsert_folder_in(guard.orgs.entry(folder.org_id).or_default(), folder)
         })
     }
 
@@ -213,7 +374,7 @@ impl DaiyaStore for MemoryStore {
 
     fn upsert_dashboard(
         &self,
-        mut dashboard: DashboardRecord,
+        dashboard: DashboardRecord,
         message: &str,
         overwrite: bool,
     ) -> StoreFuture<'_, DashboardRecord> {
@@ -221,88 +382,7 @@ impl DaiyaStore for MemoryStore {
         Box::pin(async move {
             let mut guard = self.inner.write();
             let org = guard.orgs.entry(dashboard.org_id).or_default();
-
-            if dashboard.panel_count as u64 > org.quotas.max_panels_per_dashboard {
-                return Err(CrError::QuotaExceeded {
-                    resource: "panels_per_dashboard".into(),
-                    limit: org.quotas.max_panels_per_dashboard,
-                });
-            }
-
-            let now = TimestampTz::now();
-            let parent_version;
-            if let Some(existing) = org.dashboards.get(&dashboard.uid) {
-                if !overwrite && dashboard.version != existing.version {
-                    return Err(CrError::PreconditionFailed(format!(
-                        "dashboard '{}' has been modified (stored version {}, given {})",
-                        dashboard.uid, existing.version, dashboard.version
-                    )));
-                }
-                if existing.is_provisioned
-                    && !existing.allow_ui_updates
-                    && !dashboard.is_provisioned
-                {
-                    return Err(CrError::Forbidden(
-                        "cannot update provisioned dashboard when allowUiUpdates is false".into(),
-                    ));
-                }
-                parent_version = existing.version;
-                dashboard.version = existing.version + 1;
-                dashboard.created_at = existing.created_at;
-                dashboard.updated_at = now;
-            } else {
-                if org.dashboards.len() as u64 >= org.quotas.max_dashboards {
-                    return Err(CrError::QuotaExceeded {
-                        resource: "dashboards".into(),
-                        limit: org.quotas.max_dashboards,
-                    });
-                }
-                parent_version = 0;
-                dashboard.version = 1;
-                dashboard.created_at = now;
-                dashboard.updated_at = now;
-            }
-
-            if let Some(obj) = dashboard.data.as_object_mut() {
-                obj.insert(
-                    "version".to_owned(),
-                    serde_json::Value::from(dashboard.version),
-                );
-                obj.insert(
-                    "uid".to_owned(),
-                    serde_json::Value::String(dashboard.uid.clone()),
-                );
-            }
-
-            let ver_record = DashboardVersionRecord {
-                installation_id: dashboard.installation_id,
-                org_id: dashboard.org_id,
-                instance_id: dashboard.instance_id,
-                dashboard_uid: dashboard.uid.clone(),
-                version: dashboard.version,
-                parent_version,
-                restored_from: 0,
-                message: if msg.is_empty() {
-                    if parent_version == 0 {
-                        "Initial save".into()
-                    } else {
-                        "Updated dashboard".into()
-                    }
-                } else {
-                    msg
-                },
-                data: dashboard.data.clone(),
-                created_by: dashboard.updated_by.clone(),
-                created_at: now,
-            };
-
-            org.versions
-                .entry(dashboard.uid.clone())
-                .or_default()
-                .push(ver_record);
-            org.dashboards
-                .insert(dashboard.uid.clone(), dashboard.clone());
-            Ok(dashboard)
+            upsert_dashboard_in(org, dashboard, msg, overwrite)
         })
     }
 
@@ -384,66 +464,10 @@ impl DaiyaStore for MemoryStore {
         })
     }
 
-    fn upsert_datasource(&self, mut ds: DatasourceRecord) -> StoreFuture<'_, DatasourceRecord> {
+    fn upsert_datasource(&self, ds: DatasourceRecord) -> StoreFuture<'_, DatasourceRecord> {
         Box::pin(async move {
             let mut guard = self.inner.write();
-            let org = guard.orgs.entry(ds.org_id).or_default();
-
-            // One name per organization, as Grafana (`ErrDataSourceNameExists`) and the
-            // Postgres store's UNIQUE (org_id, name).
-            if org
-                .datasources
-                .values()
-                .any(|other| other.uid != ds.uid && other.name == ds.name)
-            {
-                return Err(CrError::Conflict(format!(
-                    "already exists (data source name '{}')",
-                    ds.name
-                )));
-            }
-            let is_new = !org.datasources.contains_key(&ds.uid);
-            if is_new {
-                if org.datasources.len() as u64 >= org.quotas.max_datasources {
-                    return Err(CrError::QuotaExceeded {
-                        resource: "datasources".into(),
-                        limit: org.quotas.max_datasources,
-                    });
-                }
-                if ds.kind.starts_with("wasm:") {
-                    let wasm_count = org
-                        .datasources
-                        .values()
-                        .filter(|d| d.kind.starts_with("wasm:"))
-                        .count() as u64;
-                    if wasm_count >= org.quotas.max_wasm_plugins {
-                        return Err(CrError::QuotaExceeded {
-                            resource: "wasm_plugins".into(),
-                            limit: org.quotas.max_wasm_plugins,
-                        });
-                    }
-                }
-            }
-
-            if ds.is_default {
-                for other in org.datasources.values_mut() {
-                    if other.uid != ds.uid {
-                        other.is_default = false;
-                    }
-                }
-            }
-
-            let now = TimestampTz::now();
-            if let Some(existing) = org.datasources.get(&ds.uid) {
-                ds.version = existing.version + 1;
-                ds.created_at = existing.created_at;
-                ds.updated_at = now;
-            } else {
-                ds.version = 1;
-                ds.created_at = now;
-                ds.updated_at = now;
-            }
-            org.datasources.insert(ds.uid.clone(), ds.clone());
-            Ok(ds)
+            upsert_datasource_in(guard.orgs.entry(ds.org_id).or_default(), ds)
         })
     }
 
@@ -676,6 +700,67 @@ impl DaiyaStore for MemoryStore {
                 .import_reports
                 .push(report);
             Ok(())
+        })
+    }
+
+    fn insert_plan(&self, plan: PlanRecord) -> StoreFuture<'_, ()> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let org = guard.orgs.entry(plan.org_id).or_default();
+            let now = TimestampTz::now();
+            org.plans.retain(|_, p| p.expires_at > now);
+            if org.plans.keys().filter(|d| **d != plan.digest).count() as u64 >= MAX_LIVE_PLANS {
+                return Err(CrError::QuotaExceeded {
+                    resource: "plans".into(),
+                    limit: MAX_LIVE_PLANS,
+                });
+            }
+            org.plans.insert(plan.digest.clone(), plan);
+            Ok(())
+        })
+    }
+
+    fn get_plan(&self, org_id: OrgId, digest: &str) -> StoreFuture<'_, Option<PlanRecord>> {
+        let digest = digest.to_owned();
+        Box::pin(async move {
+            let guard = self.inner.read();
+            Ok(guard
+                .orgs
+                .get(&org_id)
+                .and_then(|o| o.plans.get(&digest).cloned()))
+        })
+    }
+
+    fn apply_bundle(&self, bundle: ApplyBundle) -> StoreFuture<'_, Vec<DashboardRecord>> {
+        Box::pin(async move {
+            let mut guard = self.inner.write();
+            let live = guard.orgs.entry(bundle.org_id).or_default();
+            let current = etag_of(live);
+            if current != bundle.base_etag {
+                return Err(CrError::StalePlan(format!(
+                    "organization state changed since plan was created (expected etag {}, found {current})",
+                    bundle.base_etag
+                )));
+            }
+            // Written to a copy that replaces the organization only when every write passed.
+            let mut org = live.clone();
+            for folder in bundle.folders {
+                upsert_folder_in(&mut org, folder)?;
+            }
+            for ds in bundle.datasources {
+                upsert_datasource_in(&mut org, ds)?;
+            }
+            let mut saved = Vec::with_capacity(bundle.dashboards.len());
+            for dashboard in bundle.dashboards {
+                saved.push(upsert_dashboard_in(
+                    &mut org,
+                    dashboard,
+                    bundle.message.clone(),
+                    true,
+                )?);
+            }
+            *live = org;
+            Ok(saved)
         })
     }
 }

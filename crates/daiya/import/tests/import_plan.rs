@@ -11,7 +11,7 @@ use common::FailingStore;
 use daiya_import::{
     DashboardImportInput, DesiredBundle, ExitCode, ImportReport, apply_plan,
     check_dashboards_offline, compute_plan, export_dashboard, import_dashboards,
-    inline_library_panels, prepare_dashboard,
+    inline_library_panels, load_plan, plan_digest, prepare_dashboard,
 };
 use daiya_model::{
     DaiyaStore, DataSourceInfo, DatasourceIndex, DatasourceRecord, FeatureFinding, FolderRecord,
@@ -607,13 +607,14 @@ async fn apply_writes_folders_datasources_and_dashboards_as_this_organization() 
     )
     .await
     .unwrap();
+    let loaded = load_plan(&store, ORG, &plan.digest).await.unwrap();
     let report = apply_plan(
         &store,
         INST,
         ORG,
         INSTANCE,
         "t",
-        &plan,
+        &loaded,
         &InputLimits::default(),
     )
     .await
@@ -633,44 +634,231 @@ async fn apply_writes_folders_datasources_and_dashboards_as_this_organization() 
     );
     assert!(store.get_dashboard(ORG, "d").await.unwrap().is_some());
 
-    // A plan for another organization is a 404, and a mangled desired state a 400.
+    // Another organization's plan is a 404 to load and to apply.
+    let err = load_plan(&store, other_org, &plan.digest)
+        .await
+        .unwrap_err();
+    assert_eq!(err.status_code(), 404);
     let err = apply_plan(
         &store,
         INST,
         other_org,
         INSTANCE,
         "t",
-        &plan,
+        &loaded,
         &InputLimits::default(),
     )
     .await
     .unwrap_err();
     assert_eq!(err.status_code(), 404);
-    let mut fresh = compute_plan(
+}
+
+#[tokio::test]
+async fn apply_takes_only_a_plan_the_server_keeps() {
+    let store = FailingStore::new();
+    let bundle = DesiredBundle {
+        folders: vec![folder("f", "Folder")],
+        dashboards: vec![input(dashboard("d"))],
+        ..Default::default()
+    };
+    let plan = compute_plan(
+        &store,
+        INST,
+        ORG,
+        INSTANCE,
+        "pia",
+        &bundle,
+        &InputLimits::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.digest.len(), 64);
+    let kept = store.get_plan(ORG, &plan.digest).await.unwrap().unwrap();
+    assert_eq!(kept.created_by, "pia");
+    assert_eq!(kept.base_etag, plan.base_etag);
+    assert_eq!(kept.desired, plan.desired);
+    assert!(kept.expires_at > TimestampTz::now());
+
+    // An ill-formed digest is a 400; one no Plan answered a 404.
+    for bad in ["", "abc", &"G".repeat(64), &plan.digest.to_uppercase()] {
+        let err = load_plan(&store, ORG, bad).await.unwrap_err();
+        assert_eq!(err.status_code(), 400, "{bad:?}");
+    }
+    let err = load_plan(&store, ORG, &"0".repeat(64)).await.unwrap_err();
+    assert_eq!(err.status_code(), 404);
+
+    // An expired plan is a 404.
+    let mut expired = kept.clone();
+    expired.digest = plan_digest("old", &json!({}));
+    expired.base_etag = "old".into();
+    expired.desired = json!({});
+    expired.expires_at = TimestampTz::from_millis(TimestampTz::now().as_millis() - 1).unwrap();
+    store.insert_plan(expired.clone()).await.unwrap();
+    let err = load_plan(&store, ORG, &expired.digest).await.unwrap_err();
+    assert_eq!(err.status_code(), 404);
+
+    // A stored row whose bundle no longer matches its digest is refused, never applied.
+    let mut altered = kept.clone();
+    altered.desired = json!({ "folders": [], "datasources": [], "dashboards": [] });
+    store.insert_plan(altered).await.unwrap();
+    let err = load_plan(&store, ORG, &plan.digest).await.unwrap_err();
+    assert_eq!(err.status_code(), 500);
+    assert!(store.get_folder(ORG, "f").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn apply_writes_exactly_the_stored_bundle() {
+    let store = FailingStore::new();
+    let bundle = DesiredBundle {
+        folders: vec![folder("f", "Folder")],
+        datasources: vec![datasource("prom")],
+        dashboards: vec![input(dashboard("d"))],
+    };
+    let plan = compute_plan(
         &store,
         INST,
         ORG,
         INSTANCE,
         "t",
-        &DesiredBundle::default(),
+        &bundle,
         &InputLimits::default(),
     )
     .await
     .unwrap();
-    fresh.desired = json!({ "folders": "not a list" });
+    let loaded = load_plan(&store, ORG, &plan.digest).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(loaded.desired()).unwrap(),
+        plan.desired
+    );
+    apply_plan(
+        &store,
+        INST,
+        ORG,
+        INSTANCE,
+        "t",
+        &loaded,
+        &InputLimits::default(),
+    )
+    .await
+    .unwrap();
+    let folders = store.list_folders(ORG).await.unwrap();
+    let datasources = store.list_datasources(ORG).await.unwrap();
+    let dashboards = store.list_dashboards(ORG).await.unwrap();
+    assert_eq!(
+        folders.iter().map(|f| f.uid.as_str()).collect::<Vec<_>>(),
+        ["f"]
+    );
+    assert_eq!(
+        datasources
+            .iter()
+            .map(|d| d.uid.as_str())
+            .collect::<Vec<_>>(),
+        ["prom"]
+    );
+    assert_eq!(
+        dashboards
+            .iter()
+            .map(|d| d.uid.as_str())
+            .collect::<Vec<_>>(),
+        ["d"]
+    );
+}
+
+#[tokio::test]
+async fn a_failure_after_the_folders_leaves_nothing_written() {
+    let store = FailingStore::new();
+    // The datasource quota refuses the bundle's datasource after its folder was written.
+    let mut quotas = store.get_quotas(ORG).await.unwrap();
+    quotas.max_datasources = 0;
+    store.set_quotas(ORG, quotas).await.unwrap();
+    let bundle = DesiredBundle {
+        folders: vec![folder("f", "Folder")],
+        datasources: vec![datasource("prom")],
+        dashboards: vec![input(dashboard("d"))],
+    };
+    let plan = compute_plan(
+        &store,
+        INST,
+        ORG,
+        INSTANCE,
+        "t",
+        &bundle,
+        &InputLimits::default(),
+    )
+    .await
+    .unwrap();
+    let loaded = load_plan(&store, ORG, &plan.digest).await.unwrap();
     let err = apply_plan(
         &store,
         INST,
         ORG,
         INSTANCE,
         "t",
-        &fresh,
+        &loaded,
         &InputLimits::default(),
     )
     .await
     .unwrap_err();
-    assert_eq!(err.status_code(), 400);
-    assert!(err.to_string().contains("invalid desired state"), "{err}");
+    assert_eq!(err.slug(), "cr.quota_exceeded", "{err}");
+    assert!(store.list_folders(ORG).await.unwrap().is_empty());
+    assert!(store.list_datasources(ORG).await.unwrap().is_empty());
+    assert!(store.list_dashboards(ORG).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn two_applies_of_plans_on_one_base_write_one_and_refuse_the_other_as_stale() {
+    let store = std::sync::Arc::new(FailingStore::new());
+    let mut plans = Vec::new();
+    for title in ["One", "Two"] {
+        let bundle = DesiredBundle {
+            folders: vec![folder("f", title)],
+            ..Default::default()
+        };
+        let plan = compute_plan(
+            store.as_ref(),
+            INST,
+            ORG,
+            INSTANCE,
+            "t",
+            &bundle,
+            &InputLimits::default(),
+        )
+        .await
+        .unwrap();
+        plans.push(load_plan(store.as_ref(), ORG, &plan.digest).await.unwrap());
+    }
+    assert_eq!(plans[0].record().base_etag, plans[1].record().base_etag);
+    let tasks: Vec<_> = plans
+        .into_iter()
+        .map(|plan| {
+            let store = store.clone();
+            tokio::spawn(async move {
+                apply_plan(
+                    store.as_ref(),
+                    INST,
+                    ORG,
+                    INSTANCE,
+                    "t",
+                    &plan,
+                    &InputLimits::default(),
+                )
+                .await
+            })
+        })
+        .collect();
+    let mut outcomes = Vec::new();
+    for t in tasks {
+        outcomes.push(t.await.unwrap());
+    }
+    let written = outcomes.iter().filter(|r| r.is_ok()).count();
+    let stale = outcomes
+        .iter()
+        .filter(|r| r.as_ref().is_err_and(|e| e.slug() == "cr.stale_plan"))
+        .count();
+    assert_eq!((written, stale), (1, 1), "{outcomes:?}");
+    let folders = store.list_folders(ORG).await.unwrap();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].version, 1);
 }
 
 #[tokio::test]
@@ -723,7 +911,38 @@ async fn a_failing_store_is_a_500_from_import_plan_apply_and_export() {
         .unwrap_err();
         assert_eq!(err.status_code(), 500, "plan {method}");
     }
-    for method in ["upsert_folder", "upsert_datasource", "upsert_dashboard"] {
+    for method in ["insert_plan"] {
+        let store = FailingStore::new();
+        store.fail(method);
+        let err = compute_plan(
+            &store,
+            INST,
+            ORG,
+            INSTANCE,
+            "t",
+            &bundle,
+            &InputLimits::default(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status_code(), 500, "plan {method}");
+    }
+    let store = FailingStore::new();
+    let plan = compute_plan(
+        &store,
+        INST,
+        ORG,
+        INSTANCE,
+        "t",
+        &bundle,
+        &InputLimits::default(),
+    )
+    .await
+    .unwrap();
+    store.fail("get_plan");
+    let err = load_plan(&store, ORG, &plan.digest).await.unwrap_err();
+    assert_eq!(err.status_code(), 500, "load get_plan");
+    for method in ["list_datasources", "list_library_panels", "apply_bundle"] {
         let store = FailingStore::new();
         let plan = compute_plan(
             &store,
@@ -736,6 +955,7 @@ async fn a_failing_store_is_a_500_from_import_plan_apply_and_export() {
         )
         .await
         .unwrap();
+        let plan = load_plan(&store, ORG, &plan.digest).await.unwrap();
         store.fail(method);
         let err = apply_plan(
             &store,

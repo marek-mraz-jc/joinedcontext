@@ -24,8 +24,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use daiya_import::{
-    DashboardImportInput, DesiredBundle, PlanBundle, apply_plan, compute_plan, export_dashboard,
-    import_dashboards,
+    DashboardImportInput, DesiredBundle, apply_plan, compute_plan, export_dashboard,
+    import_dashboards, load_plan,
 };
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use daiya_query::{Health, QueryCtx, ResourceReq};
@@ -764,10 +764,12 @@ pub async fn exec_odata_plan(
     Ok(serde_json::to_value(plan).unwrap_or(Value::Null))
 }
 
+/// Applies the plan the server holds under `digest` (what `Plan` answered); the approver's own
+/// datasource rights are checked against that stored bundle.
 pub async fn exec_odata_apply(
     state: &DaiyaState,
     ctx: &RequestCtx,
-    plan: PlanBundle,
+    digest: &str,
 ) -> CrResult<Value> {
     let dec = state.authorizer.check(
         ctx,
@@ -775,9 +777,8 @@ pub async fn exec_odata_apply(
         &ObjectTarget::Organization { org_id: ctx.org_id },
     );
     dec.into_result("Organization not found")?;
-    let desired: DesiredBundle = serde_json::from_value(plan.desired.clone())
-        .map_err(|e| CrError::BadRequest(format!("invalid desired state in plan: {e}")))?;
-    check_plan_datasources(state, ctx, &desired).await?;
+    let plan = load_plan(state.store.as_ref(), ctx.org_id, digest).await?;
+    check_plan_datasources(state, ctx, plan.desired()).await?;
 
     let report = apply_plan(
         state.store.as_ref(),
@@ -790,6 +791,13 @@ pub async fn exec_odata_apply(
     )
     .await?;
     Ok(report.to_json())
+}
+
+/// Body of `Apply`: only the digest of a plan the server holds.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyBody {
+    pub digest: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1120,16 +1128,15 @@ async fn handle_odata_single_segment_post(
             }
         }
         "Apply" => {
-            let plan_val = body.get("plan").cloned().unwrap_or(body);
-            let plan: PlanBundle = match serde_json::from_value(plan_val) {
-                Ok(p) => p,
+            let parsed: ApplyBody = match serde_json::from_value(body) {
+                Ok(b) => b,
                 Err(e) => {
                     return error_response(&CrError::BadRequest(format!(
-                        "invalid Apply plan: {e}"
+                        "invalid Apply body: {e}; send {{\"digest\": \"<digest a Plan answered>\"}}"
                     )));
                 }
             };
-            match exec_odata_apply(&state, &ctx, plan).await {
+            match exec_odata_apply(&state, &ctx, &parsed.digest).await {
                 Ok(v) => (StatusCode::OK, Json(v)).into_response(),
                 Err(e) => error_response(&e),
             }

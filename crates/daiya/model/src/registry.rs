@@ -550,13 +550,13 @@ pub fn daiya_registry() -> OperationRegistry {
             bound_to: None,
             return_type: "JoinedContext.Daiya.ImportReport".into(),
             required_action: Action::Approve,
-            description: "Apply a verified plan bundle (refuses stale plans if live state etag changed).".into(),
+            description: "Apply the plan the server keeps under the digest Plan answered, in one transaction (refuses an unknown or expired digest, and a stale plan if live state etag changed).".into(),
             params: vec![OperationParam {
-                name: "plan".into(),
-                edm_type: "JoinedContext.Daiya.PlanBundle".into(),
-                json_type: "object".into(),
+                name: "digest".into(),
+                edm_type: "Edm.String".into(),
+                json_type: "string".into(),
                 required: true,
-                description: "Plan bundle produced by Plan".into(),
+                description: "The digest a Plan answered, e.g. 3f5a...e9 (64 lowercase hex characters); a plan is kept for one hour".into(),
             }],
         },
         ActionDef {
@@ -796,6 +796,8 @@ impl OperationRegistry {
             (
                 "PlanBundle",
                 &[
+                    ("digest", "Edm.String"),
+                    ("expiresAt", "Edm.DateTimeOffset"),
                     ("baseEtag", "Edm.String"),
                     ("hasChanges", "Edm.Boolean"),
                     ("planJson", "Edm.String"),

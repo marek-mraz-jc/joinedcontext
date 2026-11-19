@@ -289,22 +289,57 @@ async fn actions_query_import_plan_apply_and_rotate() {
             Some(json!({ "bundle": { "dashboards": [{ "rawJson": dashboard("planned", "prom") }] } })),
         )
         .await;
-    assert!(plan.is_object(), "{plan}");
+    let digest = plan["digest"]
+        .as_str()
+        .expect("Plan answers a digest")
+        .to_owned();
     let (st, _) = w
         .call(
             "POST",
             "/odata/v4/Apply",
             Some("editor"),
-            Some(json!({ "plan": plan.clone() })),
+            Some(json!({ "digest": digest })),
         )
         .await;
     assert_eq!(st, StatusCode::FORBIDDEN, "apply needs approve");
-    w.ok("POST", "/odata/v4/Apply", Some(json!({ "plan": plan })))
+    // Apply writes only a bundle the server kept from a Plan: a bundle in the body is refused.
+    let mut other = plan.clone();
+    other["desired"] = json!({ "dashboards": [{ "rawJson": dashboard("unreviewed", "prom") }] });
+    for body in [
+        json!({ "plan": other.clone() }),
+        json!({ "digest": digest, "desired": other["desired"] }),
+        other.clone(),
+    ] {
+        let (st, answer) = w
+            .call("POST", "/odata/v4/Apply", Some("admin"), Some(body))
+            .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{answer}");
+    }
+    let (st, _) = w
+        .call(
+            "POST",
+            "/odata/v4/Apply",
+            Some("admin"),
+            Some(json!({ "digest": "0".repeat(64) })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "a digest no Plan answered");
+    w.ok("POST", "/odata/v4/Apply", Some(json!({ "digest": digest })))
         .await;
     w.ok("GET", "/odata/v4/Dashboards('planned')", None).await;
+    let (st, _) = w
+        .call(
+            "GET",
+            "/odata/v4/Dashboards('unreviewed')",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "a body bundle was never written");
 
     // A plan's datasources pass the checks a datasource save runs: a URL the outbound guard
-    // refuses, or a read-only record, is refused at Plan and at Apply, and nothing is written.
+    // refuses, or a read-only record, is refused at Plan (so no digest exists to apply), and
+    // nothing is written.
     let source = |uid: &str, url: &str, read_only: bool| {
         json!({
             "installationId": "00000000-0000-0000-0000-000000000001",
@@ -331,17 +366,6 @@ async fn actions_query_import_plan_apply_and_rotate() {
                 "/odata/v4/Plan",
                 Some("admin"),
                 Some(json!({ "bundle": bundle })),
-            )
-            .await;
-        assert_eq!(st, want, "{answer}");
-        let mut forged = plan.clone();
-        forged["desired"] = bundle;
-        let (st, answer) = w
-            .call(
-                "POST",
-                "/odata/v4/Apply",
-                Some("admin"),
-                Some(json!({ "plan": forged })),
             )
             .await;
         assert_eq!(st, want, "{answer}");

@@ -208,6 +208,20 @@ CREATE TABLE IF NOT EXISTS cr_import_report (
 );
 CREATE INDEX IF NOT EXISTS idx_cr_import_report_org ON cr_import_report (org_id);
 
+-- Plans `Plan` computed: `Apply` names one by its digest and writes exactly its bundle (R2, §7.3).
+CREATE TABLE IF NOT EXISTS cr_plan (
+    installation_id UUID NOT NULL,
+    org_id UUID NOT NULL,
+    instance_id UUID NOT NULL,
+    digest TEXT NOT NULL,
+    base_etag TEXT NOT NULL,
+    desired JSONB NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (org_id, digest)
+);
+
 -- Enforce Row-Level Security (FORCE ROW LEVEL SECURITY) on every table (§5.3, R8).
 -- Predicate uses btree-indexed `org_id = current_setting('cr.org', true)::uuid` (leakproof equality).
 DO $$
@@ -225,7 +239,8 @@ BEGIN
         'cr_alert_rule',
         'cr_alert_state',
         'cr_query_cache',
-        'cr_import_report'
+        'cr_import_report',
+        'cr_plan'
     ] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', tbl);

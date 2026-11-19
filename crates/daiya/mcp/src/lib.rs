@@ -6,7 +6,7 @@
 //! OData 4.01 service and CLI.
 
 use daiya_api::odata::{
-    ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
+    ApplyBody, ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
     exec_odata_datasource_editor_schema, exec_odata_datasource_health, exec_odata_datasource_query,
     exec_odata_datasource_resource, exec_odata_export, exec_odata_import, exec_odata_plan,
 };
@@ -14,7 +14,7 @@ use daiya_api::{
     DaiyaState, PanelTimeRange, PublicDashboardQueryReq, execute_public_dashboard_query,
     panel_view, rotate_public_dashboard_token,
 };
-use daiya_import::{DesiredBundle, PlanBundle};
+use daiya_import::DesiredBundle;
 use daiya_model::{Action, CrError, CrResult, ObjectTarget, RequestCtx};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -195,10 +195,12 @@ pub async fn call_mcp_tool(
             exec_odata_plan(state, ctx, desired).await
         }
         "Apply" => {
-            let plan_val = args.get("plan").cloned().unwrap_or(args);
-            let plan: PlanBundle = serde_json::from_value(plan_val)
-                .map_err(|e| CrError::BadRequest(format!("invalid apply plan: {e}")))?;
-            exec_odata_apply(state, ctx, plan).await
+            let body: ApplyBody = serde_json::from_value(args).map_err(|e| {
+                CrError::BadRequest(format!(
+                    "invalid apply args: {e}; give only the digest a daiya_plan answered"
+                ))
+            })?;
+            exec_odata_apply(state, ctx, &body.digest).await
         }
         "PublicDashboard/Rotate" => {
             let uid = required_str(&args, "uid")?;
