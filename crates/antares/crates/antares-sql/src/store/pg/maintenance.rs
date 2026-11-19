@@ -178,26 +178,13 @@ pub async fn temporal_maintenance(
             .execute(&mut *sp)
             .await
             .map(|_| ());
-            let rls = match created {
-                Ok(()) => partition_rls_missing(&mut sp, &partition_name(keyed, &suffix)).await,
-                Err(_) => Ok(false),
-            };
-            let stmts = match rls {
-                Ok(true) => partition_rls_sql(&partition_name(keyed, &suffix)),
-                Ok(false) => Vec::new(),
-                Err(e) => {
-                    created = Err(e);
-                    Vec::new()
-                }
-            };
-            for stmt in stmts {
-                if created.is_err() {
-                    break;
-                }
-                created = sqlx::query(sqlx::AssertSqlSafe(stmt))
-                    .execute(&mut *sp)
-                    .await
-                    .map(|_| ());
+            if created.is_ok() {
+                created = sqlx::query(sqlx::AssertSqlSafe(partition_rls_sql(&partition_name(
+                    keyed, &suffix,
+                ))))
+                .execute(&mut *sp)
+                .await
+                .map(|_| ());
             }
             match created {
                 Ok(()) => {
@@ -215,7 +202,7 @@ pub async fn temporal_maintenance(
             let mut adopted = Ok(());
             for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi)
                 .into_iter()
-                .chain(partition_rls_sql(&partition_name(keyed, &suffix)))
+                .chain([partition_rls_sql(&partition_name(keyed, &suffix))])
             {
                 adopted = sqlx::query(sqlx::AssertSqlSafe(stmt))
                     .execute(&mut *sp)
@@ -1313,50 +1300,14 @@ fn partition_name(keyed: bool, suffix: &str) -> String {
     }
 }
 
-/// Whether partition `table` still lacks its policies ([`partition_rls_sql`]
-/// runs as one unit, so ENABLE and FORCE stand for all of them). A week that
-/// has them is left alone: each pass would otherwise rewrite its catalog rows
-/// and hold it `ACCESS EXCLUSIVE` again.
-async fn partition_rls_missing(
-    conn: &mut sqlx::PgConnection,
-    table: &str,
-) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT NOT coalesce((SELECT relrowsecurity AND relforcerowsecurity FROM pg_class
-                              WHERE oid = to_regclass('public.' || quote_ident($1))), false)",
-    )
-    .bind(table)
-    .fetch_one(conn)
-    .await
-}
-
-/// Row-level security on one history partition, the parent's policies of
-/// 0005 copied: PostgreSQL applies a parent's policies only to statements
-/// that name the parent, so a statement naming the partition itself would
-/// otherwise read and write every Tenant's rows (migration 0040 does the same
-/// for the partitions made before it). Idempotent, for a partition that
-/// already exists.
-fn partition_rls_sql(table: &str) -> Vec<String> {
-    const MINE: &str = "tenant_id = current_setting('antares.tenant', true)";
-    const MINE_OR_SERVICE: &str = "(tenant_id = current_setting('antares.tenant', true) \
-         OR current_setting('antares.service', true) = 'on')";
-    let mut sql = vec![
-        format!("ALTER TABLE public.{table} ENABLE ROW LEVEL SECURITY"),
-        format!("ALTER TABLE public.{table} FORCE ROW LEVEL SECURITY"),
-    ];
-    for (name, rule) in [
-        ("tenant_read", format!("FOR SELECT USING {MINE_OR_SERVICE}")),
-        ("tenant_reap", format!("FOR DELETE USING {MINE_OR_SERVICE}")),
-        ("tenant_write", format!("FOR INSERT WITH CHECK ({MINE})")),
-        (
-            "tenant_update",
-            format!("FOR UPDATE USING ({MINE}) WITH CHECK ({MINE})"),
-        ),
-    ] {
-        sql.push(format!("DROP POLICY IF EXISTS {name} ON public.{table}"));
-        sql.push(format!("CREATE POLICY {name} ON public.{table} {rule}"));
-    }
-    sql
+/// Row-level security on one history partition: its parent's policies,
+/// ENABLEd and FORCEd (`antares_partition_rls`, migration 0040, which did the
+/// same for the partitions made before it). PostgreSQL applies a parent's
+/// policies only to statements that name the parent, so a statement naming
+/// the partition itself would otherwise read and write every Tenant's rows.
+/// A partition that has them already is left alone.
+fn partition_rls_sql(table: &str) -> String {
+    format!("SELECT public.antares_partition_rls('public.{table}'::regclass)")
 }
 
 /// One weekly partition, created directly under the parent: `attr_rows_long`,
@@ -1792,17 +1743,10 @@ mod tests {
 
     #[test]
     fn a_new_partition_gets_the_parents_policies() {
-        let sql = partition_rls_sql(&partition_name(false, "2026w34")).join(";\n");
-        for want in [
-            "ALTER TABLE public.attr_instances_2026w34 ENABLE ROW LEVEL SECURITY",
-            "ALTER TABLE public.attr_instances_2026w34 FORCE ROW LEVEL SECURITY",
-            "CREATE POLICY tenant_read ON public.attr_instances_2026w34 FOR SELECT",
-            "CREATE POLICY tenant_reap ON public.attr_instances_2026w34 FOR DELETE",
-            "CREATE POLICY tenant_write ON public.attr_instances_2026w34 FOR INSERT",
-            "CREATE POLICY tenant_update ON public.attr_instances_2026w34 FOR UPDATE",
-        ] {
-            assert!(sql.contains(want), "{want} in {sql}");
-        }
+        assert_eq!(
+            partition_rls_sql(&partition_name(false, "2026w34")),
+            "SELECT public.antares_partition_rls('public.attr_instances_2026w34'::regclass)"
+        );
         assert_eq!(partition_name(true, "2026w34"), "attr_rows_2026w34");
     }
 
