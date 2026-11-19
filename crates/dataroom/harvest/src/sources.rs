@@ -912,6 +912,742 @@ pub fn parse_ckan_search_page(
     Ok((out, count))
 }
 
+/// The open licence a licence text names, as the catalogue's id and IRI: an SPDX id, a CKAN id
+/// or a Creative Commons address. `None` for any other text, which leaves the record without a
+/// licence rather than claiming one.
+pub fn open_licence(text: &str) -> Option<(&'static str, &'static str)> {
+    const BY: (&str, &str) = ("cc-by", "https://creativecommons.org/licenses/by/4.0/");
+    const BY_SA: (&str, &str) = (
+        "cc-by-sa",
+        "https://creativecommons.org/licenses/by-sa/4.0/",
+    );
+    const ZERO: (&str, &str) = (
+        "cc-zero",
+        "https://creativecommons.org/publicdomain/zero/1.0/",
+    );
+    let t = text.trim().to_ascii_lowercase();
+    let t = t.trim_end_matches('/');
+    let addr = t
+        .strip_prefix("https://")
+        .or_else(|| t.strip_prefix("http://"))
+        .unwrap_or(t);
+    match addr {
+        "cc-by-4.0" | "cc-by" | "creativecommons.org/licenses/by/4.0" => Some(BY),
+        "cc-by-sa-4.0" | "cc-by-sa" | "creativecommons.org/licenses/by-sa/4.0" => Some(BY_SA),
+        "cc0-1.0" | "cc0" | "cc-zero" | "creativecommons.org/publicdomain/zero/1.0" => Some(ZERO),
+        _ => None,
+    }
+}
+
+/// The GeoJSON polygon of a WGS 84 box `[west, south, east, north]`, the `spatial` extra CKAN's
+/// spatial extension reads; `None` for a box outside the globe or with a side of no length.
+pub fn bbox_polygon([w, s, e, n]: [f64; 4]) -> Option<String> {
+    let ok = [w, s, e, n].iter().all(|v| v.is_finite())
+        && (-180.0..=180.0).contains(&w)
+        && (-180.0..=180.0).contains(&e)
+        && (-90.0..=90.0).contains(&s)
+        && (-90.0..=90.0).contains(&n)
+        && w <= e
+        && s <= n;
+    ok.then(|| {
+        json!({"type": "Polygon",
+               "coordinates": [[[w, s], [e, s], [e, n], [w, n], [w, s]]]})
+        .to_string()
+    })
+}
+
+/// An ArcGIS extent (`fullExtent`) in WGS 84: kept as given in geographic degrees (EPSG:4326,
+/// 4258, 4269: the datums differ by under 2 m), taken back from
+/// Web Mercator (102100, 3857, 102113, 900913); any other reference gives none.
+pub fn arcgis_extent_wgs84(extent: &Value) -> Option<[f64; 4]> {
+    let num = |k: &str| extent.get(k).and_then(Value::as_f64);
+    let (w, s, e, n) = (num("xmin")?, num("ymin")?, num("xmax")?, num("ymax")?);
+    let sr = extent.get("spatialReference")?;
+    let wkid = sr
+        .get("latestWkid")
+        .or_else(|| sr.get("wkid"))
+        .and_then(Value::as_u64)?;
+    match wkid {
+        4326 | 4258 | 4269 => Some([w, s, e, n]),
+        3857 | 102100 | 102113 | 900913 => {
+            const R: f64 = 6_378_137.0;
+            let lon = |x: f64| (x / R).to_degrees();
+            let lat =
+                |y: f64| (2.0 * (y / R).exp().atan() - std::f64::consts::FRAC_PI_2).to_degrees();
+            Some([lon(w), lat(s), lon(e), lat(n)])
+        }
+        _ => None,
+    }
+}
+
+/// The box around every position of a GeoJSON geometry; `None` when it holds none.
+fn geometry_bbox(geometry: &Value) -> Option<[f64; 4]> {
+    fn walk(v: &Value, b: &mut Option<[f64; 4]>) {
+        let Some(arr) = v.as_array() else { return };
+        match (
+            arr.first().and_then(Value::as_f64),
+            arr.get(1).and_then(Value::as_f64),
+        ) {
+            (Some(x), Some(y)) => {
+                let [w, s, e, n] = b.get_or_insert([x, y, x, y]);
+                *w = w.min(x);
+                *s = s.min(y);
+                *e = e.max(x);
+                *n = n.max(y);
+            }
+            _ => arr.iter().for_each(|c| walk(c, b)),
+        }
+    }
+    let mut b = None;
+    walk(geometry.get("coordinates")?, &mut b);
+    b
+}
+
+/// The title a record keeps after the source's overrides and spelling fixes, or the reason the
+/// source skips it.
+fn source_title(source: &HarvestSource, item_id: &str, title: &str) -> (String, Option<String>) {
+    let mut title = source
+        .title_overrides
+        .get(item_id)
+        .cloned()
+        .unwrap_or_else(|| title.to_owned());
+    for (wrong, right) in &source.spelling_fixes {
+        title = title.replace(wrong, right);
+    }
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    (title, source.skip_items.get(item_id).cloned())
+}
+
+/// Keywords kept as tags when they match `[\w .-]{2,100}`, as the Hub's are.
+fn keyword_tags<'a>(words: impl Iterator<Item = &'a str>) -> Vec<String> {
+    words
+        .map(str::trim)
+        .filter(|t| {
+            (2..=100).contains(&t.chars().count())
+                && t.chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | ' ' | '.' | '-'))
+        })
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Title, access URL, download URL, format and media type of a harvested record's distribution.
+type Link = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// A distribution of a harvested record: a link and what it serves.
+fn link_distribution(ds_id: &str, position: usize, link: Link, lang: &str) -> Distribution {
+    let (title, access_url, download_url, format, media_type) = link;
+    Distribution {
+        id: format!("res-{ds_id}-{position}"),
+        dataset_id: ds_id.to_owned(),
+        uri: None,
+        title: BTreeMap::from([(lang.to_owned(), title)]),
+        description: BTreeMap::new(),
+        access_url,
+        download_url,
+        format,
+        media_type,
+        compress_format: None,
+        package_format: None,
+        byte_size: None,
+        hash: None,
+        hash_algorithm: None,
+        licence: None,
+        rights: BTreeMap::new(),
+        status: None,
+        availability: None,
+        resource_type: None,
+        conforms_to: Vec::new(),
+        documentation: Vec::new(),
+        languages: Vec::new(),
+        applicable_legislation: Vec::new(),
+        temporal_resolution: None,
+        spatial_resolution_in_meters: None,
+        terms_of_use: None,
+        access_services: Vec::new(),
+        issued: None,
+        modified: None,
+        extras: BTreeMap::new(),
+    }
+}
+
+/// What a harvested record of the ArcGIS REST and OGC API Records sources says.
+struct Record<'a> {
+    item_id: &'a str,
+    /// The record's own address: its IRI and the source of its id.
+    address: String,
+    landing_page: String,
+    title: String,
+    notes: String,
+    tags: Vec<String>,
+    licence: Option<(&'static str, &'static str)>,
+    /// The licence or copyright text when it names no licence the catalogue knows.
+    licence_text: Option<String>,
+    bbox: Option<[f64; 4]>,
+    issued: Option<TimestampTz>,
+    modified: Option<TimestampTz>,
+    links: Vec<Link>,
+}
+
+/// The dataset of a harvested [`Record`], with its harvest hash.
+fn record_dataset(
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    source: &HarvestSource,
+    r: Record<'_>,
+    lang: &str,
+) -> Dataset {
+    let id = Uuid::new_v5(&Uuid::NAMESPACE_URL, r.address.as_bytes()).to_string();
+    let slug: String = ascii_slug(&r.title).chars().take(60).collect();
+    let stem = format!("{}-{}", slug.trim_matches('-'), &id[..8]);
+    let name = harvested_name(&source.name_prefix, stem.trim_start_matches('-'), &id);
+    let distributions = r
+        .links
+        .into_iter()
+        .enumerate()
+        .map(|(i, link)| {
+            let mut d = link_distribution(&id, i, link, lang);
+            d.licence = r.licence.map(|(_, url)| url.to_owned());
+            d
+        })
+        .collect();
+    let mut extras = BTreeMap::from([
+        ("harvest_source".to_owned(), source.name.clone()),
+        ("source_id".to_owned(), r.item_id.to_owned()),
+        ("source_url".to_owned(), r.address.clone()),
+    ]);
+    if let Some(polygon) = r.bbox.and_then(bbox_polygon) {
+        extras.insert("spatial".into(), polygon);
+    }
+    if let Some(text) = r.licence_text.filter(|_| r.licence.is_none()) {
+        extras.insert("licence_text".into(), text.chars().take(500).collect());
+    }
+    let now = TimestampTz::now();
+    let mut ds = Dataset {
+        org_id,
+        catalogue_id,
+        id,
+        name,
+        uri: Some(r.address),
+        dataset_type: "dataset".into(),
+        title: BTreeMap::from([(lang.to_owned(), r.title)]),
+        description: BTreeMap::from([(lang.to_owned(), r.notes)]),
+        publisher_id: source.publisher_id.clone(),
+        publisher: source
+            .target_publisher_iri
+            .as_ref()
+            .map(|uri| AgentDetails {
+                uri: Some(uri.clone()),
+                name: BTreeMap::from([(lang.to_owned(), source.publisher_id.clone())]),
+                ..AgentDetails::default()
+            }),
+        creator: None,
+        contact_point: None,
+        visibility: Visibility::Public,
+        state: RecordState::Active,
+        licence_id: r.licence.map(|(id, _)| id.to_owned()),
+        licence_url: r.licence.map(|(_, url)| url.to_owned()),
+        themes: Vec::new(),
+        eurovoc_themes: Vec::new(),
+        keywords: BTreeMap::from([(lang.to_owned(), r.tags.clone())]),
+        tags: r.tags,
+        spatial: source.spatial_uri.iter().cloned().collect(),
+        spatial_resolution_in_meters: None,
+        temporal: None,
+        temporal_resolution: None,
+        frequency: None,
+        landing_page: Some(r.landing_page),
+        documentation: Vec::new(),
+        conforms_to: Vec::new(),
+        applicable_legislation: Vec::new(),
+        in_series: None,
+        relations: Vec::new(),
+        sources: Vec::new(),
+        languages: vec![lang.to_owned()],
+        version: None,
+        version_notes: BTreeMap::new(),
+        access_rights: None,
+        provenance: BTreeMap::new(),
+        dcat_type: None,
+        identifier: Some(r.item_id.to_owned()),
+        alternate_identifiers: Vec::new(),
+        endpoint_url: None,
+        generated_by: None,
+        harvest_source_id: Some(source.name.clone()),
+        harvest_source_item_id: Some(r.item_id.to_owned()),
+        harvest_hash: None,
+        custom_shacl_shapes: None,
+        distributions,
+        extras,
+        restricted_grants: Vec::new(),
+        issued: r.issued.unwrap_or(now),
+        modified: r.modified.or(r.issued).unwrap_or(now),
+    };
+    // ponytail: the hash leaves out the `spatial` extra (it is shared with the other kinds); an
+    // extent that changes alone is picked up with the record's next other change.
+    let hash = compute_harvest_hash(&ds);
+    ds.harvest_hash = Some(hash.clone());
+    ds.extras.insert("harvest_hash".into(), hash);
+    ds
+}
+
+/// One page of an ArcGIS REST services directory (`{url}?f=json`): its folders and its
+/// `(name, type)` services, names as the directory gives them (a folder's carry its prefix).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ArcgisDirectory {
+    pub folders: Vec<String>,
+    pub services: Vec<(String, String)>,
+}
+
+/// Reads one ArcGIS REST directory page. An `error` answer (a secured directory: 499 "Token
+/// Required") or an answer that lists neither folders nor services fails the run.
+pub fn parse_arcgis_directory(body: &str) -> Result<ArcgisDirectory> {
+    let val: Value = serde_json::from_str(body)
+        .map_err(|e| DataroomError::OutboundRefused(format!("invalid ArcGIS REST JSON: {e}")))?;
+    if let Some(err) = val.get("error") {
+        return Err(DataroomError::OutboundRefused(format!(
+            "the ArcGIS directory answers error {}: {}; only a public directory is harvested",
+            err.get("code").map(Value::to_string).unwrap_or_default(),
+            err.get("message").and_then(Value::as_str).unwrap_or("")
+        )));
+    }
+    let (Some(folders), Some(services)) = (
+        val.get("folders").and_then(Value::as_array),
+        val.get("services").and_then(Value::as_array),
+    ) else {
+        return Err(DataroomError::OutboundRefused(
+            "the answer lists no folders and services; check the URL names an ArcGIS REST \
+             directory, e.g. https://gis.example.sk/arcgis/rest/services"
+                .into(),
+        ));
+    };
+    let safe = |n: &str| {
+        !n.is_empty()
+            && n.split('/').all(|seg| {
+                !seg.is_empty()
+                    && seg != ".."
+                    && seg
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            })
+    };
+    Ok(ArcgisDirectory {
+        folders: folders
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|f| safe(f))
+            .map(str::to_owned)
+            .collect(),
+        services: services
+            .iter()
+            .filter_map(|s| Some((s.get("name")?.as_str()?, s.get("type")?.as_str()?)))
+            .filter(|(n, t)| safe(n) && safe(t))
+            .map(|(n, t)| (n.to_owned(), t.to_owned()))
+            .collect(),
+    })
+}
+
+/// The `.../rest/services` root of an ArcGIS REST address, the base every directory names its
+/// folders and services from; the address itself when it holds no such segment.
+pub fn arcgis_services_root(url: &str) -> &str {
+    let url = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    match url.to_ascii_lowercase().find("/rest/services") {
+        Some(i) => &url[..i + "/rest/services".len()],
+        None => url,
+    }
+}
+
+/// Whether an ArcGIS REST address names one service, `.../FeatureServer` or `.../MapServer`.
+pub fn arcgis_service_type(url: &str) -> Option<&'static str> {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    let last = path.rsplit('/').next().unwrap_or("");
+    ["FeatureServer", "MapServer"]
+        .into_iter()
+        .find(|t| last.eq_ignore_ascii_case(t))
+}
+
+/// The most layers of one service listed as distributions.
+const MAX_LAYER_LINKS: usize = 20;
+
+/// One ArcGIS REST service (`{service_url}?f=json`) as a record: its title, description,
+/// keywords, licence or copyright, extent in WGS 84, the service itself and a GeoJSON query of
+/// each feature layer as distributions. `Err` holds the reason the run log gives for a skip: an
+/// answer that is not a service's JSON, or an `error` answer.
+pub fn parse_arcgis_service(
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    source: &HarvestSource,
+    service_url: &str,
+    item_id: &str,
+    body: &str,
+    lang: &str,
+) -> std::result::Result<Dataset, String> {
+    let val: Value =
+        serde_json::from_str(body).map_err(|_| "the service answers no JSON".to_owned())?;
+    if let Some(err) = val.get("error") {
+        return Err(format!(
+            "the service answers error {}",
+            err.get("code").map(Value::to_string).unwrap_or_default()
+        ));
+    }
+    if !val.is_object() || val.get("layers").is_some_and(|l| !l.is_array()) {
+        return Err("the answer is not an ArcGIS service's JSON".into());
+    }
+    let text = |v: Option<&Value>| plain_text_from_html(v.and_then(Value::as_str).unwrap_or(""));
+    let doc = val.get("documentInfo");
+    let fallback = item_id
+        .rsplit('/')
+        .nth(1)
+        .unwrap_or(item_id)
+        .replace('_', " ");
+    let title = Some(text(doc.and_then(|d| d.get("Title"))))
+        .filter(|t| !t.is_empty())
+        .unwrap_or(fallback);
+    let (title, _) = source_title(source, item_id, &title);
+    let notes = [
+        val.get("serviceDescription"),
+        val.get("description"),
+        doc.and_then(|d| d.get("Subject")),
+    ]
+    .into_iter()
+    .map(text)
+    .find(|t| !t.is_empty())
+    .unwrap_or_else(|| title.clone());
+    let keywords = doc
+        .and_then(|d| d.get("Keywords"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let rights = [val.get("licenseInfo"), val.get("copyrightText")]
+        .into_iter()
+        .map(text)
+        .find(|t| !t.is_empty());
+    let licence = rights.as_deref().and_then(open_licence);
+    let bbox = val
+        .get("fullExtent")
+        .or_else(|| val.get("initialExtent"))
+        .and_then(arcgis_extent_wgs84);
+    let kind = arcgis_service_type(service_url).unwrap_or("MapServer");
+    let mut links = vec![(
+        format!("{title} ({kind})"),
+        service_url.to_owned(),
+        None,
+        Some("ArcGIS REST".to_owned()),
+        Some("application/json".to_owned()),
+    )];
+    let layers = val
+        .get("layers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for layer in layers
+        .filter(|l| {
+            l.get("subLayerIds")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+        })
+        .take(MAX_LAYER_LINKS)
+    {
+        let Some(id) = layer.get("id").and_then(Value::as_u64) else {
+            continue;
+        };
+        let name = layer.get("name").and_then(Value::as_str).unwrap_or("");
+        links.push((
+            format!("{} (GeoJSON)", if name.is_empty() { &title } else { name }),
+            format!("{service_url}/{id}"),
+            Some(format!(
+                "{service_url}/{id}/query?where=1%3D1&outFields=*&f=geojson"
+            )),
+            Some("GeoJSON".to_owned()),
+            Some("application/geo+json".to_owned()),
+        ));
+    }
+    Ok(record_dataset(
+        org_id,
+        catalogue_id,
+        source,
+        Record {
+            item_id,
+            address: service_url.to_owned(),
+            landing_page: service_url.to_owned(),
+            title,
+            notes,
+            tags: keyword_tags(keywords.split([',', ';'])),
+            licence,
+            licence_text: rights,
+            bbox,
+            issued: None,
+            modified: None,
+            links,
+        },
+        lang,
+    ))
+}
+
+/// One page of an OGC API Records collection's items.
+#[derive(Debug)]
+pub struct RecordsPage {
+    pub kept: Vec<(String, Dataset)>,
+    pub skipped: Vec<HarvestSkippedItem>,
+    /// Records on the page, skipped ones included.
+    pub read: usize,
+    /// `numberMatched`, when the page gives it.
+    pub matched: Option<usize>,
+    /// The `rel: next` link, made absolute.
+    pub next: Option<String>,
+}
+
+/// Link relations that name the record or the collection itself, not a distribution.
+const NOT_DISTRIBUTIONS: [&str; 11] = [
+    "self",
+    "alternate",
+    "collection",
+    "root",
+    "parent",
+    "next",
+    "prev",
+    "license",
+    "preview",
+    "icon",
+    "describedby",
+];
+
+/// Reads one page of an OGC API Records collection (`{collection}/items`, GeoJSON): a record
+/// with no id or no title is skipped with its reason, the page's `next` link and
+/// `numberMatched` drive the walk.
+pub fn parse_ogc_records_page(
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    source: &HarvestSource,
+    page_url: &str,
+    body: &str,
+    lang: &str,
+) -> Result<RecordsPage> {
+    let val: Value = serde_json::from_str(body).map_err(|e| {
+        DataroomError::OutboundRefused(format!("invalid OGC API Records JSON: {e}"))
+    })?;
+    let features = val
+        .get("features")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            DataroomError::OutboundRefused(
+                "the answer has no features; check the URL names an OGC API Records collection, \
+             e.g. https://data.example.sk/collections/metadata"
+                    .into(),
+            )
+        })?;
+    let base = url::Url::parse(page_url)
+        .map_err(|e| DataroomError::OutboundRefused(format!("invalid page URL: {e}")))?;
+    let absolute = |href: &str| {
+        base.join(href)
+            .ok()
+            .filter(|u| matches!(u.scheme(), "https" | "http"))
+            .map(String::from)
+    };
+    let next = links_of(&val)
+        .find(|l| l.get("rel").and_then(Value::as_str) == Some("next"))
+        .and_then(|l| l.get("href").and_then(Value::as_str))
+        .and_then(absolute);
+    let items = records_collection(page_url).to_owned();
+    let mut page = RecordsPage {
+        kept: Vec::new(),
+        skipped: Vec::new(),
+        read: features.len(),
+        matched: val
+            .get("numberMatched")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok()),
+        next,
+    };
+    for f in features {
+        match ogc_record(org_id, catalogue_id, source, &items, f, &absolute, lang) {
+            Ok(Some(kept)) => page.kept.push(kept),
+            Ok(None) => {}
+            Err(skip) => page.skipped.push(skip),
+        }
+    }
+    Ok(page)
+}
+
+/// The collection an OGC API Records address names, its `/items` and query left off.
+pub fn records_collection(url: &str) -> &str {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches('/');
+    path.strip_suffix("/items").unwrap_or(path)
+}
+
+fn links_of(v: &Value) -> impl Iterator<Item = &Value> {
+    v.get("links")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+/// One OGC API Records feature: `Ok(None)` for an item the source skips by name, `Err` with the
+/// reason for a record that cannot be listed.
+fn ogc_record(
+    org_id: OrgId,
+    catalogue_id: CatalogueId,
+    source: &HarvestSource,
+    items: &str,
+    f: &Value,
+    absolute: &dyn Fn(&str) -> Option<String>,
+    lang: &str,
+) -> std::result::Result<Option<(String, Dataset)>, HarvestSkippedItem> {
+    let props = f.get("properties").filter(|p| p.is_object());
+    let item_id = match f.get("id") {
+        Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_owned(),
+        Some(Value::Number(n)) => n.to_string(),
+        _ => String::new(),
+    };
+    let raw_title = props
+        .and_then(|p| p.get("title"))
+        .and_then(Value::as_str)
+        .map(plain_text_from_html)
+        .unwrap_or_default();
+    let skip = |item_id: &str, title: &str, reason: &str| HarvestSkippedItem {
+        item_id: item_id.to_owned(),
+        title: title.to_owned(),
+        reason: reason.to_owned(),
+    };
+    if item_id.is_empty() {
+        return Err(skip("", &raw_title, "the record has no id"));
+    }
+    let Some(props) = props.filter(|_| !raw_title.is_empty()) else {
+        return Err(skip(&item_id, &item_id, "the record has no title"));
+    };
+    let (title, skipped) = source_title(source, &item_id, &raw_title);
+    if let Some(reason) = skipped {
+        return Err(skip(&item_id, &title, &reason));
+    }
+    let str_of = |k: &str| props.get(k).and_then(Value::as_str);
+    let notes = Some(plain_text_from_html(str_of("description").unwrap_or("")))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| title.clone());
+    // Keywords and the ids of each theme's concepts (OGC API Records `themes`).
+    let concepts = props
+        .get("themes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.get("concepts")?.as_array())
+        .flatten()
+        .filter_map(|c| c.get("id")?.as_str());
+    let keywords = props
+        .get("keywords")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .chain(concepts);
+    let licence_text = str_of("license").map(str::to_owned).or_else(|| {
+        links_of(f)
+            .find(|l| l.get("rel").and_then(Value::as_str) == Some("license"))
+            .and_then(|l| l.get("href").and_then(Value::as_str))
+            .map(str::to_owned)
+    });
+    let licence = licence_text.as_deref().and_then(open_licence);
+    let bbox = f.get("geometry").and_then(geometry_bbox).or_else(|| {
+        let b: Vec<f64> = f
+            .get("bbox")?
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_f64)
+            .collect();
+        <[f64; 4]>::try_from(b).ok()
+    });
+    let time = |k: &str| str_of(k).and_then(|t| t.parse::<TimestampTz>().ok());
+    let address = format!("{items}/items/{}", utf8_percent(&item_id));
+    let landing_page = links_of(f)
+        .find(|l| {
+            l.get("rel").and_then(Value::as_str) == Some("alternate")
+                && l.get("type").and_then(Value::as_str) == Some("text/html")
+        })
+        .and_then(|l| l.get("href").and_then(Value::as_str))
+        .and_then(absolute)
+        .unwrap_or_else(|| address.clone());
+    let links = links_of(f)
+        .filter(|l| {
+            !NOT_DISTRIBUTIONS.contains(&l.get("rel").and_then(Value::as_str).unwrap_or("self"))
+        })
+        .filter_map(|l| {
+            let href = absolute(l.get("href")?.as_str()?)?;
+            // `type` is a media type, or a protocol name some catalogues write (`OGC:WMS`).
+            let kind = l.get("type").and_then(Value::as_str).map(str::trim);
+            let media = kind.filter(|t| t.contains('/')).map(str::to_owned);
+            let format = kind.filter(|t| *t != "download").map(format_of);
+            let name = l
+                .get("title")
+                .and_then(Value::as_str)
+                .map(plain_text_from_html)
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| title.clone());
+            Some((name, href, None, format, media))
+        })
+        .take(MAX_LAYER_LINKS)
+        .collect();
+    let record = Record {
+        item_id: &item_id,
+        address,
+        landing_page,
+        title,
+        notes,
+        tags: keyword_tags(keywords),
+        licence,
+        licence_text,
+        bbox,
+        issued: time("created"),
+        modified: time("updated"),
+        links,
+    };
+    let ds = record_dataset(org_id, catalogue_id, source, record, lang);
+    Ok(Some((item_id, ds)))
+}
+
+/// A record id as one path segment.
+fn utf8_percent(id: &str) -> String {
+    url::form_urlencoded::byte_serialize(id.as_bytes())
+        .collect::<String>()
+        .replace('+', "%20")
+}
+
+/// The catalogue's format label of a media type, the media type itself for one it does not name.
+fn format_of(media: &str) -> String {
+    match media.split(';').next().unwrap_or(media).trim() {
+        "text/csv" => "CSV",
+        "application/geo+json" => "GeoJSON",
+        "application/json" => "JSON",
+        "application/zip" => "ZIP",
+        "application/pdf" => "PDF",
+        "text/html" => "HTML",
+        "application/xml" | "text/xml" => "XML",
+        "application/vnd.ogc.wms_xml" => "WMS",
+        "application/x-shapefile" => "SHP",
+        "OGC:WMS" => "WMS",
+        "OGC:WFS" => "WFS",
+        other => other,
+    }
+    .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::harvested_name;

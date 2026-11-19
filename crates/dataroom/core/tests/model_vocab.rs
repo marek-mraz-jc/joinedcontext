@@ -45,6 +45,8 @@ fn enum_spellings_match_their_wire_names() {
         HarvestSourceKind::NkodSparql,
         HarvestSourceKind::CkanAction,
         HarvestSourceKind::ArcGisHub,
+        HarvestSourceKind::ArcGisRest,
+        HarvestSourceKind::OgcRecords,
     ] {
         // JSON, the Postgres `kind` column and OData rows all use as_str().
         assert_eq!(serde_json::to_value(kind).unwrap(), json!(kind.as_str()));

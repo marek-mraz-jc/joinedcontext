@@ -154,4 +154,4 @@ The most a harvest run of a source reads before it fails and changes nothing (OD
 
 Where a [`PortalSource`] takes its datasets from (ODP-10).
 
-Type: one of `"endpoints"`, `"dcat-ap"`, `"ckan-action"`, `"nkod-sparql"`, `"arcgis-hub"`
+Type: one of `"endpoints"`, `"dcat-ap"`, `"ckan-action"`, `"nkod-sparql"`, `"arcgis-hub"`, `"arcgis-rest"`, `"ogc-records"`

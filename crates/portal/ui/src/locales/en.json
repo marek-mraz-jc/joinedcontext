@@ -13293,7 +13293,9 @@
         "dcat-ap": "DCAT-AP catalogue",
         "ckan-action": "CKAN catalogue",
         "nkod-sparql": "National catalogue (SPARQL)",
-        "arcgis-hub": "ArcGIS Hub"
+        "arcgis-hub": "ArcGIS Hub",
+        "arcgis-rest": "ArcGIS REST services",
+        "ogc-records": "OGC API Records"
       },
       "field": {
         "type": "Type",
@@ -13313,7 +13315,9 @@
           "dcat-ap": "The https address of a DCAT-AP catalogue in Turtle, RDF/XML or JSON-LD, for example https://data.kosice.sk/catalog.ttl.",
           "ckan-action": "The https address of a CKAN Action API, for example https://data.gov.sk/api/3/action.",
           "nkod-sparql": "The https address of the SPARQL endpoint, for example https://data.slovensko.sk/sparql.",
-          "arcgis-hub": "The https address of an ArcGIS Hub site, for example https://opendata.bratislava.sk."
+          "arcgis-hub": "The https address of an ArcGIS Hub site, for example https://opendata.bratislava.sk.",
+          "arcgis-rest": "The https address of an ArcGIS REST services directory, a folder, or one feature or map service, for example https://sampleserver6.arcgisonline.com/arcgis/rest/services; each service becomes one dataset.",
+          "ogc-records": "The https address of an OGC API Records collection, for example https://demo.pygeoapi.io/master/collections/dutch-metadata; each record becomes one dataset."
         },
         "allowedHosts": "Hosts the run may also fetch from, separated by commas, for example files.kosice.sk; the address's own host is always allowed. Each must be in the operator's allow-list.",
         "records": "A run stops past this many records, for example 5000.",
@@ -13325,7 +13329,7 @@
         "name": "Use lower-case letters, digits and dashes.",
         "nameTaken": "The portal already has a source of this name.",
         "type": "Choose a type.",
-        "url": "Write an https address, for example https://data.kosice.sk/catalog.ttl.",
+        "url": "Write an https address, like the example under the field.",
         "allowedHosts": "Write host names only.",
         "number": "Write a whole number above 0.",
         "schedule": "Write five cron fields.",

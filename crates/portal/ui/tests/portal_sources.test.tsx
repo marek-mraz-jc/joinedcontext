@@ -108,7 +108,16 @@ describe("the sources tab", () => {
     });
     await user.click(await screen.findByRole("button", { name: "Add a source" }));
     const type = screen.getByLabelText(/^Type/) as HTMLSelectElement;
-    expect(Array.from(type.options).map((o) => o.value)).toEqual(["", "endpoints", "dcat-ap", "ckan-action", "nkod-sparql", "arcgis-hub"]);
+    expect(Array.from(type.options).map((o) => o.value)).toEqual([
+      "",
+      "endpoints",
+      "dcat-ap",
+      "ckan-action",
+      "nkod-sparql",
+      "arcgis-hub",
+      "arcgis-rest",
+      "ogc-records",
+    ]);
     fireEvent.change(type, { target: { value: "dcat-ap" } });
     await user.type(screen.getByLabelText(/^Name/), "kosice");
     await user.type(screen.getByLabelText(/^Address/), "https://data.kosice.sk/catalog.ttl");
@@ -119,6 +128,33 @@ describe("the sources tab", () => {
     await waitFor(() => expect(sent.length).toBe(2));
     expect(sent[0].url).toContain("dryRun=All");
     expect(sent[1].body.spec.sources).toEqual([KOSICE]);
+  });
+
+  it.each([
+    ["arcgis-rest", "gis", "https://sampleserver6.arcgisonline.com/arcgis/rest/services", /each service becomes one dataset/],
+    ["ogc-records", "ngr", "https://demo.pygeoapi.io/master/collections/dutch-metadata", /each record becomes one dataset/],
+  ] as const)("proposes a %s source with its own address hint", async (type, name, url, hint) => {
+    const user = userEvent.setup();
+    const sent: { url: string; body: { spec: { sources: unknown[] } } }[] = [];
+    await openTab("Sources", {}, (path, request) => {
+      if (path === "/api/v1/projects/org/portals/bbsk-mobility" && request.method === "PUT") {
+        return request.json().then((body) => {
+          sent.push({ url: request.url, body });
+          return jsonResponse(request.url.includes("dryRun") ? { valid: true, verdict: { ok: true } } : CHANGE);
+        });
+      }
+      return undefined;
+    });
+    await user.click(await screen.findByRole("button", { name: "Add a source" }));
+    fireEvent.change(screen.getByLabelText(/^Type/), { target: { value: type } });
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^Name/), name);
+    await user.type(screen.getByLabelText(/^Address/), url);
+    await user.click(screen.getByRole("button", { name: "Propose the source" }));
+    await waitFor(() => expect(sent.length).toBe(2));
+    expect(sent[1].body.spec.sources).toEqual([
+      expect.objectContaining({ name, type, url, allowedHosts: [new URL(url).hostname] }),
+    ]);
   });
 
   it("stops a plain http address before anything is sent", async () => {
