@@ -143,6 +143,8 @@ function answer(path: string): Response | undefined {
     return jsonResponse({ organization: "bbsk", languages: ["sk", "en"], maxBytes: 16384, pages: [{ page: "connector", lang: "sk", title: "Konektor", builtIn: "# Konektor" }] });
   }
   if (/^\/api\/v1\/organization\/people\/[^/]+\/readable$/.test(path)) return jsonResponse({ datasets: [], unanswered: 0 });
+  // The repositories door (T-7409): an Organization with no repository yet.
+  if (path.includes(".portal_organization_repositories(")) return jsonResponse({ value: { organization: "demo", repositories: [], maxArchiveBytes: 67108864 } });
   // The backup doors (T-7154) answer one object: an Organization that set no backup target yet.
   if (path.includes(".portal_backup_configuration_get(")) return jsonResponse({ value: { target: null, log: [] } });
   if (path.includes(".portal_backup_configuration_versions(")) return jsonResponse({ value: { versioning: "", objectLock: false, versions: [] } });

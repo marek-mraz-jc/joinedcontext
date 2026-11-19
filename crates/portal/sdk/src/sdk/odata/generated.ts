@@ -1063,6 +1063,8 @@ export interface Functions {
   portal_organization_change_manifests: { id: string };
   portal_organization_list: Record<string, never>;
   portal_organization_model_list: { search?: string };
+  portal_organization_repositories: Record<string, never>;
+  portal_organization_repository_archive: { name: string };
   portal_own_connector_activity: { id: string };
   portal_own_connector_list: Record<string, never>;
   portal_own_connector_options: Record<string, never>;
@@ -1248,6 +1250,8 @@ export const FUNCTION_BINDINGS: { readonly [N in keyof Functions]: readonly stri
   portal_organization_change_manifests: ["Organization"],
   portal_organization_list: ["Organization"],
   portal_organization_model_list: ["Organization"],
+  portal_organization_repositories: ["Organization"],
+  portal_organization_repository_archive: ["Organization"],
   portal_own_connector_activity: ["Organization"],
   portal_own_connector_list: ["Organization"],
   portal_own_connector_options: ["Organization"],

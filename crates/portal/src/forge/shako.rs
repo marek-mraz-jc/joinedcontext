@@ -546,6 +546,20 @@ struct TreeEntry {
     sha: String,
 }
 
+/// A repository as `GET R` answers it: what Administration > Repositories lists (T-7409).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RepositoryInfo {
+    pub default_branch: String,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub size_bytes: u64,
+    /// RFC 3339, when the repository last changed.
+    #[serde(default)]
+    pub updated_at: String,
+}
+
 /// One file change of a `Shako.CommitFiles` call.
 #[derive(Serialize)]
 struct FileChange {
@@ -1875,10 +1889,23 @@ impl ShakoClient {
             .map_err(|e| GitError::Transport(format!("failed to read the bundle: {e}")))
     }
 
-    /// The tree of `git_ref` as one `.tar.gz`, at most `limit` bytes: `GET
-    /// R/Shako.ArchiveLink(Ref=@r,Format=@f)` names the download, fetched from the base the
-    /// Portal dials as [`Self::bundle`] does. What a build pod builds from (AP-130).
+    /// The tree of `git_ref` as one `.tar.gz`, at most `limit` bytes. What a build pod builds
+    /// from (AP-130).
     pub async fn source_archive(&self, git_ref: &str, limit: u64) -> Result<Vec<u8>, GitError> {
+        let res = self
+            .archive_response(git_ref, Duration::from_secs(120))
+            .await?;
+        read_capped(res, limit, &format!("the archive of {git_ref}")).await
+    }
+
+    /// The forge's `.tar.gz` of `git_ref`, unread, for a caller that streams it on: `GET
+    /// R/Shako.ArchiveLink(Ref=@r,Format=@f)` names the download, fetched from the base the
+    /// Portal dials as [`Self::bundle`] does. `timeout` bounds the whole transfer.
+    pub async fn archive_response(
+        &self,
+        git_ref: &str,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, GitError> {
         #[derive(Deserialize)]
         struct Link {
             value: String,
@@ -1898,12 +1925,17 @@ impl ShakoClient {
         let full = format!("{}{api}", self.base.as_str().trim_end_matches('/'));
         let here = Url::parse(&full)
             .map_err(|e| GitError::Config(format!("invalid url '{full}': {e}")))?;
-        let res = Self::check_status(
-            self.send(self.http.get(here).timeout(Duration::from_secs(120)))
-                .await?,
-        )
-        .await?;
-        read_capped(res, limit, &format!("the archive of {git_ref}")).await
+        Self::check_status(self.send(self.http.get(here).timeout(timeout)).await?).await
+    }
+
+    /// `GET R`: the repository as the forge's `Repositories` set shows it, `None` when it does
+    /// not exist or this token may not see it.
+    pub async fn repository_info(&self) -> Result<Option<RepositoryInfo>, GitError> {
+        match self.get_json(self.repo_url(&[])?, "the repository").await {
+            Ok(info) => Ok(Some(info)),
+            Err(GitError::NotFound) => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     /// `GET R/Tags?$top=50&$skip=…`: every tag of the repository and the commit it names, all
