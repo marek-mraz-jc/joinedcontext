@@ -797,7 +797,7 @@ fn with_dashboards(
 /// logo upload's SVG check keeps jc's.
 #[cfg(feature = "portal")]
 fn with_appearance(
-    mut block: BrandingBlock,
+    block: BrandingBlock,
     look: Option<&jc_core::kinds::OrganizationAppearance>,
 ) -> BrandingBlock {
     let Some(look) = look else {
