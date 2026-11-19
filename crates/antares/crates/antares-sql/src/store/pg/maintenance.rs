@@ -179,12 +179,10 @@ pub async fn temporal_maintenance(
             .await
             .map(|_| ());
             if created.is_ok() {
-                created = sqlx::query(sqlx::AssertSqlSafe(partition_rls_sql(&partition_name(
-                    keyed, &suffix,
-                ))))
-                .execute(&mut *sp)
-                .await
-                .map(|_| ());
+                created = sqlx::query(sqlx::AssertSqlSafe(partition_rls_sql(keyed, &suffix)))
+                    .execute(&mut *sp)
+                    .await
+                    .map(|_| ());
             }
             match created {
                 Ok(()) => {
@@ -202,7 +200,7 @@ pub async fn temporal_maintenance(
             let mut adopted = Ok(());
             for stmt in adopt_default_rows_sql(keyed, &suffix, &lo, &hi)
                 .into_iter()
-                .chain([partition_rls_sql(&partition_name(keyed, &suffix))])
+                .chain([partition_rls_sql(keyed, &suffix)])
             {
                 adopted = sqlx::query(sqlx::AssertSqlSafe(stmt))
                     .execute(&mut *sp)
@@ -1290,24 +1288,19 @@ fn drop_partition_sql(name: &str) -> String {
     format!("DROP TABLE public.\"{}\"", name.replace('"', "\"\""))
 }
 
-/// The weekly partition `create_partition_sql` and `adopt_default_rows_sql`
-/// make for `suffix`.
-fn partition_name(keyed: bool, suffix: &str) -> String {
-    if keyed {
-        format!("attr_rows_{suffix}")
-    } else {
-        format!("attr_instances_{suffix}")
-    }
-}
-
-/// Row-level security on one history partition: its parent's policies,
+/// Row-level security on the weekly partition `create_partition_sql` and
+/// `adopt_default_rows_sql` make for `suffix`: its parent's policies,
 /// ENABLEd and FORCEd (`antares_partition_rls`, migration 0041, which did the
 /// same for the partitions made before it). PostgreSQL applies a parent's
 /// policies only to statements that name the parent, so a statement naming
 /// the partition itself would otherwise read and write every Tenant's rows.
 /// A partition that has them already is left alone.
-fn partition_rls_sql(table: &str) -> String {
-    format!("SELECT public.antares_partition_rls('public.{table}'::regclass)")
+fn partition_rls_sql(keyed: bool, suffix: &str) -> String {
+    if keyed {
+        format!("SELECT public.antares_partition_rls('public.attr_rows_{suffix}'::regclass)")
+    } else {
+        format!("SELECT public.antares_partition_rls('public.attr_instances_{suffix}'::regclass)")
+    }
 }
 
 /// One weekly partition, created directly under the parent: `attr_rows_long`,
@@ -1744,10 +1737,13 @@ mod tests {
     #[test]
     fn a_new_partition_gets_the_parents_policies() {
         assert_eq!(
-            partition_rls_sql(&partition_name(false, "2026w34")),
+            partition_rls_sql(false, "2026w34"),
             "SELECT public.antares_partition_rls('public.attr_instances_2026w34'::regclass)"
         );
-        assert_eq!(partition_name(true, "2026w34"), "attr_rows_2026w34");
+        assert_eq!(
+            partition_rls_sql(true, "2026w34"),
+            "SELECT public.antares_partition_rls('public.attr_rows_2026w34'::regclass)"
+        );
     }
 
     #[test]
