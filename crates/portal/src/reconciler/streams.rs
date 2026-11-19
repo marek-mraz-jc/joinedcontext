@@ -429,10 +429,11 @@ impl StreamDeployer {
     }
 
     /// One step of the run queue at `now`: what [`Self::spawn_queue`] does every few seconds.
-    /// `now` is a [`jc_time::TimestampTz`] or a `jiff::Timestamp`, so portal-dump (T-7240)
-    /// passes its own clock.
-    pub async fn tick_queue(&self, now: impl Into<jc_time::TimestampTz>) {
-        run_queue::tick(&self.queue, self, now.into()).await;
+    /// `now` is anything that converts to `SystemTime` (a [`jc_time::TimestampTz`], a
+    /// `jiff::Timestamp`, `SystemTime` itself), so portal-dump (T-7240) passes its own clock.
+    pub async fn tick_queue(&self, now: impl Into<std::time::SystemTime>) {
+        let now = jc_time::TimestampTz(jc_time::from_system_time(now.into()));
+        run_queue::tick(&self.queue, self, now).await;
     }
 
     /// Tells the run queue which pipelines have ever run and when their newest run last wrote, so

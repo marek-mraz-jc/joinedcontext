@@ -1636,7 +1636,7 @@ pub fn parse_datetime(s: &str) -> bool {
     }
     // real calendar date/time, not just digits in the right slots
     let normalized = format!("{seconds}Z");
-    chrono::DateTime::parse_from_rfc3339(&normalized).is_ok()
+    normalized.parse::<jiff::Timestamp>().is_ok()
 }
 
 /// A DateTime `parse_datetime` accepted, with a comma fraction separator

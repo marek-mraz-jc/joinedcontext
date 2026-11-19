@@ -97,7 +97,6 @@ async-trait = "0.1"
 # `antares_jsonld::client_builder`, and trust anchors come from the
 # platform store (the image carries one) widened by ANTARES_EXTRA_CA_FILE.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
-chrono = { version = "0.4", features = ["serde"] }
 # T-7233: chrono -> jiff; RFC 3339 written byte for byte as chrono did, Postgres timestamptz
 jc-time = { path = "../shared/jc-time" }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
@@ -143,7 +142,7 @@ moka = { version = "0.12", features = ["sync"] }
 sonic-rs = "0.5"
 tikv-jemallocator = "0.7"
 tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
-sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "chrono", "uuid", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "uuid", "migrate", "macros"] }
 # The JetStream change spine — official client, KV + streams in core
 # (0.50; pre-1.0 pin — upgrade in dedicated PRs)
 # Default features minus "websockets": the bus dials nats:// only, and that

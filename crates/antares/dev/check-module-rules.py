@@ -45,7 +45,7 @@ OPS = "antares-ops"
 OPS_FORBIDDEN = {"antares-store", "antares-sql", "antares-bus", "antares-notifier"}
 
 # M3: what an ngsild crate may link by default. Patterns are fnmatch globs.
-NGSILD_EXTERNAL = ("serde", "serde_json", "thiserror", "chrono", "regex", "geo*", "unicode-*", "uuid")
+NGSILD_EXTERNAL = ("serde", "serde_json", "thiserror", "jiff", "regex", "geo*", "unicode-*", "uuid")
 
 # 10.1: the table each new crate carries instead of `workspace = true`.
 LINTS = {

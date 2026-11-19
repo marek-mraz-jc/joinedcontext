@@ -154,4 +154,4 @@ sha2 = "0.10"
 jc-core = { path = "../../vendor/joinedcontext-platform/crates/jc-core", features = ["outbound"] }
 http-body-util = "0.1"
 tempfile = "3"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+jc-time = { path = "../../crates/shared/jc-time" }

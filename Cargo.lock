@@ -6987,7 +6987,6 @@ dependencies = [
  "assistant",
  "axum",
  "base64 0.22.1",
- "chrono",
  "clap",
  "context-gateway",
  "daiya-model",
@@ -7425,7 +7424,6 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64 0.23.1",
- "chrono",
  "context-gateway",
  "flate2",
  "futures-util",
@@ -8723,9 +8721,9 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 name = "ngsild-jsonld"
 version = "0.3.0"
 dependencies = [
- "chrono",
  "futures-util",
  "gloo-timers",
+ "jiff",
  "moka",
  "ngsild-model",
  "reqwest 0.13.5",
@@ -8741,7 +8739,7 @@ dependencies = [
 name = "ngsild-matcher"
 version = "0.3.0"
 dependencies = [
- "chrono",
+ "jiff",
  "ngsild-jsonld",
  "ngsild-model",
  "ngsild-ql",
@@ -12990,7 +12988,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "cfg-if",
- "chrono",
  "crc",
  "crossbeam-queue",
  "either",
@@ -13069,7 +13066,6 @@ dependencies = [
  "bitflags 2.13.2",
  "byteorder",
  "bytes",
- "chrono",
  "crc",
  "digest 0.11.3",
  "dotenvy",
@@ -13099,7 +13095,6 @@ dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",
  "byteorder",
- "chrono",
  "crc",
  "dotenvy",
  "etcetera",
@@ -13132,7 +13127,6 @@ name = "sqlx-sqlite"
 version = "0.9.0"
 dependencies = [
  "atoi",
- "chrono",
  "flume 0.12.0",
  "form_urlencoded",
  "futures-channel",

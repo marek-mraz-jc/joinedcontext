@@ -26,7 +26,7 @@ ignore = [
     # none of which this workspace builds; it sits in Cargo.lock, which
     # cargo-audit reads whole (T-3489). Drops when rstar moves to heapless 0.8.
     { id = "RUSTSEC-2023-0089", reason = "heapless 0.7 via rstar, only on targets without native atomics; never compiled here" },
-    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 unmaintained (no vulnerability, no safe upgrade): a direct dependency of 76 Cargo.toml files (timestamps, RFC 3339 wire formats, sqlx timestamptz). Owner 2026-11-18 dated ignore; remove by 2027-02-18 or when the migration task T-7233 (to jiff) lands, whichever is first" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 unmaintained (no vulnerability, no safe upgrade): no direct dependency left since T-7233..T-7256 moved to jiff; still pulled by rmcp (and schemars chrono04 through it). Owner 2026-11-18 dated ignore; remove by 2027-02-18 or when those crates drop chrono, whichever is first" },
 ]
 
 [bans]
