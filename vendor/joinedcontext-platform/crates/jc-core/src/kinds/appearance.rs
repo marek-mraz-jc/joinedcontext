@@ -64,6 +64,110 @@ pub struct OrganizationAppearance {
     /// Markdown (T-7031); a page or language left out shows the built-in text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pages: Vec<AppearancePage>,
+    /// The open data portal's typeface, one of a fixed set of system font stacks, so no font is
+    /// fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<AppearanceFont>,
+    /// The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<u8>,
+    /// The open data portal's home hero: its title and an introduction in Markdown.
+    #[serde(default, skip_serializing_if = "AppearanceHero::is_unset")]
+    pub hero: AppearanceHero,
+    /// How the open data portal lists datasets: `cards` (the default) or a compact `table`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset_list: Option<DatasetListLayout>,
+    /// Links the open data portal's header adds after its own, at most 8, each a label and an
+    /// `https://` address or a path on the portal, e.g. `{label: Mesto, url: https://mesto.sk}`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nav_links: Vec<AppearanceLink>,
+    /// Links the open data portal's footer adds after its own, under the same rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub footer_links: Vec<AppearanceLink>,
+}
+
+/// The most header or footer links an appearance adds.
+pub const MAX_APPEARANCE_LINKS: usize = 8;
+
+/// The longest hero introduction, in bytes of Markdown.
+pub const MAX_HERO_INTRO: usize = 2048;
+
+/// The largest corner radius in pixels.
+pub const MAX_APPEARANCE_RADIUS: u8 = 24;
+
+/// The least WCAG 2.1 contrast an appearance's text and link colours keep on its background
+/// (level AA for body text).
+pub const MIN_CONTRAST: f64 = 4.5;
+
+/// `spec.appearance.font`: a system font stack, never a web font (T-7410).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AppearanceFont {
+    /// The platform's interface font.
+    System,
+    /// A humanist sans serif.
+    Humanist,
+    /// A book serif.
+    Serif,
+    /// A monospace font.
+    Mono,
+}
+
+impl AppearanceFont {
+    /// The CSS font stack, fonts every platform carries or falls back from.
+    pub fn stack(self) -> &'static str {
+        match self {
+            Self::System => "system-ui, -apple-system, \"Segoe UI\", Roboto, sans-serif",
+            Self::Humanist => {
+                "Seravek, \"Gill Sans Nova\", Ubuntu, Calibri, \"DejaVu Sans\", sans-serif"
+            }
+            Self::Serif => {
+                "Charter, \"Bitstream Charter\", \"Sitka Text\", Cambria, Georgia, serif"
+            }
+            Self::Mono => "ui-monospace, \"Cascadia Code\", Menlo, Consolas, monospace",
+        }
+    }
+}
+
+/// `spec.appearance.datasetList`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DatasetListLayout {
+    /// One card per dataset with its description.
+    Cards,
+    /// One table row per dataset.
+    Table,
+}
+
+/// `spec.appearance.hero`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppearanceHero {
+    /// The home page's heading, one line, e.g. `Otvorené dáta Banskej Bystrice`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The introduction under it in Markdown of at most 2 KiB, e.g.
+    /// `Dáta mesta na **jednom mieste**.`; raw HTML shows as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intro: Option<String>,
+}
+
+impl AppearanceHero {
+    /// Whether neither member is set.
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// `spec.appearance.navLinks[]` and `footerLinks[]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AppearanceLink {
+    /// The text of the link, e.g. `Mesto`.
+    pub label: String,
+    /// An `https://` or `http://` address or a path on the portal starting `/`, e.g.
+    /// `https://www.banskabystrica.sk`.
+    pub url: String,
 }
 
 /// The most page texts an appearance carries: every page in eight languages.
@@ -186,7 +290,163 @@ impl OrganizationAppearance {
         }
         dashboards("spec.appearance.homeWidgets", &self.home_widgets)?;
         dashboards("spec.appearance.opendataWidgets", &self.opendata_widgets)?;
-        pages(&self.pages)
+        pages(&self.pages)?;
+        self.contrast()?;
+        if self.radius.is_some_and(|r| r > MAX_APPEARANCE_RADIUS) {
+            return Err(invalid("spec.appearance.radius", "0 to 24 pixels"));
+        }
+        if let Some(title) = &self.hero.title {
+            plain_text("spec.appearance.hero.title", title)?;
+        }
+        if let Some(intro) = &self.hero.intro {
+            if intro.trim().is_empty()
+                || intro.len() > MAX_HERO_INTRO
+                || intro
+                    .chars()
+                    .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+            {
+                return Err(invalid(
+                    "spec.appearance.hero.intro",
+                    "Markdown of 1 to 2048 bytes without control characters",
+                ));
+            }
+        }
+        links("spec.appearance.navLinks", &self.nav_links)?;
+        links("spec.appearance.footerLinks", &self.footer_links)
+    }
+
+    /// Refuses text or primary colour below [`MIN_CONTRAST`] on the background when the
+    /// appearance sets both of the pair; a pair with one member set is checked where it meets
+    /// the installation's colour, by the page that draws it.
+    fn contrast(&self) -> Result<()> {
+        let Some(background) = &self.colours.background else {
+            return Ok(());
+        };
+        for (field, colour) in [
+            ("spec.appearance.colours.text", &self.colours.text),
+            ("spec.appearance.colours.primary", &self.colours.primary),
+        ] {
+            let ratio = colour
+                .as_deref()
+                .and_then(|c| contrast_ratio(c, background));
+            if ratio.is_some_and(|r| r < MIN_CONTRAST) {
+                return Err(invalid(
+                    field,
+                    "a colour with a contrast of at least 4.5:1 on the background (WCAG AA)",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// `self` over `under` member by member: what `self` leaves out is `under`'s, as a
+    /// `kind: Portal`'s `spec.appearance` goes over its Organization's (T-7410).
+    pub fn over(&self, under: &Self) -> Self {
+        fn pick<T: Clone>(top: &Option<T>, below: &Option<T>) -> Option<T> {
+            top.clone().or_else(|| below.clone())
+        }
+        fn list<T: Clone>(top: &[T], below: &[T]) -> Vec<T> {
+            if top.is_empty() { below } else { top }.to_vec()
+        }
+        let (c, u) = (&self.colours, &under.colours);
+        Self {
+            instance_name: pick(&self.instance_name, &under.instance_name),
+            short_name: pick(&self.short_name, &under.short_name),
+            city: pick(&self.city, &under.city),
+            publisher: pick(&self.publisher, &under.publisher),
+            contact_email: pick(&self.contact_email, &under.contact_email),
+            license_default: pick(&self.license_default, &under.license_default),
+            colours: AppearanceColours {
+                primary: pick(&c.primary, &u.primary),
+                secondary: pick(&c.secondary, &u.secondary),
+                accent: pick(&c.accent, &u.accent),
+                background: pick(&c.background, &u.background),
+                text: pick(&c.text, &u.text),
+            },
+            logo_svg: pick(&self.logo_svg, &under.logo_svg),
+            favicon_svg: pick(&self.favicon_svg, &under.favicon_svg),
+            home_widgets: list(&self.home_widgets, &under.home_widgets),
+            opendata_widgets: list(&self.opendata_widgets, &under.opendata_widgets),
+            pages: list(&self.pages, &under.pages),
+            font: self.font.or(under.font),
+            radius: self.radius.or(under.radius),
+            hero: AppearanceHero {
+                title: pick(&self.hero.title, &under.hero.title),
+                intro: pick(&self.hero.intro, &under.hero.intro),
+            },
+            dataset_list: self.dataset_list.or(under.dataset_list),
+            nav_links: list(&self.nav_links, &under.nav_links),
+            footer_links: list(&self.footer_links, &under.footer_links),
+        }
+    }
+}
+
+/// WCAG 2.1 contrast ratio of two hex colours, 1 to 21; `None` when either is not one.
+pub fn contrast_ratio(a: &str, b: &str) -> Option<f64> {
+    fn luminance(hex: &str) -> Option<f64> {
+        if !is_hex_colour(hex) {
+            return None;
+        }
+        let hex = &hex[1..];
+        let channel = |i: usize| -> Option<f64> {
+            let v = if hex.len() == 3 {
+                u8::from_str_radix(&hex[i..=i].repeat(2), 16).ok()?
+            } else {
+                u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?
+            };
+            let s = f64::from(v) / 255.0;
+            Some(if s <= 0.03928 {
+                s / 12.92
+            } else {
+                ((s + 0.055) / 1.055).powf(2.4)
+            })
+        };
+        Some(0.2126 * channel(0)? + 0.7152 * channel(1)? + 0.0722 * channel(2)?)
+    }
+    let (la, lb) = (luminance(a)?, luminance(b)?);
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    Some((hi + 0.05) / (lo + 0.05))
+}
+
+/// Each link has a label and an address a reader may follow: `http(s)://host...` or a path on
+/// the portal, never another scheme (`javascript:`, `data:`) or a protocol-relative `//host`.
+fn links(member: &str, links: &[AppearanceLink]) -> Result<()> {
+    for (at, link) in links.iter().enumerate() {
+        let field = format!("{member}[{at}]");
+        if at >= MAX_APPEARANCE_LINKS {
+            return Err(invalid(&field, "one of at most 8 links"));
+        }
+        plain_text(&format!("{field}.label"), &link.label)?;
+        if !is_link_url(&link.url) {
+            return Err(invalid(
+                &format!("{field}.url"),
+                "an https:// address or a path starting / such as /about",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `https://host...`, `http://host...` or `/path...`, at most 512 bytes of printable ASCII
+/// without quotes, angle brackets or backslashes, so it sits in an `href` as it is.
+pub fn is_link_url(url: &str) -> bool {
+    if url.is_empty()
+        || url.len() > 512
+        || !url
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && !b"\"'<>\\`".contains(&b))
+    {
+        return false;
+    }
+    let host = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    match host {
+        Some(rest) => rest
+            .split(['/', '?', '#'])
+            .next()
+            .is_some_and(|h| !h.is_empty() && !h.contains('@')),
+        None => url.starts_with('/') && !url.starts_with("//"),
     }
 }
 
@@ -415,6 +675,116 @@ mod tests {
             json!({ "pages": [{ "page": "terms", "lang": "sk", "markdown": "x", "html": "<b>" }] })
         )
         .is_err());
+    }
+
+    /// T-7410: the theme and layout members take typed values only; a low-contrast pair, a
+    /// `javascript:` or protocol-relative link and an oversized radius are refused by name.
+    #[test]
+    fn theme_and_layout_members_refuse_what_no_page_may_draw() {
+        let fine = json!({
+            "font": "serif",
+            "radius": 12,
+            "colours": { "background": "#0f172a", "text": "#f8fafc", "primary": "#93c5fd" },
+            "hero": { "title": "Otvorené dáta", "intro": "Dáta mesta na **jednom mieste**. <script>x</script>" },
+            "datasetList": "table",
+            "navLinks": [{ "label": "Mesto", "url": "https://www.banskabystrica.sk" }],
+            "footerLinks": [{ "label": "O nás", "url": "/about#api" }],
+        });
+        assert!(checked(fine.clone()).is_ok(), "{:?}", checked(fine));
+        let link = |url: &str| json!({ "navLinks": [{ "label": "x", "url": url }] });
+        for (appearance, field) in [
+            (
+                json!({ "colours": { "background": "#ffffff", "text": "#999999" } }),
+                "spec.appearance.colours.text",
+            ),
+            (
+                json!({ "colours": { "background": "#fff", "primary": "#ffff00" } }),
+                "spec.appearance.colours.primary",
+            ),
+            (json!({ "radius": 25 }), "spec.appearance.radius"),
+            (
+                json!({ "hero": { "title": "<b>" } }),
+                "spec.appearance.hero.title",
+            ),
+            (
+                json!({ "hero": { "intro": " " } }),
+                "spec.appearance.hero.intro",
+            ),
+            (
+                link("javascript:alert(1)"),
+                "spec.appearance.navLinks[0].url",
+            ),
+            (
+                link("JavaScript:alert(1)"),
+                "spec.appearance.navLinks[0].url",
+            ),
+            (link("data:text/html,x"), "spec.appearance.navLinks[0].url"),
+            (link("//evil.example"), "spec.appearance.navLinks[0].url"),
+            (link("/\\evil.example"), "spec.appearance.navLinks[0].url"),
+            (link("https://"), "spec.appearance.navLinks[0].url"),
+            (
+                link("https://u@evil.example"),
+                "spec.appearance.navLinks[0].url",
+            ),
+            (link("/a\" onclick=\"x"), "spec.appearance.navLinks[0].url"),
+            (link("about"), "spec.appearance.navLinks[0].url"),
+            (
+                json!({ "footerLinks": [{ "label": "", "url": "/" }] }),
+                "spec.appearance.footerLinks[0].label",
+            ),
+            (
+                json!({ "footerLinks": vec![json!({ "label": "x", "url": "/" }); 9] }),
+                "spec.appearance.footerLinks[8]",
+            ),
+        ] {
+            match checked(appearance.clone()) {
+                Err(Error::Invalid { field: got, .. }) => assert_eq!(got, field, "{appearance}"),
+                other => panic!("{field}: {other:?}"),
+            }
+        }
+        for unknown in [
+            json!({ "font": "Comic Sans" }),
+            json!({ "datasetList": "grid" }),
+            json!({ "hero": { "title": "x", "css": "x" } }),
+            json!({ "navLinks": [{ "label": "x", "url": "/", "target": "_blank" }] }),
+            json!({ "css": "body{}" }),
+        ] {
+            assert!(
+                serde_json::from_value::<OrganizationAppearance>(unknown.clone()).is_err(),
+                "{unknown}"
+            );
+        }
+        let ratio = contrast_ratio("#000", "#ffffff").expect("hex");
+        assert!((ratio - 21.0).abs() < 1e-9, "{ratio}");
+    }
+
+    /// T-7410: a Portal's appearance goes over its Organization's member by member.
+    #[test]
+    fn a_portal_appearance_goes_over_the_organizations_member_by_member() {
+        let org: OrganizationAppearance = serde_json::from_value(json!({
+            "instanceName": "Mesto",
+            "colours": { "primary": "#0b5394", "text": "#111111" },
+            "font": "serif",
+            "hero": { "title": "Mesto", "intro": "Vitajte" },
+            "navLinks": [{ "label": "Mesto", "url": "/" }],
+        }))
+        .expect("parses");
+        let portal: OrganizationAppearance = serde_json::from_value(json!({
+            "colours": { "primary": "#7a1f5c" },
+            "hero": { "title": "Doprava" },
+            "datasetList": "table",
+        }))
+        .expect("parses");
+        let shown = portal.over(&org);
+        assert_eq!(shown.instance_name.as_deref(), Some("Mesto"));
+        assert_eq!(shown.colours.primary.as_deref(), Some("#7a1f5c"));
+        assert_eq!(shown.colours.text.as_deref(), Some("#111111"));
+        assert_eq!(shown.font, Some(AppearanceFont::Serif));
+        assert_eq!(shown.hero.title.as_deref(), Some("Doprava"));
+        assert_eq!(shown.hero.intro.as_deref(), Some("Vitajte"));
+        assert_eq!(shown.dataset_list, Some(DatasetListLayout::Table));
+        assert_eq!(shown.nav_links, org.nav_links);
+        assert_eq!(OrganizationAppearance::default().over(&org), org);
     }
 
     /// T-6772 (UIX-16): an appearance is validated values, each refusal naming its member.

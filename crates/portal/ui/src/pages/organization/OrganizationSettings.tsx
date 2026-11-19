@@ -51,6 +51,12 @@ interface OrganizationSpec {
     colours?: Partial<Record<"primary" | "secondary" | "accent" | "background" | "text", string>>;
     logoSvg?: string;
     faviconSvg?: string;
+    font?: "system" | "humanist" | "serif" | "mono";
+    radius?: number;
+    hero?: { title?: string; intro?: string };
+    datasetList?: "cards" | "table";
+    navLinks?: { label: string; url: string }[];
+    footerLinks?: { label: string; url: string }[];
   };
 }
 
@@ -136,6 +142,29 @@ function AppearanceSummary({ appearance }: { appearance?: OrganizationSpec["appe
         t("organization.field.appearance.faviconSvg"),
         <SvgShown svg={appearance?.faviconSvg} label={t("organization.field.appearance.faviconSvg")} />,
       )}
+      {row(
+        t("organization.field.appearance.font"),
+        appearance?.font ? t(`organization.field.appearance.fontChoice.${appearance.font}`) : installation,
+      )}
+      {row(
+        t("organization.field.appearance.radius"),
+        appearance?.radius === undefined ? installation : `${appearance.radius} px`,
+      )}
+      {row(t("organization.field.appearance.heroTitle"), appearance?.hero?.title || installation)}
+      {row(
+        t("organization.field.appearance.datasetList"),
+        appearance?.datasetList
+          ? t(`organization.field.appearance.datasetListChoice.${appearance.datasetList}`)
+          : installation,
+      )}
+      {(["navLinks", "footerLinks"] as const).map((key) => (
+        <Fragment key={key}>
+          {row(
+            t(`organization.field.appearance.${key}`),
+            appearance?.[key]?.length ? appearance[key].map((link) => link.label).join(", ") : installation,
+          )}
+        </Fragment>
+      ))}
     </dl>
   );
 }
