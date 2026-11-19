@@ -78,7 +78,7 @@ async fn jwt_bearer_assertion_cannot_name_a_person_or_be_replayed() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
     let (key, kek) = jwks_client(&store, "batch-signer", "client-secret").await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
 
     // Impersonation: the client's own key signs `sub` = the steward.
     let forged = signed(
@@ -175,7 +175,7 @@ async fn federated_assertion_must_be_minted_for_this_realm_and_client_enabled() 
         serde_json::to_vec(&json!({ "keys": [jwk] })).unwrap(),
     );
     let app = router(state, mount());
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let sa_token = |aud: &str| {
         signed(
             &k8s_key,
@@ -229,7 +229,7 @@ async fn private_key_jwt_assertion_must_name_this_server_as_audience() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
     let (key, kek) = jwks_client(&store, "pkjwt-app", "client-jwt").await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let assertion = |aud: &str, jti: &str| {
         signed(
             &key,
@@ -547,7 +547,7 @@ async fn the_password_grant_obeys_the_floor() {
         "{body}"
     );
     // The steward passes it with the authenticator's code.
-    let now = chrono::Utc::now().timestamp() as u64;
+    let now = jc_time::TimestampTz::now().as_second() as u64;
     let code = generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now).unwrap();
     let (st, body) = password_grant(
         &floor,
@@ -642,7 +642,7 @@ const ANALYST_ID: &str = "de300000-0000-4000-8000-000000000010";
 /// Plants a password-only SSO session of demo.analyst (signed in before the floor turned on)
 /// and returns its cookie.
 async fn password_only_sso(store: &dyn Store) -> String {
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     store
         .upsert_sso_session(SsoSession {
             id: "sso-before-floor".into(),
@@ -653,14 +653,14 @@ async fn password_only_sso(store: &dyn Store) -> String {
             username: "demo.analyst@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
             user_agent: String::new(),
-            start: now.timestamp_millis(),
-            last_access: now.timestamp_millis(),
-            auth_time: now.timestamp(),
+            start: now.as_millis(),
+            last_access: now.as_millis(),
+            auth_time: now.as_second(),
             acr: "pwd".into(),
             amr: vec!["pwd".into()],
             clients: std::collections::HashMap::new(),
-            idle_expires_at: now + chrono::Duration::hours(1),
-            max_expires_at: now + chrono::Duration::hours(8),
+            idle_expires_at: now + jiff::SignedDuration::from_hours(1),
+            max_expires_at: now + jiff::SignedDuration::from_hours(8),
         })
         .await
         .unwrap();
@@ -859,7 +859,7 @@ async fn wrong_otp_cannot_be_retried_without_limit_in_one_login() {
         .await;
         assert_eq!(st, StatusCode::OK);
     }
-    let now = chrono::Utc::now().timestamp() as u64;
+    let now = jc_time::TimestampTz::now().as_second() as u64;
     let right = generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now).unwrap();
     let (st, _, _) = post_form(
         &app,
@@ -909,7 +909,7 @@ async fn browser_totp_enrolment_uses_a_fresh_secret_shown_on_the_page() {
     assert_eq!(secret.len(), 32);
 
     let realm = store.get_realm("dev").await.unwrap().unwrap();
-    let now = chrono::Utc::now().timestamp() as u64;
+    let now = jc_time::TimestampTz::now().as_second() as u64;
     // The old built-in constant must not enrol anyone.
     let constant = generate_totp_code(
         "enrol-seed-secret-256",
@@ -993,7 +993,7 @@ async fn public_client_cannot_run_token_exchange() {
         .insert("standard.token.exchange.enabled".into(), "true".into());
     store.upsert_client(ui).await.unwrap();
     let keys = store.list_signing_keys("dev").await.unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let subject = realm_token(
         &store,
         &keys,
@@ -1027,7 +1027,7 @@ async fn userinfo_refuses_tokens_of_an_ended_session_or_revoked() {
     let (state, store, _) = setup_dev_realm_state().await;
     let app = router(state, mount());
     let keys = store.list_signing_keys("dev").await.unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let ask = |token: String| {
         let app = app.clone();
         async move {
@@ -1063,7 +1063,7 @@ async fn userinfo_refuses_tokens_of_an_ended_session_or_revoked() {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex("ui-revoked"),
             realm_id: "dev".into(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(5),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_mins(5),
         })
         .await
         .unwrap();

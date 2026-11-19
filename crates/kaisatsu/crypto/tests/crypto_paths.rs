@@ -5,8 +5,9 @@
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::engine::{Engine, general_purpose::STANDARD as B64, general_purpose::URL_SAFE_NO_PAD};
-use chrono::{Duration, Utc};
 use hmac::Hmac;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{CredentialRecord, KaisatsuError, SigningKeyRecord};
 use kaisatsu_crypto::*;
 use serde_json::{Value, json};
@@ -14,7 +15,7 @@ use sha1::Sha1;
 use sha2::Sha512;
 
 fn claims() -> Value {
-    json!({ "iss": "https://idm.example.test/realms/dev", "sub": "u1", "exp": Utc::now().timestamp() + 300 })
+    json!({ "iss": "https://idm.example.test/realms/dev", "sub": "u1", "exp": TimestampTz::now().as_second() + 300 })
 }
 
 #[test]
@@ -86,9 +87,9 @@ fn jwks_publishes_live_keys_only_and_rotation_stages_keys() {
     let mut retired = KeyManager::generate_eddsa("dev", &kek, 80, "RETIRED").unwrap();
     retired.kid = "retired".into();
     let mut expired = KeyManager::generate_es256("dev", &kek, 90, "PASSIVE").unwrap();
-    expired.expires_at = Some(Utc::now() - Duration::seconds(1));
+    expired.expires_at = Some(TimestampTz::now() - SignedDuration::from_secs(1));
     let mut later = KeyManager::generate_es256("dev", &kek, 90, "PASSIVE").unwrap();
-    later.expires_at = Some(Utc::now() + Duration::hours(1));
+    later.expires_at = Some(TimestampTz::now() + SignedDuration::from_hours(1));
     let mut broken = active.clone();
     broken.kid = "broken".into();
     broken.public_jwk_json = "{".into();
@@ -104,7 +105,7 @@ fn jwks_publishes_live_keys_only_and_rotation_stages_keys() {
         let staged = KeyManager::rotate("dev", &kek, &mut existing, alg, 60, false).unwrap();
         assert_eq!(staged.algorithm, alg);
         assert_eq!(staged.status, "PASSIVE");
-        assert!(staged.activate_at.unwrap() >= Utc::now() + Duration::seconds(290));
+        assert!(staged.activate_at.unwrap() >= TimestampTz::now() + SignedDuration::from_secs(290));
         assert!(existing.iter().all(|k| k.status == "ACTIVE"));
         let now = KeyManager::rotate("dev", &kek, &mut existing, alg, 60, true).unwrap();
         assert_eq!(now.status, "ACTIVE");
@@ -217,7 +218,7 @@ fn verification_names_every_refusal() {
         &ed,
         &kek,
         None,
-        &json!({"iss":"https://evil.example","exp": Utc::now().timestamp() + 60}),
+        &json!({"iss":"https://evil.example","exp": TimestampTz::now().as_second() + 60}),
     )
     .unwrap();
     assert!(refuse(&foreign, &keys).contains("validation failed"));
@@ -225,7 +226,7 @@ fn verification_names_every_refusal() {
         &rs,
         &kek,
         None,
-        &json!({"iss":"https://idm.example.test/realms/dev","exp": Utc::now().timestamp() - 120}),
+        &json!({"iss":"https://idm.example.test/realms/dev","exp": TimestampTz::now().as_second() - 120}),
     )
     .unwrap();
     assert!(refuse(&expired, &keys).contains("validation failed"));
@@ -235,11 +236,11 @@ fn verification_names_every_refusal() {
         &es,
         &kek,
         None,
-        &json!({"sub":"u1","aud":"portal-api","exp": Utc::now().timestamp() + 60}),
+        &json!({"sub":"u1","aud":"portal-api","exp": TimestampTz::now().as_second() + 60}),
     )
     .unwrap();
     assert!(refuse(&no_iss, &keys).contains("validation failed"));
-    let with_aud = sign_jwt(&es, &kek, None, &json!({"iss":"https://idm.example.test/realms/dev","aud":["portal-api","x"],"exp": Utc::now().timestamp() + 60})).unwrap();
+    let with_aud = sign_jwt(&es, &kek, None, &json!({"iss":"https://idm.example.test/realms/dev","aud":["portal-api","x"],"exp": TimestampTz::now().as_second() + 60})).unwrap();
     verify_jwt::<Value>(
         &with_aud,
         &keys,

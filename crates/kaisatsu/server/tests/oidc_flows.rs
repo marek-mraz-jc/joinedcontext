@@ -772,7 +772,7 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         .await
         .unwrap()
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let hint = sign_jwt(
         &key,
         &kek,
@@ -802,7 +802,7 @@ async fn logout_accepts_an_expired_id_token_hint_and_refuses_an_access_token() {
         .into_iter()
         .find(|k| k.status == "ACTIVE")
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     claims["typ"] = json!("Bearer");
     let access = sign_jwt(&key, &kek, Some("JWT"), &claims).unwrap();
     let (st, _, _) = get(
@@ -836,7 +836,7 @@ async fn admin_token(store: &MemoryStore, kek: &Kek, roles: Value, extra: Value)
         .into_iter()
         .find(|k| k.status == "ACTIVE")
         .unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let mut claims = json!({ "iss": "https://idm.dev.example.test/realms/dev", "sub": "admin-1",
         "azp": "admin-cli", "typ": "Bearer", "iat": now, "exp": now + 600, "realm_access": { "roles": roles } });
     for (k, v) in extra.as_object().unwrap() {
@@ -855,7 +855,7 @@ async fn every_entity_set_reads_the_rows_a_login_leaves() {
         .await
         .unwrap()
         .unwrap();
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     store
         .upsert_consent(ConsentRecord {
             id: "consent-1".into(),
@@ -879,8 +879,8 @@ async fn every_entity_set_reads_the_rows_a_login_leaves() {
             scopes: vec!["offline_access".into()],
             created_at: now,
             last_access: now,
-            idle_expires_at: now + chrono::Duration::days(1),
-            max_expires_at: now + chrono::Duration::days(2),
+            idle_expires_at: now + jiff::SignedDuration::from_hours(24),
+            max_expires_at: now + jiff::SignedDuration::from_hours(24 * 2),
         })
         .await
         .unwrap();

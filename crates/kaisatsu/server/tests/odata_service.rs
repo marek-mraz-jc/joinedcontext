@@ -39,7 +39,7 @@ impl Api {
     async fn token(&self, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys("dev").await.unwrap();
         let key = keys.iter().find(|k| k.status == "ACTIVE").unwrap();
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut claims = json!({ "iss": ISSUER, "sub": sub, "azp": "admin-cli", "typ": "Bearer",
                                  "iat": now, "exp": now + 600 });
         if let (Some(c), Some(e)) = (claims.as_object_mut(), extra.as_object()) {
@@ -564,7 +564,7 @@ async fn self_service_actions_and_honest_not_implemented() {
         .to_string(),
         ..Default::default()
     };
-    let now = chrono::Utc::now().timestamp() as u64;
+    let now = jc_time::TimestampTz::now().as_second() as u64;
     let code = generate_totp_code_for_credential(&cred, now).unwrap();
     let (st, _, _, _) = api
         .call(
@@ -694,7 +694,7 @@ async fn self_service_actions_and_honest_not_implemented() {
                 attestation_type: "none".into(),
                 rp_id: "idm.dev.example.test".into(),
                 user_label: None,
-                created_at: chrono::Utc::now(),
+                created_at: jc_time::TimestampTz::now(),
                 last_used_at: None,
             })
             .await

@@ -3,7 +3,8 @@
 //! through the request role, the boot check, encryption at rest, races and LISTEN/NOTIFY.
 //! Every test prints `SKIP` and returns without `KAISATSU_TEST_DATABASE_URL`.
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::*;
 use kaisatsu_crypto::Kek;
 use kaisatsu_store_pg::{PgStore, PgStoreConfig, read_password_file, verify_boot_rls};
@@ -194,7 +195,7 @@ async fn data_survives_a_new_store_instance_and_secrets_stay_encrypted() {
         es,
         &kek,
         None,
-        &serde_json::json!({"sub": "x", "exp": Utc::now().timestamp() + 60}),
+        &serde_json::json!({"sub": "x", "exp": TimestampTz::now().as_second() + 60}),
     )
     .expect("a persisted key still signs");
     assert!(!token.is_empty());
@@ -690,7 +691,7 @@ async fn concurrent_code_redemption_has_exactly_one_winner() {
         })
         .await
         .expect("realm");
-    let now = Utc::now();
+    let now = TimestampTz::now();
     store
         .put_auth_code(AuthorizationCodeRecord {
             code_hash: "race".into(),
@@ -711,7 +712,7 @@ async fn concurrent_code_redemption_has_exactly_one_winner() {
             auth_time: 1,
             consumed: false,
             created_at: now,
-            expires_at: now + Duration::seconds(60),
+            expires_at: now + SignedDuration::from_secs(60),
         })
         .await
         .expect("code");
@@ -809,10 +810,10 @@ async fn sweeper_and_change_notifications() {
     assert!(seen, "a NOTIFY reaches the listener");
     listener.abort();
 
-    let now = Utc::now();
+    let now = TimestampTz::now();
     for (id, at) in [
-        ("old", now - Duration::minutes(1)),
-        ("new", now + Duration::minutes(5)),
+        ("old", now - SignedDuration::from_mins(1)),
+        ("new", now + SignedDuration::from_mins(5)),
     ] {
         store
             .mark_token_revoked(RevokedTokenRecord {

@@ -8,8 +8,8 @@
 use crate::compat::{
     AdminState, check_decision, ensure_may_map_client_roles, merge_user_update, record_admin_write,
 };
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::*;
 use kaisatsu_oidc::dispatch_backchannel_logout;
 use odata_table::QueryOptions;
@@ -267,7 +267,7 @@ pub async fn execute(
             user.client_roles.clear();
             user.groups.clear();
             user.service_account_client_id = None;
-            user.created_timestamp = Some(Utc::now().timestamp_millis());
+            user.created_timestamp = Some(TimestampTz::now().as_millis());
             check_decision(authz.check(ctx, Action::Create, &person_target(ctx, &user)))?;
             let created = store.create_user(user).await?;
             record_admin_write(
@@ -442,7 +442,7 @@ pub async fn execute(
                     user_id: user.id.clone(),
                     credential_type: "password".into(),
                     user_label: Some("Password".into()),
-                    created_date: Utc::now().timestamp_millis(),
+                    created_date: TimestampTz::now().as_millis(),
                     secret_data: phc,
                     credential_data: String::new(),
                     temporary,
@@ -526,8 +526,8 @@ pub async fn execute(
                 status: "pending".into(),
                 attempts: 0,
                 last_error: None,
-                next_attempt_at: Utc::now(),
-                created_at: Utc::now(),
+                next_attempt_at: TimestampTz::now(),
+                created_at: TimestampTz::now(),
                 sent_at: None,
             };
             // K9, K10: Write the updated user and the outbox row in the same transaction.
@@ -728,7 +728,7 @@ pub async fn execute(
                     user_id: user.id.clone(),
                     credential_type: "recovery-authn-codes".into(),
                     user_label: Some("Recovery codes".into()),
-                    created_date: Utc::now().timestamp_millis(),
+                    created_date: TimestampTz::now().as_millis(),
                     secret_data: json!({ "hashes": hashes }).to_string(),
                     credential_data: json!({ "remaining": plain.len() }).to_string(),
                     temporary: false,
@@ -774,12 +774,12 @@ pub async fn execute(
                 user_id: user.id.clone(),
                 credential_type: "otp".into(),
                 user_label: Some("Authenticator".into()),
-                created_date: Utc::now().timestamp_millis(),
+                created_date: TimestampTz::now().as_millis(),
                 secret_data: json!({ "value": secret }).to_string(),
                 credential_data: meta.to_string(),
                 temporary: false,
             };
-            let now = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
+            let now = u64::try_from(TimestampTz::now().as_second()).unwrap_or_default();
             if kaisatsu_crypto::verify_totp_code(
                 &cred,
                 code,
@@ -812,7 +812,7 @@ pub async fn execute(
                     &state.oidc.kek,
                     realm,
                     &user.id,
-                    Utc::now().timestamp(),
+                    TimestampTz::now().as_second(),
                 );
                 let rp_id = if !realm_cfg
                     .web_authn_policy_passwordless_rp_id
@@ -846,7 +846,7 @@ pub async fn execute(
                 realm,
                 &user.id,
                 challenge,
-                Utc::now().timestamp(),
+                TimestampTz::now().as_second(),
             ) {
                 return Err(KaisatsuError::BadRequest(
                     "unknown or expired WebAuthn challenge".into(),
@@ -860,7 +860,7 @@ pub async fn execute(
                         user.id, challenge
                     )),
                     realm_id: realm.to_owned(),
-                    expires_at: Utc::now() + chrono::Duration::minutes(15),
+                    expires_at: TimestampTz::now() + jiff::SignedDuration::from_mins(15),
                 })
                 .await
                 .map_err(|_| KaisatsuError::BadRequest("WebAuthn challenge already used".into()))?;
@@ -945,7 +945,7 @@ pub async fn execute(
                 user_label: str_param(params, "label")
                     .map(str::to_owned)
                     .or_else(|| Some("Passkey".into())),
-                created_at: Utc::now(),
+                created_at: TimestampTz::now(),
                 last_used_at: None,
             };
             let inserted = store.insert_webauthn_credential(rec).await?;

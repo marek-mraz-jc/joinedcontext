@@ -3,7 +3,8 @@
 //! challenge without an expiry or past it, a TXT answer that does not match, cluster-internal
 //! names, and the real resolver on a name that cannot exist (RFC 6761 `.invalid`).
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_admin::domain::{
     CHALLENGE_PREFIX, request_domain_verification, validate_verifiable_domain,
     verify_organization_domain,
@@ -81,7 +82,7 @@ async fn verify_refuses_missing_expired_and_mismatched_challenges() {
     assert!(message(err).contains("no expiry"));
 
     // An expired challenge.
-    d.challenge_expires_at = Some(Utc::now() - Duration::minutes(1));
+    d.challenge_expires_at = Some(TimestampTz::now() - SignedDuration::from_mins(1));
     let store = store_with(d.clone()).await;
     let err = verify_organization_domain(&store, &resolver, "dev", None, "dom-hel")
         .await

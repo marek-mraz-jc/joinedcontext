@@ -42,7 +42,7 @@ struct Upstream {
 
 impl Upstream {
     fn claims(&self, sub: &str, email: Option<&str>, verified: bool) {
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut c = json!({ "iss": self.issuer, "sub": sub, "aud": CLIENT, "nonce": "n-1",
             "email_verified": verified, "iat": now, "exp": now + 300 });
         if let Some(e) = email {

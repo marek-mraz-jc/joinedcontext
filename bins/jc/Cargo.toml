@@ -23,6 +23,7 @@ shako = [
   "dep:shako-store-pg",
 ]
 kaisatsu = [
+  "dep:jc-time",
   "dep:kaisatsu-server",
   "dep:kaisatsu-core",
   "dep:kaisatsu-crypto",

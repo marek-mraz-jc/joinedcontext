@@ -10,8 +10,9 @@
 //!   `localhost`), compares the hashed TXT values in constant time (`subtle`), and sets
 //!   `verified = true`.
 
-use chrono::{Duration, Utc};
 use futures_core::future::BoxFuture;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{KaisatsuError, Organization, Result, Store};
 use kaisatsu_crypto::{constant_time_str_eq, random_handle_256, sha256_hex};
 use parking_lot::RwLock;
@@ -144,7 +145,7 @@ pub async fn request_domain_verification(
     let (mut org, idx) = find_visible_domain(store, realm_id, allowed_orgs, domain_key).await?;
     let clean_domain = validate_verifiable_domain(&org.domains[idx].name)?;
     let txt_value = format!("{TXT_VALUE_PREFIX}{}", random_handle_256());
-    let expires_at = Utc::now() + Duration::hours(CHALLENGE_TTL_HOURS);
+    let expires_at = TimestampTz::now() + SignedDuration::from_hours(CHALLENGE_TTL_HOURS);
 
     org.domains[idx].challenge_hash = Some(sha256_hex(&txt_value));
     org.domains[idx].challenge_expires_at = Some(expires_at);
@@ -186,7 +187,7 @@ pub async fn verify_organization_domain(
     let expires_at = dom
         .challenge_expires_at
         .ok_or_else(|| KaisatsuError::BadRequest("verification challenge has no expiry".into()))?;
-    if expires_at <= Utc::now() {
+    if expires_at <= TimestampTz::now() {
         return Err(KaisatsuError::BadRequest(
             "domain verification challenge has expired".into(),
         ));
