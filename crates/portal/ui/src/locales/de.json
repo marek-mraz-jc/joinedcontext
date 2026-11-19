@@ -9591,7 +9591,20 @@
       "hint": "Haken Sie die Werte an, die ein Datensatz haben muss. Zwei Werte eines Filters bedeuten einen oder den anderen, z. B. zwei Herausgeber.",
       "open": "{count, plural, =0 {Filter} other {Filter (#)}}",
       "close": "Filter schließen",
-      "show": "{count, plural, =0 {Kein Datensatz} one {# Datensatz anzeigen} other {# Datensätze anzeigen}}"
+      "show": "{count, plural, =0 {Kein Datensatz} one {# Datensatz anzeigen} other {# Datensätze anzeigen}}",
+      "chosen": "Gewählte Filter",
+      "remove": "Filter entfernen {facet}: {value}",
+      "clearAll": "Alle entfernen",
+      "clear": "Zurücksetzen",
+      "noneChosen": "Noch ist kein Filter angehakt.",
+      "everywhere": "Jeder angezeigte Datensatz hat diese Werte, dieser Filter schränkt also gerade nichts ein.",
+      "find": {
+        "label": "Wert suchen: {facet}",
+        "placeholder": "Tippen zum Eingrenzen, z. B. {example}"
+      },
+      "noMatch": "Kein Wert passt.",
+      "all": "Alle {count} anzeigen",
+      "fewer": "Weniger anzeigen"
     },
     "results": {
       "label": "Datensätze",

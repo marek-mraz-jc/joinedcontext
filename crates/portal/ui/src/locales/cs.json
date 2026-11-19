@@ -9591,7 +9591,20 @@
       "hint": "Zaškrtněte hodnoty, které musí dataset mít. Dvě hodnoty jednoho filtru znamenají jednu nebo druhou, např. dva vydavatelé.",
       "open": "{count, plural, =0 {Filtry} other {Filtry (#)}}",
       "close": "Zavřít filtry",
-      "show": "{count, plural, =0 {Žádný dataset} one {Zobrazit # dataset} few {Zobrazit # datasety} other {Zobrazit # datasetů}}"
+      "show": "{count, plural, =0 {Žádný dataset} one {Zobrazit # dataset} few {Zobrazit # datasety} other {Zobrazit # datasetů}}",
+      "chosen": "Zvolené filtry",
+      "remove": "Odebrat filtr {facet}: {value}",
+      "clearAll": "Zrušit vše",
+      "clear": "Zrušit",
+      "noneChosen": "Zatím není zaškrtnutý žádný filtr.",
+      "everywhere": "Každá zobrazená datová sada má tyto hodnoty, takže tento filtr teď nic nezužuje.",
+      "find": {
+        "label": "Najít hodnotu: {facet}",
+        "placeholder": "Pište pro zúžení, např. {example}"
+      },
+      "noMatch": "Žádná hodnota neodpovídá.",
+      "all": "Zobrazit všech {count}",
+      "fewer": "Zobrazit méně"
     },
     "results": {
       "label": "Datové sady",
