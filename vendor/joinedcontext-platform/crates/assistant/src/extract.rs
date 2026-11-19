@@ -839,17 +839,15 @@ mod tests {
         assert_eq!(pieces("€", 1), vec!["€"]);
     }
 
-    /// T-7290: what the chunker keeps whole (one long line of a table) is stored in pieces the
-    /// embedder takes, so no batch of the project is refused for size.
+    /// T-7290: the chunker prepends the headings above a passage to it, so a long heading (a
+    /// page whose whole text is one `<h1>`) makes every passage longer than the embedder's cap
+    /// (13 340 bytes here without the split); each is stored in pieces within it.
     #[tokio::test]
     async fn an_extracted_page_has_no_passage_over_the_byte_cap() {
-        let row = "<tr><td>Žilina – Námestie Andreja Hlinku, zastávka č. ".to_owned();
-        let rows: String = (0..400)
-            .map(|n| format!("{row}{n}</td><td>ľšč</td></tr>"))
-            .collect();
+        let heading = "Žilinská ľadová plocha je otvorená denne a ".repeat(250);
         let html = format!(
-            "<html><body><h1>Zastávky</h1><table>{rows}</table><p>{}</p></body></html>",
-            "Dlhý odsek bez bodky ".repeat(1_200)
+            "<html><body><h1>{heading}</h1><p>{}</p></body></html>",
+            "Veta o meste Žilina a jeho štadióne. ".repeat(60)
         );
         let extracted = extract(html.as_bytes(), "text/html", Some("sk"), 10)
             .await
