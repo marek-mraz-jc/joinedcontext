@@ -8,8 +8,8 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
 
     cluster = "jc-prod"              # the deployment's name, in every line and incident
     kubeconfig = "/workspace/.secrets/kubeconfig-jc-prod.yaml"
-    namespace = "jc"                 # jc's namespace; jc.toml is read from its pod
-    jc_workload = "deploy/jc"        # default
+    namespace = "jc"                 # jc's namespace
+    jc_configmap = "jc"              # default; the ConfigMap jc mounts at /etc/jc (key jc.toml)
     pg_namespace = "postgres"        # the shared CNPG cluster's namespace
     pg_cluster = "postgres-cluster"  # default
     edge = "203.0.113.10"            # the edge's address
@@ -21,8 +21,8 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
     app_hosts = []                   # ORG=HOST, optional
 
 Each run:
-1. Snapshot, read-only: jc.toml from jc's pod, then one query each on the Portal's and the
-   assistant's databases on the CNPG primary, inside SET default_transaction_read_only (the
+1. Snapshot, read-only: jc.toml from the ConfigMap jc's pod mounts (the jc image has no `cat`),
+   then one query each on the Portal's and the assistant's databases on the CNPG primary, inside SET default_transaction_read_only (the
    Organizations, their served hosts and catalogue; each knowledge source's root, last crawl and
    embedder refusals). Counts and addresses only: no passage text, no person.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
@@ -74,10 +74,10 @@ def load(path: Path) -> dict:
     cfg = tomllib.loads(path.read_text())
     if missing := [k for k in REQUIRED if not cfg.get(k)]:
         raise SystemExit(f"{path}: missing {', '.join(missing)}")
-    for k in ("cluster", "owner", "namespace", "pg_namespace"):
+    cfg.setdefault("jc_configmap", "jc")
+    for k in ("cluster", "owner", "namespace", "pg_namespace", "jc_configmap"):
         if not NAME.fullmatch(str(cfg[k])):
             raise SystemExit(f"{path}: {k} {cfg[k]!r} is not a lower-case name")
-    cfg.setdefault("jc_workload", "deploy/jc")
     cfg.setdefault("pg_cluster", "postgres-cluster")
     return cfg
 
@@ -102,7 +102,10 @@ def query(cfg: dict, pod: str, db: str, sql: str) -> dict:
 def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
     """(jc.toml, snapshot.json) of the cluster, written into the run directory."""
     toml = run / "jc.toml"
-    toml.write_text(kubectl(cfg, "-n", cfg["namespace"], "exec", cfg["jc_workload"], "--", "cat", "/etc/jc/jc.toml"))
+    text = kubectl(cfg, "-n", cfg["namespace"], "get", "configmap", cfg["jc_configmap"], "-o", r"jsonpath={.data.jc\.toml}")
+    if not text.strip():
+        raise RuntimeError(f"configmap {cfg['jc_configmap']} in {cfg['namespace']} has no jc.toml")
+    toml.write_text(text)
     pod = kubectl(cfg, "-n", cfg["pg_namespace"], "get", "pod", "-o", "name", "-l",
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_assistant", ASSISTANT_SQL)}
