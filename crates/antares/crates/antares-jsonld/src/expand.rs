@@ -1634,9 +1634,10 @@ pub fn parse_datetime(s: &str) -> bool {
             return false;
         }
     }
-    // real calendar date/time, not just digits in the right slots
-    let normalized = format!("{seconds}Z");
-    normalized.parse::<jiff::Timestamp>().is_ok()
+    // real calendar date/time, not just digits in the right slots; civil, as
+    // the instant is UTC by the Z, and jiff's Timestamp stops at
+    // 9999-12-30T22:00Z while chrono (and Postgres) took up to 9999-12-31
+    seconds.parse::<jiff::civil::DateTime>().is_ok()
 }
 
 /// A DateTime `parse_datetime` accepted, with a comma fraction separator
@@ -2479,6 +2480,15 @@ mod tests {
             "2021 is not a leap year"
         );
         assert!(!parse_datetime("2020-09-09T25:00:00Z"), "hour 25");
+        assert!(
+            parse_datetime("9999-12-31T23:59:59Z"),
+            "the last second chrono accepted (temporal endTimeAt sentinel)"
+        );
+        assert!(parse_datetime("9999-12-31T00:00:00.999999Z"));
+        assert!(
+            parse_datetime("2016-12-31T23:59:60Z"),
+            "a leap second, as chrono and Postgres accept it"
+        );
     }
 
     /// 4.7.1/4.7.2/4.7.3 Geospatial Properties: location & co. must be
