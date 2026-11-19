@@ -1804,9 +1804,26 @@ pub fn keeps_an_administrator_after(
         .map(|env| (env.metadata.name, env.spec))
         .collect();
     let now = TimestampTz::now();
-    let installation = installation_scope(mirror);
-    let before = administrators(&roles, &bindings, &groups, installation.as_ref(), now);
-    if before.is_empty() {
+    // Each Organization keeps its own administrator (T-7403): with several, the installation's
+    // and every other one is judged alone, so no Organization's last admin goes, whoever holds
+    // the installation. With one, any binding at organization scope counts, as before.
+    let scopes: Vec<Option<Option<String>>> = if several_organizations(mirror) {
+        organizations(mirror)
+            .into_iter()
+            .map(|(name, _)| Some(Some(name)))
+            .collect()
+    } else {
+        vec![None]
+    };
+    let held: Vec<(Option<Option<String>>, Vec<String>)> = scopes
+        .into_iter()
+        .map(|scope| {
+            let before = administrators(&roles, &bindings, &groups, scope.as_ref(), now);
+            (scope, before)
+        })
+        .filter(|(_, before)| !before.is_empty())
+        .collect();
+    if held.is_empty() {
         return Ok(());
     }
     let mut touched = false;
@@ -1854,14 +1871,22 @@ pub fn keeps_an_administrator_after(
             None => table.remove(name),
         };
     }
-    if touched && administrators(&roles, &bindings, &groups, installation.as_ref(), now).is_empty()
-    {
-        return Err(ApiError::Conflict(format!(
-            "this change would leave the organization without an administrator: after it, no \
-             binding at organization scope grants approve and delete on RoleBinding (today: {}). \
-             Bind another person to such a role first, then make this change (PF-03)",
-            before.join(", ")
-        )));
+    if !touched {
+        return Ok(());
+    }
+    for (scope, before) in held {
+        if administrators(&roles, &bindings, &groups, scope.as_ref(), now).is_empty() {
+            let which = match scope.flatten() {
+                Some(name) => format!("the Organization {name}"),
+                None => "the organization".to_owned(),
+            };
+            return Err(ApiError::Conflict(format!(
+                "this change would leave {which} without an administrator: after it, no \
+                 binding at organization scope grants approve and delete on RoleBinding (today: \
+                 {}). Bind another person to such a role first, then make this change (PF-03)",
+                before.join(", ")
+            )));
+        }
     }
     Ok(())
 }
@@ -1968,6 +1993,22 @@ fn administrators(
         .collect()
 }
 
+/// IDN-06: a person who writes or removes a `RoleBinding` that names them, directly or through a
+/// group they hold, changes their own access, so the session proves a second factor first
+/// (403 `second-factor-required` with the step-up login), as at every decision door (T-7403).
+pub fn own_binding_needs_second_factor(
+    state: &AppState,
+    identity: &Identity,
+    spec: Option<&Value>,
+) -> Result<(), ApiError> {
+    match spec {
+        Some(spec) if names_caller(identity, spec) => {
+            crate::auth::session::require_second_factor(identity, &state.config)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Nobody grants above their own rights (PF-52, AG-77): every verb on every kind a proposed
 /// `Role` (on the organization), `RoleBinding` (on its scope) or `ServiceAccount` (through each of
 /// its roles the organization defines, on that role's scope) would grant must be one `identity`
@@ -1989,6 +2030,22 @@ pub fn within_own_rights(
     subjects_name_a_group(mirror, manifest)?;
     replaces_only_own_settings(state, identity, manifest, who)?;
     keeps_an_administrator(mirror, AccessChange::Write(manifest))?;
+    if manifest.get("kind").and_then(Value::as_str) == Some("RoleBinding") {
+        let text = |path: &str| manifest.pointer(path).and_then(Value::as_str);
+        let replaced = before
+            .and_then(|before| before.get("spec").cloned())
+            .or_else(|| {
+                mirror
+                    .get(
+                        text("/metadata/namespace").unwrap_or(ORG_NAMESPACE),
+                        "RoleBinding",
+                        text("/metadata/name").unwrap_or_default(),
+                    )
+                    .map(|env| env.spec)
+            });
+        own_binding_needs_second_factor(state, identity, manifest.get("spec"))?;
+        own_binding_needs_second_factor(state, identity, replaced.as_ref())?;
+    }
     let spec = manifest.get("spec").cloned().unwrap_or(Value::Null);
     let unreadable = |e: serde_json::Error| ApiError::BadRequest(format!("spec: {e}"));
     let no_scope = || {

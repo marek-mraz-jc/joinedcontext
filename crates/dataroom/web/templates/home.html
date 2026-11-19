@@ -25,6 +25,7 @@
     --jc-text: {{ chrome.branding.colours.text }};
     --jc-font-heading: {{ chrome.branding.fonts.heading }};
     --jc-font-body: {{ chrome.branding.fonts.body }};
+    {{ chrome.branding.layout.radius_css() }}
   }
 </style>
 <link rel="stylesheet" href="{{ chrome.mount_prefix }}/jc-theme.css">
@@ -56,7 +57,7 @@
       </hgroup>
       <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
         <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>{% for (href, label) in chrome.branding.layout.nav_links %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
         </ul>
         <form class="d-flex site-search" action="{{ chrome.lang_prefix }}/dataset/" method="get">
           <label class="d-none" for="field-sitewide-search">{{ labels.search_datasets_placeholder }}</label>
@@ -74,8 +75,8 @@
   <div role="main">
     <section class="jc-hero" aria-labelledby="jc-hero-title">
       <div class="container">
-        <h1 id="jc-hero-title">{{ chrome.site_title }}</h1>
-        <p class="jc-hero-lead">{{ chrome.site_tagline }}</p>
+        {% match chrome.branding.layout.hero_title %}{% when Some with (hero_title) %}<h1 id="jc-hero-title">{{ hero_title }}</h1>{% when None %}<h1 id="jc-hero-title">{{ chrome.site_title }}</h1>{% endmatch %}
+        {% match chrome.branding.layout.hero_intro_html %}{% when Some with (intro) %}<div class="jc-hero-lead">{{ intro|safe }}</div>{% when None %}<p class="jc-hero-lead">{{ chrome.site_tagline }}</p>{% endmatch %}
         <form class="jc-hero-search" role="search" method="get" action="{{ chrome.lang_prefix }}/dataset/">
           <label for="jc-hero-q">{{ labels.hero_search }}</label>
           <div class="jc-hero-field">

@@ -176,18 +176,23 @@ export function NewProjectDialog({
   );
 }
 
+/** Whether this caller may open a project, and the organization's reason when not (PF-65). */
+export function useProjectCreation(project: string): { allowed: boolean; reason: string } {
+  const { t } = useTranslation();
+  const creation = usePermissions(project).data?.projects?.creation;
+  return { allowed: creation?.allowed !== false, reason: creation?.reason ?? t("projects.notAllowed") };
+}
+
 /**
- * The sidebar's "New project" control. Who may open a project is the organization's own setting,
+ * The "New project" control of the Projects and Organization pages (the sidebar's sits in the
+ * project switcher, T-7404). Who may open a project is the organization's own setting,
  * which `permissions/me` answers, and the refusal is shown on the control rather than by hiding
  * it (UI-44, PF-65). The API is what refuses; this only says so first.
  */
-export function NewProjectButton({ project, inSidebar = false }: { project: string; inSidebar?: boolean }): JSX.Element {
+export function NewProjectButton({ project }: { project: string }): JSX.Element {
   const { t } = useTranslation();
-  const permissions = usePermissions(project);
   const [writing, setWriting] = useState(false);
-  const creation = permissions.data?.projects?.creation;
-  const allowed = creation?.allowed !== false;
-  const reason = creation?.reason ?? t("projects.notAllowed");
+  const { allowed, reason } = useProjectCreation(project);
   return (
     <>
       {/* The reason goes to the button, which makes itself `aria-disabled` and keeps its place
@@ -197,12 +202,10 @@ export function NewProjectButton({ project, inSidebar = false }: { project: stri
           referenced — is the exact shape `PermissionGuard.tsx:15-19` names as the bug: a
           keyboard user landed on an unnamed stop, a mouse user got no tooltip, and nobody was
           told why (T-1758, UI-44). */}
-      {/* In the sidebar a quiet action under the switcher, not a second switcher (T-7148). */}
       <Button
-        variant={inSidebar ? "ghost" : "secondary"}
-        // `md` in the sidebar: a finger's height on a phone (T-7148).
-        size={inSidebar ? "md" : "sm"}
-        className={inSidebar ? "w-full justify-start px-2.5 text-fg-muted" : "w-full justify-center"}
+        variant="secondary"
+        size="sm"
+        className="w-full justify-center"
         disabled={!allowed}
         disabledReason={allowed ? undefined : reason}
         icon={<Icon name="plus" className="size-4" />}
@@ -210,13 +213,6 @@ export function NewProjectButton({ project, inSidebar = false }: { project: stri
       >
         {t("projects.new")}
       </Button>
-      {/* The reason in sight too, under the refused action: a title shows only on hover. The
-          button already carries it as its description, so this copy is not read twice. */}
-      {inSidebar && !allowed ? (
-        <span aria-hidden="true" className="px-2.5 text-caption text-fg-muted">
-          {reason}
-        </span>
-      ) : null}
       <NewProjectDialog open={writing} onOpenChange={setWriting} />
     </>
   );

@@ -5,6 +5,10 @@
       "class": "FREE",
       "reason": "the name of a project that does not exist yet; the server refuses one any project, copy or Organization holds (422 naming name)"
     },
+    "src/pages/organization/OpendataAppearance.tsx :: organization.field.appearance.colour.${name}": {
+      "class": "FREE",
+      "reason": "a hex colour the person types for the open data portal (primary, accent, background, text), e.g. #0b5394; jc-core refuses a non-hex value and a text or primary colour below WCAG AA on the background (422 naming spec.appearance.colours)"
+    },
     "src/pages/mcp/AiConnectorsPage.tsx :: Find a project, space or Endpoint": {
       "class": "FREE",
       "reason": "a search over the tick tree below it: it narrows the list and submits nothing"

@@ -33,7 +33,9 @@ export function usePersonNames(ids: readonly string[]): Map<string, string> {
   const resolves =
     permissions.data?.bootstrap === true ||
     grantsTo("Person", "update") ||
-    grantsTo("Group", "approve");
+    grantsTo("Group", "approve") ||
+    // An Organization's administrator reads their own members' names (T-7404).
+    grantsTo("RoleBinding", "approve");
   const wanted = [...new Set(ids.filter(isPersonId))]
     .sort()
     .slice(0, 100)

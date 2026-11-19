@@ -1973,6 +1973,14 @@
         "organization_costs.test.tsx"
       ]
     },
+    "src/pages/organization/OpendataAppearance.tsx": {
+      "controls": {
+        "Button": 4
+      },
+      "tests": [
+        "opendata_appearance.test.tsx"
+      ]
+    },
     "src/pages/organization/OpendataPages.tsx": {
       "controls": {
         "Button": 5
@@ -2006,6 +2014,7 @@
       "tests": [
         "admin_grid_organization.test.tsx",
         "data_access.test.tsx",
+        "opendata_appearance.test.tsx",
         "opendata_pages.test.tsx",
         "organization_brokers.test.tsx",
         "organization_connectors.test.tsx",

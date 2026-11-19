@@ -81,7 +81,9 @@ test("a project is opened, branched and renewed, duplicated where it can be, and
   let opened = false;
   let copied = false;
   try {
-    await page.getByRole("button", { name: "New project" }).first().click();
+    // New project is the project switcher's last item (T-7404).
+    await page.getByRole("button", { name: "Projects" }).click();
+    await page.getByRole("menuitem", { name: "New project" }).click();
     const dialog = page.getByRole("dialog", { name: "Open a project" });
     await dialog.getByLabel(/^Name/).fill(PROJ);
     await dialog.getByLabel("Display name").fill(`Readiness ${SUFFIX}`);

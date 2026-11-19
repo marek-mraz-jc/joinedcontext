@@ -89,12 +89,31 @@ test.describe("the sidebar head", () => {
       await expect(page).toHaveURL(/\/projects\/zvolen-tepelne-hospodarstvo-merania\//);
     });
 
+    // New project is the switcher's last item, after a divider, never a line of its own (T-7404).
+    test(`New project in the switcher opens its dialog at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, FIVE.slice(2, 4));
+      await page.goto("/projects/zvolen-tepelne-hospodarstvo-merania/spaces?lang=en");
+      await openSidebar(page, width);
+      await expect(page.locator("#portal-sidebar").getByRole("button", { name: "New project" })).toHaveCount(0);
+      await page.getByRole("button", { name: "Projects" }).click();
+      const item = page.getByRole("menu").getByRole("menuitem", { name: "New project" });
+      await expect(item).toBeVisible();
+      await shot(page, `new-in-menu-${width}`);
+      await item.click();
+      await expect(page.getByRole("dialog", { name: "Open a project" })).toBeVisible();
+      await shot(page, `new-dialog-${width}`);
+    });
+
     test(`New project refused with its reason at ${width} px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stubApi(page, FIVE.slice(2, 4), true);
       await page.goto("/projects/zvolen-tepelne-hospodarstvo-merania/spaces?lang=en");
       await openSidebar(page, width);
-      await expect(page.getByRole("button", { name: "New project" })).toHaveAttribute("aria-disabled", "true");
+      await page.getByRole("button", { name: "Projects" }).click();
+      const item = page.getByRole("menu").getByRole("menuitem", { name: /New project/ });
+      await expect(item).toHaveAttribute("aria-disabled", "true");
+      await expect(item).toContainText(REFUSED);
       await shot(page, `refused-${width}`);
     });
 

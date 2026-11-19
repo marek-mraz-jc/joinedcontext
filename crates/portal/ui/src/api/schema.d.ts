@@ -1898,7 +1898,7 @@ export interface paths {
         };
         /**
          * Resolve Person Names
-         * @description Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group.
+         * @description Answers the name behind each Keycloak user id a manifest names. Needs `update` on Person or `approve` on Group; an Organization administrator reads the names of the people holding a role in their Organization alone.
          */
         get: operations["person_names"];
         put?: never;
@@ -13151,8 +13151,26 @@ export interface components {
             };
             /** @description The contact address in the footer and the open data portal, e.g. `opendata@banskabystrica.sk`. */
             contactEmail?: string | null;
+            /** @description How the open data portal lists datasets: `cards` (the default) or a compact `table`. */
+            datasetList?: ("cards" | "table") | null;
             /** @description The favicon as an SVG document of at most 64 KiB, under the same rules as the logo. */
             faviconSvg?: string | null;
+            /** @description The open data portal's typeface, one of a fixed set of system font stacks, so no font is fetched from another host: `system`, `humanist`, `serif` or `mono` (T-7410). */
+            font?: ("system" | "humanist" | "serif" | "mono") | null;
+            /** @description Links the open data portal's footer adds after its own, under the same rules. */
+            footerLinks?: {
+                /** @description The text of the link, e.g. `Mesto`. */
+                label: string;
+                /** @description An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`. */
+                url: string;
+            }[];
+            /** @description The open data portal's home hero: its title and an introduction in Markdown. */
+            hero?: {
+                /** @description The introduction under it in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.`; raw HTML shows as text. */
+                intro?: string | null;
+                /** @description The home page's heading, one line, e.g. `Otvorené dáta Banskej Bystrice`. */
+                title?: string | null;
+            };
             /** @description Dashboards the Organization's Portal home page shows, each `project/name` of one of its projects, e.g. `doprava/prehlad`; a viewer sees only those they may read (T-6779). */
             homeWidgets?: string[];
             /** @description Full name on page titles and the login page, e.g. `Mesto Banská Bystrica`. */
@@ -13161,6 +13179,13 @@ export interface components {
             licenseDefault?: string | null;
             /** @description The logo as an SVG document of at most 64 KiB, without script, event handler or external reference. */
             logoSvg?: string | null;
+            /** @description Links the open data portal's header adds after its own, at most 8, each a label and an `https://` address or a path on the portal, e.g. `{label: Mesto, url: https://mesto.sk}`. */
+            navLinks?: {
+                /** @description The text of the link, e.g. `Mesto`. */
+                label: string;
+                /** @description An `https://` or `http://` address or a path on the portal starting `/`, e.g. `https://www.banskabystrica.sk`. */
+                url: string;
+            }[];
             /** @description Dashboards the Organization's open data portal shows on its catalogue home, each `project/name` of one of its projects with `visibility: public`, e.g. `doprava/prehlad`; anonymous readers see them (T-6780). */
             opendataWidgets?: string[];
             /** @description The texts of the open data portal's own pages, each one page in one language in Markdown (T-7031); a page or language left out shows the built-in text. */
@@ -13174,6 +13199,11 @@ export interface components {
             }[];
             /** @description The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. */
             publisher?: string | null;
+            /**
+             * Format: uint8
+             * @description The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`.
+             */
+            radius?: number | null;
             /** @description Short name on sidebars and tabs, e.g. `BB`. */
             shortName?: string | null;
         };

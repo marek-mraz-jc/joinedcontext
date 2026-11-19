@@ -1842,6 +1842,26 @@
         "evidence/worker-t5126/T-5126/costs-refused-400.png"
       ]
     },
+    "src/pages/organization/OpendataAppearance.tsx": {
+      "walkedBy": "worker-t7413 (stub walk)",
+      "date": "2026-11-19",
+      "screenshots": [
+        "evidence/T-7413/opendata-appearance-empty-desktop.png",
+        "evidence/T-7413/opendata-appearance-empty-phone.png",
+        "evidence/T-7413/opendata-appearance-filled-desktop.png",
+        "evidence/T-7413/opendata-appearance-filled-phone.png",
+        "evidence/T-7413/opendata-appearance-dataset-desktop.png",
+        "evidence/T-7413/opendata-appearance-dataset-phone.png",
+        "evidence/T-7413/opendata-appearance-portal-desktop.png",
+        "evidence/T-7413/opendata-appearance-portal-phone.png",
+        "evidence/T-7413/opendata-appearance-published-desktop.png",
+        "evidence/T-7413/opendata-appearance-published-phone.png",
+        "evidence/T-7413/opendata-appearance-error-desktop.png",
+        "evidence/T-7413/opendata-appearance-error-phone.png",
+        "evidence/T-7413/opendata-appearance-refused-desktop.png",
+        "evidence/T-7413/opendata-appearance-refused-phone.png"
+      ]
+    },
     "src/pages/organization/OpendataPages.tsx": {
       "walkedBy": "worker-t7041 (stub walk)",
       "date": "2026-11-15",

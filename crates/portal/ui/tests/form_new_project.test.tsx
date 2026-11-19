@@ -118,23 +118,6 @@ describe("the sidebar control when the organization refuses (UI-44)", () => {
     expect(container.querySelector('span[tabindex="0"]')).toBeNull();
   });
 
-  // T-7148: in the sidebar the reason stood only in a hover title; it is in sight now, read once.
-  it("shows_the_reason_under_the_sidebar_control_and_reads_it_once", async () => {
-    creation = { allowed: false, reason: REFUSED };
-    const { container } = show(<NewProjectButton project={PROJECT} inSidebar />);
-    const button = await screen.findByRole("button", { name: en.projects.new });
-    await waitFor(() => expectDenied(button, REFUSED));
-    const shown = [...container.querySelectorAll('span[aria-hidden="true"]')].find((span) => span.textContent === REFUSED);
-    expect(shown).toBeDefined();
-    expect(container.querySelectorAll(".sr-only")).toHaveLength(1);
-  });
-
-  it("shows_no_reason_while_the_sidebar_control_is_allowed", async () => {
-    const { container } = show(<NewProjectButton project={PROJECT} inSidebar />);
-    await screen.findByRole("button", { name: en.projects.new });
-    await waitFor(() => expect(container.textContent).not.toContain(en.projects.notAllowed));
-  });
-
   it("opens_no_dialog_while_it_is_refused", async () => {
     creation = { allowed: false, reason: REFUSED };
     show(<NewProjectButton project={PROJECT} />);

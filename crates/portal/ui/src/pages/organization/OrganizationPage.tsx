@@ -44,6 +44,7 @@ import { People } from "./People";
 import { KindList } from "../../routes/ResourceListPage";
 import { ValidationHealth } from "./ValidationHealth";
 import { OrganizationConnectors } from "./OrganizationConnectors";
+import { OpendataAppearance } from "./OpendataAppearance";
 import { OpendataPages } from "./OpendataPages";
 import { Backups } from "./Backups";
 import { Repositories } from "./Repositories";
@@ -481,6 +482,7 @@ export function OrganizationPage({
         ) : null}
         {tab === "connectors" ? <OrganizationConnectors /> : null}
         {tab === "opendata-pages" ? <OpendataPages /> : null}
+        {tab === "opendata-appearance" ? <OpendataAppearance /> : null}
         {tab === "backups" ? <Backups /> : null}
         {tab === "repositories" ? <Repositories /> : null}
         {operatorTab ? (

@@ -190,7 +190,7 @@ fn further_catalogue(
 }
 
 /// The catalogue `portal` writes its sources into: `default`'s is the configured one.
-fn catalogue_key(
+pub(crate) fn catalogue_key(
     portal: &PortalSpec,
     orgs: &[OrganizationPortals],
 ) -> Option<(OrgId, CatalogueId)> {

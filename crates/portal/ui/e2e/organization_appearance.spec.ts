@@ -99,7 +99,7 @@ test.describe("an Organization's appearance", () => {
       await expect(page.getByText("zilina.sk").first()).toBeVisible();
       // Settings reads the appearance member by member, the unset ones as the installation's.
       await expect(page.getByText("#0b5394", { exact: true })).toBeVisible();
-      await expect(page.getByText("installation default", { exact: true })).toHaveCount(6);
+      await expect(page.getByText("installation default", { exact: true })).toHaveCount(12);
       await expect(page.getByRole("img", { name: "Logo (SVG)" })).toBeVisible();
       // The Portal on Žilina's host is drawn in Žilina's colour.
       const brand = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--portal-color-primary"));
@@ -145,6 +145,41 @@ test.describe("an Organization's appearance", () => {
       expect((spec as { policies?: { agents?: { models?: unknown } } }).policies?.agents?.models).toBeUndefined();
       await page.getByText("chg-0b5394aa").first().evaluate((element) => element.scrollIntoView({ block: "center" }));
       await shot(page, `appearance-proposed-${width}`, false);
+    });
+    // T-7410: the open data portal's theme and layout, typed fields with hints; a link that would
+    // run script is refused before anything is proposed.
+    test(`proposes the open data portal's theme and refuses a script link at ${width} px`, async ({ page }) => {
+      const proposed: unknown[] = [];
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, proposed);
+      await page.goto("/organization/settings?lang=en");
+      await page.getByRole("button", { name: "Edit zilina.sk" }).click();
+      await page.getByRole("group", { name: "How it looks" }).locator("summary").click();
+      await page.getByRole("combobox", { name: /^Typeface/ }).selectOption({ label: "Serif" });
+      await page.getByRole("spinbutton", { name: /^Corner radius/ }).fill("12");
+      await page.getByRole("textbox", { name: /^Heading/ }).fill("Otvorené dáta Žiliny");
+      await page.getByRole("combobox", { name: /^Dataset list/ }).selectOption({ label: "Table" });
+      const header = page.getByRole("group", { name: /^Header links/ });
+      await header.getByRole("button", { name: "Add" }).click();
+      await header.getByRole("textbox", { name: /^Label/ }).fill("Mesto");
+      const url = header.getByRole("textbox", { name: /^Address/ });
+      await url.fill("javascript:alert(1)");
+      await page.getByRole("button", { name: "Propose change" }).click();
+      expect(proposed).toHaveLength(0);
+      await expect(url).toHaveAttribute("aria-invalid", "true");
+      await url.evaluate((element) => element.scrollIntoView({ block: "center" }));
+      await shot(page, `appearance-theme-refused-${width}`, false);
+      await url.fill("https://www.zilina.sk");
+      await expect(url).not.toHaveAttribute("aria-invalid", "true");
+      await shot(page, `appearance-theme-form-${width}`, false);
+      await page.getByRole("button", { name: "Propose change" }).click();
+      await expect.poll(() => proposed.length).toBe(1);
+      const look = (proposed[0] as { spec: { appearance: Record<string, unknown> } }).spec.appearance;
+      expect(look.font).toBe("serif");
+      expect(look.radius).toBe(12);
+      expect(look.hero).toEqual({ title: "Otvorené dáta Žiliny" });
+      expect(look.datasetList).toBe("table");
+      expect(look.navLinks).toEqual([{ label: "Mesto", url: "https://www.zilina.sk" }]);
     });
   }
 });
