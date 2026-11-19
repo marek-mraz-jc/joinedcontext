@@ -288,7 +288,8 @@ def run(tmp_path, port, *extra, snap_doc=None):
     out = tmp_path / "out"
     code = orgs.main(["--out", str(out), "--jc-config", str(toml), "--deployment", "t", "--domain", "city.test",
                       "--edge", "127.0.0.1", "--edge-port", str(port), "--scheme", "http", "--rate", "1000",
-                      "--snapshot", str(snap), "--assistant", "alpha=alpha-chat", *extra])
+                      "--snapshot", str(snap), "--assistant", "alpha=alpha-chat",
+                      "--manifests", str(tmp_path / "manifests"), *extra])
     assert live.active() is None
     return code, json.loads((out / "results.json").read_text())
 
@@ -348,6 +349,55 @@ def test_an_index_without_a_titled_page_fails_the_assistant_row_by_name(tmp_path
     assert row["result"] == "fail" and row["actual"] == "no title in 1 knowledge sources searched"
     assert "no public, embedded page or document with a title" in row["reason"]
     assert not [m for k, h, m in edge[1] if k == "ASK"]
+
+
+def test_the_schedule_sets_the_cadence_and_a_sitemap_check_makes_it_daily():
+    assert orgs.cron_period_hours("0 3 * * *") == 24
+    assert orgs.cron_period_hours("0 3 * * 0") == orgs.cron_period_hours("0 3 * * 7") == 168
+    assert orgs.cron_period_hours("0 0-23/6 * * *") == 6
+    assert orgs.cron_period_hours("20 4 15 * *") >= 31 * 24
+    assert orgs.cron_period_hours("0 3 1 * 1") <= 7 * 24  # day or weekday, as jc_core::cron reads it
+    assert orgs.cron_period_hours("nightly") is None and orgs.cron_period_hours("0 3 31 2 *") is None
+    weekly = {"source": "website", "schedule": "0 3 * * 0"}
+    assert orgs.crawl_limit(None, 48) == (48, "no manifest names the source")
+    assert orgs.crawl_limit(weekly, 48) == (192, "schedule 0 3 * * 0")
+    assert orgs.crawl_limit({**weekly, "sitemap": True}, 48) == (48, "schedule 0 3 * * 0 with daily sitemap checks")
+    assert orgs.crawl_limit({"source": "catalogue"}, 99) == (48, "schedule 0 3 * * *")
+    assert orgs.crawl_limit({"schedule": "nightly"}, 48)[0] == 48
+
+
+def test_a_sitemap_job_newer_than_the_last_full_crawl_is_the_newest_crawl():
+    got, what = orgs.newest_crawl({"lastCrawl": at(65), "lastDone": {"at": at(11), "kind": "sitemap"}})
+    assert round((NOW - got).total_seconds() / 3600) == 11 and what == "sitemap job"
+    assert orgs.newest_crawl({"lastCrawl": at(2), "lastDone": {"at": at(30), "kind": "full"}})[1] == "sites.last_crawl"
+    assert orgs.newest_crawl({"lastCrawl": None})[0] is None
+
+
+def test_crawl_freshness_counts_sitemap_jobs_and_the_schedule_and_a_failed_job_is_red(tmp_path, edge, public_sources):
+    doc = snapshot(public_sources)
+    alpha, beta = doc["knowledge"][0], doc["knowledge"][1]
+    # alpha: weekly full crawl 65 h ago, the daily sitemap check 11 h ago, done (T-7397's zilina).
+    alpha.update(lastCrawl=at(65), lastDone={"at": at(11), "kind": "sitemap"},
+                 lastEnd={"state": "done", "at": at(11), "kind": "sitemap", "errorClass": None})
+    # beta: its manifest crawls weekly with no sitemap, last crawled 100 h ago; the newest job failed.
+    beta.update(lastDone={"at": at(100), "kind": "full"},
+                lastEnd={"state": "failed", "at": at(5), "kind": "full", "errorClass": "the crawl failed"})
+    (tmp_path / "manifests" / "beta").mkdir(parents=True)
+    (tmp_path / "manifests" / "beta" / "beta-web-site.yaml").write_text(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: site\n"
+        "  namespace: beta-web\nspec:\n  source: website\n  schedule: '0 3 * * 0'\n")
+    (tmp_path / "manifests" / "beta" / "template.yaml").write_text("spec: {{ schedule }}\n")
+    _, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {r["id"]: r for r in res["checks"]}
+    fresh = rows["crawl.alpha.alpha-web/site.fresh"]
+    assert fresh["result"] == "pass" and fresh["actual"] == "11.0 h (sitemap job)", fresh
+    assert fresh["expected"] == "under 48 h (no manifest names the source)"
+    fresh = rows["crawl.beta.beta-web/site.fresh"]
+    assert fresh["result"] == "pass" and fresh["expected"] == "under 192 h (schedule 0 3 * * 0)", fresh
+    assert rows["crawl.alpha.alpha-web/site.job"]["result"] == "pass"
+    job = rows["crawl.beta.beta-web/site.job"]
+    assert job["result"] == "fail" and job["actual"] == "full failed: the crawl failed", job
+    assert rows["crawl.beta.beta-files/upload"]["result"] == "skip" and "crawl.beta.beta-files/upload.job" not in rows
 
 
 def test_an_assistant_schema_before_migration_0025_skips_the_embed_row(tmp_path, edge, public_sources):
@@ -418,7 +468,7 @@ def test_a_slug_mode_config_probes_its_organizations_hosts_and_base_host_paths_w
     g = live.Guard(cfg)
     assert g.route(cfg["virtual"], "/login/realms/jc") == ("jc.city.test", "/login/realms/jc")
     # Without an idm host the sign-in realm is the installation's, under slug mode's /login.
-    a = type("A", (), {"previous": None, "scheme": "https", "timeout": 5})()
+    a = type("A", (), {"previous": None, "scheme": "https", "timeout": 5, "manifests": str(tmp_path)})()
     s = orgs.Suite(orgs.tomllib.loads(SLUG), {}, common.Results("orgs", "jc-dev"), a)
     assert (s.login, s.login_path) == ("jc.city.test", "/login")
 
@@ -669,3 +719,6 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert ("embed_error" in queries[-1][-1]) is embed_error
     for sql in (watch.PORTAL_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
         assert not any(w in sql.upper() for w in ("INSERT", "UPDATE ", "DELETE", "DROP", "TRUNCATE", "C.TEXT"))
+    # Crawl jobs give their time, kind and the error's class only: never the error's own text.
+    assert "split_part(coalesce(j.error, ''), ':', 1)" in watch.assistant_sql(True)
+    assert "j.error" not in watch.assistant_sql(True).replace("split_part(coalesce(j.error, ''), ':', 1)", "")
