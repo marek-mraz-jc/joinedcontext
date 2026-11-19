@@ -2857,7 +2857,6 @@ fn streamed(pieces: &[&str], input: u64, output: u64) -> ResponseTemplate {
 /// `outputTokensPerAnswer`. Only retrieved passages are cited, the `done` event sums every call's
 /// usage, and the same first question again comes from the cache without a model call.
 #[tokio::test]
-#[ignore = "flaky on dev: T-7290, run 44483204558 (cache answer makes a 3rd model call)"]
 async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     let mut sources_only = deployment(Channel::Public, 50_000, 10);
     sources_only.spec.connectors.clear();
@@ -2895,7 +2894,9 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
             130,
         )],
         vec![],
-        vec![streamed(&["Knižnica je otvorená ", "v pondelok až piatok od 9:00 do 18:00 [1]", " [7]."], 900, 40)],
+        // The hours are written 9.00 and 18.00: an answer quoting the clock's reading ("9:00" at
+        // 9:00) is never kept, and this test runs at any minute of the day (T-7290).
+        vec![streamed(&["Knižnica je otvorená ", "v pondelok až piatok od 9.00 do 18.00 [1]", " [7]."], 900, 40)],
     )
     .await;
     let (status, events, _) = answer_of(
