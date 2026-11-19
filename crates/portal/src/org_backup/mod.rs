@@ -65,8 +65,9 @@ pub struct Target {
     pub enabled: bool,
     pub every_hours: i32,
     pub keep_days: i32,
-    /// The age recipients (`age1…`, public keys) a data archive is encrypted to: the working
-    /// one first, then the recovery one. Empty for the configuration backup.
+    /// The age recipients (`age1…`, public keys) every upload of this target is encrypted to:
+    /// the working one first, then the recovery one. Empty only on a configuration target saved
+    /// before T-7268, which runs again once its administrator sets both.
     pub recipients: Vec<String>,
     pub updated_by: String,
     /// RFC 3339.
@@ -637,17 +638,34 @@ fn age_key_file(state: &AppState) -> Result<&std::path::Path, ApiError> {
     }
 }
 
-/// The secret access key sealed for the Portal's own recipient, ASCII-armored.
-pub fn seal(state: &AppState, secret: &str) -> Result<String, ApiError> {
+/// What a seal is bound to: a secret opens only for the record it was sealed for (T-7268). The
+/// Portal holds one age key for every Organization, so without the binding a row's seal copied
+/// into another Organization's row (a bad restore, a hand edit, an SQL slip) would hand that
+/// Organization the first one's bucket key.
+const SEAL_HEADER: &str = "jc-sealed-for ";
+
+/// The binding of an Organization's backup target secret.
+pub fn target_context(organization: &str, kind: &str) -> String {
+    format!("organization-backup/{organization}/{kind}")
+}
+
+/// The binding of an operator Change's SMTP password: the realm it is proposed for.
+pub fn smtp_context(target: &str) -> String {
+    format!("operator-smtp/{target}")
+}
+
+/// `secret` sealed for the Portal's own recipient and bound to `context`, ASCII-armored.
+pub fn seal(state: &AppState, context: &str, secret: &str) -> Result<String, ApiError> {
     let recipient =
         crate::secret_files::own_recipient(age_key_file(state)?).map_err(ApiError::Unavailable)?;
     let recipient = <age::x25519::Recipient as std::str::FromStr>::from_str(&recipient)
         .map_err(|_| ApiError::Unavailable("the Portal's age key is not an x25519 key".into()))?;
-    crate::secret_files::wrap(secret.as_bytes(), &recipient).map_err(ApiError::Internal)
+    let bound = Zeroizing::new(format!("{SEAL_HEADER}{context}\n{secret}"));
+    crate::secret_files::wrap(bound.as_bytes(), &recipient).map_err(ApiError::Internal)
 }
 
-/// A secret back from its seal ([`seal`]), for one use.
-pub(crate) fn unseal(state: &AppState, sealed: &str) -> Result<Zeroizing<String>, ApiError> {
+/// The plaintext of a seal, whatever it is bound to.
+fn open(state: &AppState, sealed: &str) -> Result<Zeroizing<String>, ApiError> {
     let unreadable =
         || ApiError::Unavailable("the sealed secret cannot be unsealed; save it again".into());
     let identities =
@@ -657,11 +675,128 @@ pub(crate) fn unseal(state: &AppState, sealed: &str) -> Result<Zeroizing<String>
     let mut reader = decryptor
         .decrypt(identities.iter().map(|i| i as &dyn age::Identity))
         .map_err(|_| unreadable())?;
-    let mut secret = Zeroizing::new(String::new());
-    reader
-        .read_to_string(&mut secret)
-        .map_err(|_| unreadable())?;
-    Ok(secret)
+    let mut plain = Zeroizing::new(String::new());
+    reader.read_to_string(&mut plain).map_err(|_| unreadable())?;
+    Ok(plain)
+}
+
+/// The secret of `sealed`, when it was sealed for `context`; a seal of another record (or one
+/// from before the binding that [`reseal_unbound`] has not moved yet) is refused.
+pub fn unseal(
+    state: &AppState,
+    context: &str,
+    sealed: &str,
+) -> Result<Zeroizing<String>, ApiError> {
+    let plain = open(state, sealed)?;
+    bound_secret(&plain, context).ok_or_else(|| {
+        ApiError::Unavailable(
+            "the sealed secret was not sealed for this record; save the secret again".into(),
+        )
+    })
+}
+
+fn bound_secret(plain: &str, context: &str) -> Option<Zeroizing<String>> {
+    plain
+        .strip_prefix(SEAL_HEADER)?
+        .strip_prefix(context)?
+        .strip_prefix('\n')
+        .map(|secret| Zeroizing::new(secret.to_owned()))
+}
+
+/// The new seal of a value sealed before the binding (T-7268), or `None` when `sealed` is bound
+/// already or does not open. Bound to `context`, the record the value is stored in now.
+pub fn rebound(
+    state: &AppState,
+    context: &str,
+    sealed: &str,
+) -> Result<Option<String>, ApiError> {
+    let Ok(plain) = open(state, sealed) else {
+        return Ok(None);
+    };
+    if plain.starts_with(SEAL_HEADER) {
+        return Ok(None);
+    }
+    seal(state, context, &plain).map(Some)
+}
+
+/// Binds every seal stored before T-7268 to its record, once: each Organization's backup targets
+/// in that Organization's keyed transaction and every open operator Change's SMTP password. A row
+/// is rewritten only while it still holds the seal read, so replicas starting together write it
+/// once, and a second run finds nothing to move. Logs row keys only, never a value.
+pub async fn reseal_unbound(state: &AppState) -> Result<usize, ApiError> {
+    let Some(pool) = state.db.as_ref() else {
+        return Ok(0);
+    };
+    if age_key_file(state).is_err() {
+        return Ok(0);
+    }
+    let mut moved = 0;
+    let organizations: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM organizations WHERE state = 'active' ORDER BY name")
+            .fetch_all(pool)
+            .await
+            .map_err(db)?;
+    for organization in organizations {
+        let Some(mut tx) = keyed(pool, &organization).await? else {
+            continue;
+        };
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT kind, sealed_secret FROM organization_backup_targets WHERE organization = $1",
+        )
+        .bind(&organization)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        for (kind, sealed) in rows {
+            let Some(bound) = rebound(state, &target_context(&organization, &kind), &sealed)?
+            else {
+                continue;
+            };
+            let done = sqlx::query(
+                "UPDATE organization_backup_targets SET sealed_secret = $3 \
+                 WHERE organization = $1 AND kind = $2 AND sealed_secret = $4",
+            )
+            .bind(&organization)
+            .bind(&kind)
+            .bind(&bound)
+            .bind(&sealed)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+            if done.rows_affected() == 1 {
+                moved += 1;
+                tracing::info!(organization = %organization, kind, "backup target secret bound to its Organization");
+            }
+        }
+        tx.commit().await.map_err(db)?;
+    }
+    let changes: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id::text, target, sealed_secret FROM operator_changes \
+         WHERE sealed_secret IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    for (id, target, sealed) in changes {
+        let Some(bound) = rebound(state, &smtp_context(&target), &sealed)? else {
+            continue;
+        };
+        let done = sqlx::query(
+            "UPDATE operator_changes SET sealed_secret = $2 \
+             WHERE id = $1::uuid AND sealed_secret = $3",
+        )
+        .bind(&id)
+        .bind(&bound)
+        .bind(&sealed)
+        .execute(pool)
+        .await
+        .map_err(db)?;
+        if done.rows_affected() == 1 {
+            moved += 1;
+            tracing::info!(change = %id, "operator Change password bound to its realm");
+        }
+    }
+    Ok(moved)
 }
 
 /// The bucket of a saved target, its endpoint checked again: a target saved before a rule
@@ -679,7 +814,11 @@ pub fn bucket(state: &AppState, target: &Target) -> Result<s3::Bucket, ApiError>
         region: target.region.clone(),
         bucket: target.bucket.clone(),
         access_key_id: target.access_key_id.clone(),
-        secret_access_key: unseal(state, &target.sealed_secret)?,
+        secret_access_key: unseal(
+            state,
+            &target_context(&target.organization, &target.kind),
+            &target.sealed_secret,
+        )?,
     })
 }
 
@@ -1071,7 +1210,11 @@ async fn upload(
             .await;
         (usize::try_from(size).unwrap_or(usize::MAX), sha256, put)
     } else {
-        let bytes = build_bundle(state, &target.organization, actor).await?.0;
+        // The bundle names every person of the Organization: it leaves the Portal only
+        // encrypted to the Organization's own two recipients, as the data archive does (T-7268).
+        let recipients = data::recipients_of(target)?;
+        let plain = build_bundle(state, &target.organization, actor).await?.0;
+        let bytes = data::encrypt_bytes(&recipients, &plain).map_err(zip_error)?;
         let (size, sha256) = (bytes.len(), sha256_hex(&bytes));
         (size, sha256, bucket.put(http, &key, bytes).await)
     };
@@ -1135,6 +1278,12 @@ async fn prune(
 /// due target to one of them.
 pub fn spawn_schedule(state: AppState) {
     tokio::spawn(async move {
+        // Seals from before T-7268 are bound to their record before any run unseals one.
+        match reseal_unbound(&state).await {
+            Ok(0) => {}
+            Ok(moved) => tracing::info!(moved, "sealed secrets bound to their records"),
+            Err(err) => tracing::warn!(error = %err, "sealed secrets not bound; retried at the next start"),
+        }
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {
             tick.tick().await;

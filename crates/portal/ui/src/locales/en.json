@@ -13456,7 +13456,7 @@
   "backups": {
     "loading": "Loading the backup…",
     "unreadable": "The backup could not be read. Try again in a minute.",
-    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings, its people (id, username and e-mail only) and each project's manifests with their schemas. No entity data, no code, no secret values. The bucket keeps every version, so a deleted backup can still be restored.",
+    "lead": "A copy of this Organization's configuration, as files with their ids, in your own S3 bucket: its settings, roles, bindings, its people (id, username and e-mail only) and each project's manifests with their schemas. No entity data, no code, no secret values. Every backup is encrypted to the two keys you set below, so nobody without one of them can read it, this Portal included. The bucket keeps every version, so a deleted backup can still be restored.",
     "runs": {
       "title": "Runs",
       "scheduled": "Runs every {hours} hours, and whenever you press Run now.",
@@ -13518,7 +13518,8 @@
       "proposed": "Proposed as a Change. Another administrator approves it in Changes.",
       "propose": "Propose the restore",
       "close": "Close",
-      "project": "Project {project}"
+      "project": "Project {project}",
+      "lead": "The version is opened with your key and compared with the Organization today. Nothing changes until you propose it and another administrator approves."
     },
     "form": {
       "title": "Bucket and schedule",
@@ -13555,7 +13556,7 @@
       "keepDays": "1 to 3650 days, e.g. 90",
       "enabled": "Off keeps the bucket and every version; Run now still works.",
       "workingRecipient": "The public key of the identity your administrators use, from age-keygen, e.g. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "A second public key, kept offline by another person, e.g. age1syrvza6xvtvsr9f0…. Either key opens every archive.",
+      "recoveryRecipient": "A second public key, kept offline by another person, e.g. age1syrvza6xvtvsr9f0…. Either key opens every backup.",
       "copyProject": "The projects of this backup you may read, e.g. air-quality. A project deleted since the backup is not listed and never restored.",
       "copyName": "Lower-case letters, digits and '-', a name no project uses, e.g. air-quality-restored."
     },

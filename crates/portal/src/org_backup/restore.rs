@@ -230,6 +230,20 @@ pub(super) fn read_capped(reader: impl Read, cap: u64, what: &str) -> Result<Vec
     Ok(out)
 }
 
+/// `sealed` decrypted with `identity` into memory, refused once it passes `cap` bytes: the
+/// configuration bundle, which a restore unpacks in memory (T-7268).
+pub fn decrypt_capped(
+    sealed: &[u8],
+    identity: &age::x25519::Identity,
+    cap: u64,
+) -> Result<Vec<u8>, ApiError> {
+    let decryptor = age::Decryptor::new(sealed).map_err(|_| unreadable())?;
+    let reader = decryptor
+        .decrypt(std::iter::once(identity as &dyn age::Identity))
+        .map_err(|_| unreadable())?;
+    read_capped(reader, cap, "the bundle")
+}
+
 /// An opened archive: the decrypted zip in a scratch file, its index, and what it may still
 /// unpack to.
 pub struct Opened {

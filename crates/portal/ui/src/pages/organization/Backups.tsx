@@ -64,8 +64,13 @@ async function softDelete(kind: Kind): Promise<unknown> {
 async function downloadVersion(kind: Kind, version: string, unreadable: string): Promise<Blob> {
   const base64 = await door(kind === "data" ? "portal_backup_data_download" : "portal_backup_configuration_download", { version });
   if (typeof base64 !== "string" || base64 === "") throw new ApiError(502, unreadable);
-  const type = kind === "data" ? "application/octet-stream" : "application/zip";
-  return new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type });
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  return new Blob([bytes], { type: plainZip(bytes) ? "application/zip" : "application/octet-stream" });
+}
+
+/** A configuration version from before T-7268 is the plain zip it was uploaded as. */
+function plainZip(bytes: Uint8Array): boolean {
+  return bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
 }
 
 /** The form's fields, in the server's names: a 422 names one of them and the page marks it. */
@@ -269,7 +274,7 @@ function Versions({ kind }: { kind: Kind }): JSX.Element {
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
-    link.download = kind === "data" ? `data-${version}.zip.age` : `configuration-${version}.zip`;
+    link.download = `${kind}-${version}.${blob.type === "application/zip" ? "zip" : "zip.age"}`;
     link.click();
     URL.revokeObjectURL(href);
   };
@@ -356,9 +361,12 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "en";
   const client = useQueryClient();
+  // The bundle is encrypted to the Organization's keys (T-7268): the identity opens it for each
+  // request and is never kept past the dialog.
+  const [identity, setIdentity] = useState("");
   const call = async (apply: boolean): Promise<RestorePlan> =>
-    (await doorAction("portal_backup_configuration_restore", { version, body: { apply } })) as RestorePlan;
-  const plan = useQuery({ queryKey: ["organizationBackup", "plan", version], queryFn: () => call(false) });
+    (await doorAction("portal_backup_configuration_restore", { version, body: { identity: identity.trim(), apply } })) as RestorePlan;
+  const plan = useMutation({ mutationFn: () => call(false) });
   const apply = useMutation({
     mutationFn: () => call(true),
     onSettled: async () => client.invalidateQueries({ queryKey: overviewKey("configuration") }),
@@ -368,18 +376,38 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
     (group) => group.name !== "organization" && group.name !== PEOPLE && group.created.length + group.changed.length > 0,
   );
   const toInvite = shown?.groups.find((group) => group.name === PEOPLE)?.created.length ?? 0;
+  const keyError = identityError(plan.error) ?? identityError(apply.error);
+  const check = (event: FormEvent) => {
+    event.preventDefault();
+    plan.mutate();
+  };
   return (
     <Dialog
       open
       onOpenChange={(open) => (open ? undefined : onClose())}
       title={t("backups.restore.title")}
       closeLabel={t("backups.restore.close")}
-      description={shown ? t("backups.restore.taken", { at: when(shown.takenAt, locale) }) : undefined}
+      description={shown ? t("backups.restore.taken", { at: when(shown.takenAt, locale) }) : t("backups.restore.lead")}
     >
       <div className="flex flex-col gap-3" data-testid="backup-restore-plan">
-        {plan.isLoading ? <p className="text-body text-fg-muted">{t("backups.restore.planning")}</p> : null}
-        {plan.isError ? <Alert tone="danger">{reasonOf(plan.error, t("backups.unreadable"))}</Alert> : null}
-        {apply.isError ? <Alert tone="danger">{reasonOf(apply.error, t("backups.unreadable"))}</Alert> : null}
+        {shown ? null : (
+          <form onSubmit={check} className="flex flex-col gap-3" noValidate>
+            <IdentityField id="backup-configuration-identity" value={identity} onChange={setIdentity} error={keyError} />
+            <div className="flex justify-end">
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={plan.isPending || identity.trim() === ""}
+                disabledReason={identity.trim() === "" ? t("backups.data.identityFirst") : t("app.busyReason")}
+              >
+                {t("backups.data.check")}
+              </Button>
+            </div>
+          </form>
+        )}
+        {plan.isPending ? <p className="text-body text-fg-muted">{t("backups.restore.planning")}</p> : null}
+        {plan.isError && !identityError(plan.error) ? <Alert tone="danger">{reasonOf(plan.error, t("backups.unreadable"))}</Alert> : null}
+        {apply.isError && !identityError(apply.error) ? <Alert tone="danger">{reasonOf(apply.error, t("backups.unreadable"))}</Alert> : null}
         {shown && shown.changes === 0 ? (
           <Alert tone={toInvite > 0 ? "info" : "success"}>
             {t(toInvite > 0 ? "backups.restore.sameButPeople" : "backups.restore.same")}
@@ -443,7 +471,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
   );
 }
 
-/** The identity field of a data restore: a password field, never kept past the request. */
+/** The identity field of a restore: a password field, never kept past the request. */
 function IdentityField({ id, value, onChange, error }: { id: string; value: string; onChange: (v: string) => void; error?: string }): JSX.Element {
   const { t } = useTranslation();
   return (
@@ -861,11 +889,8 @@ function TargetForm({
         everyHours: Number(form.everyHours),
         keepDays: Number(form.keepDays),
       };
-      return kind === "data"
-        ? doorAction("portal_backup_data_set", {
-            body: { ...body, workingRecipient: form.workingRecipient.trim(), recoveryRecipient: form.recoveryRecipient.trim() },
-          })
-        : doorAction("portal_backup_configuration_set", { body });
+      const keyed = { ...body, workingRecipient: form.workingRecipient.trim(), recoveryRecipient: form.recoveryRecipient.trim() };
+      return doorAction(kind === "data" ? "portal_backup_data_set" : "portal_backup_configuration_set", { body: keyed });
     },
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: overviewKey(kind) });
@@ -921,7 +946,7 @@ function TargetForm({
         {text("secretAccessKey", t("backups.form.secretAccessKey"), t("backups.hint.secretAccessKey"), "password")}
         {text("everyHours", t("backups.form.everyHours"), t("backups.hint.everyHours"), "number")}
         {text("keepDays", t("backups.form.keepDays"), t("backups.hint.keepDays"), "number")}
-        {kind === "data" ? (
+        {(
           <>
             {recipient("workingRecipient", t("backups.form.workingRecipient"), t("backups.hint.workingRecipient"))}
             {recipient("recoveryRecipient", t("backups.form.recoveryRecipient"), t("backups.hint.recoveryRecipient"))}
@@ -938,7 +963,7 @@ function TargetForm({
               </dl>
             ) : null}
           </>
-        ) : null}
+        )}
         <div className="md:col-span-2">
           <Switch
             checked={form.enabled}

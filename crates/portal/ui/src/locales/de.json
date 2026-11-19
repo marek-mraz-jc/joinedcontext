@@ -13456,7 +13456,7 @@
   "backups": {
     "loading": "Sicherung wird geladen…",
     "unreadable": "Die Sicherung konnte nicht gelesen werden. Versuchen Sie es in einer Minute erneut.",
-    "lead": "Eine Kopie der Konfiguration dieser Organisation als Dateien mit ihren Kennungen in Ihrem eigenen S3-Bucket: ihre Einstellungen, Rollen, Zuweisungen, ihre Personen (nur Kennung, Benutzername und E-Mail) und die Manifeste jedes Projekts mit ihren Schemas. Keine Entitätsdaten, kein Code, keine geheimen Werte. Der Bucket behält jede Version, sodass auch eine gelöschte Sicherung wiederhergestellt werden kann.",
+    "lead": "Eine Kopie der Konfiguration dieser Organisation als Dateien mit ihren IDs in Ihrem eigenen S3-Bucket: Einstellungen, Rollen, Bindungen, ihre Personen (nur ID, Benutzername und E-Mail) und die Manifeste jedes Projekts mit ihren Schemas. Keine Entitätsdaten, kein Code, keine geheimen Werte. Jede Sicherung wird mit den zwei Schlüsseln verschlüsselt, die Sie unten festlegen; ohne einen davon kann niemand sie lesen, auch dieses Portal nicht. Der Bucket behält jede Version, sodass eine gelöschte Sicherung wiederhergestellt werden kann.",
     "runs": {
       "title": "Läufe",
       "scheduled": "Läuft alle {hours} Stunden und immer, wenn Sie Jetzt ausführen drücken.",
@@ -13518,7 +13518,8 @@
       "proposed": "Als Änderung vorgeschlagen. Ein anderer Administrator genehmigt sie unter Änderungen.",
       "propose": "Wiederherstellung vorschlagen",
       "close": "Schließen",
-      "project": "Projekt {project}"
+      "project": "Projekt {project}",
+      "lead": "Die Version wird mit Ihrem Schlüssel geöffnet und mit der Organisation von heute verglichen. Nichts ändert sich, bis Sie es vorschlagen und ein anderer Administrator zustimmt."
     },
     "form": {
       "title": "Bucket und Zeitplan",
@@ -13555,7 +13556,7 @@
       "keepDays": "1 bis 3650 Tage, zum Beispiel 90",
       "enabled": "Aus behält den Bucket und jede Version; Jetzt ausführen funktioniert weiter.",
       "workingRecipient": "Der öffentliche Schlüssel der Identität Ihrer Administratoren, aus age-keygen, z. B. age1ql3z7hjy54pw3hyw…",
-      "recoveryRecipient": "Ein zweiter öffentlicher Schlüssel, den eine andere Person offline aufbewahrt, z. B. age1syrvza6xvtvsr9f0…. Jeder der beiden öffnet jedes Archiv.",
+      "recoveryRecipient": "Ein zweiter öffentlicher Schlüssel, offline bei einer anderen Person verwahrt, z. B. age1syrvza6xvtvsr9f0…. Jeder der beiden Schlüssel öffnet jede Sicherung.",
       "copyProject": "Die Projekte dieser Sicherung, die Sie lesen dürfen, z. B. air-quality. Ein seit der Sicherung gelöschtes Projekt wird nicht angezeigt und nie wiederhergestellt.",
       "copyName": "Kleinbuchstaben, Ziffern und '-', ein Name, den kein Projekt nutzt, z. B. air-quality-restored."
     },
