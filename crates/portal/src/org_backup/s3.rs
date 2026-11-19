@@ -1,10 +1,10 @@
 //! The few S3 calls an Organization backup makes, signed with AWS Signature Version 4 (T-7154).
 //!
-//! Path-style requests (`{endpoint}/{bucket}/{key}`), so MinIO, Ceph and AWS answer alike. The
-//! body of every call is held in memory: a configuration bundle is manifests and schemas, capped
-//! by [`MAX_OBJECT_BYTES`]; a data archive past that goes up from its file in parts of
-//! [`PART_BYTES`] ([`Bucket::put_file`], T-7170). Errors name the call and the status, never the
-//! credentials.
+//! Path-style requests (`{endpoint}/{bucket}/{key}`), so MinIO, Ceph and AWS answer alike. A
+//! configuration bundle is manifests and schemas, held in memory and capped by
+//! [`MAX_OBJECT_BYTES`]; a data archive goes up from its file in parts of [`PART_BYTES`]
+//! ([`Bucket::put_file`], T-7170) and comes back into a file ([`stream_into`]), both up to
+//! [`MAX_ARCHIVE_BYTES`]. Errors name the call and the status, never the credentials.
 
 use std::time::Duration;
 
