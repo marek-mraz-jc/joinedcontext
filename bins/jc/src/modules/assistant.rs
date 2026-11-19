@@ -995,6 +995,8 @@ mod tests {
             max_connections: None,
             migrate_url: None,
             migrate_password_file: None,
+            maintenance_url: None,
+            maintenance_password_file: None,
         });
         assert_eq!(missing(&cfg, &siblings, &setup, &found), None);
         let mut alone = siblings.clone();
@@ -1041,6 +1043,8 @@ mod tests {
             max_connections: None,
             migrate_url: None,
             migrate_password_file: None,
+            maintenance_url: None,
+            maintenance_password_file: None,
         });
         let filled = vars(&siblings, &setup, None, Some("http://127.0.0.1:4200"));
         let none = |_: &str| None;
@@ -1159,6 +1163,8 @@ mod tests {
             max_connections: Some(2),
             migrate_url: None,
             migrate_password_file: None,
+            maintenance_url: None,
+            maintenance_password_file: None,
         });
         // A model key of the test's own, from its file; it must show up in no log line.
         let marker = format!("{}-{id}", ["jc", "test", "model", "value"].join("-"));

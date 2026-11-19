@@ -181,6 +181,8 @@ pub struct PgBackend {
     pub entities: PgEntityStore,
     pub temporal: PgTemporalStore,
     pub docs: PgDocStore,
+    /// The table owner's pool, for the history's DDL ([`Self::with_owner`]).
+    owner: Option<sqlx::postgres::PgPool>,
     hook: std::sync::RwLock<Option<ChangeHook>>,
     /// Server and extension versions, read once at startup
     /// (`with_version`); `/q/health` serves this copy rather than querying
@@ -200,6 +202,7 @@ impl PgBackend {
             entities: PgEntityStore::new(pool.clone()),
             temporal: PgTemporalStore::new(pool.clone()),
             docs: PgDocStore::new(pool),
+            owner: None,
             hook: std::sync::RwLock::new(None),
             version: Value::Object(serde_json::Map::new()),
             exhausted_since: std::sync::Mutex::new(None),
@@ -212,6 +215,21 @@ impl PgBackend {
     pub fn with_maintenance(mut self, maint: sqlx::postgres::PgPool) -> Self {
         self.docs = self.docs.with_maintenance(maint);
         self
+    }
+
+    /// Run the DDL of the history (weekly partitions created, adopted and
+    /// dropped, their indexes built) on `owner`, the role that owns the
+    /// tables, which a split deployment's request and maintenance roles are
+    /// not (T-7310).
+    pub fn with_owner(mut self, owner: sqlx::postgres::PgPool) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
+    /// The owner pool ([`Self::with_owner`]); the maintenance pool when none
+    /// was given, the request pool when neither was.
+    pub fn owner(&self) -> &sqlx::postgres::PgPool {
+        self.owner.as_ref().unwrap_or_else(|| self.docs.maint())
     }
 
     /// Shorten [`POOL_WEDGED`], for tests that cannot wait five minutes.
@@ -1612,16 +1630,13 @@ impl AnyStore {
             AnyStore::Mem(s) => Ok(s.tenant_exists(tenant)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
-                async {
-                    let row =
-                        sqlx::query_scalar::<_, i32>("SELECT 1 FROM tenants WHERE tenant_id = $1")
-                            .bind(tenant.as_str())
-                            .fetch_optional(p.docs.pool())
-                            .await
-                            .map_err(db)?;
-                    Ok(row.is_some())
-                }
-                .await
+                // No Tenant is set yet: the request role reads one name's
+                // standing through the owner's function (0043).
+                sqlx::query_scalar::<_, bool>("SELECT known FROM antares_tenant_standing($1)")
+                    .bind(tenant.as_str())
+                    .fetch_one(p.docs.pool())
+                    .await
+                    .map_err(db)
             }
         }
     }
@@ -1636,9 +1651,10 @@ impl AnyStore {
             AnyStore::Mem(s) => Ok(s.tenant_standing(tenant)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
+                // Read before `antares.tenant` is set: through the owner's
+                // function, which answers for this one name (0043).
                 let (tombstoned, organization) = sqlx::query_as::<_, (bool, Option<String>)>(
-                    "SELECT EXISTS (SELECT 1 FROM tenant_rename WHERE old = $1), \
-                            (SELECT organization_id FROM tenants WHERE tenant_id = $1)",
+                    "SELECT tombstoned, organization FROM antares_tenant_standing($1)",
                 )
                 .bind(tenant.as_str())
                 .fetch_one(p.docs.pool())
@@ -1662,9 +1678,11 @@ impl AnyStore {
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
                 async {
+                    // Every Organization's Tenants: the maintenance role's
+                    // listing, never the request role's (0043).
                     let mut rows: Vec<String> =
                         sqlx::query_scalar("SELECT tenant_id FROM tenants ORDER BY 1")
-                            .fetch_all(p.docs.pool())
+                            .fetch_all(p.docs.maint())
                             .await
                             .map_err(db)?;
                     // The broker's own tenants claim a row like any other
@@ -1840,7 +1858,7 @@ impl AnyStore {
                 async {
                     let rows =
                         sqlx::query_scalar::<_, String>("SELECT tenant_id FROM tenants ORDER BY 1")
-                            .fetch_all(p.docs.pool())
+                            .fetch_all(p.docs.maint())
                             .await
                             .map_err(db)?;
                     Ok(rows)
@@ -2645,7 +2663,7 @@ impl antares_store::TemporalDriver for AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
-                crate::store::pg::maintenance::drop_retained_partitions(p.docs.maint(), floors)
+                crate::store::pg::maintenance::drop_retained_partitions(p.owner(), floors)
                     .await
                     .map_err(db)
             }

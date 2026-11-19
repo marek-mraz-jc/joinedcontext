@@ -1503,15 +1503,18 @@ impl Config {
             let Some(db) = db else { continue };
             db.validate()
                 .map_err(|message| ConfigError::Database { module, message })?;
-            let own = match module {
-                Module::Antares => Some("Antares"),
-                Module::Assistant => Some("The assistant"),
-                _ => None,
-            };
-            if let (Some(own), Some(_)) = (own, &db.migrate_url) {
+            if module == Module::Assistant && db.migrate_url.is_some() {
                 return Err(ConfigError::Database {
                     module,
-                    message: format!("{own} migrates as its own role at start; set no migrate_url"),
+                    message: "The assistant migrates as its own role at start; set no migrate_url"
+                        .to_owned(),
+                });
+            }
+            // The maintenance role is Antares' cross-Tenant escape (migration 0042, T-7310).
+            if module != Module::Antares && db.maintenance_url.is_some() {
+                return Err(ConfigError::Database {
+                    module,
+                    message: "maintenance_url is Antares' alone; set none here".to_owned(),
                 });
             }
         }
@@ -2111,6 +2114,9 @@ impl Config {
             out.push((app, jc_secret::Source::File));
             if db.migrate_password_file.is_some() {
                 out.push((migrate, jc_secret::Source::File));
+            }
+            if db.maintenance_password_file.is_some() {
+                out.push(("antares-db-maintenance-password", jc_secret::Source::File));
             }
         }
         out
@@ -3571,9 +3577,17 @@ password_file = "/run/secrets/kaisatsu"
         );
         assert!(!err.contains("leaked"), "{err}");
         let err = refused(
-            "[antares.database]\nurl = \"postgres://a@db/jc\"\npassword_file = \"/p\"\nmigrate_url = \"postgres://m@db/jc\"\nmigrate_password_file = \"/m\"\n",
+            "[assistant.database]\nurl = \"postgres://a@db/jc\"\npassword_file = \"/p\"\nmigrate_url = \"postgres://m@db/jc\"\nmigrate_password_file = \"/m\"\n",
         );
-        assert!(err.contains("Antares migrates"), "{err}");
+        assert!(err.contains("The assistant migrates"), "{err}");
+        let err = refused(
+            "[shako.database]\nurl = \"postgres://s@db/jc\"\npassword_file = \"/p\"\nmaintenance_url = \"postgres://m@db/jc\"\nmaintenance_password_file = \"/m\"\n",
+        );
+        assert!(err.contains("Antares' alone"), "{err}");
+        let err = refused(
+            "[antares.database]\nurl = \"postgres://a@db/jc\"\npassword_file = \"/p\"\nmaintenance_url = \"postgres://m@db/jc\"\n",
+        );
+        assert!(err.contains("go together"), "{err}");
         let err = refused(
             "[kaisatsu]\ndatabase_url_file = \"/u\"\n[kaisatsu.database]\nurl = \"postgres://k@db/jc\"\npassword_file = \"/p\"\n",
         );

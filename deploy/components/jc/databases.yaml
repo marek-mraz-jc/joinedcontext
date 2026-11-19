@@ -39,7 +39,22 @@ jc_antares:
       ensure: present
   # The Portal's data backup reader (T-7170): as the module readers below, under Antares' own
   # row-level security per tenant.
+  # jc_antares owns the tables and migrates; with jc.antaresRoleSplit the broker serves as
+  # jc_antares_app (rows only, no group, never past row-level security) and runs the cross-Tenant
+  # work (outbox drain, reaps, retention, the Tenant inventory) as jc_antares_maint, a member of
+  # antares_maintenance, the role migration 0042 keys the escape on (T-7307, T-7310).
   additionalRoles:
+    - name: 'jc_antares_app'
+      type: 'dml'
+      credentialsSecret:
+        name: 'db-jc-antares-app'
+        passwordKey: 'password'
+    - name: 'jc_antares_maint'
+      type: 'dml'
+      memberOf: ['antares_maintenance']
+      credentialsSecret:
+        name: 'db-jc-antares-maint'
+        passwordKey: 'password'
     - name: 'antares_backup'
       type: 'backup'
       credentialsSecret:

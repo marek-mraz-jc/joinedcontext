@@ -265,6 +265,45 @@ def test_jc_portal_serves_as_a_role_apart_from_the_one_that_migrates(rendered, e
 
 
 @requires_helmfile
+def test_jc_antares_serves_apart_from_its_owner_once_the_role_split_is_on(rendered, rendered_variant):
+    # T-7310: off, the broker logs in as the owner jc_antares as before (an older image knows no
+    # ANTARES_MIGRATION_DATABASE_URL); on, it migrates as jc_antares, serves as jc_antares_app and
+    # drains and reaps as jc_antares_maint, each password from its own Secret.
+    off = {e["name"]: e for e in jc_container(rendered("addons"))["env"]}
+    assert off["ANTARES_DATABASE_URL"]["value"].startswith("postgresql://jc_antares:$(BROKER_DB_PASSWORD)@")
+    assert "ANTARES_MIGRATION_DATABASE_URL" not in off and "ANTARES_MAINTENANCE_DATABASE_URL" not in off
+
+    def split_on(tree):
+        path = tree / "components/jc/default-environment.yaml.gotmpl"
+        text = path.read_text()
+        assert "antaresRoleSplit: false" in text
+        path.write_text(text.replace("antaresRoleSplit: false", "antaresRoleSplit: true"))
+
+    docs = rendered_variant("addons", split_on)
+    on = {e["name"]: e for e in jc_container(docs)["env"]}
+    urls = {k: on[k]["value"] for k in ("ANTARES_DATABASE_URL", "ANTARES_MIGRATION_DATABASE_URL",
+                                        "ANTARES_MAINTENANCE_DATABASE_URL")}
+    assert urls["ANTARES_DATABASE_URL"].startswith("postgresql://jc_antares_app:$(BROKER_APP_DB_PASSWORD)@")
+    assert urls["ANTARES_MIGRATION_DATABASE_URL"].startswith("postgresql://jc_antares:$(BROKER_DB_PASSWORD)@")
+    assert urls["ANTARES_MAINTENANCE_DATABASE_URL"].startswith(
+        "postgresql://jc_antares_maint:$(BROKER_MAINT_DB_PASSWORD)@")
+    assert all(u.endswith("/jc_antares") for u in urls.values())
+    refs = {k: on[k]["valueFrom"]["secretKeyRef"]["name"]
+            for k in ("BROKER_DB_PASSWORD", "BROKER_APP_DB_PASSWORD", "BROKER_MAINT_DB_PASSWORD")}
+    assert refs == {"BROKER_DB_PASSWORD": "db-jc-antares", "BROKER_APP_DB_PASSWORD": "db-jc-antares-app",
+                    "BROKER_MAINT_DB_PASSWORD": "db-jc-antares-maint"}
+    # The roles behind them: rows only, the maintenance one in antares_maintenance.
+    jobs = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "Job" and "create-role" in d["metadata"]["name"]}
+    def job_env(name):
+        return {e["name"]: e.get("value") for e in jobs[name]["spec"]["template"]["spec"]["containers"][0]["env"]}
+    app = job_env("jc-antares-db-create-role-jc-antares-app-dml")
+    maint = job_env("jc-antares-db-create-role-jc-antares-maint-dml")
+    assert (app["ROLE_TYPE"], app["ROLE_MEMBER_OF"]) == ("dml", "[]")
+    assert (maint["ROLE_TYPE"], maint["ROLE_MEMBER_OF"]) == ("dml", '["antares_maintenance"]')
+    assert app["DB_OWNER"] == maint["DB_OWNER"] == "jc_antares"
+
+
+@requires_helmfile
 def test_jc_prod_carries_the_cutover_parts(rendered):
     # Supervisor 2026-11-10 06:3xZ: prod parity on jc-prod. bbsk. keeps its own certificate, off
     # the copied edge certificate's SAN list; App functions run on jc-prod's realm and gateway; the
