@@ -436,6 +436,12 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
                         &pin.organization,
                     )
                 });
+                // Before the first run's mirror nobody belongs anywhere: that is no refusal.
+                if foreign && state.mirror.is_empty() {
+                    return starting(
+                        crate::error::ApiError::Unavailable(STARTING.into()).into_response(),
+                    );
+                }
                 if foreign {
                     return crate::error::ApiError::Denied(format!(
                         "this Portal is {}'s; you belong to none of its projects",
@@ -448,6 +454,20 @@ pub async fn middleware(State(state): State<AppState>, request: Request, next: N
             next.run(request).await
         })
         .await
+}
+
+/// What a request answers while this process has no mirror to serve: no completed run of an
+/// earlier process left one, and its own first run has not ended (T-7401).
+pub const STARTING: &str =
+    "this Portal is starting and has not loaded its projects yet; try again in a minute";
+
+/// `response` with the `Retry-After` of [`STARTING`].
+pub fn starting(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("60"),
+    );
+    response
 }
 
 /// The API a signed-in caller of another Organization is refused on this host: everything under
