@@ -438,7 +438,11 @@ impl World {
             }
             None => Body::empty(),
         };
-        self.send(req.body(body).unwrap()).await
+        let mut req = req.body(body).unwrap();
+        // The source address the jc router resolves for every request it serves.
+        req.extensions_mut()
+            .insert(jc_router::ClientAddr("203.0.113.9".parse().unwrap()));
+        self.send(req).await
     }
 
     pub async fn send(&self, req: Request<Body>) -> (StatusCode, Value) {

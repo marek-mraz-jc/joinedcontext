@@ -1043,10 +1043,16 @@ pub fn validate_readonly_select(
 /// Most rows one Postgres target returns; the rest of the result is not read.
 pub const MAX_SQL_ROWS: usize = 50_000;
 
+/// The database's own message for a refused statement (what a query author needs); any other
+/// failure (connection, TLS, I/O) answers a fixed text, since its detail can name addresses.
 fn pg_err(e: &sqlx::Error) -> DsError {
+    let message = match e {
+        sqlx::Error::Database(db) => format!("postgres refused the query: {}", db.message()),
+        _ => "postgres connection failed".to_owned(),
+    };
     DsError::Upstream {
         status: 400,
-        message: format!("postgres query failed: {e}"),
+        message,
     }
 }
 

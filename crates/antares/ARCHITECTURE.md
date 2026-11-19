@@ -90,6 +90,7 @@ module's header comment.
 | `negotiate.rs` | 6.3.4–6.3.6: tenant, Accept, Content-Type, `@context` resolution, parameter allow-lists (the query set of 6.4.3.2 included) and the RFC 7230 header-syntax checks. Every handler passes through `tenant_from`, `check_params`, `parse_body`, `request_context` |
 | `entities.rs` | 5.6.1–5.6.6, 5.7.1–5.7.2 `/entities`, distributed write fan-out |
 | `paging.rs` | 4.12, 6.3.10 limit/offset/count and the next/prev links, 4.23 ordering and ICU collation, 6.3.17 `NGSILD-Warning`, the query body of 5.2.23 lifted into parameters; every list operation pages through it |
+| `pairs.rs` | the KeyValuePair arrays of an endpoint (`receiverInfo`, `notifierInfo`, `contextSourceInfo`): the headers a pair may not name, values masked on read and restored on write-back; a leaf, so Subscriptions, Registrations and snapshots share it without a module cycle |
 | `admin_auth.rs` | the optional `/q` admin credential (T-3569): one bearer secret from `ANTARES_ADMIN_TOKEN_FILE`, compared without an early exit; health and readiness stay open, metrics configurable |
 | `attrs.rs` | 5.6.2–5.6.5 attribute operations, 10.2.6 Set Attribute Value |
 | `channels.rs` | inbound bridge Channels (ADR-0031, feature `channels`): `/x/channels`, the loopback and MQTT bridges, bind and relay through the policy seam |

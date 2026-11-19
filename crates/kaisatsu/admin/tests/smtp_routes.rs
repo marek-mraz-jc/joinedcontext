@@ -103,6 +103,79 @@ fn settings(host: &str) -> Value {
 }
 
 #[tokio::test]
+async fn a_realm_update_keeps_what_its_body_leaves_out() {
+    let f = Fixture::new().await;
+    let mut stored = f.store.get_realm("jc").await.unwrap().unwrap();
+    stored.display_name = "City".into();
+    stored.apply_checksum = Some("sha-1".into());
+    stored.smtp_server = Some(SmtpServerConfig {
+        host: "smtp.example.org".into(),
+        user: "mailer".into(),
+        password: "smtp-s3cret".into(),
+        ..Default::default()
+    });
+    f.store.upsert_realm(stored).await.unwrap();
+    let applier = f
+        .token(
+            "svc-apply",
+            json!({ "resource_access": { "realm-management": { "roles": ["manage-realm"] } } }),
+        )
+        .await;
+    let realm_call = |method: Method, body: Option<Value>| {
+        let mut req = Request::builder()
+            .method(method)
+            .uri("/admin/realms/jc")
+            .header("authorization", format!("Bearer {applier}"));
+        if body.is_some() {
+            req = req.header("content-type", "application/json");
+        }
+        let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
+        f.app.clone().oneshot(req.body(body).unwrap())
+    };
+
+    // A read-modify-write round trip, as keycloak-config-cli does it.
+    let got = realm_call(Method::GET, None).await.unwrap();
+    assert_eq!(got.status(), StatusCode::OK);
+    let mut doc: Value =
+        serde_json::from_slice(&got.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    doc["displayName"] = json!("City of Example");
+    let put = realm_call(Method::PUT, Some(doc)).await.unwrap();
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+    // A partial body names one key only.
+    let put = realm_call(
+        Method::PUT,
+        Some(json!({ "id": "other", "defaultGroups": ["staff"] })),
+    )
+    .await
+    .unwrap();
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+
+    let after = f.store.get_realm("jc").await.unwrap().unwrap();
+    assert_eq!(after.id, "jc");
+    assert_eq!(after.display_name, "City of Example");
+    assert_eq!(after.default_groups, vec!["staff".to_owned()]);
+    assert_eq!(after.apply_checksum.as_deref(), Some("sha-1"));
+    let smtp = after.smtp_server.expect("smtp settings kept");
+    assert_eq!(smtp.password, "smtp-s3cret");
+
+    // A new mail server without its password does not inherit the old one.
+    let put = realm_call(
+        Method::PUT,
+        Some(json!({ "smtpServer": { "host": "mail.other.example", "user": "mailer" } })),
+    )
+    .await
+    .unwrap();
+    assert_eq!(put.status(), StatusCode::NO_CONTENT);
+    let moved = f.store.get_realm("jc").await.unwrap().unwrap();
+    assert!(moved.smtp_server.unwrap().password.is_empty());
+
+    let bad = realm_call(Method::PUT, Some(json!(["not", "a", "realm"])))
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn only_manage_smtp_or_a_realm_applier_reads_and_sets_it() {
     let f = Fixture::new().await;
     let reconciler = f

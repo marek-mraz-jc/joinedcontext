@@ -37,7 +37,6 @@ use odata_table::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 
 const MAX_PAGE_SIZE: u64 = 500;
@@ -1150,10 +1149,9 @@ async fn handle_odata_single_segment_post(
                     )));
                 }
             };
-            let ip = client.map_or(IpAddr::V4(Ipv4Addr::LOCALHOST), |c| c.0.0);
             match execute_public_dashboard_query(
                 &state,
-                ip,
+                crate::public::public_caller_of(client.as_deref()),
                 &parsed.access_token,
                 parsed.panel_id,
                 parsed.query,

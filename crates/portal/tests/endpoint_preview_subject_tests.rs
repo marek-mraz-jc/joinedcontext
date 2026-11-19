@@ -507,9 +507,26 @@ async fn without_the_kept_id_token_the_preview_reads_narrower() {
     assert_eq!(value(&asked, "x-jc-subject"), Some("sub-jana"), "{asked:?}");
     assert_eq!(value(&asked, "x-jc-member"), None, "{asked:?}");
     assert_eq!(value(&asked, "x-jc-groups"), None, "{asked:?}");
+    // Without `jc_org` the session's realm roles count on no Organization's Endpoint, so its
+    // `x-jc-roles` list is a subset of the gateway's rather than equal to it.
     let gateway = gateway(Some(&jana_claims()), "air-staff");
+    let roles = |pairs: &[(String, String)]| -> std::collections::BTreeSet<String> {
+        value(pairs, "x-jc-roles")
+            .unwrap_or_default()
+            .split(',')
+            .filter(|role| !role.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
     assert!(
-        asked.iter().all(|pair| gateway.contains(pair)),
+        roles(&asked).is_subset(&roles(&gateway)),
+        "{asked:?} vs {gateway:?}"
+    );
+    assert!(
+        asked
+            .iter()
+            .filter(|(name, _)| name != "x-jc-roles")
+            .all(|pair| gateway.contains(pair)),
         "{asked:?} vs {gateway:?}"
     );
 }

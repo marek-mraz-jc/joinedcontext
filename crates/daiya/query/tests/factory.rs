@@ -689,7 +689,7 @@ async fn bad_records_and_kinds_without_a_driver_are_refused_with_a_reason() {
                 "p",
                 "postgres",
                 "db.example:5432",
-                json!({ "database": "d", "user": "u", "allowedViews": ["v"], "sslmode": "verify-full" }),
+                json!({ "database": "d", "user": "u", "allowedViews": ["v"], "sslmode": "sometimes" }),
             ),
             "sslmode",
         ),
@@ -734,7 +734,7 @@ async fn bad_records_and_kinds_without_a_driver_are_refused_with_a_reason() {
     assert!(err.to_string().contains("no host"), "{err}");
 
     // The other supported sslmodes build (the pool connects lazily, on first use).
-    for mode in ["allow", "require", "prefer"] {
+    for mode in ["allow", "require", "prefer", "verify-ca", "verify-full"] {
         let rec = record(
             "p",
             "postgres",
