@@ -143,12 +143,25 @@ async fn plan_of(pool: &sqlx::PgPool, tenant: &str, sql: &str) -> String {
 }
 
 async fn plan_as(pool: &sqlx::PgPool, tenant: &str, service: bool, sql: &str) -> String {
+    plan_with(pool, tenant, service, &[], sql).await
+}
+
+/// [`plan_as`] after the `SET LOCAL`s of `settings`.
+async fn plan_with(
+    pool: &sqlx::PgPool,
+    tenant: &str,
+    service: bool,
+    settings: &[&str],
+    sql: &str,
+) -> String {
     app_role(pool).await;
     let mut tx = pool.begin().await.expect("tx");
-    sqlx::query("SET LOCAL ROLE antares_app")
-        .execute(&mut *tx)
-        .await
-        .expect("role");
+    for s in settings.iter().chain(&["SET LOCAL ROLE antares_app"]) {
+        sqlx::query(sqlx::AssertSqlSafe(*s))
+            .execute(&mut *tx)
+            .await
+            .expect(s);
+    }
     sqlx::query(
         "SELECT set_config('antares.tenant', $1, true), set_config('antares.service', $2, true)",
     )
@@ -1079,9 +1092,15 @@ async fn the_expiry_sweep_stays_index_shaped() {
 /// T-7275, S5-34: current-state retention reads its type through the two
 /// leakproof type indexes as the broker's role, never the whole Tenant: a
 /// first-type rule (T0) and a rule on the type only multi-type Entities name
-/// second (`https://x/M`).
+/// second (`https://x/M`). Planned with sequential scans off: what is under
+/// test is whether each arm can be an index condition under RLS (the old
+/// `types @>` form could not and bitmap-read the whole Tenant even then).
+/// With them on, a LIMIT over a type the statistics put at 7 % of the table
+/// plans a Seq Scan whose cost follows the rows other tests of this binary
+/// leave in `entities` (runs 44579375051, 44587034167).
 #[tokio::test]
 async fn current_state_retention_reads_its_type_through_an_index_under_rls() {
+    const NO_SEQSCAN: &[&str] = &["SET LOCAL enable_seqscan = off"];
     use antares_sql::store::pg::maintenance::RETAIN_CURRENT_ROWS;
     let url = require_db!();
     let pool = pg::connect(&url, 5).await.expect("connect");
@@ -1098,7 +1117,7 @@ async fn current_state_retention_reads_its_type_through_an_index_under_rls() {
             &format!("SELECT count(*) FROM ({RETAIN_CURRENT_ROWS}) r"),
             &binds,
         );
-        let plan = plan_as(&pool, RLS_A, true, &count).await;
+        let plan = plan_with(&pool, RLS_A, true, NO_SEQSCAN, &count).await;
         assert!(
             plan.contains("i_entities_first_type_id")
                 && (plan.contains("i_entities_multi_type_id")
@@ -1114,7 +1133,7 @@ async fn current_state_retention_reads_its_type_through_an_index_under_rls() {
             &format!("DELETE FROM entities WHERE (tenant_id, id) IN ({RETAIN_CURRENT_ROWS})"),
             &binds,
         );
-        let plan = plan_as(&pool, RLS_A, true, &delete).await;
+        let plan = plan_with(&pool, RLS_A, true, NO_SEQSCAN, &delete).await;
         assert!(
             plan.contains("i_entities_first_type_id") && !plan.contains("Seq Scan on entities"),
             "{ty}: the retention delete reads the whole Tenant — plan:\n{plan}"
