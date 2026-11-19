@@ -106,7 +106,7 @@ def test_a_restored_db_is_vacuumed_and_analyzed_before_the_copy_serves(tmp_path,
 class FakeOps:
     """docker, pg_dump and up.sh stood in for: writes results the way the inner suites would."""
 
-    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None, born=(), unsettled=()):
+    def __init__(self, a, home, rhome, backup, after=None, restored=None, held=(), roles=None, born=(), unsettled=(), pending=()):
         self.a, self.home, self.rhome, self.backup = a, home, rhome, backup
         self.dst = SimpleNamespace(container=f"rh-pg-{rhome.name}")
         self.counts = {}
@@ -120,6 +120,7 @@ class FakeOps:
         self.started_role = None
         self.born_types = born
         self.unsettled = unsettled
+        self.pending = pending
 
     def check_disk(self):
         return {"databases": ["antares", "portal"], "needBytes": 1}
@@ -174,6 +175,10 @@ class FakeOps:
         self.settled = (base, paths, timeout)
         return list(self.unsettled)
 
+    def drain(self, timeout, window):
+        self.drained = (timeout, window, len(self.calls))
+        return list(self.pending), 0.0 if not self.pending else timeout
+
     def born(self, since):
         self.since = since
         return set(self.born_types)
@@ -198,14 +203,14 @@ def args(tmp_path, **kw):
     (home / "gtfs-realtime.proto").write_text("syntax = 'proto2';\n")
     a = SimpleNamespace(base_url="http://localhost:42310", home=str(home), suites="endpoints,names", extra={},
                         backup_dir=None, restore_env=None, restore_port=42311, restore_pg_port=55461,
-                        jc_bin="/bin/true", converge=1, settle=7, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
+                        jc_bin="/bin/true", converge=1, settle=7, drain=0, drain_window=900, max_disk=0.92, suite_timeout=10, keep=False, export="/e",
                         state=str(home / "smoke-state"), log_file=str(home / "jc.log"), admin_url=None, admin_token_file=None)
     for k, v in kw.items():
         setattr(a, k, v)
     return a
 
 
-def run_fake(tmp_path, monkeypatch, **fake):
+def run_fake(tmp_path, monkeypatch, a=None, **fake):
     monkeypatch.setenv("REHEARSAL_HOME", str(tmp_path / "rh"))
     monkeypatch.setattr(suite, "unknown_slug", lambda base: (404, "/api/endpoint/x/ngsi-ld/v1/types"))
     made = {}
@@ -214,7 +219,7 @@ def run_fake(tmp_path, monkeypatch, **fake):
         made["ops"] = FakeOps(*a, **fake)
         return made["ops"]
     res = Results("restore", "http://localhost:42310")
-    meta = suite.execute(args(tmp_path), res, tmp_path / "out", factory)
+    meta = suite.execute(a or args(tmp_path), res, tmp_path / "out", factory)
     return res, meta, made["ops"]
 
 
@@ -559,3 +564,101 @@ def test_teardown_removes_the_copys_functions_container_by_name(tmp_path, monkey
     removed = [c[-1] for c in calls if c[:3] == ["docker", "rm", "-f"]]
     assert removed == ["rh-pg-prod-restore", "rh-functions-42311", "rh-prom-prod-restore", "rh-promproxy-prod-restore"]
     assert not rhome.exists()
+
+
+def pl(name, *messages):
+    return {"metadata": {"namespace": "helsinki", "name": name},
+            "status": {"conditions": [{"reason": "x", "message": m} for m in messages]}}
+
+
+NOW = 1_800_000_000.0  # 2027-01-15T08:00:00Z
+
+
+def test_only_a_pipeline_whose_first_run_is_still_to_write_is_pending():
+    items = [pl("ran", "running since 2027-01-15T07:59:00Z; the last run ended 2027-01-15T07:58:00Z after 30 s"),
+             pl("failed-once", "the last run, ended 2027-01-15T07:50:00Z, failed: 404; next try 2027-01-15T08:01:00Z"),
+             pl("first-running", "running since 2027-01-15T07:59:00Z"),
+             pl("first-queued", "queued, due 2027-01-15T07:55:00Z"),
+             pl("due-soon", "next run 2027-01-15T08:10:00Z"),
+             pl("due-later", "next run 2027-01-16T04:00:00Z"),
+             pl("resident"), {"metadata": None, "status": None}]
+    assert suite.first_runs_pending(items, NOW, 900) == [
+        "helsinki/first-running running since 2027-01-15T07:59:00Z",
+        "helsinki/first-queued queued, due 2027-01-15T07:55:00Z",
+        "helsinki/due-soon first run due 2027-01-15T08:10:00Z"]
+
+
+class Clock:
+    def __init__(self):
+        self.t = NOW
+
+    def time(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+def test_the_wait_ends_once_the_first_runs_drained(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(suite, "time", clock)
+    rounds = [[pl("a", "queued, due 2027-01-15T07:55:00Z")], [pl("a", "running since 2027-01-15T08:00:05Z")],
+              [pl("a", "next run 2027-01-15T08:30:00Z; the last run ended 2027-01-15T08:00:15Z after 10 s")]]
+    assert suite.drain_wait(lambda: rounds.pop(0), 600, 900) == ([], 20.0) and rounds == []
+
+
+def test_a_queue_that_never_drains_or_cannot_be_read_names_what_it_waited_for(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr(suite, "time", clock)
+    left, waited = suite.drain_wait(lambda: [pl("stuck", "queued, due 2027-01-15T07:55:00Z")], 600, 900)
+    assert left == ["helsinki/stuck queued, due 2027-01-15T07:55:00Z"] and waited == 600
+
+    def refused():
+        raise RuntimeError("GET /api/v1/projects/helsinki/pipelines?limit=1000: 403")
+    assert suite.drain_wait(refused, 30, 900) == (["GET /api/v1/projects/helsinki/pipelines?limit=1000: 403"], 30)
+
+
+def test_the_before_run_waits_for_the_drain_and_an_undrained_queue_is_a_named_red_row(tmp_path, monkeypatch):
+    res, meta, ops = run_fake(tmp_path, monkeypatch, a=args(tmp_path, drain=600, drain_window=300))
+    row = by_id(res)["control.drained"]
+    assert row["result"] == "pass" and row["actual"] == "drained after 0 s" and meta["drainSeconds"] == 0
+    assert ops.drained == (600, 300, 0)  # before any before-run suite
+    pending = ["helsinki/air-quality queued, due 2027-01-15T07:55:00Z"]
+    res, _, _ = run_fake(tmp_path / "2", monkeypatch, a=args(tmp_path / "2", drain=600), pending=pending)
+    rows = by_id(res)
+    assert rows["control.drained"]["result"] == "fail" and "helsinki/air-quality" in rows["control.drained"]["reason"]
+    assert "600 s" in rows["control.drained"]["actual"] and rows["step.after"]["result"] == "pass"
+    # off by default: no wait, no row
+    res, _, ops = run_fake(tmp_path / "3", monkeypatch)
+    assert "control.drained" not in by_id(res) and not hasattr(ops, "drained")
+
+
+def test_ops_drain_reads_every_exported_projects_pipelines_as_a_signed_in_admin_and_signs_out(tmp_path, monkeypatch):
+    for project in ("helsinki", "zilina"):
+        (tmp_path / "e" / "gitea" / "files" / "joinedcontext" / project / "pipelines").mkdir(parents=True)
+    answers = {"/api/v1/projects/helsinki/pipelines?limit=1000": (200, {}, json.dumps(
+                   {"items": [{"metadata": {"name": "a"}, "status": {"conditions": [
+                       {"message": "next run 2027-01-15T08:30:00Z; the last run ended 2027-01-15T08:00:15Z after 10 s"}]}}]}).encode()),
+               "/api/v1/projects/zilina/pipelines?limit=1000": (403, {}, b"")}
+    made = []
+
+    class FakeAdmin:
+        def __init__(self, base, state):
+            self.browser = SimpleNamespace(call=lambda method, path: answers[path])
+            self.closed = False
+            made.append(self)
+
+        def sign_in(self):
+            pass
+
+        def close(self):
+            self.closed = True
+    sys.path.insert(0, str(RESTORE.parent / "pipelines"))
+    import people
+    monkeypatch.setattr(people, "Admin", FakeAdmin)
+    monkeypatch.setattr(suite.time, "sleep", lambda s: None)
+    ops = SimpleNamespace(a=SimpleNamespace(export=str(tmp_path / "e"), base_url="http://127.0.0.1:1", state=str(tmp_path)))
+    left, _ = suite.Ops.drain(ops, 0, 900)
+    assert left == ["GET /api/v1/projects/zilina/pipelines?limit=1000: 403"] and made[0].closed
+    answers["/api/v1/projects/zilina/pipelines?limit=1000"] = (200, {}, b'{"items": []}')
+    assert suite.Ops.drain(ops, 0, 900)[0] == [] and made[1].closed
