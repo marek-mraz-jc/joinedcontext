@@ -27,6 +27,14 @@ pub trait ApiSurface: Send + Sync {
     /// The routes, relative to `prefix`. The broker supplies the state.
     fn router(&self, st: AppState) -> Router<AppState>;
 
+    /// Routes, relative to `prefix`, that read their body as a stream and
+    /// bound it themselves: the broker mounts them outside the bounds wall
+    /// and the body limit, which buffer a whole body under one cap. Each
+    /// carries its own guard. None by default.
+    fn streaming_router(&self, _st: AppState) -> Option<Router<AppState>> {
+        None
+    }
+
     /// What `/q/health` reports about it, beside its prefix.
     fn version_info(&self) -> Value;
 }

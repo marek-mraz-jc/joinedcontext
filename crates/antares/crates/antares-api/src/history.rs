@@ -847,6 +847,10 @@ pub(crate) async fn drain(st: &AppState, evs: Vec<TemporalEvent>) {
 /// response is built. Drained BEFORE the response is returned so
 /// read-your-writes holds at any store latency (the ETSI temporal suites
 /// read history straight after the write).
+///
+/// S4-07: handler, drain and flush run as one spawned task the layer awaits.
+/// A client that hangs up drops only the await: a write the store committed
+/// still reaches history and the matcher instead of going with the buffers.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn layer(
     axum::extract::State(st): axum::extract::State<AppState>,
@@ -855,33 +859,43 @@ pub(crate) async fn layer(
 ) -> axum::response::Response {
     let provenance = crate::provenance::of_request(req.headers(), st.provenance_from.as_deref());
     let tenant = crate::negotiate::tenant_from(req.headers()).ok();
-    let (resp, evs, changes) = BUFFER
-        .scope(std::cell::RefCell::new(Vec::new()), async {
-            STAGED
-                .scope(
-                    std::cell::RefCell::new(Vec::new()),
-                    CHANGES.scope(std::cell::RefCell::new(Vec::new()), async {
-                        PROVENANCE
-                            .scope(
-                                provenance,
-                                TENANT.scope(tenant, async {
-                                    let resp = next.run(req).await;
-                                    (resp, BUFFER.with(|b| b.take()), CHANGES.with(|c| c.take()))
-                                }),
-                            )
-                            .await
-                    }),
-                )
-                .await
-        })
-        .await;
-    drain(&st, evs).await;
-    if !changes.is_empty() {
-        if let Some(flush) = &st.change_flush {
-            flush(changes);
+    let handled = BUFFER.scope(std::cell::RefCell::new(Vec::new()), async {
+        STAGED
+            .scope(
+                std::cell::RefCell::new(Vec::new()),
+                CHANGES.scope(std::cell::RefCell::new(Vec::new()), async {
+                    PROVENANCE
+                        .scope(
+                            provenance,
+                            TENANT.scope(tenant, async {
+                                let resp = next.run(req).await;
+                                (resp, BUFFER.with(|b| b.take()), CHANGES.with(|c| c.take()))
+                            }),
+                        )
+                        .await
+                }),
+            )
+            .await
+    });
+    let job = async move {
+        let (resp, evs, changes) = handled.await;
+        drain(&st, evs).await;
+        if !changes.is_empty() {
+            if let Some(flush) = &st.change_flush {
+                flush(changes);
+            }
+        }
+        resp
+    };
+    match tokio::spawn(tracing::Instrument::in_current_span(job)).await {
+        Ok(resp) => resp,
+        // the router's catch-panic layer answers it, as before the spawn
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        // the runtime is shutting down
+        Err(_) => {
+            axum::response::IntoResponse::into_response(axum::http::StatusCode::SERVICE_UNAVAILABLE)
         }
     }
-    resp
 }
 
 /// No buffer on wasm (pushes drain on the spot): the layer is a pass-through
@@ -1061,5 +1075,69 @@ mod tests {
             .await;
         let ids: Vec<&str> = buffered.iter().map(|e| e.entity_id.as_str()).collect();
         assert_eq!(ids, ["urn:b"]);
+    }
+
+    /// S4-07: a client that hangs up after the store committed its write
+    /// still leaves the history event and the matcher change behind.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dropped_request_still_records_its_committed_write() {
+        use std::sync::{Arc, Mutex};
+        use tower::ServiceExt;
+        const ID: &str = "urn:ngsi-ld:T:dropped";
+        let mut st = AppState::new("antares-history-drop".into());
+        st.temporal_record = crate::state::TemporalRecord::All;
+        let (change_tx, mut change_rx) = tokio::sync::mpsc::unbounded_channel();
+        st.change_flush = Some(Arc::new(move |c| {
+            let _ = change_tx.send(c);
+        }));
+        let (committed_tx, committed_rx) = tokio::sync::oneshot::channel::<()>();
+        let committed_tx = Arc::new(Mutex::new(Some(committed_tx)));
+        let handler_st = st.clone();
+        let app = axum::Router::new()
+            .route(
+                "/w",
+                axum::routing::post(move || async move {
+                    // the committed write: history keeps only an Entity
+                    // the current state holds
+                    let tenant = TenantId::new("t").expect("tenant");
+                    let doc = serde_json::json!({"id": ID, "type": "T"});
+                    assert!(handler_st
+                        .store
+                        .create(&tenant, antares_store::Kind::Entity, ID, doc)
+                        .await
+                        .expect("create"));
+                    let mut event = ev(ID);
+                    event.op = antares_store::TemporalOp::AttrCreated;
+                    event.shell = serde_json::json!({"id": ID, "type": "T"});
+                    push(&handler_st, event).await;
+                    assert!(
+                        buffer_change((ID.to_owned(), None, Some(serde_json::json!({})))).is_none()
+                    );
+                    // the write is committed; the client goes before the reply
+                    if let Some(tx) = committed_tx.lock().ok().and_then(|mut g| g.take()) {
+                        let _ = tx.send(());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    axum::http::StatusCode::NO_CONTENT
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(st.clone(), layer));
+        let req = axum::http::Request::post("/w")
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let call = tokio::spawn(app.oneshot(req));
+        committed_rx.await.expect("the handler ran");
+        call.abort();
+        let changes = tokio::time::timeout(std::time::Duration::from_secs(5), change_rx.recv())
+            .await
+            .expect("the matcher change was flushed")
+            .expect("flush hook alive");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, ID);
+        let tenant = TenantId::new("t").expect("tenant");
+        assert!(
+            st.temporal.get(&tenant, ID).await.expect("read").is_some(),
+            "the history event was drained"
+        );
     }
 }
