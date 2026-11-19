@@ -288,6 +288,16 @@ impl OrganizationRealm {
         &self.issuer
     }
 
+    /// The installation's admin client `(id, auth)` as it signs in to this realm: same id,
+    /// this realm's own secret (S1-04). Every syncer that writes the realm takes it, or the
+    /// realm answers 401 (T-7288).
+    pub fn admin_auth(
+        &self,
+        (id, auth): &(String, crate::auth::client_auth::ClientAuth),
+    ) -> (String, crate::auth::client_auth::ClientAuth) {
+        (id.clone(), own_auth(auth, &self.organization, id))
+    }
+
     /// The realm as a sign-in configuration: its public issuer, the Portal's client and the
     /// back channel the Portal posts to.
     pub fn oidc(&self) -> &OidcConfig {
@@ -542,6 +552,16 @@ mod tests {
         assert_eq!(secret(&hel.config.auth), derived.expose());
         assert_ne!(secret(&hel.config.auth), secret(&ba.config.auth));
         assert_ne!(secret(&hel.config.auth), "s", "the installation's secret");
+        // The reconciler's syncers sign in to the realm with its own admin secret (T-7288).
+        let (id, auth) = hel.admin_auth(&admin);
+        assert_eq!(id, "portal-reconciler");
+        assert_eq!(
+            secret(&auth),
+            jc_core::Secret::new("r")
+                .for_realm("hel", "portal-reconciler")
+                .expose()
+        );
+        assert_ne!(secret(&auth), secret(&ba.admin_auth(&admin).1));
         // A federated assertion names no secret and stays as it is.
         let path = std::path::PathBuf::from("/var/run/secrets/token");
         let federated = own_auth(&ClientAuth::Assertion(path.clone()), "hel", "portal-api");

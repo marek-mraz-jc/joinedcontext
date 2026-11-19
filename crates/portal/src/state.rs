@@ -914,13 +914,12 @@ impl AppState {
             ),
         }
         // Each Organization's realm, as that realm's own `portal-reconciler` (T-7144).
-        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+        if let Some(admin) = self.config.keycloak_admin.as_ref() {
             for realm in self.organization_realms.values() {
-                if let Some(groups) = crate::reconciler::groups::GroupSync::new(
-                    &realm.backchannel,
-                    id.clone(),
-                    secret.clone(),
-                ) {
+                let (id, secret) = realm.admin_auth(admin);
+                if let Some(groups) =
+                    crate::reconciler::groups::GroupSync::new(&realm.backchannel, id, secret)
+                {
                     syncer = syncer.with_organization_groups(Arc::new(
                         groups.for_organization(&realm.organization),
                     ));
@@ -960,15 +959,16 @@ impl AppState {
                     }
                 }
                 // The Apps of an Organization with a realm of its own have their client there,
-                // written by the same Portal client (T-7001 §3: one secret for every realm, T-7165).
+                // written by the same Portal client with that realm's own secret (T-7165, S1-04).
                 for realm in self.organization_realms.values() {
                     if let Some(mut clients) = crate::reconciler::app_clients::AppClientSync::new(
                         &realm.backchannel,
-                        oidc.client_id.clone(),
-                        oidc.auth.clone(),
+                        realm.oidc().client_id.clone(),
+                        realm.oidc().auth.clone(),
                         host.clone(),
                     ) {
-                        if let Some((id, secret)) = self.config.keycloak_admin.clone() {
+                        if let Some(admin) = self.config.keycloak_admin.as_ref() {
+                            let (id, secret) = realm.admin_auth(admin);
                             clients = clients.with_members(id, secret);
                         }
                         syncer = syncer.with_organization_app_clients(Arc::new(
