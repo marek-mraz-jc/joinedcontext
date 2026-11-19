@@ -418,7 +418,18 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
     .unwrap();
     assert_eq!(same["baseEtag"], plan["baseEtag"]);
 
-    let applied = call_mcp_tool(&f.state, &f.admin, "daiya_apply", json!({ "plan": plan }))
+    // Apply takes only the digest of a plan the server kept; a bundle in the arguments is refused.
+    for args in [
+        json!({ "plan": plan.clone() }),
+        json!({ "digest": plan["digest"], "desired": plan["desired"] }),
+    ] {
+        let err = call_mcp_tool(&f.state, &f.admin, "daiya_apply", args)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status_code(), 400, "{err}");
+    }
+    let by_digest = json!({ "digest": plan["digest"] });
+    let applied = call_mcp_tool(&f.state, &f.admin, "daiya_apply", by_digest.clone())
         .await
         .unwrap();
     assert_eq!(applied["dashboards"][0]["uid"], "planned", "{applied}");
@@ -431,7 +442,7 @@ async fn import_plan_and_apply_write_only_for_an_editor() {
             .is_some()
     );
     // The same plan again is stale: the state it was computed on is gone.
-    let err = call_mcp_tool(&f.state, &f.admin, "daiya_apply", plan)
+    let err = call_mcp_tool(&f.state, &f.admin, "daiya_apply", by_digest)
         .await
         .unwrap_err();
     assert_eq!(err.status_code(), 409, "{err}");

@@ -6,7 +6,7 @@
 //! OData 4.01 service and CLI.
 
 use daiya_api::odata::{
-    ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
+    ApplyBody, ODataImportActionBody, ODataQueryActionBody, exec_odata_apply,
     exec_odata_datasource_editor_schema, exec_odata_datasource_health, exec_odata_datasource_query,
     exec_odata_datasource_resource, exec_odata_export, exec_odata_import, exec_odata_plan,
 };
@@ -195,8 +195,12 @@ pub async fn call_mcp_tool(
             exec_odata_plan(state, ctx, desired).await
         }
         "Apply" => {
-            let digest = required_str(&args, "digest")?;
-            exec_odata_apply(state, ctx, digest).await
+            let body: ApplyBody = serde_json::from_value(args).map_err(|e| {
+                CrError::BadRequest(format!(
+                    "invalid apply args: {e}; give only the digest a daiya_plan answered"
+                ))
+            })?;
+            exec_odata_apply(state, ctx, &body.digest).await
         }
         "PublicDashboard/Rotate" => {
             let uid = required_str(&args, "uid")?;

@@ -195,7 +195,7 @@ fn export_of_an_unknown_uid_is_refused_not_a_store_failure() {
 }
 
 #[test]
-fn plan_then_apply_and_a_tampered_plan_is_stale() {
+fn plan_prints_the_digest_apply_takes_and_apply_refuses_anything_else() {
     let scratch = Scratch::new();
     let bundle = scratch.write(
         "bundle.json",
@@ -205,20 +205,21 @@ fn plan_then_apply_and_a_tampered_plan_is_stale() {
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     let plan: Value = serde_json::from_str(&stdout(&out)).unwrap();
     assert_eq!(plan["hasChanges"], true, "{plan}");
+    let digest = plan["digest"].as_str().unwrap();
+    assert_eq!(digest.len(), 64, "{plan}");
+
+    // Without a configured store every run has its own empty memory store: the plan of the
+    // run before is gone, so its digest is unknown here (the Postgres round trip is in
+    // binary.rs). An ill-formed digest is refused the same way.
+    for bad in [digest, "not-a-digest"] {
+        let out = daiya(&["apply", "--digest", bad]);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(stderr(&out).contains("apply failed"), "{}", stderr(&out));
+    }
+    // A plan file is no longer something apply reads.
     let plan_file = scratch.write("plan.json", &plan.to_string());
-
-    // A fresh store has the same (empty) state the plan was computed on.
     let out = daiya(&["apply", "-f", &plan_file]);
-    assert!(matches!(out.status.code(), Some(0 | 2)), "{}", stderr(&out));
-    let applied: Value = serde_json::from_str(&stdout(&out)).unwrap();
-    assert_eq!(applied["dashboards"][0]["uid"], "planned", "{applied}");
-
-    let mut stale = plan.clone();
-    stale["baseEtag"] = json!("0".repeat(64));
-    let stale_file = scratch.write("stale.json", &stale.to_string());
-    let out = daiya(&["apply", "-f", &stale_file]);
-    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
-    assert!(stderr(&out).contains("apply failed"), "{}", stderr(&out));
+    assert!(!out.status.success(), "{}", stdout(&out));
 
     // An empty bundle plans no changes.
     let empty = scratch.write("empty.json", "{}");
@@ -227,44 +228,14 @@ fn plan_then_apply_and_a_tampered_plan_is_stale() {
 }
 
 #[test]
-fn apply_reports_a_refused_dashboard_with_1() {
-    let scratch = Scratch::new();
-    let bundle = scratch.write(
-        "bundle.json",
-        &json!({ "dashboards": [{ "rawJson": refused_dashboard("refused") }] }).to_string(),
-    );
-    let out = daiya(&["plan", "-f", &bundle]);
-    let plan: Value = serde_json::from_str(&stdout(&out)).unwrap();
-    let plan_file = scratch.write("plan.json", &plan.to_string());
-    let out = daiya(&["apply", "-f", &plan_file]);
-    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
-}
-
-#[test]
-fn plan_and_apply_refuse_unreadable_and_invalid_files() {
+fn plan_refuses_unreadable_and_invalid_files() {
     let scratch = Scratch::new();
     let absent = scratch.path("absent.json");
-    for cmd in ["plan", "apply"] {
-        let out = daiya(&[cmd, "-f", &absent]);
-        assert_eq!(out.status.code(), Some(4), "{cmd}: {}", stderr(&out));
-        assert!(stderr(&out).contains("failed to read"), "{}", stderr(&out));
-    }
-    let not_a_plan = scratch.write("np.json", "{ \"dashboards\": [] }");
-    let out = daiya(&["apply", "-f", &not_a_plan]);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("invalid plan file"),
-        "{}",
-        stderr(&out)
-    );
-
-    // A plan for another organization is refused, not applied.
-    let bundle = scratch.write("b.json", "{}");
-    let plan: Value = serde_json::from_str(&stdout(&daiya(&["plan", "-f", &bundle]))).unwrap();
-    let mut foreign = plan.clone();
-    foreign["orgId"] = json!(uuid::Uuid::now_v7());
-    let foreign_file = scratch.write("foreign.json", &foreign.to_string());
-    let out = daiya(&["apply", "-f", &foreign_file]);
+    let out = daiya(&["plan", "-f", &absent]);
+    assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
+    assert!(stderr(&out).contains("failed to read"), "{}", stderr(&out));
+    let not_a_bundle = scratch.write("nb.json", "{ \"folders\": 3 }");
+    let out = daiya(&["plan", "-f", &not_a_bundle]);
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
 }
 

@@ -6,9 +6,9 @@
 //! SQL, the public-token policy, the boot check, the pool configuration and persistence.
 
 use daiya_model::{
-    DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
-    InstallationId, InstanceId, LibraryPanelRecord, OrgId, OrgQuotas, PublicDashboardRecord,
-    QueryCacheStatRecord, ShareType, sha256_hex,
+    ApplyBundle, DaiyaStore, DashboardRecord, DatasourceRecord, FolderRecord, ImportReportRecord,
+    InstallationId, InstanceId, LibraryPanelRecord, MAX_LIVE_PLANS, OrgId, OrgQuotas, PlanRecord,
+    PublicDashboardRecord, QueryCacheStatRecord, ShareType, org_state_etag, sha256_hex,
 };
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{
@@ -688,6 +688,114 @@ async fn contract_stats_and_reports(store: &dyn DaiyaStore) {
     assert_eq!(reports[0].summary["n"], 1);
 }
 
+/// Plans are kept per organization, expire, and are capped; `apply_bundle` writes a bundle whole
+/// or not at all, refuses a moved base etag, and lets one of two concurrent bundles on one base
+/// through (R2, §7.3).
+async fn contract_plans_and_apply(store: &dyn DaiyaStore) {
+    let org = OrgId::new();
+    // Whole milliseconds, so the timestamps survive Postgres' microsecond precision.
+    let now = TimestampTz::from_millis(TimestampTz::now().as_millis()).unwrap();
+    let hour = TimestampTz::from_millis(now.as_millis() + 3_600_000).unwrap();
+    let plan = PlanRecord {
+        installation_id: INST,
+        org_id: org,
+        instance_id: INSTANCE,
+        digest: "a".repeat(64),
+        base_etag: "e".into(),
+        desired: json!({ "folders": [{ "uid": "f" }] }),
+        created_by: "pia".into(),
+        created_at: now,
+        expires_at: hour,
+    };
+    store.insert_plan(plan.clone()).await.unwrap();
+    assert_eq!(
+        store.get_plan(org, &plan.digest).await.unwrap(),
+        Some(plan.clone())
+    );
+    assert_eq!(
+        store.get_plan(OrgId::new(), &plan.digest).await.unwrap(),
+        None
+    );
+    let mut renewed = plan.clone();
+    renewed.created_by = "ola".into();
+    store.insert_plan(renewed.clone()).await.unwrap();
+    assert_eq!(
+        store.get_plan(org, &plan.digest).await.unwrap(),
+        Some(renewed)
+    );
+
+    // An expired plan leaves at the next insert; live plans are capped.
+    let mut expired = plan.clone();
+    expired.digest = "b".repeat(64);
+    expired.expires_at = TimestampTz::from_millis(now.as_millis() - 1).unwrap();
+    store.insert_plan(expired.clone()).await.unwrap();
+    for n in 1..MAX_LIVE_PLANS {
+        let mut more = plan.clone();
+        more.digest = format!("{n:064x}");
+        store.insert_plan(more).await.unwrap();
+    }
+    assert_eq!(store.get_plan(org, &expired.digest).await.unwrap(), None);
+    let mut over = plan.clone();
+    over.digest = "c".repeat(64);
+    let err = store.insert_plan(over).await.unwrap_err();
+    assert_eq!(err.slug(), "cr.quota_exceeded", "{err}");
+
+    let bundle = ApplyBundle {
+        installation_id: INST,
+        org_id: org,
+        instance_id: INSTANCE,
+        base_etag: org_state_etag(&[], &[], &[]),
+        folders: vec![folder(org, "f", None)],
+        datasources: vec![datasource(org, "prom", "Prom", "prometheus")],
+        dashboards: vec![dashboard(org, "d", Some("f"))],
+        message: "imported".into(),
+    };
+    let nothing_written = || async {
+        assert!(store.list_folders(org).await.unwrap().is_empty());
+        assert!(store.list_datasources(org).await.unwrap().is_empty());
+        assert!(store.list_dashboards(org).await.unwrap().is_empty());
+    };
+
+    // A failure after the folders and datasources (the dashboard quota) writes nothing.
+    let quotas = store.get_quotas(org).await.unwrap();
+    let mut none = quotas.clone();
+    none.max_dashboards = 0;
+    store.set_quotas(org, none).await.unwrap();
+    let err = store.apply_bundle(bundle.clone()).await.unwrap_err();
+    assert_eq!(err.slug(), "cr.quota_exceeded", "{err}");
+    nothing_written().await;
+    store.set_quotas(org, quotas).await.unwrap();
+
+    // A base etag the state no longer has is stale, and writes nothing.
+    let mut stale = bundle.clone();
+    stale.base_etag = "0".repeat(64);
+    let err = store.apply_bundle(stale).await.unwrap_err();
+    assert_eq!(err.slug(), "cr.stale_plan", "{err}");
+    nothing_written().await;
+
+    // Two bundles on one base: one is written, the other refused as stale.
+    let mut other = bundle.clone();
+    other.folders[0].title = "Other".into();
+    let (one, two) = tokio::join!(store.apply_bundle(bundle), store.apply_bundle(other));
+    let outcomes = [one, two];
+    assert_eq!(
+        outcomes.iter().filter(|r| r.is_ok()).count(),
+        1,
+        "{outcomes:?}"
+    );
+    assert!(
+        outcomes
+            .iter()
+            .any(|r| r.as_ref().is_err_and(|e| e.slug() == "cr.stale_plan")),
+        "{outcomes:?}"
+    );
+    let saved = outcomes.into_iter().find_map(Result::ok).unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].version, 1);
+    assert_eq!(store.list_folders(org).await.unwrap().len(), 1);
+    assert_eq!(store.list_dashboards(org).await.unwrap().len(), 1);
+}
+
 async fn run_contract(store: &dyn DaiyaStore) {
     store.verify_rls_enforced().await.unwrap();
     contract_quotas(store).await;
@@ -697,6 +805,7 @@ async fn run_contract(store: &dyn DaiyaStore) {
     contract_library_panels(store).await;
     contract_public_dashboards(store).await;
     contract_stats_and_reports(store).await;
+    contract_plans_and_apply(store).await;
 }
 
 #[tokio::test]

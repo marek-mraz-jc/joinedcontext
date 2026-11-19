@@ -388,6 +388,73 @@ async fn serve_flags_override_the_mount_and_a_taken_port_is_a_start_failure() {
     assert_eq!(server.interrupt(), Some(0));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn cli_plan_then_apply_by_digest_on_one_store() {
+    let scratch = Scratch::new();
+    let (store, persistent) = store_config(&scratch).await;
+    if !persistent {
+        return;
+    }
+    let cfg = scratch.write("daiya.json", &json!({ "store": store }).to_string());
+    let cli = |args: &[&str]| {
+        Command::new(BIN)
+            .args(["--config", cfg.to_str().unwrap()])
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let mut refused = dashboard("refused");
+    refused["panels"][0]["type"] = json!("graph");
+    refused["panels"][0]["datasource"] = json!({ "type": "elasticsearch", "uid": "es" });
+    refused["panels"][0]["targets"] = json!([{ "refId": "A", "query": "*", "datasource": { "type": "elasticsearch", "uid": "es" } }]);
+    let bundle = scratch.write(
+        "bundle.json",
+        &json!({ "dashboards": [{ "rawJson": dashboard("planned") }] }).to_string(),
+    );
+    let out = cli(&["plan", "-f", bundle.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let plan: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let digest = plan["digest"].as_str().unwrap();
+
+    let out = cli(&["apply", "--digest", digest]);
+    assert!(
+        matches!(out.status.code(), Some(0 | 2)),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let applied: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(applied["dashboards"][0]["uid"], "planned", "{applied}");
+
+    // The same digest again is stale: the state it was planned on is gone.
+    let out = cli(&["apply", "--digest", digest]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // An applied plan with a refused dashboard answers the import's own 1.
+    let bundle = scratch.write(
+        "refused.json",
+        &json!({ "dashboards": [{ "rawJson": refused }] }).to_string(),
+    );
+    let plan: Value =
+        serde_json::from_slice(&cli(&["plan", "-f", bundle.to_str().unwrap()]).stdout).unwrap();
+    let out = cli(&["apply", "--digest", plan["digest"].as_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
 #[test]
 fn the_binary_refuses_to_start_on_a_bad_configuration() {
     let scratch = Scratch::new();
