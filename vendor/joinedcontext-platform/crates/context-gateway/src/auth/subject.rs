@@ -284,12 +284,16 @@ fn preview_reader(
         return Err(Box::new(ProblemDetails::not_found()));
     }
     let (member_of_organization, organization_groups) = in_organization(gateway, endpoint, claims);
+    let organization = gateway.organization_of(&endpoint.project);
     Ok(Subject {
         user: Some(user),
         id: Some(claims.sub.clone()),
         service_account: None,
         service_account_project: None,
-        roles: roles_on(preview.audience, claims.roles().iter().cloned()),
+        roles: roles_on(
+            preview.audience,
+            organization_roles(claims, organization.as_deref()),
+        ),
         groups: claims.group_names().map(str::to_owned).collect(),
         member_of_organization,
         organization_ids: claims.jc_org_id.iter().cloned().collect(),
@@ -356,7 +360,7 @@ pub fn person(claims: &Claims, audience: Audience, organization: Option<&str>) -
     Some(Subject {
         user: Some(user),
         id: Some(claims.sub.clone()),
-        roles: roles_on(audience, claims.roles().iter().cloned()),
+        roles: roles_on(audience, organization_roles(claims, organization)),
         groups: claims.group_names().map(str::to_owned).collect(),
         member_of_organization,
         organization_ids: claims.jc_org_id.iter().cloned().collect(),
@@ -574,6 +578,14 @@ pub(crate) fn subject_of(
     } else {
         gateway.organization_of(&project)
     };
+    // A client no ServiceAccount manifest names, under its own `service-account-<client>` user:
+    // only a Policy naming that user reaches it. The roles and groups its token asserts are realm
+    // state no manifest reviewed, and their bare names would match another Organization's grants.
+    if via.is_none() && is_own_client_user(&user, claims.azp.as_deref()) {
+        subject.roles = roles_on(endpoint.audience, Vec::new());
+        subject.groups.clear();
+        subject.organization_groups = None;
+    }
     subject.via = via;
     Ok(subject)
 }
@@ -774,6 +786,24 @@ fn owns_its_name(user: &str, azp: Option<&str>) -> bool {
     }
 }
 
+/// Whether `user` is the `service-account-<client>` user of the client `azp` names.
+fn is_own_client_user(user: &str, azp: Option<&str>) -> bool {
+    azp.is_some_and(|azp| {
+        !azp.is_empty() && user.eq_ignore_ascii_case(&format!("service-account-{azp}"))
+    })
+}
+
+/// The roles a person's token asserts that count on an Endpoint of `organization`: all of them
+/// for a member `jc_org` names, none for anyone else. One realm serves several Organizations, so
+/// a realm role of the same name held in another Organization grants nothing here (IDN-03,
+/// AUZ-12). A project without an Organization keeps the token's roles, as before ADR-N-058.
+fn organization_roles(claims: &Claims, organization: Option<&str>) -> Vec<String> {
+    match organization {
+        Some(organization) if !claims.member_of(organization) => Vec::new(),
+        _ => claims.roles().to_vec(),
+    }
+}
+
 /// The roles a caller holds on this endpoint: what the token asserts and, on a public
 /// endpoint, the synthetic `public` role as well. A signed-in person is a member of the
 /// public too, so a login never grants less than no login does (EP-16, GW22).
@@ -936,6 +966,51 @@ mod tests {
             "user:jana via serviceAccount:agent-proxy"
         );
         assert_eq!(principal_of(&workload), "serviceAccount:agent-proxy");
+    }
+
+    /// A realm role counts only for a member of the Endpoint's Organization: one realm serves
+    /// several, so the same role name held in another Organization grants nothing here.
+    #[test]
+    fn a_token_role_counts_only_in_the_holders_own_organization() {
+        let claims: Claims = serde_json::from_value(serde_json::json!({
+            "sub": "7a1d", "iss": "realm", "exp": 1, "azp": "portal-ui",
+            "preferred_username": "eva", "jc_org": ["esp"],
+            "realm_access": {"roles": ["editor"]}
+        }))
+        .expect("claims");
+        for audience in [
+            Audience::Public,
+            Audience::Organization,
+            Audience::ProjectList,
+        ] {
+            let foreign = person(&claims, audience, Some("hel")).expect("a person");
+            assert!(!foreign.roles.contains("editor"), "{audience:?}");
+            let own = person(&claims, audience, Some("esp")).expect("a person");
+            assert!(own.roles.contains("editor"), "{audience:?}");
+        }
+        let foreign = person(&claims, Audience::Public, Some("hel")).expect("a person");
+        assert!(foreign.roles.contains("public"));
+        let unorganized = person(&claims, Audience::Public, None).expect("a person");
+        assert!(unorganized.roles.contains("editor"));
+    }
+
+    #[test]
+    fn a_clients_own_user_is_told_from_a_person() {
+        assert!(is_own_client_user(
+            "service-account-city-sync",
+            Some("city-sync")
+        ));
+        assert!(is_own_client_user(
+            "Service-Account-City-Sync",
+            Some("city-sync")
+        ));
+        assert!(!is_own_client_user(
+            "service-account-city-sync",
+            Some("other")
+        ));
+        assert!(!is_own_client_user("jana", Some("city-sync")));
+        assert!(!is_own_client_user("service-account-", Some("")));
+        assert!(!is_own_client_user("service-account-city-sync", None));
     }
 
     /// One copy of the rules (jc-preview-subject): a person is named by Keycloak id with the

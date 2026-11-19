@@ -615,6 +615,26 @@ async fn a_service_account_username_from_another_client_is_refused() {
     }
 }
 
+/// A client no ServiceAccount manifest names reaches only what is granted to its own
+/// `service-account-<client>` user: the realm roles and groups its token asserts, which no
+/// manifest reviewed, reach no role or group Policy.
+#[tokio::test]
+async fn an_unnamed_clients_token_roles_and_groups_reach_no_policy() {
+    let fixture = fixture("unnamed-client", Audience::Public, PROJECT).await;
+    let (status, document) = access(
+        &fixture,
+        json!({
+            "azp": "portal-reconciler",
+            "preferred_username": "service-account-portal-reconciler",
+            "realm_access": { "roles": ["data-steward"] },
+            "groups": ["stewards"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{document}");
+    assert_eq!(granted(&document), ["PublicView", "ReconcilerView"]);
+}
+
 /// F-SEC1-001 (T-5860): a role the account's manifest scopes to its own project reaches that
 /// project's Endpoints only. On an Endpoint of another project that admits the account, the
 /// Endpoint's Policies naming the same role name are another project's role and grant nothing.
