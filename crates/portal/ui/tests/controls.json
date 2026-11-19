@@ -2285,6 +2285,15 @@
         "portals_area.test.tsx"
       ]
     },
+    "src/pages/portals/PortalHosts.tsx": {
+      "controls": {
+        "Button": 2,
+        "RadioGroup": 1
+      },
+      "tests": [
+        "portals_area.test.tsx"
+      ]
+    },
     "src/pages/portals/PortalSources.tsx": {
       "controls": {
         "Button": 10,

@@ -35,6 +35,7 @@ import {
   Tabs,
   tabPanelProps,
 } from "../../components/ui";
+import { PortalHostsPanel } from "./PortalHosts";
 import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
 type PortalOrganization = components["schemas"]["PortalOrganization"];
@@ -228,6 +229,11 @@ export function PortalsList(): JSX.Element {
           />
         }
       />
+      <div className="mt-6 space-y-4">
+        {hosts.data.items.map((org) => (
+          <PortalHostsPanel key={org.organization} organization={org} showName={hosts.data.items.length > 1} />
+        ))}
+      </div>
     </>
   );
 }
@@ -586,9 +592,14 @@ function PortalForm({
                     {host}
                   </option>
                 ))}
+                {(org?.sites ?? []).map((site) => (
+                  <option key={site.host} value={site.host}>
+                    {site.state === "served" ? site.host : t("portals.editor.hostPending", { host: site.host })}
+                  </option>
+                ))}
               </Select>
             </Field>
-            {org && org.hosts.length === 0 ? (
+            {org && org.hosts.length === 0 && org.sites.length === 0 ? (
               <Alert tone="info" role="status">
                 {t("portals.editor.noHosts", { organization: org.organization })}
               </Alert>

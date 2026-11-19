@@ -13260,7 +13260,8 @@
       "delete": "Portal entfernen",
       "defaultKept": "Das Standardportal bleibt: es ist der eigene Katalog der Organisation.",
       "fixed": "Fest, sobald das Portal besteht: ein Portal zieht nie zu einer anderen Organisation, einem anderen Namen oder Pfad um.",
-      "descriptionTabs": "Die Einstellungen des Portals, seine Quellen mit Läufen und seine Datensätze. Jede Änderung wird einem Genehmiger vorgeschlagen."
+      "descriptionTabs": "Die Einstellungen des Portals, seine Quellen mit Läufen und seine Datensätze. Jede Änderung wird einem Genehmiger vorgeschlagen.",
+      "hostPending": "{host} (noch nicht erreichbar)"
     },
     "tabs": {
       "label": "Ansichten des Portals",
@@ -13384,6 +13385,37 @@
       "noCatalogue": "Diese Installation stellt noch keinen Open-Data-Katalog bereit, daher listet dieses Portal hier keine Datensätze. Bitten Sie Ihren Betreiber, den Katalog einzuschalten.",
       "toSources": "Zu den Quellen",
       "noCatalogueTitle": "Hier noch kein Open-Data-Katalog"
+    },
+    "hosts": {
+      "title": "Portal-Adressen",
+      "titleOf": "Portal-Adressen von {organization}",
+      "description": "Namen, unter denen Ihre Portale antworten können. Eine neue Adresse ist erreichbar, sobald DNS auf die Plattform zeigt und ihr eigenes Zertifikat ausgestellt ist, meist innerhalb von Minuten; kein Operator und kein Neustart nötig.",
+      "empty": "Noch keine eigene Portal-Adresse. Fügen Sie unten eine hinzu und wählen Sie sie dann als Domain eines Portals.",
+      "state": {
+        "approved": "Wartet auf DNS",
+        "dns-ok": "Zertifikat ausstehend",
+        "cert-issued": "Geht online",
+        "served": "Erreichbar"
+      },
+      "mode": "Wo die Adresse liegt",
+      "modeOwn": "Unter der Adresse Ihrer Organisation",
+      "modeDomain": "Unter Ihrer verifizierten Domain {domain}",
+      "label": "Name",
+      "labelHint": "Ein Wort aus Kleinbuchstaben, Ziffern oder Bindestrichen, z. B. opendata2",
+      "base": "Unter",
+      "baseHint": "Eine Adresse, unter der Ihre Organisation antwortet",
+      "whole": "Adresse",
+      "wholeHint": "Ein beliebiger Name, der auf .{domain} endet; der DNS-TXT-Nachweis wird beim Hinzufügen erneut geprüft",
+      "will": "Fügt {host} hinzu",
+      "add": "Adresse hinzufügen",
+      "adding": "Wird hinzugefügt…",
+      "cannotAdd": "Ihre Organisation hat noch keine Adresse und keine verifizierte Domain. Verifizieren Sie Ihre Domain in den Organisationseinstellungen oder bitten Sie einen Operator um eine Adresse.",
+      "remove": "Adresse entfernen",
+      "removeOf": "Adresse {host} entfernen",
+      "removeTitle": "Die Adresse {host} entfernen?",
+      "removeDescription": "Die Plattform antwortet zuerst nicht mehr darauf und löscht dann ihr Zertifikat. Der Name kann nicht erneut hinzugefügt werden. Ein Portal, das sie nutzt, muss vorher auf eine andere Adresse wechseln.",
+      "nameFirst": "Geben Sie zuerst den Namen der Adresse ein.",
+      "cannotAddLink": "Organisationseinstellungen öffnen"
     }
   },
   "assistantGuides": {

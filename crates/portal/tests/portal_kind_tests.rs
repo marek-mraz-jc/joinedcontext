@@ -217,14 +217,14 @@ async fn portal_hosts_lists_only_the_callers_organizations() {
     assert_eq!(own.status, StatusCode::OK, "{}", own.body);
     assert_eq!(
         own.body["items"],
-        json!([{ "organization": "bbsk", "hosts": ["doprava.bbsk.sk"] }]),
+        json!([{ "organization": "bbsk", "hosts": ["doprava.bbsk.sk"], "sites": [], "bases": [] }]),
         "{}",
         own.body
     );
     let theirs = http(&state, admin("prahaadmin"), "GET", hosts, None).await;
     assert_eq!(
         theirs.body["items"],
-        json!([{ "organization": "praha", "hosts": [] }]),
+        json!([{ "organization": "praha", "hosts": [], "sites": [], "bases": [] }]),
         "{}",
         theirs.body
     );
@@ -306,7 +306,8 @@ async fn a_host_not_listed_and_the_cap_are_refused_naming_the_field() {
     .await;
     let taken = refusal(&taken).unwrap_or_else(|| panic!("{}", taken.body));
     assert!(
-        taken.contains("spec.host") && taken.contains("www.praha.eu is not listed"),
+        taken.contains("spec.host")
+            && taken.contains("www.praha.eu is not a host of this Organization"),
         "{taken}"
     );
     // Three Organizations and three further portals: six, the cap.

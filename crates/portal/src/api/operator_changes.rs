@@ -261,7 +261,7 @@ fn database(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
     })
 }
 
-fn rules(state: &AppState) -> Result<Rules<'_>, ApiError> {
+pub(crate) fn rules(state: &AppState) -> Result<Rules<'_>, ApiError> {
     let (base_domain, login_host) = state.config.installation_hosts.as_ref().ok_or_else(|| {
         ApiError::Unavailable(
             "this Portal does not know the installation's domain and sign-in host \
@@ -1205,7 +1205,11 @@ async fn applies_at_once(
 
 /// The TXT record of the minted id `id` still carries its challenge; `422` naming the record
 /// otherwise.
-async fn txt_holds(state: &AppState, pool: &sqlx::PgPool, id: &str) -> Result<(), ApiError> {
+pub(crate) async fn txt_holds(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    id: &str,
+) -> Result<(), ApiError> {
     let (domain, challenge): (String, String) = sqlx::query_as(
         "SELECT domain, challenge FROM organization_ids WHERE id = $1 AND minted_at IS NOT NULL",
     )
