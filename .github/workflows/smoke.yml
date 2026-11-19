@@ -280,9 +280,10 @@ jobs:
 
   # A green verdict on the merge branch fast-forwards main to the tested commit (T-7420), once ci.yml's
   # push run on jc-portal-1 at that commit is green too and main is its ancestor; never a force or a
-  # merge commit (.github/scripts/ff-main.sh). The deployer's pin and dev apply follow as before:
-  # the script dispatches ci.yml on main, which ships the commit (a GITHUB_TOKEN push starts no run).
-  # The only job here that writes: contents for the ref, actions for the dispatch. One at a time, so
+  # merge commit (.github/scripts/ff-main.sh). The script then dispatches ci.yml on main, which ships
+  # the commit (a GITHUB_TOKEN push starts no run), and deploy-pin.yml, which pins it once that ci is
+  # green (its run fires no workflow_run); the deployer's dev apply follows as before.
+  # The only job here that writes: contents for the ref, actions for the dispatches. One at a time, so
   # an older green run never races a newer one (the older then finds main ahead and leaves it).
   ff-main:
     needs: verdict
