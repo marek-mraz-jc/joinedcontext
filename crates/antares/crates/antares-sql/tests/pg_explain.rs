@@ -425,7 +425,11 @@ async fn a_probe_past_its_cap_reads_no_ids() {
         .await
         .expect("explain");
         let plan = rows.join("\n");
-        let never = plan.contains("never executed");
+        // the policies' escape (0042) is an InitPlan `Result` the tenant
+        // arm short-circuits: never executed on every read, so not the signal
+        let never = plan
+            .lines()
+            .any(|l| l.contains("never executed") && !l.trim_start().starts_with("->  Result"));
         assert!(plan.contains("i_entity_values_num"), "{cond}:\n{plan}");
         assert_eq!(never, !reads, "{cond}:\n{plan}");
         let ids: Option<Vec<String>> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))

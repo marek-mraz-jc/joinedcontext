@@ -238,7 +238,7 @@ pub struct SubMirror {
 /// them can be served, signal or no signal.
 // ponytail: one `list` per tenant per backstop, cross-tenant enumeration of
 // the periodic rows would replace it — that needs the RLS service escape
-// (`antares.service`) extended to the two subscription tables.
+// (0040, `antares_service()`) extended to the two subscription tables.
 pub(crate) const CSUB_SWEEP_BACKSTOP_MS: i64 = 60_000;
 
 #[derive(Default)]

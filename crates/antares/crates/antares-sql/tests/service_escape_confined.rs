@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 
 /// Files allowed to name `set_service`, relative to the `crates/` directory.
 const CALLERS: &[&str] = &[
+    // the writes to a shared Cached @context (0042), on the maintenance pool
+    "antares-sql/src/store/pg/doc.rs",
     "antares-sql/src/store/pg/maintenance.rs",
     "antares-sql/src/store/pg/outbox.rs",
 ];

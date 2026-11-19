@@ -207,6 +207,13 @@ impl PgBackend {
         }
     }
 
+    /// Run the cross-Tenant work on `maint`: a pool whose role is a member
+    /// of `antares_maintenance` while the request pool's is not (0042).
+    pub fn with_maintenance(mut self, maint: sqlx::postgres::PgPool) -> Self {
+        self.docs = self.docs.with_maintenance(maint);
+        self
+    }
+
     /// Shorten [`POOL_WEDGED`], for tests that cannot wait five minutes.
     pub fn with_wedged_after(mut self, after: std::time::Duration) -> Self {
         self.wedged_after = after;
@@ -637,7 +644,7 @@ impl AnyStore {
         match self {
             AnyStore::Mem(_) => Ok(Vec::new()),
             #[cfg(feature = "postgres")]
-            AnyStore::Pg(p) => super::pg::outbox::peek(p.docs.pool(), limit)
+            AnyStore::Pg(p) => super::pg::outbox::peek(p.docs.maint(), limit)
                 .await
                 .map_err(db),
         }
@@ -652,7 +659,7 @@ impl AnyStore {
         match self {
             AnyStore::Mem(_) => Ok(0),
             #[cfg(feature = "postgres")]
-            AnyStore::Pg(p) => super::pg::outbox::ack(p.docs.pool(), seqs)
+            AnyStore::Pg(p) => super::pg::outbox::ack(p.docs.maint(), seqs)
                 .await
                 .map_err(db),
         }
@@ -1824,7 +1831,7 @@ impl AnyStore {
             // Pg answers the superset the contract allows: every known
             // tenant. Narrowing it would need a cross-tenant read of
             // `subscriptions`, and that table is deliberately outside the
-            // `antares.service` escape — a subscription document carries
+            // maintenance escape (0042) — a subscription document carries
             // endpoint.receiverInfo, i.e. the credentials the notification
             // is sent with. The callers list per tenant under set_tenant
             // afterwards, so the extra names cost one empty list each.
@@ -2330,7 +2337,7 @@ impl antares_store::CurrentStateDriver for AnyStore {
             AnyStore::Mem(s) => Ok(s.retain_current(tenant, type_iri, before, batch, dry_run)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => crate::store::pg::maintenance::retain_current(
-                p.docs.pool(),
+                p.docs.maint(),
                 tenant.as_str(),
                 type_iri,
                 before,
@@ -2364,7 +2371,7 @@ impl antares_store::CurrentStateDriver for AnyStore {
             AnyStore::Mem(s) => Ok(s.history_overrides(limit)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
-                crate::store::pg::maintenance::history_overrides(p.docs.pool(), limit)
+                crate::store::pg::maintenance::history_overrides(p.docs.maint(), limit)
                     .await
                     .map_err(db)
             }
@@ -2600,7 +2607,7 @@ impl antares_store::TemporalDriver for AnyStore {
             AnyStore::Mem(s) => Ok(s.retain_history(tenant, scope, before, batch, dry_run)),
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => crate::store::pg::maintenance::retain_history(
-                p.docs.pool(),
+                p.docs.maint(),
                 tenant.as_str(),
                 scope,
                 before,
@@ -2620,7 +2627,7 @@ impl antares_store::TemporalDriver for AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
-                crate::store::pg::maintenance::retain_audit(p.docs.pool(), before, batch)
+                crate::store::pg::maintenance::retain_audit(p.docs.maint(), before, batch)
                     .await
                     .map_err(db)
             }
@@ -2638,7 +2645,7 @@ impl antares_store::TemporalDriver for AnyStore {
             }
             #[cfg(feature = "postgres")]
             AnyStore::Pg(p) => {
-                crate::store::pg::maintenance::drop_retained_partitions(p.docs.pool(), floors)
+                crate::store::pg::maintenance::drop_retained_partitions(p.docs.maint(), floors)
                     .await
                     .map_err(db)
             }
