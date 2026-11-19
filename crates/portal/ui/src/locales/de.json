@@ -13658,7 +13658,12 @@
       "hosts": "Hosts",
       "hostCount": "{served} in Betrieb, {waiting} unterwegs",
       "setDomain": "Tragen Sie die nachgewiesene Domain in den Einstellungen ein",
-      "noHost": "Noch kein Host"
+      "noHost": "Noch kein Host",
+      "driftTitle": "Einige Organisationen gibt es nur auf einer Seite",
+      "driftLead": "In diesen Organisationen können keine Rollen vergeben werden, bis Repository und Register dieselben Namen führen. Nichts wird automatisch umbenannt.",
+      "driftForge": "Nur im Register",
+      "driftRegistry": "Nur im Repository",
+      "driftFix": "Organisationseinstellungen öffnen"
     },
     "ids": {
       "title": "Domänen und ihre TXT-Einträge",

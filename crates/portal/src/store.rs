@@ -50,11 +50,25 @@ pub struct Mirror {
     /// id to the account `{project}/{name}` its registry attribute names (ARCH/TEN-04). Who an
     /// `azp` is comes from here, never from the id text; a live client keeps its id (MIG-03).
     clients: RwLock<BTreeMap<String, String>>,
+    /// The installation Organization the deployment configured (`JC_PORTAL_INSTALLATION_ORGANIZATION`):
+    /// what the installation's own rows take while the repository's claim names no active
+    /// Organization of the registry (T-7319). Set once at start, never from the repository.
+    configured_installation: std::sync::OnceLock<String>,
 }
 
 impl Mirror {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Records the configured installation Organization; a second call keeps the first.
+    pub fn set_configured_installation(&self, organization: &str) {
+        let _ = self.configured_installation.set(organization.to_owned());
+    }
+
+    /// The configured installation Organization, if the deployment set one.
+    pub fn configured_installation(&self) -> Option<&str> {
+        self.configured_installation.get().map(String::as_str)
     }
 
     /// The forge repository `project`'s own kinds are written to (CC-87), or `None` when they

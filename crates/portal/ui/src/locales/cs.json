@@ -13658,7 +13658,12 @@
       "hosts": "Hostitelé",
       "hostCount": "{served} v provozu, {waiting} na cestě",
       "setDomain": "Zapište její prokázanou doménu v Nastavení",
-      "noHost": "Zatím bez hostitele"
+      "noHost": "Zatím bez hostitele",
+      "driftTitle": "Některé organizace jsou jen na jedné straně",
+      "driftLead": "Lidem nelze přidělit role v těchto organizacích, dokud repozitář a registr neuvádějí stejné názvy. Nic se nepřejmenuje automaticky.",
+      "driftForge": "Jen v registru",
+      "driftRegistry": "Jen v repozitáři",
+      "driftFix": "Otevřít nastavení organizace"
     },
     "ids": {
       "title": "Domény a jejich TXT záznamy",

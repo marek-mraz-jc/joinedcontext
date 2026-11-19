@@ -3328,7 +3328,7 @@
           "system"
         ],
         "summary": "List Organizations For Operators",
-        "description": "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.",
+        "description": "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012), and where the forge's Organizations and the registry's disagree (T-7319). For a person of the operators' group with a second factor.",
         "operationId": "operator_organization_list",
         "responses": {
           "200": {
@@ -60606,9 +60606,14 @@
         "description": "The Organizations and the Organization ids.",
         "required": [
           "items",
-          "ids"
+          "ids",
+          "drift"
         ],
         "properties": {
+          "drift": {
+            "$ref": "#/components/schemas/OrganizationDrift",
+            "description": "The registry's Organizations the forge lacks and the forge's the registry lacks (T-7319);\nboth empty while they agree or the forge has not loaded."
+          },
           "ids": {
             "type": "array",
             "items": {
@@ -60835,6 +60840,30 @@
           }
         },
         "additionalProperties": false
+      },
+      "OrganizationDrift": {
+        "type": "object",
+        "description": "Where the forge mirror's Organizations and the registry's active ones disagree (T-7319): jc-prod\nran a forge holding barcelona, bratislava, hel and zilina beside a registry of smartcity,\nmarek-mraz, bbsk and slovensko, so every RoleBinding scoped to a registry Organization was\nrefused. Reported, never repaired: a rename is an operator's Change.",
+        "required": [
+          "missingFromForge",
+          "missingFromRegistry"
+        ],
+        "properties": {
+          "missingFromForge": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Active registry Organizations the forge holds no Organization manifest of, by name."
+          },
+          "missingFromRegistry": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Organization manifests of the forge the registry holds no active row of, by name."
+          }
+        }
       },
       "OrganizationLimits": {
         "type": "object",

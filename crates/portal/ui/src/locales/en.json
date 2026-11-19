@@ -13658,7 +13658,12 @@
       "hosts": "Hosts",
       "hostCount": "{served} served, {waiting} on their way",
       "setDomain": "Write its proved domain in Settings",
-      "noHost": "No host yet"
+      "noHost": "No host yet",
+      "driftTitle": "Some Organizations exist on one side only",
+      "driftLead": "People cannot be given roles in these Organizations until the repository and the registry list the same names. Nothing is renamed automatically.",
+      "driftForge": "Only in the registry",
+      "driftRegistry": "Only in the repository",
+      "driftFix": "Open Organization settings"
     },
     "ids": {
       "title": "Domains and their TXT records",
