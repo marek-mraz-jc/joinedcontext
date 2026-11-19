@@ -80,7 +80,13 @@ function answer(who: ReturnType<typeof row>[], publisher: string[]) {
     }));
   const all = [...internal, ...PAGE.datasets];
   const datasets = publisher.length > 0 ? all.filter((dataset) => publisher.includes(dataset.publisher.name)) : all;
-  const facets = internal.length > 0 ? { ...PAGE.facets, publisher: [...PAGE.facets.publisher, facet("helsinki", "Helsinki Region", internal.length)] } : PAGE.facets;
+  // Every other facet counts the rows the Publisher filter keeps, as page_with does.
+  const themes = PAGE.facets.theme.filter((value) => datasets.some((dataset) => dataset.themes.includes(value.value)));
+  const facets = {
+    ...PAGE.facets,
+    theme: publisher.length > 0 ? themes : PAGE.facets.theme,
+    publisher: internal.length > 0 ? [...PAGE.facets.publisher, facet("helsinki", "Helsinki Region", internal.length)] : PAGE.facets.publisher,
+  };
   return { ...PAGE, total: datasets.length, datasets, facets };
 }
 
