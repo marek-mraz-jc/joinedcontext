@@ -758,6 +758,39 @@ impl ViewOps {
         self.view.shown_names()
     }
 
+    /// What `caller` may read through the view: asked as the type details
+    /// the `LinkML` surface asks for its schema documents, else as the reads a
+    /// model describes, the first of them the view and the engine allow (a
+    /// grant of queries alone still reads the names it queries). A view
+    /// offering none of them, or an engine refusing them all, leaves the
+    /// caller nothing (fail closed).
+    pub async fn readable(&self, caller: &Caller) -> Visible {
+        for op in [
+            OperationId::RetrieveEntityTypeDetails,
+            OperationId::QueryEntities,
+            OperationId::RetrieveEntity,
+        ] {
+            if !self.allows(op) {
+                continue;
+            }
+            if let Ok(visible) = self.visible(caller, op, &[], &[]).await {
+                return visible;
+            }
+        }
+        Visible::default()
+    }
+
+    /// [`Self::shown_names`] less the types and Attributes the engine hides
+    /// from `caller` ([`Self::readable`]): the names a surface lists to this
+    /// caller (AUZ-06, MCP-03).
+    pub async fn readable_names(&self, caller: &Caller) -> (Vec<String>, Vec<String>) {
+        let visible = self.readable(caller).await;
+        self.view.shown_names_where(|ty, attr| match attr {
+            None => visible.shows_type(ty),
+            Some(attr) => visible.shows_attribute(ty, attr),
+        })
+    }
+
     /// What `caller` may see through the view for `op`, a read the view
     /// allows: the view's rules composed with the engine's answer for the
     /// operation's clause and the expanded `types` and `attrs` it names
