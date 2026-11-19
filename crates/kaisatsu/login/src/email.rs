@@ -26,8 +26,18 @@ pub struct SignedActionToken {
     pub client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirect_uri: Option<String>,
+    /// [`email_binding`] of the address the link was sent to: `VERIFY_EMAIL` verifies only that
+    /// address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
     pub iat: i64,
     pub exp: i64,
+}
+
+/// What an action token stores of `address`: its hash, compared case-blind.
+#[must_use]
+pub fn email_binding(address: &str) -> String {
+    sha256_hex(&format!("action-email:{}", address.trim().to_lowercase()))
 }
 
 #[derive(Clone, Default)]
@@ -87,6 +97,11 @@ impl EmailSender {
             .iter()
             .find(|k| k.status == "ACTIVE")
             .ok_or_else(|| KaisatsuError::Crypto("no active signing key".into()))?;
+        let email = store
+            .get_user_by_id(realm_id, None, user_id)
+            .await?
+            .and_then(|u| u.email)
+            .map(|e| email_binding(&e));
         let now = TimestampTz::now().as_second();
         let ttl = lifespan_secs.unwrap_or(ACTION_TOKEN_TTL_SECS).min(43_200);
         let claims = SignedActionToken {
@@ -98,10 +113,36 @@ impl EmailSender {
             actions,
             client_id,
             redirect_uri,
+            email,
             iat: now,
             exp: now + ttl,
         };
         sign_jwt(key, kek, Some("JWT"), &claims)
+    }
+
+    /// Verifies an action token without using it up: a link opened (or prefetched by a mail
+    /// scanner) is only applied by the confirming POST.
+    pub async fn check_action_token(
+        store: &Arc<dyn Store>,
+        realm_id: &str,
+        issuer: &str,
+        token: &str,
+    ) -> Result<SignedActionToken> {
+        let keys = store.list_signing_keys(realm_id).await?;
+        let (_, claims): (_, SignedActionToken) =
+            verify_jwt(token, &keys, Some(issuer), Some(issuer))?;
+        if claims.typ != "Action" {
+            return Err(KaisatsuError::Unauthorized("not an action token".into()));
+        }
+        if store
+            .is_token_revoked(realm_id, &sha256_hex(&format!("action:{}", claims.jti)))
+            .await?
+        {
+            return Err(KaisatsuError::BadRequest(
+                "action link has already been used".into(),
+            ));
+        }
+        Ok(claims)
     }
 
     /// Verifies and consumes a single-use action token (second use is refused via `revoked_token`, W7).

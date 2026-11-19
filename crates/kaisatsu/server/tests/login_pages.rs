@@ -1127,7 +1127,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .strip_prefix("https://idm.dev.example.test")
         .unwrap()
         .to_owned();
-    let (st_link, _, _) = get(&app, &ve_link, None).await;
+    let (st_link, _, _) = open_action_link(&app, &ve_link).await;
     assert!(
         st_link.is_success() || st_link == StatusCode::SEE_OTHER,
         "{st_link}"
@@ -1195,8 +1195,14 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
         .strip_prefix("https://idm.dev.example.test")
         .unwrap();
 
+    // Opening the link changes nothing: a prefetch leaves it usable (K10).
+    let (st_peek, _, html_peek) = get(&app, link_path, None).await;
+    assert_eq!(st_peek, StatusCode::OK);
+    assert_eq!(page_id(&html_peek), "action-token-confirm");
+    assert!(html_peek.contains("name=\"key\""), "{html_peek}");
+
     // Consume action-token once -> renders password form + sets auth cookie
-    let (st_at, h_at, html_at) = get(&app, link_path, None).await;
+    let (st_at, h_at, html_at) = open_action_link(&app, link_path).await;
     assert_eq!(st_at, StatusCode::OK);
     assert_eq!(page_id(&html_at), "action-token-form");
     let at_cookie = h_at[header::SET_COOKIE]
@@ -1210,7 +1216,7 @@ async fn k7_k8_k10_k11_recovery_codes_verify_email_combined_pw_otp_action_links_
     let at_session = extract_hidden_input(&html_at, "session_code");
 
     // Second use of the same action-token link is refused
-    let (st_at_replay, _, html_at_replay) = get(&app, link_path, None).await;
+    let (st_at_replay, _, html_at_replay) = open_action_link(&app, link_path).await;
     assert_eq!(st_at_replay, StatusCode::BAD_REQUEST);
     assert_eq!(page_id(&html_at_replay), "expired");
 

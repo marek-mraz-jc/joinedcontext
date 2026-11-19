@@ -465,7 +465,7 @@ async fn action_links_apply_direct_actions_and_refuse_disabled_people() {
         &["VERIFY_EMAIL", "TERMS_AND_CONDITIONS"],
     )
     .await;
-    let (st, h, _) = send(&app, Method::GET, &link, None, None, None).await;
+    let (st, h, _) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert_eq!(h[header::LOCATION], CALLBACK);
     let after = user(&store, MEMBER).await;
@@ -476,8 +476,35 @@ async fn action_links_apply_direct_actions_and_refuse_disabled_people() {
     let mut disabled = user(&store, MEMBER).await;
     disabled.enabled = false;
     store.update_user(disabled).await.unwrap();
-    let (st, _, _) = send(&app, Method::GET, &link, None, None, None).await;
+    let (st, _, _) = open_action_link(&app, &link).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+/// A verify-e-mail link verifies only the address it was sent to, and only from the confirm
+/// page's POST: the GET a mail scanner sends changes nothing.
+#[tokio::test]
+async fn verify_email_links_verify_the_address_they_were_sent_to_on_confirm_only() {
+    let (app, store) = app().await;
+    let mut member = user(&store, MEMBER).await;
+    member.email_verified = false;
+    let member = store.update_user(member).await.unwrap();
+    let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
+
+    let (st, _, _) = send(&app, Method::GET, &link, None, None, None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(!user(&store, MEMBER).await.email_verified);
+
+    let mut moved = user(&store, MEMBER).await;
+    moved.email = Some("someone-else@example.org".into());
+    store.update_user(moved).await.unwrap();
+    let (st, _, _) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(!user(&store, MEMBER).await.email_verified);
+
+    let link = mint(&store, &member.id, &["VERIFY_EMAIL"]).await;
+    let (st, _, _) = open_action_link(&app, &link).await;
+    assert!(st.is_success() || st.is_redirection(), "{st}");
+    assert!(user(&store, MEMBER).await.email_verified);
 }
 
 /// An UPDATE_PASSWORD + CONFIGURE_TOTP link renders one form; a wrong code is refused, the
@@ -489,7 +516,7 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
     let open = |link: String| {
         let app = app.clone();
         async move {
-            let (st, h, html) = send(&app, Method::GET, &link, None, None, None).await;
+            let (st, h, html) = open_action_link(&app, &link).await;
             assert_eq!(st, StatusCode::OK, "{html}");
             assert_eq!(page_id(&html), "action-token-form");
             (

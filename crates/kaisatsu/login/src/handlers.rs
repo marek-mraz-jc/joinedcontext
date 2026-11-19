@@ -2474,41 +2474,41 @@ async fn reset_credentials_post(
         .map(String::as_str)
         .unwrap_or_default()
         .trim();
-    if !identifier.is_empty() && realm.reset_password_allowed {
-        if let Some(user) = state
+    if !identifier.is_empty()
+        && realm.reset_password_allowed
+        && let Some(user) = state
             .store
             .get_user_by_username_or_email(&realm.id, None, identifier)
             .await?
             .filter(|u| u.enabled)
-            && let Some(ref email) = user.email
-        {
-            let outbox = EmailOutboxRecord {
-                id: uuid::Uuid::now_v7().to_string(),
-                realm_id: realm.id.clone(),
-                org_id: user.org_id.clone(),
-                user_id: user.id.clone(),
-                to_address: email.clone(),
-                locale: bundle.locale.to_owned(),
-                template_kind: "RESET_CREDENTIALS".into(),
-                action_jti: uuid::Uuid::now_v7().to_string(),
-                actions: vec!["UPDATE_PASSWORD".into()],
-                client_id: session
-                    .as_ref()
-                    .map(|s| s.client_id.clone())
-                    .or_else(|| form.get("client_id").cloned()),
-                redirect_uri: None,
-                lifespan_secs: crate::email::ACTION_TOKEN_TTL_SECS,
-                issuer: mount.realm_issuer(&realm.realm),
-                status: "pending".into(),
-                attempts: 0,
-                last_error: None,
-                next_attempt_at: TimestampTz::now(),
-                created_at: TimestampTz::now(),
-                sent_at: None,
-            };
-            // Queued after the answer, so a known and an unknown account answer alike.
-            tokio::spawn(queue_reset_mail(state.store.clone(), outbox));
-        }
+        && let Some(ref email) = user.email
+    {
+        let outbox = EmailOutboxRecord {
+            id: uuid::Uuid::now_v7().to_string(),
+            realm_id: realm.id.clone(),
+            org_id: user.org_id.clone(),
+            user_id: user.id.clone(),
+            to_address: email.clone(),
+            locale: bundle.locale.to_owned(),
+            template_kind: "RESET_CREDENTIALS".into(),
+            action_jti: uuid::Uuid::now_v7().to_string(),
+            actions: vec!["UPDATE_PASSWORD".into()],
+            client_id: session
+                .as_ref()
+                .map(|s| s.client_id.clone())
+                .or_else(|| form.get("client_id").cloned()),
+            redirect_uri: None,
+            lifespan_secs: crate::email::ACTION_TOKEN_TTL_SECS,
+            issuer: mount.realm_issuer(&realm.realm),
+            status: "pending".into(),
+            attempts: 0,
+            last_error: None,
+            next_attempt_at: TimestampTz::now(),
+            created_at: TimestampTz::now(),
+            sent_at: None,
+        };
+        // Queued after the answer, so a known and an unknown account answer alike.
+        tokio::spawn(queue_reset_mail(state.store.clone(), outbox));
     }
 
     if let Some(s) = session {
@@ -2555,12 +2555,10 @@ struct ActionTokenQuery {
     key: String,
 }
 
-/// `GET /realms/{realm}/login-actions/action-token?key=...` (W7, K10):
-/// Consumes a signed single-use action link (`EmailSender::consume_action_token`).
-/// - If the actions only contain non-form actions (`VERIFY_EMAIL`, `TERMS_AND_CONDITIONS`),
-///   applies them immediately and redirects to the validated `redirect_uri` or shows "account updated".
-/// - If the actions include `UPDATE_PASSWORD` or `CONFIGURE_TOTP`, creates an `AuthSession` bound
-///   to an auth cookie and renders the corresponding interactive step.
+/// `GET /realms/{realm}/login-actions/action-token?key=...` (W7, K10): checks the signed
+/// single-use action link without using it up and renders a page whose button POSTs it to
+/// [`apply_action_token`]. A GET changes nothing, so a mail scanner that prefetches the link
+/// neither verifies an address nor burns a password-reset link.
 async fn action_token_get(
     State(state): State<OidcState>,
     Path(realm_name): Path<String>,
@@ -2575,21 +2573,81 @@ async fn action_token_get(
         .ok_or_else(|| KaisatsuError::NotFound("realm not found".into()))?;
     let mount = state.mount_from(mount_ext.as_ref().map(|e| &e.0));
     let issuer = mount.realm_issuer(&realm.realm);
-    let locale = page_locale(&realm, None, &headers);
-
-    let Ok(claims) = crate::email::EmailSender::consume_action_token(
-        &state.store,
-        &realm.id,
-        &issuer,
-        &query.key,
-    )
-    .await
+    let Ok(claims) =
+        crate::email::EmailSender::check_action_token(&state.store, &realm.id, &issuer, &query.key)
+            .await
     else {
         return render_expired_session_page(
             &state,
             &mount,
             &realm,
             &headers,
+            None,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    };
+    let bundle = Bundle::for_locale(page_locale(&realm, None, &headers));
+    let branding = load_branding(&state, &realm, None).await?;
+    let shell = page::Shell {
+        bundle: &bundle,
+        realm: &realm,
+        branding: &branding,
+        path_prefix: &mount.path_prefix,
+        app: "",
+        locale_base_url: "",
+    };
+    let wants = |a: &str| claims.actions.iter().any(|x| x == a);
+    let heading = if wants("UPDATE_PASSWORD") {
+        bundle.get("updatePasswordTitle")
+    } else if wants("CONFIGURE_TOTP") {
+        bundle.get("loginTotpTitle")
+    } else if wants("VERIFY_EMAIL") {
+        bundle.get("emailVerifyTitle")
+    } else {
+        bundle.get("termsTitle")
+    };
+    let mut tpl = shell.page("action-token-confirm", heading, &new_nonce());
+    tpl.form = Some(page::Form {
+        id: "kc-action-confirm-form".into(),
+        action: format!(
+            "{}/realms/{}/login-actions/action-token",
+            mount.path_prefix, realm.realm
+        ),
+        hidden: vec![("key".into(), query.key.clone())],
+        submit_id: "kc-submit".into(),
+        submit_label: bundle.get("proceedWithAction").to_owned(),
+        ..page::Form::default()
+    });
+    Ok(render_with_security_headers(&tpl, None, None))
+}
+
+/// The POST of an action link's confirm page: consumes the link
+/// (`EmailSender::consume_action_token`).
+/// - Non-form actions (`VERIFY_EMAIL`, `TERMS_AND_CONDITIONS`) apply at once, then the person is
+///   redirected to the validated `redirect_uri` or shown "account updated". `VERIFY_EMAIL` applies
+///   only while the account still holds the address the link was sent to.
+/// - `UPDATE_PASSWORD` or `CONFIGURE_TOTP` create an `AuthSession` bound to an auth cookie and
+///   render the corresponding interactive step.
+async fn apply_action_token(
+    state: &OidcState,
+    realm: &RealmConfig,
+    mount: &Mount,
+    headers: &HeaderMap,
+    key: &str,
+) -> Result<Response> {
+    let issuer = mount.realm_issuer(&realm.realm);
+    let locale = page_locale(realm, None, headers);
+
+    let Ok(claims) =
+        crate::email::EmailSender::consume_action_token(&state.store, &realm.id, &issuer, key)
+            .await
+    else {
+        return render_expired_session_page(
+            state,
+            mount,
+            realm,
+            headers,
             None,
             StatusCode::BAD_REQUEST,
         )
@@ -2617,6 +2675,24 @@ async fn action_token_get(
     for act in &claims.actions {
         match act.as_str() {
             "VERIFY_EMAIL" => {
+                let sent_to_current = claims.email.as_deref().is_some_and(|bound| {
+                    user.email
+                        .as_deref()
+                        .map(crate::email::email_binding)
+                        .as_deref()
+                        == Some(bound)
+                });
+                if !sent_to_current {
+                    return render_expired_session_page(
+                        state,
+                        mount,
+                        realm,
+                        headers,
+                        None,
+                        StatusCode::BAD_REQUEST,
+                    )
+                    .await;
+                }
                 user.email_verified = true;
                 user.required_actions.retain(|a| a != "VERIFY_EMAIL");
             }
@@ -2683,14 +2759,14 @@ async fn action_token_get(
         };
         state.store.put_auth_session(auth_session.clone()).await?;
 
-        let set_cookie = add_auth_cookie(&headers, &handle, 900);
+        let set_cookie = add_auth_cookie(headers, &handle, 900);
 
         return render_action_form(
-            &state,
-            &mount,
-            &realm,
+            state,
+            mount,
+            realm,
             &auth_session,
-            &headers,
+            headers,
             None,
             Some(set_cookie),
         )
@@ -2698,10 +2774,10 @@ async fn action_token_get(
     }
 
     finish_action_token_response(
-        &state,
-        &mount,
-        &realm,
-        &headers,
+        state,
+        mount,
+        realm,
+        headers,
         validated_redirect.as_deref(),
         claims.client_id.as_deref(),
     )
@@ -2725,6 +2801,11 @@ async fn action_token_post(
         .get("session_code")
         .map(String::as_str)
         .unwrap_or_default();
+    if session_code.is_empty()
+        && let Some(key) = form.get("key").filter(|k| !k.is_empty())
+    {
+        return apply_action_token(&state, &realm, &mount, &headers, key).await;
+    }
     let Some(auth_session) = state
         .store
         .get_auth_session_by_id(&realm.id, session_code)

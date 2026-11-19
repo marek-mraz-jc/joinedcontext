@@ -46,7 +46,7 @@ This document records the architecture and state-machine designs for items **K1�
 - **K10 Mails & action-token route**:
   - `Person/SendRequiredActions` and `PUT .../execute-actions-email` validate `client_id` and `redirect_uri`, cap `lifespan` (default 900s), and atomically update the user and enqueue the outbox row.
   - `POST /realms/{realm}/login-actions/reset-credentials` runs dummy Argon2id work for unknown users so known and unknown users share the same response page and timing band.
-  - `GET/POST /realms/{realm}/login-actions/action-token` consumes the single-use `SignedActionToken` and executes `VERIFY_EMAIL`, `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, `TERMS_AND_CONDITIONS`, or `webauthn-register`.
+  - `GET /realms/{realm}/login-actions/action-token` checks the single-use `SignedActionToken` without using it and renders a confirm page; its `POST` (field `key`) consumes the token and executes `VERIFY_EMAIL` (only while the account holds the address the token names), `UPDATE_PASSWORD`, `CONFIGURE_TOTP`, `TERMS_AND_CONDITIONS`, or `webauthn-register`. A mail scanner prefetching the link changes nothing.
 - **K11 WebAuthn Passkeys**:
   - `crypto/src/webauthn.rs` implements a bounded, panic-free CBOR decoder (`MAX_CBOR_BYTES = 65536`, `MAX_CBOR_DEPTH = 8`, `MAX_CBOR_ITEMS = 1024`, definite lengths only), `COSE_Key` parser (`ES256` P-256, `EdDSA` Ed25519, `RS256` 2048–8192 bit RSA), signature verification via `aws-lc-rs`, and WebAuthn L3 §7.1 / §7.2 verifiers.
   - Stored in `kaisatsu.webauthn_credential` (migration `0002`) with random per-user `user_handle`, realm-unique `credential_id`, `sign_count` regression refusal, and `backup_eligible` / `backup_state` tracking.
