@@ -10096,7 +10096,10 @@ export interface components {
             /** @description Catalogues that did not answer; the others still did. */
             unavailable: string[];
         };
-        /** @description The CKAN organization a dataset belongs to: one per project (Architecture/21 §1). */
+        /**
+         * @description Who publishes a dataset: the `dct:publisher` its project names (`name` its IRI, or the name
+         *     itself when it has none), else the CKAN organization it is filed under (Architecture/21 §1).
+         */
         CataloguePublisher: {
             name: string;
             title: string;

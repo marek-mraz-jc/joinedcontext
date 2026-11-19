@@ -777,16 +777,19 @@ fn summary(dataset: &Value) -> CatalogueDataset {
 /// Who publishes `dataset`: the `dct:publisher` its publisher wrote (`publisher_name`, keyed by
 /// `publisher_uri` when it has one), else its CKAN organization. A project of the installation's
 /// Organization names its own publisher there, so its datasets are not credited to the
-/// organization's title (T-7317).
+/// organization's title (T-7317). A harvester that writes the organization's slug there names
+/// nobody new: the organization's title says it better.
 fn publisher(dataset: &Value) -> Option<CataloguePublisher> {
-    if let Some(title) = extra(dataset, "publisher_name") {
+    let organization = dataset.get("organization");
+    let slug = organization.and_then(|o| text(o, "name"));
+    if let Some(title) = extra(dataset, "publisher_name").filter(|t| slug.as_ref() != Some(t)) {
         return Some(CataloguePublisher {
             name: extra(dataset, "publisher_uri").unwrap_or_else(|| title.clone()),
             title,
         });
     }
-    let organization = dataset.get("organization")?;
-    let name = text(organization, "name")?;
+    let organization = organization?;
+    let name = slug?;
     Some(CataloguePublisher {
         title: text(organization, "title").unwrap_or_else(|| name.clone()),
         name,
@@ -2162,7 +2165,18 @@ mod tests {
             false,
         );
         let plain = dataset("helsinki-air", "hel", extras(&[]), &[], false);
-        let page = page_of(&[declared, named, plain], &Filters::parse(None), 2026);
+        let harvested = dataset(
+            "bbsk-mosty",
+            "bbsk",
+            extras(&[("publisher_name", "bbsk")]),
+            &[],
+            false,
+        );
+        let page = page_of(
+            &[declared, named, plain, harvested],
+            &Filters::parse(None),
+            2026,
+        );
         let by = |name: &str| {
             let d = page.datasets.iter().find(|d| d.name == name).unwrap();
             d.publisher.clone().unwrap()
@@ -2176,8 +2190,9 @@ mod tests {
         );
         assert_eq!(by("praha-ovzdusi").name, "Hlavní město Praha");
         assert_eq!(by("helsinki-air").title, "hel title");
-        // Three publishers, so the facet tells them apart and filters each alone.
-        assert_eq!(page.facets.publisher.len(), 3);
+        assert_eq!(by("bbsk-mosty").title, "bbsk title");
+        // Four publishers, so the facet tells them apart and filters each alone.
+        assert_eq!(page.facets.publisher.len(), 4);
         let only = Filters::parse(Some(
             "publisher=https%3A%2F%2Fdata.gov.sk%2Fid%2Flegal-subject%2F00313271",
         ));

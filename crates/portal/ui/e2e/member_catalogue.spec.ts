@@ -108,6 +108,27 @@ test.describe("a member's catalogue", () => {
       await shot(page, `member-catalogue-empty-en-${width}`);
     });
 
+    test(`a person in no project of this Organization's host is told who adds them, not shown an error (${width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stub(page, MEMBER, 200);
+      // The Organization host's gate (organization_host.rs) answers 403 to everyone outside its projects (T-7317).
+      await page.route("**/api/v1/catalogue/readable", (route) =>
+        route.fulfill({
+          status: 403,
+          contentType: "application/problem+json",
+          body: JSON.stringify({ type: "https://joinedcontext.com/errors/forbidden", title: "Forbidden", status: 403, detail: "this Portal is bbsk's; you belong to none of its projects" }),
+        }),
+      );
+      await page.goto("/catalogue?lang=en");
+      const readable = page.getByRole("region", { name: "Datasets you may read" });
+      await expect(readable.getByText("You are not in a project of this organization yet")).toBeVisible();
+      await expect(readable.getByText(/A project owner or an administrator of this organization can add you/)).toBeVisible();
+      await expect(readable.getByRole("alert")).toHaveCount(0);
+      await expect(page.getByText(/belong to none of its projects/)).toHaveCount(0);
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `member-catalogue-no-project-en-${width}`);
+    });
+
     test(`a non-public dataset asks a visitor to sign in and tells a member without a grant no access (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stub(page, "visitor", 401);
