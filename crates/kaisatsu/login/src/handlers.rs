@@ -2608,6 +2608,7 @@ async fn action_token_get(
         bundle.get("termsTitle")
     };
     let mut tpl = shell.page("action-token-confirm", heading, &new_nonce());
+    tpl.instructions = vec![bundle.get("actionTokenConfirmInstruction").to_owned()];
     tpl.form = Some(page::Form {
         id: "kc-action-confirm-form".into(),
         action: format!(
