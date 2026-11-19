@@ -11,6 +11,7 @@ default = []
 [dependencies]
 shako-core = { path = "../core" }
 shako-store-memory = { path = "../store-memory" }
+kaisatsu-crypto = { path = "../../kaisatsu/crypto" }
 jc-time = { path = "../../shared/jc-time", features = ["sqlx"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

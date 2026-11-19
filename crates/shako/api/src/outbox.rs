@@ -286,11 +286,17 @@ pub async fn deliver_webhook_with_retries(
     }
     // A hook whose secret is gone is not delivered: a body signed with an empty key would
     // pass any receiver that, like this forge, accepts an empty secret, and fail the others.
-    let Some(secret) = state
+    // A store that cannot answer counts as a missing secret: the delivery is recorded failed and
+    // retried with the next event, never sent unsigned.
+    let held = state
         .secret_store
         .get_secret(hook.org_id, &hook.secret_ref)
-        .filter(|s| !s.is_empty())
-    else {
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(hook = %hook.id, error = %e, "a webhook's secret could not be read");
+            None
+        });
+    let Some(secret) = held.filter(|s| !s.is_empty()) else {
         return state
             .store()
             .record_delivery(DeliveryRecord {
@@ -323,10 +329,8 @@ pub async fn deliver_webhook_with_retries(
         headers.push(("X-Hub-Signature-256".to_owned(), format!("sha256={sig}")));
     }
     if let Some(prev_ref) = &hook.previous_secret_ref
-        && let Some(prev_sec) = state
-            .secret_store
-            .get_secret(hook.org_id, prev_ref)
-            .filter(|s| !s.is_empty())
+        && let Ok(Some(prev_sec)) = state.secret_store.get_secret(hook.org_id, prev_ref).await
+        && !prev_sec.is_empty()
         && let Ok(prev_sig) = compute_gitea_signature(&prev_sec, &body_bytes)
     {
         headers.push((format!("{prefix}-Signature-Previous"), prev_sig));

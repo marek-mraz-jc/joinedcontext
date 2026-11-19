@@ -348,7 +348,11 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
     // listener; before, the gateway's router answered `/metrics` here.
     for path in ["/metrics", "/metrics?x=1"] {
         let (status, body) = get(addr, "api.city.test", path).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{path} on the API host: {body}");
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{path} on the API host: {body}"
+        );
     }
 
     let apps = running.apps_addr.expect("an apps listener");

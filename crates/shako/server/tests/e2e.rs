@@ -63,7 +63,7 @@ struct TestWorld {
 /// The last webhook delivery the mock receiver saw: `(X-Shako-Signature, body)`.
 type LastWebhook = Arc<parking_lot::Mutex<Option<(String, Vec<u8>)>>>;
 
-fn setup_world() -> TestWorld {
+async fn setup_world() -> TestWorld {
     let tmp = tempfile::tempdir().expect("tempdir");
     let inst = InstanceId::from_u128(1);
     let org_a = OrgId::from_u128(10);
@@ -177,9 +177,10 @@ fn setup_world() -> TestWorld {
     );
     state.register_owner_org("joinedcontext", org_a);
     state.register_owner_org("bbsk", org_b);
-    state
+    let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
+    kept.await.expect("the secret is kept");
 
     let mount = Mount::new("shako", "https", "city.example", "/git").expect("mount");
     let app = router(state.clone(), mount);
@@ -271,7 +272,7 @@ fn walk_rs_files(dir: &Path) -> Vec<std::path::PathBuf> {
 /// verifying prefixed URLs in one-domain mode and root URLs in host mode, and refusing overlaps.
 #[tokio::test]
 async fn s1_mount_modes_and_overlap_refusal() {
-    let world = setup_world();
+    let world = setup_world().await;
 
     let git_mount = Mount::new("shako", "https", "city.example", "/git").unwrap();
     let v2_mount = Mount::new("shako-registry", "https", "city.example", "/v2").unwrap();
@@ -382,7 +383,7 @@ fn git_cmd() -> std::process::Command {
 /// Portal `push_bundle` against a live served `shako` listener.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
-    let world = setup_world();
+    let world = setup_world().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let mount = Mount::new("shako", "http", addr.to_string(), "").unwrap();
@@ -554,7 +555,7 @@ async fn s3_s4_git_client_matrix_v0_v2_and_portal_push_bundle() {
 /// commit it pointed at before (S14).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_branch_moved_back_to_an_earlier_commit_is_a_new_push_event() {
-    let world = setup_world();
+    let world = setup_world().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let mount = Mount::new("shako", "http", addr.to_string(), "").unwrap();
@@ -617,7 +618,7 @@ async fn a_branch_moved_back_to_an_earlier_commit_is_a_new_push_event() {
 
 #[tokio::test]
 async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() {
-    let world = setup_world();
+    let world = setup_world().await;
 
     // 1. Create repository (Row 2) and verify duplicate returns 409 (Row 2 quirk)
     let (st, _) = send_json(
@@ -921,7 +922,7 @@ async fn s5_s7_s10_s11_s14_s15_portal_change_lane_webhooks_mirrors_and_backup() 
 /// as they do to a push, and only an open pull request is updated (S5).
 #[tokio::test]
 async fn update_branch_obeys_the_head_branch_rules_and_needs_an_open_pull_request() {
-    let world = setup_world();
+    let world = setup_world().await;
     let repo = "/api/v1/repos/joinedcontext/rules";
     let (st, _) = send_json(
         &world.app,
@@ -1057,7 +1058,7 @@ async fn create_repo(world: &TestWorld, name: &str) {
 /// write tenant data, and report rights the caller holds.
 #[tokio::test]
 async fn organization_routes_refuse_outsiders_and_report_real_rights() {
-    let world = setup_world();
+    let world = setup_world().await;
     let inst = InstanceId::from_u128(1);
     for (method, uri) in [
         ("GET", "/api/v1/orgs/joinedcontext/teams"),
@@ -1112,7 +1113,7 @@ async fn organization_routes_refuse_outsiders_and_report_real_rights() {
 /// is a member of no Organization.
 #[tokio::test]
 async fn an_owner_name_in_a_token_names_no_organization() {
-    let world = setup_world();
+    let world = setup_world().await;
     let (st, _) = send_json(
         &world.app,
         "POST",
@@ -1163,7 +1164,7 @@ async fn an_owner_name_in_a_token_names_no_organization() {
 /// deleted.
 #[tokio::test]
 async fn deleting_a_branch_after_a_merge_obeys_the_branch_rules() {
-    let world = setup_world();
+    let world = setup_world().await;
     let repo = "/api/v1/repos/joinedcontext/guarded";
     create_repo(&world, "guarded").await;
     for branch in ["release", "feature"] {
@@ -1241,7 +1242,7 @@ async fn deleting_a_branch_after_a_merge_obeys_the_branch_rules() {
 /// rule gains no writer through the API.
 #[tokio::test]
 async fn branch_rules_are_refused_when_they_would_not_protect() {
-    let world = setup_world();
+    let world = setup_world().await;
     let repo = "/api/v1/repos/joinedcontext/ruled";
     create_repo(&world, "ruled").await;
     for (rule, field) in [
@@ -1313,7 +1314,7 @@ async fn branch_rules_are_refused_when_they_would_not_protect() {
 /// A hook or mirror names only its own repository's forge-kept secrets.
 #[tokio::test]
 async fn a_secret_ref_never_reaches_another_repositorys_secret() {
-    let world = setup_world();
+    let world = setup_world().await;
     create_repo(&world, "first").await;
     create_repo(&world, "second").await;
     let first = world
@@ -1349,7 +1350,7 @@ async fn a_secret_ref_never_reaches_another_repositorys_secret() {
 /// green.
 #[tokio::test]
 async fn commit_statuses_take_known_states_only() {
-    let world = setup_world();
+    let world = setup_world().await;
     create_repo(&world, "checked").await;
     let sha = "a".repeat(40);
     let uri = format!("/api/v1/repos/joinedcontext/checked/statuses/{sha}");
@@ -1386,7 +1387,7 @@ async fn commit_statuses_take_known_states_only() {
 /// branch from `branch`; commit pages move.
 #[tokio::test]
 async fn compat_writes_keep_what_the_client_did_not_send() {
-    let world = setup_world();
+    let world = setup_world().await;
     let repo = "/api/v1/repos/joinedcontext/kept";
     create_repo(&world, "kept").await;
     let (st, _) = send_json(
@@ -1463,7 +1464,7 @@ async fn compat_writes_keep_what_the_client_did_not_send() {
 /// Every registry 401 names where a token comes from.
 #[tokio::test]
 async fn every_registry_401_carries_the_token_challenge() {
-    let world = setup_world();
+    let world = setup_world().await;
     let resp = world
         .app
         .clone()
@@ -1504,7 +1505,7 @@ async fn every_registry_401_carries_the_token_challenge() {
 /// The mergeable and link tools answer, and list tools narrow by the repository they name.
 #[tokio::test]
 async fn advertised_forge_tools_answer() {
-    let world = setup_world();
+    let world = setup_world().await;
     create_repo(&world, "tooled").await;
     create_repo(&world, "other").await;
     let ctx = RequestCtx::new(
@@ -1564,7 +1565,7 @@ async fn advertised_forge_tools_answer() {
 /// The repository of a Branches read comes from a top-level `and` of the parsed filter only.
 #[tokio::test]
 async fn a_repository_under_or_in_a_filter_selects_nothing() {
-    let world = setup_world();
+    let world = setup_world().await;
     create_repo(&world, "filtered").await;
     let id = world
         .state
@@ -1607,7 +1608,7 @@ fn standalone_fsck_and_compact_fail_when_they_find_no_repository() {
 /// generic packages, MCP tools, read-only web views, and security threats T1, T4, T6, T13, T14.
 #[tokio::test]
 async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
-    let world = setup_world();
+    let world = setup_world().await;
 
     // Create repo in org_a and another in org_b
     let (st, body) = send_json(
@@ -2088,7 +2089,7 @@ async fn s8_s9_s13_s18_s19_s21_odata_registry_mcp_web_and_security_threats() {
 /// without a token; only the liveness probe is open and carries no data.
 #[tokio::test]
 async fn deny_by_default_on_discovery_version_and_actions() {
-    let world = setup_world();
+    let world = setup_world().await;
     for uri in [
         "/odata",
         "/odata/",
@@ -2139,7 +2140,7 @@ async fn deny_by_default_on_discovery_version_and_actions() {
 /// must answer 404 without writing outside the repository root.
 #[tokio::test]
 async fn generic_package_owner_traversal_is_refused() {
-    let world = setup_world();
+    let world = setup_world().await;
     let root = world.state.repo_root().to_path_buf();
     for owner in ["..%2F..%2Fescape", "..", "joinedcontext%2F..%2F..%2Fescape"] {
         let resp = world

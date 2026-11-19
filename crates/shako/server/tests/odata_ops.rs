@@ -39,7 +39,7 @@ struct World {
     delivered: Delivered,
 }
 
-fn world() -> World {
+async fn world() -> World {
     let tmp = tempfile::tempdir().expect("tempdir");
     let org_a = OrgId::from_u128(10);
     let org_b = OrgId::from_u128(20);
@@ -108,9 +108,10 @@ fn world() -> World {
     );
     state.register_owner_org("joinedcontext", org_a);
     state.register_owner_org("bbsk", org_b);
-    state
+    let kept = state
         .secret_store
         .put_secret(org_a, "portal-webhook-secret", "wh-secret-key-123");
+    kept.await.expect("the secret is kept");
     let mount = Mount::new("shako", "https", "city.example", "/git").expect("mount");
     let app = router(state.clone(), mount);
     World {
@@ -201,7 +202,7 @@ async fn head_of(w: &World, branch: &str) -> String {
 
 #[tokio::test]
 async fn repositories_by_alternate_key_create_conflict_import_archive_delete() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, _, _) = call(
         &w.app,
@@ -271,7 +272,7 @@ async fn repositories_by_alternate_key_create_conflict_import_archive_delete() {
 /// nothing under it, and the owner keeps resolving to its own Organization.
 #[tokio::test]
 async fn an_owner_of_another_organization_is_refused_on_create_and_import() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, body, _) = call(
         &w.app,
@@ -308,7 +309,7 @@ async fn an_owner_of_another_organization_is_refused_on_create_and_import() {
 
 #[tokio::test]
 async fn contents_history_tree_and_a_stale_sha_that_moves_nothing() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, first) = commit(
         &w,
@@ -443,7 +444,7 @@ async fn contents_history_tree_and_a_stale_sha_that_moves_nothing() {
 
 #[tokio::test]
 async fn pull_requests_review_merge_and_native_webhooks() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, hook, _) = call(
         &w.app,
@@ -630,7 +631,7 @@ async fn pull_requests_review_merge_and_native_webhooks() {
 
 #[tokio::test]
 async fn mirrors_packages_and_tags() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let credential = "ghp_odatamirrorcredential987654";
     let (st, mirror, raw) = call(
@@ -720,7 +721,7 @@ async fn mirrors_packages_and_tags() {
 /// `$expand` on a set without navigation properties is a 400, never a silently smaller answer.
 #[tokio::test]
 async fn an_expand_on_a_set_that_expands_nothing_is_400() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, body, _) = call(
         &w.app,
@@ -746,7 +747,7 @@ async fn an_expand_on_a_set_that_expands_nothing_is_400() {
 /// there is no nonce to draw per request.
 #[tokio::test]
 async fn every_answer_carries_the_fixed_content_security_policy() {
-    let w = world();
+    let w = world().await;
     let resp = w
         .app
         .clone()
@@ -769,7 +770,7 @@ async fn every_answer_carries_the_fixed_content_security_policy() {
 /// Every write and read the Portal makes, without a token: 401.
 #[tokio::test]
 async fn no_token_is_401_on_every_portal_call() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     for (method, uri) in [
         ("GET", R.to_owned()),
@@ -799,7 +800,7 @@ async fn no_token_is_401_on_every_portal_call() {
 /// Another organization's repository is 404 on every call, with the body a missing one gets.
 #[tokio::test]
 async fn another_organizations_repository_is_404_like_a_missing_one() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, _) = commit(
         &w,
@@ -864,7 +865,7 @@ async fn another_organizations_repository_is_404_like_a_missing_one() {
 /// A reader of a visible repository is 403 on a write, never 404.
 #[tokio::test]
 async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     create_repo(&w, "other").await;
     let patch = |body: Value| {
@@ -890,7 +891,7 @@ async fn a_rename_onto_a_taken_name_is_409_and_a_new_default_branch_moves_head()
 
 #[tokio::test]
 async fn api_commits_count_against_the_quota_and_an_import_keeps_to_it() {
-    let w = world();
+    let w = world().await;
     let (inst, org) = (InstanceId::from_u128(1), OrgId::from_u128(10));
     create_repo(&w, "helsinki").await;
     let usage = || async { w.state.store().get_quota_usage(inst, org).await.unwrap() };
@@ -934,7 +935,7 @@ async fn api_commits_count_against_the_quota_and_an_import_keeps_to_it() {
 
 #[tokio::test]
 async fn a_navigated_collection_keeps_to_its_repository_whatever_the_filter() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     create_repo(&w, "other").await;
     let (st, body, _) = call(
@@ -961,7 +962,7 @@ async fn a_navigated_collection_keeps_to_its_repository_whatever_the_filter() {
 
 #[tokio::test]
 async fn a_reader_is_403_on_writes() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, _, _) = call(&w.app, "GET", R, Some("bob-token"), None).await;
     assert_eq!(st, StatusCode::OK);
@@ -990,7 +991,7 @@ async fn a_reader_is_403_on_writes() {
 /// person who reads one repository of the organization does not read another's by its id.
 #[tokio::test]
 async fn pull_request_parts_check_the_repository_read() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     create_repo(&w, "public-one").await;
     let (st, _, _) = call(
@@ -1036,7 +1037,7 @@ async fn pull_request_parts_check_the_repository_read() {
 /// Redelivering a hook goes only to a hook of the named repository.
 #[tokio::test]
 async fn a_hook_of_another_repository_is_not_redelivered() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     create_repo(&w, "other").await;
     let (st, hook, _) = call(
@@ -1075,7 +1076,7 @@ async fn a_hook_of_another_repository_is_not_redelivered() {
 /// Writes of one Organization at once deliver each event once, even when a hook is slow.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_commits_deliver_each_event_once() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, hook, _) = call(
         &w.app,
@@ -1125,7 +1126,7 @@ async fn concurrent_commits_deliver_each_event_once() {
 /// Admin reads like the repository's mirrors: a reader sees none, the administrator sees each.
 #[tokio::test]
 async fn a_reader_sees_no_hook_or_delivery_of_the_repository() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, hook, _) = call(
         &w.app,
@@ -1164,7 +1165,7 @@ async fn a_reader_sees_no_hook_or_delivery_of_the_repository() {
 /// is refused with the rule and path, never the value, and nothing lands on the branch.
 #[tokio::test]
 async fn a_literal_secret_in_an_api_commit_is_refused() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let before = head_of(&w, "main").await;
     let literal = "s3cr3t".repeat(2);
@@ -1190,7 +1191,7 @@ async fn a_literal_secret_in_an_api_commit_is_refused() {
 /// clear); the answer never repeats the value.
 #[tokio::test]
 async fn a_credential_pasted_as_a_secret_reference_is_refused() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let pasted = &format!("{}_abcdefghijklmnopqrstuvwxyz0123456789", "ghp");
     for (uri, body, field) in [
@@ -1237,7 +1238,7 @@ async fn a_credential_pasted_as_a_secret_reference_is_refused() {
 /// A mirror password never overwrites a secret already stored under the reference it names.
 #[tokio::test]
 async fn a_mirror_password_does_not_overwrite_a_named_secret() {
-    let w = world();
+    let w = world().await;
     create_repo(&w, "helsinki").await;
     let (st, _, _) = call(
         &w.app,
@@ -1256,7 +1257,8 @@ async fn a_mirror_password_does_not_overwrite_a_named_secret() {
         w.state
             .secret_store
             .get_secret(OrgId::from_u128(10), "portal-webhook-secret")
-            .as_deref(),
-        Some("wh-secret-key-123")
+            .await
+            .expect("the store answers"),
+        Some("wh-secret-key-123".to_owned())
     );
 }
