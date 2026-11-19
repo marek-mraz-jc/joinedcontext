@@ -166,7 +166,7 @@ pub struct ViewOps {
 
 /// The Entity types a caller may see through a view and the Attributes
 /// each may show, as IRIs (ADR-0023 rule 5): made by [`ViewOps::visible`].
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Visible {
     /// Each rule's types and the Attributes it shows; `None` for an
     /// engine's grant over the whole Entity (`Rule::every_attribute`), which
@@ -760,18 +760,24 @@ impl ViewOps {
 
     /// What `caller` may read through the view: asked as the type details
     /// the `LinkML` surface asks for its schema documents, else as the reads a
-    /// model describes. A view offering none of them, or an engine refusing,
-    /// leaves the caller nothing (fail closed).
+    /// model describes, the first of them the view and the engine allow (a
+    /// grant of queries alone still reads the names it queries). A view
+    /// offering none of them, or an engine refusing them all, leaves the
+    /// caller nothing (fail closed).
     pub async fn readable(&self, caller: &Caller) -> Visible {
-        let op = [
+        for op in [
             OperationId::RetrieveEntityTypeDetails,
             OperationId::QueryEntities,
             OperationId::RetrieveEntity,
-        ]
-        .into_iter()
-        .find(|op| self.allows(*op))
-        .unwrap_or(OperationId::RetrieveEntityTypeDetails);
-        self.visible(caller, op, &[], &[]).await.unwrap_or_default()
+        ] {
+            if !self.allows(op) {
+                continue;
+            }
+            if let Ok(visible) = self.visible(caller, op, &[], &[]).await {
+                return visible;
+            }
+        }
+        Visible::default()
     }
 
     /// [`Self::shown_names`] less the types and Attributes the engine hides

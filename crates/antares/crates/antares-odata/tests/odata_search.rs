@@ -313,6 +313,28 @@ async fn a_property_the_engine_hides_never_matches() -> Result<(), String> {
     Ok(())
 }
 
+/// AUZ-06, ISO-03: a property the engine hides is refused in `$filter`, `$orderby` and
+/// `$select` exactly as one the view never shows, so the answers name no hidden property.
+#[tokio::test]
+async fn a_hidden_property_is_refused_as_an_unknown_one() -> Result<(), String> {
+    let (_b, app) = broker(true).await?;
+    for (hidden, unknown) in [
+        ("$filter=owner%20eq%20'Ana'", "$filter=nosuch%20eq%20'Ana'"),
+        ("$orderby=owner", "$orderby=nosuch"),
+        ("$select=owner", "$select=nosuch"),
+    ] {
+        let hidden = send(&app, Method::GET, &format!("{ROOT}/Car?{hidden}"), None).await;
+        let unknown = send(&app, Method::GET, &format!("{ROOT}/Car?{unknown}"), None).await;
+        assert_eq!(hidden.0, StatusCode::BAD_REQUEST, "{}", hidden.1);
+        let named = hidden.1.to_string().replace("owner", "nosuch");
+        assert_eq!(named, unknown.1.to_string());
+    }
+    let (_b, app) = broker(false).await?;
+    let (status, body) = send(&app, Method::GET, &format!("{ROOT}/Car?$select=owner"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    Ok(())
+}
+
 #[tokio::test]
 async fn search_is_refused_where_it_does_not_apply() -> Result<(), String> {
     let (_b, app) = broker(false).await?;
