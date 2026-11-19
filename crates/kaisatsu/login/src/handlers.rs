@@ -2598,17 +2598,17 @@ async fn action_token_get(
         locale_base_url: "",
     };
     let wants = |a: &str| claims.actions.iter().any(|x| x == a);
-    let heading = if wants("UPDATE_PASSWORD") {
-        bundle.get("updatePasswordTitle")
+    let (heading, instruction) = if wants("UPDATE_PASSWORD") {
+        ("updatePasswordTitle", "actionConfirmUpdatePassword")
     } else if wants("CONFIGURE_TOTP") {
-        bundle.get("loginTotpTitle")
+        ("loginTotpTitle", "actionConfirmTotp")
     } else if wants("VERIFY_EMAIL") {
-        bundle.get("emailVerifyTitle")
+        ("emailVerifyTitle", "actionConfirmVerifyEmail")
     } else {
-        bundle.get("termsTitle")
+        ("termsTitle", "termsInstruction")
     };
-    let mut tpl = shell.page("action-token-confirm", heading, &new_nonce());
-    tpl.instructions = vec![bundle.get("actionTokenConfirmInstruction").to_owned()];
+    let mut tpl = shell.page("action-token-confirm", bundle.get(heading), &new_nonce());
+    tpl.instructions = vec![bundle.get(instruction).to_owned()];
     tpl.form = Some(page::Form {
         id: "kc-action-confirm-form".into(),
         action: format!(
