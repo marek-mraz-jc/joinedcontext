@@ -33,7 +33,9 @@ use daiya_model::{
     CrError, CrResult, DaiyaStore, GrafanaRole, InstallationId, InstanceId, OrgId,
     PolicyAuthorizer, RoleBinding, Subject,
 };
-use daiya_query::{FileSecretResolver, MapSecretResolver, OpenedNetwork, OutboundPolicy};
+use daiya_query::{
+    DRIVER_KINDS, FileSecretResolver, MapSecretResolver, OpenedNetwork, OutboundPolicy,
+};
 use daiya_store_memory::MemoryStore;
 use daiya_store_pg::{PgPoolConfig, PgStore};
 use ipnet::IpNet;
@@ -301,6 +303,12 @@ impl DaiyaConfig {
                 if kinds.is_empty() {
                     return Err(config_err(format!(
                         "allowedNetworks '{cidr}' names no datasource kind (for example \"kinds\": [\"prometheus\"])"
+                    )));
+                }
+                if let Some(unknown) = kinds.iter().find(|k| !DRIVER_KINDS.contains(&k.as_str())) {
+                    return Err(config_err(format!(
+                        "allowedNetworks '{cidr}' names the unknown kind '{unknown}'; use one of {}",
+                        DRIVER_KINDS.join(", ")
                     )));
                 }
                 Ok(OpenedNetwork {

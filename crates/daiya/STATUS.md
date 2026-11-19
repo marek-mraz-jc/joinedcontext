@@ -38,7 +38,7 @@ The Postgres tests ran against a throwaway PostGIS 17 server through `DAIYA_TEST
 - **R3 Datasources**: partial.
   - **Driver factory.** `query/src/factory.rs` builds a driver from a stored datasource record: Prometheus, NGSI-LD, OData, Postgres, and the Loki slot. WASM kinds and unknown kinds answer 501.
     - `DaiyaState::driver_for` caches each driver by record revision, and builds it only after the authorization decision (`api/tests/stored_drivers.rs`).
-  - **Outbound guard.** Operators can now open non-public networks (`outbound.allowedNetworks`), each to one organization and the datasource kinds it names. Cloud metadata addresses are always refused.
+  - **Outbound guard.** Operators can now open non-public networks (`outbound.allowedNetworks`), each to one organization and the driver kinds it names (`prometheus`, `ngsild`, `odata`, `postgres`, `loki`; a Grafana-type record opens under its driver kind, so `grafana-postgresql-datasource` under `postgres`). Cloud metadata addresses are always refused.
   - **Postgres driver.** It runs against the real server under a dedicated reader role (`query/tests/factory.rs`). These are now decoded: int2/int4, numeric, timestamp, date, json and uuid columns, all of which used to come back null. Health runs `SELECT 1`, and a 50 000-row cut is noticed.
   - **PromQL variables.** They are escaped for the literal they stand in. Interpolation is one pass, by whole name.
   - **Prometheus.**
