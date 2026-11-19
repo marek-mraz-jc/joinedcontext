@@ -13385,7 +13385,9 @@
       "remove": "Odebrat adresu",
       "removeOf": "Odebrat adresu {host}",
       "removeTitle": "Odebrat adresu {host}?",
-      "removeDescription": "Platforma na ní nejprve přestane odpovídat a pak smaže její certifikát. Stejné jméno už nelze přidat znovu. Portál, který ji používá, musí nejprve přejít na jinou adresu."
+      "removeDescription": "Platforma na ní nejprve přestane odpovídat a pak smaže její certifikát. Stejné jméno už nelze přidat znovu. Portál, který ji používá, musí nejprve přejít na jinou adresu.",
+      "nameFirst": "Nejprve zadejte název adresy, např. opendata2",
+      "cannotAddLink": "Otevřít nastavení organizace"
     }
   },
   "assistantGuides": {

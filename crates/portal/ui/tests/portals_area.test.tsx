@@ -219,8 +219,9 @@ describe("the portal hosts (T-7415)", () => {
         return undefined;
       },
     });
-    expect(await screen.findByText(/No portal host of your own yet/)).toBeInTheDocument();
-    expect(screen.getByText(/verified no domain yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/verified no domain yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/No portal host of your own yet/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Open Organization settings" })).toHaveAttribute("href", "/organization/settings");
   });
 
   it("adds a label under the own host and shows the server's refusal on the field", async () => {
@@ -229,9 +230,9 @@ describe("the portal hosts (T-7415)", () => {
     await renderRoute({
       path: "/portals",
       permissions: ADMIN,
-      answer: async (path, request) => {
+      answer: (path, request) => {
         if (path === "/api/v1/organization/portal-hosts" && request.method === "POST") {
-          sent.push(await request.json());
+          void request.json().then((body: unknown) => sent.push(body));
           return problem(422, "host: the label 'api' is reserved for the platform; choose another, e.g. data");
         }
         if (path === "/api/v1/organization/portal-hosts") return jsonResponse(OWN_HOSTS);

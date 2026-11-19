@@ -10,7 +10,22 @@ test.beforeEach(({ page }) => manifestReadsAsRest(page));
 // 1440 and 400 px, and one create, edit and delete journey whose requests are each a checked
 // proposal (a dry run, then the write) on the Portal kind's own routes.
 
-const HOSTS = { items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk", "skoly.bbsk.sk"], opendata: "https://opendata.bbsk.sk" }] };
+const HOSTS = { items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk", "skoly.bbsk.sk"], opendata: "https://opendata.bbsk.sk", sites: [] as unknown[], bases: [] as string[] }] };
+
+// T-7415: bbsk serving bbsk.smartcity.joinedcontext.com, with a verified domain and two own hosts.
+const OWN_HOSTS = {
+  items: [
+    {
+      ...HOSTS.items[0],
+      bases: ["bbsk.smartcity.joinedcontext.com"],
+      verifiedDomain: "bbsk.sk",
+      sites: [
+        { host: "opendata2.bbsk.smartcity.joinedcontext.com", state: "dns-ok", detail: "the certificate waits until 2026-11-20 10:00 UTC (10 new certificates a day)", removable: true },
+        { host: "data.bbsk.sk", state: "served", removable: true },
+      ],
+    },
+  ],
+};
 
 function portal(path: string, title: Record<string, string>, extra: Record<string, unknown> = {}) {
   return {
@@ -43,6 +58,10 @@ interface Stub {
   write?: (route: Route) => Promise<void>;
   /** The hosts read; a 403 for somebody who makes no portal. */
   hosts?: number;
+  /** The hosts answer, when not HOSTS. */
+  hostsBody?: unknown;
+  /** What a write of a portal host answers; the default is the hosts answer. */
+  hostWrite?: (route: Route) => Promise<void>;
 }
 
 async function stub(page: Page, options: Stub): Promise<string[]> {
@@ -57,7 +76,13 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
       return json({ project: "org", bootstrap: false, grants: [{ rule: { kinds: ["Portal", "Organization", "RoleBinding", "Group"], verbs: ["read", "propose", "approve", "delete"] }, organization: "bbsk" }] });
     }
     if (path === "/api/v1/projects") return json({ apiVersion: "joinedcontext.com/v1alpha1", kind: "ProjectList", items: [{ name: "doprava" }] });
+    if (path.startsWith("/api/v1/organization/portal-hosts") && request.method() !== "GET") {
+      sent.push(`${request.method()} ${path}`);
+      if (options.hostWrite) return options.hostWrite(route);
+      return json((options.hostsBody as typeof HOSTS | undefined)?.items[0] ?? HOSTS.items[0], request.method() === "POST" ? 201 : 200);
+    }
     if (path === "/api/v1/organization/portal-hosts") {
+      if (options.hostsBody) return json(options.hostsBody);
       return options.hosts ? json({ type: "about:blank", title: "Forbidden", status: options.hosts, detail: "only an Organization's administrator" }, options.hosts) : json(HOSTS);
     }
     if (path.startsWith("/api/v1/projects/org/portals")) {
@@ -113,6 +138,59 @@ for (const width of [1440, 400]) {
       await page.reload();
       await expect(page.getByText(/made by an Organization's administrators/)).toBeVisible();
       await shoot(page, "refusal", width, info.outputPath(`portals-list-refusal-${width}.png`));
+    });
+
+    test("the portal hosts: empty, filled, the server's refusal, remove, and nothing to add under", async ({ page }, info) => {
+      const empty = { items: [{ ...OWN_HOSTS.items[0], sites: [] }] };
+      await stub(page, { portals: FILLED, hostsBody: empty });
+      await page.goto("/portals?lang=en");
+      await expect(page.getByText(/No portal host of your own yet/)).toBeVisible();
+      const panel = page.getByRole("heading", { level: 2, name: "Portal hosts" });
+      await panel.scrollIntoViewIfNeeded();
+      await shoot(page, "hosts-empty", width, info.outputPath(`portal-hosts-empty-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+
+      await page.unrouteAll();
+      const sent = await stub(page, {
+        portals: FILLED,
+        hostsBody: OWN_HOSTS,
+        hostWrite: (route) =>
+          route.request().method() === "POST"
+            ? route.fulfill({
+                status: 422,
+                contentType: "application/problem+json",
+                body: JSON.stringify({ type: "about:blank", title: "Unprocessable", status: 422, detail: "x", errors: ["host: the label 'api' is reserved for the platform; choose another, e.g. opendata2"] }),
+              })
+            : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(OWN_HOSTS.items[0]) }),
+      });
+      await page.reload();
+      await expect(page.getByText("Certificate pending")).toBeVisible();
+      await expect(page.getByText("Served", { exact: true })).toBeVisible();
+      await shoot(page, "hosts-filled", width, info.outputPath(`portal-hosts-filled-${width}.png`));
+      expect(await axeViolations(page)).toEqual([]);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(overflow).toBeLessThanOrEqual(0);
+
+      await page.getByRole("button", { name: "Add host" }).click();
+      await expect(page.getByText(/Type the host's name first/)).toBeVisible();
+      await page.locator("input[id='portal-host-label-bbsk']").fill("api");
+      await page.getByRole("button", { name: "Add host" }).click();
+      await expect(page.getByText(/the label 'api' is reserved/)).toBeVisible();
+      expect(sent).toContain("POST /api/v1/organization/portal-hosts");
+      await shoot(page, "hosts-error", width, info.outputPath(`portal-hosts-error-${width}.png`));
+
+      await page.getByRole("button", { name: "Remove host data.bbsk.sk" }).click();
+      const dialog = page.getByRole("alertdialog");
+      await expect(dialog.getByText(/cannot be added again/)).toBeVisible();
+      await shoot(page, "hosts-remove", width, info.outputPath(`portal-hosts-remove-${width}.png`));
+      await dialog.getByRole("button", { name: "Remove host" }).click();
+      await expect.poll(() => sent).toContain("DELETE /api/v1/organization/portal-hosts/data.bbsk.sk");
+
+      await page.unrouteAll();
+      await stub(page, { portals: FILLED });
+      await page.reload();
+      await expect(page.getByText(/verified no domain yet/)).toBeVisible();
+      await shoot(page, "hosts-none", width, info.outputPath(`portal-hosts-none-${width}.png`));
     });
 
     test("the editor: filled, the server's refusal on its field, and another Organization's portal", async ({ page }, info) => {

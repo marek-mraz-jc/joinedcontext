@@ -13385,7 +13385,9 @@
       "remove": "Remove host",
       "removeOf": "Remove host {host}",
       "removeTitle": "Remove the host {host}?",
-      "removeDescription": "The platform stops answering on it first, then deletes its certificate. The name cannot be added again. A portal that uses it must move to another host before."
+      "removeDescription": "The platform stops answering on it first, then deletes its certificate. The name cannot be added again. A portal that uses it must move to another host before.",
+      "nameFirst": "Type the host's name first, e.g. opendata2",
+      "cannotAddLink": "Open Organization settings"
     }
   },
   "assistantGuides": {

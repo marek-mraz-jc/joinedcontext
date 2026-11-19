@@ -13385,7 +13385,9 @@
       "remove": "Adresse entfernen",
       "removeOf": "Adresse {host} entfernen",
       "removeTitle": "Die Adresse {host} entfernen?",
-      "removeDescription": "Die Plattform antwortet zuerst nicht mehr darauf und löscht dann ihr Zertifikat. Der Name kann nicht erneut hinzugefügt werden. Ein Portal, das sie nutzt, muss vorher auf eine andere Adresse wechseln."
+      "removeDescription": "Die Plattform antwortet zuerst nicht mehr darauf und löscht dann ihr Zertifikat. Der Name kann nicht erneut hinzugefügt werden. Ein Portal, das sie nutzt, muss vorher auf eine andere Adresse wechseln.",
+      "nameFirst": "Geben Sie zuerst den Namen der Adresse ein, z. B. opendata2",
+      "cannotAddLink": "Organisationseinstellungen öffnen"
     }
   },
   "assistantGuides": {

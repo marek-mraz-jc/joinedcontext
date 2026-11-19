@@ -10,7 +10,7 @@ test.beforeEach(({ page }) => manifestReadsAsRest(page));
 // and 400 px (empty, filled, error, refusal), and one journey that adds a dcat-ap source, tests it,
 // runs it, reads its run log and hides a dataset, each write a checked proposal.
 
-const HOSTS = { items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk" }] };
+const HOSTS = { items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk", sites: [], bases: [] }] };
 
 const KOSICE = {
   name: "kosice",
