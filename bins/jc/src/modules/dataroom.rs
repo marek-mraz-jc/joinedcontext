@@ -1115,6 +1115,7 @@ mod tests {
                 same_site_apps: false,
                 catalogue_id: format!("6f1c0b2e-5d3a-4c1e-9a8b-7e2d4f6a1b{n:02}"),
                 portal_token_file: None,
+                first_admin: None,
             })
             .collect();
 
@@ -1425,6 +1426,7 @@ mod tests {
             same_site_apps: false,
             catalogue_id: "00000000-0000-7000-8000-000000007186".into(),
             portal_token_file: None,
+            first_admin: None,
         };
         let decided = |name: &str, call: &str, token: Option<&str>| {
             let mut request = axum::http::Request::builder()

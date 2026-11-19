@@ -14,6 +14,10 @@ pub struct SignIn {
     pub organization: String,
     /// Lowercase, without a port.
     pub host: String,
+    /// The Organization's working hosts, the first its Portal's, each lowercase without a port:
+    /// its realm's clients redirect to these alone (T-7284). Empty while none is served, and then
+    /// the realm is neither applied nor pinned.
+    pub portals: Vec<String>,
 }
 
 /// Each `[[organizations]]` row with `hosts.idm`.
@@ -23,6 +27,10 @@ pub fn from_config(orgs: &[crate::config::OrganizationSection]) -> Vec<SignIn> {
             Some(SignIn {
                 organization: org.name.clone(),
                 host: jc_router::registry::bare(org.hosts.idm.as_deref()?).to_ascii_lowercase(),
+                portals: std::iter::once(&org.hosts.portal)
+                    .chain(&org.hosts.portals)
+                    .map(|h| jc_router::registry::bare(h).to_ascii_lowercase())
+                    .collect(),
             })
         })
         .collect()
@@ -33,10 +41,18 @@ pub fn from_config(orgs: &[crate::config::OrganizationSection]) -> Vec<SignIn> {
 pub type Row<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 /// The registry's `served` `signin` rows of the Organizations jc runs (`known`), one per
-/// Organization (the first row wins; the registry's check refuses a second). A row of an
-/// Organization jc does not run is left out: none of its modules could serve it.
+/// Organization (the first row wins; the registry's check refuses a second), each with the
+/// working hosts the registry serves for it (`app::registry_hosts`: the first working row, then
+/// each `portal-site`). A row of an Organization jc does not run is left out: none of its modules
+/// could serve it.
 #[cfg(feature = "portal")]
 pub fn from_registry<'a>(rows: impl IntoIterator<Item = Row<'a>>, known: &[String]) -> Vec<SignIn> {
+    let rows: Vec<Row<'a>> = rows.into_iter().collect();
+    let served = crate::app::registry_hosts(
+        rows.iter()
+            .filter(|(_, _, _, state)| *state == "served")
+            .map(|&(host, organization, role, _)| (host, organization, role)),
+    );
     let mut out: Vec<SignIn> = Vec::new();
     for (host, organization, role, state) in rows {
         if role != jc_router::HostRole::SignIn.as_str()
@@ -49,6 +65,13 @@ pub fn from_registry<'a>(rows: impl IntoIterator<Item = Row<'a>>, known: &[Strin
         out.push(SignIn {
             organization: organization.to_owned(),
             host: jc_router::registry::bare(host).to_ascii_lowercase(),
+            portals: served.get(organization).map_or_else(Vec::new, |h| {
+                std::iter::once(&h.portal)
+                    .filter(|p| !p.is_empty())
+                    .chain(&h.portals)
+                    .cloned()
+                    .collect()
+            }),
         });
     }
     out.sort_by(|a, b| a.organization.cmp(&b.organization));
@@ -94,12 +117,16 @@ mod tests {
             from_config(&orgs),
             [SignIn {
                 organization: "bbsk".into(),
-                host: "idm.bbsk.sk".into()
+                host: "idm.bbsk.sk".into(),
+                portals: vec!["smartcity.bbsk.sk".into()],
             }]
         );
         let set = from_registry(
             [
                 ("idm.hel.fi", "hel", "signin", "served"),
+                ("smartcity.hel.fi", "hel", "working", "served"),
+                ("portal.hel.fi", "hel", "portal-site", "served"),
+                ("old.hel.fi", "hel", "portal-site", "removed"),
                 ("idm.bbsk.sk", "bbsk", "signin", "removed"),
                 ("smartcity.bbsk.sk", "bbsk", "portal-site", "served"),
                 ("idm.zilina.sk", "zilina", "signin", "served"),
@@ -112,9 +139,11 @@ mod tests {
             set,
             [SignIn {
                 organization: "hel".into(),
-                host: "idm.hel.fi".into()
+                host: "idm.hel.fi".into(),
+                portals: vec!["smartcity.hel.fi".into(), "portal.hel.fi".into()],
             }],
-            "a removed row, another role, an unknown Organization and a second row are left out"
+            "a removed row, another role, an unknown Organization and a second row are left out; \
+             the served working hosts go with the sign-in host"
         );
     }
 
@@ -124,6 +153,7 @@ mod tests {
         let one = vec![SignIn {
             organization: "hel".into(),
             host: "idm.hel.fi".into(),
+            portals: Vec::new(),
         }];
         publish(one.clone());
         let held = Arc::clone(&seen);

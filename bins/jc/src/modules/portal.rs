@@ -436,6 +436,7 @@ fn run_time(
                 same_site_apps: false,
                 catalogue_id: o.catalogue_id.clone().unwrap_or_default(),
                 portal_token_file: None,
+                first_admin: None,
             })
         })
         .collect()
@@ -1480,6 +1481,7 @@ mod tests {
             same_site_apps: false,
             catalogue_id: catalogue.into(),
             portal_token_file: None,
+            first_admin: None,
         };
         let set = super::super::follow::Organizations {
             run_time: vec![
