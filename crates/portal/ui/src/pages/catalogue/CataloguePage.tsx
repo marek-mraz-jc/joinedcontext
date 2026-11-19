@@ -263,7 +263,11 @@ function Results({
         ) : null}
         <div className="flex items-center justify-between gap-2">
           <p role="status" className="text-body text-fg-muted">
-            {t("catalogue.results.count", { count: total })}
+            {/* Signed in with nothing granted: said beside the count too, since a phone keeps
+                the Access filter behind its button (T-7389). */}
+            {granted.state !== "off" && granted.state !== "loading" && granted.datasets.length === 0 && !onlyGranted
+              ? t("catalogue.access.countNone", { count: total })
+              : t("catalogue.results.count", { count: total })}
           </p>
           <Button
             variant="secondary"

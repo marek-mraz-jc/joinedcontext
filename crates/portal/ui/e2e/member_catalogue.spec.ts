@@ -166,7 +166,7 @@ test.describe("a member's catalogue", () => {
       await stub(page, [row("bikes", "Bike counters", "public")], 200);
       await page.goto("/catalogue?lang=en");
       await listAtTop(page);
-      await expect(page.getByText("3 datasets")).toBeVisible();
+      await expect(page.getByText("3 datasets, none granted to you yet")).toBeVisible();
       await shot(page, `member-catalogue-empty-en-${width}`);
       const access = await accessFilter(page, width);
       const mine = access.getByRole("checkbox", { name: /Granted to me/ });
@@ -191,6 +191,8 @@ test.describe("a member's catalogue", () => {
       );
       await page.goto("/catalogue?lang=en");
       await listAtTop(page);
+      await expect(page.getByText("3 datasets, none granted to you yet")).toBeVisible();
+      if (width < 768) await shot(page, `member-catalogue-no-project-page-en-${width}`);
       const access = await accessFilter(page, width);
       await expect(access.locator("p", { hasText: /A project owner or an administrator of this organization can add you/ })).toBeVisible();
       await expect(page.getByRole("alert")).toHaveCount(0);

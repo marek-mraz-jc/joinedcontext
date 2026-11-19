@@ -9614,7 +9614,8 @@
       "loading": "Wir prüfen, welche Datensätze für Sie freigegeben sind…",
       "failed": "Ihre freigegebenen Datensätze konnten gerade nicht geprüft werden. Laden Sie die Seite in einer Minute neu.",
       "none": "Noch ist kein interner Datensatz für Sie freigegeben. Ein Datenverantwortlicher Ihrer Organisation kann Ihrer Gruppe Zugriff geben, z. B. auf ihre Sensordaten.",
-      "noProject": "Sie sind noch in keinem Projekt dieser Organisation. Eine Projektverantwortliche oder ein Administrator dieser Organisation kann Sie hinzufügen."
+      "noProject": "Sie sind noch in keinem Projekt dieser Organisation. Eine Projektverantwortliche oder ein Administrator dieser Organisation kann Sie hinzufügen.",
+      "countNone": "{count, plural, =0 {Kein Datensatz} one {# Datensatz} other {# Datensätze}}, noch keiner für Sie freigegeben"
     },
     "results": {
       "label": "Datensätze",

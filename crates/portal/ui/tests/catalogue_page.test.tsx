@@ -186,7 +186,7 @@ describe("the catalogue (EP-81, EP-82)", () => {
     renderAt("/catalogue");
     expect(await screen.findByRole("heading", { level: 1, name: "Catalogue" })).toBeInTheDocument();
     const results = await screen.findByRole("region", { name: "Datasets" });
-    expect(await within(results).findByText("2 datasets")).toBeInTheDocument();
+    expect(await within(results).findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
     const link = within(results).getByRole("link", { name: "Ukazovatele kraja" });
     expect(link).toHaveAttribute("href", "/catalogue/bbsk-kpi");
     expect(within(results).getByText("Economy and finance")).toBeInTheDocument();
@@ -210,7 +210,7 @@ describe("the catalogue (EP-81, EP-82)", () => {
   it("starts the page with the list: no box above it, Access a filter with Granted to me (0) refused and saying why (T-7389)", async () => {
     renderAt("/catalogue");
     const results = await screen.findByRole("region", { name: "Datasets" });
-    expect(await within(results).findByText("2 datasets")).toBeInTheDocument();
+    expect(await within(results).findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
     // Nothing between the search and the list: the old "Datasets you may read" card is gone.
     expect(screen.queryByRole("region", { name: "Datasets you may read" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Datasets you may read" })).not.toBeInTheDocument();
@@ -305,7 +305,7 @@ describe("the catalogue (EP-81, EP-82)", () => {
     const access = await screen.findByRole("group", { name: "Access" });
     expect(await within(access).findAllByText(en.catalogue.access.failed)).toHaveLength(2);
     expect(within(access).queryByText(/not in a project of this organization/)).not.toBeInTheDocument();
-    expect(await screen.findByText("2 datasets")).toBeInTheDocument();
+    expect(await screen.findByText("2 datasets, none granted to you yet")).toBeInTheDocument();
   });
 
   it("offers no Access filter to a visitor", async () => {

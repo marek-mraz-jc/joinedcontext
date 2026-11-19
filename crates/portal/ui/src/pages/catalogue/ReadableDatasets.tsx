@@ -118,7 +118,7 @@ export function AccessFacet({
         {option("granted", t("catalogue.access.granted"), granted.datasets.length, none && selected !== "granted" ? why : undefined)}
         {/* Seen by everyone; the refused box reads the same words to a screen reader itself. */}
         {none ? (
-          <p aria-hidden="true" className="text-caption text-fg-muted">
+          <p aria-hidden="true" className="text-body text-fg-muted">
             {why}
           </p>
         ) : null}
@@ -143,7 +143,7 @@ export function GrantedCard({ dataset }: { dataset: ReadableDataset }): JSX.Elem
             {dataset.title ?? dataset.name}
           </Link>
         </h2>
-        <Badge tone="info">{t("catalogue.access.badge")}</Badge>
+        <Badge tone="primary">{t("catalogue.access.badge")}</Badge>
       </div>
       <p className="flex flex-wrap items-center gap-1 text-caption text-fg-muted">
         <Icon name="spaces" className="size-3.5" />
