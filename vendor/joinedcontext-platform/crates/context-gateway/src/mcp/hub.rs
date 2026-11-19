@@ -1482,7 +1482,6 @@ fn attributes_of(
         .collect()
 }
 
-/// The tool that answers the caller's list (ADR-N-025 2.1).
 /// The hub's `serverInfo.name` (MCP-31): `{org}.data` on an Organization's host, built from
 /// its name alone (jc.toml's or the host registry's identifier), so no two Organizations' doors
 /// share one; the installation's hub keeps its own name.
@@ -1493,6 +1492,7 @@ fn hub_name(host: Option<&HostOrganization>) -> String {
     )
 }
 
+/// The tool that answers the caller's list (ADR-N-025 2.1).
 pub(crate) fn list_endpoints_tool() -> Value {
     // The codes an agent may filter by, each with its English label (AG-124).
     let themes = jc_core::kinds::DataTheme::ALL
