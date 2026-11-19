@@ -85,8 +85,7 @@ pub fn organization_total(
             mirror
                 .list(&other, "MqttBroker", &ListOptions::default())
                 .items
-                .iter()
-                .count()
+                .len()
         })
         .sum();
     if used < total as usize {
@@ -94,9 +93,9 @@ pub fn organization_total(
     }
     Err(ApiError::Unprocessable {
         detail: format!(
-            "the Organization may run {total} MQTT brokers over all its projects ({used} in use; \
-             limit spec.limits.mqtt.brokers, origin Organization); an org admin can raise it in \
-             Organization settings > MQTT (PF-118)"
+            "The Organization may run {total} MQTT brokers over all its projects and {used} run \
+             already. An org admin can raise the Organization's limit (spec.limits.mqtt.brokers) \
+             in Organization settings > MQTT (PF-118)."
         ),
         errors: vec![format!(
             "metadata.name: {name} would be MQTT broker {} of the Organization's {total} \
@@ -499,7 +498,7 @@ pub(crate) mod tests {
         let (detail, field) = past_the_total(&wide, "helsinki", "four");
         assert!(
             detail.contains(
-                "the Organization may run 3 MQTT brokers over all its projects (3 in use;"
+                "The Organization may run 3 MQTT brokers over all its projects and 3 run already."
             ),
             "{detail}"
         );
@@ -566,7 +565,7 @@ pub(crate) mod tests {
         }
         let (detail, field) = past_the_total(&mirror, "espoo", "b10");
         assert!(
-            detail.contains("10 MQTT brokers over all its projects (10 in use;"),
+            detail.contains("10 MQTT brokers over all its projects and 10 run already"),
             "{detail}"
         );
         assert!(
@@ -610,7 +609,7 @@ pub(crate) mod tests {
         set(2);
         assert!(past_the_total(&mirror, "helsinki", "e")
             .0
-            .contains("may run 2 MQTT brokers over all its projects (4 in use;"));
+            .contains("may run 2 MQTT brokers over all its projects and 4 run already"));
         assert!(admitted(&mirror, "espoo", "d", &broker(2), None).is_ok());
         assert_eq!(
             super::brokers(&mirror, "espoo").len(),

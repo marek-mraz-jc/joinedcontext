@@ -40,7 +40,7 @@ const ELEVENTH = {
   title: "Unprocessable Content",
   status: 422,
   detail:
-    "the Organization may run 10 MQTT brokers over all its projects (10 in use; limit spec.limits.mqtt.brokers, origin Organization); an org admin can raise it in Organization settings > MQTT (PF-118)",
+    "The Organization may run 10 MQTT brokers over all its projects and 10 run already. An org admin can raise the Organization's limit (spec.limits.mqtt.brokers) in Organization settings > MQTT (PF-118).",
   errors: ["metadata.name: vents would be MQTT broker 11 of the Organization's 10 (limit spec.limits.mqtt.brokers, origin Organization)"],
 };
 const meter = (limit: number, used: number) => ({ limit, used, left: Math.max(limit - used, 0) });
@@ -148,7 +148,7 @@ test.describe("an Organization's MQTT total", () => {
       await page.getByRole("textbox", { name: /^Role/ }).first().fill("vents");
       await page.getByRole("combobox", { name: /Service accounts/ }).first().selectOption("vent-1");
       await page.getByRole("button", { name: "Check", exact: true }).click();
-      const reason = page.getByText(/the Organization may run 10 MQTT brokers over all its projects \(10 in use; limit spec\.limits\.mqtt\.brokers, origin Organization\)/).first();
+      const reason = page.getByText(/The Organization may run 10 MQTT brokers over all its projects and 10 run already\. An org admin can raise the Organization's limit/).first();
       await expect(reason).toBeVisible();
       await reason.evaluate((element) => element.scrollIntoView({ block: "center" }));
       await shot(page, `mqtt-total-eleventh-${width}`);
