@@ -251,11 +251,85 @@ pub async fn extract(
     if passages.iter().any(|p| !short(p)) {
         passages.retain(|p| !short(p));
     }
+    // The chunker keeps a table or a long line whole: a passage over the embedder's byte cap
+    // would be refused every minute (T-7290), so it goes in pieces within it.
+    let mut passages: Vec<Passage> = passages
+        .into_iter()
+        .flat_map(|p| {
+            pieces(&p.text, MAX_TEXT_BYTES)
+                .into_iter()
+                .map(|text| Passage {
+                    text: text.to_owned(),
+                    first_page: p.first_page,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if passages.len() > MAX_PASSAGES {
+        passages.truncate(MAX_PASSAGES);
+        truncated = true;
+    }
     Ok(Extracted {
         language,
         passages,
         truncated,
     })
+}
+
+/// The most bytes of one passage: what the embedder takes in one text.
+pub const MAX_TEXT_BYTES: usize = jc_embedder::MAX_TEXT_BYTES;
+
+/// Where `text` is cut so its head holds at most `cap` bytes: after the last line break, else
+/// the last sentence end, else the last space of the head's second half; else at the last
+/// character boundary, never inside a UTF-8 character. `text.len()` when it fits.
+pub fn cut(text: &str, cap: usize) -> usize {
+    if text.len() <= cap {
+        return text.len();
+    }
+    let mut end = cap;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    if end == 0 {
+        // A cap below one character: the character alone.
+        return text.chars().next().map_or(0, char::len_utf8);
+    }
+    let head = &text[..end];
+    let late = |at: usize| at > end / 2;
+    let line = head.rfind('\n').map(|at| at + 1);
+    let sentence = || {
+        head.char_indices()
+            .rev()
+            .find(|&(at, c)| {
+                matches!(c, '.' | '!' | '?') && head[at + 1..].starts_with(char::is_whitespace)
+            })
+            .map(|(at, _)| at + 1)
+    };
+    let space = || {
+        head.char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(at, c)| at + c.len_utf8())
+    };
+    line.filter(|&at| late(at))
+        .or_else(|| sentence().filter(|&at| late(at)))
+        .or_else(|| space().filter(|&at| late(at)))
+        .unwrap_or(end)
+}
+
+/// `text` in pieces of at most `cap` bytes, each cut where [`cut`] says, trimmed, none empty.
+pub fn pieces(text: &str, cap: usize) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let at = cut(rest, cap);
+        let piece = rest[..at].trim();
+        if !piece.is_empty() {
+            out.push(piece);
+        }
+        rest = rest[at..].trim_start();
+    }
+    out
 }
 
 /// `bytes`, a PDF, cut to its first `max_pages` pages before PDFium reads it (T-3314), so a
@@ -731,6 +805,63 @@ mod tests {
             .expect("xlsx");
         let text: String = read.passages.iter().map(|p| p.text.as_str()).collect();
         assert!(text.contains("Podhorie") && text.contains("42"), "{read:?}");
+    }
+
+    /// T-7290: a 20 000-byte passage of two-byte letters goes in pieces each within the
+    /// embedder's cap, cut at a sentence end and never inside a character, nothing lost.
+    #[test]
+    fn a_passage_over_the_byte_cap_goes_in_pieces_within_it() {
+        let sentence = "Žilinská ľadová plocha je otvorená denne. ";
+        let text = sentence.repeat(20_000 / sentence.len() + 1);
+        assert!(text.len() > 20_000);
+        let cut = pieces(&text, MAX_TEXT_BYTES);
+        assert!(cut.len() >= 3, "{}", cut.len());
+        for piece in &cut {
+            assert!(piece.len() <= MAX_TEXT_BYTES, "{}", piece.len());
+            assert!(
+                piece.ends_with('.'),
+                "cut inside a sentence: {:?}",
+                &piece[piece.len() - 20..]
+            );
+        }
+        let joined: String = cut.join(" ");
+        assert_eq!(joined, text.trim());
+        // One unbroken word of three-byte characters: cut at a character boundary.
+        let word = "€".repeat(5_000);
+        let cut = pieces(&word, MAX_TEXT_BYTES);
+        assert!(cut
+            .iter()
+            .all(|p| p.len() <= MAX_TEXT_BYTES && p.len() % 3 == 0));
+        assert_eq!(cut.concat(), word);
+        // A line break in the head's second half is the first choice; short text stays whole.
+        assert_eq!(cut("aaaa bbbb\ncc dd", 12), 10);
+        assert_eq!(pieces("short", MAX_TEXT_BYTES), vec!["short"]);
+        assert_eq!(pieces("€", 1), vec!["€"]);
+    }
+
+    /// T-7290: what the chunker keeps whole (one long line of a table) is stored in pieces the
+    /// embedder takes, so no batch of the project is refused for size.
+    #[tokio::test]
+    async fn an_extracted_page_has_no_passage_over_the_byte_cap() {
+        let row = "<tr><td>Žilina – Námestie Andreja Hlinku, zastávka č. ".to_owned();
+        let rows: String = (0..400)
+            .map(|n| format!("{row}{n}</td><td>ľšč</td></tr>"))
+            .collect();
+        let html = format!(
+            "<html><body><h1>Zastávky</h1><table>{rows}</table><p>{}</p></body></html>",
+            "Dlhý odsek bez bodky ".repeat(1_200)
+        );
+        let extracted = extract(html.as_bytes(), "text/html", Some("sk"), 10)
+            .await
+            .expect("extracted");
+        assert!(!extracted.passages.is_empty());
+        let longest = extracted
+            .passages
+            .iter()
+            .map(|p| p.text.len())
+            .max()
+            .unwrap_or(0);
+        assert!(longest <= MAX_TEXT_BYTES, "a passage of {longest} bytes");
     }
 
     #[test]

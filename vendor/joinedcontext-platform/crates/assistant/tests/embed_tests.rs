@@ -10,6 +10,8 @@ mod model;
 
 use assistant::embed::{embed_missing, embed_until, Embedder, MODEL_FILES};
 use assistant::{Error, DIMENSIONS};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
@@ -289,5 +291,128 @@ async fn passages_are_embedded_until_the_budget_is_spent() {
         took < budget + std::time::Duration::from_secs(5),
         "at most one batch past the budget: {took:?}"
     );
+    db::drop_database(admin, pool, &name).await;
+}
+
+/// An embedder service like `crates/embedder`'s: `413` for a request holding a text over its
+/// byte cap or one holding `ODMIETNI`, else a vector per text. It counts the texts it was sent
+/// that hold `ODMIETNI`. Its base URL and its token endpoint.
+async fn refusing_embedder(refused_sent: Arc<AtomicUsize>) -> (String, String) {
+    use axum::{http::StatusCode, Json};
+    use serde_json::{json, Value};
+    let app = axum::Router::new()
+        .route(
+            "/token",
+            axum::routing::post(|| async {
+                Json(json!({"access_token": "t", "token_type": "Bearer", "expires_in": 300}))
+            }),
+        )
+        .route(
+            "/v1/embeddings",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                let refused_sent = Arc::clone(&refused_sent);
+                async move {
+                    let input: Vec<String> =
+                        serde_json::from_value(body["input"].clone()).unwrap_or_default();
+                    let held = input.iter().filter(|t| t.contains("ODMIETNI")).count();
+                    refused_sent.fetch_add(held, Ordering::SeqCst);
+                    if let Some(at) = input
+                        .iter()
+                        .position(|t| t.len() > jc_embedder::MAX_TEXT_BYTES || t.contains("ODMIETNI"))
+                    {
+                        let why = format!("text {at} is longer than {} bytes", jc_embedder::MAX_TEXT_BYTES);
+                        return (StatusCode::PAYLOAD_TOO_LARGE, Json(json!({"error": why})));
+                    }
+                    let data: Vec<Value> = (0..input.len())
+                        .map(|index| json!({"index": index, "embedding": vec![0.05_f32; DIMENSIONS]}))
+                        .collect();
+                    (
+                        StatusCode::OK,
+                        Json(json!({"model": jc_embedder::MODEL,
+                                    "model_sha256": jc_embedder::MODEL_SHA256, "data": data})),
+                    )
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    (format!("http://{addr}"), format!("http://{addr}/token"))
+}
+
+/// T-7290 (jc-prod zilina: "413 Payload Too Large text 5 is longer than 8192 bytes" every
+/// minute): a 20 000-byte passage of multi-byte letters stored before passages were split is
+/// sent within the cap and embedded; a passage the embedder still refuses is marked with why,
+/// its batch's other passages get their vectors, and the next round does not send it again.
+#[tokio::test]
+async fn a_passage_over_the_cap_is_embedded_and_one_refused_is_not_sent_again() {
+    let (admin, pool, name) = db::database("embedcap").await;
+    let refused_sent = Arc::new(AtomicUsize::new(0));
+    let (url, token_url) = refusing_embedder(Arc::clone(&refused_sent)).await;
+    let embedder = Embedder::remote(jc_embedder::client::RemoteConfig {
+        url,
+        token_url,
+        client_id: "jc-assistant".into(),
+        client_secret: "s".into(),
+    })
+    .expect("remote");
+    let long = "Zimný štadión v Žiline je otvorený denne. ".repeat(500);
+    assert!(long.len() > 20_000);
+    let ids = corpus::pages(
+        &pool,
+        "zilina",
+        "web",
+        &[
+            (
+                "https://zilina.example/a",
+                "sk",
+                "Knižnica je otvorená v pondelok.",
+            ),
+            ("https://zilina.example/b", "sk", &long),
+            ("https://zilina.example/c", "sk", "ODMIETNI tento odsek."),
+        ],
+    )
+    .await;
+    assert_eq!(
+        embed_missing(&pool, &embedder, "zilina", 100)
+            .await
+            .expect("first round"),
+        3
+    );
+    let state = |id: i64| {
+        let pool = pool.clone();
+        async move {
+            let mut tx = assistant::project_scope(&pool, "zilina")
+                .await
+                .expect("scope");
+            let row: (bool, Option<String>) = sqlx::query_as(
+                "SELECT embedding IS NOT NULL, embed_error FROM chunks WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await
+            .expect("chunk");
+            row
+        }
+    };
+    assert_eq!(state(ids[0]).await, (true, None));
+    assert_eq!(
+        state(ids[1]).await,
+        (true, None),
+        "the long passage is embedded"
+    );
+    let (embedded, why) = state(ids[2]).await;
+    assert!(!embedded);
+    assert!(why.as_deref().is_some_and(|w| w.contains("413")), "{why:?}");
+    let sent = refused_sent.load(Ordering::SeqCst);
+    assert_eq!(
+        embed_missing(&pool, &embedder, "zilina", 100)
+            .await
+            .expect("next round"),
+        0
+    );
+    assert_eq!(refused_sent.load(Ordering::SeqCst), sent, "not sent again");
     db::drop_database(admin, pool, &name).await;
 }

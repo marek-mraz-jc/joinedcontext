@@ -76,6 +76,18 @@ async fn a_service_that_is_down_or_failing_is_a_refusal() {
     assert!(matches!(got, Err(Error::Unreachable(_))), "{got:?}");
 }
 
+/// T-7290: a `413` names the texts as the cause, so the caller stops sending them; any other
+/// refusal (503 above) is the service's and worth another try.
+#[tokio::test]
+async fn a_text_over_the_cap_is_too_large_not_a_passing_refusal() {
+    let url = common::serve(answering(jc_embedder::MODEL_SHA256, 413)).await;
+    let got = remote(url).await.embed(Kind::Passage, &["p".into()]).await;
+    assert!(
+        matches!(&got, Err(Error::TooLarge(why)) if why.contains("413")),
+        "{got:?}"
+    );
+}
+
 #[tokio::test]
 async fn the_pinned_model_answers_go_through() {
     let url = common::serve(answering(jc_embedder::MODEL_SHA256, 200)).await;

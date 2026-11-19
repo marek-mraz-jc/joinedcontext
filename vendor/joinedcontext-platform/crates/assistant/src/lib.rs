@@ -74,6 +74,8 @@ pub enum Error {
     Extract(String),
     /// The embedding model could not be loaded or run.
     Model(String),
+    /// The embedder service refused the texts themselves: sent again, they are refused again.
+    TooLarge(String),
 }
 
 impl std::fmt::Display for Error {
@@ -85,6 +87,7 @@ impl std::fmt::Display for Error {
             Error::Crawl(why) => write!(f, "the crawl failed: {why}"),
             Error::Extract(why) => write!(f, "the text could not be read: {why}"),
             Error::Model(why) => write!(f, "the embedding model: {why}"),
+            Error::TooLarge(why) => write!(f, "the embedder refused the text: {why}"),
         }
     }
 }

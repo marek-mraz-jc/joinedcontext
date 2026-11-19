@@ -75,7 +75,7 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             max_texts: 64,
-            max_text_bytes: 8 * 1024,
+            max_text_bytes: crate::MAX_TEXT_BYTES,
             timeout_secs: 20,
             max_in_flight: 4,
         }
