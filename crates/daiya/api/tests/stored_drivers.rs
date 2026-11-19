@@ -99,14 +99,7 @@ fn loopback() -> OutboundPolicy {
         allowed_networks: vec![OpenedNetwork::new(
             "127.0.0.0/8".parse().unwrap(),
             ORG,
-            &[
-                "prometheus",
-                "ngsild",
-                "ngsild-grafana-datasource",
-                "odata",
-                "postgres",
-                "grafana-postgresql-datasource",
-            ],
+            &["prometheus", "ngsild", "odata", "postgres"],
         )],
         ..OutboundPolicy::default()
     }
