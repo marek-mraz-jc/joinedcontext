@@ -1037,6 +1037,11 @@ async fn render_action_link_unusable(
     };
     let (title, explained) = if expired {
         ("jcActionLinkExpiredTitle", "jcActionLinkExpiredExplained")
+    } else if claims.is_none() {
+        (
+            "jcActionLinkUnusableTitle",
+            "jcActionLinkUnreadableExplained",
+        )
     } else {
         ("jcActionLinkUnusableTitle", "jcActionLinkUnusableExplained")
     };

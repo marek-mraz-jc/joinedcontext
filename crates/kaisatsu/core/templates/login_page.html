@@ -158,7 +158,7 @@
         </form>
         {% endif %}
         {% if !links.is_empty() %}
-        <p>{% for l in links %}<a id="{{ l.id }}" class="pf-v5-c-button {{ l.class }}" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}</p>
+        <p class="kc-links">{% for l in links %}<a id="{{ l.id }}" class="pf-v5-c-button {{ l.class }}" href="{{ l.url }}">{{ l.label }}</a>{% endfor %}</p>
         {% endif %}
         {% if !content_id.is_empty() %}</div>{% endif %}
         <div class="pf-v5-c-login__main-footer">

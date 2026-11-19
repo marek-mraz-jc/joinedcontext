@@ -571,7 +571,10 @@ async fn unusable_action_links_name_the_cause_and_the_next_step_for_their_action
     )
     .await;
     unusable(&html);
-    assert!(html.contains("This link no longer works"), "{html}");
+    assert!(
+        html.contains("We cannot tell what this link was for"),
+        "{html}"
+    );
     assert!(html.contains(reset), "{html}");
 }
 

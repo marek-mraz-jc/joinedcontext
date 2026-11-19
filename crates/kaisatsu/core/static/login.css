@@ -855,10 +855,32 @@ a {
 
 #kc-error-message .pf-v5-c-button,
 #kc-info-message .pf-v5-c-button,
-#kc-logout-confirm .pf-v5-c-button,
-#instruction1 + p .pf-v5-c-button {
+#kc-logout-confirm .pf-v5-c-button {
     margin-block-start: var(--pf-v5-global--spacer--md);
     text-decoration: none;
+}
+
+/* A card's links: one row of 44 px touch targets, stacked full width on a phone, set off from
+   the text above it by the row's margin alone. */
+.instruction + .instruction { margin-block-start: var(--pf-v5-global--spacer--sm); }
+.kc-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--pf-v5-global--spacer--xs) var(--pf-v5-global--spacer--lg);
+    margin-block-start: var(--pf-v5-global--spacer--md);
+}
+.kc-links .pf-v5-c-button {
+    display: inline-flex;
+    align-items: center;
+    min-block-size: 44px;
+    text-decoration: none;
+}
+:is(#kc-error-message, #kc-info-message, #kc-logout-confirm) .kc-links .pf-v5-c-button { margin-block-start: 0; }
+.kc-links .pf-v5-c-button.pf-m-link { padding-inline: 0; text-decoration: underline; }
+@media (max-width: 575px) {
+    .kc-links { flex-direction: column; align-items: stretch; }
+    .kc-links .pf-v5-c-button { justify-content: center; }
 }
 
 /* The icons are inline SVG (Font Awesome Free paths, CC BY 4.0) instead of the icon font. */
