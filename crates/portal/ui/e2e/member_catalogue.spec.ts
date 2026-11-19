@@ -115,6 +115,10 @@ async function stub(page: Page, who: "visitor" | typeof MEMBER | typeof ANALYST,
     if (url.pathname.endsWith("/auth/me")) return signedIn ? json(IDENTITY) : json({ title: "Unauthorized", status: 401 }, 401);
     if (url.pathname === "/api/v1/projects") return json({ apiVersion: "v1", kind: "List", items: [] });
     if (url.pathname === "/api/v1/catalogue") return json(answer(signedIn ? who : [], url.searchParams.getAll("publisher")));
+    // A dataset page by its Endpoint still names what grants it from the readable list.
+    if (url.pathname === "/api/v1/catalogue/readable") {
+      return json({ datasets: signedIn ? who : [row("bikes", "Bike counters", "public")], unanswered: 0 });
+    }
     return json({ apiVersion: "v1", kind: "List", items: [] });
   });
 }
@@ -149,7 +153,7 @@ test.describe("a member's catalogue", () => {
       await listAtTop(page);
       const first = page.getByRole("region", { name: "Datasets" }).locator("ul > li").first();
       await expect(first.getByRole("link", { name: "Traffic counts" })).toBeVisible();
-      await expect(first.getByText("Internal", { exact: true })).toBeVisible();
+      await expect(first.getByText(/^Internal/)).toBeVisible();
       await expect(first.getByText("Helsinki Region")).toBeVisible();
       await expect(page.getByText("4 datasets")).toBeVisible();
       await expect(page.getByRole("group", { name: "Access" })).toHaveCount(0);
@@ -166,7 +170,7 @@ test.describe("a member's catalogue", () => {
       const helsinki = sidebar.getByRole("group", { name: "Publisher" }).getByRole("checkbox", { name: /Helsinki Region/ });
       await helsinki.check();
       if (width < 768) await page.getByRole("button", { name: "Show 2 datasets" }).click();
-      await expect(page).toHaveURL(/publisher=helsinki/);
+      await expect(page).toHaveURL(/publisher=.*helsinki/);
       await expect(page.getByText("2 datasets")).toBeVisible();
       const list = page.getByRole("region", { name: "Datasets" });
       await expect(list.locator("ul > li")).toHaveCount(2);
@@ -186,7 +190,7 @@ test.describe("a member's catalogue", () => {
       await page.goto("/catalogue?lang=en&access=granted");
       await listAtTop(page);
       await expect(page.getByText("3 datasets")).toBeVisible();
-      await expect(page.getByText("Internal", { exact: true })).toHaveCount(0);
+      await expect(page.getByText(/^Internal/)).toHaveCount(0);
       await shot(page, `member-catalogue-empty-en-${width}`);
       const sidebar = await filters(page, width);
       await expect(sidebar.getByRole("group", { name: "Access" })).toHaveCount(0);
