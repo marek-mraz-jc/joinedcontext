@@ -860,6 +860,159 @@ async fn sync_state_answers_only_under_its_projects_key() {
     assert_eq!(read(Some(key)).await.as_deref(), Some("c0ffee"));
 }
 
+/// T-7319 (jc-prod): the forge's installation claim names an Organization the registry lacks
+/// (`hel` beside a registry of smartcity, marek-mraz, bbsk, slovensko), so the org namespace had no
+/// key, no check of an org draft was kept and every proposal into org answered "has not been
+/// checked". The configured installation Organization keys it then; a claim the registry holds
+/// as active still wins, and an inactive one falls back again.
+#[tokio::test]
+async fn the_org_namespace_takes_the_configured_installation_when_the_claim_has_no_registry_row() {
+    use joinedcontext_portal::ops::verdict::Verdict;
+    let pool = pool().await;
+    let org_ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    let configured = organization(&pool, "cfginst").await;
+    let claim = run_name("cfghel");
+    let mirror = std::sync::Arc::new(joinedcontext_portal::store::Mirror::default());
+    mirror.upsert(envelope(
+        "Organization",
+        &claim,
+        org_ns,
+        json!({ "installation": true }),
+    ));
+    mirror.upsert(envelope(
+        "Organization",
+        &run_name("cfgzil"),
+        org_ns,
+        json!({}),
+    ));
+    let reserved = |name: String| {
+        let pool = pool.clone();
+        async move {
+            project_ids::reserved(&pool, &name)
+                .await
+                .expect("reserved")
+                .expect("an active Organization's key")
+        }
+    };
+
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, org_ns)
+            .await
+            .expect("key"),
+        None,
+        "without a configured installation an unknown claim keys nothing"
+    );
+    mirror.set_configured_installation(&configured);
+    mirror.set_configured_installation("ignored-second-call");
+    let fallback = reserved(configured.clone()).await;
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, org_ns)
+            .await
+            .expect("key"),
+        Some(fallback)
+    );
+    assert_eq!(
+        project_ids::installation(&pool, &mirror)
+            .await
+            .expect("installation"),
+        Some(fallback)
+    );
+
+    // A check of an org draft is kept, so the proposal that follows finds its verdict.
+    let state = AppState::new(Config::for_tests(), None)
+        .with_db(pool.clone())
+        .with_mirror(std::sync::Arc::clone(&mirror));
+    let binding = run_name("cfgrb");
+    let manifest = json!({ "kind": "RoleBinding", "metadata": { "name": binding } });
+    state
+        .drafts
+        .put(
+            org_ns,
+            "RoleBinding",
+            &binding,
+            manifest.clone(),
+            None,
+            "anna",
+            "human",
+        )
+        .await
+        .expect("an org draft is kept under the configured installation");
+    state
+        .drafts
+        .set_verdict(
+            org_ns,
+            "RoleBinding",
+            &binding,
+            Verdict::new(true, vec![], None, &manifest),
+        )
+        .await
+        .expect("its check is kept");
+    let draft = state
+        .drafts
+        .get(org_ns, "RoleBinding", &binding)
+        .await
+        .expect("get")
+        .expect("the draft");
+    assert!(draft
+        .verdict
+        .is_some_and(|v| v.ok && v.is_fresh_for(&manifest)));
+
+    // The registry holds the claim: the claim wins over the configured one.
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $1 || '.example', 'active', 'test')",
+    )
+    .bind(&claim)
+    .execute(&pool)
+    .await
+    .expect("the registry holds the claim");
+    let claimed = reserved(claim.clone()).await;
+    assert_ne!(claimed, fallback);
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, org_ns)
+            .await
+            .expect("key"),
+        Some(claimed)
+    );
+    // Removed from the registry: the configured one again, never the inactive claim.
+    sqlx::query("UPDATE organizations SET state = 'removed' WHERE name = $1")
+        .bind(&claim)
+        .execute(&pool)
+        .await
+        .expect("removed");
+    assert_eq!(
+        project_ids::key_of(&pool, &mirror, org_ns)
+            .await
+            .expect("key"),
+        Some(fallback)
+    );
+}
+
+/// T-7319: the drift report names each side once the mirror holds Organizations, and nothing
+/// before the first sync.
+#[tokio::test]
+async fn the_organization_drift_names_each_side_of_the_forge_and_the_registry() {
+    use joinedcontext_portal::host_registry::report_drift;
+    let pool = pool().await;
+    let org_ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    let both = organization(&pool, "drboth").await;
+    let registry_only = organization(&pool, "drreg").await;
+    let forge_only = run_name("drforge");
+    let mirror = joinedcontext_portal::store::Mirror::default();
+    assert_eq!(report_drift(&pool, &mirror).await.expect("drift"), None);
+    mirror.upsert(envelope("Organization", &both, org_ns, json!({})));
+    mirror.upsert(envelope("Organization", &forge_only, org_ns, json!({})));
+    let drift = report_drift(&pool, &mirror)
+        .await
+        .expect("drift")
+        .expect("a loaded mirror reports");
+    assert!(
+        drift.missing_from_forge.contains(&registry_only),
+        "{drift:?}"
+    );
+    assert!(!drift.missing_from_forge.contains(&both), "{drift:?}");
+    assert_eq!(drift.missing_from_registry, [forge_only], "{drift:?}");
+}
+
 /// T-7282, the smoke's multiorg@path: on a host Organizations share by path (no Organization host,
 /// no `JC_PORTAL_INSTALLATION_ORGANIZATION`), a person's connector takes the key of the
 /// installation Organization the mirror names, once the registry holds it; until then the create

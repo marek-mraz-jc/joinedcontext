@@ -194,6 +194,75 @@ pub async fn organizations(pool: &PgPool) -> Result<Vec<OrganizationRow>, sqlx::
     .await
 }
 
+/// Where the forge mirror's Organizations and the registry's active ones disagree (T-7319): jc-prod
+/// ran a forge holding barcelona, bratislava, hel and zilina beside a registry of smartcity,
+/// marek-mraz, bbsk and slovensko, so every RoleBinding scoped to a registry Organization was
+/// refused. Reported, never repaired: a rename is an operator's Change.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OrganizationDrift {
+    /// Active registry Organizations the forge holds no Organization manifest of, by name.
+    pub missing_from_forge: Vec<String>,
+    /// Organization manifests of the forge the registry holds no active row of, by name.
+    pub missing_from_registry: Vec<String>,
+}
+
+impl OrganizationDrift {
+    pub fn is_empty(&self) -> bool {
+        self.missing_from_forge.is_empty() && self.missing_from_registry.is_empty()
+    }
+}
+
+/// The drift between the registry's `rows` and the Organization names of the forge, both sorted.
+pub fn organization_drift(rows: &[OrganizationRow], forge: &[String]) -> OrganizationDrift {
+    let registry: std::collections::BTreeSet<&str> = rows
+        .iter()
+        .filter(|row| row.state == "active")
+        .map(|row| row.name.as_str())
+        .collect();
+    let forge: std::collections::BTreeSet<&str> = forge.iter().map(String::as_str).collect();
+    OrganizationDrift {
+        missing_from_forge: registry
+            .difference(&forge)
+            .map(|s| (*s).to_owned())
+            .collect(),
+        missing_from_registry: forge
+            .difference(&registry)
+            .map(|s| (*s).to_owned())
+            .collect(),
+    }
+}
+
+/// [`organization_drift`] of the database and the mirror, logged and counted
+/// (`jc_organization_drift`); `None` while the mirror holds no Organization yet (before the first
+/// sync), so a loading Portal reports no drift.
+pub async fn report_drift(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Option<OrganizationDrift>, sqlx::Error> {
+    let forge: Vec<String> = crate::permissions::organizations(mirror)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    if forge.is_empty() {
+        return Ok(None);
+    }
+    let drift = organization_drift(&organizations(pool).await?, &forge);
+    crate::telemetry::organization_drift(
+        drift.missing_from_forge.len(),
+        drift.missing_from_registry.len(),
+    );
+    if !drift.is_empty() {
+        tracing::warn!(
+            missing_from_forge = ?drift.missing_from_forge,
+            missing_from_registry = ?drift.missing_from_registry,
+            "the forge's Organizations and the registry's disagree: bindings scoped to a missing \
+             one are refused; an operator renames or adds the Organization so both name the same"
+        );
+    }
+    Ok(Some(drift))
+}
+
 /// Every row, removed ones included, by host.
 pub async fn rows(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
     sqlx::query_as(
@@ -395,4 +464,39 @@ fn refused(r: Refusal) -> ApiError {
 fn db(e: sqlx::Error) -> ApiError {
     tracing::error!(error = %e, "host registry");
     ApiError::Unavailable("the host registry could not be read or written; try again".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(name: &str, state: &str) -> OrganizationRow {
+        OrganizationRow {
+            name: name.into(),
+            organization_id: None,
+            host: format!("{name}.example"),
+            state: state.into(),
+            catalogue_id: None,
+        }
+    }
+
+    #[test]
+    fn drift_names_each_side_and_skips_removed_rows() {
+        let rows = [
+            row("smartcity", "active"),
+            row("bbsk", "active"),
+            row("hel", "removed"),
+            row("zilina", "active"),
+        ];
+        let forge = ["zilina", "hel", "barcelona"].map(String::from);
+        assert_eq!(
+            organization_drift(&rows, &forge),
+            OrganizationDrift {
+                missing_from_forge: vec!["bbsk".into(), "smartcity".into()],
+                missing_from_registry: vec!["barcelona".into(), "hel".into()],
+            }
+        );
+        let same = organization_drift(&rows[3..], &["zilina".to_owned()]);
+        assert!(same.is_empty(), "{same:?}");
+    }
 }

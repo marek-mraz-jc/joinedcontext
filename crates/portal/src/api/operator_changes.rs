@@ -1878,6 +1878,9 @@ pub struct OperatorOrganization {
 pub struct OperatorOrganizationList {
     pub items: Vec<OperatorOrganization>,
     pub ids: Vec<OperatorOrganizationId>,
+    /// The registry's Organizations the forge lacks and the forge's the registry lacks (T-7319);
+    /// both empty while they agree or the forge has not loaded.
+    pub drift: host_registry::OrganizationDrift,
 }
 
 #[utoipa::path(
@@ -1885,7 +1888,7 @@ pub struct OperatorOrganizationList {
     path = "/api/v1/operator/organizations",
     operation_id = "operator_organization_list",
     summary = "List Organizations For Operators",
-    description = "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012). For a person of the operators' group with a second factor.",
+    description = "Every Organization of the installation with its domain and its hosts per state, and every Organization id with the TXT record that proves its domain (T-7129, T-7012), and where the forge's Organizations and the registry's disagree (T-7319). For a person of the operators' group with a second factor.",
     tag = "system",
     responses(
         (status = 200, description = "The Organizations and ids", body = OperatorOrganizationList),
@@ -1982,7 +1985,16 @@ pub async fn organizations(
             },
         )
         .collect();
-    Ok(Json(OperatorOrganizationList { items, ids }))
+    let forge: Vec<String> = crate::permissions::organizations(&state.mirror)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let drift = if forge.is_empty() {
+        host_registry::OrganizationDrift::default()
+    } else {
+        host_registry::organization_drift(&organizations, &forge)
+    };
+    Ok(Json(OperatorOrganizationList { items, ids, drift }))
 }
 
 /// `GET /operator/project-moves/plan`: the project and the Organization it would move to.

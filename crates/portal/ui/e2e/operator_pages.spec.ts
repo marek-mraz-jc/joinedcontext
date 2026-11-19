@@ -27,6 +27,7 @@ interface Registry {
   hosts: Record<string, unknown>[];
   changes: Record<string, unknown>[];
   audit: Record<string, unknown>[];
+  drift?: { missingFromForge: string[]; missingFromRegistry: string[] };
 }
 
 function fresh(): Registry {
@@ -82,7 +83,7 @@ async function stubApi(page: Page, registry: Registry, operator = true): Promise
         ),
       );
     if (path.startsWith("/api/v1/operator/") && !operator) return route.fulfill(json(FORBIDDEN, 403));
-    if (path === "/api/v1/operator/organizations") return route.fulfill(json({ items: registry.organizations, ids: registry.ids }));
+    if (path === "/api/v1/operator/organizations") return route.fulfill(json({ items: registry.organizations, ids: registry.ids, drift: registry.drift ?? { missingFromForge: [], missingFromRegistry: [] } }));
     if (path === "/api/v1/operator/hosts") {
       const day = registry.audit.filter((row) => row.action === "certificate.created").length + (registry.hosts.length > 0 ? 9 : 0);
       return route.fulfill(json({ items: registry.hosts, certificates: { usedToday: day, perDay: 10, perDomainWeek: 20, nextFreeAt: day >= 10 ? "2026-11-18T09:00:00Z" : null } }));
@@ -206,6 +207,20 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       await expect(page.getByText(OTHER)).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-audit-${width}`);
+    });
+
+    test(`a repository whose Organizations drifted from the registry is named on both sides at ${width} px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      const registry = fresh();
+      registry.drift = { missingFromForge: ["marek-mraz", "slovensko"], missingFromRegistry: ["barcelona", "hel"] };
+      await stubApi(page, registry);
+      await page.goto("/organization/operator-organizations?lang=en");
+      const alert = page.getByRole("status").filter({ hasText: "The repository and the registry name different Organizations" });
+      await expect(alert).toBeVisible();
+      await expect(alert).toContainText("In the registry, missing from the repository: marek-mraz, slovensko");
+      await expect(alert).toContainText("In the repository, missing from the registry: barcelona, hel");
+      expect(await axeViolations(page)).toEqual([]);
+      await shot(page, `operator-organizations-drift-${width}`);
     });
 
     test(`an empty registry says where to start at ${width} px`, async ({ page }) => {

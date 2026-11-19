@@ -29,6 +29,7 @@ export function OperatorOrganizations(): JSX.Element {
   const list = useQuery({ queryKey: operatorKeys.organizations, queryFn: operatorOrganizations });
   const items = list.data?.items ?? [];
   const ids = list.data?.ids ?? [];
+  const drift = list.data?.drift;
   return (
     <section className="space-y-6" aria-labelledby="operator-organizations-heading">
       <div>
@@ -37,6 +38,17 @@ export function OperatorOrganizations(): JSX.Element {
         </h2>
         <p className="text-body text-fg-muted">{t("operator.organizations.lead")}</p>
       </div>
+      {drift && (drift.missingFromForge.length > 0 || drift.missingFromRegistry.length > 0) ? (
+        <Alert tone="warning" title={t("operator.organizations.driftTitle")}>
+          <p>{t("operator.organizations.driftLead")}</p>
+          {drift.missingFromForge.length > 0 ? (
+            <p>{t("operator.organizations.driftForge", { names: drift.missingFromForge.join(", ") })}</p>
+          ) : null}
+          {drift.missingFromRegistry.length > 0 ? (
+            <p>{t("operator.organizations.driftRegistry", { names: drift.missingFromRegistry.join(", ") })}</p>
+          ) : null}
+        </Alert>
+      ) : null}
       <AdminGrid
         query={list}
         caption={t("operator.organizations.caption")}

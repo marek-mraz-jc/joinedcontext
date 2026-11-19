@@ -13641,7 +13641,11 @@
       "hosts": "Hosts",
       "hostCount": "{served} served, {waiting} on their way",
       "setDomain": "Write its proved domain in Settings",
-      "noHost": "No host yet"
+      "noHost": "No host yet",
+      "driftTitle": "The repository and the registry name different Organizations",
+      "driftLead": "Bindings scoped to an Organization the repository lacks are refused. Rename or add the Organization in the repository or the registry so both name the same; nothing is renamed by itself.",
+      "driftForge": "In the registry, missing from the repository: {names}",
+      "driftRegistry": "In the repository, missing from the registry: {names}"
     },
     "ids": {
       "title": "Domains and their TXT records",
