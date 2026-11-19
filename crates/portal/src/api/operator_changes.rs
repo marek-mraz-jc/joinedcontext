@@ -1263,25 +1263,8 @@ pub async fn approve(
             state.installation_look().map(|look| look_summary(&look)),
             payload.branding.as_ref().map(look_summary),
         ),
-        // Counts per table, never a row's content (T-7305).
         OperatorKind::ProjectMove => {
-            let project = payload.project.as_deref().unwrap_or_default();
-            let to = payload.organization.as_deref().unwrap_or_default();
-            let moved = crate::project_move::apply(&mut tx, &state.mirror, project, to)
-                .await
-                .map_err(|e| match e {
-                    crate::project_move::MoveError::Refused(message) => ApiError::Conflict(message),
-                    crate::project_move::MoveError::Db(e) => db(e),
-                })?;
-            (
-                Some(json!({ "project": project, "organization": moved.from })),
-                Some(json!({
-                    "project": project,
-                    "organization": to,
-                    "rows": moved.rows,
-                    "tables": moved.tables,
-                })),
-            )
+            return apply_move(&state, tx, &found, &identity.subject, source(client)).await;
         }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
@@ -1300,6 +1283,53 @@ pub async fn approve(
     if found.kind == OperatorKind::BrandingSet {
         state.set_installation_look(payload.branding.clone().unwrap_or_default());
     }
+    Ok(Json(decided))
+}
+
+/// Applies an approved `ProjectMove` (T-7305) through migration 0089's `project_move`, which
+/// takes the Change itself, refuses it unless `by` is not its proposer, marks it applied and
+/// writes its audit row (counts per table, never a row's content) in this transaction.
+async fn apply_move(
+    state: &AppState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    found: &OperatorChange,
+    by: &str,
+    ip: Option<String>,
+) -> Result<Json<OperatorChange>, ApiError> {
+    let project = found.payload.project.as_deref().unwrap_or_default();
+    let to = found.payload.organization.as_deref().unwrap_or_default();
+    let approval = crate::project_move::Approval {
+        id: &found.id,
+        approver: by,
+        source_ip: ip.as_deref(),
+    };
+    let moved = crate::project_move::apply(&mut tx, &state.mirror, &approval, project, to)
+        .await
+        .map_err(|e| match e {
+            crate::project_move::MoveError::Refused(message) => ApiError::Conflict(message),
+            crate::project_move::MoveError::Db(e) => db(e),
+        })?;
+    let row: Row = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {COLUMNS} FROM operator_changes WHERE id = $1::uuid"
+    )))
+    .bind(&found.id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(db)?;
+    let decided = change(row)?;
+    tx.commit().await.map_err(db)?;
+    tracing::info!(
+        target: "operator_audit",
+        actor = by,
+        change = %found.id,
+        action = "applied ProjectMove",
+        project,
+        from = moved.from.as_deref().unwrap_or_default(),
+        to,
+        rows = moved.rows,
+        source = ip.as_deref().unwrap_or_default(),
+        "operator audit"
+    );
     Ok(Json(decided))
 }
 

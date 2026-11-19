@@ -217,7 +217,7 @@ async fn grant_serving_role(owner: &PgPool, role: &str) -> Result<(), sqlx::Erro
          REVOKE ALL ON project_rows_set_aside FROM %1$I; \
          REVOKE ALL ON operator_audit FROM %1$I; \
          GRANT SELECT, INSERT ON operator_audit TO %1$I; \
-         GRANT EXECUTE ON FUNCTION project_move(uuid, text) TO %1$I;', $1::text)",
+         GRANT EXECUTE ON FUNCTION project_move(uuid, text, text) TO %1$I;', $1::text)",
     )
     .bind(role)
     .fetch_one(owner)

@@ -22,6 +22,14 @@ pub struct TableRows {
     pub rows: u64,
 }
 
+/// The approved `ProjectMove` Change a move applies: its id, the operator approving it and the
+/// address the approval came from, for the audit row `project_move` writes.
+pub struct Approval<'a> {
+    pub id: &'a str,
+    pub approver: &'a str,
+    pub source_ip: Option<&'a str>,
+}
+
 /// What a `ProjectMove` of `project` to `to` would do now, as the operators read it before they
 /// approve.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -240,6 +248,7 @@ impl From<sqlx::Error> for MoveError {
 pub async fn apply(
     tx: &mut sqlx::PgConnection,
     mirror: &Mirror,
+    change: &Approval<'_>,
     project: &str,
     to: &str,
 ) -> Result<MovePlan, MoveError> {
@@ -280,12 +289,14 @@ pub async fn apply(
             "project: '{project}' has {branches} live branch(es); merge or close them first"
         )));
     }
-    // Migration 0089's `project_move` re-keys each table holding the project's rows as their
-    // owner, then the registry row; it moves nothing when the project is under `to` already.
+    // Migration 0089's `project_move` moves what the Change names, approved by another operator:
+    // each table holding the project's rows as their owner, then the registry row (nothing when
+    // the project is under `to` already); it marks the Change applied and writes its audit row.
     let rows: Vec<(String, i64)> =
-        sqlx::query_as("SELECT moved_table, moved_rows FROM project_move($1::uuid, $2)")
-            .bind(&id)
-            .bind(to)
+        sqlx::query_as("SELECT moved_table, moved_rows FROM project_move($1::uuid, $2, $3)")
+            .bind(change.id)
+            .bind(change.approver)
+            .bind(change.source_ip)
             .fetch_all(&mut *tx)
             .await?;
     let moved: Vec<TableRows> = rows

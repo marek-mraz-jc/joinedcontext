@@ -313,6 +313,41 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
         "the registry refuses a move outside a ProjectMove"
     );
 
+    // The serving role's direct call moves nothing without an approved ProjectMove Change: no
+    // Change, the proposer approving their own, or a replay of one applied already.
+    let direct = |change: String, approver: &'static str| {
+        let pool = pool(&state).clone();
+        async move {
+            sqlx::query("SELECT * FROM project_move($1::uuid, $2, NULL)")
+                .bind(change)
+                .bind(approver)
+                .execute(&pool)
+                .await
+        }
+    };
+    let unknown = direct(uuid::Uuid::new_v4().to_string(), "ops-b").await;
+    assert!(unknown.is_err(), "no Change, no move");
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("an id").to_owned();
+    let self_approved = direct(id.clone(), "ops-a").await;
+    assert!(self_approved.is_err(), "the proposer never approves");
+    let unnamed = direct(id.clone(), "").await;
+    assert!(unnamed.is_err(), "an approver is named");
+    let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(applied["state"], json!("applied"), "{applied}");
+    assert_eq!(applied["decidedBy"], json!("ops-b"), "{applied}");
+    let replay = direct(id.clone(), "ops-c").await;
+    assert!(replay.is_err(), "an applied Change moves nothing again");
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM operator_audit WHERE change_id = $1::uuid AND action = 'applied ProjectMove'")
+            .bind(&id)
+            .fetch_one(pool(&state))
+            .await
+            .expect("the audit");
+    assert_eq!(audited, 1, "one audit row per applied move");
+
     // The tables stay forced: the move lifts FORCE only inside its own transaction.
     let unforced: Vec<String> = sqlx::query_scalar(
         "SELECT relname::text FROM pg_class WHERE relname IN ('drafts', 'activity') AND NOT relforcerowsecurity",
