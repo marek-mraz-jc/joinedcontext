@@ -1092,6 +1092,8 @@ mod tests {
             max_connections: Some(2),
             migrate_url: Some(urls[1].0.clone()),
             migrate_password_file: Some(urls[1].1.clone()),
+            maintenance_url: None,
+            maintenance_password_file: None,
         };
         let cfg = DataroomSection {
             database: Some(database),

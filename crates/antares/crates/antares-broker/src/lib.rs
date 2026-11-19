@@ -44,6 +44,9 @@ const KNOWN_KEYS: &[&str] = &[
     "ANTARES_DATABASE_URL",
     // The cross-Tenant work's own role (0042, T-7307); unset = the request pool.
     "ANTARES_MAINTENANCE_DATABASE_URL",
+    // The tables' owner, which migrates and runs the history's DDL (T-7310);
+    // unset = the request pool does both.
+    "ANTARES_MIGRATION_DATABASE_URL",
     "ANTARES_STORE",
     // Temporal driver: a store mode, or `none` — history off (temporal
     // reads answer OperationNotSupported, Table 6.3.2-1). Defaults to the
@@ -414,6 +417,30 @@ pub struct BrokerConfig {
     /// The pool size a host gives in place of ANTARES_PG_POOL (that
     /// variable is read when this is `None`).
     pub pg_pool: Option<u32>,
+    /// ANTARES_MIGRATION_DATABASE_URL, password included: the tables'
+    /// owner. Set, the broker migrates and runs the history's DDL on a pool
+    /// of [`OWNER_POOL`] connections to it, serves on `database_url`, and
+    /// refuses a request role that owns a table (T-7310).
+    pub migration_database_url: Option<Secret>,
+    /// ANTARES_MAINTENANCE_DATABASE_URL, password included: the role of the
+    /// cross-Tenant work (0042, 0043).
+    pub maintenance_database_url: Option<Secret>,
+}
+
+/// Connections of the owner's pool (ANTARES_MIGRATION_DATABASE_URL): one
+/// for the migration at start, one for the maintenance job's DDL.
+pub const OWNER_POOL: u32 = 2;
+
+/// Connections of the maintenance pool (ANTARES_MAINTENANCE_DATABASE_URL).
+pub const MAINTENANCE_POOL: u32 = 4;
+
+/// A connection string from `key`; unset or blank = `None`, held as a
+/// Secret so no error or log line prints its password.
+fn url_var(key: &str) -> Option<Secret> {
+    std::env::var(key)
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .map(Secret::new)
 }
 
 /// A host-given `/q` admin token: `Debug` prints `<redacted>`.
@@ -535,6 +562,8 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
         database_url: None,
         require_rls: std::env::var("ANTARES_REQUIRE_RLS").is_ok_and(|v| !is_off(&v)),
         pg_pool: None,
+        migration_database_url: url_var("ANTARES_MIGRATION_DATABASE_URL"),
+        maintenance_database_url: url_var("ANTARES_MAINTENANCE_DATABASE_URL"),
     })
 }
 
@@ -543,6 +572,10 @@ pub fn config_from_env() -> Result<BrokerConfig, Box<dyn std::error::Error>> {
 #[derive(Debug, Clone, Default)]
 struct PgSettings {
     url: Option<Secret>,
+    /// The tables' owner ([`BrokerConfig::migration_database_url`]).
+    owner_url: Option<Secret>,
+    /// [`BrokerConfig::maintenance_database_url`].
+    maintenance_url: Option<Secret>,
     require_rls: bool,
     pool: Option<u32>,
     /// ANTARES_PG_POOL, from the environment or the host's defaults.
@@ -551,7 +584,7 @@ struct PgSettings {
     async_commit_var: Option<String>,
 }
 
-/// ANTARES_MAINTENANCE_DATABASE_URL → the pool the cross-Tenant work runs
+/// ANTARES_MAINTENANCE_DATABASE_URL (`url`) → the pool the cross-Tenant work runs
 /// on (0042, T-7307). Unset or empty, `backend` comes back as it was and
 /// its request pool does that work too, which holds only when its role owns
 /// the tables. The
@@ -561,19 +594,17 @@ struct PgSettings {
 /// echoed.
 async fn with_maintenance_pool(
     backend: antares_sql::store::any::PgBackend,
+    url: Option<&Secret>,
     require_rls: bool,
     statement_timeout: std::time::Duration,
 ) -> Result<antares_sql::store::any::PgBackend, String> {
-    let Some(url) = std::env::var("ANTARES_MAINTENANCE_DATABASE_URL")
-        .ok()
-        .filter(|u| !u.trim().is_empty())
-        .map(Secret::new)
-    else {
+    let Some(url) = url else {
         return Ok(backend);
     };
-    let pool = antares_sql::store::pg::connect_reserve(url.expose(), 4, statement_timeout)
-        .await
-        .map_err(|e| format!("ANTARES_MAINTENANCE_DATABASE_URL: pool not opened: {e}"))?;
+    let pool =
+        antares_sql::store::pg::connect_reserve(url.expose(), MAINTENANCE_POOL, statement_timeout)
+            .await
+            .map_err(|e| format!("ANTARES_MAINTENANCE_DATABASE_URL: pool not opened: {e}"))?;
     let holds = antares_sql::store::pg::holds_maintenance(&pool)
         .await
         .map_err(|e| format!("ANTARES_MAINTENANCE_DATABASE_URL: escape probe failed: {e}"))?;
@@ -1010,7 +1041,7 @@ async fn build_store(
     };
     let maintenance = match (&store, backend) {
         (antares_sql::store::any::AnyStore::Pg(p), Some(backend)) => {
-            Some((p.docs.maint().clone(), backend))
+            Some((p.owner().clone(), backend))
         }
         _ => None,
     };
@@ -1085,14 +1116,18 @@ async fn build_builtin(
             // The DB container may still be booting — bounded retry, then die.
             let mut last = String::new();
             for _ in 0..30 {
-                match antares_sql::store::pg::connect_with(
+                match open_pools(
                     url.expose(),
+                    pg.owner_url.as_ref(),
                     pool_size.saturating_sub(write_reserve),
                     statement_timeout,
                 )
                 .await
                 {
-                    Ok(pool) => {
+                    Ok((pool, owner)) => {
+                        if owner.is_some() {
+                            refuse_owning_request_role(&pool).await?;
+                        }
                         // The temporal backend is what the migrations actually
                         // BUILT, detected once from the catalog and pinned —
                         // the maintenance branch can never disagree with the
@@ -1164,6 +1199,9 @@ async fn build_builtin(
                             m.insert("poolWriteReserve".into(), write_reserve.into());
                         }
                         let mut backend_pg = PgBackend::new(pool).with_version(version);
+                        if let Some(owner) = owner {
+                            backend_pg = backend_pg.with_owner(owner);
+                        }
                         if write_reserve > 0 {
                             let reserve = antares_sql::store::pg::connect_reserve(
                                 url.expose(),
@@ -1183,9 +1221,13 @@ async fn build_builtin(
                         // T-7307: the outbox drain, the reaps, retention and
                         // the shared Cached @context writes on a role the
                         // request role is not (0042).
-                        backend_pg =
-                            with_maintenance_pool(backend_pg, pg.require_rls, statement_timeout)
-                                .await?;
+                        backend_pg = with_maintenance_pool(
+                            backend_pg,
+                            pg.maintenance_url.as_ref(),
+                            pg.require_rls,
+                            statement_timeout,
+                        )
+                        .await?;
                         let sealing = secret_key.is_some();
                         if let Some(key) = secret_key.take() {
                             backend_pg = backend_pg.with_secret_key(key);
@@ -1238,6 +1280,44 @@ async fn build_builtin(
             Err(format!("ANTARES_STORE={mode}: database not reachable after 30 s: {last}").into())
         }
     }
+}
+
+/// The request pool, and the owner's pool when `owner_url` is set
+/// (ANTARES_MIGRATION_DATABASE_URL, T-7310). Without it the request pool
+/// migrates, as before. With it the owner's pool migrates and the request
+/// pool only serves (its role must own nothing, [`refuse_owning_request_role`]).
+async fn open_pools(
+    url: &str,
+    owner_url: Option<&Secret>,
+    max_connections: u32,
+    statement_timeout: std::time::Duration,
+) -> Result<(antares_sql::sqlx::PgPool, Option<antares_sql::sqlx::PgPool>), antares_sql::sqlx::Error>
+{
+    use antares_sql::store::pg;
+    let Some(owner_url) = owner_url else {
+        let pool = pg::connect_with(url, max_connections, statement_timeout).await?;
+        return Ok((pool, None));
+    };
+    let owner = pg::connect_with(owner_url.expose(), OWNER_POOL, statement_timeout).await?;
+    let pool = pg::connect_reserve(url, max_connections, statement_timeout).await?;
+    Ok((pool, Some(owner)))
+}
+
+/// With an owner's pool, the request role must own no table: an owner
+/// could switch the row-level security of its table off (T-7310).
+async fn refuse_owning_request_role(pool: &antares_sql::sqlx::PgPool) -> Result<(), String> {
+    let owns = antares_sql::store::pg::role_owns_tables(pool)
+        .await
+        .map_err(|e| format!("ANTARES_DATABASE_URL: ownership probe failed: {e}"))?;
+    if owns {
+        return Err(
+            "ANTARES_MIGRATION_DATABASE_URL is set but the ANTARES_DATABASE_URL role owns a \
+             table of the schema (or is a superuser), so it could switch row-level security \
+             off; serve as a role that holds the rows' grants and owns nothing"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 /// Warn when the data dir shares a device with its parent — i.e. it is
@@ -1309,6 +1389,8 @@ pub async fn build_state(
         &cfg.store_name,
         &PgSettings {
             url: cfg.database_url.clone(),
+            owner_url: cfg.migration_database_url.clone(),
+            maintenance_url: cfg.maintenance_database_url.clone(),
             require_rls: cfg.require_rls,
             pool: cfg.pg_pool,
             pool_var: cfg.var("ANTARES_PG_POOL"),

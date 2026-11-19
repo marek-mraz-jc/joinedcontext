@@ -31,6 +31,13 @@ pub struct DatabaseSection {
     pub migrate_url: Option<String>,
     /// File holding the migration role's password (required with `migrate_url`).
     pub migrate_password_file: Option<PathBuf>,
+    /// Antares only: `postgres://<maintenance role>@...`, the member of `antares_maintenance` the
+    /// broker runs its cross-Tenant work as (T-7310).
+    #[serde(default)]
+    pub maintenance_url: Option<String>,
+    /// File holding the maintenance role's password (required with `maintenance_url`).
+    #[serde(default)]
+    pub maintenance_password_file: Option<PathBuf>,
 }
 
 impl DatabaseSection {
@@ -42,6 +49,11 @@ impl DatabaseSection {
             (Some(url), Some(_)) => check_url("migrate_url", url),
             (None, None) => Ok(()),
             _ => Err("migrate_url and migrate_password_file go together".into()),
+        }?;
+        match (&self.maintenance_url, &self.maintenance_password_file) {
+            (Some(url), Some(_)) => check_url("maintenance_url", url),
+            (None, None) => Ok(()),
+            _ => Err("maintenance_url and maintenance_password_file go together".into()),
         }?;
         if self.max_connections == Some(0) {
             return Err("max_connections must be at least 1".into());
@@ -69,12 +81,23 @@ impl DatabaseSection {
     /// The request role's URL with its password, for a module that takes a URL string
     /// (Antares). Hold it as a secret: never log or print it.
     pub fn app_url_with_password(&self) -> Result<jc_secret::Secret, String> {
-        check_url("url", &self.url)?;
-        let password = read_password(&self.password_file)?;
-        let mut url = url::Url::parse(&self.url).map_err(|_| "url does not parse".to_owned())?;
-        url.set_password(Some(password.expose()))
-            .map_err(|()| "url takes no password".to_owned())?;
-        Ok(jc_secret::Secret::new(url.into()))
+        url_with_password("url", &self.url, &self.password_file)
+    }
+
+    /// The migration role's URL with its password, when one is configured (Antares).
+    pub fn migrate_url_with_password(&self) -> Result<Option<jc_secret::Secret>, String> {
+        match (&self.migrate_url, &self.migrate_password_file) {
+            (Some(url), Some(file)) => url_with_password("migrate_url", url, file).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    /// The maintenance role's URL with its password, when one is configured (Antares).
+    pub fn maintenance_url_with_password(&self) -> Result<Option<jc_secret::Secret>, String> {
+        match (&self.maintenance_url, &self.maintenance_password_file) {
+            (Some(url), Some(file)) => url_with_password("maintenance_url", url, file).map(Some),
+            _ => Ok(None),
+        }
     }
 
     /// The role `url` names (the role a migration grants to).
@@ -84,6 +107,16 @@ impl DatabaseSection {
             .get_username()
             .to_owned())
     }
+}
+
+/// `raw` with the password of `file` in it. Hold it as a secret: never log or print it.
+fn url_with_password(key: &str, raw: &str, file: &Path) -> Result<jc_secret::Secret, String> {
+    check_url(key, raw)?;
+    let password = read_password(file)?;
+    let mut url = url::Url::parse(raw).map_err(|_| format!("{key} does not parse"))?;
+    url.set_password(Some(password.expose()))
+        .map_err(|()| format!("{key} takes no password"))?;
+    Ok(jc_secret::Secret::new(url.into()))
 }
 
 fn check_url(key: &str, raw: &str) -> Result<(), String> {
@@ -144,6 +177,8 @@ mod tests {
             max_connections: None,
             migrate_url: None,
             migrate_password_file: None,
+            maintenance_url: None,
+            maintenance_password_file: None,
         }
     }
 

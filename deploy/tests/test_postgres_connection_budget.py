@@ -88,12 +88,27 @@ def replicas(workload: dict) -> int:
     return int(workload["spec"].get("replicas", 1))
 
 
-def antares(docs: list[dict], jc: bool = False) -> int:
-    # jc runs the broker in its own process and logs in as jc_antares, counted apart.
+# The broker's own pools beside ANTARES_PG_POOL (antares-broker lib.rs): the owner's that migrates
+# and builds partitions, the maintenance role's of the cross-Tenant work (T-7307, T-7310).
+ANTARES_OWNER_POOL = 2
+ANTARES_MAINTENANCE_POOL = 4
+
+
+def antares(docs: list[dict], jc: bool = False, role: str | None = None) -> int:
+    # jc runs the broker in its own process and logs in as jc_antares, counted apart; with the role
+    # split each URL's role is counted under its own name.
+    def logins(env: dict) -> list[tuple[str, int]]:
+        pools = (("ANTARES_DATABASE_URL", int(env.get("ANTARES_PG_POOL", ANTARES_DEFAULT))),
+                 ("ANTARES_MIGRATION_DATABASE_URL", ANTARES_OWNER_POOL),
+                 ("ANTARES_MAINTENANCE_DATABASE_URL", ANTARES_MAINTENANCE_POOL))
+        found = ((re.match(r"postgres(?:ql)?://([^:@/]+)", env[k]), n) for k, n in pools if k in env)
+        return [(m.group(1) if m else "", n) for m, n in found]
     return sum(
-        replicas(w) * int(env_of(w).get("ANTARES_PG_POOL", ANTARES_DEFAULT))
+        replicas(w) * n
         for w in workloads(docs)
         if "ANTARES_DATABASE_URL" in env_of(w) and (w["metadata"]["name"] == "jc") == jc
+        for login, n in logins(env_of(w))
+        if role is None or login == role
     )
 
 
@@ -212,7 +227,9 @@ CLIENTS = {
     "decidim": decidim,
     "jc_portal": compiled("jc_portal"),
     "jc_portal_app": compiled("jc_portal_app"),
-    "jc_antares": lambda docs: antares(docs, jc=True),
+    "jc_antares": lambda docs: antares(docs, jc=True, role="jc_antares"),
+    "jc_antares_app": lambda docs: antares(docs, jc=True, role="jc_antares_app"),
+    "jc_antares_maint": lambda docs: antares(docs, jc=True, role="jc_antares_maint"),
     "kaisatsu_migrate": jc_kaisatsu,
     **{f"{m}_migrate": jc_module(m) for m in ("shako", "daiya", "dataroom", "ekiben")},
     "jc_assistant": jc_assistant,
