@@ -30,7 +30,9 @@ env:
 jobs:
   build:
     if: inputs.mode != 'sign'
-    runs-on: ubuntu-latest
+    # The binary built here runs on the trixie base (glibc 2.41): ubuntu-latest became 26.04
+    # (glibc 2.43) and its binary failed the image smoke with "GLIBC_2.43 not found".
+    runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
     timeout-minutes: 90
     outputs:
