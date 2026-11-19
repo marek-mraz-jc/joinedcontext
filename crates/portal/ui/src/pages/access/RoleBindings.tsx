@@ -13,6 +13,7 @@ import { AdminGrid } from "../../components/grid/AdminGrid";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { FormRecordLink } from "../../components/RecordLink";
 import { EditResourceAction } from "../../components/EditResourceDialog";
+import type { EditableForm } from "../../components/EditResourceDialog";
 import { FormFrame, useCreateForm, useFormRoute } from "../../components/forms/FormRoute";
 import { dns1123 } from "../../components/endpoints/sharing";
 import {
@@ -443,6 +444,69 @@ export function GrantRoleDialog({
 }
 
 /**
+ * Editing a binding as a form (T-7404): the role, from the roles this person reads, and the end
+ * date. Who it names and where it applies are read in words above the fields and carried over as
+ * stored, so the edit sends no namespace, scope or subject the person typed. The server decides
+ * whether the role may be given here (T-7403, PF-52), and its refusal stands in the form.
+ */
+export function bindingEditForm(
+  roleNames: string[],
+  describe: (manifest: Manifest) => { who: string; where: string },
+  t: (key: string, options?: Record<string, unknown>) => string,
+): EditableForm {
+  return {
+    schema: {
+      type: "object",
+      required: ["role"],
+      properties: {
+        role: {
+          type: "string",
+          title: t("access.roles.roleLabel"),
+          description: t("access.roles.roleEditHelp"),
+          ...(roleNames.length > 0 ? { enum: roleNames } : {}),
+        },
+        until: {
+          type: "string",
+          format: "date",
+          title: t("access.roles.untilLabel"),
+          description: t("access.roles.untilHelp"),
+        },
+      },
+    },
+    fromManifest: (manifest) => {
+      const spec = ((manifest as Manifest).spec ?? {}) as BindingSpec;
+      return { role: spec.role ?? "", ...(spec.validity?.notAfter ? { until: spec.validity.notAfter.slice(0, 10) } : {}) };
+    },
+    toManifest: (form, stored) => {
+      const manifest = stored as Manifest;
+      const { validity: _validity, ...spec } = (manifest.spec ?? {}) as BindingSpec;
+      const until = typeof form.until === "string" ? form.until : "";
+      return {
+        apiVersion: manifest.apiVersion,
+        kind: manifest.kind,
+        metadata: manifest.metadata,
+        spec: {
+          ...spec,
+          role: form.role,
+          ...(until ? { validity: { notAfter: new Date(`${until}T23:59:59Z`).toISOString() } } : {}),
+        },
+      };
+    },
+    summary: (manifest) => {
+      const { who, where } = describe(manifest as Manifest);
+      return (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-body">
+          <dt className="text-fg-muted">{t("access.roles.who")}</dt>
+          <dd className="text-fg">{who}</dd>
+          <dt className="text-fg-muted">{t("access.roles.where")}</dt>
+          <dd className="text-fg">{where}</dd>
+        </dl>
+      );
+    },
+  };
+}
+
+/**
  * Who holds which role: over the organization, this project or one of its spaces. `scope` narrows
  * it to the organization's own bindings (Organization → Members) or to this project's and its
  * spaces' (Project settings → Members), T-2605, T-2606.
@@ -506,6 +570,16 @@ export function RoleBindings({
     (spec.subjects ?? []).flatMap((subject) => (subject.user && !names.has(subject.user) ? [subject.user] : [])).join(", ") ||
     undefined;
 
+  const roles = useReadableList(ORG_NAMESPACE, "roles", "Role");
+  const editForm = bindingEditForm(
+    asManifests(roles.data?.items ?? []).map((role) => role.metadata.name),
+    (binding) => {
+      const spec = (binding.spec ?? {}) as BindingSpec;
+      return { who: who(spec), where: where(spec.scope) };
+    },
+    t,
+  );
+
   const untilOf = (binding: Manifest) => (binding.spec as BindingSpec).validity?.notAfter;
   const columns: DataColumn<Manifest>[] = [
     {
@@ -552,7 +626,7 @@ export function RoleBindings({
         };
         return (
           <span className="inline-flex items-center gap-1.5">
-            <EditResourceAction target={target} addressed />
+            <EditResourceAction target={target} form={editForm} addressed />
             <DeleteResourceAction target={target} />
           </span>
         );

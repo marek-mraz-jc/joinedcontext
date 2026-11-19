@@ -395,6 +395,10 @@ pub struct Config {
     /// the file the deployment renders `portal.organizationBounds` into; PF-97, ADR-N-035). No
     /// file keeps every entry at the catalog's built-in bound.
     pub organization_bounds: jc_core::kinds::OrganizationBounds,
+    /// The MQTT allowance every Organization without its own `spec.limits.mqtt` runs on
+    /// (`JC_PORTAL_MQTT_ORGANIZATION_DEFAULT`, JSON, e.g. `{"enabled":true,"brokers":10}`;
+    /// T-7407). `None` keeps MQTT off until an org admin turns it on.
+    pub mqtt_default: Option<jc_core::kinds::MqttAllowance>,
     /// The operator's price table for Administration → Costs (`JC_PORTAL_COST_PRICES_FILE`, the
     /// file the deployment renders `portal.costPrices` into; T-5126): the currency, the rate
     /// for one US dollar, each node, volume and fixed item with its monthly price. No file leaves
@@ -519,6 +523,7 @@ impl std::fmt::Debug for Config {
             .field("pipeline_namespace", &self.pipeline_namespace)
             .field("app_identity_namespace", &self.app_identity_namespace)
             .field("mqtt_namespace", &self.mqtt_namespace)
+            .field("mqtt_default", &self.mqtt_default)
             .field("gateway_namespace", &self.gateway_namespace)
             .field("gateway_url", &self.gateway_url)
             .field("gateway_pods_url", &self.gateway_pods_url)
@@ -1775,7 +1780,42 @@ fn app_pods(
     Ok(pods)
 }
 
-/// The basemap configuration block, or `None` when this Portal proxies no basemap (AP-67).
+/// `JC_PORTAL_MQTT_ORGANIZATION_DEFAULT`, the MQTT allowance of every Organization that sets no
+/// `spec.limits.mqtt` of its own (T-7407): a JSON object of the `spec.limits.mqtt` shape, held to
+/// the operator's bounds. Ports, custom hostnames and a client CA are each project's own and are
+/// refused here, as is anything that does not read: a deployment default nobody meant is worse
+/// than a Portal that says why it did not start.
+pub fn mqtt_default(
+    lookup: &impl Fn(&str) -> Option<String>,
+    bounds: &jc_core::kinds::OrganizationBounds,
+) -> Result<Option<jc_core::kinds::MqttAllowance>, ConfigError> {
+    const VAR: &str = "JC_PORTAL_MQTT_ORGANIZATION_DEFAULT";
+    let Some(text) = lookup(VAR).filter(|text| !text.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let invalid = |reason: String| ConfigError::Invalid { var: VAR, reason };
+    let allowance: jc_core::kinds::MqttAllowance = serde_json::from_str(&text).map_err(|e| {
+        invalid(format!(
+            "no spec.limits.mqtt object, e.g. {{\"enabled\":true,\"brokers\":10}}: {e}"
+        ))
+    })?;
+    if !allowance.ports.is_empty()
+        || !allowance.custom_hostnames.is_empty()
+        || allowance.client_ca_ref.is_some()
+    {
+        return Err(invalid(
+            "ports, customHostnames and clientCaRef are each project's own (spec.quotas.mqtt), \
+             never an Organization default"
+                .to_owned(),
+        ));
+    }
+    allowance
+        .validate(VAR)
+        .and_then(|()| bounds.check_mqtt(&allowance, VAR))
+        .map_err(|e| invalid(e.to_string()))?;
+    Ok(Some(allowance))
+}
+
 /// The operator's bounds (PF-97, LIM-01): the file the deployment renders
 /// `portal.organizationBounds` into, or `JC_PORTAL_ORGANIZATION_BOUNDS`, the same map inline,
 /// which `jc` fills from `jc.toml` `[portal.limits]` (T-6716). Absent, every entry keeps its
@@ -2413,6 +2453,7 @@ impl Config {
         let apps_db = apps_db_settings(&lookup)?;
         let pipeline_secrets = pipeline_secret_backend(&lookup);
 
+        let organization_bounds = organization_bounds(&lookup)?;
         Ok(Self {
             bind,
             internal_bind,
@@ -2499,7 +2540,8 @@ impl Config {
             second_factor_floor,
             journey_users,
             keycloak_admin,
-            organization_bounds: organization_bounds(&lookup)?,
+            mqtt_default: mqtt_default(&lookup, &organization_bounds)?,
+            organization_bounds,
             cost_prices: cost_prices(&lookup)?,
             app_settings,
             build_pods,
@@ -2607,6 +2649,7 @@ impl Config {
             journey_users: Vec::new(),
             keycloak_admin: None,
             organization_bounds: jc_core::kinds::OrganizationBounds::default(),
+            mqtt_default: None,
             cost_prices: None,
         }
     }
@@ -3221,6 +3264,38 @@ mod tests {
         let missing = dir.join("absent.yaml").to_string_lossy().into_owned();
         assert!(with(Some(missing)).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-7407: the deployment's MQTT default for every Organization reads as `spec.limits.mqtt`,
+    /// inside the operator's bounds, and never carries what is one project's own.
+    #[test]
+    fn the_mqtt_organization_default_is_an_allowance_inside_the_bounds() {
+        let bounds = jc_core::kinds::OrganizationBounds::default();
+        let with = |text: &'static str| {
+            mqtt_default(
+                &move |name: &str| {
+                    (name == "JC_PORTAL_MQTT_ORGANIZATION_DEFAULT").then(|| text.to_owned())
+                },
+                &bounds,
+            )
+        };
+        let on = with(r#"{"enabled":true,"brokers":10}"#)
+            .expect("default")
+            .expect("set");
+        assert_eq!((on.enabled, on.limit("brokers")), (true, 10));
+        assert_eq!(with(" ").expect("blank"), None);
+        for bad in [
+            r#"{"enabled":true,"brokers":21}"#,
+            r#"{"enabled":true,"ports":[18830]}"#,
+            r#"{"enabled":true,"brokrs":10}"#,
+            "enabled: true",
+        ] {
+            let refused = with(bad).expect_err(bad).to_string();
+            assert!(
+                refused.contains("JC_PORTAL_MQTT_ORGANIZATION_DEFAULT"),
+                "{refused}"
+            );
+        }
     }
 
     /// LIM-01, T-6716: `jc` hands `jc.toml` `[portal.limits]` over inline; it is checked as the

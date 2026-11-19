@@ -99,7 +99,7 @@ impl Broker {
 /// it (MF-54): its kind's rules, every ServiceAccount its roles name declared in its project, and
 /// a dedicated port held by the first broker in that order, the later ones refused with the holder
 /// named. A port is the node's, so it is checked across projects.
-pub fn declared(mirror: &Mirror) -> Vec<Broker> {
+pub fn declared(mirror: &Mirror, default: Option<&MqttAllowance>) -> Vec<Broker> {
     let mut brokers: Vec<Broker> = mirror
         .namespaces()
         .into_iter()
@@ -136,7 +136,7 @@ pub fn declared(mirror: &Mirror) -> Vec<Broker> {
         })
         .collect();
     brokers.sort_by(|a, b| (&a.project, &a.name).cmp(&(&b.project, &b.name)));
-    judge_allowances(mirror, &mut brokers);
+    judge_allowances(mirror, default, &mut brokers);
     let mut ports: BTreeMap<u16, String> = BTreeMap::new();
     for broker in &mut brokers {
         let Some(port) = broker.spec.as_ref().ok().and_then(|spec| spec.port) else {
@@ -164,7 +164,7 @@ pub fn declared(mirror: &Mirror) -> Vec<Broker> {
         }
     }
     judge_hostnames(mirror, &mut brokers);
-    judge_doors(mirror, &mut brokers);
+    judge_doors(mirror, default, &mut brokers);
     brokers
 }
 
@@ -172,7 +172,7 @@ pub fn declared(mirror: &Mirror) -> Vec<Broker> {
 /// client CA its project's allowance names (ADR-N-048 §2.12, T-5875). A door whose release is
 /// another broker's (one named `<name>-cert`) refuses the broker: the gateway would read that
 /// release as the other broker's token door, and both would write the same objects.
-fn judge_doors(mirror: &Mirror, brokers: &mut [Broker]) {
+fn judge_doors(mirror: &Mirror, default: Option<&MqttAllowance>, brokers: &mut [Broker]) {
     let releases: BTreeMap<String, String> = brokers
         .iter()
         .map(|broker| (broker.release.clone(), broker.label()))
@@ -186,7 +186,7 @@ fn judge_doors(mirror: &Mirror, brokers: &mut [Broker]) {
             continue;
         }
         let release = certificate_release_name(&broker.project, &broker.name);
-        let (allowance, _) = crate::mqtt_allowance::effective(mirror, &broker.project);
+        let (allowance, _) = crate::mqtt_allowance::effective(mirror, &broker.project, default);
         let judged = match (releases.get(&release), allowance.client_ca_ref) {
             (Some(holder), _) => Err(format!(
                 "spec.deviceAuth clientCertificate needs the release {release} for the \
@@ -282,14 +282,14 @@ fn certificate_secret(name: Option<&str>) -> Result<Option<String>, String> {
 
 /// The project's MQTT allowance, judged in name order like a quota: a broker past what is left
 /// is not rendered, and a release it already has keeps running (PF-100, PF-118).
-fn judge_allowances(mirror: &Mirror, brokers: &mut [Broker]) {
+fn judge_allowances(mirror: &Mirror, default: Option<&MqttAllowance>, brokers: &mut [Broker]) {
     let mut allowances: BTreeMap<String, (MqttAllowance, MqttUsage)> = BTreeMap::new();
     for broker in brokers {
         let Ok(spec) = &broker.spec else {
             continue;
         };
         let (allowance, used) = allowances.entry(broker.project.clone()).or_insert_with(|| {
-            let (allowance, _) = crate::mqtt_allowance::effective(mirror, &broker.project);
+            let (allowance, _) = crate::mqtt_allowance::effective(mirror, &broker.project, default);
             (allowance, MqttUsage::default())
         });
         match allowance.refusal(&broker.project, used, spec, None) {
@@ -1172,7 +1172,7 @@ spec:
 
     #[test]
     fn two_brokers_in_one_project_and_one_in_another_are_three_releases() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let releases: Vec<&str> = brokers.iter().map(|b| b.release.as_str()).collect();
         assert_eq!(
             releases,
@@ -1206,7 +1206,7 @@ spec:
             "cameras",
             broker_spec(&["cam-north"], Some(18830)),
         ));
-        let brokers = declared(&mirror);
+        let brokers = declared(&mirror, None);
         let espoo = brokers
             .iter()
             .find(|b| b.project == "espoo")
@@ -1242,7 +1242,7 @@ spec:
             "cameras",
             broker_spec(&["cam-north"], Some(18845)),
         ));
-        let brokers = declared(&mirror);
+        let brokers = declared(&mirror, None);
         let espoo = brokers
             .iter()
             .find(|b| b.project == "espoo")
@@ -1287,7 +1287,7 @@ spec:
 
     #[test]
     fn a_broker_with_a_port_takes_the_port_template_and_one_without_the_plain_one() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let cameras = &brokers[1];
         let mut spec = cameras.spec.clone().expect("valid");
         spec.port = Some(18835);
@@ -1333,7 +1333,7 @@ spec:
     /// routes, with the ranges as jc-core reads them; one without the list gets none.
     #[test]
     fn allowed_sources_put_the_brokers_own_middleware_on_each_of_its_routes() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let cameras = &brokers[1];
         let mut spec = cameras.spec.clone().expect("valid");
         spec.port = Some(18835);
@@ -1461,7 +1461,7 @@ spec:
     /// default and the manifest's `connectionsPerAddress` when it names one.
     #[test]
     fn every_route_caps_the_connections_of_one_address() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let cameras = &brokers[1];
         let mut spec = cameras.spec.clone().expect("valid");
         spec.port = Some(18835);
@@ -1557,7 +1557,7 @@ spec:
 
     #[test]
     fn a_custom_hostname_gets_its_route_and_an_http01_certificate_or_the_admins_secret() {
-        let brokers = declared(&hostname_mirror("mqtt.helsinki.example", None));
+        let brokers = declared(&hostname_mirror("mqtt.helsinki.example", None), None);
         let cameras = brokers
             .iter()
             .find(|b| b.label() == "helsinki/cameras")
@@ -1602,10 +1602,10 @@ spec:
         );
 
         // The admin's certificate: the route serves it, and no Certificate is issued.
-        let brokers = declared(&hostname_mirror(
-            "mqtt.helsinki.example",
-            Some("helsinki-mqtt-cert"),
-        ));
+        let brokers = declared(
+            &hostname_mirror("mqtt.helsinki.example", Some("helsinki-mqtt-cert")),
+            None,
+        );
         let cameras = brokers
             .iter()
             .find(|b| b.label() == "helsinki/cameras")
@@ -1628,7 +1628,7 @@ spec:
 
     #[test]
     fn a_hostname_another_project_holds_or_a_platform_secret_is_refused() {
-        let brokers = declared(&hostname_mirror("mqtt.shared.example", None));
+        let brokers = declared(&hostname_mirror("mqtt.shared.example", None), None);
         let cameras = brokers
             .iter()
             .find(|b| b.label() == "helsinki/cameras")
@@ -1643,10 +1643,10 @@ spec:
             "the holder stays unnamed: {reason}"
         );
 
-        let brokers = declared(&hostname_mirror(
-            "mqtt.helsinki.example",
-            Some("mqtt-espoo-gates-tls"),
-        ));
+        let brokers = declared(
+            &hostname_mirror("mqtt.helsinki.example", Some("mqtt-espoo-gates-tls")),
+            None,
+        );
         let cameras = brokers
             .iter()
             .find(|b| b.label() == "helsinki/cameras")
@@ -1663,7 +1663,7 @@ spec:
         spec["address"] = json!("customHostname");
         spec["hostname"] = json!("mqtt.helsinki.example");
         mirror.upsert(envelope("MqttBroker", "helsinki", "doors", spec));
-        let brokers = declared(&mirror);
+        let brokers = declared(&mirror, None);
         let doors = brokers
             .iter()
             .find(|b| b.label() == "helsinki/doors")
@@ -1708,7 +1708,7 @@ spec:
             "espoo",
             json!({ "organizationRef": { "name": "hel" }, "quotas": { "mqtt": { "enabled": false } } }),
         ));
-        let by_label: BTreeMap<String, Result<MqttBrokerSpec, String>> = declared(&mirror)
+        let by_label: BTreeMap<String, Result<MqttBrokerSpec, String>> = declared(&mirror, None)
             .into_iter()
             .map(|b| (b.label(), b.spec))
             .collect();
@@ -1746,7 +1746,7 @@ spec:
             "typo",
             json!({ "rolez": [] }),
         ));
-        let by_label: BTreeMap<String, Result<MqttBrokerSpec, String>> = declared(&mirror)
+        let by_label: BTreeMap<String, Result<MqttBrokerSpec, String>> = declared(&mirror, None)
             .into_iter()
             .map(|b| (b.label(), b.spec))
             .collect();
@@ -1767,7 +1767,7 @@ spec:
 
     #[test]
     fn the_template_is_filled_and_a_change_of_limits_changes_the_hash() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let broker = &brokers[1];
         let mut spec = broker.spec.clone().expect("valid");
         let objects = render(TEMPLATE_TEXT, broker, &spec).expect("renders");
@@ -1804,7 +1804,7 @@ spec:
 
     #[test]
     fn a_template_object_of_another_release_or_none_at_all_is_refused() {
-        let brokers = declared(&mirror());
+        let brokers = declared(&mirror(), None);
         let spec = brokers[0].spec.clone().expect("valid");
         let foreign = format!("{TEMPLATE_TEXT}---\napiVersion: v1\nkind: Service\nmetadata:\n  name: portal\n  labels: {{}}\n");
         assert!(render(&foreign, &brokers[0], &spec)
@@ -1864,7 +1864,7 @@ spec:
 
     #[test]
     fn a_role_still_listing_accounts_is_a_deprecation_naming_broker_role_and_the_fix() {
-        let found = warnings(&declared(&mirror()));
+        let found = warnings(&declared(&mirror(), None));
         let doors: Vec<&String> = found
             .iter()
             .filter(|w| w.starts_with("MQTT broker helsinki/doors role `camera`"))
@@ -1898,7 +1898,7 @@ spec:
             } } }),
         ));
         mirror.upsert(envelope("MqttBroker", "espoo", "air", spec));
-        declared(&mirror)
+        declared(&mirror, None)
             .into_iter()
             .find(|broker| broker.label() == "espoo/air")
             .expect("declared")
@@ -1966,7 +1966,7 @@ spec:
 
     #[test]
     fn the_client_is_bearer_only_with_no_secret_and_no_flow() {
-        let broker = &declared(&mirror())[0];
+        let broker = &declared(&mirror(), None)[0];
         let want = desired(broker);
         assert_eq!(want["clientId"], "mqtt-espoo-cameras");
         assert_eq!(want["bearerOnly"], true);
@@ -2047,11 +2047,14 @@ spec:
     /// with tokens alone gets none, and a template without the key refuses the door by name.
     #[test]
     fn a_certificate_broker_gets_its_door_with_the_projects_client_ca() {
-        let brokers = declared(&door_mirror(
-            "helsinki-device-ca",
-            json!(["token", "clientCertificate"]),
+        let brokers = declared(
+            &door_mirror(
+                "helsinki-device-ca",
+                json!(["token", "clientCertificate"]),
+                None,
+            ),
             None,
-        ));
+        );
         let cameras = helsinki_cameras(&brokers);
         let spec = cameras.spec.clone().expect("accepted");
         let door = cameras.door.clone().expect("a door");
@@ -2087,7 +2090,10 @@ spec:
             door_objects(&plain_only, cameras, &spec, &door, None).expect_err("no door template");
         assert!(err.contains("has no objects-certificate.yaml"), "{err}");
 
-        let tokens = declared(&door_mirror("helsinki-device-ca", json!(["token"]), None));
+        let tokens = declared(
+            &door_mirror("helsinki-device-ca", json!(["token"]), None),
+            None,
+        );
         assert_eq!(helsinki_cameras(&tokens).door, None);
         assert!(helsinki_cameras(&tokens).spec.is_ok());
     }
@@ -2096,11 +2102,10 @@ spec:
     /// door's route, so a certificate device outside the networks is closed at the edge too.
     #[test]
     fn the_door_admits_only_the_brokers_allowed_sources() {
-        let brokers = declared(&door_mirror(
-            "helsinki-device-ca",
-            json!(["clientCertificate"]),
+        let brokers = declared(
+            &door_mirror("helsinki-device-ca", json!(["clientCertificate"]), None),
             None,
-        ));
+        );
         let cameras = helsinki_cameras(&brokers);
         let mut spec = cameras.spec.clone().expect("accepted");
         spec.allowed_sources = vec!["203.0.113.0/24".into()];
@@ -2158,11 +2163,14 @@ spec:
     /// own, refuses the broker with the reason; the other broker keeps its release.
     #[test]
     fn a_door_on_another_brokers_release_or_a_platform_secret_is_refused() {
-        let brokers = declared(&door_mirror(
-            "helsinki-device-ca",
-            json!(["clientCertificate"]),
-            Some("cameras-cert"),
-        ));
+        let brokers = declared(
+            &door_mirror(
+                "helsinki-device-ca",
+                json!(["clientCertificate"]),
+                Some("cameras-cert"),
+            ),
+            None,
+        );
         let err = helsinki_cameras(&brokers)
             .spec
             .clone()
@@ -2177,11 +2185,14 @@ spec:
             .expect("held");
         assert!(other.spec.is_ok() && other.door.is_none());
 
-        let brokers = declared(&door_mirror(
-            "mqtt-helsinki-cameras-tls",
-            json!(["clientCertificate"]),
+        let brokers = declared(
+            &door_mirror(
+                "mqtt-helsinki-cameras-tls",
+                json!(["clientCertificate"]),
+                None,
+            ),
             None,
-        ));
+        );
         let err = helsinki_cameras(&brokers)
             .spec
             .clone()

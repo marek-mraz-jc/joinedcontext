@@ -186,7 +186,8 @@ pub async fn get_limits(
                 path: entry.path.to_owned(),
                 section: section_name(entry.section),
                 security: entry.kind == BoundKind::Security,
-                default: entry.default,
+                default: mqtt_default_at(entry.path, state.config.mqtt_default.as_ref())
+                    .or(entry.default),
                 min,
                 max,
                 value,
@@ -250,7 +251,11 @@ pub async fn get_limits(
                 })
                 .collect();
             // The MQTT allowance (PF-117, API/01 §47): its own origin counts as the project's.
-            let (mqtt, mqtt_own) = crate::mqtt_allowance::quota_rows(&state.mirror, &project);
+            let (mqtt, mqtt_own) = crate::mqtt_allowance::quota_rows(
+                &state.mirror,
+                &project,
+                state.config.mqtt_default.as_ref(),
+            );
             for (dimension, limit, used) in mqtt {
                 let (limit, used) = (Some(limit), Some(used));
                 quota.insert(dimension.to_owned(), QuotaUse { limit, used });
@@ -279,6 +284,15 @@ pub async fn get_limits(
     }))
 }
 
+/// The deployment's MQTT default in place of the catalog's for a `spec.limits.mqtt.*` entry, so
+/// the page shows what an Organization that sets none runs on (T-7407).
+fn mqtt_default_at(path: &str, default: Option<&jc_core::kinds::MqttAllowance>) -> Option<u32> {
+    let name = path.strip_prefix("spec.limits.mqtt.")?;
+    default
+        .filter(|default| default.enabled)
+        .map(|default| default.limit(name))
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/organization/limits", get(get_limits))
 }
@@ -303,6 +317,22 @@ mod tests {
             spec,
             status: None,
         }
+    }
+
+    /// T-7407: an MQTT entry shows the deployment's default for every Organization, the others
+    /// keep the catalog's.
+    #[test]
+    fn the_mqtt_entries_show_the_deployments_default() {
+        let default = jc_core::kinds::MqttAllowance {
+            enabled: true,
+            brokers: Some(10),
+            ..Default::default()
+        };
+        let at = |path| mqtt_default_at(path, Some(&default));
+        assert_eq!(at("spec.limits.mqtt.brokers"), Some(10));
+        assert_eq!(at("spec.limits.mqtt.connections"), Some(1000));
+        assert_eq!(at("spec.limits.data.uploadMegabytes"), None);
+        assert_eq!(mqtt_default_at("spec.limits.mqtt.brokers", None), None);
     }
 
     /// T-2870 (ADR-N-035): the upload size is the catalog's 16 MiB until the organization sets

@@ -50,6 +50,9 @@ const BINDINGS = {
   ],
 };
 
+/** The owner's id as jc-prod's binding names them (ADR-N-061), resolved to a name (T-7404). */
+const OWNER_ID = "3f1c2b9a-7d4e-4c1a-9b2f-5e6d7c8b9a01";
+
 const ROLES = {
   apiVersion: "joinedcontext.com/v1alpha1",
   kind: "List",
@@ -95,7 +98,14 @@ function renderAccess(options: { grants: unknown[]; refusal?: string; bindings?:
     if (path.endsWith("/permissions/me")) {
       return json({ grants: options.grants });
     }
-    if (request.method === "POST" || request.method === "DELETE") {
+    if (path.includes("portal_person_names")) {
+      return json({ value: { items: [{ id: OWNER_ID, name: "Marek Mráz" }] } });
+    }
+    const single = (options.bindings ?? BINDINGS).items.find((item) => path === `/api/v1/projects/org/rolebindings/${item.metadata.name}`);
+    if (request.method === "GET" && single) {
+      return json(single);
+    }
+    if (request.method !== "GET") {
       return options.refusal
         ? json(
             { type: "https://joinedcontext.com/errors/forbidden", title: "Forbidden", status: 403, detail: options.refusal },
@@ -295,6 +305,35 @@ describe("people and roles", () => {
     const dialog = await findFormPage(en.access.roles.grantTitle);
     expect(within(dialog).getByLabelText(new RegExp(en.access.roles.personLabel))).toHaveValue("jana.kovacova");
     await waitFor(() => expect(within(dialog).getByLabelText(new RegExp(en.access.roles.roleLabel))).toHaveValue("steward"));
+  });
+
+  // T-7404 (owner screenshot "Edit Unknown person: org-admin" over a YAML editor): the edit is a
+  // form with the person's name, the role as a dropdown of the readable roles and nothing else
+  // to type; the save sends the stored binding with only the role changed.
+  it("edits a member as a form with the person's name and sends only the role", async () => {
+    const owner = binding("owner", { user: OWNER_ID }, "steward", { project: PROJECT });
+    const fetchMock = renderAccess({ grants: ADMIN, bindings: { ...BINDINGS, items: [...BINDINGS.items, owner] } });
+    const user = userEvent.setup();
+    const row = (await within(await screen.findByRole("table")).findByText("Marek Mráz")).closest("tr") as HTMLElement;
+    expect(row.textContent).not.toContain(OWNER_ID);
+    await user.click(within(row).getByRole("button", { name: /^Edit\b/ }));
+    const page = await findFormPage();
+    expect(within(page).getAllByText(/Marek Mráz/).length).toBeGreaterThan(0);
+    expect(page.textContent).not.toContain(OWNER_ID);
+    expect(page.textContent).not.toContain("apiVersion");
+    expect(page.textContent).not.toContain(en.personName.unknown);
+    const role = await within(page).findByRole("combobox", { name: new RegExp(en.access.roles.roleLabel) });
+    const offered = within(role).getAllByRole("option").filter((option) => (option as HTMLOptionElement).value !== "").map((option) => option.textContent);
+    expect(offered).toEqual(["org-admin", "pipeline-editor", "steward"]);
+    expect(within(page).getByText(en.access.roles.roleEditHelp)).toBeTruthy();
+    await user.selectOptions(role, "pipeline-editor");
+    await user.click(within(page).getByRole("button", { name: en.resourceEdit.propose }));
+    await waitFor(() => expect(writes(fetchMock).some((request) => request.method === "PUT")).toBe(true));
+    const put = writes(fetchMock).find((request) => request.method === "PUT") as Request;
+    expect(new URL(put.url).pathname).toBe("/api/v1/projects/org/rolebindings/owner");
+    const sent = (await put.clone().json()) as { metadata: Record<string, unknown>; spec: Record<string, unknown> };
+    expect(sent.metadata).toMatchObject({ name: "owner", namespace: "org" });
+    expect(sent.spec).toEqual({ subjects: [{ user: OWNER_ID }], role: "pipeline-editor", scope: { project: PROJECT } });
   });
 
   it("removes a binding only after its name is typed back, through the organization's route", async () => {

@@ -18,7 +18,7 @@ export const ORGANIZATION_GROUPS = [
     tabs: ["projects", "applications", "endpoints", "mcp-servers", "models", "blueprints", "agentprofiles"],
   },
   { id: "platform", tabs: ["brokers", "environments", "dataspaceparticipants", "health", "costs"] },
-  { id: "settings", tabs: ["settings", "opendata-pages", "backups", "setup"] },
+  { id: "settings", tabs: ["settings", "opendata-pages", "opendata-appearance", "backups", "setup"] },
   // The installation's operators alone (T-7129, T-7140): Organizations, hosts, their Changes, the audit.
   { id: "operators", tabs: ["operator-organizations", "operator-hosts", "operator-installation", "operator-changes", "operator-audit"] },
 ] as const;
@@ -53,6 +53,7 @@ export const OWN_ORGANIZATION_TABS: readonly OrganizationTab[] = [
   "groups",
   "settings",
   "opendata-pages",
+  "opendata-appearance",
   "backups",
 ];
 

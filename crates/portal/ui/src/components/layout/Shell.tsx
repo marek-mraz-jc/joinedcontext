@@ -34,7 +34,7 @@ import {
 import type { IconName } from "../ui";
 import { isHiddenSection, NAV_SECTIONS, sameSection } from "./navigation";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { NewProjectButton } from "./NewProject";
+import { NewProjectDialog, useProjectCreation } from "./NewProject";
 import { WorkspaceBar } from "./WorkspaceBar";
 import { withoutCopy } from "./WorkspaceContext";
 import { BrandMark, navLinkClass } from "./BrandMark";
@@ -64,7 +64,13 @@ function ProjectSelector({ active }: { active: string }) {
   });
   const title = titleOf(active);
   const titled = title !== active;
+  // Opening a project is a setting of the organization: the switcher's last item, disabled with
+  // the reason when this caller may not (UI-44, PF-65, T-7404). The dialog lives outside the
+  // menu, which unmounts as it closes.
+  const creation = useProjectCreation(active);
+  const [writing, setWriting] = useState(false);
   return (
+    <>
     <Menu>
       <MenuTrigger asChild>
         <Button
@@ -124,8 +130,25 @@ function ProjectSelector({ active }: { active: string }) {
             </MenuItem>
           );
         })}
+        <MenuSeparator />
+        <MenuItem
+          disabled={!creation.allowed}
+          onSelect={() => setWriting(true)}
+          className="py-2!"
+        >
+          <Icon name={creation.allowed ? "plus" : "lock"} className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block">{t("projects.new")}</span>
+            {/* The refusal in words inside the item, read with it and legible (UI-44). */}
+            {creation.allowed ? null : (
+              <span className="block text-caption text-fg-muted">{creation.reason}</span>
+            )}
+          </span>
+        </MenuItem>
       </MenuContent>
     </Menu>
+    <NewProjectDialog open={writing} onOpenChange={setWriting} />
+    </>
   );
 }
 
@@ -780,13 +803,10 @@ function ProjectFrame({
           )}
         >
           {sidebar ? sidebar(closeNav) : (<>
-          {/* The project and New project read as one block, set off from the
-              sections under it (T-7148). */}
-          <div className="flex flex-col gap-1.5 border-b border-border pb-3">
+          {/* The project switcher, set off from the sections under it; New project is its
+              menu's last item (T-7148, T-7404). */}
+          <div className="border-b border-border pb-3">
             <ProjectSelector active={project} />
-            {/* Opening a project is a setting of the organization, so the control is always
-                here, disabled with the reason when this caller may not (UI-44, PF-65). */}
-            <NewProjectButton project={project} inSidebar />
           </div>
           <ul className="flex flex-col gap-0.5">
             {NAV_SECTIONS.filter((section) => !isHiddenSection(section.plural, hiddenSections)).map((section) => {

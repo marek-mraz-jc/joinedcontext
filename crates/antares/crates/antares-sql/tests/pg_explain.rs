@@ -1081,6 +1081,7 @@ async fn the_expiry_sweep_stays_index_shaped() {
 /// first-type rule (T0) and a rule on the type only multi-type Entities name
 /// second (`https://x/M`).
 #[tokio::test]
+#[ignore = "flaky on dev: T-7275, runs 44579375051 and 44587034167 (planner left the type indexes)"]
 async fn current_state_retention_reads_its_type_through_an_index_under_rls() {
     use antares_sql::store::pg::maintenance::RETAIN_CURRENT_ROWS;
     let url = require_db!();

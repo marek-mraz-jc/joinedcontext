@@ -4,7 +4,8 @@ name: ci
 # Four Cargo workspaces live here: the root (bins/jc and the modules it links) and the nested
 # crates/antares, crates/ekiben and crates/portal, each with its own lockfile; each is its own job.
 # Jobs are gated by the paths changed since the base (`changes`): a docs-only change runs only
-# `changes` (gitleaks runs in it). A dispatch runs every job. There is no schedule (to put one
+# `changes` (gitleaks runs in it). A dispatch runs every job (on main: every job no push run
+# of the commit passed, see REUSE). There is no schedule (to put one
 # back: `schedule: [{ cron: "7 2 * * *" }]`). The repository is public: its standard runners have
 # 4 cores (root-test prints nproc) and cost no minutes, but the account runs at most 20 jobs at
 # once across its repositories, so each job here takes a slot from the others.
@@ -58,15 +59,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { fetch-depth: 0 }
       - id: release
-        run: echo "release=${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/')) }}" >> "$GITHUB_OUTPUT"
+        # A dispatch on main ships too: smoke.yml ff-main moves main with GITHUB_TOKEN, whose push
+        # starts no run, and dispatches this workflow instead (T-7420).
+        run: echo "release=${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ship-proof/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') }}" >> "$GITHUB_OUTPUT"
       - id: paths
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           BEFORE: ${{ github.event.before }}
-          # Every push: a job that passed in another push run of this commit is not run again;
+          # Every push, and a dispatch on main (ff-main's, after jc-portal-1's push run passed this
+          # commit): a job that passed in another push run of this commit is not run again;
           # image, scan, promote and ship-apps are no reused key and always run on main.
-          REUSE: ${{ github.event_name == 'push' && '1' || '0' }}
+          REUSE: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && '1' || '0' }}
           GH_TOKEN: ${{ github.token }}
         run: sh .github/scripts/changes.sh
       # The checks that need no build ride in this job (one runner slot, not four): gitleaks over
@@ -93,7 +97,7 @@ jobs:
       # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
       - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/ff-main.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo

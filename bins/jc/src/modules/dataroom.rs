@@ -349,7 +349,15 @@ pub async fn build_with_writer(
     #[cfg(feature = "portal")]
     let state = with_dashboards(organizations, state).map_err(|e| err(&e))?;
     #[cfg(feature = "portal")]
-    follow_appearances(organizations, configured, &state, shutdown, tasks).map_err(|e| err(&e))?;
+    follow_appearances(
+        organizations,
+        followed.clone(),
+        configured,
+        &state,
+        shutdown,
+        tasks,
+    )
+    .map_err(|e| err(&e))?;
     #[cfg(not(feature = "portal"))]
     let _ = (shutdown, tasks);
     let writer = dataroom_server::CatalogueWriter::new(state.clone(), authorizer, harvested);
@@ -667,11 +675,13 @@ impl RunTime {
 }
 
 /// Keeps each Organization's catalogue branding its `Organization.spec.appearance` over jc's
-/// config (UIX-16, T-6777): a member the Organization leaves out, or a removed appearance,
-/// shows `configured` again.
+/// config (UIX-16, T-6777), and each further portal's its `kind: Portal` `spec.appearance` over
+/// that (T-7410): a member the Organization leaves out, or a removed appearance, shows
+/// `configured` again; a removed portal look falls back to the installation's.
 #[cfg(feature = "portal")]
 fn follow_appearances(
     organizations: &[OrganizationSection],
+    portals: Vec<super::portals::OrganizationPortals>,
     configured: BTreeMap<CatalogueId, BrandingBlock>,
     state: &DataroomState,
     shutdown: &tokio_util::sync::CancellationToken,
@@ -682,27 +692,82 @@ fn follow_appearances(
         let id = CatalogueId::parse_verified(&org.catalogue_id).map_err(|e| e.to_string())?;
         catalogue.insert(org.name.clone(), id);
     }
+    if catalogue.is_empty() {
+        return Ok(());
+    }
     let shared = state.catalogue_branding.clone();
-    super::appearance::follow(
-        catalogue.keys().cloned().collect(),
-        shutdown,
-        tasks,
-        move |name, look| {
-            let block = catalogue
-                .get(&name)
-                .and_then(|id| Some((*id, configured.get(id)?.clone())));
-            if let Some((id, block)) = block {
-                let block = with_appearance(block, look.as_ref());
-                shared
+    let shutdown = shutdown.clone();
+    tasks.spawn(async move {
+        let mut seen: BTreeMap<CatalogueId, BrandingBlock> = BTreeMap::new();
+        loop {
+            if let Some(portal) = super::PORTAL_STATE.get() {
+                let wanted = catalogue_looks(&portal.mirror, &catalogue, &portals, &configured);
+                let mut branding = shared
                     .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(id, block);
-                tracing::info!(organization = %name, appearance = look.is_some(), "dataroom: catalogue branding follows the Organization");
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                seen.retain(|id, _| {
+                    let kept = wanted.contains_key(id);
+                    if !kept {
+                        branding.remove(id);
+                    }
+                    kept
+                });
+                for (id, block) in wanted {
+                    if seen.get(&id) != Some(&block) {
+                        tracing::info!(catalogue = %id, "dataroom: catalogue branding follows its appearance");
+                        branding.insert(id, block.clone());
+                        seen.insert(id, block);
+                    }
+                }
             }
-            std::future::ready(())
-        },
-    );
+            tokio::select! {
+                () = shutdown.cancelled() => return,
+                () = tokio::time::sleep(super::appearance::FOLLOW_LOOK_EVERY) => {}
+            }
+        }
+    });
     Ok(())
+}
+
+/// Each catalogue's branding as `mirror` has it now: every Organization's catalogue its
+/// configured block under its appearance, and each further portal with a `spec.appearance` its
+/// Organization's block under that look over the Organization's. A portal's look lands only in
+/// a catalogue of its own `organizationRef` (T-7410).
+#[cfg(feature = "portal")]
+fn catalogue_looks(
+    mirror: &joinedcontext_portal::store::Mirror,
+    catalogue: &BTreeMap<String, CatalogueId>,
+    portals: &[super::portals::OrganizationPortals],
+    configured: &BTreeMap<CatalogueId, BrandingBlock>,
+) -> BTreeMap<CatalogueId, BrandingBlock> {
+    let mut out = BTreeMap::new();
+    let mut looks = BTreeMap::new();
+    for (name, id) in catalogue {
+        let look = super::appearance::in_mirror(mirror, name);
+        if let Some(block) = configured.get(id) {
+            out.insert(*id, with_appearance(block.clone(), look.as_ref()));
+        }
+        looks.insert(name.clone(), (*id, look));
+    }
+    let installation = joinedcontext_portal::permissions::installation_organization(mirror);
+    let orgs = super::portals::named(portals, installation);
+    for portal in super::portals::in_mirror(mirror).values() {
+        let Some(top) = &portal.appearance else {
+            continue;
+        };
+        let Some((own, under)) = looks.get(&portal.organization_ref) else {
+            continue;
+        };
+        let (Some((_, id)), Some(block)) = (
+            super::portals::catalogue_key(portal, &orgs),
+            configured.get(own),
+        ) else {
+            continue;
+        };
+        let look = top.over(&under.clone().unwrap_or_default());
+        out.insert(id, with_appearance(block.clone(), Some(&look)));
+    }
+    out
 }
 
 /// Each Organization's catalogue home shows the public Dashboards its
@@ -732,7 +797,7 @@ fn with_dashboards(
 /// logo upload's SVG check keeps jc's.
 #[cfg(feature = "portal")]
 fn with_appearance(
-    mut block: BrandingBlock,
+    block: BrandingBlock,
     look: Option<&jc_core::kinds::OrganizationAppearance>,
 ) -> BrandingBlock {
     let Some(look) = look else {
@@ -761,7 +826,48 @@ fn with_appearance(
         over["logoSvg"] = svg.into();
         over["logo"] = "logo.svg".into();
     }
-    block.apply_override_json(&over);
+    if let Some(font) = look.font {
+        over["fonts"] = serde_json::json!({ "heading": font.stack(), "body": font.stack() });
+    }
+    let mut shown = block.clone();
+    shown.apply_override_json(&over);
+    // T-7410: a colour that is readable alone can meet the installation's other colour of its
+    // pair; below WCAG AA the Organization's colours give way to jc's, the rest still shows.
+    let readable = |b: &BrandingBlock| {
+        [&b.colours.text, &b.colours.primary].iter().all(|c| {
+            jc_core::kinds::contrast_ratio(c, &b.colours.background)
+                .is_some_and(|r| r >= jc_core::kinds::appearance::MIN_CONTRAST)
+        })
+    };
+    if readable(&block) && !readable(&shown) {
+        tracing::warn!(
+            "dataroom: an appearance colour below WCAG AA on the background; jc's colours show"
+        );
+        if let Some(members) = over.as_object_mut() {
+            members.remove("colours");
+        }
+        shown = block;
+        shown.apply_override_json(&over);
+    }
+    let mut block = shown;
+    block.layout = dataroom_core::branding::BrandingLayout {
+        radius_px: look.radius,
+        hero_title: look.hero.title.clone(),
+        hero_intro_html: look.hero.intro.as_deref().map(hero_intro),
+        dataset_table: look.dataset_list == Some(jc_core::kinds::DatasetListLayout::Table),
+        nav_links: look
+            .nav_links
+            .iter()
+            .filter(|l| jc_core::kinds::is_link_url(&l.url))
+            .map(|l| (l.url.clone(), l.label.clone()))
+            .collect(),
+        footer_links: look
+            .footer_links
+            .iter()
+            .filter(|l| jc_core::kinds::is_link_url(&l.url))
+            .map(|l| (l.url.clone(), l.label.clone()))
+            .collect(),
+    };
     // T-7031: the Organization's own page texts, each page and language over the built-in one.
     // A text the manifest's rules refuse never reaches here (jc-core validates every load), and
     // the page renders it with jc-core's one safe renderer.
@@ -776,6 +882,23 @@ fn with_appearance(
         })
         .collect();
     block
+}
+
+/// The hero introduction as safe HTML through jc-core's page renderer: raw HTML shows as text,
+/// links keep to http(s) and the portal; a leading `# heading` stays, as a level-two one.
+#[cfg(feature = "portal")]
+fn hero_intro(markdown: &str) -> String {
+    let page = jc_core::opendata_pages::render(markdown, &[]);
+    match page.title {
+        Some(title) => {
+            let title = title
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            format!("<h2>{title}</h2>{}", page.html)
+        }
+        None => page.html,
+    }
 }
 
 /// An Organization's catalogue frames its own Portal and API: the installation's other live
@@ -2430,6 +2553,164 @@ mod tests {
             Some("# Konektor mesta")
         );
         assert_eq!(shown.pages.len(), 1);
+    }
+
+    /// T-7410: the theme and layout members reach the catalogue's block; the introduction is
+    /// rendered safe, and a colour below WCAG AA on jc's background gives way to jc's colours.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn an_organizations_theme_and_layout_reach_its_catalogue_safely() {
+        let configured = BrandingBlock::default();
+        let look: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "font": "serif",
+                "radius": 4,
+                "colours": { "primary": "#7a1f5c" },
+                "hero": { "title": "Dáta mesta", "intro": "# Vitajte\n\nDáta <script>alert(1)</script> [x](javascript:alert(1)) [y](https://mesto.sk)" },
+                "datasetList": "table",
+                "navLinks": [{ "label": "Mesto", "url": "https://mesto.sk" }],
+                "footerLinks": [{ "label": "API", "url": "/about#api" }],
+            }))
+            .expect("an appearance");
+        look.validate().expect("valid");
+        let shown = with_appearance(configured.clone(), Some(&look));
+        assert!(
+            shown.fonts.body.starts_with("Charter"),
+            "{}",
+            shown.fonts.body
+        );
+        assert_eq!(shown.fonts.heading, shown.fonts.body);
+        assert_eq!(shown.colours.primary, "#7a1f5c");
+        assert_eq!(shown.layout.radius_px, Some(4));
+        assert_eq!(shown.layout.hero_title.as_deref(), Some("Dáta mesta"));
+        let intro = shown.layout.hero_intro_html.as_deref().expect("rendered");
+        assert!(intro.starts_with("<h2>Vitajte</h2>"), "{intro}");
+        assert!(!intro.contains("<script"), "{intro}");
+        assert!(!intro.contains("javascript:"), "{intro}");
+        assert!(intro.contains("https://mesto.sk"), "{intro}");
+        assert!(shown.layout.dataset_table);
+        assert_eq!(
+            shown.layout.nav_links,
+            vec![("https://mesto.sk".to_owned(), "Mesto".to_owned())]
+        );
+        assert_eq!(
+            shown.layout.footer_links,
+            vec![("/about#api".to_owned(), "API".to_owned())]
+        );
+        // Defence in depth: a link that skipped validate() still never reaches the template.
+        let unchecked: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "navLinks": [{ "label": "x", "url": "javascript:alert(1)" }, { "label": "Mesto", "url": "https://mesto.sk" }],
+                "footerLinks": [{ "label": "y", "url": "//evil.example" }],
+            }))
+            .expect("an appearance");
+        let shown_unchecked = with_appearance(configured.clone(), Some(&unchecked));
+        assert_eq!(
+            shown_unchecked.layout.nav_links,
+            vec![("https://mesto.sk".to_owned(), "Mesto".to_owned())]
+        );
+        assert!(shown_unchecked.layout.footer_links.is_empty());
+        // Text alone passes jc-core (no background of its own) yet is unreadable on jc's white.
+        let pale: jc_core::kinds::OrganizationAppearance =
+            serde_json::from_value(serde_json::json!({
+                "instanceName": "Mesto",
+                "colours": { "text": "#eeeeee" },
+            }))
+            .expect("an appearance");
+        pale.validate()
+            .expect("one colour of a pair passes jc-core");
+        let shown = with_appearance(configured.clone(), Some(&pale));
+        assert_eq!(
+            shown.colours, configured.colours,
+            "jc's colours keep it readable"
+        );
+        assert_eq!(shown.instance_name, "Mesto", "the rest still shows");
+    }
+
+    /// T-7410: each catalogue follows its own Organization's look; a `kind: Portal` look goes
+    /// over its Organization's in that portal's catalogue only, never another Organization's.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_look_reaches_only_its_own_organizations_catalogues() {
+        use joinedcontext_portal::resource::ResourceEnvelope;
+        let ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+        let envelope = |kind: &str, name: &str, spec: serde_json::Value| ResourceEnvelope {
+            api_version: jc_core::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: jc_core::ObjectMeta::new(name, ns),
+            spec,
+            status: None,
+        };
+        let installation = OrgId::parse_verified("00000000-0000-7000-8000-000000000001").unwrap();
+        let org = |name: &str, cat: &str| super::super::portals::OrganizationPortals {
+            name: name.into(),
+            org_id: OrgId::of_organization(installation, name),
+            catalogue_id: CatalogueId::parse_verified(cat).unwrap(),
+            scheme: "https".into(),
+            opendata: format!("data.{name}.test"),
+            listed: Vec::new(),
+            harvest_hosts: Vec::new(),
+            config_dir: None,
+            own_gateway: None,
+        };
+        let portals = vec![
+            org("city", "00000000-0000-7000-8000-0000000000c1"),
+            org("town", "00000000-0000-7000-8000-0000000000c2"),
+        ];
+        let catalogue: BTreeMap<String, CatalogueId> = portals
+            .iter()
+            .map(|o| (o.name.clone(), o.catalogue_id))
+            .collect();
+        let configured: BTreeMap<CatalogueId, BrandingBlock> = portals
+            .iter()
+            .map(|o| (o.catalogue_id, BrandingBlock::default()))
+            .collect();
+        let mirror = joinedcontext_portal::store::Mirror::new();
+        mirror.upsert(envelope(
+            "Organization",
+            "city",
+            serde_json::json!({ "domain": "city.test", "appearance": {
+                "colours": { "primary": "#0b5394" }, "hero": { "title": "City data" },
+            }}),
+        ));
+        mirror.upsert(envelope(
+            "Organization",
+            "town",
+            serde_json::json!({ "domain": "town.test" }),
+        ));
+        mirror.upsert(envelope(
+            "Portal",
+            "city-mobility",
+            serde_json::json!({ "organizationRef": "city", "path": "mobility",
+                "appearance": { "colours": { "primary": "#7a1f5c" } } }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        let (city, town) = (portals[0].catalogue_id, portals[1].catalogue_id);
+        let mobility = CatalogueId::of_portal(portals[0].org_id, "mobility");
+        assert_eq!(looks.len(), 3, "{:?}", looks.keys());
+        assert_eq!(looks[&city].colours.primary, "#0b5394");
+        assert_eq!(looks[&town], BrandingBlock::default(), "town sets nothing");
+        assert_eq!(
+            looks[&mobility].colours.primary, "#7a1f5c",
+            "the portal's own"
+        );
+        assert_eq!(
+            looks[&mobility].layout.hero_title.as_deref(),
+            Some("City data"),
+            "left out: its Organization's"
+        );
+        mirror.upsert(envelope(
+            "Organization",
+            "city",
+            serde_json::json!({ "domain": "city.test" }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        assert_eq!(
+            looks[&city],
+            BrandingBlock::default(),
+            "a removed look is jc's again"
+        );
+        const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
     }
 
     fn prod_hidden() -> BTreeMap<String, String> {

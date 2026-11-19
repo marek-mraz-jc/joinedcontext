@@ -61,7 +61,10 @@ pub use app::{
     AppServiceLimits, AppSource, AppSpec, AppVisibility, ContentSecurityPolicy, DataNeed,
     GeoConstraint, GeoWithin, GitSource, TemporalConstraint, DEFAULT_ORGANIZATION_SERVICES,
 };
-pub use appearance::{is_hex_colour, AppearanceColours, AppearancePage, OrganizationAppearance};
+pub use appearance::{
+    contrast_ratio, is_hex_colour, is_link_url, AppearanceColours, AppearanceFont, AppearanceHero,
+    AppearanceLink, AppearancePage, DatasetListLayout, OrganizationAppearance,
+};
 pub use assistant::{
     AnswerSpec, AssistantDeploymentSpec, AssistantScope, Budget, Channel, ChatWidget, Connector,
     KnowledgeSourceSpec, Localised, ModelChoice, PdfPolicy, PdfPolicyKind, ProviderRouting,

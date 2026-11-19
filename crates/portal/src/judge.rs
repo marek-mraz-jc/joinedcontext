@@ -12,7 +12,7 @@ use crate::api::mutate;
 use crate::error::ApiError;
 use crate::resource::ResourceEnvelope;
 use crate::store::Mirror;
-use jc_core::kinds::OrganizationBounds;
+use jc_core::kinds::{MqttAllowance, OrganizationBounds};
 use serde_json::Value;
 
 /// What a manifest is judged against: the project as it stands without it, and the
@@ -22,6 +22,8 @@ pub struct Ground<'a> {
     pub mirror: &'a Mirror,
     /// The operator's bounds on an Organization's limits (PF-97).
     pub bounds: &'a OrganizationBounds,
+    /// The deployment's MQTT allowance of an Organization that sets none (T-7407).
+    pub mqtt_default: Option<&'a MqttAllowance>,
     /// The zone the installation's own App hosts sit under (AP-133), when the Portal serves Apps.
     pub apex: Option<&'a str>,
     /// The deployment's organization domain, when no Organization manifest names one (PF-121).
@@ -41,6 +43,7 @@ impl<'a> Ground<'a> {
         Ground {
             mirror: &state.mirror,
             bounds: &state.config.organization_bounds,
+            mqtt_default: state.config.mqtt_default.as_ref(),
             apex: settings.map(|s| s.apex.as_str()),
             domain: settings.map(|s| s.org_domain.as_str()),
             portals: Some(&state.config.portal_settings),
@@ -139,10 +142,15 @@ pub fn reason(err: &ApiError) -> String {
 /// ([`Ground::load`]): the reconciler marks it `Degraded` and it keeps serving reads.
 pub fn replay(
     base: &Mirror,
-    settings: (&OrganizationBounds, Option<&str>, Option<&str>),
+    settings: (
+        &OrganizationBounds,
+        Option<&str>,
+        Option<&str>,
+        Option<&MqttAllowance>,
+    ),
     mut envelopes: Vec<ResourceEnvelope>,
 ) -> Vec<(ResourceEnvelope, String)> {
-    let (bounds, apex, domain) = settings;
+    let (bounds, apex, domain, mqtt_default) = settings;
     let project_of = |e: &ResourceEnvelope| e.metadata.namespace.clone().unwrap_or_default();
     envelopes.sort_by(|a, b| {
         let org = |e: &ResourceEnvelope| project_of(e) != crate::permissions::ORG_NAMESPACE;
@@ -165,6 +173,7 @@ pub fn replay(
                 let ground = Ground {
                     mirror: base,
                     bounds,
+                    mqtt_default,
                     apex,
                     domain,
                     portals: None,
@@ -444,12 +453,26 @@ fn mqtt_allowance(
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
     match envelope.kind.as_str() {
-        "MqttBroker" => crate::mqtt_allowance::check(
-            ground.mirror,
-            project,
-            &envelope.metadata.name,
-            &envelope.spec,
-        ),
+        "MqttBroker" => {
+            let name = &envelope.metadata.name;
+            crate::mqtt_allowance::check(
+                ground.mirror,
+                project,
+                name,
+                &envelope.spec,
+                ground.mqtt_default,
+            )?;
+            // A load keeps what runs: a total lowered below it refuses only new brokers (T-7407).
+            if ground.load {
+                return Ok(());
+            }
+            crate::mqtt_allowance::organization_total(
+                ground.mirror,
+                project,
+                name,
+                ground.mqtt_default,
+            )
+        }
         _ => Ok(()),
     }
 }
@@ -472,7 +495,12 @@ fn catalogue_publication(
 pub fn validate(
     org_dir: &std::path::Path,
     projects: std::collections::BTreeMap<String, std::path::PathBuf>,
-    settings: (&OrganizationBounds, Option<&str>, Option<&str>),
+    settings: (
+        &OrganizationBounds,
+        Option<&str>,
+        Option<&str>,
+        Option<&MqttAllowance>,
+    ),
 ) -> jcctl::commands::validate::Report {
     use jcctl::commands::validate::Finding;
     let judge = |repository: &jcctl::loader::Repository| {
@@ -552,8 +580,13 @@ pub fn validate_command(args: &[String]) -> i32 {
     if !rest.is_empty() {
         return usage();
     }
-    let bounds = match crate::config::organization_bounds(&|key| std::env::var(key).ok()) {
-        Ok(bounds) => bounds,
+    let env = |key: &str| std::env::var(key).ok();
+    let settings = crate::config::organization_bounds(&env).and_then(|bounds| {
+        let mqtt_default = crate::config::mqtt_default(&env, &bounds)?;
+        Ok((bounds, mqtt_default))
+    });
+    let (bounds, mqtt_default) = match settings {
+        Ok(settings) => settings,
         Err(err) => {
             eprintln!("Configuration error: {err}");
             return 2;
@@ -562,7 +595,7 @@ pub fn validate_command(args: &[String]) -> i32 {
     let report = validate(
         std::path::Path::new(org_dir),
         projects,
-        (&bounds, apex.as_deref(), None),
+        (&bounds, apex.as_deref(), None, mqtt_default.as_ref()),
     );
     for finding in &report.findings {
         eprintln!("{finding}");
@@ -891,6 +924,7 @@ mod tests {
             let ground = Ground {
                 mirror: &mirror,
                 bounds: &bounds,
+                mqtt_default: None,
                 apex: None,
                 domain: None,
                 portals: None,
@@ -924,6 +958,7 @@ mod tests {
         let ground = Ground {
             mirror: &mirror,
             bounds: &bounds,
+            mqtt_default: None,
             apex: None,
             domain: None,
             portals: None,
@@ -939,7 +974,7 @@ mod tests {
         said(&reason(
             &manifest(&ground, "ovzdusie", &feed).expect_err("propose and approval refuse it"),
         ));
-        let refused = replay(&Mirror::new(), (&bounds, None, None), vec![feed]);
+        let refused = replay(&Mirror::new(), (&bounds, None, None, None), vec![feed]);
         assert_eq!(refused.len(), 1, "load refuses it: {refused:?}");
         said(&refused[0].1);
     }
@@ -954,6 +989,7 @@ mod tests {
         let ground = Ground {
             mirror: &mirror,
             bounds: &bounds,
+            mqtt_default: None,
             apex: None,
             domain: None,
             portals: None,
@@ -981,7 +1017,11 @@ mod tests {
                     other => panic!("{door} {name}: {other:?}"),
                 }
             }
-            let refused = replay(&Mirror::new(), (&bounds, None, None), vec![named(name)]);
+            let refused = replay(
+                &Mirror::new(),
+                (&bounds, None, None, None),
+                vec![named(name)],
+            );
             assert_eq!(refused.len(), 1, "load {name}: {refused:?}");
             assert!(
                 refused[0].1.contains("reserved for the platform"),
@@ -1014,7 +1054,7 @@ mod tests {
     #[test]
     fn a_replay_refuses_what_a_proposal_of_it_would() {
         let bounds = OrganizationBounds::default();
-        let settings = (&bounds, None, None);
+        let settings = (&bounds, None, None, None);
         let refused = replay(
             &Mirror::new(),
             settings,
@@ -1066,7 +1106,7 @@ mod tests {
         };
         let refused = replay(
             &Mirror::new(),
-            (&bounds, None, Some("hel.fi")),
+            (&bounds, None, Some("hel.fi"), None),
             vec![
                 envelope("ContextSpace", "air", "ovzdusie", json!({})),
                 envelope("ContextSpace", "leftover", "ovzdusie", json!({})),
@@ -1144,7 +1184,7 @@ mod tests {
         );
         let mut all = held.to_vec();
         all.push(open.clone());
-        let refused = replay(&Mirror::new(), (&bounds, None, Some("hel.fi")), all);
+        let refused = replay(&Mirror::new(), (&bounds, None, Some("hel.fi"), None), all);
         assert!(refused.is_empty(), "{refused:?}");
 
         let mirror = Mirror::new();
@@ -1152,6 +1192,7 @@ mod tests {
         let ground = Ground {
             mirror: &mirror,
             bounds: &bounds,
+            mqtt_default: None,
             apex: None,
             domain: Some("hel.fi"),
             portals: None,
@@ -1188,7 +1229,7 @@ mod tests {
             std::fs::write(&file, manifest.to_string()).expect("the manifest");
         };
         let bounds = OrganizationBounds::default();
-        let settings = (&bounds, None, None);
+        let settings = (&bounds, None, None, None);
 
         write("organization");
         let report = validate(&dir, Default::default(), settings);

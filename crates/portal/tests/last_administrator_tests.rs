@@ -234,7 +234,8 @@ async fn the_delete_door_refuses_the_last_administrator_with_409() {
 }
 
 /// With several Organizations (ADR-N-058) only the installation's administrators keep it
-/// running: another Organization's admin binding does not let its last one go (T-5241, T-5248).
+/// running: another Organization's admin binding does not let its last one go (T-5241, T-5248),
+/// and that Organization keeps its own last administrator as well (T-7403).
 #[test]
 fn another_organizations_administrator_does_not_replace_the_installations_last() {
     let mirror = organization(&[("admin", "org-admin")]);
@@ -258,5 +259,9 @@ fn another_organizations_administrator_does_not_replace_the_installations_last()
         remove("RoleBinding", "admin"),
     ));
     assert!(detail.contains("admin"), "{detail}");
-    assert!(keeps_an_administrator(&mirror, remove("RoleBinding", "zilina-admins")).is_ok());
+    let detail = refused(keeps_an_administrator(
+        &mirror,
+        remove("RoleBinding", "zilina-admins"),
+    ));
+    assert!(detail.contains("Organization zilina"), "{detail}");
 }
