@@ -71,6 +71,7 @@ fn a_selected_surface_without_a_view_is_closed() {
     let port = free_port();
     let _broker = Broker(
         Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_ADMIN_OPEN", "1")
             .env("ANTARES_HTTP_PORT", port.to_string())
             .env("ANTARES_API_SURFACES", "admin,views")
             .spawn()

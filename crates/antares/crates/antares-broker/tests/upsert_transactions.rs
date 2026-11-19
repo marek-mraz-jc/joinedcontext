@@ -97,6 +97,7 @@ fn an_upsert_through_a_view_opens_three_transactions_however_many_targets_and_me
     let port = free_port();
     let _broker = Broker(
         Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_ADMIN_OPEN", "1")
             .env("ANTARES_HTTP_PORT", port.to_string())
             .env("ANTARES_STORE", "postgres")
             .env("ANTARES_TEMPORAL", "postgres")

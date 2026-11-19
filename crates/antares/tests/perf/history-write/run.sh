@@ -25,7 +25,7 @@ docker run -d --name $PG --cpus 2 --memory 2g -p 127.0.0.1:$PGP:5432 -e POSTGRES
 for _ in $(seq 120); do psql "$ADMIN" -qXc 'SELECT 1' >/dev/null 2>&1 && break; sleep 1; done
 PID=
 broker() { local log=$1; shift
-  env ANTARES_STORE=postgres ANTARES_HTTP_PORT=$PORT ANTARES_ALLOW_SHARED_LOCAL=1 ANTARES_TEMPORAL_RECORD=all "$@" \
+  env ANTARES_STORE=postgres ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT=$PORT ANTARES_ALLOW_SHARED_LOCAL=1 ANTARES_TEMPORAL_RECORD=all "$@" \
     taskset -c 0-3 "$BIN" > "$OUT/$log" 2>&1 & PID=$!
   for _ in $(seq 600); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health" && return; sleep 0.1; done
   echo "broker did not start" >&2; tail "$OUT/$log" >&2; exit 1; }

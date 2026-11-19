@@ -1227,6 +1227,51 @@ async fn the_index_status_counts_pending_and_failed_and_lists_why() {
     assert!(items.contains(&json!({"url": "https://hronov.example/odpad/zber", "kind": "page", "reason": "HTTP 404"})), "{errors}");
     assert!(items.contains(&json!({"url": "https://hronov.example/vzn.pdf", "kind": "document", "reason": "not recorded"})), "{errors}");
 
+    // T-7290: a passage the embedder refused waits no more, counts its page as failed and
+    // lists why; its text is in no answer.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query(
+        "UPDATE chunks SET embedding = NULL, \
+         embed_error = '413 Payload Too Large text 0 is longer than 8192 bytes' WHERE page_id = $1",
+    )
+    .bind(w.child)
+    .execute(&mut *tx)
+    .await
+    .expect("refused");
+    tx.commit().await.expect("commit");
+    let (_, listed) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    let web = row(&listed);
+    assert_eq!(
+        (
+            web["embedded"].clone(),
+            web["pending"].clone(),
+            web["failed"].clone()
+        ),
+        (json!(1), json!(2), json!(3)),
+        "{web}"
+    );
+    let (_, errors) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources/web/errors"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    let items = errors["items"].as_array().cloned().unwrap_or_default();
+    assert_eq!(items.len(), 3, "{errors}");
+    assert!(items.contains(&json!({"url": "u", "kind": "page", "reason": "1 of its passages not embedded: 413 Payload Too Large text 0 is longer than 8192 bytes"})), "{errors}");
+    assert!(!errors.to_string().contains("Odpad"), "{errors}");
+
     // The upload source has no failures, a source never crawled is not found.
     let (status, none) = call(
         &w.app,

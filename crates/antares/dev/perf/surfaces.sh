@@ -45,7 +45,7 @@ run_build() {  # run_build <build> <binary> <surfaces>
   [ -x "$bin" ] || { echo "$build: missing $bin" >&2; exit 1; }
   psql "$DATABASE_URL" -qX -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $db" -c "CREATE DATABASE $db"
   local url="${DATABASE_URL%/*}/$db"
-  env ANTARES_STORE=postgres ANTARES_DATABASE_URL="$url" ANTARES_HTTP_PORT="$PORT" \
+  env ANTARES_STORE=postgres ANTARES_DATABASE_URL="$url" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
     ANTARES_ALLOW_SHARED_LOCAL=1 ${surfaces:+ANTARES_API_SURFACES=$surfaces} ${surfaces:+ANTARES_SCHEMA_MAX_BYTES=65536} \
     "$bin" > "$OUT/$build-broker.log" 2>&1 & PID=$!
   for _ in $(seq 600); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health" && break; sleep 0.1; done

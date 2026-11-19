@@ -35,6 +35,7 @@ case "${1:-}" in
     fi
 
     # Set up per-broker environment
+    export ANTARES_ADMIN_OPEN=1
     export ANTARES_HTTP_PORT="$PORT"
     export ANTARES_EGRESS_ALLOW_PRIVATE=true
     export ANTARES_STORE="$STORE"

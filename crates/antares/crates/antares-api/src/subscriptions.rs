@@ -1442,6 +1442,11 @@ pub async fn update(
         }
         norm
     };
+    // ISO-11: the subject who changes a Subscription is the one it is
+    // delivered as from now on, so moving another subject's Subscription to
+    // your own endpoint receives only what you may read. A caller naming no
+    // subject (the control plane) keeps the stored one.
+    let restamp = crate::policy::subject_member(&crate::policy::subject_of(&tenant, headers));
     let ts = now_iso();
     let res = st
         .store
@@ -1457,6 +1462,9 @@ pub async fn update(
             let mut norm = norm.clone();
             keep_masked_receiver_info(&mut norm, target)?;
             crate::apply_doc_fragment(target, &norm, &ts);
+            if let Some(subject) = &restamp {
+                target.insert(crate::policy::SUBJECT_MEMBER.into(), subject.clone());
+            }
             // 5.2.12 holds for the updated Subscription too: deleting both
             // selectors is refused and nothing is written
             let local_only = target.get("localOnly").and_then(Value::as_bool) == Some(true);

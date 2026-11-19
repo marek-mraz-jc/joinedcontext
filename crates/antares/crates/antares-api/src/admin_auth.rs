@@ -2,9 +2,11 @@
 //! The `/q` admin credential (T-3569): one bearer secret a deployment
 //! configures. Configured, every `/q` route except `/q/health` and
 //! `/q/ready` (and `/q/metrics` when the deployment leaves it open) answers
-//! `401` without it; unconfigured, `/q` serves as it always did and the
-//! broker says so once at start. A network position is then no longer the
-//! only thing between a caller and a tenant purge.
+//! `401` without it. Unconfigured, the broker closes those routes with a
+//! secret nobody holds ([`AdminAuth::closed`]) unless the deployment opts
+//! out with `ANTARES_ADMIN_OPEN=1` (a throwaway test stack). A network
+//! position is then no longer the only thing between a caller and a tenant
+//! purge.
 
 use crate::state::AppState;
 use axum::{
@@ -56,6 +58,22 @@ impl AdminAuth {
             token: crate::secret::Secret::new(secret),
             metrics_open,
         })
+    }
+
+    /// A credential nobody holds: 244 random bits made at start and never
+    /// written anywhere, so every guarded `/q` route answers `401`. What a
+    /// broker with no configured credential serves (SEC-16).
+    #[must_use]
+    pub fn closed(metrics_open: bool) -> Self {
+        let secret = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        Self {
+            token: crate::secret::Secret::new(&secret),
+            metrics_open,
+        }
     }
 
     /// The credential a deployment configured: `file` is
@@ -472,6 +490,21 @@ mod tests {
 
     fn auth() -> AdminAuth {
         AdminAuth::new(SECRET, false).expect("a 32-byte secret is accepted")
+    }
+
+    #[test]
+    fn a_closed_credential_admits_no_bearer() {
+        let closed = AdminAuth::closed(false);
+        for presented in [
+            &b"Bearer "[..],
+            b"Bearer",
+            b"",
+            b"Bearer 0000000000000000000000000000000000000000",
+        ] {
+            assert!(!closed.admits(Some(presented)));
+        }
+        assert!(!closed.admits(None));
+        assert!(AdminAuth::closed(true).metrics_open);
     }
 
     #[test]

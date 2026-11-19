@@ -24,6 +24,11 @@ pub const MODEL: &str = "multilingual-e5-small-int8";
 /// The SHA-256 of the ONNX file [`MODEL`] names, which every answer carries.
 pub const MODEL_SHA256: &str = MODEL_FILES[0].1;
 
+/// The most bytes of one text the service embeds by default (`[limits] max_text_bytes`): a
+/// caller keeps each text within it. The model reads at most 512 tokens, a few thousand bytes,
+/// so a longer text adds nothing to its vector.
+pub const MAX_TEXT_BYTES: usize = 8 * 1024;
+
 /// The service's audience: the scope a calling deployment asks kaisatsu for.
 pub const AUDIENCE: &str = "embedder";
 
@@ -87,6 +92,10 @@ pub enum Error {
     /// The embedder service answered no vectors.
     #[error("the embedder refused: {0}")]
     Refused(String),
+    /// The embedder service refused the texts themselves (`413`, a text over its
+    /// `max_text_bytes`): sending the same texts again is refused again.
+    #[error("the embedder refused the text: {0}")]
+    TooLarge(String),
     /// The embedder service could not be reached.
     #[error("the embedder is unreachable: {0}")]
     Unreachable(String),
