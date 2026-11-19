@@ -183,7 +183,9 @@ pub fn index_rows(reg: &Value) -> Vec<Value> {
             "mode": mode_code(reg),
             "ops": ops_mask(reg),
             "tenant_at_peer": reg.get("tenant").and_then(Value::as_str),
-            "headers": reg.get("contextSourceInfo"),
+            // no `contextSourceInfo` copy: those are the forward's headers,
+            // sealed in the registration row (seal.rs); the matcher and the
+            // forwarder read the opened registration
             // Table 5.2.9-1 names this member `contextSourceAlias` — the
             // peer's tenant-specific loop pseudonym. (`hostAlias` is the
             // prose spelling 6.3.18 uses and the csource_index column name;
@@ -270,14 +272,14 @@ async fn rebuild_csource_index(
         "INSERT INTO csource_index
            (tenant_id, registration_id, entity_id, id_pattern, entity_type,
             property_name, relationship_name, scopes, expires_at, endpoint,
-            mode, ops, tenant_at_peer, headers, host_alias, location)
+            mode, ops, tenant_at_peer, host_alias, location)
          SELECT $1, $2, e->>'entity_id', e->>'id_pattern', e->>'entity_type',
                 e->>'property_name', e->>'relationship_name',
                 CASE WHEN e->'scopes' = 'null'::jsonb THEN NULL
                      ELSE ARRAY(SELECT jsonb_array_elements_text(e->'scopes')) END,
                 (e->>'expires_at')::timestamptz, e->>'endpoint',
                 (e->>'mode')::smallint, (e->>'ops')::bigint,
-                e->>'tenant_at_peer', e->'headers', e->>'host_alias',
+                e->>'tenant_at_peer', e->>'host_alias',
                 CASE WHEN ST_IsValid(try_geomfromgeojson(e->>'location'))
                      THEN try_geomfromgeojson(e->>'location') END
          FROM jsonb_array_elements($3::jsonb) AS e",
@@ -339,6 +341,14 @@ async fn insert_doc(
         .await?
         .map(|r| r.get::<bool, _>(0)))
 }
+
+/// The kinds whose rows hold a credential [`super::seal`] seals.
+const SEALED_KINDS: [DocKind; 4] = [
+    DocKind::Subscription,
+    DocKind::CSourceSubscription,
+    DocKind::DeadLetter,
+    DocKind::Registration,
+];
 
 /// The row a sealed credential is bound to ([`super::seal::Row`]).
 fn seal_row<'a>(kind: DocKind, tenant: &'a TenantId, id: &'a str) -> super::seal::Row<'a> {
@@ -973,7 +983,9 @@ impl PgDocStore {
     /// without a key it seals nothing. Each row is rewritten through
     /// [`Self::mutate`], under its row lock, so a concurrent write is never
     /// lost. Then it reseals the rows of a renamed Tenant
-    /// (`reseal_renamed`). Answers how many rows it sealed.
+    /// (`reseal_renamed`). Answers how many rows it sealed. It also clears
+    /// the `contextSourceInfo` copy `csource_index.headers` held before the
+    /// index stopped writing it.
     pub async fn seal_plaintext(&self) -> Result<u64, sqlx::Error> {
         if self.key.is_none() {
             return Ok(0);
@@ -986,12 +998,22 @@ impl PgDocStore {
         if !tenants.iter().any(|t| t == TenantId::DEFAULT) {
             tenants.push(TenantId::DEFAULT.to_owned());
         }
+        for raw in &tenants {
+            let tenant = TenantId::try_from(raw.clone())
+                .map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
+            let mut tx = super::begin(&self.pool).await?;
+            crate::store::pg::set_tenant(&mut tx, &tenant).await?;
+            sqlx::query(
+                "UPDATE csource_index SET headers = NULL
+                  WHERE tenant_id = $1 AND headers IS NOT NULL",
+            )
+            .bind(tenant.as_str())
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
         let mut sealed = 0u64;
-        for kind in [
-            DocKind::Subscription,
-            DocKind::CSourceSubscription,
-            DocKind::DeadLetter,
-        ] {
+        for kind in SEALED_KINDS {
             let Some(path) = super::seal::plaintext_path(kind) else {
                 continue;
             };
@@ -1040,11 +1062,7 @@ impl PgDocStore {
             let tenant =
                 TenantId::try_from(raw).map_err(|e| sqlx::Error::Configuration(Box::new(e)))?;
             let former = self.former_names(&tenant).await?;
-            for kind in [
-                DocKind::Subscription,
-                DocKind::CSourceSubscription,
-                DocKind::DeadLetter,
-            ] {
+            for kind in SEALED_KINDS {
                 // literals from DocKind
                 let sql = format!(
                     "SELECT id FROM {} WHERE tenant_id = $1 AND {}::text LIKE '%\"{}%' ORDER BY id",
@@ -1179,7 +1197,19 @@ impl PgDocStore {
         let rows = q.bind(MAX_UNDECIDED_ROWS).fetch_all(&mut *tx).await?;
         tx.commit().await?;
         check_ceiling(false, rows.len(), MAX_UNDECIDED_ROWS)?;
-        Ok(rows.into_iter().map(|r| r.get::<Value, _>(1)).collect())
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(
+                self.opened(
+                    DocKind::Registration,
+                    tenant,
+                    &r.get::<String, _>(0),
+                    r.get::<Value, _>(1),
+                )
+                .await?,
+            );
+        }
+        Ok(out)
     }
 
     /// Bookkeeping columns straight from the row (test hook: rows are truth).

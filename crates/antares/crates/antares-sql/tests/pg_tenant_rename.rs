@@ -536,14 +536,15 @@ async fn the_rename_rewrites_only_the_members_that_name_a_tenant() {
         .await
         .expect("registration");
         assert_eq!(reg, r, "{tenant}");
-        let headers: serde_json::Value = sqlx::query_scalar(
+        // the index keeps no copy of the forward's headers (T-7296)
+        let headers: Option<serde_json::Value> = sqlx::query_scalar(
             "SELECT headers FROM csource_index WHERE tenant_id = $1 AND registration_id = 'urn:ngsi-ld:R:r' LIMIT 1",
         )
         .bind(&tenant)
         .fetch_one(&pool)
         .await
         .expect("index row");
-        assert_eq!(headers, r["contextSourceInfo"], "{tenant}");
+        assert_eq!(headers, None, "{tenant}");
     }
     db.drop().await;
 }

@@ -44,7 +44,7 @@ async fn tenant(pool: &sqlx::PgPool, name: &str) -> TenantId {
 /// test, and a broker started there without this key fails each read of
 /// such a row (antares-broker upsert_transactions never went idle).
 async fn forget(pool: &sqlx::PgPool, name: &str) {
-    for table in ["subscriptions", "dead_letters"] {
+    for table in ["subscriptions", "dead_letters", "csource_registrations"] {
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DELETE FROM {table} WHERE tenant_id = '{name}'"
         )))
@@ -219,6 +219,103 @@ async fn rows_written_before_the_key_are_read_and_sealed_at_boot() {
         "{still} after a second pass sealing {again}"
     );
     forget(&pool, "pgsealboot").await;
+}
+
+fn reg(id: &str) -> Value {
+    json!({"id": id, "type": "ContextSourceRegistration", "endpoint": "http://cs.example",
+           "information": [{"entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Room"}]}],
+           "contextSourceInfo": [{"key": "Authorization", "value": TOKEN}]})
+}
+
+/// `csource_index.headers` of one registration's rows, read past the store.
+async fn index_headers(pool: &sqlx::PgPool, t: &TenantId, id: &str) -> Vec<Option<Value>> {
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('antares.tenant', $1, true)")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant setting");
+    let rows = sqlx::query_scalar(
+        "SELECT headers FROM csource_index WHERE tenant_id = $1 AND registration_id = $2",
+    )
+    .bind(t.as_str())
+    .bind(id)
+    .fetch_all(&mut *tx)
+    .await
+    .expect("index rows");
+    tx.commit().await.expect("commit");
+    rows
+}
+
+/// T-7296: a registration's contextSourceInfo is sealed in its row, every
+/// read (the 5.12 candidate read included) opens it, and the match index
+/// keeps no copy of it; a registration from before the key is sealed at
+/// boot and its old index copy cleared.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registration_is_sealed_and_its_index_keeps_no_header_copy() {
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("pool");
+    let t = tenant(&pool, "pgsealreg").await;
+    let csi = |d: &Value| d["contextSourceInfo"][0]["value"].clone();
+    let legacy = "urn:ngsi-ld:ContextSourceRegistration:legacy";
+    PgDocStore::new(pool.clone())
+        .upsert(&t, DocKind::Registration, legacy, &reg(legacy))
+        .await
+        .expect("legacy");
+    // the copy a release before this one wrote into the index
+    let mut tx = pool.begin().await.expect("tx");
+    sqlx::query("SELECT set_config('antares.tenant', $1, true)")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("tenant setting");
+    sqlx::query(
+        "UPDATE csource_index SET headers = $3 WHERE tenant_id = $1 AND registration_id = $2",
+    )
+    .bind(t.as_str())
+    .bind(legacy)
+    .bind(&reg(legacy)["contextSourceInfo"])
+    .execute(&mut *tx)
+    .await
+    .expect("old copy");
+    tx.commit().await.expect("commit");
+
+    let s = PgDocStore::new(pool.clone())
+        .with_secret_key(SecretKey::from_base64(TEST_KEY).expect("key"));
+    let id = "urn:ngsi-ld:ContextSourceRegistration:sealed";
+    assert!(s
+        .create(&t, DocKind::Registration, id, &reg(id))
+        .await
+        .expect("create"));
+    let text = raw(&pool, &t, "csource_registrations", "registration", id).await;
+    assert!(
+        !text.contains("the-webhook-token") && text.contains("enc:v1:"),
+        "{text}"
+    );
+    assert_eq!(index_headers(&pool, &t, id).await, vec![None]);
+    let got = s
+        .get(&t, DocKind::Registration, id)
+        .await
+        .expect("get")
+        .expect("row");
+    assert_eq!(csi(&got), TOKEN);
+    let candidates = s
+        .matching_registrations(&t, None, None)
+        .await
+        .expect("candidates");
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates.iter().all(|d| csi(d) == TOKEN), "{candidates:?}");
+
+    // no count: the other tests' boot passes share the database and may
+    // seal this row first
+    s.seal_plaintext().await.expect("seal");
+    let text = raw(&pool, &t, "csource_registrations", "registration", legacy).await;
+    assert!(
+        !text.contains("the-webhook-token") && text.contains("enc:v1:"),
+        "{text}"
+    );
+    assert_eq!(index_headers(&pool, &t, legacy).await, vec![None]);
+    forget(&pool, "pgsealreg").await;
 }
 
 /// The bounce of T-5838: a dump holder who can create subscriptions pastes

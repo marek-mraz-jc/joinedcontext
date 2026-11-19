@@ -1125,17 +1125,17 @@ async fn build_builtin(
                         if sealing {
                             let sealed = store.seal_plaintext_credentials().await.map_err(|e| {
                                 format!(
-                                    "ANTARES_SECRET_KEY: sealing stored receiverInfo failed: {e}"
+                                    "ANTARES_SECRET_KEY: sealing stored credentials failed: {e}"
                                 )
                             })?;
                             tracing::info!(
-                                "ANTARES_SECRET_KEY: receiverInfo is sealed at rest \
-                                 ({sealed} row(s) written before the key sealed now)"
+                                "ANTARES_SECRET_KEY: receiverInfo and contextSourceInfo are sealed \
+                                 at rest ({sealed} row(s) written before the key sealed now)"
                             );
                         } else {
                             tracing::warn!(
-                                "ANTARES_SECRET_KEY is not set: Subscription receiverInfo \
-                                 (notification credentials) is stored in plaintext"
+                                "ANTARES_SECRET_KEY is not set: Subscription receiverInfo and \
+                                 Registration contextSourceInfo (credentials) are stored in plaintext"
                             );
                         }
                         if async_batch {

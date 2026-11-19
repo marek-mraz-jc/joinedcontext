@@ -735,7 +735,10 @@ async fn check_entity_conflict(
 /// (5.8.6), a Registration has no `status` member that keeps an expired one
 /// visible.
 /// A patch's masked contextSourceInfo values (as a read answered them) keep
-/// the stored ones, on the stored endpoint only.
+/// the stored ones, on the stored endpoint only. The stored pairs are the
+/// headers given for the stored endpoint: a patch that moves the endpoint
+/// and carries no contextSourceInfo drops them (Decided T-7296), so they
+/// are never sent to the new endpoint.
 fn keep_masked_csi(
     norm: &mut Map<String, Value>,
     stored: &Map<String, Value>,
@@ -750,7 +753,12 @@ fn keep_masked_csi(
             stored.get("contextSourceInfo"),
             moved,
         ),
-        None => Ok(()),
+        None => {
+            if moved && stored.contains_key("contextSourceInfo") {
+                norm.insert("contextSourceInfo".into(), Value::Null);
+            }
+            Ok(())
+        }
     }
 }
 
