@@ -143,6 +143,7 @@ pub async fn message(State(gateway): State<Arc<Gateway>>, mut request: Request) 
     }
 
     let caller = rate_limit::caller_key(&gateway, request.headers());
+    let host = request.extensions().get::<HostOrganization>().cloned();
     let (_, body) = request.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, MAX_BODY).await else {
         return jsonrpc::parse_error();
@@ -157,6 +158,7 @@ pub async fn message(State(gateway): State<Arc<Gateway>>, mut request: Request) 
         caller,
         server: None,
         reads_only: anonymous,
+        host,
     };
     let mut response = match hub.answer(message).await {
         Answer::Json(answer) => jsonrpc::json_response(StatusCode::OK, &answer),
@@ -517,6 +519,8 @@ pub(crate) struct Hub {
     /// No token on this request, on the hub or a named server: only
     /// [`tools::ANONYMOUS_TOOLS`] are listed and called (T-4168).
     pub(crate) reads_only: bool,
+    /// The Organization whose host the hub answers on, which names it (MCP-31).
+    pub(crate) host: Option<HostOrganization>,
 }
 
 pub(crate) enum Answer {
@@ -627,7 +631,7 @@ impl Hub {
                             "resources": { "listChanged": false },
                         },
                         "serverInfo": {
-                            "name": "joinedcontext-hub",
+                            "name": hub_name(self.host.as_ref()),
                             "version": env!("CARGO_PKG_VERSION"),
                         },
                         "instructions": format!("{}\n\n{}", untrusted::NOTICE, *super::PRIMER),
@@ -1479,6 +1483,16 @@ fn attributes_of(
 }
 
 /// The tool that answers the caller's list (ADR-N-025 2.1).
+/// The hub's `serverInfo.name` (MCP-31): `{org}.data` on an Organization's host, built from
+/// its name alone (jc.toml's or the host registry's identifier), so no two Organizations' doors
+/// share one; the installation's hub keeps its own name.
+fn hub_name(host: Option<&HostOrganization>) -> String {
+    host.map_or_else(
+        || "joinedcontext-hub".to_owned(),
+        |h| format!("{}.data", h.0),
+    )
+}
+
 pub(crate) fn list_endpoints_tool() -> Value {
     // The codes an agent may filter by, each with its English label (AG-124).
     let themes = jc_core::kinds::DataTheme::ALL
@@ -1747,6 +1761,7 @@ mod tests {
             caller: "caller".to_owned(),
             server: None,
             reads_only: anonymous,
+            host: None,
         }
     }
 

@@ -89,6 +89,11 @@ fn app(realm: &common::Realm) -> Router {
 
 /// [`app`] whose Organizations declare `domains`.
 fn app_with(realm: &common::Realm, domains: &[(&str, &str)]) -> Router {
+    router(Arc::new(gateway_with(realm, domains)))
+}
+
+/// The gateway of [`app_with`].
+fn gateway_with(realm: &common::Realm, domains: &[(&str, &str)]) -> Gateway {
     let gateway = Gateway::new(
         Broker::new("http://127.0.0.1:1"),
         Box::new(PolicyPdp),
@@ -119,7 +124,7 @@ fn app_with(realm: &common::Realm, domains: &[(&str, &str)]) -> Router {
         server("pa", "open", Audience::Public),
         server("pb", "private", Audience::Organization),
     ]);
-    router(Arc::new(gateway))
+    gateway
 }
 
 /// A named server in `project` that selects every Endpoint its audience takes.
@@ -209,6 +214,111 @@ async fn the_anonymous_hub_lists_only_the_hosts_organization() {
     assert_eq!(listed(&app, None).await, [ALPHA, BETA]);
     // A host of an Organization with no Endpoint lists none.
     assert!(listed(&app, Some("gamma")).await.is_empty());
+}
+
+/// T-7411 (jc-prod: smartcity's host listed 0 of its 667): the Organization jc runs a project
+/// under decides its host, not the `organizationRef` its manifest names, which in one jc
+/// Organization's repository may be another Organization (bratislava, hel). Here the manifests
+/// name the crossed Organizations, so going by them shows each host the other's Endpoint.
+#[tokio::test]
+async fn the_organization_jc_runs_a_project_under_decides_its_host() {
+    let realm = common::Realm::new();
+    let gateway = gateway_with(&realm, &[]);
+    gateway.replace_provenance(Provenance {
+        organizations: [("pa", "beta"), ("pb", "alpha")]
+            .into_iter()
+            .map(|(p, o)| (p.to_owned(), o.to_owned()))
+            .collect(),
+        ..Provenance::without_organizations()
+    });
+    gateway.replace_project_tenants(
+        [("pa", "alpha"), ("pb", "beta")]
+            .into_iter()
+            .map(|(p, o)| (p.to_owned(), o.to_owned()))
+            .collect(),
+    );
+    let app = router(Arc::new(gateway));
+    assert_eq!(listed(&app, Some("alpha")).await, [ALPHA]);
+    assert_eq!(listed(&app, Some("beta")).await, [BETA]);
+    // The installation's host lists both, as before: an Organization's host never widens it.
+    assert_eq!(listed(&app, None).await, [ALPHA, BETA]);
+    for (host, other) in [("alpha", BETA), ("beta", ALPHA)] {
+        let (status, _) = send(
+            &app,
+            Some(host),
+            Method::GET,
+            &format!("/api/endpoint/{other}/"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{host} answers {other}");
+    }
+    // A signed-in caller's reach on a host holds that Organization's Endpoints alone (MCP-26).
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "ana",
+        "preferred_username": "ana",
+        "aud": "mcp-hub",
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    for (host, own) in [("alpha", ALPHA), ("beta", BETA)] {
+        let mut request = Request::builder()
+            .method(Method::POST)
+            .uri("/api/mcp")
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(tool("list_endpoints", json!({})).to_string()))
+            .expect("a request");
+        request
+            .extensions_mut()
+            .insert(HostOrganization(host.to_owned()));
+        let response = app.clone().oneshot(request).await.expect("an answer");
+        let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+            .await
+            .expect("a body");
+        let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        let slugs: Vec<&str> = answer["result"]["structuredContent"]["endpoints"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no list on {host}: {answer}"))
+            .iter()
+            .filter_map(|e| e["slug"].as_str())
+            .collect();
+        assert_eq!(slugs, [own], "{host} signed in");
+    }
+}
+
+/// MCP-31: each Organization's hub names itself from the Organization's name, so two
+/// Organizations' doors never share a `serverInfo.name`; the installation's keeps its own.
+#[tokio::test]
+async fn each_organizations_hub_has_its_own_server_name() {
+    let realm = common::Realm::new();
+    let app = app(&realm);
+    let initialize = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "protocolVersion": "2025-06-18", "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "1" } },
+    });
+    let mut names = Vec::new();
+    for host in [Some("alpha"), Some("beta"), None] {
+        let (status, text) = send(
+            &app,
+            host,
+            Method::POST,
+            "/api/mcp",
+            Some(initialize.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{host:?}: {text}");
+        let answer: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        names.push(
+            answer["result"]["serverInfo"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+        );
+    }
+    assert_eq!(names, ["alpha.data", "beta.data", "joinedcontext-hub"]);
 }
 
 /// A named server selects only the host's Organization's Endpoints, and its metadata on another

@@ -981,6 +981,14 @@ pub async fn build(
     let built = context_gateway::serve::build(&config, broker)
         .await
         .map_err(err)?;
+    // Each Organization's host lists the projects jc runs under it (T-7411).
+    #[cfg(feature = "portal")]
+    {
+        let gateway = std::sync::Arc::clone(&built.gateway);
+        super::follow::PROJECT_TENANTS.follow("gateway", move |tenants| {
+            gateway.replace_project_tenants(tenants.clone());
+        });
+    }
     if let (Some(kaisatsu), Some(realms)) = (follow_realms, built.organization_realms.clone()) {
         let scheme = mount.scheme.clone();
         super::sign_in::follow("gateway", move |set| {
