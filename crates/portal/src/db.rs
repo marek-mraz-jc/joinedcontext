@@ -87,7 +87,7 @@ pub async fn connect_with(
     if set_aside > 0 {
         tracing::warn!(
             rows = set_aside,
-            "migration 0080 set aside project rows of names no Project ever had: they are in \
+            "a migration set aside project rows no project can key (0080, 0086): they are in \
              project_rows_set_aside; an operator restores a row by hand once its project exists"
         );
     }
@@ -381,9 +381,10 @@ pub struct SyncStateRow {
     pub paused: bool,
 }
 
-/// The state of one source, `None` before its first run.
+/// The state of one source, `None` before its first run. `conn` is the project's
+/// [`tenant_tx`]: the table answers only under its key (T-7281).
 pub async fn load_sync_state(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     namespace: &str,
     name: &str,
 ) -> Result<Option<SyncStateRow>, sqlx::Error> {
@@ -394,13 +395,17 @@ pub async fn load_sync_state(
     )
     .bind(namespace)
     .bind(name)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 
 /// Replaces the row whole: a run's state is one value, and writing half of it is how a
-/// restarted Portal would re-propose a revision it had already proposed.
-pub async fn save_sync_state(pool: &PgPool, row: &SyncStateRow) -> Result<(), sqlx::Error> {
+/// restarted Portal would re-propose a revision it had already proposed. `conn` is the
+/// project's [`tenant_tx`], whose key stamps the row.
+pub async fn save_sync_state(
+    conn: &mut sqlx::PgConnection,
+    row: &SyncStateRow,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO sync_source_state (namespace, name, observed_revision, last_run_at, \
          open_proposal, open_revision, merge_request, last_error, paused, updated_at) \
@@ -420,7 +425,7 @@ pub async fn save_sync_state(pool: &PgPool, row: &SyncStateRow) -> Result<(), sq
     .bind(&row.merge_request)
     .bind(&row.last_error)
     .bind(row.paused)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }
