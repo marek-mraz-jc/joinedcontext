@@ -206,7 +206,8 @@ def prune_runs(runs: Path, now: dt.datetime) -> None:
 
 
 class Board:
-    """The incidents' tasks: tasks/newid, a task file, tasks/note; closed with tasks/claim done."""
+    """The incidents' tasks: tasks/newid, a task file claimed for the owner, tasks/note; closed with
+    tasks/claim done, which changes a task only when tasks/.claims/<id>/owner names the owner."""
 
     def __init__(self, path: Path | None, cluster: str, owner: str, dry: bool = False):
         self.path, self.cluster, self.owner, self.dry = path, cluster, owner, dry
@@ -249,6 +250,7 @@ Opened {at} by bins/jc/smoke/orgs/watch.py (T-7309, T-7378) on {self.cluster}: {
 The watch rewrites the list above on every run whose red checks differ and closes this task on the
 first run where all of them pass. The run's rows: <state>/runs/ on s1 (watch.toml `state`).
 """)
+        self.claim(tid)
         self.tool("note", f"@{self.owner} {tid}: {self.cluster} {what}: {len(rows)} check(s) "
                   f"({', '.join(r['id'] for r in rows[:5])}{', ...' if len(rows) > 5 else ''})")
         return tid
@@ -265,13 +267,28 @@ first run where all of them pass. The run's rows: <state>/runs/ on s1 (watch.tom
         new, n = BLOCK.subn(lambda _: block, text, count=1)
         f.write_text(new if n else f"{text.rstrip()}\n\n{block}\n")
 
+    def claim(self, tid: str, *status: str) -> None:
+        self.tool("claim", tid, *status, env={"AGENT_NAME": self.owner})
+
     def close(self, tid: str, key: str, why: str, at: str) -> None:
         if not self.path or self.dry or tid.startswith("dry-"):
             return
-        if f := self.task_file(tid):
-            with f.open("a") as fh:
-                fh.write(f"\nClosed {at} by orgs/watch.py: {key} {why}.\n")
-        self.tool("claim", tid, "done", env={"AGENT_NAME": self.owner})
+        f = self.task_file(tid)
+        if not f:
+            raise RuntimeError(f"no task file {tid}-*.md")
+        text = f.read_text()
+        # Only a task this watch opened (a per-check incident of T-7309 carries its check id as the key).
+        got = re.search(r"^incident: *(.+?) *$", text, re.MULTILINE)
+        if not got or got.group(1) != f"{self.cluster}/orgs/{key.removeprefix(ORG)}":
+            raise RuntimeError(f"{tid} is not this watch's incident {key} (incident: {got.group(1) if got else 'none'})")
+        if re.search(r"^status: *done *$", text, re.MULTILINE):
+            return
+        # An incident opened before T-7381 carries owner: but no claim, which tasks/claim done refuses.
+        if not (self.path / ".claims" / tid).is_dir():
+            self.claim(tid)
+        with f.open("a") as fh:
+            fh.write(f"\nClosed {at} by orgs/watch.py: {key} {why}.\n")
+        self.claim(tid, "done")
 
 
 ORG, CLUSTER = "org/", "cluster"

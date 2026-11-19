@@ -207,7 +207,10 @@ class Suite:
         self.scheme = a.scheme
         self.installation = (doc.get("identity") or {}).get("realm") or "jc"
         mount = (doc.get("mounts") or {}).get("kaisatsu")
-        self.login = (mount.get("host") if isinstance(mount, dict) else None) or doc.get("base_host", "")
+        mount = mount if isinstance(mount, dict) else {}
+        self.login = mount.get("host") or doc.get("base_host", "")
+        # Slug mode serves the sign-in module as /login on base_host (bins/jc/src/module.rs Module::slug).
+        self.login_path = "" if mount.get("host") or doc.get("mode") != "slug" else mount.get("path_prefix", "/login")
         mount = (doc.get("mounts") or {}).get("assistant")
         self.assistant_host = mount.get("host") if isinstance(mount, dict) else None
         mounts = (doc.get("mounts") or {}).get("gateway") or []
@@ -220,7 +223,7 @@ class Suite:
     def run(self) -> None:
         if self.gateway:
             self.prm("prm.gateway", "gateway", self.gateway, "/api/mcp",
-                     f"{self.scheme}://{self.login}/realms/{self.installation}")
+                     f"{self.scheme}://{self.login}{self.login_path}/realms/{self.installation}")
         for o, e in self.orgs.items():
             self.one(o, e)
 
@@ -230,11 +233,11 @@ class Suite:
         st, _, _ = self.http(portal).call("GET", "/")
         self.r.check(f"portal.{o}", o, f"GET {portal}/", "2xx/3xx", str(st), answered(st))
 
-        signin, realm = (hs["idm"], o) if hs.get("idm") else (self.login, self.installation)
-        issuer = f"{self.scheme}://{signin}/realms/{realm}"
-        st, _, raw = self.http(signin).call("GET", f"/realms/{realm}/.well-known/openid-configuration")
+        signin, at, realm = (hs["idm"], "", o) if hs.get("idm") else (self.login, self.login_path, self.installation)
+        issuer = f"{self.scheme}://{signin}{at}/realms/{realm}"
+        st, _, raw = self.http(signin).call("GET", f"{at}/realms/{realm}/.well-known/openid-configuration")
         got = (as_json(raw) or {}).get("issuer") if st == 200 else None
-        self.r.check(f"oidc.{o}", o, f"GET {signin}/realms/{realm}/.well-known/openid-configuration",
+        self.r.check(f"oidc.{o}", o, f"GET {signin}{at}/realms/{realm}/.well-known/openid-configuration",
                      f"200, issuer {issuer}", f"{st} {got or ''}".strip(), st == 200 and got == issuer)
 
         self.prm(f"prm.{o}", o, portal, "/api/v1/mcp", issuer)
@@ -371,7 +374,7 @@ def main(argv) -> int:
     p = argparse.ArgumentParser(prog="run orgs")
     p.add_argument("--out", required=True)
     p.add_argument("--base-url", help="ignored: the hosts come from --jc-config and --snapshot")
-    p.add_argument("--jc-config", required=True, help="the deployment's host-mode jc.toml")
+    p.add_argument("--jc-config", required=True, help="the deployment's host- or slug-mode jc.toml")
     p.add_argument("--deployment", required=True, help="its name, e.g. jc-prod")
     p.add_argument("--domain", required=True, help="its base_host, e.g. smartcity.joinedcontext.com")
     p.add_argument("--edge", required=True, help="the edge's IP address every host of the deployment reaches")
