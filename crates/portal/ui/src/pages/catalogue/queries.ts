@@ -16,7 +16,8 @@ export function datasetKey(name: string) {
 
 export function catalogueQuery(search: CatalogueSearch) {
   return {
-    queryKey: catalogueKey(search),
+    // Access picks among datasets already read, so the server's answer is the same (T-7389).
+    queryKey: catalogueKey({ ...search, access: undefined }),
     queryFn: async () =>
       unwrap(
         await api.GET("/api/v1/catalogue", {

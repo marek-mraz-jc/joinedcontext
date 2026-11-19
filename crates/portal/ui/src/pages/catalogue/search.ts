@@ -13,6 +13,8 @@ export interface CatalogueSearch {
   licence?: string[];
   spatial?: string[];
   year?: string[];
+  /** Signed in: only the datasets granted to the person, or only the public ones (T-7389). */
+  access?: "granted" | "public";
   page?: number;
 }
 
@@ -35,6 +37,9 @@ export function parseCatalogueSearch(search: Record<string, unknown>): Catalogue
       out[facet] = values;
     }
   }
+  if (search.access === "granted" || search.access === "public") {
+    out.access = search.access;
+  }
   const page = Number(search.page);
   if (Number.isInteger(page) && page > 1) {
     out.page = page;
@@ -51,7 +56,7 @@ export function toggled(search: CatalogueSearch, facet: FacetName, value: string
 
 /** Whether any filter or text narrows the list. */
 export function narrowed(search: CatalogueSearch): boolean {
-  return Boolean(search.q) || FACETS.some((facet) => (search[facet]?.length ?? 0) > 0);
+  return Boolean(search.q) || Boolean(search.access) || FACETS.some((facet) => (search[facet]?.length ?? 0) > 0);
 }
 
 /**

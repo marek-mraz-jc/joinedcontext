@@ -1227,7 +1227,7 @@
     },
     "src/pages/catalogue/CataloguePage.tsx": {
       "controls": {
-        "Button": 12,
+        "Button": 13,
         "Checkbox": 1
       },
       "tests": [
@@ -1248,6 +1248,14 @@
       },
       "tests": [
         "catalogue_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/ReadableDatasets.tsx": {
+      "controls": {
+        "Checkbox": 1
+      },
+      "tests": [
+        "member_catalogue.test.tsx"
       ]
     },
     "src/pages/catalogue/SubscribeMenu.tsx": {
