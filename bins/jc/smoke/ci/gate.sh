@@ -74,6 +74,19 @@ view() {
   done
 }
 
+# register <env> <pg port>: each Organization name read from stdin an active row of <env>'s Portal
+# Organization registry, as an installation's jc.toml seeds it (a row already there stays).
+register() {
+  local o
+  while read -r o; do
+    PGPASSWORD=$(cat "$REHEARSAL_HOME/$1/secrets/superuser") psql -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$2" \
+      -U postgres -d portal -v name="$o" <<'SQL'
+INSERT INTO organizations (name, host, state, created_by)
+VALUES (:'name', 'portal.' || :'name' || '.localhost', 'active', 'rehearsal') ON CONFLICT (name) DO NOTHING;
+SQL
+  done
+}
+
 # multiorg <env> <port> <pg port>: import the composed bundle into a fresh <env> and wait for its
 # reconciler, logging to <out>/<env>.log. A failure stops nothing: the multiorg rows then fail.
 # Pipelines held (no ekiben): multiorg reads their manifests only, and two more run queues would
@@ -82,6 +95,10 @@ multiorg() {
   fresh "$1"
   # the bundle's Environment overlay keeps {orgDomain} at the former installation's domain
   if JC_ENVIRONMENT=rehearsal REHEARSAL_HOLD_PIPELINES=1 "$repo/deploy/rehearsal/import.sh" "$1" "$2" "$3" "$mo_export"; then
+    # Path mode has no [[organizations]] entry (each needs a host of its own), so its registry is
+    # seeded here with the six, as host mode's jc.toml seeds them: without ops, the installation's,
+    # a person's connector and preferences on the shared host have no Organization key (T-7282).
+    if [ "$1" = mo-path ]; then printf '%s\n' "${mo_orgs[@]%%=*}" | register "$1" "$3"; fi
     converge "$1" 0
   else
     echo "gate: $1: import FAILED; its multiorg rows fail"
@@ -162,13 +179,7 @@ reports gate ""
 # with a host of its own, and any entry turns off dataroom's loopback default catalogue, which
 # every suite reads at 127.0.0.1/opendata. The backfill places the projects within a minute.
 sed -n 's/^  organizationRef: *//p' "$export_dir"/gitea/files/*/configuration/projects/*.yaml | sort -u |
-  while read -r o; do
-    PGPASSWORD=$(cat "$home/secrets/superuser") psql -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$pg_port" \
-      -U postgres -d portal -v name="$o" <<'SQL'
-INSERT INTO organizations (name, host, state, created_by)
-VALUES (:'name', 'portal.' || :'name' || '.localhost', 'active', 'rehearsal') ON CONFLICT (name) DO NOTHING;
-SQL
-  done
+  register gate "$pg_port"
 # The red proof: SMOKE_STOP=<module> restarts jc without that module, and the verdict must be RED.
 if [ -n "${SMOKE_STOP:-}" ]; then
   roles=$(printf '%s\n' kaisatsu dataroom daiya ekiben antares gateway portal shako | grep -vx "$SMOKE_STOP" | paste -sd,)

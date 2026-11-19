@@ -860,6 +860,71 @@ async fn sync_state_answers_only_under_its_projects_key() {
     assert_eq!(read(Some(key)).await.as_deref(), Some("c0ffee"));
 }
 
+/// T-7282, the smoke's multiorg@path: on a host Organizations share by path (no Organization host,
+/// no `JC_PORTAL_INSTALLATION_ORGANIZATION`), a person's connector takes the key of the
+/// installation Organization the mirror names, once the registry holds it; until then the create
+/// answers 409 with the next step instead of writing an unkeyed row.
+#[tokio::test]
+async fn a_shared_hosts_connector_takes_the_mirrors_installation_organization() {
+    use joinedcontext_portal::connectors::{ConnectorStore, NewConnector};
+    let pool = pool().await;
+    let (ops, hel) = (run_name("psops"), run_name("pshel"));
+    let mirror = std::sync::Arc::new(joinedcontext_portal::store::Mirror::default());
+    let org_ns = joinedcontext_portal::permissions::ORG_NAMESPACE;
+    mirror.upsert(envelope(
+        "Organization",
+        &ops,
+        org_ns,
+        json!({ "installation": true }),
+    ));
+    mirror.upsert(envelope("Organization", &hel, org_ns, json!({})));
+    let store = ConnectorStore::new(Some((pool.clone(), std::sync::Arc::clone(&mirror))), None);
+    let ask = || -> NewConnector {
+        serde_json::from_value(json!({
+            "name": "doprava", "segments": ["data-read"], "scope": [],
+            "expiresAt": "2030-01-01T00:00:00Z"
+        }))
+        .expect("a connector")
+    };
+    let (owner, base) = (run_name("f:1:hel-admin"), "https://portal.test");
+
+    let refused = store.create(&owner, ask(), vec![], base).await;
+    assert!(
+        matches!(&refused, Err(joinedcontext_portal::error::ApiError::Conflict(m)) if m.contains("installation Organization")),
+        "an installation Organization the registry lacks keys nothing: {refused:?}"
+    );
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $1 || '.example', 'active', 'test')",
+    )
+    .bind(&ops)
+    .execute(&pool)
+    .await
+    .expect("the registry holds ops");
+    let made = store
+        .create(&owner, ask(), vec![], base)
+        .await
+        .expect("created on the shared host");
+    let ops_key = project_ids::reserved(&pool, &ops)
+        .await
+        .expect("reserved")
+        .expect("ops' key");
+    let (org_id, project_id): (String, String) =
+        sqlx::query_as("SELECT org_id::text, project_id::text FROM connectors WHERE id = $1")
+            .bind(&made.id)
+            .fetch_one(&pool)
+            .await
+            .expect("the row");
+    assert_eq!(
+        (org_id, project_id),
+        (ops_key.org.to_string(), ops_key.project.to_string())
+    );
+    let listed = store.of_owner(&owner, base).await.expect("list");
+    assert_eq!(
+        listed.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+        [made.id.as_str()]
+    );
+}
+
 /// S1-27 (T-7282): a person's connectors, their calls and preferences answer only in the
 /// Organization the person used the Portal in. Before, they were read on the bare pool by subject
 /// or id, so a request on one Organization's host read, revoked or overwrote another's.
