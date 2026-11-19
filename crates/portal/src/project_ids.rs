@@ -50,7 +50,8 @@ pub const LEFT_UNKEYED: &[(&str, &str)] = &[
 ];
 
 /// The ids of the live projects `names`, minting one for each name the registry has not seen.
-/// A branch or copy (a row with a parent) never answers for its parent's name (TEN-12), and an
+/// A branch (a row with a parent) never answers for its parent's name (TEN-12), a restored copy
+/// is the live row of its own name (T-7208), and an
 /// Organization's reserved project never answers for a project spelled like it (TEN-11).
 pub async fn ensure(
     pool: &PgPool,
@@ -477,7 +478,7 @@ pub async fn open_branch(
 /// Why [`open_branch`] opened no branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoBranch {
-    /// The parent is no live project of an Organization: a reserved project, a branch or a copy.
+    /// The parent is no live project of an Organization: a reserved project or a branch.
     NotAParent,
     /// The parent already keeps as many live branches as the deployment allows.
     AtLimit,

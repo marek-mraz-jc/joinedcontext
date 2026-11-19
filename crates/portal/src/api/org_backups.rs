@@ -495,20 +495,25 @@ fn valid_version(version: &str) -> Result<(), ApiError> {
     }
 }
 
-async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u8>, ApiError> {
+/// GetObject of `version` of the target's object, its body not read yet.
+async fn object(
+    state: &AppState,
+    target: &Target,
+    version: &str,
+) -> Result<reqwest::Response, ApiError> {
     valid_version(version)?;
     let bucket = org_backup::bucket(state, target)?;
     let http = &state.org_backup_egress.http;
     let not_found = || ApiError::NotFound(format!("version '{version}' not found"));
-    match bucket.get(http, &target.object_key()?, version).await {
-        Ok(bytes) => Ok(bytes),
+    match bucket.object(http, &target.object_key()?, version).await {
+        Ok(response) => Ok(response),
         // A version id belongs to one key: one the run wrote before T-7207 is read at the key of
         // then, as long as the bucket keeps it (TEN-15). An S3 refuses another key's version id
         // as unknown (404) or as not one of this key's (400).
         Err(s3::S3Error::Status {
             status: 404 | 400, ..
         }) => bucket
-            .get(http, &target.legacy_object_key(), version)
+            .object(http, &target.legacy_object_key(), version)
             .await
             .map_err(|err| match err {
                 s3::S3Error::Status {
@@ -518,6 +523,14 @@ async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u
             }),
         Err(other) => Err(s3_unavailable(other)),
     }
+}
+
+/// `version` of the target's configuration bundle, in memory (a bundle is at most
+/// [`s3::MAX_OBJECT_BYTES`]).
+async fn fetch(state: &AppState, target: &Target, version: &str) -> Result<Vec<u8>, ApiError> {
+    s3::read_object(object(state, target, version).await?)
+        .await
+        .map_err(s3_unavailable)
 }
 
 #[utoipa::path(
@@ -552,14 +565,24 @@ async fn download_of(
 ) -> Result<Response, ApiError> {
     let organization = administered(state, &user.0.identity)?;
     let target = saved_target(state, &organization, kind).await?;
+    if kind == DATA {
+        // A data archive can be larger than the Portal should hold in memory: it streams through.
+        let response = object(state, &target, version).await?;
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{organization}-data.zip.age\""),
+                ),
+            ],
+            axum::body::Body::from_stream(response.bytes_stream()),
+        )
+            .into_response());
+    }
     let bytes = fetch(state, &target, version).await?;
     // A configuration version from before T-7268 is still the plain zip it was uploaded as.
-    let (content_type, file) = if kind == DATA {
-        (
-            "application/octet-stream",
-            format!("{organization}-data.zip.age"),
-        )
-    } else if !bytes.starts_with(b"PK\x03\x04") {
+    let (content_type, file) = if !bytes.starts_with(b"PK\x03\x04") {
         (
             "application/octet-stream",
             format!("{organization}-configuration.zip.age"),
@@ -1217,7 +1240,7 @@ async fn opened(
     let identity = org_backup::restore::identity_of(&Zeroizing::new(identity))?;
     valid_version(version)?;
     let logged = org_backup::restore::taken_by(state, &target.organization, version).await?;
-    let sealed = fetch(state, target, version).await?;
+    let sealed = org_backup::restore::receive(object(state, target, version).await?).await?;
     let sha256 = org_backup::restore::same_bytes(&sealed, &logged)?;
     let archive = org_backup::restore::open(
         sealed,

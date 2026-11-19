@@ -2062,16 +2062,29 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
             .expect("the path form");
     assert_ne!(copy_id, source_id);
     let copy = copy_id.to_string();
-    let (parent, organization): (String, String) =
+    let (parent, organization): (Option<String>, String) =
         sqlx::query_as("SELECT parent::text, organization FROM project_ids WHERE id = $1::uuid")
             .bind(&copy)
             .fetch_one(&db)
             .await
             .expect("the copy's registry row");
-    assert_eq!(
-        (parent.as_str(), organization.as_str()),
-        (source_id.to_string().as_str(), "alfa")
-    );
+    assert_eq!((parent, organization.as_str()), (None, "alfa"));
+    // The copy is the live project of its name: every reader by name enters its key, and the
+    // first request for a Project of that name gets no second id.
+    let by_name = joinedcontext_portal::project_ids::recorded(&db, "alfa-copy")
+        .await
+        .expect("registry")
+        .expect("the copy's key by its name");
+    assert_eq!(by_name.project, copy_id);
+    let ensured = joinedcontext_portal::project_ids::ensure(&db, &["alfa-copy".to_owned()])
+        .await
+        .expect("ensure");
+    assert_eq!(ensured.get("alfa-copy"), Some(&copy_id));
+    let keyed = joinedcontext_portal::project_ids::key(&db, "alfa", "alfa-copy")
+        .await
+        .expect("key")
+        .expect("the copy's key in its Organization");
+    assert_eq!(keyed, by_name);
     let lineage: (String, String) =
         sqlx::query_as("SELECT source::text, version_id FROM project_copies WHERE id = $1::uuid")
             .bind(&copy)

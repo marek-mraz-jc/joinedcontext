@@ -1203,6 +1203,7 @@ async fn upload(
     let key = target.object_key()?;
     let (size, sha256, put) = if target.kind == DATA {
         let (sealed, size, sha256) = data::encrypted_archive(state, target, actor).await?;
+        restorable(size)?;
         let put = bucket
             .put_file(http, &key, sealed.path(), size, s3::PART_BYTES)
             .await;
@@ -1222,6 +1223,24 @@ async fn upload(
         0
     });
     Ok((size, key, version, pruned, sha256))
+}
+
+/// Refuses a sealed data archive of `size` bytes that a restore would not read back
+/// ([`s3::MAX_ARCHIVE_BYTES`]): the run fails, so no version is logged that cannot be restored.
+fn restorable(size: u64) -> Result<(), ApiError> {
+    if size <= s3::MAX_ARCHIVE_BYTES {
+        return Ok(());
+    }
+    Err(ApiError::Unprocessable {
+        detail: format!(
+            "the data archive is {} MiB sealed, more than the {} MiB a restore reads back, so it \
+             was not uploaded: remove data the Organization no longer needs, or ask the platform \
+             operator to raise the bound",
+            size >> 20,
+            s3::MAX_ARCHIVE_BYTES >> 20
+        ),
+        errors: vec!["archive: larger than a restore reads back".into()],
+    })
 }
 
 /// The SHA-256 of `bytes`, lower-case hex: what the run log binds a version's bytes by.
@@ -1307,6 +1326,14 @@ pub fn spawn_schedule(state: AppState) {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// A run refuses a sealed archive a restore would not read back, and takes one at the bound.
+    #[test]
+    fn a_run_refuses_an_archive_a_restore_would_not_read_back() {
+        assert!(restorable(s3::MAX_ARCHIVE_BYTES).is_ok());
+        let err = restorable(s3::MAX_ARCHIVE_BYTES + 1).expect_err("refused");
+        assert!(err.to_string().contains("a restore reads back"), "{err}");
+    }
 
     fn envelope(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
         ResourceEnvelope {

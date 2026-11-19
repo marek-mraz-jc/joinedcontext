@@ -1,10 +1,10 @@
 //! The few S3 calls an Organization backup makes, signed with AWS Signature Version 4 (T-7154).
 //!
-//! Path-style requests (`{endpoint}/{bucket}/{key}`), so MinIO, Ceph and AWS answer alike. The
-//! body of every call is held in memory: a configuration bundle is manifests and schemas, capped
-//! by [`MAX_OBJECT_BYTES`]; a data archive past that goes up from its file in parts of
-//! [`PART_BYTES`] ([`Bucket::put_file`], T-7170). Errors name the call and the status, never the
-//! credentials.
+//! Path-style requests (`{endpoint}/{bucket}/{key}`), so MinIO, Ceph and AWS answer alike. A
+//! configuration bundle is manifests and schemas, held in memory and capped by
+//! [`MAX_OBJECT_BYTES`]; a data archive goes up from its file in parts of [`PART_BYTES`]
+//! ([`Bucket::put_file`], T-7170) and comes back into a file ([`stream_into`]), both up to
+//! [`MAX_ARCHIVE_BYTES`]. Errors name the call and the status, never the credentials.
 
 use std::time::Duration;
 
@@ -13,8 +13,11 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use zeroize::Zeroizing;
 
-/// The largest object a backup writes or reads back.
+/// The largest object a backup holds in memory: a configuration bundle, written or read back.
 pub const MAX_OBJECT_BYTES: usize = 256 * 1024 * 1024;
+/// The largest sealed data archive a run uploads and a restore reads back, both through a file:
+/// a run past it fails rather than log a version no restore can read.
+pub const MAX_ARCHIVE_BYTES: u64 = 1 << 30;
 /// One part of a multipart upload: S3 takes 5 MiB to 5 GiB a part and 10 000 parts.
 pub const PART_BYTES: usize = 64 * 1024 * 1024;
 /// The longest an answer to an S3 call may take.
@@ -137,6 +140,10 @@ pub enum S3Error {
     },
     /// The answer was not what the call expects.
     Unreadable(&'static str),
+    /// The object is larger than the reader takes.
+    TooLarge { call: &'static str, cap: u64 },
+    /// The scratch file the object streams into could not be written.
+    Scratch,
 }
 
 impl std::fmt::Display for S3Error {
@@ -153,6 +160,12 @@ impl std::fmt::Display for S3Error {
                 Ok(())
             }
             Self::Unreadable(call) => write!(f, "{call} answered something that is not S3 XML"),
+            Self::TooLarge { call, cap } => write!(
+                f,
+                "{call} answered an object larger than {} MiB, more than a backup of this Portal writes",
+                cap >> 20
+            ),
+            Self::Scratch => write!(f, "the Portal's temporary directory could not be written"),
         }
     }
 }
@@ -221,6 +234,76 @@ async fn read_part(file: std::fs::File, part: usize) -> Result<(std::fs::File, V
     .ok()
     .and_then(Result::ok)
     .ok_or(S3Error::Unreadable("the archive file"))
+}
+
+/// The body of a GetObject `response` in memory, up to [`MAX_OBJECT_BYTES`].
+pub async fn read_object(response: reqwest::Response) -> Result<Vec<u8>, S3Error> {
+    jc_core::outbound::read_capped(response, MAX_OBJECT_BYTES)
+        .await
+        .map_err(|err| match err {
+            jc_core::outbound::BodyError::TooLarge(_) => S3Error::TooLarge {
+                call: "GetObject",
+                cap: MAX_OBJECT_BYTES as u64,
+            },
+            _ => S3Error::Unreadable("GetObject"),
+        })
+}
+
+/// `body` appended to `file` and to `digest`, off the runtime.
+async fn append(
+    file: std::fs::File,
+    digest: Sha256,
+    body: Vec<u8>,
+) -> Result<(std::fs::File, Sha256), S3Error> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let (mut file, mut digest) = (file, digest);
+        file.write_all(&body)?;
+        digest.update(&body);
+        Ok::<_, std::io::Error>((file, digest))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .ok_or(S3Error::Scratch)
+}
+
+/// The body of a GetObject `response` streamed into `file` in writes of up to [`PART_BYTES`],
+/// refused once it passes `cap` bytes: its size and SHA-256 (lower-case hex), with the file
+/// rewound to its start.
+pub async fn stream_into(
+    mut response: reqwest::Response,
+    file: std::fs::File,
+    cap: u64,
+) -> Result<(std::fs::File, u64, String), S3Error> {
+    let too_large = S3Error::TooLarge {
+        call: "GetObject",
+        cap,
+    };
+    if response.content_length().is_some_and(|len| len > cap) {
+        return Err(too_large);
+    }
+    let (mut file, mut digest) = (file, Sha256::new());
+    let mut held = Vec::new();
+    let mut size = 0u64;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| S3Error::Unreachable(e.without_url().to_string()))?
+    {
+        size += chunk.len() as u64;
+        if size > cap {
+            return Err(too_large);
+        }
+        held.extend_from_slice(&chunk);
+        if held.len() >= PART_BYTES {
+            (file, digest) = append(file, digest, std::mem::take(&mut held)).await?;
+        }
+    }
+    (file, digest) = append(file, digest, held).await?;
+    use std::io::Seek;
+    file.rewind().map_err(|_| S3Error::Scratch)?;
+    Ok((file, size, hex(&digest.finalize())))
 }
 
 impl Bucket {
@@ -398,27 +481,22 @@ impl Bucket {
         Ok(parse_versions(&xml))
     }
 
-    /// GetObject of one version.
-    pub async fn get(
+    /// GetObject of one version: the answer, its body not read yet.
+    pub async fn object(
         &self,
         http: &reqwest::Client,
         key: &str,
         version_id: &str,
-    ) -> Result<Vec<u8>, S3Error> {
-        const CALL: &str = "GetObject";
-        let response = self
-            .call(
-                http,
-                CALL,
-                reqwest::Method::GET,
-                Some(key),
-                &[("versionId", version_id)],
-                Vec::new(),
-            )
-            .await?;
-        jc_core::outbound::read_capped(response, MAX_OBJECT_BYTES)
-            .await
-            .map_err(|_| S3Error::Unreadable(CALL))
+    ) -> Result<reqwest::Response, S3Error> {
+        self.call(
+            http,
+            "GetObject",
+            reqwest::Method::GET,
+            Some(key),
+            &[("versionId", version_id)],
+            Vec::new(),
+        )
+        .await
     }
 
     /// The file at `path` (`size` bytes) as the next version of `key`: one PutObject up to

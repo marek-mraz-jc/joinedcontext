@@ -20,7 +20,7 @@ use axum::body::Body;
 use axum::http::{Response, StatusCode, header};
 
 /// One project of the registry (`project_ids`) as the router reads it: a live project, or a
-/// branch with its expiry (TEN-12, CHG-15). A copy has no id address until it has one of its own.
+/// branch with its expiry (TEN-12, CHG-15). A restored copy is a live project of its own name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegistryProject<'a> {
     /// The Organization's name, what [`crate::Organization`] carries.

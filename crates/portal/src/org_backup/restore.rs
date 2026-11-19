@@ -183,10 +183,35 @@ pub async fn taken_by(
     }
 }
 
+/// A sealed data archive fetched into a scratch file, with its SHA-256.
+pub struct Sealed {
+    file: std::fs::File,
+    sha256: String,
+    _scratch: Scratch,
+}
+
+/// The body of a GetObject `response` in a scratch file, up to [`super::s3::MAX_ARCHIVE_BYTES`]
+/// (what a run uploads at most), never held in memory.
+pub async fn receive(response: reqwest::Response) -> Result<Sealed, ApiError> {
+    let (scratch, file) = Scratch::new(".zip.age")?;
+    let (file, _, sha256) = super::s3::stream_into(response, file, super::s3::MAX_ARCHIVE_BYTES)
+        .await
+        .map_err(|err| match err {
+            super::s3::S3Error::TooLarge { cap, .. } => too_large("the sealed archive", cap),
+            super::s3::S3Error::Scratch => internal(err),
+            other => ApiError::Unavailable(other.to_string()),
+        })?;
+    Ok(Sealed {
+        file,
+        sha256,
+        _scratch: scratch,
+    })
+}
+
 /// Refuses `sealed` unless it is the bytes a run logged for the version (`logged`, from
 /// [`taken_by`]); answers their SHA-256.
-pub fn same_bytes(sealed: &[u8], logged: &[String]) -> Result<String, ApiError> {
-    let sha256 = super::sha256_hex(sealed);
+pub fn same_bytes(sealed: &Sealed, logged: &[String]) -> Result<String, ApiError> {
+    let sha256 = sealed.sha256.clone();
     if logged.iter().any(|l| !l.is_empty() && *l == sha256) {
         Ok(sha256)
     } else {
@@ -208,11 +233,12 @@ pub struct Caps {
     pub total: u64,
 }
 
-/// The caps of a restore: a table's JSON lines up to 256 MiB, the archive up to 1 GiB. The
-/// sealed archive itself is at most 256 MiB.
+/// The caps of a restore: a table's JSON lines up to 256 MiB, the archive up to what a run
+/// uploads at most ([`super::s3::MAX_ARCHIVE_BYTES`]): age adds no compression, so the
+/// plaintext is no larger than the sealed object.
 pub const CAPS: Caps = Caps {
     entry: 256 << 20,
-    total: 1 << 30,
+    total: super::s3::MAX_ARCHIVE_BYTES,
 };
 
 /// The index of an archive is a few kilobytes.
@@ -266,10 +292,10 @@ pub struct Opened {
     _scratch: Scratch,
 }
 
-/// Decrypts `sealed` with `identity` into a scratch file and reads its index, which must be
+/// Decrypts `sealed` with `identity` into a second scratch file and reads its index, which must be
 /// this code's format and name `organization`.
 pub async fn open(
-    sealed: Vec<u8>,
+    sealed: Sealed,
     identity: age::x25519::Identity,
     organization: &str,
     caps: Caps,
@@ -277,7 +303,8 @@ pub async fn open(
     let (scratch, file) = Scratch::new(".zip")?;
     let path = scratch.path().to_path_buf();
     let opened = tokio::task::spawn_blocking(move || -> Result<_, ApiError> {
-        let decryptor = age::Decryptor::new(sealed.as_slice()).map_err(|_| unreadable())?;
+        let decryptor =
+            age::Decryptor::new(std::io::BufReader::new(&sealed.file)).map_err(|_| unreadable())?;
         let mut reader = decryptor
             .decrypt(std::iter::once(&identity as &dyn age::Identity))
             .map_err(|_| unreadable())?;
@@ -1019,6 +1046,47 @@ async fn keyed_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn served(body: Vec<u8>) -> (wiremock::MockServer, reqwest::Response) {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_bytes(body))
+            .mount(&server)
+            .await;
+        let response = reqwest::get(server.uri()).await.expect("GetObject");
+        (server, response)
+    }
+
+    /// A sealed archive larger than the bundle's in-memory cap, which a run uploads in parts, is
+    /// read back whole into a file and hashed there.
+    #[tokio::test]
+    async fn a_sealed_archive_past_the_in_memory_cap_is_received_whole() {
+        let size = super::super::s3::MAX_OBJECT_BYTES + 1;
+        let body: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        let sha256 = super::super::sha256_hex(&body);
+        let (_server, response) = served(body).await;
+        let sealed = receive(response).await.expect("received");
+        assert_eq!(sealed.sha256, sha256);
+        assert_eq!(sealed.file.metadata().expect("file").len(), size as u64);
+        assert_eq!(
+            same_bytes(&sealed, std::slice::from_ref(&sha256)).expect("same"),
+            sha256
+        );
+    }
+
+    /// Past its cap a GetObject body is refused with the cap named, and nothing more is read.
+    #[tokio::test]
+    async fn a_body_past_the_cap_is_refused_naming_it() {
+        let (_server, response) = served(vec![7u8; 3 << 20]).await;
+        let (_scratch, file) = Scratch::new(".zip.age").expect("scratch");
+        let err = super::super::s3::stream_into(response, file, 2 << 20)
+            .await
+            .expect_err("refused");
+        assert_eq!(
+            err.to_string(),
+            "GetObject answered an object larger than 2 MiB, more than a backup of this Portal writes"
+        );
+    }
 
     #[test]
     fn a_restored_row_is_written_only_under_the_organizations_key() {
