@@ -67,20 +67,11 @@ impl Principal {
             .is_some_and(|roles| roles.iter().any(|r| r == "realm-admin"))
     }
 
-    pub fn is_realm_applier(&self) -> bool {
-        self.is_realm_admin()
-            || self.realm_roles.iter().any(|r| r == "realm-apply")
-            || self
-                .client_roles
-                .get("realm-management")
-                .is_some_and(|roles| roles.iter().any(|r| r == "manage-realm"))
-    }
-
-    /// Whether the caller sets the realm's SMTP server (T-7152): a realm applier, or a holder of
-    /// `realm-management` `manage-smtp`, the one right the Portal's reconciler gets for it
-    /// instead of `manage-realm`.
+    /// Whether the caller sets the realm's SMTP server (T-7152): a realm administrator, or a
+    /// holder of `realm-management` `manage-smtp`, the one right the Portal's reconciler gets
+    /// for it.
     pub fn may_set_smtp(&self) -> bool {
-        self.is_realm_applier() || self.has_realm_mgmt_role("manage-smtp")
+        self.is_realm_admin() || self.has_realm_mgmt_role("manage-smtp")
     }
 
     pub fn has_realm_mgmt_role(&self, role: &str) -> bool {
@@ -322,11 +313,6 @@ impl LocalAuthorizer {
         {
             return None;
         }
-        // `realm-apply` / `manage-realm` reach realm-level objects; the role checks below still
-        // decide what they may do there (the realm itself: read and apply only).
-        if ctx.active_org_id.is_none() && target_org.is_none() && ctx.principal.is_realm_applier() {
-            return None;
-        }
         let Some(target) = target_org else {
             return Some(Decision::deny_hidden(
                 "realm-level object hidden from org caller",
@@ -389,15 +375,10 @@ impl Authorizer for LocalAuthorizer {
             .unwrap_or_default();
 
         match object {
-            ObjectTarget::Realm { .. } => {
-                if action == Action::Apply && ctx.principal.is_realm_applier() {
-                    Decision::allow("realm-apply")
-                } else if action == Action::Read && ctx.principal.is_realm_applier() {
-                    Decision::allow("realm-read")
-                } else {
-                    Decision::deny_visible("realm-admin or realm-apply required")
-                }
-            }
+            // Applying a realm document writes its users and their roles, clients, mappers and
+            // identity providers: whoever applies one holds the realm, so only `realm-admin`
+            // (allowed above) does. `realm-apply` and `manage-realm` grant nothing more.
+            ObjectTarget::Realm { .. } => Decision::deny_visible("realm-admin required"),
             ObjectTarget::Organization { org_id, .. } => {
                 if ctx.principal.has_org_role(org_id, "org-admin") {
                     Decision::allow("org-admin")

@@ -10,7 +10,7 @@
 //! - `POST /admin/realms/{realm}/smtp-server/test`: sends one test e-mail to `to` through the stored
 //!   settings, the host judged by the outbound guard (W12), and says whether the server took it.
 //!
-//! Each door needs a realm applier or `realm-management` `manage-smtp` (`Principal::may_set_smtp`),
+//! Each door needs a realm administrator or `realm-management` `manage-smtp` (`Principal::may_set_smtp`),
 //! in the realm itself, with no Organization pinned.
 
 use axum::extract::{Path, State};
@@ -180,7 +180,7 @@ async fn caller(
         Ok(ctx)
     } else {
         Err(KaisatsuError::Forbidden(
-            "the realm's SMTP server needs manage-smtp or a realm applier".into(),
+            "the realm's SMTP server needs manage-smtp or realm-admin".into(),
         ))
     }
 }
