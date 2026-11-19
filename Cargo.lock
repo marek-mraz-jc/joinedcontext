@@ -12691,6 +12691,7 @@ name = "shako-store-pg"
 version = "0.1.0"
 dependencies = [
  "jc-time",
+ "kaisatsu-crypto",
  "serde",
  "serde_json",
  "shako-core",

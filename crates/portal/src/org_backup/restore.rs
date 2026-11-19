@@ -614,7 +614,7 @@ pub async fn run(
         .await
         .map_err(failed)?
         .ok_or_else(|| super::unregistered(organization))?;
-    let mut tx = crate::db::tenant_tx(&pool, reserved)
+    let mut tx = crate::db::bulk_tenant_tx(&pool, reserved)
         .await
         .map_err(failed)?;
     if let Some(approval) = approval {

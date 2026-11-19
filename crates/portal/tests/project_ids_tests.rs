@@ -471,10 +471,12 @@ async fn migration_0067_keys_the_organizations_and_projects_of_today() {
         .expect("dropped");
 }
 
-const KEYED: [&str; 3] = [
+const KEYED: [&str; 5] = [
     "organization_backup_targets",
     "organization_backup_log",
     "organization_data_restores",
+    "agent_run_events",
+    "sync_source_state",
 ];
 
 #[tokio::test]
@@ -665,6 +667,196 @@ async fn a_backup_row_answers_only_under_its_organizations_key() {
 }
 
 /// A grafana_visualizations row of `project` written as before T-7196: no key.
+/// S1-27 (T-7278): a run's events answer only under its run's key. Before, they were read on the
+/// bare pool by run id, so another Organization reading by that id got the whole stream; and a
+/// write under another key never lands on the run.
+#[tokio::test]
+async fn a_runs_events_answer_only_under_its_organizations_key() {
+    let pool = pool().await;
+    let org = organization(&pool, "evorg").await;
+    let other = organization(&pool, "evother").await;
+    let key = project_ids::key(&pool, &org, &run_name("evp"))
+        .await
+        .expect("key")
+        .expect("a key");
+    let other_key = project_ids::key(&pool, &other, &run_name("evq"))
+        .await
+        .expect("key")
+        .expect("a key");
+    // A role of its own: GRANTs racing on one role's catalog rows fail a parallel test.
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE ev_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON agent_runs, agent_run_events TO ev_rls_reader",
+    )
+    .execute(&pool)
+    .await
+    .expect("the reader role");
+    let as_reader = |pool: sqlx::PgPool, key: Option<jc_types::ProjectKey>| async move {
+        let mut tx = match key {
+            Some(key) => joinedcontext_portal::db::tenant_tx(&pool, key)
+                .await
+                .expect("keyed"),
+            None => pool.begin().await.expect("begin"),
+        };
+        sqlx::query("SET LOCAL ROLE ev_rls_reader")
+            .execute(&mut *tx)
+            .await
+            .expect("role");
+        tx
+    };
+    let run = run_name("run");
+    let mut tx = as_reader(pool.clone(), Some(key)).await;
+    sqlx::query(
+        "INSERT INTO agent_runs (id, project, app_name, endpoint_name, endpoint_slug, profile, \
+         app_class, visibility, prompt, prompt_digest, data_needs, branch, path_prefix, status, \
+         ticket_hash, created_by, expires_at) VALUES ($1, 'evp', 'app', 'e', 's', 'default', \
+         'static', 'private', 'p', 'd', '[]', 'b', 'apps/app', 'running', '', 'test', \
+         now() + interval '1 hour')",
+    )
+    .bind(&run)
+    .execute(&mut *tx)
+    .await
+    .expect("a run under its key");
+    joinedcontext_portal::db::append_agent_run_event(&mut tx, &run, "status", &json!({"s": 1}))
+        .await
+        .expect("an event under the run's key");
+    tx.commit().await.expect("commit");
+
+    let read = |key: Option<jc_types::ProjectKey>| {
+        let (pool, run) = (pool.clone(), run.clone());
+        async move {
+            let mut tx = as_reader(pool, key).await;
+            let since = joinedcontext_portal::db::load_agent_run_events(&mut tx, &run, 0)
+                .await
+                .expect("read")
+                .len();
+            let of = joinedcontext_portal::db::load_agent_run_events_of(
+                &mut tx,
+                std::slice::from_ref(&run),
+                &["status"],
+            )
+            .await
+            .expect("read")
+            .len();
+            (since, of)
+        }
+    };
+    assert_eq!(read(Some(key)).await, (1, 1));
+    assert_eq!(
+        read(Some(other_key)).await,
+        (0, 0),
+        "another Organization reads none of the run's events"
+    );
+    assert_eq!(read(None).await, (0, 0), "the key unset reads no event");
+
+    let mut tx = as_reader(pool.clone(), Some(other_key)).await;
+    assert!(
+        joinedcontext_portal::db::append_agent_run_event(&mut tx, &run, "status", &json!({}))
+            .await
+            .is_err(),
+        "another Organization's key extends no run it cannot see"
+    );
+}
+
+/// S1-27 (T-7281): a project's sync memory answers only under its project's key. Before, it was
+/// read and written on the bare pool by project name, so another Organization read or overwrote
+/// it; `States` now opens the project's tenant_tx from the mirror.
+#[tokio::test]
+async fn sync_state_answers_only_under_its_projects_key() {
+    use joinedcontext_portal::db::{load_sync_state, save_sync_state, SyncStateRow};
+    use joinedcontext_portal::sync::state::{States, Stored};
+    let pool = pool().await;
+    let org = organization(&pool, "syorg").await;
+    let other = organization(&pool, "syother").await;
+    let (project, foreign) = (run_name("syp"), run_name("syq"));
+    let mirror = std::sync::Arc::new(joinedcontext_portal::store::Mirror::default());
+    for (name, organization) in [(&project, &org), (&foreign, &other)] {
+        mirror.upsert(envelope(
+            "Project",
+            name,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": organization }),
+        ));
+    }
+    let key = project_ids::key(&pool, &org, &project)
+        .await
+        .expect("key")
+        .expect("a key");
+    let other_key = project_ids::key(&pool, &other, &foreign)
+        .await
+        .expect("key")
+        .expect("a key");
+    let states = States::new(Some((pool.clone(), std::sync::Arc::clone(&mirror))));
+    let mut stored = Stored::default();
+    stored.state.observed_revision = Some("c0ffee".into());
+    states.put(&project, "regional", &stored).await;
+    assert_eq!(states.get(&project, "regional").await, stored);
+    assert_eq!(
+        states.get(&foreign, "regional").await,
+        Stored::default(),
+        "another project's source of the same name is its own"
+    );
+    assert_eq!(
+        states.get("no-such-project", "regional").await,
+        Stored::default()
+    );
+
+    // A role of its own: GRANTs racing on one role's catalog rows fail a parallel test.
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE sy_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON sync_source_state TO sy_rls_reader",
+    )
+    .execute(&pool)
+    .await
+    .expect("the reader role");
+    let as_reader = |pool: sqlx::PgPool, key: Option<jc_types::ProjectKey>| async move {
+        let mut tx = match key {
+            Some(key) => joinedcontext_portal::db::tenant_tx(&pool, key)
+                .await
+                .expect("keyed"),
+            None => pool.begin().await.expect("begin"),
+        };
+        sqlx::query("SET LOCAL ROLE sy_rls_reader")
+            .execute(&mut *tx)
+            .await
+            .expect("role");
+        tx
+    };
+    let read = |key: Option<jc_types::ProjectKey>| {
+        let (pool, project) = (pool.clone(), project.clone());
+        async move {
+            let mut tx = as_reader(pool, key).await;
+            load_sync_state(&mut tx, &project, "regional")
+                .await
+                .expect("read")
+                .and_then(|row| row.observed_revision)
+        }
+    };
+    assert_eq!(read(Some(key)).await.as_deref(), Some("c0ffee"));
+    assert_eq!(
+        read(Some(other_key)).await,
+        None,
+        "another Organization reads no sync state of the project"
+    );
+    assert_eq!(read(None).await, None, "the key unset reads no row");
+
+    let mut tx = as_reader(pool.clone(), Some(other_key)).await;
+    let overwrite = SyncStateRow {
+        namespace: project.clone(),
+        name: "regional".into(),
+        observed_revision: Some("evil".into()),
+        ..SyncStateRow::default()
+    };
+    assert!(
+        save_sync_state(&mut tx, &overwrite).await.is_err(),
+        "another Organization's key overwrites no row it cannot see"
+    );
+    drop(tx);
+    assert_eq!(read(Some(key)).await.as_deref(), Some("c0ffee"));
+}
+
 async fn unkeyed_visualization(pool: &sqlx::PgPool, project: &str) -> String {
     let id = run_name("viz");
     sqlx::query(

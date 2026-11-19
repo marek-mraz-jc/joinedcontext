@@ -21,6 +21,10 @@ pub struct Config {
     /// The internal listener, for the MQTT brokers' CONNECT checks only
     /// (`JC_GATEWAY_INTERNAL_BIND`, e.g. `0.0.0.0:8082`); absent serves none (ADR-N-048).
     pub internal_bind: Option<SocketAddr>,
+    /// The metrics listener, `/metrics` alone (`JC_GATEWAY_METRICS_BIND`, default
+    /// `127.0.0.1:9464`): the public listener serves no scrape (S2-18, T-7279). A deployment
+    /// names a pod address its NetworkPolicy opens to the scraper alone.
+    pub metrics_bind: SocketAddr,
     /// The pipeline runner's headless Service (`JC_GATEWAY_MQTT_RUNNER_HOST`, e.g.
     /// `pipeline-runner-pods.dev.svc.cluster.local`): a broker admits the runner's tokenless
     /// CONNECT only from an address this name resolves to; absent admits none (PL-76, T-4004).
@@ -296,6 +300,19 @@ impl Config {
                 reason: e.to_string(),
             })?;
 
+        let metrics_bind = match var("JC_GATEWAY_METRICS_BIND") {
+            Ok(value) if !value.trim().is_empty() => {
+                value
+                    .trim()
+                    .parse()
+                    .map_err(|e: std::net::AddrParseError| ConfigError::Invalid {
+                        name: "JC_GATEWAY_METRICS_BIND",
+                        reason: e.to_string(),
+                    })?
+            }
+            _ => SocketAddr::from(([127, 0, 0, 1], 9464)),
+        };
+
         let broker_url = var("JC_GATEWAY_BROKER_URL")
             .map_err(|_| ConfigError::Missing("JC_GATEWAY_BROKER_URL"))?;
         let broker_url = normalize_broker_url(&broker_url)?;
@@ -468,6 +485,7 @@ impl Config {
             domain_verifications_url,
             bind,
             internal_bind,
+            metrics_bind,
             mqtt_runner_host: var("JC_GATEWAY_MQTT_RUNNER_HOST")
                 .ok()
                 .map(|host| host.trim().to_owned())
@@ -817,6 +835,7 @@ mod tests {
         Config {
             bind: "0.0.0.0:8080".parse().expect("a socket address"),
             internal_bind: None,
+            metrics_bind: "127.0.0.1:9464".parse().expect("a socket address"),
             mqtt_runner_host: None,
             mqtt_portal_host: None,
             mqtt_broker_host: None,
@@ -1022,6 +1041,33 @@ mod tests {
             Some("127.0.0.1:8080".parse().expect("an address"))
         );
         assert_eq!(with("").expect("no reach").oidc_jwks_reach, None);
+    }
+
+    /// S2-18 (T-7279): the scrape listens on loopback unless a deployment names a pod address;
+    /// a value that is no socket address refuses the start.
+    #[test]
+    fn the_metrics_listener_is_loopback_by_default_and_refuses_a_bad_address() {
+        let with = |value: &'static str| {
+            Config::from_vars(move |name| match name {
+                "JC_GATEWAY_METRICS_BIND" => Some(value.to_owned()),
+                "JC_GATEWAY_BROKER_URL" => Some("http://broker:1026".to_owned()),
+                "JC_GATEWAY_ORG_DOMAIN" => Some("hel.fi".to_owned()),
+                _ => None,
+            })
+        };
+        let default = with("").expect("unset").metrics_bind;
+        assert!(default.ip().is_loopback(), "{default}");
+        assert_eq!(
+            with("0.0.0.0:9464").expect("a pod address").metrics_bind,
+            "0.0.0.0:9464".parse().expect("an address")
+        );
+        assert!(matches!(
+            with("metrics:9464"),
+            Err(ConfigError::Invalid {
+                name: "JC_GATEWAY_METRICS_BIND",
+                ..
+            })
+        ));
     }
 
     /// ARCH/IDN-02 (T-7194): the project requirement is off unless switched on, and a value

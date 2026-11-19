@@ -30,6 +30,7 @@ pub const KEYED_BY_NAME: &[&str] = &[
 pub fn key_column(table: &str) -> &'static str {
     match table {
         "access_requests" => "endpoint_project",
+        "sync_source_state" => "namespace",
         _ => "project",
     }
 }

@@ -11,13 +11,25 @@ use std::pin::Pin;
 
 pub type StoreFuture<'a, T> = Pin<Box<dyn Future<Output = ShakoResult<T>> + Send + 'a>>;
 
-/// Resolves secrets (`secretRef`) from the secrets mount without storing raw secrets in database tables (S14, S15, S21).
+/// Holds the hook and mirror secrets (`secretRef`) the forge signs and pushes with, per
+/// Organization (S14, S15, S21). `shako-store-pg`'s `PgSecretStore` keeps them sealed in
+/// Postgres so they survive a restart (S6-09, T-7280); a failing store refuses the write.
 pub trait SecretStore: Send + Sync {
-    fn get_secret(&self, org_id: OrgId, secret_ref: &str) -> Option<String>;
-    fn put_secret(&self, org_id: OrgId, secret_ref: &str, value: &str);
+    fn get_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+    ) -> StoreFuture<'a, Option<String>>;
+    fn put_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+        value: &'a str,
+    ) -> StoreFuture<'a, ()>;
 }
 
-/// In-memory / file-backed secret store.
+/// The secrets of one process, gone with it: tests and a jc without `[shako.database]`, whose
+/// records are in memory too.
 #[derive(Debug, Default)]
 pub struct MemorySecretStore {
     secrets: RwLock<BTreeMap<(OrgId, String), String>>,
@@ -31,17 +43,29 @@ impl MemorySecretStore {
 }
 
 impl SecretStore for MemorySecretStore {
-    fn get_secret(&self, org_id: OrgId, secret_ref: &str) -> Option<String> {
-        self.secrets
+    fn get_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+    ) -> StoreFuture<'a, Option<String>> {
+        let held = self
+            .secrets
             .read()
             .get(&(org_id, secret_ref.to_owned()))
-            .cloned()
+            .cloned();
+        Box::pin(async move { Ok(held) })
     }
 
-    fn put_secret(&self, org_id: OrgId, secret_ref: &str, value: &str) {
+    fn put_secret<'a>(
+        &'a self,
+        org_id: OrgId,
+        secret_ref: &'a str,
+        value: &'a str,
+    ) -> StoreFuture<'a, ()> {
         self.secrets
             .write()
             .insert((org_id, secret_ref.to_owned()), value.to_owned());
+        Box::pin(async { Ok(()) })
     }
 }
 

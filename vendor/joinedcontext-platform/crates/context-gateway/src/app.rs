@@ -911,7 +911,7 @@ async fn host_scope(
     next.run(request).await
 }
 
-/// The router: two probes and the endpoint surface.
+/// The router: two probes and the endpoint surface; the scrape is [`telemetry::router`].
 pub fn router(gateway: Arc<Gateway>) -> Router {
     // The outermost layer resolves the endpoint of a path itself, to write the `describedby`
     // link no handler can then forget (EP-50).
@@ -966,11 +966,8 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
         ))
         .route("/healthz", get(ready))
         .route("/livez", get(ok))
-        // OPS-16: what `components/monitoring` scrapes, on the port it already names. Outside
-        // every guard above, because it is reachable only from inside the cluster and carries
-        // no request of anyone's; and outermost of the two layers, so a request refused by the
-        // rate limiter is still counted.
-        .route("/metrics", get(telemetry::metrics))
+        // No `/metrics` here (S2-18, T-7279): its series name spaces, rules and Endpoints, so the
+        // scrape answers on its own listener alone ([`telemetry::router`], `metrics_bind`).
         .layer(axum::middleware::from_fn_with_state(
             Arc::clone(&gateway),
             host_scope,

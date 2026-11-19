@@ -10,13 +10,14 @@ use crate::config::ShakoSection;
 use crate::module::Module;
 use axum::Router;
 use jc_router::Mount;
+use kaisatsu_crypto::Kek;
 use shako_core::{
-    Action, LocalAuthorizer, OrgId, RoleBinding, ShakoSigningKey, StaticTokenBinding, Subject,
-    TokenVerifier,
+    Action, LocalAuthorizer, MemorySecretStore, OrgId, RoleBinding, SecretStore, ShakoSigningKey,
+    StaticTokenBinding, Subject, TokenVerifier,
 };
 use shako_server::{PortalBase, ShakoState, registry_router, router};
 use shako_store_memory::MemoryStore;
-use shako_store_pg::PgStore;
+use shako_store_pg::{PgSecretStore, PgStore};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -46,15 +47,33 @@ pub(crate) const INSTANCE: shako_core::InstanceId = shako_core::InstanceId::from
 /// The one shako organization jc's forge runs under.
 pub(crate) const ORG: OrgId = OrgId::from_u128(1);
 
-/// The configured store: Postgres (migrated first when a migration role is set, boot RLS
-/// check, log replayed for `(INSTANCE, org_id)`), or memory without a database section.
+/// The configured stores: Postgres (migrated first when a migration role is set, boot RLS
+/// check, log replayed for `(INSTANCE, org_id)`), its hook and mirror secrets sealed in
+/// `shako.secret` with the installation's KEK (T-7280); or memory for both without a database
+/// section.
 async fn open_store(
     cfg: &ShakoSection,
     org_id: OrgId,
-) -> Result<Arc<dyn shako_core::Store>, StartError> {
+    setup: &crate::setup::Setup,
+) -> Result<(Arc<dyn shako_core::Store>, Arc<dyn SecretStore>), StartError> {
     let Some(db) = &cfg.database else {
-        return Ok(Arc::new(MemoryStore::new()));
+        return Ok((
+            Arc::new(MemoryStore::new()),
+            Arc::new(MemorySecretStore::new()),
+        ));
     };
+    // Read before anything connects: a database without the key would keep secrets it cannot
+    // open after the next start.
+    let kek = setup
+        .value(crate::setup::Secret::KaisatsuKek)
+        .ok_or_else(|| {
+            err(
+                "shako seals its hook and mirror secrets with the installation's key-encryption \
+                 key, and the state directory holds no kaisatsu-kek",
+            )
+        })?;
+    let kek = Kek::from_raw_bytes(kek.as_bytes())
+        .map_err(|_| err("the installation's kaisatsu-kek is not a 32-byte key"))?;
     if let Some(opts) = db.migrate_options().map_err(err)? {
         let pool = crate::pg::connect(opts, 1).await.map_err(err)?;
         PgStore::run_migrations(&pool).await.map_err(err)?;
@@ -65,7 +84,8 @@ async fn open_store(
         .map_err(err)?;
     let replayed = store.hydrate(INSTANCE, org_id).await.map_err(err)?;
     tracing::info!(replayed, "shako: records loaded from Postgres");
-    Ok(Arc::new(store))
+    let secrets = PgSecretStore::new(&store, INSTANCE, &kek).map_err(err)?;
+    Ok((Arc::new(store), Arc::new(secrets)))
 }
 
 /// shako's signing key: the operator's or the one setup keeps in the state directory (generated
@@ -86,7 +106,7 @@ pub async fn build_state(
 ) -> Result<ShakoState, StartError> {
     let root = repo_root(cfg.repo_root.as_deref(), &setup.dir)?;
     let org_id = ORG;
-    let store = open_store(cfg, org_id).await?;
+    let (store, secrets) = open_store(cfg, org_id, setup).await?;
     let authz = Arc::new(LocalAuthorizer::new(vec![RoleBinding {
         org_id,
         principal: "admin".into(),
@@ -111,7 +131,7 @@ pub async fn build_state(
     }
 
     let verifier = TokenVerifier::new(key).with_static_tokens(static_tokens);
-    Ok(ShakoState::new(
+    let mut state = ShakoState::new(
         INSTANCE,
         org_id,
         root,
@@ -119,7 +139,9 @@ pub async fn build_state(
         authz,
         verifier,
         shako_core::OutboundGuard::default(),
-    ))
+    );
+    state.secret_store = secrets;
+    Ok(state)
 }
 
 /// `portal` is the Portal's public base: a browser asking shako's pages without a credential is

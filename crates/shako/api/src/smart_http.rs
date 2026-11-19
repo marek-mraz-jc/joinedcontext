@@ -324,10 +324,20 @@ pub async fn sync_repo_mirrors_on_commit(
             // Stored before the API refused non-key names: still used, never logged.
             tracing::warn!(mirror = %m.id, "a push mirror's secret reference is not a secret-store key name; add the mirror again");
         }
-        let cred = state
+        let cred = match state
             .secret_store
             .get_secret(repo.org_id, &m.credential_secret_ref)
-            .unwrap_or_default();
+            .await
+        {
+            Ok(held) => held.unwrap_or_default(),
+            Err(e) => {
+                tracing::warn!(mirror = %m.id, error = %e, "a push mirror's secret could not be read; not pushed");
+                m.last_error =
+                    "the mirror's credential could not be read; the next push tries again".into();
+                let _ = state.store().upsert_push_mirror(m).await;
+                continue;
+            }
+        };
         let (user, pass) = cred
             .split_once(':')
             .map_or(("x-access-token", cred.as_str()), |(u, p)| (u, p));

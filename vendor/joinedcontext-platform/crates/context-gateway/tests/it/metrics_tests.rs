@@ -75,8 +75,14 @@ fn app() -> axum::Router {
     ))
 }
 
+/// `/metrics` goes to the metrics listener's router, every other path to the public one.
 async fn call(path: &str) -> (StatusCode, String, String) {
-    let response = app()
+    let surface = if path == "/metrics" {
+        telemetry::router()
+    } else {
+        app()
+    };
+    let response = surface
         .oneshot(
             Request::builder()
                 .uri(path)
@@ -100,6 +106,30 @@ async fn call(path: &str) -> (StatusCode, String, String) {
         content_type,
         String::from_utf8_lossy(&body).into_owned(),
     )
+}
+
+/// S2-18, T-7279: the public listener serves no scrape. Its series carry space and Endpoint
+/// names, so `/metrics` answers 404 there after a tenant's request, and only the separate
+/// metrics listener ([`telemetry::router`]) answers.
+#[tokio::test]
+async fn the_public_router_serves_no_scrape() {
+    call(&format!("/api/endpoint/{SLUG}")).await;
+    let response = app()
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("a readable body");
+    let body = String::from_utf8_lossy(&body);
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(!body.contains("ovzdusie") && !body.contains(SLUG), "{body}");
 }
 
 #[tokio::test]

@@ -491,7 +491,14 @@ impl AgentStore {
         payload: serde_json::Value,
     ) -> Result<AgentRunEvent, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::append_agent_run_event(pool, run_id, kind, &payload).await?);
+            // A run no keyed project holds takes no event, as the foreign key refused it before.
+            let mut tx = self
+                .run_tx(pool, run_id)
+                .await?
+                .ok_or(StoreError::Db(sqlx::Error::RowNotFound))?;
+            let event = db::append_agent_run_event(&mut tx, run_id, kind, &payload).await?;
+            tx.commit().await?;
+            return Ok(event);
         }
         let mut memory = self.memory.write().await;
         let stream = memory.events.entry(run_id.to_owned()).or_default();
@@ -513,7 +520,10 @@ impl AgentStore {
         after_seq: i64,
     ) -> Result<Vec<AgentRunEvent>, StoreError> {
         if let Some(pool) = &self.db {
-            return Ok(db::load_agent_run_events(pool, run_id, after_seq).await?);
+            let Some(mut tx) = self.run_tx(pool, run_id).await? else {
+                return Ok(Vec::new());
+            };
+            return Ok(db::load_agent_run_events(&mut tx, run_id, after_seq).await?);
         }
         Ok(self
             .memory
@@ -542,8 +552,16 @@ impl AgentStore {
             return Ok(by_run);
         }
         if let Some(pool) = &self.db {
-            for event in db::load_agent_run_events_of(pool, run_ids, kinds).await? {
-                by_run.entry(event.run_id.clone()).or_default().push(event);
+            // Each run in its own project's key (T-7278).
+            // ponytail: one transaction per run; group by project when a page lists hundreds.
+            for id in run_ids {
+                let Some(mut tx) = self.run_tx(pool, id).await? else {
+                    continue;
+                };
+                let ids = std::slice::from_ref(id);
+                for event in db::load_agent_run_events_of(&mut tx, ids, kinds).await? {
+                    by_run.entry(event.run_id.clone()).or_default().push(event);
+                }
             }
             return Ok(by_run);
         }

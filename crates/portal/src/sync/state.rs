@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use jcctl::sync::{Phase, State};
 
 use crate::db::{self, SyncStateRow};
+use crate::store::Mirror;
 
 /// One source's memory: the state `jcctl::sync` reads, and the two things it has no field for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -86,15 +87,24 @@ impl Stored {
 }
 
 /// The memory of every `SyncSource`, by project and name.
-#[derive(Debug)]
 pub struct States {
-    db: Option<sqlx::PgPool>,
+    /// The database and the mirror that places each project's key: a row is read and written
+    /// only inside its project's `db::tenant_tx` (T-7281).
+    db: Option<(sqlx::PgPool, std::sync::Arc<Mirror>)>,
     memory: Mutex<HashMap<(String, String), Stored>>,
+}
+
+impl std::fmt::Debug for States {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("States")
+            .field("durable", &self.db.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl States {
     /// Backed by the database when there is one, by a map when there is not.
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    pub fn new(db: Option<(sqlx::PgPool, std::sync::Arc<Mirror>)>) -> Self {
         Self {
             db,
             memory: Mutex::new(HashMap::new()),
@@ -112,8 +122,8 @@ impl States {
     /// that follows re-proposes at worst, where returning an error would stop every source of
     /// the tick because one row could not be read.
     pub async fn get(&self, namespace: &str, name: &str) -> Stored {
-        if let Some(pool) = &self.db {
-            return match db::load_sync_state(pool, namespace, name).await {
+        if let Some((pool, mirror)) = &self.db {
+            return match Self::load(pool, mirror, namespace, name).await {
                 Ok(Some(row)) => Stored::from_row(row),
                 Ok(None) => Stored::default(),
                 Err(err) => {
@@ -132,9 +142,17 @@ impl States {
     /// Records one source's memory. A write that fails is loud: the next run repeats work a
     /// reviewer has already seen, and the log is where that is explained.
     pub async fn put(&self, namespace: &str, name: &str, stored: &Stored) {
-        if let Some(pool) = &self.db {
-            if let Err(err) = db::save_sync_state(pool, &stored.to_row(namespace, name)).await {
-                tracing::warn!(%namespace, %name, error = %err, "sync state was not recorded");
+        if let Some((pool, mirror)) = &self.db {
+            match Self::save(pool, mirror, &stored.to_row(namespace, name)).await {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!(
+                    %namespace, %name,
+                    "sync state was not recorded: the project has no key (no Project in the \
+                     mirror or its Organization is not an active one of the registry)"
+                ),
+                Err(err) => {
+                    tracing::warn!(%namespace, %name, error = %err, "sync state was not recorded");
+                }
             }
             return;
         }
@@ -152,6 +170,37 @@ impl States {
         let mut stored = self.get(namespace, name).await;
         stored.state.paused = paused;
         self.put(namespace, name, &stored).await;
+    }
+}
+
+impl States {
+    /// The row of `namespace`/`name` read in the project's key; `None` for a project with none.
+    async fn load(
+        pool: &sqlx::PgPool,
+        mirror: &Mirror,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Option<SyncStateRow>, sqlx::Error> {
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, namespace).await? else {
+            return Ok(None);
+        };
+        let row = db::load_sync_state(&mut tx, namespace, name).await?;
+        tx.commit().await?;
+        Ok(row)
+    }
+
+    /// Writes `row` in its project's key; `false` when the project has none.
+    async fn save(
+        pool: &sqlx::PgPool,
+        mirror: &Mirror,
+        row: &SyncStateRow,
+    ) -> Result<bool, sqlx::Error> {
+        let Some(mut tx) = crate::project_ids::tx_of(pool, mirror, &row.namespace).await? else {
+            return Ok(false);
+        };
+        db::save_sync_state(&mut tx, row).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 }
 
