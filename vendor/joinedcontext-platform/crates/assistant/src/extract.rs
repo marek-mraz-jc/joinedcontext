@@ -629,8 +629,8 @@ mod tests {
     }
 
     use super::{
-        chrome_only, document_type, extract, first_pages, language_of, only_headings, prose,
-        MIN_PROSE,
+        chrome_only, cut, document_type, extract, first_pages, language_of, only_headings, pieces,
+        prose, MAX_TEXT_BYTES, MIN_PROSE,
     };
 
     /// A PDF of `pages` pages, page n showing "Strana n", with a correct cross-reference table.
@@ -814,25 +814,25 @@ mod tests {
         let sentence = "Žilinská ľadová plocha je otvorená denne. ";
         let text = sentence.repeat(20_000 / sentence.len() + 1);
         assert!(text.len() > 20_000);
-        let cut = pieces(&text, MAX_TEXT_BYTES);
-        assert!(cut.len() >= 3, "{}", cut.len());
-        for piece in &cut {
+        let split = pieces(&text, MAX_TEXT_BYTES);
+        assert!(split.len() >= 3, "{}", split.len());
+        for piece in &split {
             assert!(piece.len() <= MAX_TEXT_BYTES, "{}", piece.len());
             assert!(
                 piece.ends_with('.'),
                 "cut inside a sentence: {:?}",
-                &piece[piece.len() - 20..]
+                piece.chars().rev().take(20).collect::<String>()
             );
         }
-        let joined: String = cut.join(" ");
+        let joined: String = split.join(" ");
         assert_eq!(joined, text.trim());
         // One unbroken word of three-byte characters: cut at a character boundary.
         let word = "€".repeat(5_000);
-        let cut = pieces(&word, MAX_TEXT_BYTES);
-        assert!(cut
+        let split = pieces(&word, MAX_TEXT_BYTES);
+        assert!(split
             .iter()
             .all(|p| p.len() <= MAX_TEXT_BYTES && p.len() % 3 == 0));
-        assert_eq!(cut.concat(), word);
+        assert_eq!(split.concat(), word);
         // A line break in the head's second half is the first choice; short text stays whole.
         assert_eq!(cut("aaaa bbbb\ncc dd", 12), 10);
         assert_eq!(pieces("short", MAX_TEXT_BYTES), vec!["short"]);
