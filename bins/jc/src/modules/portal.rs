@@ -396,6 +396,9 @@ fn apply(
         state
             .replace_organization_hosts(&portal_hosts(organizations, &orgs, &run.scheme))
             .map_err(|e| format!("the Portal kept its Organization hosts: {e}"))?;
+        // The Organizations' own portal hosts (T-7415): the judge takes them as a Portal's
+        // `spec.host`, and the portal reconciler serves a portal on one once it is `served`.
+        state.config.portal_settings.sites.replace(rows);
     }
     #[cfg(feature = "gateway")]
     super::gateway::replace_registry_links(

@@ -75,6 +75,24 @@ pub(crate) fn named(
         .collect()
 }
 
+/// `orgs` with each Organization's own `served` portal hosts of the host registry (T-7415)
+/// listed beside jc.toml's `hosts.portals`, so a portal takes such a host with no restart.
+pub(crate) fn with_sites(
+    orgs: Vec<OrganizationPortals>,
+    sites: &joinedcontext_portal::portals::Sites,
+) -> Vec<OrganizationPortals> {
+    orgs.into_iter()
+        .map(|mut org| {
+            for host in sites.served(&org.name) {
+                if !org.listed.contains(&host) {
+                    org.listed.push(host);
+                }
+            }
+            org
+        })
+        .collect()
+}
+
 /// Each Portal manifest of `mirror` that passes jc-core's check, by `metadata.name`.
 pub(crate) fn in_mirror(mirror: &Mirror) -> BTreeMap<String, PortalSpec> {
     let items = mirror
@@ -404,7 +422,10 @@ pub(crate) fn follow(
             if let Some(state) = super::PORTAL_STATE.get() {
                 let installation =
                     joinedcontext_portal::permissions::installation_organization(&state.mirror);
-                let orgs = named(&orgs, installation);
+                let orgs = with_sites(
+                    named(&orgs, installation),
+                    &state.config.portal_settings.sites,
+                );
                 let names: Vec<String> = orgs.iter().map(|o| o.name.clone()).collect();
                 if handed.as_ref() != Some(&names) {
                     joinedcontext_portal::api::portal_sources::hand_desk_to(std::sync::Arc::new(

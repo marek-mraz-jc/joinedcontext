@@ -7254,6 +7254,179 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Add Portal Host",
+        "description": "An Organization's administrator adds a host its portals may answer on, without an operator, when it is one label under a host the Organization serves or a name under its DNS-verified domain (the TXT proof is read again now). The host enters the registry approved and turns served once DNS points at the edge and its own certificate is issued (paced; the state and detail say until when). Any other name is an operator HostAdd (T-7415).",
+        "operationId": "add_portal_host",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewSiteHost"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Added; the Organization's portal hosts now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalOrganization"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not make portals in this Organization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The host is in the registry already (a removed host stays taken)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The host is not this Organization's to add, a reserved label, or its domain proof lapsed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The Organization added its daily share of portal hosts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database or the installation's domain is unknown here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/organization/portal-hosts/{host}": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Remove Portal Host",
+        "description": "An Organization's administrator removes one of its portal hosts. The edge stops routing it first; its certificate is deleted after that. A removed name stays taken in the registry. Refused while a Portal answers on it, and for a host jc.toml seeded (the operator's) (T-7415).",
+        "operationId": "remove_portal_host",
+        "parameters": [
+          {
+            "name": "host",
+            "in": "path",
+            "description": "The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed; the Organization's portal hosts now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalOrganization"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller does not make portals in the host's Organization, or jc.toml seeded the host",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No portal host of that name the caller may see",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A Portal answers on the host; move or delete it first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database here",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/organization/setup": {
@@ -59835,6 +60008,29 @@
         },
         "additionalProperties": false
       },
+      "NewSiteHost": {
+        "type": "object",
+        "description": "A portal host to add.",
+        "required": [
+          "organization",
+          "host"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com` or `data.bbsk.sk`."
+          },
+          "organization": {
+            "type": "string",
+            "description": "The Organization, e.g. `bbsk`."
+          }
+        },
+        "additionalProperties": false,
+        "example": {
+          "host": "opendata2.bbsk.smartcity.joinedcontext.com",
+          "organization": "bbsk"
+        }
+      },
       "NewVisualization": {
         "type": "object",
         "description": "A new visualization.",
@@ -62929,9 +63125,18 @@
         "description": "One Organization the caller manages portals of.",
         "required": [
           "organization",
-          "hosts"
+          "hosts",
+          "sites",
+          "bases"
         ],
         "properties": {
+          "bases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The hosts it serves that a new portal host may sit one label under, e.g.\n`bbsk.smartcity.joinedcontext.com`."
+          },
           "hosts": {
             "type": "array",
             "items": {
@@ -62949,6 +63154,20 @@
           "organization": {
             "type": "string",
             "description": "The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`."
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SiteHost"
+            },
+            "description": "Its own portal hosts in the host registry, with their state (T-7415)."
+          },
+          "verifiedDomain": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`."
           }
         }
       },
@@ -65884,6 +66103,36 @@
           },
           "subject": {
             "$ref": "#/components/schemas/Resolved"
+          }
+        }
+      },
+      "SiteHost": {
+        "type": "object",
+        "description": "One of the Organization's own portal hosts in the host registry.",
+        "required": [
+          "host",
+          "state",
+          "removable"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the host wave last said of it, e.g. a DNS answer or until when a certificate waits."
+          },
+          "host": {
+            "type": "string",
+            "description": "e.g. `opendata2.bbsk.smartcity.joinedcontext.com`."
+          },
+          "removable": {
+            "type": "boolean",
+            "description": "Whether this Portal can remove it (a host jc.toml seeded is the operator's)."
+          },
+          "state": {
+            "type": "string",
+            "description": "`approved`, `dns-ok`, `cert-issued` or `served`; only `served` answers."
           }
         }
       },

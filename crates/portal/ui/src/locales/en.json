@@ -13236,7 +13236,8 @@
       "delete": "Remove portal",
       "defaultKept": "The default portal stays: it is the Organization's own catalogue.",
       "fixed": "Fixed once the portal exists: a portal never moves to another Organization, name or path.",
-      "descriptionTabs": "The portal's settings, its sources and run log, and its datasets. Each change is proposed for an approver."
+      "descriptionTabs": "The portal's settings, its sources and run log, and its datasets. Each change is proposed for an approver.",
+      "hostPending": "{host} (not served yet)"
     },
     "tabs": {
       "label": "Portal views",
@@ -13356,6 +13357,35 @@
       "noCatalogue": "This installation serves no open data catalogue yet, so this portal lists no datasets here. Ask your operator to enable the catalogue.",
       "toSources": "Go to Sources",
       "noCatalogueTitle": "No open data catalogue here yet"
+    },
+    "hosts": {
+      "title": "Portal hosts",
+      "titleOf": "Portal hosts of {organization}",
+      "description": "Names your portals can answer on. A new host is served once DNS points at the platform and its own certificate is issued, usually within minutes; no operator or restart is needed.",
+      "empty": "No portal host of your own yet. Add one below, then pick it as a portal's domain.",
+      "state": {
+        "approved": "Waiting for DNS",
+        "dns-ok": "Certificate pending",
+        "cert-issued": "Going live",
+        "served": "Served"
+      },
+      "mode": "Where the host sits",
+      "modeOwn": "Under your Organization's host",
+      "modeDomain": "Under your verified domain {domain}",
+      "label": "Name",
+      "labelHint": "One word of lowercase letters, digits or dashes, e.g. opendata2",
+      "base": "Under",
+      "baseHint": "A host your Organization serves",
+      "whole": "Host",
+      "wholeHint": "A name under {domain}, e.g. data.{domain}; its DNS TXT proof is checked again when you add it",
+      "will": "Adds {host}",
+      "add": "Add host",
+      "adding": "Adding…",
+      "cannotAdd": "Your Organization serves no host and has verified no domain yet. Verify your domain under Organization settings, or ask an operator to add a host.",
+      "remove": "Remove host",
+      "removeOf": "Remove host {host}",
+      "removeTitle": "Remove the host {host}?",
+      "removeDescription": "The platform stops answering on it first, then deletes its certificate. The name cannot be added again. A portal that uses it must move to another host before."
     }
   },
   "assistantGuides": {

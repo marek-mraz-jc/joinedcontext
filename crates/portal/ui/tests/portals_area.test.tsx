@@ -2,6 +2,7 @@
 // dropdown fed by the server's filtered list, and a refusal landing on the field it names.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { hostOf } from "../src/pages/portals/PortalHosts";
 import userEvent from "@testing-library/user-event";
 import { draftOf, faultsOf, fieldOfRefusal, portalAddress, specOf } from "../src/pages/portals/PortalsArea";
 import { expectAxeClean, expectOneH1, jsonResponse, list, problem, renderRoute } from "./pageHarness";
@@ -12,7 +13,20 @@ afterEach(() => {
 });
 
 const HOSTS = {
-  items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk" }],
+  items: [{ organization: "bbsk", hosts: ["doprava.bbsk.sk"], opendata: "https://opendata.bbsk.sk", sites: [], bases: [] }],
+};
+
+const BASE_HOST = "bbsk.smartcity.example";
+
+/** bbsk serving `bbsk.smartcity.example`, with one own host on its way to served. */
+const OWN_HOSTS = {
+  items: [
+    {
+      ...HOSTS.items[0],
+      bases: [BASE_HOST],
+      sites: [{ host: `data2.${BASE_HOST}`, state: "dns-ok", detail: "the certificate waits until 2026-11-20T10:00Z", removable: true }],
+    },
+  ],
 };
 
 const ADMIN = {
@@ -170,5 +184,106 @@ describe("the portal editor", () => {
     });
     expect(await screen.findByText(/The default portal stays/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove portal/ })).toBeNull();
+  });
+});
+
+describe("the portal hosts (T-7415)", () => {
+  it("builds the host from a label and a base, or takes the whole name", () => {
+    expect(hostOf("own", " Opendata2 ", BASE_HOST, "")).toBe(`opendata2.${BASE_HOST}`);
+    expect(hostOf("domain", "", BASE_HOST, "Data.bbsk.sk.")).toBe("data.bbsk.sk");
+  });
+
+  it("lists an own host with its state and detail and says what to do with none", async () => {
+    await renderRoute({
+      path: "/portals",
+      permissions: ADMIN,
+      answer: (path) => {
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(OWN_HOSTS);
+        if (path === "/api/v1/projects/org/portals") return jsonResponse(list([portal("default")]));
+        return undefined;
+      },
+    });
+    const panel = await screen.findByRole("heading", { level: 2, name: "Portal hosts" });
+    const card = panel.closest("section, div") as HTMLElement;
+    expect(await screen.findByText(`data2.${BASE_HOST}`)).toBeInTheDocument();
+    expect(screen.getByText("Certificate pending")).toBeInTheDocument();
+    expect(screen.getByText(/certificate waits until/)).toBeInTheDocument();
+    expect(card).toBeTruthy();
+    cleanup();
+    await renderRoute({
+      path: "/portals",
+      permissions: ADMIN,
+      answer: (path) => {
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(HOSTS);
+        if (path === "/api/v1/projects/org/portals") return jsonResponse(list([portal("default")]));
+        return undefined;
+      },
+    });
+    expect(await screen.findByText(/No portal host of your own yet/)).toBeInTheDocument();
+    expect(screen.getByText(/verified no domain yet/)).toBeInTheDocument();
+  });
+
+  it("adds a label under the own host and shows the server's refusal on the field", async () => {
+    const user = userEvent.setup();
+    const sent: unknown[] = [];
+    await renderRoute({
+      path: "/portals",
+      permissions: ADMIN,
+      answer: async (path, request) => {
+        if (path === "/api/v1/organization/portal-hosts" && request.method === "POST") {
+          sent.push(await request.json());
+          return problem(422, "host: the label 'api' is reserved for the platform; choose another, e.g. data");
+        }
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(OWN_HOSTS);
+        if (path === "/api/v1/projects/org/portals") return jsonResponse(list([portal("default")]));
+        return undefined;
+      },
+    });
+    const label = await screen.findByLabelText(/^Name/, { selector: "input[id^='portal-host-label']" });
+    await user.type(label, "api");
+    expect(screen.getByText(`Adds api.${BASE_HOST}`)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add host" }));
+    await waitFor(() => expect(sent).toEqual([{ organization: "bbsk", host: `api.${BASE_HOST}` }]));
+    expect(await screen.findByText(/the label 'api' is reserved/)).toBeInTheDocument();
+  });
+
+  it("removes an own host only after the confirm step", async () => {
+    const user = userEvent.setup();
+    const removed: string[] = [];
+    await renderRoute({
+      path: "/portals",
+      permissions: ADMIN,
+      answer: (path, request) => {
+        if (request.method === "DELETE") {
+          removed.push(path);
+          return jsonResponse({ ...OWN_HOSTS.items[0], sites: [] });
+        }
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(OWN_HOSTS);
+        if (path === "/api/v1/projects/org/portals") return jsonResponse(list([portal("default")]));
+        return undefined;
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: `Remove host data2.${BASE_HOST}` }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/cannot be added again/)).toBeInTheDocument();
+    expect(removed).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Remove host" }));
+    await waitFor(() => expect(removed).toEqual([`/api/v1/organization/portal-hosts/data2.${BASE_HOST}`]));
+  });
+
+  it("offers the own hosts in the portal's domain dropdown, marked until served", async () => {
+    const user = userEvent.setup();
+    await renderRoute({
+      path: "/portals/new",
+      permissions: ADMIN,
+      answer: (path) => {
+        if (path === "/api/v1/organization/portal-hosts") return jsonResponse(OWN_HOSTS);
+        return undefined;
+      },
+    });
+    await screen.findByRole("heading", { level: 1, name: "New portal" });
+    await user.click(await screen.findByRole("radio", { name: "A domain of its own" }));
+    const host = screen.getByLabelText(/^Domain/) as HTMLSelectElement;
+    expect(Array.from(host.options).map((option) => option.textContent)).toContain(`data2.${BASE_HOST} (not served yet)`);
   });
 });
