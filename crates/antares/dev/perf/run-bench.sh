@@ -31,7 +31,7 @@ command -v k6 >/dev/null || { echo "k6 missing"; exit 1; }
 cargo build -q --release -p antares-broker -j 2
 
 for i in $(seq "$REPEATS"); do
-  ANTARES_HTTP_PORT="$PORT" ./target/release/antares \
+  ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" ./target/release/antares \
     > "$OUT/broker-$i.log" 2>&1 &
   BROKER=$!
   trap 'kill -TERM $BROKER 2>/dev/null || true' EXIT

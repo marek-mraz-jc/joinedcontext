@@ -40,7 +40,7 @@ start() {  # start <broker>: sets PID to the broker's own process
   case $1 in
     antares)
       # no history on either side: Coraine runs with --troe none below
-      ANTARES_STORE=memory ANTARES_TEMPORAL=none ANTARES_HTTP_PORT=$PORT ANTARES_ALLOW_SHARED_LOCAL=1 \
+      ANTARES_STORE=memory ANTARES_TEMPORAL=none ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT=$PORT ANTARES_ALLOW_SHARED_LOCAL=1 \
         taskset -c 0 "$BIN" > "$OUT/antares.log" 2>&1 &
       PID=$!
       ;;

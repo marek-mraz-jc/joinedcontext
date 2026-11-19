@@ -24,7 +24,7 @@ for i in 0 1 2 3 4; do
   # ANTARES_PUBLIC_URL: distributed subscriptions (5.8.1.4) hand this URL to
   # the peer broker as the notification endpoint — the default
   # http://{host_alias} is not resolvable between local processes.
-  ANTARES_HTTP_PORT=$port ANTARES_HOST_ALIAS="antares$((i + 1))" \
+  ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT=$port ANTARES_HOST_ALIAS="antares$((i + 1))" \
     ANTARES_PUBLIC_URL="http://localhost:$port" \
     nohup "$BIN" > "$LOGDIR/broker$((i + 1)).log" 2>&1 &
 done

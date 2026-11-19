@@ -22,7 +22,7 @@ trap 'rm -rf "$DATA"' EXIT
 one() {  # one <store>: prints "<ms> <rss_kib>"
   local store=$1 t0 t1 pid rss
   t0=$(date +%s%N)
-  ANTARES_STORE="$store" ANTARES_DATA_DIR="$DATA" ANTARES_HTTP_PORT="$PORT" \
+  ANTARES_STORE="$store" ANTARES_DATA_DIR="$DATA" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
     ANTARES_DATABASE_URL="${DATABASE_URL:-}" ANTARES_ALLOW_SHARED_LOCAL=1 \
     "$BIN" >/dev/null 2>&1 & pid=$!
   until curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health"; do sleep 0.005; done

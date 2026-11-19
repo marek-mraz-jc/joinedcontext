@@ -123,8 +123,11 @@ const KNOWN_KEYS: &[&str] = &[
     "ANTARES_CHANNEL_BROKERS",
     // The /q admin credential (T-3569): a file holding the bearer secret,
     // and whether /q/metrics answers without it (token | open).
+    // Unset, the guarded /q routes answer 401; ANTARES_ADMIN_OPEN=1 serves
+    // them without a credential on a test stack.
     "ANTARES_ADMIN_TOKEN_FILE",
     "ANTARES_ADMIN_METRICS",
+    "ANTARES_ADMIN_OPEN",
     // A second listener that serves /q/metrics and nothing else; set, the
     // API port answers /q/metrics 404 (T-5095). Unset = /q/metrics on the API port.
     "ANTARES_METRICS_PORT",
@@ -768,6 +771,18 @@ fn tenant_organization(raw: Option<String>, subject_required: bool) -> Result<bo
     }
 }
 
+/// ANTARES_ADMIN_OPEN: `1` serves the guarded `/q` routes without a
+/// credential when no ANTARES_ADMIN_TOKEN_FILE is set (a throwaway test
+/// stack); unset or `0` closes them. Anything else is a typo and fatal, so a
+/// misspelt opt-out never opens nor silently closes the routes.
+fn admin_open(value: Option<&str>) -> Result<bool, String> {
+    match value.map(str::trim) {
+        None | Some("" | "0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(other) => Err(format!("ANTARES_ADMIN_OPEN: {other:?} is neither 0 nor 1")),
+    }
+}
+
 /// ANTARES_API_SURFACES → the surfaces mounted beside the NGSI-LD API,
 /// comma-separated; absent = `admin`. An unknown name is fatal and names
 /// the shelf, and so is a selection that ends up empty: health, readiness
@@ -1399,7 +1414,8 @@ pub async fn build_state(
         );
     }
     // The /q admin credential, before the router mounts the admin surface.
-    // Unconfigured, /q serves as before and says so once, here.
+    // Unconfigured, /q is closed (a secret nobody holds) unless the deployment
+    // opts out with ANTARES_ADMIN_OPEN=1, and says which once, here.
     let admin_metrics = std::env::var("ANTARES_ADMIN_METRICS").ok();
     let admin = match &cfg.admin_token {
         Some(token) => {
@@ -1414,15 +1430,24 @@ pub async fn build_state(
             admin_metrics.as_deref(),
         )?,
     };
-    match admin {
-        Some(auth) => {
+    match (admin, admin_open(cfg.var("ANTARES_ADMIN_OPEN").as_deref())?) {
+        (Some(auth), _) => {
             tracing::info!("/q admin routes require the admin token ({auth:?})");
             state = state.with_admin_auth(auth);
         }
-        None => tracing::warn!(
+        (None, true) => tracing::warn!(
             "/q admin routes (tenants, dead letters, metrics) answer without a credential: \
-             ANTARES_ADMIN_TOKEN_FILE is unset"
+             ANTARES_ADMIN_OPEN=1 and ANTARES_ADMIN_TOKEN_FILE is unset"
         ),
+        (None, false) => {
+            let open = admin_metrics.as_deref().map(str::trim) == Some("open");
+            tracing::warn!(
+                "/q admin routes (tenants, dead letters, views, policy) answer 401: \
+                 ANTARES_ADMIN_TOKEN_FILE is unset; set it to use them \
+                 (ANTARES_ADMIN_OPEN=1 opens them on a test stack)"
+            );
+            state = state.with_admin_auth(antares_api::admin_auth::AdminAuth::closed(open));
+        }
     }
     // /q/metrics renders through this closure (None without the
     // `telemetry` feature — the endpoint answers 404); the sampler feeds
@@ -2477,6 +2502,24 @@ mod driver_registry_tests {
                 .len(),
             1
         );
+    }
+}
+
+#[cfg(test)]
+mod admin_open_tests {
+    use super::admin_open;
+
+    /// SEC-16: only an explicit `1` opens the guarded `/q` routes without a
+    /// credential; unset closes them and a typo refuses the start.
+    #[test]
+    fn only_an_explicit_one_opens_the_admin_routes_without_a_credential() {
+        assert_eq!(admin_open(None), Ok(false));
+        assert_eq!(admin_open(Some("")), Ok(false));
+        assert_eq!(admin_open(Some("0")), Ok(false));
+        assert_eq!(admin_open(Some(" 1 ")), Ok(true));
+        for typo in ["true", "yes", "open"] {
+            assert!(admin_open(Some(typo)).is_err_and(|e| e.contains("ANTARES_ADMIN_OPEN")));
+        }
     }
 }
 
