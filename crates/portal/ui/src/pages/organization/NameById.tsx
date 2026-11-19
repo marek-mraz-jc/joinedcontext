@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { reasonOf } from "../../api/client";
 import { ORG_NAMESPACE } from "../../api/manifest";
 import { doorAction, type RestAnswer } from "../../api/odata";
-import { allows, usePermissions } from "../../api/permissions";
+import { administersOrganization, allows, usePermissions } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import { Alert, Button } from "../../components/ui";
 
@@ -37,9 +37,12 @@ export function NameById(): JSX.Element | null {
       (sum, repository) => sum + repository.manifests.length,
       0,
     ) ?? 0;
+  // The move rewrites every repository of the installation, so only its administrators see it;
+  // an Organization's own administrator has Person update for their own people (T-7380).
   if (
     !Array.isArray(permissions.data?.grants) ||
-    !allows(permissions.data, "Person", "update")
+    !allows(permissions.data, "Person", "update") ||
+    !administersOrganization(permissions.data)
   )
     return null;
   return (

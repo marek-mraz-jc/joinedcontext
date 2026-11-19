@@ -8164,6 +8164,7 @@
     },
     "title": "Administrácia",
     "adminOnly": "Táto stránka je pre administrátorov organizácie. O to, čo tu potrebujete, požiadajte niektorého z nich.",
+    "installationOnlyTitle": "Sekcia {section} patrí inštalácii",
     "installationOnly": "Časť {section} patrí inštalácii: otvárajú ju iba jej správcovia.",
     "lead": "Čo je rovnaké v každom projekte: nastavenia organizácie, jej členovia, roly, skupiny a servisné účty a jej projekty. Každá zmena sa tu navrhuje a schvaľuje.",
     "tab": {

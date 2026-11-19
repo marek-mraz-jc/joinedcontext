@@ -193,7 +193,9 @@ describe("the Organization page", () => {
     expect(
       await screen.findByText(en.organization.installationOnly.replace("{section}", en.organization.tab.brokers)),
     ).toBeInTheDocument();
-    expect(screen.getByText(en.askAdmins.installationTitle)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 2, name: en.organization.installationOnlyTitle.replace("{section}", en.organization.tab.brokers) }),
+    ).toBeInTheDocument();
     expect(screen.getByText(en.organization.groupLead.platform)).toBeInTheDocument();
     expect(screen.queryByText(en.organization.adminOnly)).toBeNull();
     // Whom to ask is the installation's contact list, and the way on is to their own sections.

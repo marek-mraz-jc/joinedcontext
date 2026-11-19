@@ -8164,6 +8164,7 @@
     },
     "title": "Verwaltung",
     "adminOnly": "Diese Seite ist für die Administratoren der Organisation. Bitten Sie einen von ihnen um das, was Sie hier brauchen.",
+    "installationOnlyTitle": "{section} gehört zur Installation",
     "installationOnly": "Der Bereich {section} gehört der Installation: Nur ihre Administratoren öffnen ihn.",
     "lead": "Was in jedem Projekt gleich ist: die Einstellungen der Organisation, ihre Mitglieder, Rollen, Gruppen und Dienstkonten und ihre Projekte. Jede Änderung hier wird vorgeschlagen und genehmigt.",
     "tab": {

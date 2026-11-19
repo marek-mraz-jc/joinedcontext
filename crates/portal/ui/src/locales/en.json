@@ -8164,6 +8164,7 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
+    "installationOnlyTitle": "{section} is the installation's section",
     "installationOnly": "The {section} section belongs to the installation: only its administrators open it.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {

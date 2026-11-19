@@ -99,14 +99,16 @@ export function ProjectsPage(): JSX.Element {
                   {/* The slug under a title that differs from it, never the same word twice. */}
                   {titleOf(name) === name ? null : <span className="truncate text-caption text-fg-muted">{name}</span>}
                 </span>
+                <Icon name="chevronRight" className="ml-auto size-4 shrink-0 text-fg-muted" />
               </Link>
               <nav aria-label={t("projectsPage.pagesOf", { project: titleOf(name) })} className="flex flex-wrap gap-1 pl-12 sm:pl-0">
-                {(["spaces", "endpoints"] as const).map((plural) => (
+                {(["spaces", "endpoints", "pipelines"] as const).map((plural) => (
                   <Link
                     key={plural}
                     to="/projects/$project/$plural"
                     params={{ project: name, plural }}
-                    className={buttonClass("ghost", "sm")}
+                    // 44 px tall on a phone, a thumb's target; the desktop row keeps the control height.
+                    className={`${buttonClass("ghost", "sm")} min-h-11 sm:min-h-0`}
                   >
                     <Icon name={plural} className="size-4" />
                     {t(`nav.${plural}`)}

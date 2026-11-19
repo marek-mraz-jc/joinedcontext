@@ -44,7 +44,8 @@ const PLAN = {
   unresolved: ["nobody@hel.fi"],
 };
 
-function stub(verbs: string[]): { url: string; method: string }[] {
+// An installation administrator by default; `organization` narrows every grant to that one (T-7380).
+function stub(verbs: string[], organization?: string): { url: string; method: string }[] {
   const sent: { url: string; method: string }[] = [];
   vi.stubGlobal(
     "fetch",
@@ -60,7 +61,10 @@ function stub(verbs: string[]): { url: string; method: string }[] {
         return json({
           project: "org",
           bootstrap: false,
-          grants: [{ rule: { kinds: ["Person"], verbs } }],
+          grants: [
+            { organization, rule: { kinds: ["Person"], verbs } },
+            { organization, rule: { kinds: ["RoleBinding"], verbs: ["read", "approve", "delete"] } },
+          ],
         });
       }
       sent.push({
@@ -166,6 +170,18 @@ describe("naming people by id (ADR-N-061)", () => {
 
   it("is not offered to someone who does not update people", async () => {
     stub(["read"]);
+    wrap(<NameById />);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", {
+          name: en.organization.people.nameById.title,
+        }),
+      ).toBeNull(),
+    );
+  });
+
+  it("is not offered to an Organization's own administrator: it rewrites every repository (T-7380)", async () => {
+    stub(["read", "update"], "bbsk");
     wrap(<NameById />);
     await waitFor(() =>
       expect(
