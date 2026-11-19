@@ -1053,6 +1053,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/operator/project-moves/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Plan A Project Move
+         * @description What a `ProjectMove` Change of the project to the Organization would do now (T-7305): the Organization the registry files it under, the one its manifest names, the rows per table that take the new key, the project's own RoleBindings that move with it, and each blocker with its next step. Reads only counts, never a row. For a person of the operators' group with a second factor.
+         */
+        get: operations["operator_project_move_plan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organization-ids": {
         parameters: {
             query?: never;
@@ -10239,6 +10259,7 @@ export interface components {
             host?: string | null;
             organization?: string | null;
             organizationId?: string | null;
+            project?: string | null;
             role?: string | null;
             smtp?: null | components["schemas"]["SmtpSettings"];
             subject?: string | null;
@@ -10298,13 +10319,18 @@ export interface components {
             /** @description `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`. */
             host?: string | null;
             kind: components["schemas"]["OperatorKind"];
-            /** @description `HostAdd`: the Organization's name, e.g. `bbsk`. */
+            /**
+             * @description `HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the
+             *     project moves to, e.g. `bbsk`.
+             */
             organization?: string | null;
             /**
              * @description `HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a
              *     host outside the installation's domain.
              */
             organizationId?: string | null;
+            /** @description `ProjectMove`: the name of the project that moves, e.g. `banskabystrica`. */
+            project?: string | null;
             /**
              * @description `HostAdd`: what answers on the host: `working`, `opendata`, `api`, `signin`, `apps`,
              *     `portal-site` or `host`.
@@ -12497,6 +12523,28 @@ export interface components {
             target?: null | components["schemas"]["TenantDigest"];
             to: string;
         };
+        /**
+         * @description What a `ProjectMove` of `project` to `to` would do now, as the operators read it before they
+         *     approve.
+         */
+        MovePlan: {
+            /** @description The project's own `RoleBinding`s, which move with it. */
+            bindings: string[];
+            /** @description Why the move cannot be applied now, each naming its next step; empty when it can. */
+            blockers: string[];
+            /** @description The project sits under `to` already: approving changes nothing. */
+            done: boolean;
+            /** @description The Organization the registry files the project under now; `None` before it has one. */
+            from?: string | null;
+            /** @description The Organization the project's manifest names (or the installation's when it names none). */
+            manifestOrganization?: string | null;
+            project: string;
+            /** Format: int64 */
+            rows: number;
+            /** @description Rows keyed by the project under `from`, per table; only tables holding any are listed. */
+            tables: components["schemas"]["TableRows"][];
+            to: string;
+        };
         /** @description Where the space goes. */
         MoveRequest: {
             /** @description A `ContextBroker` of the organization other than the one the space lives on. */
@@ -12920,7 +12968,7 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
             domain?: string | null;
@@ -15303,6 +15351,12 @@ export interface components {
             leader: boolean;
             manifests: number;
             revision?: string | null;
+        };
+        /** @description The rows of one keyed table that move. */
+        TableRows: {
+            /** Format: int64 */
+            rows: number;
+            table: string;
         };
         /**
          * @description Where an Organization's backup goes and when it runs. The secret access key is sealed with
@@ -18532,6 +18586,76 @@ export interface operations {
             };
             /** @description Not an operator, or no second factor */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    operator_project_move_plan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The project's name, e.g. `banskabystrica`. */
+                project: string;
+                /** @description The Organization it would move to, e.g. `banskabystrica`. */
+                organization: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan; `blockers` is empty when the move can be approved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MovePlan"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Not an operator, or no second factor */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No live project of that name */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The project name is not one; the error names the field */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

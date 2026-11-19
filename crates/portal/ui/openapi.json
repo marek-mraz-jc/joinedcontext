@@ -3374,6 +3374,98 @@
         }
       }
     },
+    "/api/v1/operator/project-moves/plan": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Plan A Project Move",
+        "description": "What a `ProjectMove` Change of the project to the Organization would do now (T-7305): the Organization the registry files it under, the one its manifest names, the rows per table that take the new key, the project's own RoleBindings that move with it, and each blocker with its next step. Reads only counts, never a row. For a person of the operators' group with a second factor.",
+        "operationId": "operator_project_move_plan",
+        "parameters": [
+          {
+            "name": "project",
+            "in": "path",
+            "description": "The project's name, e.g. `banskabystrica`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organization",
+            "in": "path",
+            "description": "The Organization it would move to, e.g. `banskabystrica`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan; `blockers` is empty when the move can be approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovePlan"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an operator, or no second factor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No live project of that name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The project name is not one; the error names the field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/organization-ids": {
       "post": {
         "tags": [
@@ -53283,6 +53375,12 @@
               "null"
             ]
           },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "role": {
             "type": [
               "string",
@@ -53438,7 +53536,7 @@
               "string",
               "null"
             ],
-            "description": "`HostAdd`: the Organization's name, e.g. `bbsk`."
+            "description": "`HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the\nproject moves to, e.g. `bbsk`."
           },
           "organizationId": {
             "type": [
@@ -53446,6 +53544,13 @@
               "null"
             ],
             "description": "`HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a\nhost outside the installation's domain."
+          },
+          "project": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ProjectMove`: the name of the project that moves, e.g. `banskabystrica`."
           },
           "role": {
             "type": [
@@ -59240,6 +59345,71 @@
           }
         }
       },
+      "MovePlan": {
+        "type": "object",
+        "description": "What a `ProjectMove` of `project` to `to` would do now, as the operators read it before they\napprove.",
+        "required": [
+          "project",
+          "to",
+          "tables",
+          "rows",
+          "bindings",
+          "done",
+          "blockers"
+        ],
+        "properties": {
+          "bindings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The project's own `RoleBinding`s, which move with it."
+          },
+          "blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the move cannot be applied now, each naming its next step; empty when it can."
+          },
+          "done": {
+            "type": "boolean",
+            "description": "The project sits under `to` already: approving changes nothing."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Organization the registry files the project under now; `None` before it has one."
+          },
+          "manifestOrganization": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The Organization the project's manifest names (or the installation's when it names none)."
+          },
+          "project": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableRows"
+            },
+            "description": "Rows keyed by the project under `from`, per table; only tables holding any are listed."
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
       "MoveRequest": {
         "type": "object",
         "description": "Where the space goes.",
@@ -60342,7 +60512,8 @@
           "OperatorAdd",
           "OperatorRemove",
           "SmtpSet",
-          "BrandingSet"
+          "BrandingSet",
+          "ProjectMove"
         ]
       },
       "OperatorOrganization": {
@@ -66559,6 +66730,24 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TableRows": {
+        "type": "object",
+        "description": "The rows of one keyed table that move.",
+        "required": [
+          "table",
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "table": {
+            "type": "string"
           }
         }
       },
