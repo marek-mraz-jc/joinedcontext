@@ -13642,10 +13642,11 @@
       "hostCount": "{served} in Betrieb, {waiting} unterwegs",
       "setDomain": "Tragen Sie die nachgewiesene Domain in den Einstellungen ein",
       "noHost": "Noch kein Host",
-      "driftTitle": "Repository und Register nennen verschiedene Organisationen",
-      "driftLead": "Bindungen an eine Organisation, die das Repository nicht kennt, werden abgelehnt. Benennen Sie die Organisation im Repository oder im Register um oder ergänzen Sie sie, damit beide dieselben nennen; nichts wird von selbst umbenannt.",
-      "driftForge": "Im Register, fehlt im Repository: {names}",
-      "driftRegistry": "Im Repository, fehlt im Register: {names}"
+      "driftTitle": "Einige Organisationen gibt es nur auf einer Seite",
+      "driftLead": "In diesen Organisationen können keine Rollen vergeben werden, bis Repository und Register dieselben Namen führen. Nichts wird automatisch umbenannt.",
+      "driftForge": "Nur im Register",
+      "driftRegistry": "Nur im Repository",
+      "driftFix": "Organisationseinstellungen öffnen"
     },
     "ids": {
       "title": "Domänen und ihre TXT-Einträge",

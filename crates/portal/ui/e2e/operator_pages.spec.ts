@@ -215,10 +215,11 @@ test.describe("Administration → the installation operators (T-7140)", () => {
       registry.drift = { missingFromForge: ["marek-mraz", "slovensko"], missingFromRegistry: ["barcelona", "hel"] };
       await stubApi(page, registry);
       await page.goto("/organization/operator-organizations?lang=en");
-      const alert = page.getByRole("status").filter({ hasText: "The repository and the registry name different Organizations" });
+      const alert = page.getByRole("status").filter({ hasText: "Some Organizations exist on one side only" });
       await expect(alert).toBeVisible();
-      await expect(alert).toContainText("In the registry, missing from the repository: marek-mraz, slovensko");
-      await expect(alert).toContainText("In the repository, missing from the registry: barcelona, hel");
+      await expect(alert.getByRole("definition").first()).toHaveText("marek-mrazslovensko");
+      await expect(alert.getByRole("definition").last()).toHaveText("barcelonahel");
+      await expect(alert.getByRole("link", { name: "Open Organization settings" })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `operator-organizations-drift-${width}`);
     });

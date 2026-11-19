@@ -41,12 +41,30 @@ export function OperatorOrganizations(): JSX.Element {
       {drift && (drift.missingFromForge.length > 0 || drift.missingFromRegistry.length > 0) ? (
         <Alert tone="warning" title={t("operator.organizations.driftTitle")}>
           <p>{t("operator.organizations.driftLead")}</p>
-          {drift.missingFromForge.length > 0 ? (
-            <p>{t("operator.organizations.driftForge", { names: drift.missingFromForge.join(", ") })}</p>
-          ) : null}
-          {drift.missingFromRegistry.length > 0 ? (
-            <p>{t("operator.organizations.driftRegistry", { names: drift.missingFromRegistry.join(", ") })}</p>
-          ) : null}
+          <dl className="mt-2 space-y-2">
+            {(
+              [
+                [t("operator.organizations.driftForge"), drift.missingFromForge],
+                [t("operator.organizations.driftRegistry"), drift.missingFromRegistry],
+              ] as const
+            )
+              .filter(([, names]) => names.length > 0)
+              .map(([label, names]) => (
+                <div key={label}>
+                  <dt className="font-medium">{label}</dt>
+                  <dd className="mt-1 flex flex-wrap gap-1">
+                    {names.map((name) => (
+                      <code key={name} className="rounded bg-surface px-1.5 py-0.5 font-mono text-caption">
+                        {name}
+                      </code>
+                    ))}
+                  </dd>
+                </div>
+              ))}
+          </dl>
+          <Link to="/organization/$tab" params={{ tab: "settings" }} className="mt-2 inline-block underline">
+            {t("operator.organizations.driftFix")}
+          </Link>
         </Alert>
       ) : null}
       <AdminGrid

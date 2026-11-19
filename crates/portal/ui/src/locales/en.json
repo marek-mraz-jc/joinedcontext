@@ -13642,10 +13642,11 @@
       "hostCount": "{served} served, {waiting} on their way",
       "setDomain": "Write its proved domain in Settings",
       "noHost": "No host yet",
-      "driftTitle": "The repository and the registry name different Organizations",
-      "driftLead": "Bindings scoped to an Organization the repository lacks are refused. Rename or add the Organization in the repository or the registry so both name the same; nothing is renamed by itself.",
-      "driftForge": "In the registry, missing from the repository: {names}",
-      "driftRegistry": "In the repository, missing from the registry: {names}"
+      "driftTitle": "Some Organizations exist on one side only",
+      "driftLead": "People cannot be given roles in these Organizations until the repository and the registry list the same names. Nothing is renamed automatically.",
+      "driftForge": "Only in the registry",
+      "driftRegistry": "Only in the repository",
+      "driftFix": "Open Organization settings"
     },
     "ids": {
       "title": "Domains and their TXT records",
