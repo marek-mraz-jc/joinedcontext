@@ -1,0 +1,34 @@
+{
+  "@context": {
+    "@vocab": "https://joinedcontext.com/models/",
+    "Entity": {
+      "@id": "ngsi-ld:Entity"
+    },
+    "ShareCheck": {
+      "@id": "jc:ShareCheck"
+    },
+    "geojson": "https://purl.org/geojson/vocab#",
+    "id": "@id",
+    "jc": "https://joinedcontext.com/models/",
+    "level": {
+      "@id": "jc:level"
+    },
+    "linkml": "https://w3id.org/linkml/",
+    "location": {
+      "@id": "geojson:geometry"
+    },
+    "ngsi-ld": "https://uri.etsi.org/ngsi-ld/",
+    "note": {
+      "@id": "jc:note"
+    },
+    "observedAt": {
+      "@id": "ngsi-ld:observedAt",
+      "@type": "xsd:dateTime"
+    },
+    "schema": "http://schema.org/",
+    "shex": "http://www.w3.org/ns/shex#",
+    "type": "@type",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "x-generator-version": "jc-model-tools-0.1.0"
+}
