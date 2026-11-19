@@ -5,6 +5,7 @@ is a rehearsal (bins/jc/smoke/ci/gate.sh, then run sharing).
     python3 -m pytest bins/jc/smoke/sharing/tests -q
 """
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -206,3 +207,48 @@ def test_the_report_holds_statuses_and_attribute_names_never_values():
         == "title: AccessDenied, detail: no Policy of this endpoint grants you this write"
     assert suite.Suite.brief({"title": "AccessDenied"}) == "title: AccessDenied"
     assert "kept" not in suite.Suite.brief(entity(True))
+
+
+class RefusingForge:
+    """A forge answering every repository create with `status`; records the calls."""
+    def __init__(self, status):
+        self.status, self.calls = status, []
+
+    def json(self, method, path, headers=None, body=None):
+        self.calls.append((method, path))
+        return self.status, {}
+
+    def call(self, method, path, headers=None, body=None):
+        self.calls.append((method, path))
+        return 404, {}, b""
+
+
+def refused_run(tmp_path, monkeypatch, lane):
+    a = argparse.Namespace(base_url="http://127.0.0.1:1", state=None, export=str(tmp_path), out=str(tmp_path),
+                           provider="hel", consumer="zilina", outsider="barcelona", sync_timeout=1)
+    s = suite.Suite(a, lane)
+    forge = RefusingForge(405)
+    monkeypatch.setattr(s, "client", lambda *_a, **_k: forge)
+    monkeypatch.setattr(s, "domain_of", lambda org: f"{org}.example")
+    monkeypatch.setattr(suite.R, "read_secret", lambda *_a: "t")
+
+    def no_persona(*_a):
+        raise AssertionError("a persona was made before the fixtures existed")
+    monkeypatch.setattr(suite.R, "admin_token", no_persona)
+    monkeypatch.setattr(suite.R, "make_person", no_persona)
+    s.run()
+    return s, forge, s.write(tmp_path / "out", lane)
+
+
+def test_a_forge_refusing_the_fixtures_is_one_skip_row_and_no_persona(tmp_path, monkeypatch):
+    s, forge, fails = refused_run(tmp_path, monkeypatch, None)
+    assert fails == 0 and s.matrix == [] and not s.made
+    checks = json.loads((tmp_path / "out" / "results.json").read_text())["checks"]
+    assert [(c["id"], c["result"], c["actual"]) for c in checks] == [("setup.fixtures", "skip", "405")]
+    assert "no fixture rights" in checks[0]["reason"]
+    assert [m for m, _ in forge.calls] == ["POST"]  # nothing to clean up: no delete of a repository
+
+
+def test_in_the_lane_a_forge_refusing_the_fixtures_fails(tmp_path, monkeypatch):
+    s, _forge, fails = refused_run(tmp_path, monkeypatch, set(json.loads(suite.LANE.read_text())["cells"]))
+    assert fails > 0 and not s.skipped
