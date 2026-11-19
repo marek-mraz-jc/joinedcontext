@@ -81,6 +81,24 @@ pub(crate) fn named(
         .collect()
 }
 
+/// `orgs` with each Organization's own `served` portal hosts of the host registry (T-7415)
+/// listed beside jc.toml's `hosts.portals`, so a portal takes such a host with no restart.
+pub(crate) fn with_sites(
+    orgs: Vec<OrganizationPortals>,
+    sites: &joinedcontext_portal::portals::Sites,
+) -> Vec<OrganizationPortals> {
+    orgs.into_iter()
+        .map(|mut org| {
+            for host in sites.served(&org.name) {
+                if !org.listed.contains(&host) {
+                    org.listed.push(host);
+                }
+            }
+            org
+        })
+        .collect()
+}
+
 /// Each Portal manifest of `mirror` that passes jc-core's check, by `metadata.name`.
 pub(crate) fn in_mirror(mirror: &Mirror) -> BTreeMap<String, PortalSpec> {
     let items = mirror
@@ -412,7 +430,10 @@ pub(crate) fn follow(
             if let Some(state) = super::PORTAL_STATE.get() {
                 let installation =
                     joinedcontext_portal::permissions::installation_organization(&state.mirror);
-                let orgs = named(&orgs, installation);
+                let orgs = with_sites(
+                    named(&orgs, installation),
+                    &state.config.portal_settings.sites,
+                );
                 let names: Vec<String> = orgs.iter().map(|o| o.name.clone()).collect();
                 if handed.as_ref() != Some(&names) {
                     let desk = std::sync::Arc::new(Desk {
@@ -882,6 +903,41 @@ mod tests {
             config_dir: None,
             own_gateway: None,
         }]
+    }
+
+    #[test]
+    fn a_served_own_portal_host_is_listed_live_and_a_pending_one_is_not() {
+        let sites = joinedcontext_portal::portals::Sites::default();
+        let row =
+            |host: &str, org: &str, state: &str| joinedcontext_portal::host_registry::HostRow {
+                host: host.into(),
+                organization: org.into(),
+                organization_id: None,
+                role: "portal-site".into(),
+                state: state.into(),
+            };
+        sites.replace(&[
+            row("data2.city.test", "city", "served"),
+            row("wait.city.test", "city", "dns-ok"),
+            row("theirs.other.test", "other", "served"),
+        ]);
+        let orgs = with_sites(city(), &sites);
+        assert_eq!(orgs[0].listed, ["mobility.city.test", "data2.city.test"]);
+        let portal = serde_json::from_value::<PortalSpec>(serde_json::json!({
+            "organizationRef": "city", "path": "two", "host": "data2.city.test",
+        }))
+        .unwrap();
+        assert_eq!(
+            catalogue_of(&portal, &orgs).unwrap().host,
+            "data2.city.test"
+        );
+        for host in ["wait.city.test", "theirs.other.test"] {
+            let portal = PortalSpec {
+                host: Some(host.into()),
+                ..portal.clone()
+            };
+            assert!(catalogue_of(&portal, &orgs).is_err(), "{host}");
+        }
     }
 
     #[test]

@@ -851,8 +851,14 @@ async fn tools_call(
 ) -> Value {
     // The connector comes from the stored grant the verified token was checked against
     // (T-5973), never from the call's arguments.
+    // Provenance only: the approval checks the mark again itself (T-7432).
+    let automation = crate::automation::login_of(state, &caller.identity)
+        .await
+        .ok()
+        .flatten();
     let via = crate::change::ProposedVia::mcp(caller.identity.client.as_deref())
-        .through(caller.access.as_ref().and_then(|a| a.connector()));
+        .through(caller.access.as_ref().and_then(|a| a.connector()))
+        .automated(automation.as_ref());
     let mut answer = None;
     let envelope = crate::change::PROPOSED_VIA
         .scope(

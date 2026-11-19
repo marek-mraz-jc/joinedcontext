@@ -168,3 +168,32 @@ test("an administrator uploads, renames, replaces and deletes a portal file", as
     await steward.context.close();
   }
 });
+
+// T-7415: the administrator adds a portal host of its own (one label under a host the
+// Organization serves), sees it on its way to served, then removes it. Each run leaves the
+// removed name as a registry tombstone and takes one of the Organization's 3 adds a day.
+test("an administrator adds an own portal host, sees its state and removes it", async ({ browser }) => {
+  const steward = await signIn(browser, STEWARD, "/portals?lang=en");
+  const { page } = steward;
+  const answer = await page.request.get("/api/v1/organization/portal-hosts");
+  expect(answer.ok(), "the steward makes portals in an Organization").toBe(true);
+  const org = ((await answer.json()) as { items: { organization: string; bases: string[] }[] }).items.find((o) => o.bases.length > 0);
+  test.skip(org === undefined, "no Organization of the steward serves a working host of the registry");
+  const label = `j${Date.now().toString(36)}`;
+  const host = `${label}.${org?.bases[0] ?? ""}`;
+  try {
+    await expect(page.getByRole("heading", { level: 2, name: /Portal hosts/ }).first()).toBeVisible();
+    await page.locator(`input[id='portal-host-label-${org?.organization ?? ""}']`).fill(label);
+    await expect(page.getByText(`Adds ${host}`)).toBeVisible();
+    await page.getByRole("button", { name: "Add host" }).first().click();
+    await expect(page.getByText(host, { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Waiting for DNS|Certificate pending|Going live|Served/).first()).toBeVisible();
+    await page.getByRole("button", { name: `Remove host ${host}` }).click();
+    const dialog = page.getByRole("alertdialog");
+    await dialog.getByRole("button", { name: "Remove host" }).click();
+    await expect(page.getByText(host, { exact: true })).toHaveCount(0, { timeout: 30_000 });
+  } finally {
+    await page.request.delete(`/api/v1/organization/portal-hosts/${host}`).catch(() => undefined);
+    await steward.context.close();
+  }
+});

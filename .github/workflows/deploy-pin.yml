@@ -6,6 +6,10 @@ name: deploy-pin
 # cluster, and prod stays the deployer's manual pin. ship-proof/** pushes (pipeline measurements)
 # push their pin branch `pin-proof/jc-<sha>` and open no pull request.
 #
+# A ci run started by a GITHUB_TOKEN dispatch (ff-main's) fires no workflow_run, so ff-main also
+# dispatches this workflow on main with the sha: job `wait` polls until ci.yml's dispatch run on
+# main at that sha finishes and lets `pin` run only when it is green (T-7420).
+#
 # The pin is written only for a digest that carries this repository's image.yml signature and the
 # image-scan.yml vuln-scan attestation of the same ref, checked here with cosign, not taken from
 # the ci run's word. The pin branch and pull request need the secret DEPLOY_PIN_TOKEN: a fine-grained
@@ -14,21 +18,44 @@ name: deploy-pin
 # apply by hand.
 on:
   workflow_run: { workflows: [ci], types: [completed], branches: [main, "ship-proof/**"] }
+  workflow_dispatch:
+    inputs:
+      sha: { description: "The commit ff-main moved main to (40 hex)", required: true, type: string }
 permissions: { contents: read, packages: read }
-# One pin at a time; a newer commit's run waits rather than racing this one's push.
-concurrency: { group: deploy-pin, cancel-in-progress: false }
 jobs:
+  wait:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 130
+    permissions: { contents: read, actions: read }
+    outputs:
+      ok: ${{ steps.ci.outputs.ok }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false, sparse-checkout: .github/scripts }
+      - id: ci
+        shell: bash
+        env: { SHA: "${{ inputs.sha }}", GH_TOKEN: "${{ github.token }}" }
+        run: sh .github/scripts/ff-main.sh --await-main-ci | tee /dev/stderr | grep '^ok=' >> "$GITHUB_OUTPUT"
   pin:
+    needs: wait
+    # always(): on workflow_run `wait` is skipped, which would skip this job too
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      (github.event.workflow_run.event == 'push' ||
-       (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main')) &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      always() &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        (github.event.workflow_run.event == 'push' ||
+         (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.head_branch == 'main')) &&
+        github.event.workflow_run.head_repository.full_name == github.repository) ||
+       (github.event_name == 'workflow_dispatch' && needs.wait.outputs.ok == 'true'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # One pin at a time; a newer commit's run waits rather than racing this one's push. On the job,
+    # not the workflow, so a dispatch run's long `wait` holds no other pin back.
+    concurrency: { group: deploy-pin, cancel-in-progress: false }
     env:
-      SHA: ${{ github.event.workflow_run.head_sha }}
-      BRANCH: ${{ github.event.workflow_run.head_branch }}
+      SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
+      BRANCH: ${{ github.event.workflow_run.head_branch || 'main' }}
       IMAGE: ghcr.io/${{ github.repository_owner }}/jc
       DEPLOYMENT: ${{ github.repository }}
       # The branch the pin goes on top of: the merge branch every change lands on.
@@ -36,7 +63,7 @@ jobs:
       PIN_PATH: deploy/components/jc/images.yaml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with: { ref: "${{ github.event.workflow_run.head_sha }}" }
+        with: { ref: "${{ env.SHA }}" }
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
@@ -73,5 +100,5 @@ jobs:
           DIGEST: ${{ steps.digest.outputs.digest }}
           PIN_TOKEN: ${{ secrets.DEPLOY_PIN_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          CI_URL: ${{ github.event.workflow_run.html_url }}
+          CI_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/workflows/ci.yml?query=branch%3Amain', github.server_url, github.repository) }}
         run: sh .github/scripts/deploy-pin.sh

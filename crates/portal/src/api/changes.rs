@@ -2633,6 +2633,9 @@ pub async fn approve_change_as(
     if connector.is_none() {
         refuse_bearer_decision(identity)?;
     }
+    // An automation login proposes; a person approves, also through its autonomous connector
+    // (T-7432, AG-11, PF-58).
+    crate::automation::refuse_approver(state, identity, "a Change").await?;
     may_approve_anything(state, identity, project)?;
     crate::auth::session::require_second_factor(identity, &state.config)?;
     let (shako, pr_number) = resolve_change(state, project, id)?;

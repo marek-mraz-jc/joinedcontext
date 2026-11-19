@@ -2224,6 +2224,22 @@
         "evidence/T-7428/files-error-400.png"
       ]
     },
+    "src/pages/portals/PortalHosts.tsx": {
+      "walkedBy": "worker-t7415",
+      "date": "2026-11-19",
+      "screenshots": [
+        "evidence/T-7415/portal-hosts-empty-1440.png",
+        "evidence/T-7415/portal-hosts-empty-400.png",
+        "evidence/T-7415/portal-hosts-filled-1440.png",
+        "evidence/T-7415/portal-hosts-filled-400.png",
+        "evidence/T-7415/portal-hosts-error-1440.png",
+        "evidence/T-7415/portal-hosts-error-400.png",
+        "evidence/T-7415/portal-hosts-remove-1440.png",
+        "evidence/T-7415/portal-hosts-remove-400.png",
+        "evidence/T-7415/portal-hosts-none-1440.png",
+        "evidence/T-7415/portal-hosts-none-400.png"
+      ]
+    },
     "src/pages/portals/PortalSources.tsx": {
       "walkedBy": "worker-t6880",
       "date": "2026-11-14",

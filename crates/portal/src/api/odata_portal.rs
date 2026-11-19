@@ -94,6 +94,7 @@ const BROKER: (&str, Place) = ("broker", Place::Path);
 const UID: (&str, Place) = ("uid", Place::Path);
 const NAME: (&str, Place) = ("name", Place::Path);
 const FILE: (&str, Place) = ("id", Place::Path);
+const HOST: (&str, Place) = ("host", Place::Path);
 const RUN: (&str, Place) = ("id", Place::Path);
 const QUESTION: (&str, Place) = ("id", Place::Path);
 const PROJECT_NAME: (&str, Place) = ("projectName", Place::Path);
@@ -265,6 +266,22 @@ pub static DOORS: &[Door] = &[
         Method::GET,
         "/organization/portal-hosts",
         &[],
+        Who::Own,
+    ),
+    door(
+        "portal_portal_host_add",
+        Org,
+        Method::POST,
+        "/organization/portal-hosts",
+        &[BODY],
+        Who::Own,
+    ),
+    door(
+        "portal_portal_host_remove",
+        Org,
+        Method::DELETE,
+        "/organization/portal-hosts/{host}",
+        &[HOST],
         Who::Own,
     ),
     door(

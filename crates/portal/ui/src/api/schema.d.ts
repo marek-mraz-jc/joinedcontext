@@ -2130,8 +2130,32 @@ export interface paths {
          */
         get: operations["list_portal_hosts"];
         put?: never;
-        post?: never;
+        /**
+         * Add Portal Host
+         * @description An Organization's administrator adds a host its portals may answer on, without an operator, when it is one label under a host the Organization serves or a name under its DNS-verified domain (the TXT proof is read again now). The host enters the registry approved and turns served once DNS points at the edge and its own certificate is issued (paced; the state and detail say until when). Any other name is an operator HostAdd (T-7415).
+         */
+        post: operations["add_portal_host"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organization/portal-hosts/{host}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Portal Host
+         * @description An Organization's administrator removes one of its portal hosts. The edge stops routing it first; its certificate is deleted after that. A removed name stays taken in the registry. Refused while a Portal answers on it, and for a host jc.toml seeded (the operator's) (T-7415).
+         */
+        delete: operations["remove_portal_host"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9471,6 +9495,11 @@ export interface components {
         /** @description The mode of one Organization as its Administration page and an approval show it. */
         ApprovalMode: {
             /**
+             * @description The automation logins holding a role there, which are no people here (T-7432), e.g.
+             *     `bbsk-mcp-admin`.
+             */
+            automationLogins: string[];
+            /**
              * Format: date-time
              * @description When an operator or the Portal last changed the mode.
              */
@@ -9479,7 +9508,7 @@ export interface components {
             offReason?: string | null;
             /** @description The Organization's name, e.g. `marek-mraz`. */
             organization: string;
-            /** @description How many people hold a role in the Organization now. */
+            /** @description How many people hold a role in the Organization now, its automation logins left out. */
             peopleWithARole: number;
             /** @description Whether its one person approves their own access Changes after a fresh second factor. */
             singlePerson: boolean;
@@ -10396,7 +10425,9 @@ export interface components {
         };
         /** @description The rows a Change writes, as it was asked for and checked. */
         ChangePayload: {
+            automation?: boolean | null;
             branding?: components["schemas"]["OrganizationAppearance"];
+            connector?: string | null;
             host?: string | null;
             organization?: string | null;
             organizationId?: string | null;
@@ -10457,7 +10488,14 @@ export interface components {
          *     }
          */
         ChangeRequest: {
+            /** @description `AutomationLoginSet`: `true` marks the `subject` an automation login, `false` clears it. */
+            automation?: boolean | null;
             branding?: components["schemas"]["OrganizationAppearance"];
+            /**
+             * @description `AutomationLoginSet`: the id of the connector the login stands behind, e.g.
+             *     `bbsk-mcp`; optional, shown beside the login.
+             */
+            connector?: string | null;
             /** @description `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`. */
             host?: string | null;
             kind: components["schemas"]["OperatorKind"];
@@ -10486,7 +10524,8 @@ export interface components {
             smtp?: null | components["schemas"]["SmtpRequest"];
             /**
              * @description `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
-             *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
+             *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`. `AutomationLoginSet`: the login as the
+             *     `organization`'s RoleBinding names it (user id, username or e-mail), e.g. `bbsk-mcp-admin`.
              */
             subject?: string | null;
         };
@@ -12831,6 +12870,19 @@ export interface components {
             until?: string | null;
         };
         /**
+         * @description A portal host to add.
+         * @example {
+         *       "host": "opendata2.bbsk.smartcity.joinedcontext.com",
+         *       "organization": "bbsk"
+         *     }
+         */
+        NewSiteHost: {
+            /** @description The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com` or `data.bbsk.sk`. */
+            host: string;
+            /** @description The Organization, e.g. `bbsk`. */
+            organization: string;
+        };
+        /**
          * @description A new visualization.
          * @example {
          *       "attribute": "pm25",
@@ -13131,7 +13183,7 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove" | "SinglePersonSet";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove" | "SinglePersonSet" | "AutomationLoginSet";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
             /** @description Its single-person approval mode (T-7388), which a `SinglePersonSet` Change sets. */
@@ -14017,6 +14069,11 @@ export interface components {
         };
         /** @description One Organization the caller manages portals of. */
         PortalOrganization: {
+            /**
+             * @description The hosts it serves that a new portal host may sit one label under, e.g.
+             *     `bbsk.smartcity.joinedcontext.com`.
+             */
+            bases: string[];
             /** @description The hosts the operator listed for its portals, e.g. `mobility.bratislava.sk`. */
             hosts: string[];
             /**
@@ -14026,6 +14083,10 @@ export interface components {
             opendata?: string | null;
             /** @description The Organization's name, the `spec.organizationRef` of its portals, e.g. `bratislava`. */
             organization: string;
+            /** @description Its own portal hosts in the host registry, with their state (T-7415). */
+            sites: components["schemas"]["SiteHost"][];
+            /** @description The domain it verified by DNS TXT, under which it may name any host, e.g. `bbsk.sk`. */
+            verifiedDomain?: string | null;
         };
         Preferences: {
             /**
@@ -14389,6 +14450,8 @@ export interface components {
         };
         /** @description The channel a Change came through and the OAuth client that sent it (AG-17, AG-137). */
         ProposedVia: {
+            /** @description The automation login that proposed it (T-7432), e.g. `bbsk-mcp-admin`: a person approves. */
+            automationLogin?: string | null;
             /** @description `mcp`: a person's AI client over the Portal's MCP server. */
             channel: string;
             /** @description The token's `azp`, at most 64 characters of `[A-Za-z0-9._:-]`. */
@@ -15187,6 +15250,17 @@ export interface components {
             /** @description `policy_grant_matched`, `prohibited`, `no_grant` or `not_admitted`. */
             reason: string;
             subject: components["schemas"]["Resolved"];
+        };
+        /** @description One of the Organization's own portal hosts in the host registry. */
+        SiteHost: {
+            /** @description What the host wave last said of it, e.g. a DNS answer or until when a certificate waits. */
+            detail?: string | null;
+            /** @description e.g. `opendata2.bbsk.smartcity.joinedcontext.com`. */
+            host: string;
+            /** @description Whether this Portal can remove it (a host jc.toml seeded is the operator's). */
+            removable: boolean;
+            /** @description `approved`, `dns-ok`, `cert-issued` or `served`; only `served` answers. */
+            state: string;
         };
         /**
          * @description `SmtpSet`: the e-mail server as an operator types it.
@@ -22032,6 +22106,152 @@ export interface operations {
             };
             /** @description The caller makes portals in no Organization */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    add_portal_host: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewSiteHost"];
+            };
+        };
+        responses: {
+            /** @description Added; the Organization's portal hosts now */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalOrganization"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller does not make portals in this Organization */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The host is in the registry already (a removed host stays taken) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The host is not this Organization's to add, a reserved label, or its domain proof lapsed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The Organization added its daily share of portal hosts */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database or the installation's domain is unknown here */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    remove_portal_host: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The host, e.g. `opendata2.bbsk.smartcity.joinedcontext.com` */
+                host: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed; the Organization's portal hosts now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalOrganization"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description The caller does not make portals in the host's Organization, or jc.toml seeded the host */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No portal host of that name the caller may see */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description A Portal answers on the host; move or delete it first */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description No database here */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -314,6 +314,8 @@
       "hint": "Tento návrh napísal AI klient ({client}) cez MCP a {author} ho potvrdil(a). Prečítajte si, čo mení, ako pri každom inom.",
       "badgeConnector": "Cez {client}, konektor {connector}",
       "hintConnector": "Tento návrh napísal AI klient ({client}) cez MCP konektor {connector} používateľa {author} a {author} ho potvrdil(a). Prečítajte si, čo mení, ako pri každom inom.",
+      "automation": "Navrhol automatizačný login {login} (konektor {connector}). Automatizačný login nikdy neschvaľuje: o tejto zmene rozhoduje človek.",
+      "automationAlone": "Navrhol automatizačný login {login}. Automatizačný login nikdy neschvaľuje: o tejto zmene rozhoduje človek.",
       "plan": "Plán {plan}: rozdiel, ktorý AI klient ukázal používateľovi {author} pred použitím."
     },
     "workspace": "Z kópie",
@@ -13260,7 +13262,8 @@
       "delete": "Odstrániť portál",
       "defaultKept": "Predvolený portál zostáva: je to vlastný katalóg organizácie.",
       "fixed": "Po založení portálu sa nemení: portál sa nikdy nepresunie k inej organizácii, menu ani ceste.",
-      "descriptionTabs": "Nastavenia portálu, jeho zdroje s behmi a jeho datasety. Každá zmena sa navrhne schvaľovateľovi."
+      "descriptionTabs": "Nastavenia portálu, jeho zdroje s behmi a jeho datasety. Každá zmena sa navrhne schvaľovateľovi.",
+      "hostPending": "{host} (zatiaľ nefunguje)"
     },
     "tabs": {
       "label": "Pohľady portálu",
@@ -13443,6 +13446,37 @@
       "noCatalogue": "Táto inštalácia zatiaľ neposkytuje katalóg otvorených dát, preto tento portál tu nevypíše žiadne datasety. Požiadajte operátora o zapnutie katalógu.",
       "toSources": "Prejsť na Zdroje",
       "noCatalogueTitle": "Zatiaľ tu nie je katalóg otvorených dát"
+    },
+    "hosts": {
+      "title": "Adresy portálov",
+      "titleOf": "Adresy portálov organizácie {organization}",
+      "description": "Mená, na ktorých môžu vaše portály odpovedať. Nová adresa začne fungovať, keď DNS ukazuje na platformu a jej vlastný certifikát je vydaný, zvyčajne do pár minút; operátor ani reštart nie sú potrebné.",
+      "empty": "Zatiaľ nemáte vlastnú adresu portálu. Pridajte ju nižšie a potom ju vyberte ako doménu portálu.",
+      "state": {
+        "approved": "Čaká na DNS",
+        "dns-ok": "Čaká na certifikát",
+        "cert-issued": "Spúšťa sa",
+        "served": "Funguje"
+      },
+      "mode": "Kde adresa leží",
+      "modeOwn": "Pod adresou vašej organizácie",
+      "modeDomain": "Pod vašou overenou doménou {domain}",
+      "label": "Názov",
+      "labelHint": "Jedno slovo z malých písmen, číslic alebo pomlčiek, napr. opendata2",
+      "base": "Pod",
+      "baseHint": "Adresa, na ktorej vaša organizácia odpovedá",
+      "whole": "Adresa",
+      "wholeHint": "Akékoľvek meno končiace na .{domain}; jeho DNS TXT záznam sa pri pridaní overí znova",
+      "will": "Pridá {host}",
+      "add": "Pridať adresu",
+      "adding": "Pridáva sa…",
+      "cannotAdd": "Vaša organizácia zatiaľ nemá žiadnu adresu ani overenú doménu. Overte doménu v nastaveniach organizácie alebo požiadajte operátora o adresu.",
+      "remove": "Odstrániť adresu",
+      "removeOf": "Odstrániť adresu {host}",
+      "removeTitle": "Odstrániť adresu {host}?",
+      "removeDescription": "Platforma na nej najprv prestane odpovedať a potom zmaže jej certifikát. To isté meno sa už nedá pridať znova. Portál, ktorý ju používa, musí najprv prejsť na inú adresu.",
+      "nameFirst": "Najprv zadajte názov adresy.",
+      "cannotAddLink": "Otvoriť nastavenia organizácie"
     }
   },
   "assistantGuides": {
@@ -13891,6 +13925,7 @@
       "turnOff": "Vypnúť",
       "turnOnHint": "Len pre organizáciu, v ktorej má rolu práve jedna osoba, napr. prvý administrátor mesta. Schvaľuje ho druhý operátor; s jedným operátorom platí hneď.",
       "onePersonOnly": "Rolu má {count} osôb: štyri oči sú možné, režim zostáva vypnutý.",
+      "automationLogins": "Automatizačné loginy (nepočítajú sa, nikdy neschvaľujú): {logins}",
       "asked": "Požiadané: schváli to druhý operátor v Zmenách operátorov.",
       "applied": "Použité."
     },

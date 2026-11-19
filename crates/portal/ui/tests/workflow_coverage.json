@@ -1372,6 +1372,17 @@
           "PATCH /api/v1/projects/org/portals/{name}/files/{id}",
           "DELETE /api/v1/projects/org/portals/{name}/files/{id}"
         ]
+      },
+      "portal-own-host": {
+        "live": {
+          "spec": "portals.spec.ts",
+          "test": "an administrator adds an own portal host, sees its state and removes it"
+        },
+        "personOnly": "a host takes one of the installation's paced certificates and an Organization's daily share; an agent asks the Organization's administrator, it never takes or removes a host",
+        "routes": [
+          "POST /api/v1/organization/portal-hosts",
+          "DELETE /api/v1/organization/portal-hosts/{host}"
+        ]
       }
     },
     "app": {

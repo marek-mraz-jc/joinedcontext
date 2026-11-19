@@ -1458,6 +1458,8 @@ export interface Actions {
   portal_pipeline_test: { body?: unknown };
   portal_portal_file_delete: { name: string; id: string };
   portal_portal_file_rename: { name: string; id: string; body?: unknown };
+  portal_portal_host_add: { body?: unknown };
+  portal_portal_host_remove: { host: string };
   portal_portal_source_run: { name: string; source: string };
   portal_portal_source_test: { name: string; source: string };
   portal_preferences_recent: { body?: unknown };
@@ -1645,6 +1647,8 @@ export const ACTION_BINDINGS: { readonly [N in keyof Actions]: readonly string[]
   portal_pipeline_test: ["Project"],
   portal_portal_file_delete: ["Organization"],
   portal_portal_file_rename: ["Organization"],
+  portal_portal_host_add: ["Organization"],
+  portal_portal_host_remove: ["Organization"],
   portal_portal_source_run: ["Organization"],
   portal_portal_source_test: ["Organization"],
   portal_preferences_recent: ["Organization"],

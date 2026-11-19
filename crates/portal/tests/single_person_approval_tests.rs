@@ -220,6 +220,152 @@ async fn a_second_person_turns_the_mode_off_and_says_so() {
     assert!(!stored.0 && stored.1.is_some());
 }
 
+/// The automation login of a test: a username its RoleBinding names, unique per run, since a
+/// mark refuses its approvals in every Organization.
+fn bot(test: &str) -> Identity {
+    person(&run(test))
+}
+
+async fn mark(
+    state: &AppState,
+    who: Identity,
+    organization: &str,
+    login: &str,
+) -> (StatusCode, Value) {
+    let change = json!({ "kind": "AutomationLoginSet", "organization": organization, "subject": login, "automation": true, "connector": "org-mcp" });
+    let answer = send(state, who, "POST", CHANGES, Some(change)).await;
+    (
+        answer.status,
+        serde_json::from_str(&answer.text).unwrap_or_default(),
+    )
+}
+
+/// An operator marks `login` and a second one approves it.
+async fn marked(state: &AppState, organization: &str, login: &str) {
+    let (status, proposed) = mark(state, operator(state, "op-a"), organization, login).await;
+    assert_eq!(status, StatusCode::CREATED, "{proposed}");
+    let id = proposed["id"].as_str().expect("an id");
+    let applied = send(
+        state,
+        operator(state, "op-b"),
+        "POST",
+        &format!("{CHANGES}/{id}/approve"),
+        None,
+    )
+    .await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+}
+
+#[tokio::test]
+async fn only_an_operator_marks_an_automation_login_and_people_count_without_it() {
+    let state = AppState::new(Config::for_tests(), None).with_db(pool().await);
+    let org = run("bot-org");
+    let bot = bot("mcp-admin");
+    organization(&state, &org, &[OWNER, &bot.username]).await;
+
+    // Today's defect: the automation login is a second person.
+    let (status, refused) = propose(&state, operator(&state, "op-a"), &org, true).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+
+    // Neither the Organization's administrator nor the login itself sets the mark.
+    for who in [owner(), bot.clone()] {
+        let (status, body) = mark(&state, who, &org, &bot.username).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    }
+    // A login without a role there is no login of it.
+    let (status, unknown) = mark(&state, operator(&state, "op-a"), &org, "nobody-here").await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{unknown}");
+    assert_eq!(unknown["errors"][0]["path"], "subject", "{unknown}");
+
+    marked(&state, &org, &bot.username).await;
+    let (status, on) = propose(&state, operator(&state, "op-a"), &org, true).await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "one person and an automation login: {on}"
+    );
+    assert_eq!(mode(&state, owner(), &org).await["peopleWithARole"], 1);
+
+    // Two people and the login: PF-58's second person exists.
+    let pair = run("bot-pair");
+    organization(&state, &pair, &[OWNER, SECOND, &bot.username]).await;
+    marked(&state, &pair, &bot.username).await;
+    let (status, refused) = propose(&state, operator(&state, "op-a"), &pair, true).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(
+        refused["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("2 people"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn an_automation_login_never_approves_a_change() {
+    // Unmarked, the login is a valid second approver: the defect the mark closes.
+    let org = run("bot-open");
+    let free = bot("mcp-free");
+    let (server, state) = forge(&org, &[OWNER, &free.username]).await;
+    approve_change_as(
+        &state,
+        &free,
+        ORG_NAMESPACE,
+        "chg-org-00000001",
+        Some(BINDING),
+        ApprovedBy::Person,
+        None,
+    )
+    .await
+    .expect("an unmarked login approves");
+    assert!(merged(&server).await);
+
+    let org = run("bot-shut");
+    let bot = bot("mcp-shut");
+    let (server, state) = forge(&org, &[OWNER, &bot.username]).await;
+    marked(&state, &org, &bot.username).await;
+    for by in [
+        ApprovedBy::Person,
+        ApprovedBy::Operation,
+        ApprovedBy::Connector("org-mcp".into()),
+    ] {
+        let err = approve_change_as(
+            &state,
+            &bot,
+            ORG_NAMESPACE,
+            "chg-org-00000001",
+            Some(BINDING),
+            by.clone(),
+            Some(now_unix()),
+        )
+        .await
+        .expect_err("an automation login approves nothing");
+        assert!(
+            matches!(&err, ApiError::Denied(why) if why.contains("automation login") && why.contains("T-7432")),
+            "{by:?}: {err:?}"
+        );
+    }
+    assert!(!merged(&server).await);
+}
+
+#[tokio::test]
+async fn a_change_the_automation_login_proposed_is_approved_by_the_one_person() {
+    let org = run("bot-solo");
+    let bot = bot("mcp-solo");
+    let (server, state) = forge_by(&org, &[OWNER, &bot.username], &bot.username).await;
+    marked(&state, &org, &bot.username).await;
+    on(&state, &org).await;
+    approve(&state, ApprovedBy::Person, Some(now_unix() - 10))
+        .await
+        .expect("the one person approves the login's change");
+    assert!(merged(&server).await);
+    assert_eq!(
+        mode(&state, owner(), &org).await["singlePerson"],
+        true,
+        "the login keeps the mode on"
+    );
+}
+
 async fn on(state: &AppState, organization: &str) {
     let mut conn = state
         .db
@@ -236,6 +382,11 @@ async fn on(state: &AppState, organization: &str) {
 /// A forge holding a RoleBinding proposed by `owner@hel.fi` that grants its own author access,
 /// in a Portal of Organization `org` where `people` hold a role.
 async fn forge(org: &str, people: &[&str]) -> (MockServer, AppState) {
+    forge_by(org, people, "owner").await
+}
+
+/// [`forge`] with the RoleBinding proposed by `author` (`{author}@hel.fi`).
+async fn forge_by(org: &str, people: &[&str], author: &str) -> (MockServer, AppState) {
     let server = MockServer::start().await;
     let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
     let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
@@ -263,9 +414,9 @@ async fn forge(org: &str, people: &[&str]) -> (MockServer, AppState) {
             "HeadSha": "head-1",
             "Base": "main",
             "CreatedAt": "2026-11-19T09:14:22Z",
-            "Author": "owner",
-            "AuthorName": "owner",
-            "AuthorEmail": "owner@hel.fi",
+            "Author": author,
+            "AuthorName": author,
+            "AuthorEmail": format!("{author}@hel.fi"),
             "Mergeable": true,
             "Merged": false
         })))

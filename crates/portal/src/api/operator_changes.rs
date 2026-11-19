@@ -79,6 +79,10 @@ pub enum OperatorKind {
     /// there. Turning it off applies at once; turning it on waits for a second operator, unless
     /// the installation has one.
     SinglePersonSet,
+    /// An Organization's automation login (T-7432): a sign-in an agent or a script holds, marked
+    /// so it never approves a Change and the single-person rule does not count it; `false`
+    /// clears the mark. Applied by a second operator, unless the installation has one.
+    AutomationLoginSet,
 }
 
 impl OperatorKind {
@@ -92,6 +96,7 @@ impl OperatorKind {
             Self::BrandingSet => "BrandingSet",
             Self::ProjectMove => "ProjectMove",
             Self::SinglePersonSet => "SinglePersonSet",
+            Self::AutomationLoginSet => "AutomationLoginSet",
         }
     }
 
@@ -105,6 +110,7 @@ impl OperatorKind {
             Self::BrandingSet,
             Self::ProjectMove,
             Self::SinglePersonSet,
+            Self::AutomationLoginSet,
         ]
         .into_iter()
         .find(|k| k.as_str() == s)
@@ -129,7 +135,8 @@ pub struct ChangeRequest {
     /// `portal-site` or `host`.
     pub role: Option<String>,
     /// `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
-    /// `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
+    /// `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`. `AutomationLoginSet`: the login as the
+    /// `organization`'s RoleBinding names it (user id, username or e-mail), e.g. `bbsk-mcp-admin`.
     pub subject: Option<String>,
     /// `SmtpSet`: the installation's e-mail server.
     pub smtp: Option<SmtpRequest>,
@@ -142,6 +149,11 @@ pub struct ChangeRequest {
     /// `SinglePersonSet`: whether the `organization`'s one person approves their own access
     /// Changes after a fresh second factor, e.g. `true`.
     pub single_person: Option<bool>,
+    /// `AutomationLoginSet`: `true` marks the `subject` an automation login, `false` clears it.
+    pub automation: Option<bool>,
+    /// `AutomationLoginSet`: the id of the connector the login stands behind, e.g.
+    /// `bbsk-mcp`; optional, shown beside the login.
+    pub connector: Option<String>,
 }
 
 /// `SmtpSet`: the e-mail server as an operator types it.
@@ -201,6 +213,10 @@ pub struct ChangePayload {
     pub project: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub single_person: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automation: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connector: Option<String>,
 }
 
 /// One operator Change.
@@ -261,7 +277,7 @@ fn database(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
     })
 }
 
-fn rules(state: &AppState) -> Result<Rules<'_>, ApiError> {
+pub(crate) fn rules(state: &AppState) -> Result<Rules<'_>, ApiError> {
     let (base_domain, login_host) = state.config.installation_hosts.as_ref().ok_or_else(|| {
         ApiError::Unavailable(
             "this Portal does not know the installation's domain and sign-in host \
@@ -327,6 +343,19 @@ fn payload(
             format!("{} takes no singlePerson", kind.as_str()),
         ));
     }
+    if kind != OperatorKind::AutomationLoginSet {
+        for (field, given) in [
+            ("automation", request.automation.is_some()),
+            ("connector", request.connector.is_some()),
+        ] {
+            if given {
+                return Err(invalid(
+                    field,
+                    format!("{} takes no {field}", kind.as_str()),
+                ));
+            }
+        }
+    }
     if kind != OperatorKind::ProjectMove && request.project.is_some() {
         return Err(invalid(
             "project",
@@ -364,6 +393,8 @@ fn payload(
                     single_person: None,
                     branding: None,
                     project: None,
+                    automation: None,
+                    connector: None,
                 },
                 host,
                 None,
@@ -532,7 +563,80 @@ fn payload(
                 None,
             ))
         }
+        OperatorKind::AutomationLoginSet => {
+            absent(
+                kind,
+                &[
+                    ("host", &request.host),
+                    ("organizationId", &request.organization_id),
+                    ("role", &request.role),
+                ],
+            )?;
+            let organization = required("organization", request.organization, "bbsk")?;
+            let login =
+                required("subject", request.subject, "bbsk-mcp-admin")?.to_ascii_lowercase();
+            if !login_name(&login) {
+                return Err(invalid(
+                    "subject",
+                    format!("'{login}' is no login: a user id, username or e-mail of at most 255 letters, digits and . _ @ + -"),
+                ));
+            }
+            let on = request.automation.ok_or_else(|| {
+                invalid(
+                    "automation",
+                    "automation is required: true marks the login, false clears the mark".into(),
+                )
+            })?;
+            let connector = request
+                .connector
+                .map(|c| c.trim().to_owned())
+                .filter(|c| !c.is_empty());
+            if let Some(c) = connector.as_deref() {
+                if !on {
+                    return Err(invalid(
+                        "connector",
+                        "clearing the mark takes no connector".into(),
+                    ));
+                }
+                if !connector_id(c) {
+                    return Err(invalid(
+                        "connector",
+                        format!("'{c}' is no connector id: at most 64 letters, digits and . _ : -, e.g. bbsk-mcp"),
+                    ));
+                }
+            }
+            Ok((
+                kind,
+                ChangePayload {
+                    organization: Some(organization.clone()),
+                    subject: Some(login.clone()),
+                    automation: Some(on),
+                    connector,
+                    ..ChangePayload::default()
+                },
+                format!("automation:{organization}:{login}"),
+                None,
+            ))
+        }
     }
+}
+
+/// A login as a RoleBinding names a person: a user id, a username or an e-mail, lower case.
+fn login_name(login: &str) -> bool {
+    (1..=255).contains(&login.len())
+        && login.bytes().all(|b| {
+            b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || matches!(b, b'.' | b'_' | b'@' | b'+' | b'-')
+        })
+}
+
+/// A connector's id as the Portal keeps it.
+fn connector_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b':' | b'-'))
 }
 
 /// `SinglePersonSet`: the Organization exists, and the mode turns on only while at most one
@@ -557,15 +661,59 @@ async fn single_person_holds(
     if payload.single_person != Some(true) {
         return Ok(());
     }
-    let people =
-        crate::permissions::people_with_a_role(&state.mirror, organization, TimestampTz::now())
-            .len();
+    let people = crate::single_person::humans_with_a_role(state, organization)
+        .await?
+        .len();
     if people > 1 {
         return Err(invalid(
             "singlePerson",
             format!(
                 "{people} people hold a role in '{organization}'; single-person approvals are for an Organization with exactly one, where PF-58's second person does not exist"
             ),
+        ));
+    }
+    Ok(())
+}
+
+/// `AutomationLoginSet`: the Organization exists; a login is marked only while it holds a role
+/// there, under the name its RoleBinding gives it, and a mark is cleared only where one is.
+async fn automation_holds(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    payload: &ChangePayload,
+) -> Result<(), ApiError> {
+    let organization = payload.organization.as_deref().unwrap_or_default();
+    let login = payload.subject.as_deref().unwrap_or_default();
+    if !host_registry::organizations(pool)
+        .await
+        .map_err(db)?
+        .iter()
+        .any(|row| row.name == organization && row.state == "active")
+    {
+        return Err(invalid(
+            "organization",
+            format!("the installation has no Organization '{organization}'"),
+        ));
+    }
+    let marked = crate::automation::marked(state, Some(organization))
+        .await?
+        .iter()
+        .any(|row| row.login == login);
+    if payload.automation == Some(true) {
+        let people =
+            crate::permissions::people_with_a_role(&state.mirror, organization, TimestampTz::now());
+        if !people.contains(login) {
+            return Err(invalid(
+                "subject",
+                format!(
+                    "'{login}' holds no role in '{organization}'; give the login as its RoleBinding names it (user id, username or e-mail)"
+                ),
+            ));
+        }
+    } else if !marked {
+        return Err(invalid(
+            "subject",
+            format!("'{login}' is no automation login of '{organization}'"),
         ));
     }
     Ok(())
@@ -825,6 +973,7 @@ async fn holds(
         OperatorKind::BrandingSet => Ok(()),
         OperatorKind::ProjectMove => move_holds(state, pool, payload).await.map(drop),
         OperatorKind::SinglePersonSet => single_person_holds(state, pool, payload).await,
+        OperatorKind::AutomationLoginSet => automation_holds(state, pool, payload).await,
     }
 }
 
@@ -1154,8 +1303,11 @@ pub async fn propose(
     )
     .await?;
     if let Some(why) = applies_at_once(&state, kind, &payload, &identity.subject).await {
-        let (before, after) =
-            apply_single_person(&state, &mut tx, &payload, &identity.subject).await?;
+        let (before, after) = if kind == OperatorKind::AutomationLoginSet {
+            apply_automation(&mut tx, &payload, &identity.subject).await?
+        } else {
+            apply_single_person(&state, &mut tx, &payload, &identity.subject).await?
+        };
         let decided = decide(&mut tx, &row.0, "applied", &identity.subject).await?;
         audit(
             &mut tx,
@@ -1174,21 +1326,23 @@ pub async fn propose(
     Ok((StatusCode::CREATED, Json(change(row)?)))
 }
 
-/// Why a `SinglePersonSet` applies when it is asked for, without a second operator (T-7388):
-/// turning the mode off only restores PF-58, and an installation whose operators' group holds
-/// the proposer alone has no second operator to ask. `None` (a second operator approves) for
-/// every other Change, and whenever the realm cannot say who the operators are.
+/// Why a `SinglePersonSet` or an `AutomationLoginSet` applies when it is asked for, without a
+/// second operator (T-7388, T-7432): turning single-person mode off only restores PF-58, and an
+/// installation whose operators' group holds the proposer alone has no second operator to ask.
+/// `None` (a second operator approves) for every other Change, and whenever the realm cannot say
+/// who the operators are.
 async fn applies_at_once(
     state: &AppState,
     kind: OperatorKind,
     payload: &ChangePayload,
     proposer: &str,
 ) -> Option<&'static str> {
-    if kind != OperatorKind::SinglePersonSet {
-        return None;
-    }
-    if payload.single_person != Some(true) {
-        return Some("turning off needs no second operator");
+    match kind {
+        OperatorKind::SinglePersonSet if payload.single_person != Some(true) => {
+            return Some("turning off needs no second operator");
+        }
+        OperatorKind::SinglePersonSet | OperatorKind::AutomationLoginSet => {}
+        _ => return None,
     }
     let admin = state.people.as_deref()?.admin().await.ok()?;
     let operators = admin
@@ -1205,7 +1359,11 @@ async fn applies_at_once(
 
 /// The TXT record of the minted id `id` still carries its challenge; `422` naming the record
 /// otherwise.
-async fn txt_holds(state: &AppState, pool: &sqlx::PgPool, id: &str) -> Result<(), ApiError> {
+pub(crate) async fn txt_holds(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    id: &str,
+) -> Result<(), ApiError> {
     let (domain, challenge): (String, String) = sqlx::query_as(
         "SELECT domain, challenge FROM organization_ids WHERE id = $1 AND minted_at IS NOT NULL",
     )
@@ -1325,6 +1483,7 @@ pub async fn approve(
     let pool = database(&state)?;
     let mut tx = pool.begin().await.map_err(db)?;
     let found = open(&mut tx, &id).await?;
+    crate::automation::refuse_approver(&state, identity, "an operator Change").await?;
     if found.proposed_by == identity.subject {
         return Err(ApiError::SelfApproval(
             "the operator who asked for a Change never approves it; a second operator does (T-7129 §4)"
@@ -1341,7 +1500,8 @@ pub async fn approve(
         | OperatorKind::SmtpSet
         | OperatorKind::BrandingSet
         | OperatorKind::ProjectMove
-        | OperatorKind::SinglePersonSet,
+        | OperatorKind::SinglePersonSet
+        | OperatorKind::AutomationLoginSet,
     ) = (state.people.as_deref(), found.kind)
     {
         proposer_holds(
@@ -1400,6 +1560,9 @@ pub async fn approve(
         OperatorKind::SinglePersonSet => {
             apply_single_person(&state, &mut tx, payload, &identity.subject).await?
         }
+        OperatorKind::AutomationLoginSet => {
+            apply_automation(&mut tx, payload, &identity.subject).await?
+        }
     };
     let decided = decide(&mut tx, &id, "applied", &identity.subject).await?;
     let ip = source(client);
@@ -1418,6 +1581,34 @@ pub async fn approve(
         state.set_installation_look(payload.branding.clone().unwrap_or_default());
     }
     Ok(Json(decided))
+}
+
+/// Writes an applied `AutomationLoginSet` (T-7432): the mark before and after, for the audit row.
+async fn apply_automation(
+    tx: &mut sqlx::PgConnection,
+    payload: &ChangePayload,
+    by: &str,
+) -> Result<(Option<Value>, Option<Value>), ApiError> {
+    let organization = payload.organization.as_deref().unwrap_or_default();
+    let login = payload.subject.as_deref().unwrap_or_default();
+    let on = payload.automation == Some(true);
+    let before = crate::automation::set(
+        tx,
+        organization,
+        login,
+        payload.connector.as_deref(),
+        on,
+        by,
+    )
+    .await
+    .map_err(db)?;
+    tracing::warn!(target: "audit", organization, login, automation = on, by, "automation login mark set (T-7432)");
+    Ok((
+        Some(json!({ "organization": organization, "login": login, "automation": before })),
+        Some(
+            json!({ "organization": organization, "login": login, "automation": on, "connector": payload.connector }),
+        ),
+    ))
 }
 
 /// Writes an applied `SinglePersonSet` (T-7388): the mode before and after, for the audit row.
