@@ -4,6 +4,7 @@ results.json + REPORT.md writer. Python 3 stdlib only (run with /opt/jc-py or an
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -16,7 +17,6 @@ import urllib.request
 from pathlib import Path
 
 import live
-
 from second_factor import SECOND_FACTOR  # noqa: F401  (re-exported: every suite's sign-in, T-6894)
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
@@ -217,3 +217,32 @@ class Results:
                                                ("id", "target", "call", "expected", "actual", "reason")) + " |")
             lines.append("")
         (out / "REPORT.md").write_text("\n".join(lines))
+
+
+# The visitor flow of a public AssistantDeployment (assistant chat/visitor.rs, T-4653).
+def zero_bits(digest: bytes) -> int:
+    bits = 0
+    for b in digest:
+        if b == 0:
+            bits += 8
+            continue
+        return bits + 8 - b.bit_length()
+    return bits
+
+
+def solve(challenge: str, bits: int) -> str:
+    n = 0
+    while zero_bits(hashlib.sha256(f"{challenge}:{n}".encode()).digest()) < bits:
+        n += 1
+    return str(n)
+
+
+def events(raw: bytes) -> list[tuple[str, object]]:
+    """The SSE events of a chat answer as (name, JSON data)."""
+    out = []
+    for block in raw.decode(errors="replace").split("\n\n"):
+        name = next((ln[7:] for ln in block.splitlines() if ln.startswith("event: ")), "")
+        data = "\n".join(ln[6:] for ln in block.splitlines() if ln.startswith("data: "))
+        if name:
+            out.append((name, as_json(data.encode()) if data else None))
+    return out
