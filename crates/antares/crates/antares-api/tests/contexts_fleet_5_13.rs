@@ -126,7 +126,10 @@ async fn cached_context_bookkeeping_is_shared_across_instances() {
     let details = format!("/ngsi-ld/v1/jsonldContexts/{local_id}?details=true");
 
     // instance A uses the external @context (fetch + Cached write-through)
-    a.loader.resolve(&json!(url)).await.expect("resolve on A");
+    a.loader
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
+        .await
+        .expect("resolve on A");
     assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
 
     // instance B must see the Cached entry WITH the hit count (5.13.3.5) —
@@ -143,7 +146,7 @@ async fn cached_context_bookkeeping_is_shared_across_instances() {
     // itself bumped after rendering (the 053_06/053_08 serve-counts-as-hit
     // contract), so the ledger reads 1 (A) + 1 (B's GET) + 1 (A) = 3.
     a.loader
-        .resolve(&json!(url))
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
         .await
         .expect("re-resolve on A");
     let (_, body) = get(&b, &details).await;
@@ -162,7 +165,7 @@ async fn cached_context_bookkeeping_is_shared_across_instances() {
     // use must honour the delete — refetch and re-create the Cached row —
     // not serve the deleted copy forever out of local cache
     a.loader
-        .resolve(&json!(url))
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
         .await
         .expect("use after delete on A");
     assert_eq!(
@@ -198,7 +201,10 @@ async fn deleted_row_recreated_when_peer_doc_cache_is_warm() {
     let local_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
     let details = format!("/ngsi-ld/v1/jsonldContexts/{local_id}?details=true");
 
-    a.loader.resolve(&json!(url)).await.expect("resolve on A");
+    a.loader
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
+        .await
+        .expect("resolve on A");
     let sc = delete(&b, &format!("/ngsi-ld/v1/jsonldContexts/{local_id}")).await;
     assert_eq!(sc, StatusCode::NO_CONTENT);
 
@@ -208,7 +214,7 @@ async fn deleted_row_recreated_when_peer_doc_cache_is_warm() {
         .await;
 
     a.loader
-        .resolve(&json!(url))
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
         .await
         .expect("use after delete on A");
     let (sc, body) = get(&b, &details).await;

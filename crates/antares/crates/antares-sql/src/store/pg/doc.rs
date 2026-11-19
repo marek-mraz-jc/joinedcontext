@@ -362,6 +362,52 @@ pub struct PgDocStore {
 /// returns NULL: the policy's `tenant_id = current_setting(...)` arm is NULL
 /// for every row and only `tenant_id IS NULL` — the Cached rows — remains.
 /// That is what the boot warm and the Cached write-through want.
+/// S5-10: the acting Tenant's counters on a stored `@context` row, kept in
+/// `jsonld_context_usage` (0039) and joined by `usage_join!` on the query's `$2`. Under
+/// `tenant: None` the GUC is unset and RLS hides every usage row.
+macro_rules! usage_join {
+    () => {
+        " LEFT JOIN jsonld_context_usage u ON u.context_id = c.id AND u.tenant_id = $2 "
+    };
+}
+macro_rules! usage_columns {
+    () => {
+        "u.tenant_id IS NOT NULL AS used, u.hits, u.last_usage"
+    };
+}
+
+/// The counters `usage_columns!` reads, as `context_row_view` takes them.
+fn used(row: &sqlx::postgres::PgRow) -> Option<Value> {
+    row.get::<bool, _>("used").then(|| {
+        serde_json::json!({
+            "numberOfHits": row.get::<Option<i64>, _>("hits").unwrap_or(0),
+            "lastUsage": row.get::<Option<String>, _>("last_usage"),
+        })
+    })
+}
+
+/// Store `usage` as `tenant`'s counters on the Cached row `id`.
+async fn put_usage(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tenant: &TenantId,
+    id: &str,
+    usage: &Value,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO jsonld_context_usage (context_id, tenant_id, hits, last_usage)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (context_id, tenant_id)
+         DO UPDATE SET hits = EXCLUDED.hits, last_usage = EXCLUDED.last_usage",
+    )
+    .bind(id)
+    .bind(tenant.as_str())
+    .bind(i64::try_from(usage["numberOfHits"].as_u64().unwrap_or(0)).unwrap_or(i64::MAX))
+    .bind(usage["lastUsage"].as_str())
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 async fn set_context_tenant(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     tenant: Option<&TenantId>,
@@ -1203,6 +1249,22 @@ impl PgDocStore {
         // nothing. Nothing in the broker reaches it — every id is minted
         // by the caller — so it is a backstop, and it is the one the
         // driver contract probes.
+        // a Cached row's counters are the acting Tenant's and go to its
+        // usage row below, never into the shared body (S5-10)
+        let cached = kind == "Cached";
+        let usage = cached.then(|| antares_store::context_row_usage(doc));
+        let stripped;
+        let doc = match doc.as_object().filter(|_| cached) {
+            Some(o) => {
+                let mut o = o.clone();
+                for k in antares_store::CONTEXT_COUNTERS {
+                    o.remove(k);
+                }
+                stripped = Value::Object(o);
+                &stripped
+            }
+            None => doc,
+        };
         let inserted: bool = sqlx::query_scalar(
             "INSERT INTO jsonld_contexts (id, body, kind) VALUES ($1, $2, $3)
              ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, kind = EXCLUDED.kind
@@ -1226,6 +1288,9 @@ impl PgDocStore {
             .execute(&mut *tx)
             .await?;
         }
+        if let (Some(t), Some(usage)) = (tenant, usage) {
+            put_usage(&mut tx, t, id, &usage).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -1237,16 +1302,19 @@ impl PgDocStore {
     ) -> Result<Option<Value>, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;
-        let row = sqlx::query(
-            "SELECT body FROM jsonld_contexts
-              WHERE id = $1 AND (tenant_id IS NULL OR tenant_id = $2)",
-        )
+        let row = sqlx::query(concat!(
+            "SELECT c.body, ",
+            usage_columns!(),
+            " FROM jsonld_contexts c",
+            usage_join!(),
+            "WHERE c.id = $1 AND (c.tenant_id IS NULL OR c.tenant_id = $2)"
+        ))
         .bind(id)
         .bind(tenant.map(TenantId::as_str))
         .fetch_optional(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(row.map(|r| r.get::<Value, _>(0)))
+        Ok(row.and_then(|r| antares_store::context_row_view(r.get(0), tenant, used(&r).as_ref())))
     }
 
     /// Read-modify-write of one row under `FOR UPDATE`: `None` when it is
@@ -1270,15 +1338,52 @@ impl PgDocStore {
         let Some(row) = row else {
             return Ok(None);
         };
-        let mut doc: Value = row.get(0);
+        let held: Value = row.get(0);
+        let cached = antares_store::context_row_owner(&held).is_none();
+        // The counters are read only now, under the row lock, in a statement
+        // of their own: a join in the locking statement reads them from the
+        // snapshot taken before the lock was granted, and of two racing bumps
+        // the second would overwrite the first's count.
+        let counted = match tenant.filter(|_| cached) {
+            Some(t) => sqlx::query(
+                "SELECT true AS used, hits, last_usage FROM jsonld_context_usage
+                  WHERE context_id = $1 AND tenant_id = $2",
+            )
+            .bind(id)
+            .bind(t.as_str())
+            .fetch_optional(&mut *tx)
+            .await?
+            .and_then(|r| used(&r)),
+            None => None,
+        };
+        // a mutate reaches a Cached row the Tenant never used: its first use
+        // starts the Tenant's counters at zero
+        let used = counted.or_else(|| tenant.map(|_| Value::Object(Default::default())));
+        let Some(mut doc) = antares_store::context_row_view(held.clone(), tenant, used.as_ref())
+        else {
+            return Ok(None);
+        };
         if f(&mut doc).is_err() {
             return Ok(Some(Err(())));
         }
-        sqlx::query("UPDATE jsonld_contexts SET body = $2 WHERE id = $1")
-            .bind(id)
-            .bind(&doc)
-            .execute(&mut *tx)
-            .await?;
+        let usage = cached.then(|| antares_store::context_row_usage(&doc));
+        if let (true, Some(o)) = (cached, doc.as_object_mut()) {
+            for k in antares_store::CONTEXT_COUNTERS {
+                o.remove(k);
+            }
+        }
+        // a usage bump leaves the shared body as it was: only a refetch
+        // rewrites it
+        if doc != held {
+            sqlx::query("UPDATE jsonld_contexts SET body = $2 WHERE id = $1")
+                .bind(id)
+                .bind(&doc)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if let (Some(t), Some(usage)) = (tenant, usage) {
+            put_usage(&mut tx, t, id, &usage).await?;
+        }
         tx.commit().await?;
         Ok(Some(Ok(())))
     }
@@ -1315,15 +1420,22 @@ impl PgDocStore {
     ) -> Result<Vec<Value>, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
         set_context_tenant(&mut tx, tenant).await?;
-        let rows = sqlx::query(
-            "SELECT body - 'body' FROM jsonld_contexts
-              WHERE tenant_id IS NULL OR tenant_id = $1 ORDER BY id",
-        )
+        let rows = sqlx::query(concat!(
+            "SELECT c.body - 'body', ",
+            usage_columns!(),
+            " FROM jsonld_contexts c",
+            usage_join!(),
+            "WHERE c.tenant_id IS NULL OR c.tenant_id = $1 ORDER BY c.id"
+        ))
+        .bind(tenant.map(TenantId::as_str))
         .bind(tenant.map(TenantId::as_str))
         .fetch_all(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(rows.into_iter().map(|r| r.get::<Value, _>(0)).collect())
+        Ok(rows
+            .iter()
+            .filter_map(|r| antares_store::context_row_view(r.get(0), tenant, used(r).as_ref()))
+            .collect())
     }
 }
 

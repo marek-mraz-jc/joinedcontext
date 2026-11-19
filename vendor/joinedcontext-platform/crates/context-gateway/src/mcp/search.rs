@@ -423,10 +423,17 @@ impl Index {
             text.push_str(&format!(
                 "{} | {} | {} | {} | {} | {}\n",
                 hit["endpoint"].as_str().unwrap_or(""),
-                hit["title"].as_str().unwrap_or(""),
+                // titles are their authors' text (S2-21)
+                super::hub::cell(&super::untrusted::inline(
+                    hit["title"].as_str().unwrap_or(""),
+                    super::untrusted::NAME_CAP
+                )),
                 strings(Some(&hit["types"])).join(","),
                 strings(Some(&hit["domains"])).join(","),
-                hit["dataset"].as_str().unwrap_or(""),
+                super::hub::cell(&super::untrusted::inline(
+                    hit["dataset"].as_str().unwrap_or(""),
+                    super::untrusted::NAME_CAP
+                )),
                 hit["why"].as_str().unwrap_or(""),
             ));
         }

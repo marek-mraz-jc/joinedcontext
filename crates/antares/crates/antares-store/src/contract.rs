@@ -1027,13 +1027,30 @@ pub async fn run_current_state_contract(
             .is_some(),
         "the owner's @context must survive every foreign attempt"
     );
-    for t in [Some(a), Some(b), None] {
+    assert!(
+        d.context_get(None, &cached_id)
+            .await
+            .expect("context_get")
+            .is_some(),
+        "a Cached copy is a public document the boot warm reaches"
+    );
+    // S5-10: which public @context a Tenant named is that Tenant's
+    // information, so a Tenant that never used the copy does not see it
+    for t in [a, b] {
         assert!(
-            d.context_get(t, &cached_id)
+            d.context_get(Some(t), &cached_id)
                 .await
                 .expect("context_get")
-                .is_some(),
-            "a Cached copy is a public document every tenant reaches"
+                .is_none(),
+            "a Cached copy no call of the tenant used must be absent to it"
+        );
+        assert!(
+            d.context_list_meta(Some(t))
+                .await
+                .expect("context_list_meta")
+                .iter()
+                .all(|r| r["localId"] != cached_id.as_str()),
+            "a Cached copy no call of the tenant used must not be listed to it"
         );
     }
     assert!(
@@ -1090,6 +1107,14 @@ async fn both<A: std::future::Future, B: std::future::Future>(
     .await
 }
 
+/// The `numberOfHits` a call acting for `tenant` reads on the row `id`.
+async fn hits(d: &dyn CurrentStateDriver, tenant: Option<&TenantId>, id: &str) -> Option<Value> {
+    d.context_get(tenant, id)
+        .await
+        .expect("context_get")
+        .map(|r| r["numberOfHits"].clone())
+}
+
 /// 5.13.3.5 + ADR-0021 for the @context rows: a row has a kind, and a
 /// read-modify-write of one holds its lock, so a usage bump racing a
 /// delete leaves it deleted and two racing bumps both count.
@@ -1137,19 +1162,61 @@ async fn context_rows_are_locked(
     .expect("context_put");
     let (x, y) = both(
         d.context_mutate(Some(a), &id, bump()),
-        d.context_mutate(Some(b), &id, bump()),
+        d.context_mutate(Some(a), &id, bump()),
     )
     .await;
     assert!(
         matches!((x, y), (Ok(Some(Ok(()))), Ok(Some(Ok(()))))),
         "both bumps of a Cached row must apply"
     );
-    let hits = d
-        .context_get(None, &id)
+    assert!(
+        matches!(
+            d.context_mutate(Some(b), &id, bump()).await,
+            Ok(Some(Ok(())))
+        ),
+        "a mutate reaches a Cached row the tenant never used"
+    );
+    assert_eq!(
+        hits(d, Some(a), &id).await,
+        Some(json!(2)),
+        "two racing bumps must both count"
+    );
+    // S5-10: the counters of a shared copy are kept per Tenant
+    assert_eq!(
+        hits(d, Some(b), &id).await,
+        Some(json!(1)),
+        "another tenant's hits must not count"
+    );
+    assert_eq!(
+        hits(d, None, &id).await,
+        Some(Value::Null),
+        "no tenant in scope reads no tenant's counters"
+    );
+    let listed: Vec<Value> = d
+        .context_list_meta(Some(a))
         .await
-        .expect("context_get")
-        .map(|r| r["numberOfHits"].clone());
-    assert_eq!(hits, Some(json!(2)), "two racing bumps must both count");
+        .expect("context_list_meta")
+        .into_iter()
+        .filter(|r| r["localId"] == id.as_str())
+        .map(|r| r["numberOfHits"].clone())
+        .collect();
+    assert_eq!(
+        listed,
+        [json!(2)],
+        "the list shows the tenant's own counters"
+    );
+    d.context_put(
+        Some(a),
+        &id,
+        json!({"localId": id, "kind": "Cached", "numberOfHits": 0, "body": {"@context": {"x": "y"}}}),
+    )
+    .await
+    .expect("context_put");
+    assert_eq!(
+        hits(d, Some(b), &id).await,
+        Some(json!(1)),
+        "a put for one tenant keeps every other tenant's counters"
+    );
 
     let hosted = format!("{prefix}-ctx-owned");
     d.context_put(

@@ -13,7 +13,10 @@
 
 use ::redb::{Database, Durability, ReadableDatabase, ReadableTableMetadata};
 use antares_model::{NgsiError, TenantId};
-use antares_store::{context_row_owner, context_row_visible, filter, ChangeHook, Kind};
+use antares_store::{
+    context_row_owner, context_row_stored, context_row_used, context_row_view, context_row_visible,
+    filter, ChangeHook, Kind, CONTEXT_USAGE,
+};
 
 mod redb;
 use self::redb::{
@@ -855,6 +858,29 @@ impl Store {
             for id in dead {
                 inner.contexts.remove(&id);
             }
+            // and its uses of the shared Cached copies (S5-10), or the next
+            // holder of the name would list them
+            let mut used = Vec::new();
+            for (id, row) in inner.contexts.iter_mut() {
+                let taken = row
+                    .get_mut(CONTEXT_USAGE)
+                    .and_then(Value::as_object_mut)
+                    .and_then(|u| u.remove(tenant.as_str()));
+                if taken.is_some() {
+                    used.push(id.clone());
+                }
+            }
+            let used: Vec<Persisted<'_>> = used
+                .iter()
+                .map(|id| {
+                    (
+                        T_JSONLD_CONTEXTS,
+                        id.as_bytes().to_vec(),
+                        inner.contexts.get(id),
+                    )
+                })
+                .collect();
+            self.persist_many(&used);
         });
         existed
     }
@@ -1349,7 +1375,8 @@ impl Store {
     // and every call below is answered through it (ADR-0021): the Postgres
     // arm has the same rule as a Row-Level Security policy over a generated
     // `tenant_id` column, and this arm, which has no policy engine under it,
-    // applies it in the store.
+    // applies it in the store. A Cached row's counters are kept per Tenant
+    // in its `usage` member and read through `context_row_view` (S5-10).
     pub fn context_put(
         &self,
         tenant: Option<&TenantId>,
@@ -1370,8 +1397,13 @@ impl Store {
                     "@context belongs to another tenant".into(),
                 ));
             }
+            let cached = context_row_owner(&doc).is_none();
+            let doc = if cached {
+                context_row_stored(doc, held, tenant)
+            } else {
+                doc
+            };
             self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
-            let cached = doc.get("kind").and_then(Value::as_str) == Some("Cached");
             inner.contexts.insert(id.to_owned(), doc);
             // 5.13.1: "Implementations shall periodically invalidate the
             // 'Cached' @contexts." One entry is stored per distinct external
@@ -1398,7 +1430,7 @@ impl Store {
             .contexts
             .get(id)
             .filter(|r| context_row_visible(r, tenant))
-            .cloned()
+            .and_then(|r| context_row_view(r.clone(), tenant, context_row_used(r, tenant)))
     }
 
     /// Read-modify-write under the write lock; `None` when the row is absent
@@ -1415,9 +1447,16 @@ impl Store {
                 .contexts
                 .get_mut(id)
                 .filter(|r| context_row_visible(r, tenant))?;
-            let mut doc = row.clone();
+            // a mutate reaches a Cached row the Tenant never used: its first
+            // use starts the Tenant's counters at zero
+            let fresh = Value::Object(serde_json::Map::new());
+            let used = context_row_used(row, tenant).or(tenant.map(|_| &fresh));
+            let mut doc = context_row_view(row.clone(), tenant, used)?;
             if f(&mut doc).is_err() {
                 return Some(Err(()));
+            }
+            if context_row_owner(row).is_none() {
+                doc = context_row_stored(doc, Some(&*row), tenant);
             }
             self.persist(T_JSONLD_CONTEXTS, id.as_bytes(), Some(&doc));
             *row = doc;
@@ -1452,14 +1491,18 @@ impl Store {
             .filter(|v| context_row_visible(v, tenant))
             // every member but the body, which is never copied (T-5895)
             .map(|v| match v.as_object() {
-                Some(o) => Value::Object(
-                    o.iter()
-                        .filter(|(k, _)| k.as_str() != "body")
-                        .map(|(k, v)| (k.clone(), v.clone()))
-                        .collect(),
+                Some(o) => (
+                    Value::Object(
+                        o.iter()
+                            .filter(|(k, _)| k.as_str() != "body")
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    ),
+                    v,
                 ),
-                None => v.clone(),
+                None => (v.clone(), v),
             })
+            .filter_map(|(meta, v)| context_row_view(meta, tenant, context_row_used(v, tenant)))
             .collect()
     }
 }
@@ -2311,10 +2354,15 @@ mod tests {
             s.context_get(None, "h").is_none(),
             "no Tenant in scope reaches no Tenant's documents"
         );
-        for t in [Some(&alpha), Some(&beta), None] {
+        assert!(
+            s.context_get(None, "c").is_some(),
+            "a Cached copy is a public document the boot warm reaches"
+        );
+        // S5-10: the copy is shared, who used it is not
+        for t in [&alpha, &beta] {
             assert!(
-                s.context_get(t, "c").is_some(),
-                "a Cached copy is a public document and is shared"
+                s.context_get(Some(t), "c").is_none(),
+                "a Cached copy the Tenant never used is absent to it"
             );
         }
         assert!(
@@ -2365,7 +2413,7 @@ mod tests {
         .expect("store");
         for i in 0..MAX_CACHED_CONTEXTS {
             s.context_put(
-                None,
+                Some(&TenantId::default()),
                 &format!("cached-{i:05}"),
                 entry("Cached", &format!("2026-01-01T00:00:{:02}Z", i % 60)),
             )
@@ -2384,8 +2432,12 @@ mod tests {
         );
 
         // one more Cached entry evicts exactly one — the oldest
-        s.context_put(None, "cached-new", entry("Cached", "2026-06-01T00:00:00Z"))
-            .expect("store");
+        s.context_put(
+            Some(&TenantId::default()),
+            "cached-new",
+            entry("Cached", "2026-06-01T00:00:00Z"),
+        )
+        .expect("store");
         assert_eq!(cached(&s), MAX_CACHED_CONTEXTS, "the ceiling holds");
         assert!(
             s.context_get(None, "cached-new").is_some(),

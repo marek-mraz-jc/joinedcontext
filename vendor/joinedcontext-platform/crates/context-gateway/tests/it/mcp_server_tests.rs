@@ -561,7 +561,7 @@ async fn reads_may_fan_out_and_writes_name_their_endpoint() {
     assert!(hello["result"]["instructions"]
         .as_str()
         .expect("instructions")
-        .starts_with("The city's mobility data."));
+        .contains("as its authors wrote it: ⟦The city's mobility data.⟧"));
 }
 
 /// §2.4: a cursor object asks only the members it names, each from its own offset.

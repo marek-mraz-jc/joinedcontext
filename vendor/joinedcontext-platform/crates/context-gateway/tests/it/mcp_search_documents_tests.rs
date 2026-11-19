@@ -149,7 +149,7 @@ async fn the_tool_is_listed_where_sources_are_attached_with_their_publishers_and
     assert_eq!(status, StatusCode::OK, "{hub}");
     let listed = tool(&hub, "search_documents").expect("the hub lists it");
     let description = listed["description"].as_str().expect("a description");
-    assert!(description.contains("of banskabystrica"), "{description}");
+    assert!(description.contains("of ⟦banskabystrica⟧"), "{description}");
     assert!(
         description.contains("Content languages: sk 90 %, en 10 %. Keywords match only their own language: also pass the question in `translations`"),
         "{description}"

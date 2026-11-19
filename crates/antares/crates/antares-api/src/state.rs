@@ -1851,7 +1851,11 @@ mod jsonld_context_locality_5_13 {
         let st = AppState::new("me".into());
         let (url, fetches) = context_server("/ngsi-ld/v1/jsonldContexts/peer-ctx");
         let user = serde_json::json!(url);
-        st.loader.resolve(&user).await.expect("resolve");
+        let tenant = antares_model::TenantId::default();
+        st.loader
+            .resolve_for(&tenant, &user)
+            .await
+            .expect("resolve");
         let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
         let row = st
             .store
@@ -1861,7 +1865,10 @@ mod jsonld_context_locality_5_13 {
             .expect("the fetched @context is persisted as a Cached row");
         assert_eq!(row["kind"], "Cached");
         assert_eq!(row["url"], serde_json::json!(url));
-        st.loader.resolve(&user).await.expect("resolve again");
+        st.loader
+            .resolve_for(&tenant, &user)
+            .await
+            .expect("resolve again");
         assert_eq!(
             fetch_count(&fetches),
             1,
@@ -1869,7 +1876,7 @@ mod jsonld_context_locality_5_13 {
         );
         assert_eq!(
             st.store
-                .context_get(None, &id)
+                .context_get(Some(&tenant), &id)
                 .await
                 .expect("store")
                 .expect("row")["numberOfHits"],
@@ -1893,9 +1900,10 @@ mod jsonld_context_locality_5_13 {
                 .expect("header"),
         );
         let id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
+        let tenant = antares_model::TenantId::default();
         let hits = || async {
             st.store
-                .context_get(None, &id)
+                .context_get(Some(&tenant), &id)
                 .await
                 .expect("store")
                 .expect("row")["numberOfHits"]
@@ -1965,6 +1973,11 @@ mod jsonld_context_locality_5_13 {
             .resolve_for(&alpha, &serde_json::json!(url))
             .await
             .expect("cached");
+        // the default Tenant manages the copies it used itself (S5-10)
+        st.loader
+            .resolve_for(&antares_model::TenantId::default(), &serde_json::json!(url))
+            .await
+            .expect("used by the default Tenant");
         let path = format!(
             "/ngsi-ld/v1/jsonldContexts/{}",
             url.replace(':', "%3A").replace('/', "%2F")
@@ -1978,7 +1991,7 @@ mod jsonld_context_locality_5_13 {
             tower::ServiceExt::oneshot(crate::router(st.clone()), req)
         };
         for uri in [path.clone(), format!("{path}?reload=true")] {
-            let refused = send("DELETE", uri, Some("beta")).await.expect("response");
+            let refused = send("DELETE", uri, Some("alpha")).await.expect("response");
             assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN);
         }
         let details = send("GET", format!("{path}?details=true"), None)
@@ -1991,6 +2004,84 @@ mod jsonld_context_locality_5_13 {
         );
         let deleted = send("DELETE", path, None).await.expect("response");
         assert_eq!(deleted.status(), axum::http::StatusCode::NO_CONTENT);
+    }
+
+    /// S5-10: a Cached copy is shared, who used it is not. Another Tenant
+    /// neither lists the copy nor reads it by URL until it uses it itself,
+    /// and then each Tenant counts its own hits.
+    #[tokio::test]
+    async fn a_cached_context_is_listed_only_to_the_tenants_that_used_it() {
+        let st = AppState::new("me".into());
+        let (url, _) = context_server("/private-path/ctx.jsonld");
+        let alpha = antares_model::TenantId::new("alpha").expect("tenant");
+        let beta = antares_model::TenantId::new("beta").expect("tenant");
+        for _ in 0..2 {
+            st.loader
+                .resolve_for(&alpha, &serde_json::json!(url))
+                .await
+                .expect("alpha resolves");
+        }
+        let get = |uri: String, tenant: &'static str| {
+            let req = axum::http::Request::builder()
+                .uri(uri)
+                .header("NGSILD-Tenant", tenant)
+                .body(axum::body::Body::empty())
+                .expect("request");
+            let st = st.clone();
+            async move {
+                let resp = tower::ServiceExt::oneshot(crate::router(st), req)
+                    .await
+                    .expect("response");
+                let status = resp.status();
+                let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                    .await
+                    .expect("body");
+                (
+                    status,
+                    serde_json::from_slice::<serde_json::Value>(&body).unwrap_or_default(),
+                )
+            }
+        };
+        let hits = |list: &serde_json::Value| {
+            list.as_array()
+                .into_iter()
+                .flatten()
+                .find(|e| e["URL"] == url.as_str())
+                .map(|e| e["numberOfHits"].clone())
+        };
+        let list = "/ngsi-ld/v1/jsonldContexts?details=true&kind=Cached".to_owned();
+        let (status, shown) = get(list.clone(), "beta").await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(
+            hits(&shown),
+            None,
+            "listed to a Tenant that never used it: {shown}"
+        );
+        let by_url = format!(
+            "/ngsi-ld/v1/jsonldContexts/{}?details=true",
+            url.replace(':', "%3A").replace('/', "%2F")
+        );
+        let (status, _) = get(by_url.clone(), "beta").await;
+        assert_eq!(status, axum::http::StatusCode::NOT_FOUND, "read by URL");
+        let (_, shown) = get(list.clone(), "alpha").await;
+        assert_eq!(hits(&shown), Some(serde_json::json!(2)), "{shown}");
+
+        st.loader
+            .resolve_for(&beta, &serde_json::json!(url))
+            .await
+            .expect("beta resolves");
+        let (_, shown) = get(list.clone(), "beta").await;
+        assert_eq!(
+            hits(&shown),
+            Some(serde_json::json!(1)),
+            "beta's own count: {shown}"
+        );
+        let (_, shown) = get(list, "alpha").await;
+        assert_eq!(
+            hits(&shown),
+            Some(serde_json::json!(2)),
+            "alpha's unchanged: {shown}"
+        );
     }
 
     /// F-ANT2-004: a Tenant purge drops its Hosted @context from the loader

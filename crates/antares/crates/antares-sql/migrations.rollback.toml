@@ -160,3 +160,7 @@ note = "adds the rename functions, nothing calls them, and recreates the csource
 [0038]
 rollback = "compatible"
 note = "adds tenant_seal_alias and the tenant_pairs/tenant_contract functions and replaces tenant_rename_apply and antares_tenant_digest; an older release never renames, reads none of them, and opens only rows sealed under their current Tenant name"
+
+[0039]
+rollback = "compatible"
+note = "adds jsonld_context_usage and drops the shared counters from Cached rows; an older release never reads the table and counts into the row body again from zero"
