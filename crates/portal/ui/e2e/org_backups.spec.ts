@@ -141,8 +141,8 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
   if (kind === "data" && rest.endsWith("/restore")) {
     const input = route.request().postDataJSON() as { identity: string; request?: boolean };
     if (!input.identity.startsWith("AGE-SECRET-KEY-1")) {
-      const detail = "identity: an age identity, one line starting with AGE-SECRET-KEY-1";
-      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "an age identity, one line starting with AGE-SECRET-KEY-1" }] }, 422));
+      const detail = "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "not an age identity; paste the one line that starts with AGE-SECRET-KEY-1" }] }, 422));
     }
     log("restore-plan", true, "16 row(s) would be written");
     let request = null;
@@ -166,8 +166,8 @@ async function answer(route: Route, kind: Kind, bucket: Bucket, method: string, 
     // The configuration bundle is encrypted too (T-7268): the identity opens it.
     const input = route.request().postDataJSON() as { identity: string };
     if (!input.identity.startsWith("AGE-SECRET-KEY-1")) {
-      const detail = "identity: an age identity, one line starting with AGE-SECRET-KEY-1";
-      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "an age identity, one line starting with AGE-SECRET-KEY-1" }] }, 422));
+      const detail = "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+      return route.fulfill(json({ type: "about:blank", title: "Unprocessable Content", status: 422, detail, errors: [{ path: "identity", message: "not an age identity; paste the one line that starts with AGE-SECRET-KEY-1" }] }, 422));
     }
     log("restore-plan", true, "0 change(s) planned");
     return route.fulfill(
@@ -244,7 +244,7 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       await expect(restore.getByRole("button", { name: "Check this version" })).toBeDisabled();
       await restore.getByLabel("Identity that opens the archive").fill("not-a-key");
       await restore.getByRole("button", { name: "Check this version" }).click();
-      await expect(restore.getByText(/an age identity, one line starting with AGE-SECRET-KEY-1/)).toBeVisible();
+      await expect(restore.getByText(/not an age identity; paste the one line that starts with AGE-SECRET-KEY-1/)).toBeVisible();
       await shot(page, `backups-restore-key-${width}`);
       await restore.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
       await restore.getByRole("button", { name: "Check this version" }).click();
@@ -295,7 +295,7 @@ test.describe("Administration → Backups (T-7154, T-7168)", () => {
       const dialog = page.getByTestId("backup-data-restore");
       await dialog.getByLabel("Identity that opens the archive").fill("not-a-key");
       await dialog.getByRole("button", { name: "Check this version" }).click();
-      await expect(dialog.getByText(/an age identity, one line starting with AGE-SECRET-KEY-1/)).toBeVisible();
+      await expect(dialog.getByText(/not an age identity; paste the one line that starts with AGE-SECRET-KEY-1/)).toBeVisible();
       await dialog.getByLabel("Identity that opens the archive").fill("AGE-SECRET-KEY-1E2EPLACEHOLDER");
       await dialog.getByRole("button", { name: "Check this version" }).click();
       await expect(dialog.getByRole("rowheader", { name: "portal/entity_comments" })).toBeVisible();

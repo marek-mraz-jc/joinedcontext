@@ -130,15 +130,17 @@ fn unreadable() -> ApiError {
     }
 }
 
+/// Why a pasted identity is refused: a reason, then what to paste instead.
+const IDENTITY_REFUSED: &str =
+    "identity: not an age identity; paste the one line that starts with AGE-SECRET-KEY-1";
+
 /// The identity an administrator pasted, parsed; the text stays in its zeroizing buffer.
 pub fn identity_of(text: &Zeroizing<String>) -> Result<age::x25519::Identity, ApiError> {
     text.trim()
         .parse::<age::x25519::Identity>()
         .map_err(|_| ApiError::Unprocessable {
-            detail: "identity: an age identity, one line starting with AGE-SECRET-KEY-1".into(),
-            errors: vec![
-                "identity: an age identity, one line starting with AGE-SECRET-KEY-1".into(),
-            ],
+            detail: IDENTITY_REFUSED.into(),
+            errors: vec![IDENTITY_REFUSED.into()],
         })
 }
 
