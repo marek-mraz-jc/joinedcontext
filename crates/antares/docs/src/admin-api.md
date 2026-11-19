@@ -278,6 +278,9 @@ Takes that stream into a tenant that holds nothing: no Entity, history,
 Subscription, registration, Snapshot, EntityMap, distributed subscription
 or hosted `@context` (`409` naming each count otherwise). The header names
 the same tenant, entities come before history, a line is at most 16 MiB.
+The body is read as a stream, so it may be chunked and exceed
+`ANTARES_MAX_BODY_BYTES`: this route is the one outside the bounds wall,
+and the 16 MiB line limit is its bound.
 Any refused line, or a missing trailer, answers `400` naming the line; the
 import then deletes the Entities and history it wrote, by id, and nothing
 else. `204` when every record is in.
