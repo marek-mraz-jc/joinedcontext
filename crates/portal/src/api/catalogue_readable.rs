@@ -222,6 +222,50 @@ where
     }
 }
 
+/// The internal datasets of `catalogue` as rows of the catalogue list (T-7400), each
+/// `(slug, dataset)` in the shape the list reads: the public ones are left out (CKAN lists them
+/// already), `project` keeps that project's alone, and every word of `q` must be in the name,
+/// title or description, as CKAN narrows the public rows. The publisher is the Organization that
+/// owns the project, under its name and title, as its public datasets are filed (T-7317), and
+/// the second value is the Endpoints the gateway did not answer about.
+pub(crate) fn internal_rows(
+    state: &AppState,
+    catalogue: ReadableCatalogue,
+    q: &str,
+    project: Option<&str>,
+) -> (Vec<(String, Value)>, usize) {
+    let words: Vec<String> = q.split_whitespace().map(str::to_lowercase).collect();
+    let rows = catalogue
+        .datasets
+        .into_iter()
+        .filter(|d| d.access != "public" && project.is_none_or(|p| p == d.project))
+        .filter(|d| {
+            let text = [Some(&d.name), d.title.as_ref(), d.description.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|s| s.to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            words.iter().all(|word| text.contains(word.as_str()))
+        })
+        .map(|d| {
+            let organization =
+                crate::permissions::organization_of(&state.mirror, &d.project).map(|name| {
+                    let title = crate::api::organization_addresses::title(state, &name);
+                    json!({ "name": name, "title": title })
+                });
+            let dataset = json!({
+                "name": d.slug,
+                "title": d.title.unwrap_or(d.name),
+                "notes": d.description,
+                "organization": organization,
+            });
+            (d.slug, dataset)
+        })
+        .collect();
+    (rows, catalogue.unanswered)
+}
+
 /// The gateway admits the subject and grants at least one permission (a prohibition alone
 /// reads nothing).
 fn granted(answer: &Value) -> bool {
@@ -426,6 +470,62 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// T-7400: the catalogue list takes the internal datasets alone, filed under the owning
+    /// Organization's name and title, narrowed by the scope's project and by every search word;
+    /// the public's catalogue gives it none.
+    #[tokio::test]
+    async fn internal_rows_carry_their_organization_and_narrow_by_project_and_words() {
+        let state = world();
+        let put = |kind: &str, name: &str, metadata: Value, spec: Value| {
+            let mut meta = crate::resource::ObjectMeta::new(name, "org");
+            if let Some(title) = metadata.get("title") {
+                meta.title = serde_json::from_value(title.clone()).ok();
+            }
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: meta,
+                spec,
+                status: None,
+            });
+        };
+        put(
+            "Organization",
+            "helsinki",
+            json!({ "title": "Helsinki Region" }),
+            json!({}),
+        );
+        put(
+            "Project",
+            "helsinki",
+            json!({}),
+            json!({ "organizationRef": "helsinki" }),
+        );
+        let ask =
+            |slug: String, question: Value| async move { gateway(&question["subject"], &slug) };
+        let analyst = person(&["helsinki"], &["/helsinki/traffic-analysts"]);
+        let rows = async |q: &str, project: Option<&str>| {
+            let catalogue = readable(&state, Some(&analyst), ask).await;
+            internal_rows(&state, catalogue, q, project).0
+        };
+        let all = rows("", None).await;
+        let slugs: Vec<_> = all
+            .iter()
+            .map(|(slug, _)| slug.trim_end_matches('z'))
+            .collect();
+        assert_eq!(slugs, ["counts", "incidents"]);
+        assert_eq!(
+            all[0].1["organization"],
+            json!({ "name": "helsinki", "title": "Helsinki Region" })
+        );
+        assert_eq!(rows("INCIDENTS", None).await.len(), 1);
+        assert_eq!(rows("incidents nothing", None).await.len(), 0);
+        assert_eq!(rows("", Some("espoo")).await.len(), 0);
+        assert_eq!(rows("", Some("helsinki")).await.len(), 2);
+        let public = readable(&state, None, ask).await;
+        assert!(internal_rows(&state, public, "", None).0.is_empty());
     }
 
     /// A signed-in person the gateway grants nothing reads the public Endpoints alone, and the

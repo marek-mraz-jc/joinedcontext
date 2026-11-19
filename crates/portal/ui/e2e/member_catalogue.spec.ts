@@ -2,8 +2,8 @@
  * The member shell and the signed-in catalogue on stubs (ADR-N-067 §2.4, T-6411).
  *
  * A member (signed in, no project) opens "/" and lands on /catalogue in the member shell; the
- * datasets they may read come from GET /api/v1/catalogue/readable: an Access filter of the one list,
- * each marked "Granted" and by what grants it, never a box above the list (T-7389).
+ * internal datasets granted to them are rows of the one list GET /api/v1/catalogue answers, each
+ * marked "Internal" and filed under its Organization in Publisher; no box, no Access filter (T-7400).
  * A dataset by its Endpoint, /catalogue/endpoint/{slug}, shows the grid's refusals (T-6376): a
  * visitor of a non-public Endpoint "sign in", a member without a grant "no access". SHOTS_DIR
  * takes the pictures at 1440 and 400 px.
@@ -61,6 +61,29 @@ const row = (name: string, title: string, access: string, group?: string) => ({
 const MEMBER = [row("bikes", "Bike counters", "public"), row("counts", "Traffic counts", "organization")];
 const ANALYST = [...MEMBER, row("incidents", "Traffic incidents", "group", "traffic-analysts")];
 
+/**
+ * The catalogue's answer as the server builds it for `who` (T-7400): their internal datasets first,
+ * filed under the Organization "Helsinki Region", counted and faceted with the public ones;
+ * `publisher` keeps the rows of those publishers alone.
+ */
+function answer(who: ReturnType<typeof row>[], publisher: string[]) {
+  const internal = who
+    .filter((dataset) => dataset.access !== "public")
+    .map((dataset) => ({
+      name: dataset.slug,
+      title: dataset.title,
+      notes: dataset.description,
+      publisher: { name: "helsinki", title: "Helsinki Region" },
+      formats: [],
+      themes: [],
+      endpoint: dataset.slug,
+    }));
+  const all = [...internal, ...PAGE.datasets];
+  const datasets = publisher.length > 0 ? all.filter((dataset) => publisher.includes(dataset.publisher.name)) : all;
+  const facets = internal.length > 0 ? { ...PAGE.facets, publisher: [...PAGE.facets.publisher, facet("helsinki", "Helsinki Region", internal.length)] } : PAGE.facets;
+  return { ...PAGE, total: datasets.length, datasets, facets };
+}
+
 async function shot(page: Page, name: string): Promise<void> {
   const dir = process.env.SHOTS_DIR;
   if (dir) await page.screenshot({ path: `${dir}/${name}.png`, fullPage: true });
@@ -91,19 +114,15 @@ async function stub(page: Page, who: "visitor" | typeof MEMBER | typeof ANALYST,
     const signedIn = who !== "visitor";
     if (url.pathname.endsWith("/auth/me")) return signedIn ? json(IDENTITY) : json({ title: "Unauthorized", status: 401 }, 401);
     if (url.pathname === "/api/v1/projects") return json({ apiVersion: "v1", kind: "List", items: [] });
-    if (url.pathname === "/api/v1/catalogue") return json(PAGE);
-    if (url.pathname === "/api/v1/catalogue/readable") {
-      return json({ datasets: signedIn ? who : [row("bikes", "Bike counters", "public")], unanswered: 0 });
-    }
+    if (url.pathname === "/api/v1/catalogue") return json(answer(signedIn ? who : [], url.searchParams.getAll("publisher")));
     return json({ apiVersion: "v1", kind: "List", items: [] });
   });
 }
 
-/** The Access filter: the sidebar at 1440, the Filters sheet on a phone. */
-async function accessFilter(page: Page, width: number) {
+/** The filters: the sidebar at 1440, the Filters sheet on a phone. */
+async function filters(page: Page, width: number) {
   if (width < 768) await page.getByRole("button", { name: /^Filters/ }).click();
-  const scope = width < 768 ? page.getByRole("dialog") : page.getByRole("complementary", { name: "Filters" });
-  return scope.getByRole("group", { name: "Access" });
+  return width < 768 ? page.getByRole("dialog") : page.getByRole("complementary", { name: "Filters" });
 }
 
 /** The list starts right under the title and the search, with no box between (T-7389). */
@@ -117,7 +136,7 @@ async function listAtTop(page: Page): Promise<void> {
 
 test.describe("a member's catalogue", () => {
   for (const width of [1440, 400]) {
-    test(`a member lands on the catalogue in the member shell, granted datasets first and marked (${width} px)`, async ({ page }) => {
+    test(`a member lands on the catalogue in the member shell, an internal dataset a row of the one list (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stub(page, MEMBER, 200);
       await page.goto("/?lang=en");
@@ -130,30 +149,30 @@ test.describe("a member's catalogue", () => {
       await listAtTop(page);
       const first = page.getByRole("region", { name: "Datasets" }).locator("ul > li").first();
       await expect(first.getByRole("link", { name: "Traffic counts" })).toBeVisible();
-      await expect(first.getByText("Granted", { exact: true })).toBeVisible();
-      await expect(first.getByText("helsinki · Your organization")).toBeVisible();
+      await expect(first.getByText("Internal", { exact: true })).toBeVisible();
+      await expect(first.getByText("Helsinki Region")).toBeVisible();
       await expect(page.getByText("4 datasets")).toBeVisible();
+      await expect(page.getByRole("group", { name: "Access" })).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       await shot(page, `member-catalogue-en-${width}`);
     });
 
-    test(`an analyst filters to what they are granted, and opens it (${width} px)`, async ({ page }) => {
+    test(`an analyst ticks the internal datasets' publisher, and opens one (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stub(page, ANALYST, 200);
       await page.goto("/catalogue?lang=en");
-      const access = await accessFilter(page, width);
-      const mine = access.getByRole("checkbox", { name: /Granted to me/ });
-      await expect(mine).toBeEnabled();
-      await mine.check();
+      const sidebar = await filters(page, width);
+      await expect(sidebar.getByRole("group", { name: "Access" })).toHaveCount(0);
+      const helsinki = sidebar.getByRole("group", { name: "Publisher" }).getByRole("checkbox", { name: /Helsinki Region/ });
+      await helsinki.check();
       if (width < 768) await page.getByRole("button", { name: "Show 2 datasets" }).click();
-      await expect(page).toHaveURL(/access=granted/);
+      await expect(page).toHaveURL(/publisher=helsinki/);
       await expect(page.getByText("2 datasets")).toBeVisible();
       const list = page.getByRole("region", { name: "Datasets" });
       await expect(list.locator("ul > li")).toHaveCount(2);
-      await expect(list.getByText("helsinki · Group traffic-analysts")).toBeVisible();
-      await expect(list.getByRole("group", { name: "Chosen filters" }).getByRole("button", { name: "Remove filter Access: Granted to me" })).toBeVisible();
+      await expect(list.getByRole("group", { name: "Chosen filters" }).getByRole("button", { name: "Remove filter Publisher: Helsinki Region" })).toBeVisible();
       expect(await axeViolations(page)).toEqual([]);
-      await shot(page, `analyst-catalogue-granted-en-${width}`);
+      await shot(page, `analyst-catalogue-publisher-en-${width}`);
       await list.getByRole("link", { name: "Traffic incidents" }).click();
       await expect(page).toHaveURL(new RegExp(`/catalogue/endpoint/${SLUG}`));
       await expect(page.getByRole("heading", { level: 1, name: "Traffic incidents" })).toBeVisible();
@@ -161,44 +180,19 @@ test.describe("a member's catalogue", () => {
       await shot(page, `analyst-dataset-rows-en-${width}`);
     });
 
-    test(`a member with nothing internal shared sees the list at once and Granted to me (0) saying why (${width} px)`, async ({ page }) => {
+    test(`a member with nothing internal shared sees the public list alone, no Access filter (${width} px)`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await stub(page, [row("bikes", "Bike counters", "public")], 200);
-      await page.goto("/catalogue?lang=en");
+      await page.goto("/catalogue?lang=en&access=granted");
       await listAtTop(page);
-      await expect(page.getByText("3 datasets, none granted to you yet")).toBeVisible();
+      await expect(page.getByText("3 datasets")).toBeVisible();
+      await expect(page.getByText("Internal", { exact: true })).toHaveCount(0);
       await shot(page, `member-catalogue-empty-en-${width}`);
-      const access = await accessFilter(page, width);
-      const mine = access.getByRole("checkbox", { name: /Granted to me/ });
-      await expect(mine).toHaveAttribute("aria-disabled", "true");
-      await expect(access.locator("p", { hasText: /A data steward of your organization can grant your group access/ })).toBeVisible();
-      await mine.click({ force: true });
-      await expect(mine).not.toBeChecked();
+      const sidebar = await filters(page, width);
+      await expect(sidebar.getByRole("group", { name: "Access" })).toHaveCount(0);
+      await expect(sidebar.getByRole("group", { name: "Publisher" }).getByRole("checkbox", { name: /Helsinki Region/ })).toHaveCount(0);
       expect(await axeViolations(page)).toEqual([]);
       if (width < 768) await shot(page, `member-catalogue-empty-filters-en-${width}`);
-    });
-
-    test(`a person in no project of this Organization's host is told who adds them, not shown an error (${width} px)`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 900 });
-      await stub(page, MEMBER, 200);
-      // The Organization host's gate (organization_host.rs) answers 403 to everyone outside its projects (T-7317).
-      await page.route("**/api/v1/catalogue/readable", (route) =>
-        route.fulfill({
-          status: 403,
-          contentType: "application/problem+json",
-          body: JSON.stringify({ type: "https://joinedcontext.com/errors/forbidden", title: "Forbidden", status: 403, detail: "this Portal is bbsk's; you belong to none of its projects" }),
-        }),
-      );
-      await page.goto("/catalogue?lang=en");
-      await listAtTop(page);
-      await expect(page.getByText("3 datasets; you are not in a project of this organization yet")).toBeVisible();
-      if (width < 768) await shot(page, `member-catalogue-no-project-page-en-${width}`);
-      const access = await accessFilter(page, width);
-      await expect(access.locator("p", { hasText: /A project owner or an administrator of this organization can add you/ })).toBeVisible();
-      await expect(page.getByRole("alert")).toHaveCount(0);
-      await expect(page.getByText(/belong to none of its projects/)).toHaveCount(0);
-      expect(await axeViolations(page)).toEqual([]);
-      await shot(page, `member-catalogue-no-project-en-${width}`);
     });
 
     test(`an Organization with no dataset yet says so instead of listing another Organization's (${width} px)`, async ({ page }) => {

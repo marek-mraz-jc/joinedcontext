@@ -1,12 +1,11 @@
 // covers (T-2137, the module gate in gate_modules.test.ts): src/pages/catalogue/ReadableDatasets.tsx,
 // src/pages/catalogue/EndpointDatasetPage.tsx, src/components/layout/MemberFrame.tsx.
-// ADR-N-067 §2.4 (T-6411): the signed-in catalogue lists what the server says the person may
-// read, each row marked by what grants it; a dataset page by its Endpoint shows "sign in" to a
+// ADR-N-067 §2.4 (T-6411): what grants a dataset, in words (the catalogue lists the internal
+// rows itself, T-7400); a dataset page by its Endpoint shows "sign in" to a
 // visitor of a non-public Endpoint, "no access" to a person without a grant, rows to a person
 // with one; a member gets the member shell.
 import type { ReactNode } from "react";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
-import type { Granted } from "../src/pages/catalogue/ReadableDatasets";
+import { screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n, { SUPPORTED_LOCALES } from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -30,7 +29,7 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({}),
 }));
 
-const { AccessFacet, GrantedCard } = await import("../src/pages/catalogue/ReadableDatasets");
+const { AccessBadge } = await import("../src/pages/catalogue/ReadableDatasets");
 const { EndpointDatasetPage } = await import("../src/pages/catalogue/EndpointDatasetPage");
 const { MemberFrame } = await import("../src/components/layout/MemberFrame");
 
@@ -61,67 +60,24 @@ afterEach(() => {
   status = "authenticated";
 });
 
-describe("the datasets a signed-in person may read (T-6411, T-7389)", () => {
+describe("what grants a dataset, and the Internal mark of the catalogue's rows (T-6411, T-7400)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  const granted = (datasets: ReturnType<typeof row>[]): Granted => ({ state: "ready", datasets, unanswered: 0 });
-
-  it("marks each granted dataset and names what grants it", async () => {
+  it("names what grants each dataset", async () => {
     const { container } = renderPart(
       <ul>
-        {ANALYST.slice(1).map((dataset) => (
+        {ANALYST.map((dataset) => (
           <li key={dataset.slug}>
-            <GrantedCard dataset={dataset} />
+            <AccessBadge dataset={dataset} />
           </li>
         ))}
       </ul>,
     );
-    const counts = await screen.findByRole("link", { name: "Counts" });
-    expect(counts).toHaveAttribute("href", "/catalogue/endpoint/countszzzzzzzzzzzzzzzzzzzzzz");
-    expect(screen.getAllByText(en.catalogue.access.badge)).toHaveLength(2);
-    expect(screen.getByText(`helsinki · ${en.catalogue.readable.access.organization}`)).toBeInTheDocument();
-    expect(screen.getByText("helsinki · Group traffic-analysts")).toBeInTheDocument();
-    await expectNoViolations(container);
-  });
-
-  it("counts the granted and the public datasets, and picks one of them", async () => {
-    const onSelect = vi.fn();
-    const { container } = renderPart(
-      <AccessFacet granted={granted(ANALYST.slice(1))} publicCount={626} selected={undefined} onSelect={onSelect} />,
-    );
-    const mine = await screen.findByRole("checkbox", { name: /Granted to me/ });
-    expect(mine.closest("label")?.textContent).toBe("Granted to me2");
-    expect(screen.getByRole("checkbox", { name: /Public/ }).closest("label")?.textContent).toBe("Public626");
-    fireEvent.click(mine);
-    expect(onSelect).toHaveBeenCalledWith("granted");
-    await expectNoViolations(container);
-  });
-
-  it("unticks the chosen access", async () => {
-    const onSelect = vi.fn();
-    renderPart(<AccessFacet granted={granted(ANALYST.slice(1))} publicCount={3} selected="public" onSelect={onSelect} />);
-    fireEvent.click(await screen.findByRole("checkbox", { name: /Public/ }));
-    expect(onSelect).toHaveBeenCalledWith(undefined);
-  });
-
-  it.each([
-    ["ready", en.catalogue.access.none],
-    ["noProject", en.catalogue.access.noProject],
-    ["failed", en.catalogue.access.failed],
-    ["loading", en.catalogue.access.loading],
-  ] as const)("refuses Granted to me (0) when %s and says why", async (state, words) => {
-    const onSelect = vi.fn();
-    const { container } = renderPart(
-      <AccessFacet granted={{ state, datasets: [], unanswered: 0 }} publicCount={626} selected={undefined} onSelect={onSelect} />,
-    );
-    const mine = await screen.findByRole("checkbox", { name: /Granted to me/ });
-    expect(mine).toHaveAttribute("aria-disabled", "true");
-    expect(mine).toHaveAccessibleDescription(words);
-    fireEvent.click(mine);
-    expect(onSelect).not.toHaveBeenCalled();
-    expect(screen.getAllByText(words)).toHaveLength(2);
+    expect(await screen.findByText(en.catalogue.readable.access.public)).toBeInTheDocument();
+    expect(screen.getByText(en.catalogue.readable.access.organization)).toBeInTheDocument();
+    expect(screen.getByText("Group traffic-analysts")).toBeInTheDocument();
     await expectNoViolations(container);
   });
 
@@ -129,11 +85,12 @@ describe("the datasets a signed-in person may read (T-6411, T-7389)", () => {
     await i18n.changeLanguage(locale);
     const { container } = renderPart(
       <>
-        <AccessFacet granted={{ state: "noProject", datasets: [], unanswered: 0 }} publicCount={1} selected={undefined} onSelect={() => undefined} />
-        <GrantedCard dataset={ANALYST[2]!} />
+        <AccessBadge dataset={ANALYST[2]!} />
+        <span>{i18n.t("catalogue.access.badge")}</span>
+        <span>{i18n.t("catalogue.access.badgeHint")}</span>
       </>,
     );
-    await screen.findAllByRole("checkbox");
+    await screen.findAllByText(/./);
     expectNoRawKeys(container);
   });
 });
