@@ -248,7 +248,9 @@ impl RegistrationSync {
                     grants.insert(key, shared.slug.clone());
                     tracing::info!(%space, provider = %shared.tenant, "export grant removed with its shared read");
                 }
-                Err(reason) => tracing::warn!(%space, provider = %shared.tenant, %reason, "export grant not removed"),
+                Err(reason) => {
+                    tracing::warn!(%space, provider = %shared.tenant, %reason, "export grant not removed")
+                }
             }
         }
         outcomes
@@ -266,7 +268,8 @@ impl RegistrationSync {
         manifest: &RawManifest,
         hub_ngsi_ld: &str,
     ) -> Result<Option<SharedMember>, String> {
-        let Ok(spec) = serde_json::from_value::<ContextSourceRegistrationSpec>(manifest.spec.clone())
+        let Ok(spec) =
+            serde_json::from_value::<ContextSourceRegistrationSpec>(manifest.spec.clone())
         else {
             return Ok(None);
         };
@@ -347,7 +350,12 @@ impl RegistrationSync {
             .map_err(|err| err.to_string())?;
         match response.status().is_success() {
             true => Ok(()),
-            false => Err(refusal("the broker refused the provider's export grant", response, None).await),
+            false => Err(refusal(
+                "the broker refused the provider's export grant",
+                response,
+                None,
+            )
+            .await),
         }
     }
 
@@ -360,7 +368,12 @@ impl RegistrationSync {
         match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
         {
             true => Ok(()),
-            false => Err(refusal("the broker refused to remove the export grant", response, None).await),
+            false => Err(refusal(
+                "the broker refused to remove the export grant",
+                response,
+                None,
+            )
+            .await),
         }
     }
 
@@ -604,7 +617,11 @@ impl SharedMember {
 /// slug or by its `endpointRef`.
 fn referenced(mirror: &Mirror, project: &str, provider: &str, name: &str, slug: &str) -> bool {
     mirror
-        .list(project, "SharedSpaceReference", &crate::store::ListOptions::default())
+        .list(
+            project,
+            "SharedSpaceReference",
+            &crate::store::ListOptions::default(),
+        )
         .items
         .into_iter()
         .any(|envelope| {
@@ -916,9 +933,8 @@ mod tests {
     /// gateway address, no token marker, no person of the hub.
     #[test]
     fn a_shared_endpoint_of_another_project_is_read_in_process_as_an_anonymous_caller() {
-        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker").with_gateway(Some(
-            "http://127.0.0.1:42101/api".into(),
-        ));
+        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker")
+            .with_gateway(Some("http://127.0.0.1:42101/api".into()));
         let mirror = shared_read(true);
         let (found, refused) = declared(&mirror);
         assert!(refused.is_empty(), "{refused:?}");
@@ -931,23 +947,27 @@ mod tests {
         let member = shared.member.clone();
         let body = registration(manifest, &move |_: &str| Some(member.clone())).expect("renders");
         assert_eq!(body["endpoint"], json!(ngsi_ld));
-        assert_eq!(body["tenant"], json!("espoo-src"));
+        // Both spaces pin their segment, which is their tenant.
+        assert_eq!(body["tenant"], json!("src"));
         assert!(body.get("contextSourceInfo").is_none(), "{body}");
 
         assert_eq!(
             shared.grant_url(hub),
-            "http://127.0.0.1:42101/broker/q/grants/espoo-src/helsinki-hub"
+            "http://127.0.0.1:42101/broker/q/grants/src/hub"
         );
         assert_eq!(
             shared.grant(hub),
-            json!({ "target": "espoo-src", "source": "helsinki-hub", "view": SHARED_SLUG,
+            json!({ "target": "src", "source": "hub", "view": SHARED_SLUG,
                     "access": "read", "subject": { "x-jc-roles": "public" } })
         );
         let across = SharedMember {
             tenant: "sk_ba__src".into(),
             ..shared
         };
-        assert_eq!(across.grant("sk_bbsk__hub")["crossOrganization"], json!(true));
+        assert_eq!(
+            across.grant("sk_bbsk__hub")["crossOrganization"],
+            json!(true)
+        );
 
         // On another broker than the hub's, nothing is read in process.
         let refused = sync
@@ -1006,12 +1026,19 @@ mod tests {
         let sync = RegistrationSync::new(base);
         let outcomes = sync.converge(&shared_read(true), &Mirror::new()).await;
         assert_eq!(outcomes[0].2, RegistrationOutcome::Written, "{outcomes:?}");
-        let calls = std::mem::take(&mut *seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        let calls = std::mem::take(
+            &mut *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         assert_eq!(
             calls,
             [
-                ("PUT".into(), "/broker/q/grants/espoo-src/helsinki-hub".into()),
-                ("POST".into(), "/broker/ngsi-ld/v1/csourceRegistrations".into()),
+                ("PUT".into(), "/broker/q/grants/src/hub".into()),
+                (
+                    "POST".into(),
+                    "/broker/ngsi-ld/v1/csourceRegistrations".into()
+                ),
             ]
         );
 
@@ -1020,10 +1047,14 @@ mod tests {
             matches!(&outcomes[0].2, RegistrationOutcome::Error(r) if r.contains("SharedSpaceReference")),
             "{outcomes:?}"
         );
-        let calls = std::mem::take(&mut *seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        let calls = std::mem::take(
+            &mut *seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         assert_eq!(
             calls,
-            [("DELETE".into(), "/broker/q/grants/espoo-src/helsinki-hub".into())]
+            [("DELETE".into(), "/broker/q/grants/src/hub".into())]
         );
     }
 

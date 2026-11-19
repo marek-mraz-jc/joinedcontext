@@ -377,7 +377,10 @@ impl Federation {
 mod tests {
     use super::ContextSourceRegistrationSpec;
 
-    fn spec(endpoint_ref: serde_json::Value, federation: serde_json::Value) -> ContextSourceRegistrationSpec {
+    fn spec(
+        endpoint_ref: serde_json::Value,
+        federation: serde_json::Value,
+    ) -> ContextSourceRegistrationSpec {
         serde_json::from_value(serde_json::json!({
             "contextSpaceRef": "hub",
             "endpointRef": endpoint_ref,
@@ -406,19 +409,37 @@ mod tests {
             anonymous.clone(),
         );
         assert!(own.validate().is_ok());
-        let said = own.validate_scope(Some("helsinki")).map_err(|e| e.to_string());
-        assert!(said.as_ref().is_err_and(|e| e.contains("spec.endpointRef.namespace")), "{said:?}");
+        let said = own
+            .validate_scope(Some("helsinki"))
+            .map_err(|e| e.to_string());
+        assert!(
+            said.as_ref()
+                .is_err_and(|e| e.contains("spec.endpointRef.namespace")),
+            "{said:?}"
+        );
 
-        let bare = spec(serde_json::json!({"kind": "Endpoint", "name": "shared"}), anonymous);
+        let bare = spec(
+            serde_json::json!({"kind": "Endpoint", "name": "shared"}),
+            anonymous,
+        );
         let said = bare.validate().map_err(|e| e.to_string());
-        assert!(said.as_ref().is_err_and(|e| e.contains("spec.federation.identity")), "{said:?}");
+        assert!(
+            said.as_ref()
+                .is_err_and(|e| e.contains("spec.federation.identity")),
+            "{said:?}"
+        );
 
         let caller = spec(
             serde_json::json!({"kind": "Endpoint", "name": "shared", "namespace": "espoo"}),
             serde_json::json!({"identity": "caller"}),
         );
         assert!(caller.validate().is_ok());
-        let said = caller.validate_scope(Some("helsinki")).map_err(|e| e.to_string());
-        assert!(said.as_ref().is_err_and(|e| e.contains("espoo")), "{said:?}");
+        let said = caller
+            .validate_scope(Some("helsinki"))
+            .map_err(|e| e.to_string());
+        assert!(
+            said.as_ref().is_err_and(|e| e.contains("espoo")),
+            "{said:?}"
+        );
     }
 }

@@ -127,7 +127,9 @@ impl ExportGrant {
                 ));
             }
             if HeaderValue::from_str(value).is_err() {
-                return Err(format!("the subject header {name:?} has a value no header can carry"));
+                return Err(format!(
+                    "the subject header {name:?} has a value no header can carry"
+                ));
             }
         }
         Ok(())

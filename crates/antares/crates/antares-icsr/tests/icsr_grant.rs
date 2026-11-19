@@ -495,12 +495,26 @@ async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_a
     .await;
     let reg = register(&app, b, "r1", Some(a), json!({})).await;
     assert_eq!(reg.status, 201, "{}", reg.body);
-    engine.1.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    engine
+        .1
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clear();
 
     let read = cars(&app, b, Some("bob")).await;
-    assert_eq!(ids(&read.body), [format!("urn:ngsi-ld:Car:{a}-1")], "{}", read.body);
-    assert!(read.body[0].get("speed").is_some(), "{}", read.body);
-    assert!(read.body[0].get("owner").is_none(), "the view leaves owner out: {}", read.body);
+    assert_eq!(
+        ids(&read.body),
+        [format!("urn:ngsi-ld:Car:{a}-1")],
+        "{}",
+        read.body
+    );
+    let first = read.body.get(0).cloned().unwrap_or_default();
+    assert!(first.get("speed").is_some(), "{}", read.body);
+    assert!(
+        first.get("owner").is_none(),
+        "the view leaves owner out: {}",
+        read.body
+    );
     let seen = std::mem::take(&mut *engine.1.lock().unwrap_or_else(PoisonError::into_inner));
     assert!(!seen.is_empty(), "A's engine decided the forward");
     assert!(
@@ -508,6 +522,12 @@ async fn icsr_a_grant_naming_its_caller_decides_a_forward_across_organizations_a
         "A's engine saw only the grant's caller: {seen:?}"
     );
 
-    assert_eq!(register(&app, c, "r1", Some(a), json!({})).await.status, 403);
-    assert!(ids(&cars(&app, c, Some("carol")).await.body).is_empty());
+    assert_eq!(
+        register(&app, c, "r1", Some(a), json!({})).await.status,
+        403
+    );
+    assert_eq!(
+        ids(&cars(&app, c, Some("carol")).await.body),
+        Vec::<String>::new()
+    );
 }
