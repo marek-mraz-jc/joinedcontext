@@ -141,11 +141,39 @@ impl Preferences {
     }
 }
 
-fn pool(state: &AppState) -> Result<&sqlx::PgPool, ApiError> {
-    state
+/// A transaction in the reserved key of the request's Organization, where the person's
+/// preferences live (T-7282); `None` on a host in no active Organization, which keeps none.
+pub(crate) async fn person_tx(
+    state: &AppState,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, ApiError> {
+    let pool = state
         .db
         .as_ref()
-        .ok_or_else(|| ApiError::Unavailable("no preferences database is configured".into()))
+        .ok_or_else(|| ApiError::Unavailable("no preferences database is configured".into()))?;
+    let installation = state.config.installation_organization.as_ref();
+    crate::project_ids::person_tx(pool, &state.mirror, installation.map(|o| o.name.as_str()))
+        .await
+        .map_err(db_error)
+}
+
+/// [`person_tx`] for a write: a host in no active Organization answers 409 with the next step.
+async fn person_write_tx(
+    state: &AppState,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, ApiError> {
+    person_tx(state)
+        .await?
+        .ok_or_else(|| crate::project_ids::person_unplaced("preferences"))
+}
+
+/// The person's document in a fresh [`person_tx`]; `None` before the first save or where
+/// nothing is kept.
+async fn load(state: &AppState, subject: &str) -> Result<Option<serde_json::Value>, ApiError> {
+    let Some(mut tx) = person_tx(state).await? else {
+        return Ok(None);
+    };
+    db::load_preferences(&mut tx, subject)
+        .await
+        .map_err(db_error)
 }
 
 fn db_error(err: sqlx::Error) -> ApiError {
@@ -159,12 +187,9 @@ async fn stored_row(
     state: &AppState,
     identity: &Identity,
 ) -> Result<Option<serde_json::Value>, ApiError> {
-    let pool = pool(state)?;
     // Every page load asks this and the pool holds five connections: only a row with old
     // connectors pays a second read (T-6520).
-    let stored = db::load_preferences(pool, &identity.subject)
-        .await
-        .map_err(db_error)?;
+    let stored = load(state, &identity.subject).await?;
     if !stored
         .as_ref()
         .is_some_and(crate::personal_connectors::holds_old)
@@ -172,9 +197,7 @@ async fn stored_row(
         return Ok(stored);
     }
     crate::personal_connectors::move_one(state, identity).await?;
-    db::load_preferences(pool, &identity.subject)
-        .await
-        .map_err(db_error)
+    load(state, &identity.subject).await
 }
 
 #[utoipa::path(
@@ -232,22 +255,23 @@ pub async fn put_preferences(
     let preferences: Preferences = serde_json::from_slice(&body)
         .map_err(|e| ApiError::BadRequest(format!("preferences body is invalid: {e}")))?;
     preferences.validate().map_err(ApiError::BadRequest)?;
-    let pool = pool(&state)?;
     let subject = &user.0.identity.subject;
     // Old connectors still in the row move first, so this whole-document save cannot drop them.
     crate::personal_connectors::move_one(&state, &user.0.identity).await?;
     let mut value = serde_json::to_value(&preferences)
         .map_err(|e| ApiError::Internal(format!("preferences did not serialize: {e}")))?;
+    let mut tx = person_write_tx(&state).await?;
     // What the move left (a list it could not read, connectors it kept aside) is carried over.
-    let stored = db::load_preferences(pool, subject)
+    let stored = db::load_preferences(&mut tx, subject)
         .await
         .map_err(db_error)?;
     if let Some(object) = value.as_object_mut() {
         object.extend(crate::personal_connectors::held(stored.as_ref()));
     }
-    db::save_preferences(pool, subject, &value)
+    db::save_preferences(&mut tx, subject, &value)
         .await
         .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
     Ok(Json(preferences))
 }
 
@@ -307,9 +331,9 @@ pub async fn add_recent(
     for place in &opened.places {
         place.validate().map_err(ApiError::BadRequest)?;
     }
-    let pool = pool(&state)?;
     let subject = &user.0.identity.subject;
-    let mut preferences = db::load_preferences(pool, subject)
+    let mut tx = person_write_tx(&state).await?;
+    let mut preferences = db::load_preferences(&mut tx, subject)
         .await
         .map_err(db_error)?
         .and_then(|value| serde_json::from_value::<Preferences>(value).ok())
@@ -317,9 +341,10 @@ pub async fn add_recent(
     preferences.recent = merged_recent(opened.places, std::mem::take(&mut preferences.recent));
     let value = serde_json::to_value(&preferences)
         .map_err(|e| ApiError::Internal(format!("preferences did not serialize: {e}")))?;
-    db::save_preferences(pool, subject, &value)
+    db::save_preferences(&mut tx, subject, &value)
         .await
         .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
     Ok(Json(preferences))
 }
 

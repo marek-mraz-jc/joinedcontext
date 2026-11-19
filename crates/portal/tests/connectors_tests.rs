@@ -41,9 +41,22 @@ async fn state(url: &str) -> AppState {
         .map(str::to_owned)
     })
     .expect("config");
+    let mut config = config;
+    // A person's connectors and preferences live under an Organization (T-7282): the deployment
+    // host's requests take the configured installation Organization's.
+    let persons = joinedcontext_portal::host_registry::SeedOrganization {
+        name: PERSONS.to_owned(),
+        organization_id: None,
+        host: "portal.persons.example".to_owned(),
+        catalogue_id: None,
+    };
+    config.installation_organization = Some(persons.clone());
     let pool = joinedcontext_portal::db::connect(url)
         .await
         .expect("connect + migrate");
+    joinedcontext_portal::host_registry::seed_organizations(&pool, &[persons])
+        .await
+        .expect("the installation Organization");
     let state = AppState::new(config, None).with_db(pool);
     state
         .bearer
@@ -73,6 +86,28 @@ async fn state(url: &str) -> AppState {
         json!({ "rules": [{ "kinds": ["Endpoint", "ContextSpace"], "verbs": ["read"] }] }),
     ));
     state
+}
+
+/// The installation Organization of this suite's Portal, where its people's rows live.
+const PERSONS: &str = "connectors-persons";
+
+/// A transaction in the key of [`PERSONS`]'s reserved project.
+async fn person_tx(state: &AppState) -> sqlx::Transaction<'static, sqlx::Postgres> {
+    let pool = state.db.as_ref().expect("a pool");
+    joinedcontext_portal::project_ids::person_tx(pool, &state.mirror, Some(PERSONS))
+        .await
+        .expect("the key")
+        .expect("a keyed transaction")
+}
+
+async fn save_preferences(state: &AppState, subject: &str, doc: &Value) -> Result<(), sqlx::Error> {
+    let mut tx = person_tx(state).await;
+    joinedcontext_portal::db::save_preferences(&mut tx, subject, doc).await?;
+    tx.commit().await
+}
+
+async fn load_preferences(state: &AppState, subject: &str) -> Result<Option<Value>, sqlx::Error> {
+    joinedcontext_portal::db::load_preferences(&mut *person_tx(state).await, subject).await
 }
 
 /// Binds `{who}@hel.fi` to reading Endpoints in project `mesto`.
@@ -142,9 +177,8 @@ async fn old_connectors_move_once_read_only_and_reach_the_gateway_alone() {
     let state = state(&url).await;
     let (a, b) = (fresh("a"), fresh("b"));
     let (sub_a, sub_b) = (format!("sub-{a}"), format!("sub-{b}"));
-    let pool = state.db.clone().expect("a pool");
-    joinedcontext_portal::db::save_preferences(
-        &pool,
+    save_preferences(
+        &state,
         &sub_a,
         &json!({
             "theme": "dark",
@@ -211,7 +245,7 @@ async fn old_connectors_move_once_read_only_and_reach_the_gateway_alone() {
         (StatusCode::OK, Some(2))
     );
 
-    let kept = joinedcontext_portal::db::load_preferences(&pool, &sub_a)
+    let kept = load_preferences(&state, &sub_a)
         .await
         .expect("the row")
         .expect("a row");
@@ -271,9 +305,8 @@ async fn a_save_of_preferences_never_drops_old_connectors_and_refuses_the_old_fi
     let state = state(&url).await;
     let a = fresh("a");
     let sub_a = format!("sub-{a}");
-    let pool = state.db.clone().expect("a pool");
-    joinedcontext_portal::db::save_preferences(
-        &pool,
+    save_preferences(
+        &state,
         &sub_a,
         &json!({ "connectors": [{ "name": "fav", "select": { "projects": ["mesto"] } }] }),
     )
@@ -368,11 +401,10 @@ async fn an_unreadable_old_list_stays_in_place_and_a_save_keeps_it() {
     let state = state(&url).await;
     let a = fresh("a");
     let sub_a = format!("sub-{a}");
-    let pool = state.db.clone().expect("a pool");
     let unreadable =
         json!([{ "name": "fav", "select": {} }, { "select": { "projects": ["mesto"] } }]);
-    joinedcontext_portal::db::save_preferences(
-        &pool,
+    save_preferences(
+        &state,
         &sub_a,
         &json!({ "theme": "dark", "connectors": unreadable }),
     )
@@ -406,7 +438,7 @@ async fn an_unreadable_old_list_stays_in_place_and_a_save_keeps_it() {
     )
     .await;
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
-    let row = joinedcontext_portal::db::load_preferences(&pool, &sub_a)
+    let row = load_preferences(&state, &sub_a)
         .await
         .expect("the row")
         .expect("a row");
@@ -435,10 +467,9 @@ async fn an_old_connector_whose_name_is_taken_is_kept_aside_and_a_save_keeps_it(
     let state = state(&url).await;
     let a = fresh("a");
     let sub_a = format!("sub-{a}");
-    let pool = state.db.clone().expect("a pool");
     let old = json!({ "connectors": [{ "name": "fav", "select": { "projects": ["mesto"] } }] });
     reader_in_mesto(&state, &a);
-    joinedcontext_portal::db::save_preferences(&pool, &sub_a, &old)
+    save_preferences(&state, &sub_a, &old)
         .await
         .expect("an old row");
     let first = joinedcontext_portal::personal_connectors::move_one(&state, &common::person(&a))
@@ -446,7 +477,7 @@ async fn an_old_connector_whose_name_is_taken_is_kept_aside_and_a_save_keeps_it(
         .expect("a move");
     assert_eq!(first.moved, 1);
     // A second Portal's copy of the same list arrives after the first moved it.
-    joinedcontext_portal::db::save_preferences(&pool, &sub_a, &old)
+    save_preferences(&state, &sub_a, &old)
         .await
         .expect("the old row again");
     let second = joinedcontext_portal::personal_connectors::move_one(&state, &common::person(&a))
@@ -463,7 +494,7 @@ async fn an_old_connector_whose_name_is_taken_is_kept_aside_and_a_save_keeps_it(
     )
     .await;
     assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
-    let row = joinedcontext_portal::db::load_preferences(&pool, &sub_a)
+    let row = load_preferences(&state, &sub_a)
         .await
         .expect("the row")
         .expect("a row");

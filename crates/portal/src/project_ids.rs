@@ -144,6 +144,81 @@ pub async fn installation(
     }
 }
 
+/// The Organization a person's own rows belong to (connectors, connector calls, preferences;
+/// T-7282): the one the request is pinned to (its Organization host), else the installation's
+/// from the mirror, else `configured` (`JC_PORTAL_INSTALLATION_ORGANIZATION`, under which
+/// [`key_person_rows`] keyed the rows written before). `None` on a deployment host of an
+/// installation that names no Organization: such a person keeps no row there.
+pub fn person_organization(mirror: &Mirror, configured: Option<&str>) -> Option<String> {
+    crate::organization_host::organization()
+        .or_else(|| crate::permissions::installation_organization(mirror))
+        .or_else(|| configured.map(str::to_owned))
+}
+
+/// A `db::tenant_tx` of the reserved project of [`person_organization`] (TEN-11), where a person's
+/// own rows live: one person on two Organization hosts keeps two sets. `None` when the request is
+/// in no active Organization of the registry: the caller reads nothing and writes nothing.
+pub async fn person_tx(
+    pool: &PgPool,
+    mirror: &Mirror,
+    configured: Option<&str>,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, sqlx::Error> {
+    let Some(organization) = person_organization(mirror, configured) else {
+        return Ok(None);
+    };
+    match reserved(pool, &organization).await? {
+        Some(key) => Ok(Some(crate::db::tenant_tx(pool, key).await?)),
+        None => Ok(None),
+    }
+}
+
+/// What a person's write answers on a host that is in no active Organization ([`person_tx`]
+/// `None`): 409 naming the next step.
+pub fn person_unplaced(what: &str) -> crate::error::ApiError {
+    crate::error::ApiError::Conflict(format!(
+        "this address belongs to no active Organization, so it keeps no {what}; open the Portal \
+         on your Organization's own address, or an operator sets the installation Organization"
+    ))
+}
+
+/// The tables migration 0088 forces with a person's Organization key (T-7282), in the order
+/// [`key_person_rows`] keys them: a call takes its connector's key.
+const PERSON_TABLES: &[&str] = &["connectors", "user_preferences"];
+
+/// Keys every unkeyed row of a person's tables under `organization`'s reserved project, after
+/// migration 0087 adds the key and before 0088 forces it ([`crate::db::connect_with`], T-7282):
+/// before 0087 a person's rows had no Organization, and the installation's is the one the
+/// deployment host shows them under. A call takes its connector's key. Answers the rows keyed.
+pub async fn key_person_rows(
+    pool: &PgPool,
+    organization: &crate::host_registry::SeedOrganization,
+) -> Result<u64, sqlx::Error> {
+    crate::host_registry::seed_organizations(pool, std::slice::from_ref(organization)).await?;
+    let Some(key) = reserved(pool, &organization.name).await? else {
+        return Ok(0);
+    };
+    let mut keyed = 0;
+    for table in PERSON_TABLES {
+        keyed += sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET org_id = $1::uuid, project_id = $2::uuid \
+             WHERE org_id IS NULL OR project_id IS NULL"
+        )))
+        .bind(key.org.to_string())
+        .bind(key.project.to_string())
+        .execute(pool)
+        .await?
+        .rows_affected();
+    }
+    keyed += sqlx::query(
+        "UPDATE connector_calls k SET org_id = c.org_id, project_id = c.project_id \
+         FROM connectors c WHERE c.id = k.connector AND (k.org_id IS NULL OR k.project_id IS NULL)",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(keyed)
+}
+
 /// The key of `project` as the mirror places it: its Organization from the Project's
 /// `spec.organizationRef` or the installation's (ADR-N-058 section 2.3), then [`key`]. `None` for
 /// a name the mirror holds no Project of, so a removed project's leftover rows never mint an id.

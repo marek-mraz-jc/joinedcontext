@@ -346,7 +346,7 @@ impl AppState {
             feedback: Arc::new(crate::feedback::FeedbackStore::new(None)),
             org_backups: Arc::new(crate::org_backup::BackupStore::new(None)),
             org_backup_egress: Arc::new(crate::org_backup::Egress::default()),
-            connectors: Arc::new(crate::connectors::ConnectorStore::new(None)),
+            connectors: Arc::new(crate::connectors::ConnectorStore::new(None, None)),
             paired_tabs: Arc::default(),
             plans: Arc::default(),
             alerts: Arc::new(crate::alerts::AlertStore::new(None, Arc::default())),
@@ -1327,7 +1327,13 @@ impl AppState {
         ));
         self.feedback = Arc::new(crate::feedback::FeedbackStore::new(db.clone()));
         self.org_backups = Arc::new(crate::org_backup::BackupStore::new(db.clone()));
-        self.connectors = Arc::new(crate::connectors::ConnectorStore::new(db.clone()));
+        self.connectors = Arc::new(crate::connectors::ConnectorStore::new(
+            db.clone().map(|pool| (pool, self.mirror.clone())),
+            self.config
+                .installation_organization
+                .as_ref()
+                .map(|o| o.name.clone()),
+        ));
         self.alerts = Arc::new(crate::alerts::AlertStore::new(
             db.clone(),
             self.mirror.clone(),

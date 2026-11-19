@@ -1850,8 +1850,28 @@ type CallRow = (
 );
 
 enum Inner {
-    Postgres(sqlx::PgPool),
+    Postgres(Db),
     Memory(Mutex<Held>),
+}
+
+/// The database, the mirror and the configured installation Organization that place a person's
+/// rows under their Organization's reserved key (T-7282, [`crate::project_ids::person_tx`]).
+struct Db {
+    pool: sqlx::PgPool,
+    mirror: std::sync::Arc<crate::store::Mirror>,
+    installation: Option<String>,
+}
+
+type Tx = sqlx::Transaction<'static, sqlx::Postgres>;
+
+impl Db {
+    /// The request's Organization's transaction; `None` on a host in no active Organization,
+    /// where a person holds no connector.
+    async fn person(&self) -> Result<Option<Tx>, ApiError> {
+        crate::project_ids::person_tx(&self.pool, &self.mirror, self.installation.as_deref())
+            .await
+            .map_err(db_error)
+    }
 }
 
 pub struct ConnectorStore {
@@ -1916,10 +1936,20 @@ fn taken(name: &str) -> ApiError {
 }
 
 impl ConnectorStore {
-    pub fn new(db: Option<sqlx::PgPool>) -> Self {
+    /// Backed by the database when there is one: each statement runs in the reserved key of the
+    /// request's Organization, else of the installation's (`installation`, the configured name,
+    /// when the mirror names none). By a map when there is no database.
+    pub fn new(
+        db: Option<(sqlx::PgPool, std::sync::Arc<crate::store::Mirror>)>,
+        installation: Option<String>,
+    ) -> Self {
         Self {
             inner: match db {
-                Some(pool) => Inner::Postgres(pool),
+                Some((pool, mirror)) => Inner::Postgres(Db {
+                    pool,
+                    mirror,
+                    installation,
+                }),
                 None => Inner::Memory(Mutex::default()),
             },
         }
@@ -1961,8 +1991,10 @@ impl ConnectorStore {
             revoked_at: None,
         };
         match &self.inner {
-            Inner::Postgres(pool) => {
-                let mut tx = pool.begin().await.map_err(db_error)?;
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Err(crate::project_ids::person_unplaced("connector"));
+                };
                 // One person's creates in a row, so two at once cannot both pass the count.
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtext('connectors/' || $1))")
                     .bind(owner)
@@ -2037,16 +2069,20 @@ impl ConnectorStore {
             granted_at: Some(TimestampTz::now()),
         };
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(false);
+                };
                 let done = sqlx::query(
                     "UPDATE connectors SET grant_doc = $3 WHERE id = $1 AND owner = $2 AND revoked_at IS NULL",
                 )
                 .bind(id)
                 .bind(owner)
                 .bind(sqlx::types::Json(&grant))
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
+                tx.commit().await.map_err(db_error)?;
                 Ok(done.rows_affected() == 1)
             }
             Inner::Memory(rows) => {
@@ -2064,14 +2100,17 @@ impl ConnectorStore {
     pub async fn get(&self, id: &str, base: &str) -> Result<Option<Connector>, ApiError> {
         let now = TimestampTz::now();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(None);
+                };
                 let row: Option<Row> = sqlx::query_as(concat!(
                     "SELECT ",
                     columns!(),
                     " FROM connectors WHERE id = $1"
                 ))
                 .bind(id)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 Ok(row.map(|row| record(row).view(base, now)))
@@ -2088,14 +2127,17 @@ impl ConnectorStore {
     pub async fn of_owner(&self, owner: &str, base: &str) -> Result<Vec<Connector>, ApiError> {
         let now = TimestampTz::now();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<Row> = sqlx::query_as(concat!(
                     "SELECT ",
                     columns!(),
                     " FROM connectors WHERE owner = $1 ORDER BY created_at DESC LIMIT 200"
                 ))
                 .bind(owner)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 Ok(rows
@@ -2117,14 +2159,17 @@ impl ConnectorStore {
     pub async fn pending(&self, base: &str) -> Result<Vec<Connector>, ApiError> {
         let now = TimestampTz::now();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<Row> = sqlx::query_as(concat!(
                     "SELECT ",
                     columns!(),
                     " FROM connectors WHERE revoked_at IS NULL AND (grant_doc->>'pending')::boolean \
                      ORDER BY created_at LIMIT 200"
                 ))
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 Ok(rows
@@ -2149,16 +2194,20 @@ impl ConnectorStore {
             at: TimestampTz::now(),
         };
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(false);
+                };
                 let done = sqlx::query(
                     "UPDATE connectors SET grant_doc = grant_doc || jsonb_build_object('pending', false, 'approval', $2::jsonb) \
                      WHERE id = $1 AND revoked_at IS NULL AND (grant_doc->>'pending')::boolean",
                 )
                 .bind(id)
                 .bind(sqlx::types::Json(&approval))
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
+                tx.commit().await.map_err(db_error)?;
                 Ok(done.rows_affected() == 1)
             }
             Inner::Memory(rows) => {
@@ -2180,15 +2229,19 @@ impl ConnectorStore {
     /// Revokes the owner's live connector `id`; `false` when there is none to revoke.
     pub async fn revoke(&self, id: &str, owner: &str) -> Result<bool, ApiError> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(false);
+                };
                 let done = sqlx::query(
                     "UPDATE connectors SET revoked_at = now() WHERE id = $1 AND owner = $2 AND revoked_at IS NULL",
                 )
                 .bind(id)
                 .bind(owner)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
+                tx.commit().await.map_err(db_error)?;
                 Ok(done.rows_affected() == 1)
             }
             Inner::Memory(rows) => {
@@ -2209,7 +2262,10 @@ impl ConnectorStore {
     pub async fn overview(&self, base: &str) -> Result<Vec<Overview>, ApiError> {
         let now = TimestampTz::now();
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<OverviewRow> = sqlx::query_as(concat!(
                     "SELECT ",
                     columns!(),
@@ -2220,7 +2276,7 @@ impl ConnectorStore {
                      FROM connectors ORDER BY revoked_at IS NULL DESC, created_at DESC LIMIT $1"
                 ))
                 .bind(OVERVIEW_PAGE)
-                .fetch_all(pool)
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 Ok(rows
@@ -2259,14 +2315,21 @@ impl ConnectorStore {
     /// Revokes every live connector of `owner`, as offboarding does (T-5975): how many it revoked.
     pub async fn revoke_all(&self, owner: &str) -> Result<u64, ApiError> {
         match &self.inner {
-            Inner::Postgres(pool) => Ok(sqlx::query(
-                "UPDATE connectors SET revoked_at = now() WHERE owner = $1 AND revoked_at IS NULL",
-            )
-            .bind(owner)
-            .execute(pool)
-            .await
-            .map_err(db_error)?
-            .rows_affected()),
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(0);
+                };
+                let done = sqlx::query(
+                    "UPDATE connectors SET revoked_at = now() WHERE owner = $1 AND revoked_at IS NULL",
+                )
+                .bind(owner)
+                .execute(&mut *tx)
+                .await
+                .map_err(db_error)?
+                .rows_affected();
+                tx.commit().await.map_err(db_error)?;
+                Ok(done)
+            }
             Inner::Memory(rows) => {
                 let now = TimestampTz::now();
                 let mut rows = Self::memory(rows);
@@ -2288,7 +2351,13 @@ impl ConnectorStore {
     pub async fn record(&self, connector: &str, call: Call) -> Result<(), ApiError> {
         let used = call.verdict == "allowed";
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                // The connector was read in the same key a moment before: none means it is not
+                // this Organization's, and its call is not written into another's.
+                let Some(mut tx) = db.person().await? else {
+                    tracing::warn!(%connector, "a connector call outside any Organization was not recorded");
+                    return Ok(());
+                };
                 sqlx::query(
                     "INSERT INTO connector_calls (connector, at, subject, client, tool, target, verdict, duration_ms) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
@@ -2301,7 +2370,7 @@ impl ConnectorStore {
                 .bind(&call.target)
                 .bind(&call.verdict)
                 .bind(call.duration_ms)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 sqlx::query(
@@ -2309,17 +2378,18 @@ impl ConnectorStore {
                 )
                 .bind(connector)
                 .bind(i32::try_from(CALLS_KEPT_DAYS).unwrap_or(30))
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
                 .map_err(db_error)?;
                 if used {
                     sqlx::query("UPDATE connectors SET last_used_at = $2 WHERE id = $1")
                         .bind(connector)
                         .bind(ts_to_odt(call.at))
-                        .execute(pool)
+                        .execute(&mut *tx)
                         .await
                         .map_err(db_error)?;
                 }
+                tx.commit().await.map_err(db_error)?;
             }
             Inner::Memory(rows) => {
                 let mut rows = Self::memory(rows);
@@ -2339,7 +2409,10 @@ impl ConnectorStore {
     /// The connector's newest audit rows first, at most [`CALLS_PAGE`].
     pub async fn calls(&self, connector: &str) -> Result<Vec<Call>, ApiError> {
         match &self.inner {
-            Inner::Postgres(pool) => {
+            Inner::Postgres(db) => {
+                let Some(mut tx) = db.person().await? else {
+                    return Ok(Vec::new());
+                };
                 let rows: Vec<CallRow> =
                     sqlx::query_as(
                         "SELECT at, subject, client, tool, target, verdict, duration_ms FROM connector_calls \
@@ -2347,7 +2420,7 @@ impl ConnectorStore {
                     )
                     .bind(connector)
                     .bind(CALLS_PAGE)
-                    .fetch_all(pool)
+                    .fetch_all(&mut *tx)
                     .await
                     .map_err(db_error)?;
                 Ok(rows
@@ -3401,7 +3474,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn the_memory_store_keeps_twenty_live_connectors_one_name_each_and_their_calls() {
-        let store = ConnectorStore::new(None);
+        let store = ConnectorStore::new(None, None);
         let base = "https://portal.test";
         let mut first = None;
         for n in 0..MAX_PER_PERSON {
@@ -3831,7 +3904,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn a_pending_connector_waits_for_one_approval() {
-        let store = ConnectorStore::new(None);
+        let store = ConnectorStore::new(None, None);
         let base = "https://portal.test";
         let made = store
             .create(
@@ -3871,7 +3944,7 @@ pub(crate) mod tests {
     /// overview lists live ones first, then the revoked.
     #[tokio::test]
     async fn revoke_all_ends_one_persons_connectors_and_the_overview_lists_live_first() {
-        let store = ConnectorStore::new(None);
+        let store = ConnectorStore::new(None, None);
         for (owner, name) in [("jana", "a"), ("jana", "b"), ("petra", "c")] {
             let mut ask = new(&["data-read"], false, 1);
             ask.name = name.into();
