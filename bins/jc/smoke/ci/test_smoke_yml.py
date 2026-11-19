@@ -112,6 +112,22 @@ def test_the_verdict_expects_every_shard_and_runs_whatever_they_did():
     assert any("needs.runner-tests.result" in str(s.get("env", "")) for s in v["steps"])
 
 
+def test_only_a_green_verdict_on_the_merge_branch_fast_forwards_main_and_only_that_job_writes():
+    doc = yaml.safe_load(workflow.read_text())
+    ff = doc["jobs"]["ff-main"]
+    # needs the verdict and no status function: GitHub's implicit success() keeps a red one out
+    assert ff["needs"] == "verdict" and "always()" not in ff["if"] and "failure()" not in ff["if"]
+    assert "github.ref == 'refs/heads/jc-portal-1'" in ff["if"]
+    assert ff["permissions"] == {"contents": "write", "actions": "write"}
+    assert doc["permissions"] == {"contents": "read"}
+    assert [n for n, j in doc["jobs"].items() if "permissions" in j] == ["ff-main"]
+    assert ff["concurrency"] == {"group": "ff-main", "cancel-in-progress": False}
+    checkout = ff["steps"][0]
+    assert "checkout" in checkout["uses"] and checkout["with"]["persist-credentials"] is False
+    assert ff["steps"][1]["run"] == "sh .github/scripts/ff-main.sh"
+    assert ff["steps"][1]["env"]["SHA"] == "${{ github.sha }}"
+
+
 def test_every_action_is_pinned_by_sha_and_no_secret_reaches_a_job():
     text = workflow.read_text()
     uses = re.findall(r"uses: (\S+)", text)
