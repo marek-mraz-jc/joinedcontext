@@ -174,14 +174,14 @@ pub(crate) fn anonymous_bounds(
         arguments
             .get(key)
             .and_then(Value::as_str)
-            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .and_then(jc_time::parse_rfc3339)
     };
     let window = match (
         arguments.get("timerel").and_then(Value::as_str),
         instant("timeAt"),
         instant("endTimeAt"),
     ) {
-        (Some("between"), Some(start), Some(end)) if end > start => end - start,
+        (Some("between"), Some(start), Some(end)) if end > start => end.duration_since(start),
         _ => {
             return Err(format!(
                 "`{name}` without a token reads a window: timerel between, with timeAt before endTimeAt, \
@@ -189,7 +189,7 @@ pub(crate) fn anonymous_bounds(
             ))
         }
     };
-    if window > chrono::Duration::days(ANONYMOUS_WINDOW_DAYS) {
+    if window > jiff::SignedDuration::from_hours(24 * ANONYMOUS_WINDOW_DAYS) {
         return Err(format!(
             "`{name}` without a token reads at most {ANONYMOUS_WINDOW_DAYS} days between timeAt and endTimeAt"
         ));
@@ -197,7 +197,7 @@ pub(crate) fn anonymous_bounds(
     // A window over a day that asks neither raw values (`format`) nor its own aggregation
     // answers the broker's hourly or daily averages (T-4800), periods the PT1H floor below
     // allows; every other read keeps the broker's default of newest instances.
-    let averaged = window > chrono::Duration::days(1)
+    let averaged = window > jiff::SignedDuration::from_hours(24)
         && !arguments.contains_key("format")
         && !arguments.contains_key("aggrMethods");
     crate::mcp::limits::anonymous_page(arguments, averaged)?;

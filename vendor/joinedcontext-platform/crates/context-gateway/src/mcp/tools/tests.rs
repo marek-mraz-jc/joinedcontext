@@ -30,6 +30,56 @@ fn bounded(name: &str, change: Value) -> Result<Map<String, Value>, String> {
     anonymous_bounds(name, &mut arguments).map(|()| arguments)
 }
 
+/// T-7253: the anonymous window reads its instants as the chrono build did and measures them
+/// across the DST nights of Bratislava and Helsinki: over 31 days is refused, over a day is
+/// averaged (no `lastN` added), a day or less keeps the newest instances. Verdicts pasted from
+/// the chrono build as (over 31 days, over a day).
+#[test]
+fn the_anonymous_window_reads_as_the_chrono_build_did() {
+    let golden = [
+        (
+            "2026-03-01T00:00:00+01:00",
+            "2026-04-01T00:00:00+02:00",
+            Some((false, true)),
+        ),
+        (
+            "2026-03-01T00:00:00+01:00",
+            "2026-04-01T01:00:00+02:00",
+            Some((false, true)),
+        ),
+        (
+            "2026-10-01T00:00:00+03:00",
+            "2026-11-01T00:00:00+02:00",
+            Some((true, true)),
+        ),
+        (
+            "2026-10-01T00:00:00+03:00",
+            "2026-10-02T00:00:00+03:00",
+            Some((false, false)),
+        ),
+        (
+            "2026-10-01T00:00:00+03:00",
+            "2026-10-02T00:00:01+03:00",
+            Some((false, true)),
+        ),
+        (
+            "2026-10-01 00:00:00Z",
+            "2026-10-02T00:00:00Z",
+            Some((false, false)),
+        ),
+        ("2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z", None),
+    ];
+    for (from, to, want) in golden {
+        let got = bounded("query_temporal", json!({ "timeAt": from, "endTimeAt": to }));
+        let verdict = match (&got, want) {
+            (Err(e), _) if e.contains("at most 31 days between") => Some((true, true)),
+            (Err(_), _) => None,
+            (Ok(arguments), _) => Some((false, !arguments.contains_key("lastN"))),
+        };
+        assert_eq!(verdict, want, "{from} .. {to}: {got:?}");
+    }
+}
+
 /// T-4261: a window of 31 days passes, one second more is refused, by its bound.
 #[test]
 fn an_anonymous_window_over_31_days_is_refused() {

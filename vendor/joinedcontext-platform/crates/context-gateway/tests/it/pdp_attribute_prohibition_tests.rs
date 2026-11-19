@@ -2,16 +2,16 @@
 //! schema, the access document and the assistant already read it; one naming none still refuses
 //! the whole type.
 
-use chrono::{DateTime, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Constraints, Request, Verdict};
 use context_gateway::pdp::projection::project_entity;
 use context_gateway::pdp::{drop_types_that_may_not_be_filtered, write_guard};
 use jc_core::kinds::{Operation, PolicySpec};
+use jc_time::TimestampTz;
 use serde_json::json;
 use std::collections::BTreeSet;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-10-25T12:00:00Z".parse().expect("a fixed instant")
 }
 

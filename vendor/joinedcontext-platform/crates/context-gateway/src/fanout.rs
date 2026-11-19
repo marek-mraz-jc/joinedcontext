@@ -75,8 +75,8 @@ impl Filter {
     }
 
     /// Records a notification sent now, which starts the filter's `throttling` window.
-    pub fn sent(&mut self, at: chrono::DateTime<chrono::Utc>) {
-        let stamp = at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    pub fn sent(&mut self, at: jc_time::TimestampTz) {
+        let stamp = at.to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
         if let Some(sub) = self.sub.as_object_mut() {
             let notification = sub
                 .entry("notification")
@@ -776,6 +776,22 @@ mod tests {
         compile(&body, &ctx()).expect("a valid filter")
     }
 
+    /// `lastNotification` is written to the millisecond with `Z`, as the chrono build wrote it
+    /// (T-7253); the matcher reads it back for `throttling`.
+    #[test]
+    fn last_notification_keeps_the_chrono_wire_format() {
+        let mut f = filter(sub(json!({ "throttling": 60 })));
+        f.sent(
+            "2026-10-25T01:30:00.987654321Z"
+                .parse()
+                .expect("an instant"),
+        );
+        assert_eq!(
+            f.subscription()["notification"]["lastNotification"],
+            json!("2026-10-25T01:30:00.987Z")
+        );
+    }
+
     fn sub(extra: Value) -> Value {
         let mut body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]});
         if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
@@ -933,12 +949,15 @@ mod tests {
         let a = vehicle(1, 10.0, "bus", 24.9, 60.1);
         let b = vehicle(1, 12.0, "bus", 24.9, 60.1);
         assert_eq!(index.notified(&a, None, &ctx()), [1]);
-        index.get_mut(1).expect("held").sent(chrono::Utc::now());
+        index
+            .get_mut(1)
+            .expect("held")
+            .sent(jc_time::TimestampTz::now());
         assert!(index.notified(&b, Some(&a), &ctx()).is_empty());
         index
             .get_mut(1)
             .expect("held")
-            .sent(chrono::Utc::now() - chrono::Duration::seconds(61));
+            .sent(jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(61));
         assert_eq!(index.notified(&b, Some(&a), &ctx()), [1]);
     }
 

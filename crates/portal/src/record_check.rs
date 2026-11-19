@@ -661,7 +661,7 @@ fn judge_write(
         &request,
         &write.tenant,
         &write.policies,
-        now,
+        crate::time_shim::tz(now),
     ) {
         // An access request asks for the upsert a pipeline's write grant holds (PL-90); a merge
         // or a backfill is a Policy of the Endpoint's to extend.

@@ -1166,7 +1166,7 @@ pub(crate) fn quality_judged(
             shape,
             &declared.quality,
             &endpoint.space,
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         )
     };
     let refuse = |problem: Box<ProblemDetails>| Box::new(problem.into_response());

@@ -1,13 +1,13 @@
 //! Hierarchical scopes folded into the query as an anchored regex (T-0148, R12, R13, R30).
 
-use chrono::{DateTime, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Request};
 use context_gateway::pdp::scope_folding::fold;
 use jc_core::kinds::{Operation, PolicySpec};
+use jc_time::TimestampTz;
 use regex::Regex;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z".parse().expect("a fixed instant")
 }
 

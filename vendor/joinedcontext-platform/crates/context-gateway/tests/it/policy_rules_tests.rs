@@ -2,12 +2,12 @@
 //! kiosk case, the public reads and one service account updates one entity, is one Policy, and a
 //! prohibition rule of another bound Policy still wins (GW4).
 
-use chrono::{DateTime, Utc};
 use context_gateway::auth::subject::Subject;
 use context_gateway::pdp::evaluator::{evaluate, Request, Verdict};
 use context_gateway::resolver::Endpoint;
 use context_gateway::store;
 use jc_core::kinds::Operation;
+use jc_time::TimestampTz;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -85,7 +85,7 @@ spec:
         - entities: [{ type: Kiosk }]
 "#;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-10-22T12:00:00Z".parse().expect("a fixed instant")
 }
 

@@ -14,14 +14,15 @@
 //! the window algebra. These are the inputs around them: the durations a policy can be written
 //! with and the relations it cannot.
 
-use chrono::{DateTime, Duration, Utc};
 use context_gateway::pdp::temporal::{clamp, parse, Window};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z".parse().expect("a fixed instant")
 }
 
-fn at(stamp: &str) -> DateTime<Utc> {
+fn at(stamp: &str) -> TimestampTz {
     stamp.parse().expect("an instant")
 }
 
@@ -76,19 +77,22 @@ fn a_duration_with_no_fixed_length_is_refused_rather_than_approximated() {
 #[test]
 fn the_units_a_retention_window_is_written_in_all_resolve_against_now() {
     for (written, expected) in [
-        ("P1D", Duration::days(1)),
-        ("P1W", Duration::weeks(1)),
-        ("PT1H", Duration::hours(1)),
-        ("PT30M", Duration::minutes(30)),
-        ("PT45S", Duration::seconds(45)),
-        ("P1DT12H", Duration::days(1) + Duration::hours(12)),
+        ("P1D", SignedDuration::from_hours(24)),
+        ("P1W", SignedDuration::from_hours(168)),
+        ("PT1H", SignedDuration::from_hours(1)),
+        ("PT30M", SignedDuration::from_mins(30)),
+        ("PT45S", SignedDuration::from_secs(45)),
+        (
+            "P1DT12H",
+            SignedDuration::from_hours(24) + SignedDuration::from_hours(12),
+        ),
         (
             "P2W3DT4H5M6S",
-            Duration::weeks(2)
-                + Duration::days(3)
-                + Duration::hours(4)
-                + Duration::minutes(5)
-                + Duration::seconds(6),
+            SignedDuration::from_hours(336)
+                + SignedDuration::from_hours(72)
+                + SignedDuration::from_hours(4)
+                + SignedDuration::from_mins(5)
+                + SignedDuration::from_secs(6),
         ),
     ] {
         let window = parse(&format!("timerel=after;timeAt={written}"), now())
@@ -101,7 +105,7 @@ fn the_units_a_retention_window_is_written_in_all_resolve_against_now() {
 fn a_duration_is_negative_written_either_way_round() {
     // `P-1D` and `-P1D` are both "a day ago"; a policy author uses whichever their tooling emits,
     // and reading one of them as "a day from now" would grant a window in the future.
-    let a_day_ago = Some(now() - Duration::days(1));
+    let a_day_ago = Some(now() - SignedDuration::from_hours(24));
     for written in ["P-1D", "-P1D"] {
         let window = parse(&format!("timerel=after;timeAt={written}"), now())
             .unwrap_or_else(|| panic!("{written} did not parse"));
@@ -109,7 +113,7 @@ fn a_duration_is_negative_written_either_way_round() {
     }
     // And the minute sign inside the time part is read the same way.
     let window = parse("timerel=after;timeAt=PT-30M", now()).expect("PT-30M parses");
-    assert_eq!(window.from, Some(now() - Duration::minutes(30)));
+    assert_eq!(window.from, Some(now() - SignedDuration::from_mins(30)));
 }
 
 #[test]

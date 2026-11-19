@@ -54,8 +54,8 @@ fn repository(test: &str) -> PathBuf {
     account(&dir, "ovzdusie", "cam-north");
     account(&dir, "ovzdusie", "cam-idle");
     account(&dir, "espoo", "cam-north");
-    let soon = chrono::Utc::now() + chrono::Duration::seconds(100);
-    let gone = chrono::Utc::now() - chrono::Duration::seconds(5);
+    let soon = jc_time::TimestampTz::now() + jiff::SignedDuration::from_secs(100);
+    let gone = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(5);
     for (name, end) in [("cam-soon", soon), ("cam-gone", gone)] {
         account_until(
             &dir,
@@ -1026,7 +1026,7 @@ fn bound_fixture(test: &str) -> Fixture {
     let until = |seconds: i64| {
         format!(
             "      validity:\n        notAfter: \"{}\"\n",
-            (chrono::Utc::now() + chrono::Duration::seconds(seconds)).to_rfc3339()
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_secs(seconds)).to_rfc3339()
         )
     };
     let grant = |role: &str, project: &str, validity: &str| {
@@ -1225,7 +1225,7 @@ fn a_certificate_device_is_its_common_names_account_for_an_hour() {
     assert_eq!(answer["result"], "allow", "{answer}");
     assert_eq!(answer["acl"][0]["topic"], "commands/${clientid}/+");
     let expire_at = answer["expire_at"].as_i64().expect("an expiry");
-    let hour = chrono::Utc::now().timestamp() + 3600;
+    let hour = jc_time::TimestampTz::now().as_second() + 3600;
     assert!((hour - 5..=hour).contains(&expire_at), "{expire_at}");
     // The same broker's token door still admits a token (deviceAuth names both).
     let token = f.token("ovzdusie-cam-north", "mqtt-ovzdusie-doors", 300);

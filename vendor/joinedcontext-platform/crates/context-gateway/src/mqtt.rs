@@ -436,8 +436,8 @@ pub fn decide(
     };
     // The verifier's leeway is for clocks between services; the broker would only refuse a past
     // `expire_at` itself, so the gateway does it here without one.
-    let now = chrono::Utc::now();
-    if claims.exp <= now.timestamp() {
+    let now = jc_time::TimestampTz::now();
+    if claims.exp <= now.as_second() {
         return refuse("the token is expired", Reason::Expired);
     }
     let Some(azp) = claims.azp.as_deref() else {
@@ -487,12 +487,12 @@ fn certificate(broker: &Broker, accounts: &ServiceAccounts, connect: &Connect) -
             Reason::WrongClient,
         );
     }
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     match accounts.resolve(&connect.clientid) {
         Some(account) => device(
             broker,
             account,
-            now.timestamp().saturating_add(CERTIFICATE_CONNECT_SECONDS),
+            now.as_second().saturating_add(CERTIFICATE_CONNECT_SECONDS),
             now,
         ),
         None => refuse(
@@ -531,7 +531,7 @@ fn admits_source(sources: &[SourceRange], ipaddr: &str) -> bool {
 fn refused(
     broker: &Broker,
     account: &crate::auth::accounts::Account,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> Option<(&'static str, Reason)> {
     if account.project != broker.project {
         return Some((
@@ -550,7 +550,7 @@ fn device(
     broker: &Broker,
     account: &crate::auth::accounts::Account,
     exp: i64,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> (Answer, Why) {
     if let Some((why, reason)) = refused(broker, account, now) {
         return refuse(why, reason);
@@ -567,11 +567,11 @@ fn device(
     // The CONNECT ends when the last grant does too; each publish is decided again anyway.
     let grants_end = held
         .iter()
-        .map(|held| held.until.map(|end| end.timestamp()))
+        .map(|held| held.until.map(|end| end.as_second()))
         .collect::<Option<Vec<_>>>()
         .and_then(|ends| ends.into_iter().max());
     let expire_at = [
-        account.credentials_end.map(|end| end.timestamp()),
+        account.credentials_end.map(|end| end.as_second()),
         grants_end,
     ]
     .into_iter()
@@ -607,7 +607,7 @@ pub struct Access {
 pub fn roles_held<'a>(
     broker: &'a Broker,
     account: &crate::auth::accounts::Account,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jc_time::TimestampTz,
 ) -> Vec<Held<'a>> {
     jc_core::mqtt::roles_held(
         jc_core::mqtt::Broker {
@@ -665,10 +665,10 @@ pub fn publish_check(
     let Some(account) = accounts.resolve(&access.clientid) else {
         return (false, "the client is no ServiceAccount");
     };
-    if let Some((why, _)) = refused(broker, account, chrono::Utc::now()) {
+    if let Some((why, _)) = refused(broker, account, jc_time::TimestampTz::now()) {
         return (false, why);
     }
-    let allowed = roles_held(broker, account, chrono::Utc::now())
+    let allowed = roles_held(broker, account, jc_time::TimestampTz::now())
         .iter()
         .flat_map(|held| &held.role.publish)
         .any(|filter| topics::matches(filter, &access.topic, &access.clientid));
@@ -784,7 +784,7 @@ async fn auth(
         refusals.record(
             release,
             Refusal {
-                at: chrono::Utc::now(),
+                at: jc_time::TimestampTz::now(),
                 reason,
                 account: account_of(broker, &accounts, &connect.username),
             },

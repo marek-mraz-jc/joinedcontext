@@ -15,10 +15,10 @@ use crate::auth::subject::Subject;
 use crate::pdp::grants::GrantView;
 use crate::pdp::temporal::{self, Window};
 use crate::pdp::{geo, scope_folding};
-use chrono::{DateTime, Utc};
 use jc_core::kinds::{
     Operation, OperationRef, PolicySpec, Principal, PrincipalKind, RegistrationInfo,
 };
+use jc_time::TimestampTz;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Subject {
@@ -187,7 +187,7 @@ pub fn evaluate(
     request: &Request,
     tenant: &str,
     policies: &[PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Verdict {
     // S-49: a read-only token writes nothing, whatever its holder is granted (T-5955).
     if subject.read_only && operation.is_write() {
@@ -235,7 +235,7 @@ pub(crate) fn applies(
     policy: &PolicySpec,
     subject: &Subject,
     operation: Operation,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> bool {
     subject.is(&policy.assignee) && grants_operation(policy, operation) && in_force(policy, now)
 }
@@ -254,7 +254,7 @@ pub fn grants_action(
     subject: &Subject,
     action: jc_core::kinds::PlatformAction,
     policies: &[PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> bool {
     let naming: Vec<&PolicySpec> = policies
         .iter()
@@ -277,7 +277,7 @@ pub fn grants_action(
 pub fn version_reads(
     subject: &Subject,
     policies: &[PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Option<Option<BTreeSet<String>>> {
     use jc_core::kinds::{PlatformAction, VersionsCapability};
     if !grants_action(subject, PlatformAction::ReadVersions, policies, now) {
@@ -337,7 +337,7 @@ pub fn version_reads(
 pub fn keeps_versions(
     subject: &Subject,
     policies: &[PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
     touched: Option<&BTreeSet<String>>,
 ) -> bool {
     use jc_core::kinds::VersionsCapability;
@@ -366,7 +366,7 @@ pub fn keeps_versions(
 }
 
 /// Whether the policy is inside its validity window (GW7).
-fn in_force(policy: &PolicySpec, now: DateTime<Utc>) -> bool {
+fn in_force(policy: &PolicySpec, now: TimestampTz) -> bool {
     policy.validity.as_ref().is_none_or(|validity| {
         validity.from.is_none_or(|from| now >= from) && validity.to.is_none_or(|to| now < to)
     })
@@ -438,7 +438,7 @@ fn intersect(
     request: &Request,
     tenant: &str,
     grants: &[&PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Constraints {
     let granted_types: BTreeSet<String> = grants
         .iter()
@@ -639,7 +639,7 @@ pub fn narrow_to_identity(
 pub fn effective<'a>(
     subject: &Subject,
     policies: &'a [PolicySpec],
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Vec<&'a PolicySpec> {
     policies
         .iter()
@@ -649,7 +649,7 @@ pub fn effective<'a>(
 
 /// Whether `policy` is assigned to `subject` and in force at `now`: the one test
 /// [`effective`] filters by.
-fn assigned_and_in_force(subject: &Subject, policy: &PolicySpec, now: DateTime<Utc>) -> bool {
+fn assigned_and_in_force(subject: &Subject, policy: &PolicySpec, now: TimestampTz) -> bool {
     subject.is(&policy.assignee) && in_force(policy, now)
 }
 
@@ -770,7 +770,7 @@ mod tests {
             &Request::default(),
             "air",
             &[policy],
-            Utc::now(),
+            TimestampTz::now(),
         )
         .is_deny()
     }
@@ -848,7 +848,7 @@ mod tests {
                  {attributes}"
             ))
         };
-        let reads = |p: PolicySpec| version_reads(&public, &[p], Utc::now());
+        let reads = |p: PolicySpec| version_reads(&public, &[p], TimestampTz::now());
         assert_eq!(reads(air("", "")), None);
         assert_eq!(reads(air("readVersions", "")), Some(None));
         let name_only =
@@ -894,7 +894,7 @@ mod tests {
             keeps_versions(
                 &jana,
                 std::slice::from_ref(&grant),
-                Utc::now(),
+                TimestampTz::now(),
                 touched.as_ref(),
             )
         };
@@ -906,7 +906,7 @@ mod tests {
             id: Some("petra".to_owned()),
             ..Subject::default()
         };
-        assert!(!keeps_versions(&other, &[grant], Utc::now(), None));
+        assert!(!keeps_versions(&other, &[grant], TimestampTz::now(), None));
     }
 
     /// P-3-01 (T-6937): the write path asks `None` first and parses the body only when it holds,
@@ -930,7 +930,12 @@ mod tests {
         });
         for grant in grants {
             let keeps = |touched: Option<&BTreeSet<String>>| {
-                keeps_versions(&jana, std::slice::from_ref(&grant), Utc::now(), touched)
+                keeps_versions(
+                    &jana,
+                    std::slice::from_ref(&grant),
+                    TimestampTz::now(),
+                    touched,
+                )
             };
             for touched in [["name"], ["pm10"], ["*"]] {
                 let touched = touched.iter().map(|s| (*s).to_owned()).collect();
@@ -962,7 +967,7 @@ mod tests {
                 &request,
                 "air",
                 std::slice::from_ref(&policy),
-                Utc::now(),
+                TimestampTz::now(),
             )
         };
         for operation in [

@@ -2136,7 +2136,7 @@ mod tests {
             &request,
             "t",
             std::slice::from_ref(grant),
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         )
         .is_deny()
     }
@@ -2171,7 +2171,7 @@ mod tests {
                 &Request::default(),
                 "t",
                 std::slice::from_ref(&loaded),
-                chrono::Utc::now(),
+                jc_time::TimestampTz::now(),
             )
             .is_deny()
         };
@@ -2221,7 +2221,7 @@ mod tests {
             &Request::default(),
             "t",
             std::slice::from_ref(&grant),
-            chrono::Utc::now(),
+            jc_time::TimestampTz::now(),
         );
         assert_eq!(
             verdict.constraints().map(|c| c.types.clone()),

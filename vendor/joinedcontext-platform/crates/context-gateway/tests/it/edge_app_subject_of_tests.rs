@@ -123,8 +123,14 @@ impl Repo {
         .expect("the delegating account");
         // One account whose one credential has ended, one whose credential ends later.
         for (name, end) in [
-            ("stary", chrono::Utc::now() - chrono::Duration::seconds(5)),
-            ("novy", chrono::Utc::now() + chrono::Duration::seconds(300)),
+            (
+                "stary",
+                jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(5),
+            ),
+            (
+                "novy",
+                jc_time::TimestampTz::now() + jiff::SignedDuration::from_secs(300),
+            ),
         ] {
             std::fs::write(
                 accounts.join(format!("{name}.yaml")),

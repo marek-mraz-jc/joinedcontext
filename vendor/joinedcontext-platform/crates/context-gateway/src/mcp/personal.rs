@@ -92,8 +92,7 @@ impl ScopeItem {
 impl Connector {
     /// Whether `now` (seconds since the epoch) lies past its expiry; an unreadable one is past.
     fn expired(&self, now: i64) -> bool {
-        chrono::DateTime::parse_from_rfc3339(&self.expires_at)
-            .map_or(true, |at| at.timestamp() <= now)
+        jc_time::parse_rfc3339(&self.expires_at).is_none_or(|at| at.as_second() <= now)
     }
 
     /// Whether a token obtained by `azp` may use it.
@@ -392,9 +391,9 @@ mod tests {
             "id": "x", "name": "n", "expiresAt": "2026-10-28T12:00:00Z", "scope": [],
             "allowedClients": ["mcp-local"],
         }));
-        let noon = chrono::DateTime::parse_from_rfc3339("2026-10-28T12:00:00Z")
+        let noon = jc_time::parse_rfc3339("2026-10-28T12:00:00Z")
             .expect("a time")
-            .timestamp();
+            .as_second();
         assert!(!c.expired(noon - 1));
         assert!(c.expired(noon));
         assert!(connector(serde_json::json!({

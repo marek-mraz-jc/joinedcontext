@@ -1,13 +1,14 @@
 //! A caller's temporal window clamped to what the grants permit (T-0150, GW26).
 
-use chrono::{DateTime, Duration, Utc};
 use context_gateway::pdp::temporal::{clamp, parse, Window};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 
-fn now() -> DateTime<Utc> {
+fn now() -> TimestampTz {
     "2026-09-06T12:00:00Z".parse().expect("a fixed instant")
 }
 
-fn at(stamp: &str) -> DateTime<Utc> {
+fn at(stamp: &str) -> TimestampTz {
     stamp.parse().expect("an instant")
 }
 
@@ -15,21 +16,21 @@ fn at(stamp: &str) -> DateTime<Utc> {
 #[test]
 fn a_relative_grant_window_slides_with_now() {
     let window = parse("timerel=after;timeAt=P-1D", now()).expect("parses");
-    assert_eq!(window.from, Some(now() - Duration::days(1)));
+    assert_eq!(window.from, Some(now() - SignedDuration::from_hours(24)));
     assert_eq!(window.to, None);
 
     assert_eq!(
         parse("timerel=after;timeAt=-PT12H", now())
             .expect("parses")
             .from,
-        Some(now() - Duration::hours(12)),
+        Some(now() - SignedDuration::from_hours(12)),
         "both spellings of a negative duration"
     );
     assert_eq!(
         parse("timerel=before;timeAt=P-7D", now())
             .expect("parses")
             .to,
-        Some(now() - Duration::days(7))
+        Some(now() - SignedDuration::from_hours(168))
     );
     assert_eq!(
         parse("timerel=after;timeAt=P-1Y", now()),

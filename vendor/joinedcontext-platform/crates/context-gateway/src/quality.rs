@@ -11,13 +11,13 @@
 //! check is counted in `jc_quality_checks_total`. Nothing here reads the network or the store.
 
 use crate::units::Shape;
-use chrono::{DateTime, Utc};
 use jc_core::error::ProblemDetails;
 use jc_core::kinds::{QualityOutcome, QualityRule};
 use jc_core::quality::{mark, on_write, rejection, QUARANTINED_AT, QUARANTINE_RULES};
 use jc_core::system_members::{is_entity_system_member, INSTANT_MEMBERS};
 use jc_core::types_of;
 use jc_manifest::model_schema::{ModelSchema, Problem};
+use jc_time::TimestampTz;
 use serde_json::{json, Map, Value};
 
 /// Every quality check, by space, type, rule and outcome (DM-93).
@@ -101,7 +101,7 @@ pub fn enforce(
     shape: Shape<'_>,
     rules: &[QualityRule],
     space: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<(), Box<ProblemDetails>> {
     if rules.is_empty() {
         return Ok(());
@@ -132,7 +132,7 @@ fn judge(
     shape: Shape<'_>,
     rules: &[QualityRule],
     space: &str,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<(), Box<ProblemDetails>> {
     let Some(object) = entity.as_object() else {
         return Ok(());
@@ -436,14 +436,14 @@ mod tests {
             targeted: Some("speed"),
         };
         let mut value = json!({"type": "Property", "value": 90});
-        let problem = enforce(&mut value, targeted, &rules, "bikes", Utc::now())
+        let problem = enforce(&mut value, targeted, &rules, "bikes", TimestampTz::now())
             .expect_err("quarantined on the attribute path");
         assert!(problem
             .detail
             .unwrap_or_default()
             .contains("PATCH /entities/{id}/attrs"));
         let mut fine = json!({"type": "Property", "value": 9});
-        enforce(&mut fine, targeted, &rules, "bikes", Utc::now()).expect("within the rule");
+        enforce(&mut fine, targeted, &rules, "bikes", TimestampTz::now()).expect("within the rule");
         assert_eq!(fine, json!({"type": "Property", "value": 9}));
     }
 
@@ -451,7 +451,7 @@ mod tests {
     fn a_rejected_value_is_refused_by_rule_and_attribute_never_by_value() {
         let mut entity = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": -7.25}});
         let problem =
-            enforce(&mut entity, WHOLE, &rules(), "bikes", Utc::now()).expect_err("min 0");
+            enforce(&mut entity, WHOLE, &rules(), "bikes", TimestampTz::now()).expect_err("min 0");
         assert_eq!(problem.status, 400);
         assert!(
             problem.type_uri.ends_with("/quality-rule"),
@@ -474,7 +474,14 @@ mod tests {
             addressed: Some("urn:ngsi-ld:Vehicle:1"),
             targeted: None,
         };
-        enforce(&mut fragment, addressed, &rules(), "bikes", Utc::now()).expect("flags");
+        enforce(
+            &mut fragment,
+            addressed,
+            &rules(),
+            "bikes",
+            TimestampTz::now(),
+        )
+        .expect("flags");
         assert_eq!(
             fragment["speed"]["qualityFlags"]["value"],
             json!(["speed-plausible"])
@@ -489,7 +496,7 @@ mod tests {
             addressed: Some("urn:ngsi-ld:Vehicle:1"),
             targeted: Some("speed"),
         };
-        enforce(&mut bare, targeted, &rules(), "bikes", Utc::now()).expect("flags");
+        enforce(&mut bare, targeted, &rules(), "bikes", TimestampTz::now()).expect("flags");
         assert_eq!(bare["value"], json!(50));
         assert_eq!(bare["qualityFlags"]["value"], json!(["speed-plausible"]));
 
@@ -497,15 +504,15 @@ mod tests {
             {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": 3},
             {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": -1}
         ]);
-        assert!(enforce(&mut batch, WHOLE, &rules(), "bikes", Utc::now()).is_err());
+        assert!(enforce(&mut batch, WHOLE, &rules(), "bikes", TimestampTz::now()).is_err());
     }
 
     #[test]
     fn a_space_without_rules_and_another_type_pass_untouched() {
         let mut entity = json!({"id": "urn:ngsi-ld:Stop:1", "type": "Stop", "speed": -1});
         let before = entity.clone();
-        enforce(&mut entity, WHOLE, &rules(), "bikes", Utc::now()).expect("not a Vehicle");
-        enforce(&mut entity, WHOLE, &[], "bikes", Utc::now()).expect("no rules");
+        enforce(&mut entity, WHOLE, &rules(), "bikes", TimestampTz::now()).expect("not a Vehicle");
+        enforce(&mut entity, WHOLE, &[], "bikes", TimestampTz::now()).expect("no rules");
         assert_eq!(entity, before);
     }
 }

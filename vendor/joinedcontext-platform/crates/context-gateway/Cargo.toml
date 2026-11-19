@@ -28,7 +28,9 @@ http-body-util = "0.1"
 # The Body trait's Frame and SizeHint for the coalescing body (T-5851); hyper and axum link it.
 http-body = "1"
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
-chrono = { version = "0.4", default-features = false, features = ["serde", "alloc"] }
+# Instants (T-7233 plan, RUSTSEC-2026-0543): RFC 3339 read and written as chrono did.
+jc-time = { version = "0.1.0", path = "../../../../crates/shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 regex.workspace = true
 # The broker's own q/scopeQ evaluator, so a grant's condition is judged per entity exactly as the
 # broker judges it (T-3530, EP-16); the NGSI-LD crates' release repository at a tag (T-3913).

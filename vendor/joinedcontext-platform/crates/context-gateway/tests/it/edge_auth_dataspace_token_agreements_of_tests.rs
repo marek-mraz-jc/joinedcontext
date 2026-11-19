@@ -10,17 +10,17 @@
 //! is well covered. These are the ones around it: what is left out and why, what the key
 //! really is, where the project comes from, and what two agreements claiming the same id do.
 
-use chrono::{DateTime, TimeZone, Utc};
 use context_gateway::auth::dataspace_token::{agreements_of, Agreements};
 use jc_manifest::loader::Repository;
+use jc_time::TimestampTz;
 
 const PROJECT: &str = "banskabystrica";
 const CONSUMER: &str = "did:web:helsinki.fi";
 const AGREEMENT: &str = "urn:uuid:9a1f-air-quality";
 
-fn now() -> DateTime<Utc> {
-    Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0)
-        .single()
+fn now() -> TimestampTz {
+    "2026-06-01T12:00:00Z"
+        .parse::<TimestampTz>()
         .expect("a real instant")
 }
 

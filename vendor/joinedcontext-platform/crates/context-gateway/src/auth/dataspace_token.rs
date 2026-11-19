@@ -17,9 +17,9 @@
 use crate::auth::subject::Subject;
 use crate::auth::token::Claims;
 use crate::resolver::Endpoint;
-use chrono::{DateTime, Utc};
 use jc_core::kinds::{AgreementRole, DataAgreementSpec};
 use jc_manifest::loader::Repository;
+use jc_time::TimestampTz;
 use std::collections::BTreeMap;
 
 /// The longest a transfer token may live, in seconds (DS-11).
@@ -69,7 +69,7 @@ impl Agreements {
     ///
     /// A consumer-role agreement is a token *this* platform holds to read somebody else's
     /// endpoint; it never authorises a read here, whatever its state.
-    pub fn serving(&self, id: &str, now: DateTime<Utc>) -> Option<&Agreement> {
+    pub fn serving(&self, id: &str, now: TimestampTz) -> Option<&Agreement> {
         self.by_id
             .get(id)
             .filter(|agreement| agreement.spec.role == AgreementRole::Provider)
@@ -133,7 +133,7 @@ pub fn subject(
     agreements: &Agreements,
     endpoint: &Endpoint,
     organizations: &std::collections::BTreeMap<String, String>,
-    now: DateTime<Utc>,
+    now: TimestampTz,
 ) -> Result<Subject, Refused> {
     let (Some(id), Some(participant)) = (
         claims.agreement_id.as_deref().filter(|id| !id.is_empty()),
@@ -147,7 +147,7 @@ pub fn subject(
     let issued = claims.iat.ok_or(Refused::NoLifetime)?;
     // An `iat` past the clock would carry the window anywhere ahead of `now` (F-R2PLT1-015).
     if claims.exp.saturating_sub(issued) > MAX_LIFETIME
-        || issued > now.timestamp().saturating_add(IAT_LEEWAY)
+        || issued > now.as_second().saturating_add(IAT_LEEWAY)
     {
         return Err(Refused::TooLong);
     }
