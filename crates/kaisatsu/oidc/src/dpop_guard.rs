@@ -8,8 +8,9 @@ use crate::dpop::{
 };
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use chrono::{Duration, Utc};
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{KaisatsuError, Result, RevokedTokenRecord};
 use kaisatsu_crypto::sha256_hex;
 use serde_json::Value;
@@ -91,7 +92,7 @@ pub async fn verify_resource_dpop(
         ));
     }
 
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
     let fresh_nonce = issue_dpop_nonce(&state.kek, realm_id, "rs", now);
     if let Some(realm_cfg) = state.store.get_realm(realm_id).await?
         && realm_requires_dpop_nonce(&realm_cfg)
@@ -115,7 +116,7 @@ pub async fn verify_resource_dpop(
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex(&format!("dpop:{}", proof.jti)),
             realm_id: realm_id.to_owned(),
-            expires_at: Utc::now() + Duration::minutes(10),
+            expires_at: TimestampTz::now() + SignedDuration::from_mins(10),
         })
         .await
         .map_err(|_| KaisatsuError::Unauthorized("replayed DPoP proof".into()))?;

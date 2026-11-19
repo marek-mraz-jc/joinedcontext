@@ -11,8 +11,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Form, Router};
-use chrono::{Duration, Utc};
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::page::{self, Page};
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
@@ -661,8 +662,8 @@ async fn render_state_page_with(
                             status: "pending".into(),
                             attempts: 0,
                             last_error: None,
-                            next_attempt_at: Utc::now(),
-                            created_at: Utc::now(),
+                            next_attempt_at: TimestampTz::now(),
+                            created_at: TimestampTz::now(),
                             sent_at: None,
                         })
                         .await;
@@ -1542,7 +1543,7 @@ async fn authenticate_page_post(
                 user_id: user.id.clone(),
                 credential_type: "otp".into(),
                 user_label: Some(device_label(form.get("userLabel"))),
-                created_date: Utc::now().timestamp_millis(),
+                created_date: TimestampTz::now().as_millis(),
                 secret_data: serde_json::json!({ "value": new_secret }).to_string(),
                 credential_data: serde_json::json!({
                     "subType": "totp",
@@ -1554,7 +1555,7 @@ async fn authenticate_page_post(
                 .to_string(),
                 temporary: false,
             };
-            let now_secs = Utc::now().timestamp() as u64;
+            let now_secs = TimestampTz::now().as_second() as u64;
             if verify_totp_code(
                 &cred,
                 otp_code,
@@ -1605,7 +1606,7 @@ async fn authenticate_page_post(
         if !creds.iter().any(|c| c.credential_type == "otp") {
             return Err(KaisatsuError::BadRequest("no OTP credential".into()));
         }
-        let now_secs = Utc::now().timestamp() as u64;
+        let now_secs = TimestampTz::now().as_second() as u64;
         let Some((otp_cred, matched_step)) = verify_any_totp_code(
             &creds,
             otp_code,
@@ -1645,7 +1646,7 @@ async fn authenticate_page_post(
             .mark_token_revoked(RevokedTokenRecord {
                 jti_hash: step_key,
                 realm_id: realm.id.clone(),
-                expires_at: Utc::now() + Duration::seconds(90),
+                expires_at: TimestampTz::now() + SignedDuration::from_secs(90),
             })
             .await
             .is_err()
@@ -1746,7 +1747,7 @@ async fn authenticate_page_post(
                 user_id: user.id.clone(),
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
-                created_date: Utc::now().timestamp_millis(),
+                created_date: TimestampTz::now().as_millis(),
                 secret_data: {
                     let new_password = new_password.to_owned();
                     kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??
@@ -1811,7 +1812,7 @@ async fn authenticate_page_post(
             .get_user_by_id(&realm.id, None, user_id)
             .await?
             .ok_or_else(|| KaisatsuError::Unauthorized("user not found".into()))?;
-        let now_ms = Utc::now().timestamp_millis();
+        let now_ms = TimestampTz::now().as_millis();
         state
             .store
             .upsert_consent(ConsentRecord {
@@ -1922,7 +1923,7 @@ async fn authenticate_page_post(
             .mark_token_revoked(RevokedTokenRecord {
                 jti_hash: sha256_hex(&format!("recovery:{}:{used_hash}", user.id)),
                 realm_id: realm.id.clone(),
-                expires_at: Utc::now() + Duration::days(3650),
+                expires_at: TimestampTz::now() + SignedDuration::from_hours(24 * 3650),
             })
             .await
             .is_err()
@@ -2182,7 +2183,7 @@ async fn advance_or_render(
         BruteForceProtector::new(state.store.clone())
             .record_success(realm, &user.id)
             .await?;
-        let now = Utc::now();
+        let now = TimestampTz::now();
         let sso_id = uuid::Uuid::now_v7().to_string();
         let sso_handle = random_handle_256();
         let sso = SsoSession {
@@ -2194,17 +2195,19 @@ async fn advance_or_render(
             username: user.username.clone(),
             ip_address: client_ip.for_audit(),
             user_agent: user_agent_of(headers),
-            start: now.timestamp_millis(),
-            last_access: now.timestamp_millis(),
-            auth_time: now.timestamp(),
+            start: now.as_millis(),
+            last_access: now.as_millis(),
+            auth_time: now.as_second(),
             acr: acr.clone(),
             amr: amr.clone(),
             clients: HashMap::from([(
                 auth_session.client_id.clone(),
                 auth_session.client_id.clone(),
             )]),
-            idle_expires_at: now + Duration::seconds(realm.sso_session_idle_timeout.max(3600)),
-            max_expires_at: now + Duration::seconds(realm.sso_session_max_lifespan.max(36000)),
+            idle_expires_at: now
+                + SignedDuration::from_secs(realm.sso_session_idle_timeout.max(3600)),
+            max_expires_at: now
+                + SignedDuration::from_secs(realm.sso_session_max_lifespan.max(36000)),
         };
         state.store.upsert_sso_session(sso).await?;
 
@@ -2225,10 +2228,10 @@ async fn advance_or_render(
             acr,
             amr,
             dpop_jkt: auth_session.dpop_jkt.clone(),
-            auth_time: now.timestamp(),
+            auth_time: now.as_second(),
             consumed: false,
             created_at: now,
-            expires_at: now + Duration::seconds(realm.access_code_lifespan.max(60)),
+            expires_at: now + SignedDuration::from_secs(realm.access_code_lifespan.max(60)),
         };
         state.store.put_auth_code(code_rec).await?;
         state
@@ -2242,7 +2245,7 @@ async fn advance_or_render(
                 id: uuid::Uuid::now_v7().to_string(),
                 realm_id: realm.id.clone(),
                 org_id: None,
-                time: now.timestamp_millis(),
+                time: now.as_millis(),
                 event_type: "LOGIN".into(),
                 client_id: Some(auth_session.client_id),
                 user_id: Some(user.id),
@@ -2455,8 +2458,8 @@ async fn reset_credentials_post(
                 status: "pending".into(),
                 attempts: 0,
                 last_error: None,
-                next_attempt_at: Utc::now(),
-                created_at: Utc::now(),
+                next_attempt_at: TimestampTz::now(),
+                created_at: TimestampTz::now(),
                 sent_at: None,
             };
             let _ = state.store.enqueue_outbox(outbox).await;
@@ -2633,8 +2636,8 @@ async fn action_token_get(
             user_id: Some(user.id.clone()),
             amr: Vec::new(),
             acr_achieved: String::new(),
-            created_at: Utc::now(),
-            expires_at: Utc::now() + Duration::minutes(15),
+            created_at: TimestampTz::now(),
+            expires_at: TimestampTz::now() + SignedDuration::from_mins(15),
         };
         state.store.put_auth_session(auth_session.clone()).await?;
 
@@ -2751,7 +2754,7 @@ async fn action_token_post(
             user_id: user.id.clone(),
             credential_type: "otp".into(),
             user_label: Some("Authenticator".into()),
-            created_date: Utc::now().timestamp_millis(),
+            created_date: TimestampTz::now().as_millis(),
             secret_data: serde_json::json!({ "value": secret }).to_string(),
             credential_data: serde_json::json!({
                 "subType": "totp",
@@ -2763,7 +2766,7 @@ async fn action_token_post(
             .to_string(),
             temporary: false,
         };
-        let now_secs = u64::try_from(Utc::now().timestamp()).unwrap_or_default();
+        let now_secs = u64::try_from(TimestampTz::now().as_second()).unwrap_or_default();
         if verify_totp_code(
             &cred,
             otp_code,
@@ -2848,7 +2851,7 @@ async fn action_token_post(
                 user_id: user.id.clone(),
                 credential_type: "password".into(),
                 user_label: Some("Password".into()),
-                created_date: Utc::now().timestamp_millis(),
+                created_date: TimestampTz::now().as_millis(),
                 secret_data: {
                     let new_password = new_password.to_owned();
                     kaisatsu_oidc::password_work(move || hash_password(&new_password)).await??

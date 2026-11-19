@@ -10,8 +10,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Form, Router};
-use chrono::Utc;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::i18n::{Bundle, negotiate_for_realm};
 use kaisatsu_core::page;
 use kaisatsu_core::*;
@@ -405,7 +405,7 @@ async fn broker_endpoint_get(
             idp_alias: idp.alias.clone(),
             external_user_id: claims.sub,
             external_username: claims.preferred_username.or(claims.email),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await?;
 
@@ -525,7 +525,7 @@ async fn broker_endpoint_confirm_post(
             idp_alias: alias.clone(),
             external_user_id: claims.sub,
             external_username: claims.preferred_username.or(claims.email),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await?;
 

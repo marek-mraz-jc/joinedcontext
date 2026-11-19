@@ -133,7 +133,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
     assert!(html3.contains("login-otp"));
 
     // 4. Submit valid HMAC-SHA256 TOTP code
-    let now_secs = chrono::Utc::now().timestamp() as u64;
+    let now_secs = jc_time::TimestampTz::now().as_second() as u64;
     let totp_code =
         generate_totp_code("steward-totp-seed-123456", 6, 30, "HmacSHA256", now_secs).unwrap();
     let (st4, hdrs4, _) = post_form(
@@ -232,7 +232,7 @@ async fn e2e_portal_login_pkce_otp_stepup_and_endpoint_token_exchange_and_backch
         200,
         serde_json::to_vec(&json!({ "keys": [k8s_pub_jwk2] })).unwrap(),
     );
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let sa_assertion = sign_jwt(
         &k8s_key2,
         &k8s_kek,
@@ -773,12 +773,12 @@ async fn a_sign_in_cookie_planted_from_a_sibling_host_is_never_read() {
             user_agent: String::new(),
             start: 1000,
             last_access: 1000,
-            auth_time: chrono::Utc::now().timestamp(),
+            auth_time: jc_time::TimestampTz::now().as_second(),
             acr: "pwd".into(),
             amr: vec!["pwd".into()],
             clients: Default::default(),
-            idle_expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-            max_expires_at: chrono::Utc::now() + chrono::Duration::hours(10),
+            idle_expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(1),
+            max_expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(10),
         })
         .await
         .unwrap();
@@ -938,8 +938,8 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
             acr: "pwd".into(),
             amr: vec!["pwd".into()],
             clients: Default::default(),
-            idle_expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-            max_expires_at: chrono::Utc::now() + chrono::Duration::hours(10),
+            idle_expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(1),
+            max_expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(10),
         })
         .await
         .unwrap();
@@ -963,8 +963,8 @@ async fn e2e_w9_mount_under_slug_and_dedicated_host_and_w12_attack_regression_su
             dpop_jkt: None,
             auth_time: 1000,
             consumed: false,
-            created_at: chrono::Utc::now(),
-            expires_at: chrono::Utc::now() + chrono::Duration::seconds(60),
+            created_at: jc_time::TimestampTz::now(),
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_secs(60),
         })
         .await
         .unwrap();

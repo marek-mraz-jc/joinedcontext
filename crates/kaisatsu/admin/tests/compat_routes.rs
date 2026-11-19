@@ -13,9 +13,10 @@
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use axum::{Extension, Router};
-use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_admin::{AdminState, admin_router};
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, sha256_hex, sign_jwt};
@@ -43,7 +44,7 @@ fn token(kek: &Kek, key: &SigningKeyRecord, claims: Value) -> String {
 }
 
 fn claims(sub: &str, extra: Value) -> Value {
-    let now = Utc::now().timestamp();
+    let now = TimestampTz::now().as_second();
     let mut c = json!({
         "iss": "https://idm.localhost/realms/dev",
         "sub": sub,
@@ -94,7 +95,7 @@ async fn fixture() -> Fixture {
             org_id: "helsinki".into(),
             person_id: "org-admin-hel".into(),
             org_roles: vec!["org-admin".into()],
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -124,7 +125,7 @@ async fn fixture() -> Fixture {
             org_id: "helsinki".into(),
             person_id: "realm-user".into(),
             org_roles: Vec::new(),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -210,7 +211,7 @@ async fn fixture() -> Fixture {
         .mark_token_revoked(RevokedTokenRecord {
             jti_hash: sha256_hex("jti-admin-2"),
             realm_id: "dev".into(),
-            expires_at: Utc::now() + Duration::hours(1),
+            expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
         })
         .await
         .unwrap();
@@ -845,8 +846,8 @@ async fn people_lifecycle_through_the_compat_routes() {
             acr: "1".into(),
             amr: vec!["pwd".into()],
             clients: HashMap::new(),
-            idle_expires_at: Utc::now() + Duration::hours(1),
-            max_expires_at: Utc::now() + Duration::hours(10),
+            idle_expires_at: TimestampTz::now() + SignedDuration::from_hours(1),
+            max_expires_at: TimestampTz::now() + SignedDuration::from_hours(10),
         })
         .await
         .unwrap();
@@ -1921,8 +1922,8 @@ async fn an_org_admin_works_inside_its_organization_only() {
                 num_failures: 30,
                 last_failure_ms: 1,
                 last_ip_failure: "192.0.2.9".into(),
-                locked_until: Some(Utc::now() + Duration::hours(1)),
-                window_started_at: Utc::now(),
+                locked_until: Some(TimestampTz::now() + SignedDuration::from_hours(1)),
+                window_started_at: TimestampTz::now(),
             })
             .await
             .unwrap();

@@ -209,7 +209,7 @@ fn proof(h: &Holder) -> String {
     header.typ = Some("dpop+jwt".into());
     header.jwk = Some(serde_json::from_value(h.jwk.clone()).unwrap());
     let claims = json!({ "jti": uuid::Uuid::new_v4().to_string(), "htm": "POST",
-                         "htu": TOKEN_URL, "iat": chrono::Utc::now().timestamp() });
+                         "htu": TOKEN_URL, "iat": jc_time::TimestampTz::now().as_second() });
     encode(&header, &claims, &h.key).unwrap()
 }
 

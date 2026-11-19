@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Domain and Keycloak Admin REST representations (W1, W2, W3, W7, W10).
 
-use chrono::{DateTime, Utc};
+use jc_time::TimestampTz;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -274,7 +274,7 @@ pub struct OrganizationDomain {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub challenge_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub challenge_expires_at: Option<DateTime<Utc>>,
+    pub challenge_expires_at: Option<TimestampTz>,
 }
 
 /// Membership of a person in an organization (W3).
@@ -287,7 +287,7 @@ pub struct Membership {
     pub person_id: String,
     #[serde(default)]
     pub org_roles: Vec<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 /// Person (`UserRepresentation` in Keycloak Admin REST, W1, W3).
@@ -871,11 +871,11 @@ pub struct SigningKeyRecord {
     /// AES-256-GCM encrypted PKCS#8 DER under the installation KEK.
     #[serde(skip_serializing)]
     pub encrypted_private_key: Vec<u8>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activate_at: Option<DateTime<Utc>>,
+    pub activate_at: Option<TimestampTz>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
 }
 
 /// Public representation of a signing key for OData (`SigningKeys`, W4).
@@ -888,11 +888,11 @@ pub struct SigningKeyMetadata {
     pub algorithm: String,
     pub status: String,
     pub priority: i32,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub activate_at: Option<DateTime<Utc>>,
+    pub activate_at: Option<TimestampTz>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<TimestampTz>,
 }
 
 impl From<&SigningKeyRecord> for SigningKeyMetadata {
@@ -972,8 +972,8 @@ pub struct AuthSession {
     #[serde(default)]
     pub amr: Vec<String>,
     pub acr_achieved: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub expires_at: TimestampTz,
 }
 
 /// Prints only the session's identity: the TOTP seed being enrolled, the CSRF token, the
@@ -1023,8 +1023,8 @@ pub struct AuthorizationCodeRecord {
     pub dpop_jkt: Option<String>,
     pub auth_time: i64,
     pub consumed: bool,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub expires_at: TimestampTz,
 }
 
 /// Pushed Authorization Request (PAR, RFC 9126, 60 s single-use, W1, W12).
@@ -1036,7 +1036,7 @@ pub struct ParRequestRecord {
     pub client_id: String,
     pub params: BTreeMap<String, String>,
     pub consumed: bool,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
 }
 
 /// Where a device authorization (RFC 8628) stands: the person's answer at the verification page.
@@ -1074,10 +1074,10 @@ pub struct DeviceCodeRecord {
     /// Seconds the device waits between polls; each `slow_down` adds 5 (RFC 8628 §3.5).
     pub interval_secs: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_poll_at: Option<DateTime<Utc>>,
+    pub last_poll_at: Option<TimestampTz>,
     pub consumed: bool,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub expires_at: TimestampTz,
 }
 
 /// The token endpoint's answer to one poll of a device code (RFC 8628 §3.5).
@@ -1096,7 +1096,7 @@ impl DeviceCodeRecord {
     /// interval is `SlowDown` (the interval grows by 5 s), an approved code is used up by the
     /// poll that takes its tokens, and a used or expired code stays so.
     #[must_use]
-    pub fn polled(&self, now: DateTime<Utc>) -> (Self, DevicePoll) {
+    pub fn polled(&self, now: TimestampTz) -> (Self, DevicePoll) {
         let mut next = self.clone();
         if self.consumed {
             return (next, DevicePoll::Used);
@@ -1107,7 +1107,7 @@ impl DeviceCodeRecord {
         next.last_poll_at = Some(now);
         if self
             .last_poll_at
-            .is_some_and(|last| (now - last).num_milliseconds() < self.interval_secs * 1000)
+            .is_some_and(|last| (now - last).as_millis() < i128::from(self.interval_secs) * 1000)
         {
             next.interval_secs += 5;
             return (next, DevicePoll::SlowDown);
@@ -1147,8 +1147,8 @@ pub struct SsoSession {
     pub amr: Vec<String>,
     #[serde(default)]
     pub clients: HashMap<String, String>,
-    pub idle_expires_at: DateTime<Utc>,
-    pub max_expires_at: DateTime<Utc>,
+    pub idle_expires_at: TimestampTz,
+    pub max_expires_at: TimestampTz,
 }
 
 /// Per-client session inside an SSO session (`client_session`, W2).
@@ -1163,8 +1163,8 @@ pub struct ClientSession {
     pub client_id: String,
     pub user_id: String,
     pub scopes: Vec<String>,
-    pub created_at: DateTime<Utc>,
-    pub last_access: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub last_access: TimestampTz,
 }
 
 /// Offline session (`offline_session`, 30 d idle / 60 d max per RI, W1, W2).
@@ -1178,10 +1178,10 @@ pub struct OfflineSession {
     pub user_id: String,
     pub client_id: String,
     pub scopes: Vec<String>,
-    pub created_at: DateTime<Utc>,
-    pub last_access: DateTime<Utc>,
-    pub idle_expires_at: DateTime<Utc>,
-    pub max_expires_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
+    pub last_access: TimestampTz,
+    pub idle_expires_at: TimestampTz,
+    pub max_expires_at: TimestampTz,
 }
 
 /// Refresh token family for rotation and reuse detection (W1, W2).
@@ -1213,7 +1213,7 @@ pub struct RefreshTokenFamily {
     pub dpop_jkt: Option<String>,
     pub offline: bool,
     pub revoked: bool,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
     /// The delegation chain of an exchanged token, minted again by each refresh (S-4-08).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub act: Option<crate::claims::ActClaim>,
@@ -1228,7 +1228,7 @@ pub struct RefreshTokenFamily {
 pub struct RevokedTokenRecord {
     pub jti_hash: String,
     pub realm_id: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: TimestampTz,
 }
 
 /// Brute-force login failure record (`login_failure`, W2, W7).
@@ -1243,8 +1243,8 @@ pub struct LoginFailureRecord {
     pub last_failure_ms: i64,
     pub last_ip_failure: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked_until: Option<DateTime<Utc>>,
-    pub window_started_at: DateTime<Utc>,
+    pub locked_until: Option<TimestampTz>,
+    pub window_started_at: TimestampTz,
 }
 
 /// User consent (`Consent`, W1, W2, W4).
@@ -1343,9 +1343,9 @@ pub struct WebAuthnCredentialRecord {
     pub rp_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_label: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<TimestampTz>,
 }
 
 /// Transactional e-mail outbox row (W7, K9). Holds no plaintext secrets or signed tokens:
@@ -1375,10 +1375,10 @@ pub struct EmailOutboxRecord {
     pub attempts: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
-    pub next_attempt_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
+    pub next_attempt_at: TimestampTz,
+    pub created_at: TimestampTz,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sent_at: Option<DateTime<Utc>>,
+    pub sent_at: Option<TimestampTz>,
 }
 
 /// Federated identity provider link for a person (`kaisatsu.idp_links`, W11, K12).
@@ -1394,7 +1394,7 @@ pub struct IdentityProviderLinkRecord {
     pub external_user_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_username: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: TimestampTz,
 }
 
 #[cfg(test)]

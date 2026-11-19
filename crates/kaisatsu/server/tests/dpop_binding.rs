@@ -56,7 +56,7 @@ fn proof(h: &Holder, jti: &str, htu: &str) -> String {
     header.typ = Some("dpop+jwt".into());
     header.jwk = Some(serde_json::from_value(h.jwk.clone()).unwrap());
     let claims = json!({ "jti": jti, "htm": "POST", "htu": htu,
-                         "iat": chrono::Utc::now().timestamp() });
+                         "iat": jc_time::TimestampTz::now().as_second() });
     encode(&header, &claims, &h.key).unwrap()
 }
 
@@ -152,7 +152,7 @@ fn userinfo_proof(h: &Holder, jti: &str, method: &str, access_token: Option<&str
     header.jwk = Some(serde_json::from_value(h.jwk.clone()).unwrap());
     let mut claims = json!({ "jti": jti, "htm": method,
         "htu": "https://idm.dev.example.test/realms/dev/protocol/openid-connect/userinfo",
-        "iat": chrono::Utc::now().timestamp() });
+        "iat": jc_time::TimestampTz::now().as_second() });
     if let Some(at) = access_token {
         claims["ath"] = json!(URL_SAFE_NO_PAD.encode(Sha256::digest(at.as_bytes())));
     }
@@ -217,7 +217,7 @@ fn resource_proof(
         "jti": jti,
         "htm": method,
         "htu": htu,
-        "iat": chrono::Utc::now().timestamp()
+        "iat": jc_time::TimestampTz::now().as_second()
     });
     if let Some(at) = access_token {
         claims["ath"] = json!(URL_SAFE_NO_PAD.encode(Sha256::digest(at.as_bytes())));
@@ -241,7 +241,7 @@ async fn k6_dpop_enforced_across_admin_odata_mcp_and_scim_and_server_nonce_round
     // Mint a DPoP-bound realm-admin token with `cnf.jkt`.
     let keys = store.list_signing_keys("dev").await.unwrap();
     let key = keys.iter().find(|k| k.status == "ACTIVE").unwrap();
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let bound_admin_token = kaisatsu_crypto::sign_jwt(
         key,
         &kek,

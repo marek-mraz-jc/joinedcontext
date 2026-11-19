@@ -8,7 +8,8 @@ publish = false
 [dependencies]
 kaisatsu-core = { path = "../core" }
 kaisatsu-crypto = { path = "../crypto" }
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 futures-core = "0.3"
 odata-csdl = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-csdl" }
 odata-table = { git = "https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker", rev = "9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd", package = "odata-table" }

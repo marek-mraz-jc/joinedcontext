@@ -232,7 +232,7 @@ mod tests {
 
     impl Upstream {
         fn id_token(&self, extra: Value) -> String {
-            let now = chrono::Utc::now().timestamp();
+            let now = jc_time::TimestampTz::now().as_second();
             let mut c = json!({ "iss": ISS, "aud": "kaisatsu-rp", "sub": "up-1", "iat": now,
                 "exp": now + 300, "nonce": "n-1", "email": "Ada@Hel.fi", "email_verified": true,
                 "given_name": "Ada" });

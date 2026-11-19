@@ -16,7 +16,7 @@
 pub mod odata_pg;
 pub use odata_pg::PgScopedTable;
 
-use chrono::Utc;
+use jc_time::TimestampTz;
 use kaisatsu_core::store::StoreFuture;
 use kaisatsu_core::*;
 use kaisatsu_crypto::{Kek, KeyManager};
@@ -930,7 +930,7 @@ impl Store for PgStore {
                 *em = em.to_ascii_lowercase();
             }
             if user.created_timestamp.is_none() {
-                user.created_timestamp = Some(Utc::now().timestamp_millis());
+                user.created_timestamp = Some(TimestampTz::now().as_millis());
             }
             let mut tx = self.begin(&user.realm_id, None).await?;
             if user_key_taken(&mut tx, &user, None).await? {
@@ -1136,7 +1136,7 @@ impl Store for PgStore {
                 cred.id = new_id();
             }
             if cred.created_date == 0 {
-                cred.created_date = Utc::now().timestamp_millis();
+                cred.created_date = TimestampTz::now().as_millis();
             }
             let mut tx = self.begin(&cred.realm_id, None).await?;
             sqlx::query("DELETE FROM kaisatsu.credentials WHERE realm_id = $1 AND id = $2")
@@ -1923,7 +1923,7 @@ impl Store for PgStore {
                     enabled: true,
                     email_verified: false,
                     service_account_client_id: Some(client.client_id.clone()),
-                    created_timestamp: Some(Utc::now().timestamp_millis()),
+                    created_timestamp: Some(TimestampTz::now().as_millis()),
                     ..Default::default()
                 };
                 let exists: bool = sqlx::query_scalar(
@@ -2483,7 +2483,7 @@ impl Store for PgStore {
         realm_id: &'a str,
         device_code_hash: &'a str,
         client_id: &'a str,
-        now: chrono::DateTime<Utc>,
+        now: jc_time::TimestampTz,
     ) -> StoreFuture<'a, Option<(DeviceCodeRecord, DevicePoll)>> {
         Box::pin(async move {
             let mut tx = self.begin(realm_id, None).await?;
@@ -2579,7 +2579,7 @@ impl Store for PgStore {
             let mut client_ids: Vec<&String> = session.clients.keys().collect();
             client_ids.sort();
             for cid in client_ids {
-                let now = Utc::now();
+                let now = TimestampTz::now();
                 let cs = ClientSession {
                     id: new_id(),
                     realm_id: realm_id.clone(),
@@ -3533,7 +3533,7 @@ impl Store for PgStore {
         id: &'a str,
         sent: bool,
         error: Option<String>,
-        next_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+        next_attempt_at: Option<jc_time::TimestampTz>,
         max_attempts: u32,
     ) -> StoreFuture<'a, ()> {
         Box::pin(async move {
@@ -3550,7 +3550,7 @@ impl Store for PgStore {
                 let mut rec: EmailOutboxRecord = from_doc(doc)?;
                 if sent {
                     rec.status = "sent".into();
-                    rec.sent_at = Some(Utc::now());
+                    rec.sent_at = Some(TimestampTz::now());
                     rec.last_error = None;
                 } else {
                     rec.last_error = error.clone();
@@ -3558,8 +3558,9 @@ impl Store for PgStore {
                         rec.status = "failed".into();
                     } else {
                         rec.status = "pending".into();
-                        rec.next_attempt_at = next_attempt_at
-                            .unwrap_or_else(|| Utc::now() + chrono::Duration::seconds(5));
+                        rec.next_attempt_at = next_attempt_at.unwrap_or_else(|| {
+                            TimestampTz::now() + jiff::SignedDuration::from_secs(5)
+                        });
                     }
                 }
                 sqlx::query(
@@ -3605,7 +3606,7 @@ impl Store for PgStore {
             rec.status = "pending".into();
             rec.attempts = 0;
             rec.last_error = None;
-            rec.next_attempt_at = Utc::now();
+            rec.next_attempt_at = TimestampTz::now();
             sqlx::query(
                 "UPDATE kaisatsu.email_outbox
                  SET status = 'pending', attempts = 0, last_error = NULL,

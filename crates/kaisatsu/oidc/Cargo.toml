@@ -11,7 +11,8 @@ kaisatsu-crypto = { path = "../crypto" }
 jc-router = { path = "../../shared/jc-router" }
 axum = { version = "0.8", features = ["form", "json"] }
 base64 = "0.22"
-chrono = { version = "0.4", features = ["serde"] }
+jc-time = { path = "../../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 http = "1.5"
 ipnet = "2.12"
 jsonwebtoken = { version = "11.1", default-features = false, features = ["aws_lc_rs", "use_pem"] }

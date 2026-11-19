@@ -8,9 +8,9 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::{Extension, Router};
 use base64::engine::{Engine, general_purpose::URL_SAFE_NO_PAD};
-use chrono::Utc;
 use http_body_util::BodyExt;
 use jc_router::Mount;
+use jc_time::TimestampTz;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_login::*;
@@ -176,7 +176,7 @@ async fn steward_totp(store: &MemoryStore) -> String {
     let s = user(store, STEWARD).await;
     let creds = store.list_credentials("dev", &s.id).await.unwrap();
     let otp = creds.iter().find(|c| c.credential_type == "otp").unwrap();
-    generate_totp_code_for_credential(otp, Utc::now().timestamp() as u64).unwrap()
+    generate_totp_code_for_credential(otp, TimestampTz::now().as_second() as u64).unwrap()
 }
 
 async fn remove(store: &MemoryStore, u: &UserRepresentation) {
@@ -246,7 +246,7 @@ async fn memberships_and_a_pinned_session_organization_shape_the_login() {
             org_id: "helsinki".into(),
             person_id: member.id.clone(),
             org_roles: Vec::new(),
-            created_at: Utc::now(),
+            created_at: TimestampTz::now(),
         })
         .await
         .unwrap();
@@ -539,7 +539,8 @@ async fn action_link_forms_need_a_valid_code_a_person_and_a_pending_secret() {
             .to_string(),
         ..Default::default()
     };
-    let code = generate_totp_code_for_credential(&probe, Utc::now().timestamp() as u64).unwrap();
+    let code =
+        generate_totp_code_for_credential(&probe, TimestampTz::now().as_second() as u64).unwrap();
     let (st, h, _) = submit(code).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     assert_eq!(h[header::LOCATION], CALLBACK);
@@ -681,8 +682,8 @@ fn outbox_row(id: &str, realm_id: &str) -> EmailOutboxRecord {
         status: "pending".into(),
         attempts: 0,
         last_error: None,
-        next_attempt_at: Utc::now() - chrono::Duration::seconds(1),
-        created_at: Utc::now(),
+        next_attempt_at: TimestampTz::now() - jiff::SignedDuration::from_secs(1),
+        created_at: TimestampTz::now(),
         sent_at: None,
     }
 }

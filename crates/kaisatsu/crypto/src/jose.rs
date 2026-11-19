@@ -207,7 +207,7 @@ mod tests {
             "iss": "https://idm.example.test/realms/dev",
             "sub": "u1",
             "aud": "portal-api",
-            "exp": chrono::Utc::now().timestamp() + 300,
+            "exp": jc_time::TimestampTz::now().as_second() + 300,
         });
 
         for k in &keys {

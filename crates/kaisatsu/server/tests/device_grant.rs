@@ -8,9 +8,10 @@
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::{Extension, Router};
-use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::*;
 use kaisatsu_crypto::*;
 use kaisatsu_server::router;
@@ -329,7 +330,7 @@ async fn only_a_client_the_realm_enables_starts_or_polls_a_device_grant() {
 }
 
 fn record(raw: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRecord {
-    let now = Utc::now();
+    let now = TimestampTz::now();
     DeviceCodeRecord {
         device_code_hash: sha256_hex(raw),
         user_code_hash: sha256_hex(user_code),
@@ -346,8 +347,8 @@ fn record(raw: &str, user_code: &str, client: &str, ttl: i64) -> DeviceCodeRecor
         interval_secs: 1,
         last_poll_at: None,
         consumed: false,
-        created_at: now - Duration::seconds(700),
-        expires_at: now + Duration::seconds(ttl),
+        created_at: now - SignedDuration::from_secs(700),
+        expires_at: now + SignedDuration::from_secs(ttl),
     }
 }
 

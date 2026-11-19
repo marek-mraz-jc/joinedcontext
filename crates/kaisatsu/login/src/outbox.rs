@@ -9,9 +9,10 @@
 
 use crate::email::{EmailSender, SignedActionToken};
 use crate::i18n::Bundle;
-use chrono::{Duration, Utc};
 use futures_core::future::BoxFuture;
 use jc_router::Mount;
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{EmailOutboxRecord, KaisatsuError, Result, Store};
 use kaisatsu_crypto::{Kek, sign_jwt};
 use std::sync::Arc;
@@ -172,7 +173,7 @@ impl OutboxDispatcher {
             .iter()
             .find(|k| k.status == "ACTIVE")
             .ok_or_else(|| KaisatsuError::Crypto("no active signing key".into()))?;
-        let now = Utc::now().timestamp();
+        let now = TimestampTz::now().as_second();
         let ttl = row.lifespan_secs.clamp(60, 43_200);
         let claims = SignedActionToken {
             iss: row.issuer.clone(),
@@ -242,7 +243,7 @@ impl OutboxDispatcher {
                             &row.id,
                             false,
                             Some(e.public_detail()),
-                            Some(Utc::now() + Duration::seconds(10)),
+                            Some(TimestampTz::now() + SignedDuration::from_secs(10)),
                             self.max_attempts,
                         )
                         .await;
@@ -277,7 +278,7 @@ impl OutboxDispatcher {
                             &row.id,
                             false,
                             Some(e.public_detail()),
-                            Some(Utc::now() + Duration::seconds(backoff_secs)),
+                            Some(TimestampTz::now() + SignedDuration::from_secs(backoff_secs)),
                             self.max_attempts,
                         )
                         .await?;

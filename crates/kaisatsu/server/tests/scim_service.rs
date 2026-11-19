@@ -38,7 +38,7 @@ impl Api {
     async fn token(&self, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys("dev").await.unwrap();
         let key = keys.iter().find(|k| k.status == "ACTIVE").unwrap();
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         let mut claims = json!({ "iss": ISSUER, "sub": sub, "azp": "admin-cli", "typ": "Bearer",
                                  "iat": now, "exp": now + 600 });
         for (k, v) in extra.as_object().unwrap() {
@@ -386,7 +386,7 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
     let etag1 = u_created["meta"]["version"].as_str().unwrap().to_owned();
     assert!(etag1.starts_with("W/\""));
 
-    let now = chrono::Utc::now();
+    let now = jc_time::TimestampTz::now();
     api.store
         .upsert_sso_session(SsoSession {
             id: "sso-bj-1".into(),
@@ -397,14 +397,14 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
             username: "bjensen@hel.fi".into(),
             ip_address: "127.0.0.1".into(),
             user_agent: String::new(),
-            start: now.timestamp_millis(),
-            last_access: now.timestamp_millis(),
-            auth_time: now.timestamp(),
+            start: now.as_millis(),
+            last_access: now.as_millis(),
+            auth_time: now.as_second(),
             acr: "pwd".into(),
             amr: vec!["pwd".into()],
             clients: Default::default(),
-            idle_expires_at: now + chrono::Duration::hours(1),
-            max_expires_at: now + chrono::Duration::hours(10),
+            idle_expires_at: now + jiff::SignedDuration::from_hours(1),
+            max_expires_at: now + jiff::SignedDuration::from_hours(10),
         })
         .await
         .unwrap();

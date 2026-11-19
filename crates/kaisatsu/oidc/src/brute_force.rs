@@ -9,7 +9,8 @@
 //!   one the router resolved ([`crate::ClientIp`]); when it is unknown only the per-person counter
 //!   runs, so failures never pile onto one shared placeholder address that would lock everyone out.
 
-use chrono::{Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::SignedDuration;
 use kaisatsu_core::{LoginFailureRecord, RealmConfig, Result, Store};
 use std::sync::Arc;
 
@@ -32,7 +33,7 @@ impl BruteForceProtector {
         if !realm.brute_force_protected {
             return Ok(false);
         }
-        let now = Utc::now();
+        let now = TimestampTz::now();
         if let Some(uid) = user_id
             && let Some(rec) = self
                 .store
@@ -89,20 +90,13 @@ impl BruteForceProtector {
         target_key: &str,
         ip_address: &str,
     ) -> Result<Option<i64>> {
-        let now = Utc::now();
-        let now_ms = now.timestamp_millis();
+        let now = TimestampTz::now();
+        let now_ms = now.as_millis();
         let factor = realm.failure_factor.max(1);
         let max_delta = realm.max_delta_time_seconds.max(60);
 
         let mut rec = match self.store.get_login_failure(&realm.id, target_key).await? {
-            Some(existing)
-                if now
-                    .signed_duration_since(existing.window_started_at)
-                    .num_seconds()
-                    <= max_delta =>
-            {
-                existing
-            }
+            Some(existing) if (now - existing.window_started_at).as_secs() <= max_delta => existing,
             _ => LoginFailureRecord {
                 id: uuid::Uuid::now_v7().to_string(),
                 realm_id: realm.id.clone(),
@@ -137,7 +131,7 @@ impl BruteForceProtector {
         }
 
         if wait_secs > 0 {
-            rec.locked_until = Some(now + Duration::seconds(wait_secs));
+            rec.locked_until = Some(now + SignedDuration::from_secs(wait_secs));
         }
         self.store.upsert_login_failure(rec).await?;
         Ok((wait_secs > 0).then_some(wait_secs))

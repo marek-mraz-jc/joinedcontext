@@ -115,6 +115,40 @@ impl From<TimestampTz> for Timestamp {
     }
 }
 
+/// `self + d`, saturating at jiff's range (years -9999..=9999) where chrono's
+/// `DateTime + TimeDelta` panicked: an expiry from a configured lifespan of thousands of years
+/// reads as "never" instead of failing the request. [`TimestampTz::checked_add`] says when.
+impl std::ops::Add<SignedDuration> for TimestampTz {
+    type Output = Self;
+    fn add(self, d: SignedDuration) -> Self {
+        self.checked_add(d).unwrap_or(if d.is_negative() {
+            Self(Timestamp::MIN)
+        } else {
+            Self(Timestamp::MAX)
+        })
+    }
+}
+
+/// `self - d`, saturating at jiff's range as `+` does.
+impl std::ops::Sub<SignedDuration> for TimestampTz {
+    type Output = Self;
+    fn sub(self, d: SignedDuration) -> Self {
+        self.checked_sub(d).unwrap_or(if d.is_negative() {
+            Self(Timestamp::MAX)
+        } else {
+            Self(Timestamp::MIN)
+        })
+    }
+}
+
+/// The signed time from `rhs` to `self` (chrono's `DateTime - DateTime`).
+impl std::ops::Sub for TimestampTz {
+    type Output = SignedDuration;
+    fn sub(self, rhs: Self) -> SignedDuration {
+        self.0.duration_since(rhs.0)
+    }
+}
+
 /// Fraction digits of the seconds, as chrono's `SecondsFormat`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SecondsFormat {
@@ -573,6 +607,28 @@ mod tests {
 
     fn at(nanos: i32) -> Timestamp {
         Timestamp::new(SECS, nanos).expect("in range")
+    }
+
+    // chrono's `DateTime ± TimeDelta` and `DateTime - DateTime`, which kaisatsu's expiries use.
+    #[test]
+    fn duration_arithmetic_matches_chrono() {
+        let t = TimestampTz(at(500_000_000));
+        let later = t + SignedDuration::from_hours(1);
+        assert_eq!(later.to_rfc3339(), "2025-11-18T17:20:00.500+00:00");
+        assert_eq!(later - SignedDuration::from_hours(1), t);
+        assert_eq!(later - t, SignedDuration::from_secs(3600));
+        assert_eq!(t - later, SignedDuration::from_secs(-3600));
+        assert_eq!((t - SignedDuration::from_mins(1)).as_second(), SECS - 60);
+        // A lifespan past year 9999 (an absurd realm setting) saturates instead of panicking.
+        let far = SignedDuration::from_secs(1_000_000_000_000);
+        assert_eq!(t + far, TimestampTz(Timestamp::MAX));
+        assert_eq!(t - far, TimestampTz(Timestamp::MIN));
+        assert_eq!(t + -far, TimestampTz(Timestamp::MIN));
+        assert_eq!(t - -far, TimestampTz(Timestamp::MAX));
+        assert_eq!(
+            (t + far).to_rfc3339(),
+            "9999-12-30T22:00:00.999999999+00:00"
+        );
     }
 
     // What chrono 0.4.45's serde (`DateTime<FixedOffset>: FromStr`) read, compared case by case

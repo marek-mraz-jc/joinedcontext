@@ -185,7 +185,7 @@ impl Cluster {
     }
 
     fn claims(aud: &str) -> Value {
-        let now = chrono::Utc::now().timestamp();
+        let now = jc_time::TimestampTz::now().as_second();
         json!({ "iss": K8S, "sub": SA, "aud": aud, "iat": now, "exp": now + 600 })
     }
 
@@ -288,7 +288,7 @@ async fn a_cluster_ca_that_is_not_mounted_trusts_nothing_of_the_cluster() {
 async fn wrong_assertions_and_jwks_urls_are_refused() {
     // The default window: a token's unknown kid reads no JWKS within 10 s of the last read.
     let c = cluster(true, None, ClusterCredentials::default().jwks_min_refetch).await;
-    let now = chrono::Utc::now().timestamp();
+    let now = jc_time::TimestampTz::now().as_second();
     let other = KeyManager::generate_es256("stranger", &c.kek, 100, "ACTIVE").unwrap();
     let refused = [
         ("wrong iss", c.assertion(&c.key, json!({ "iss": "https://other.example", "sub": SA, "aud": ISSUER, "iat": now, "exp": now + 600 }))),
