@@ -147,6 +147,29 @@ async fn app_url(admin: &sqlx::PgPool, url: &str) -> String {
     format!("{scheme}://antares_app:app@{host}")
 }
 
+/// The maintenance role of pg_rls_pentest.rs: a member of
+/// `antares_maintenance`, which the Cached @context write-through takes
+/// (0040, T-7307).
+async fn maint_url(admin: &sqlx::PgPool, url: &str) -> String {
+    let mut tx = admin.begin().await.expect("begin");
+    for stmt in [
+        "SELECT pg_advisory_xact_lock(4334)",
+        "DO $$ BEGIN CREATE ROLE antares_maint_probe LOGIN PASSWORD 'maint';
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
+        "DO $$ BEGIN CREATE ROLE antares_maintenance NOLOGIN;
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$",
+        "GRANT antares_maintenance TO antares_maint_probe",
+        "GRANT USAGE ON SCHEMA public TO antares_maint_probe",
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO antares_maint_probe",
+    ] {
+        sqlx::query(stmt).execute(&mut *tx).await.expect(stmt);
+    }
+    tx.commit().await.expect("commit");
+    let (scheme, rest) = url.split_once("://").expect("a postgres:// URL");
+    let (_, host) = rest.rsplit_once('@').expect("test URL carries credentials");
+    format!("{scheme}://antares_maint_probe:maint@{host}")
+}
+
 async fn get(st: &AppState, uri: &str, tenant: &str, link: Option<&str>) -> (StatusCode, Value) {
     let mut req = Request::builder().uri(uri).header("NGSILD-Tenant", tenant);
     if let Some(link) = link {
@@ -245,8 +268,13 @@ async fn each_read_shape_sends_its_pinned_statements() {
         !antares_sql::store::pg::role_bypasses_rls(&app).await,
         "the app role must not bypass RLS, or set_config is not what production runs"
     );
+    let maint = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&maint_url(&admin, &url).await)
+        .await
+        .expect("maintenance-role connect");
     let store = Arc::new(antares_sql::store::any::AnyStore::Pg(
-        antares_sql::store::any::PgBackend::new(app.clone()),
+        antares_sql::store::any::PgBackend::new(app.clone()).with_maintenance(maint),
     ));
     let mut st = AppState::with_store("me".into(), store.clone(), "postgres");
     antares_api::wire(&mut st).await;
@@ -290,8 +318,10 @@ async fn each_read_shape_sends_its_pinned_statements() {
 
     // (d) the page with a Link to the Cached @context the warm-up fetched:
     // one transaction of the @context write-through the hit still runs
-    // (state.rs `set_cache_writer`: `context_mutate`'s set_config, SELECT
-    // ... FOR UPDATE, the Tenant's usage SELECT, the usage upsert, COMMIT),
+    // (state.rs `set_cache_writer`: `context_mutate`'s two set_config calls,
+    // the Tenant's and the maintenance escape a Cached row's lock needs
+    // (0040), SELECT ... FOR UPDATE, the Tenant's usage SELECT, the usage
+    // upsert, COMMIT),
     // then the page's own three. The counters are the Tenant's own row in
     // jsonld_context_usage (S5-10), read in a statement of its own after the
     // lock (a join in the locking SELECT reads them from the pre-lock
@@ -301,7 +331,7 @@ async fn each_read_shape_sends_its_pinned_statements() {
     // change that stops the write lowers both numbers.
     let (body, d) = counted(&st, &log, page, &tenant, Some(&link)).await;
     assert_eq!(body.as_array().map(Vec::len), Some(20), "{body}");
-    assert_eq!(d.len(), 8, "statements: {d:#?}");
+    assert_eq!(d.len(), 9, "statements: {d:#?}");
     let writes = |table: &str| -> Vec<&String> {
         d.iter()
             .filter(|q| q.contains(table) && !q.starts_with("SELECT"))
