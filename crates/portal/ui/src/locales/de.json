@@ -8708,8 +8708,8 @@
         },
         "mqtt": {
           "brokers": {
-            "label": "MQTT-Broker je Projekt",
-            "hint": "Wie viele Broker ein Projekt deklarieren darf."
+            "label": "MQTT-Broker in der Organisation",
+            "hint": "Jeder Broker jedes Projekts zählt mit, z. B. 10. Die eigene Freigabe eines Projekts darf sie nur verengen. Unter den laufenden Bestand gesenkt, bleiben die Broker bestehen und neue werden abgelehnt."
           },
           "connections": {
             "label": "MQTT-Verbindungen je Projekt",
@@ -11754,7 +11754,7 @@
       "enabled": "MQTT-Broker erlaubt",
       "enabledHint": "Aus: Das Projekt kann keinen Broker hinzufügen.",
       "brokers": "Höchstens Broker",
-      "brokersHint": "Leer: Standard der Organisation.",
+      "brokersHint": "Leer: Standard der Organisation. Verengt nur die Gesamtzahl der Organisation über alle Projekte, z. B. 3.",
       "connections": "Geräteverbindungen insgesamt",
       "connectionsHint": "Summe der Verbindungsgrenzen aller Broker.",
       "messagesPerSecond": "Nachrichten pro Sekunde insgesamt",
