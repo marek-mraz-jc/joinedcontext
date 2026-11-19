@@ -495,6 +495,7 @@ pub(crate) async fn approve_erasure(
 ) -> Result<Json<Value>, ApiError> {
     let spec = owned(&state, &user, &project, &space)?;
     refuse_bearer(&user)?;
+    crate::automation::refuse_approver(&state, &user.0.identity, "an erasure").await?;
     crate::auth::session::require_second_factor(&user.0.identity, &state.config)?;
     let Json(request) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     if let Some(why) = erasure::subject_refusal(&request.subject) {

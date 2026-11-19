@@ -54,7 +54,7 @@ const ORGANIZATION = {
 
 const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
 
-async function stub(page: Page, mode: Record<string, unknown>, stepUp = false): Promise<void> {
+async function stub(page: Page, mode: Record<string, unknown>, stepUp = false, proposal: typeof PROPOSAL = PROPOSAL): Promise<void> {
   await page.route("**/api/v1/**", async (route) => {
     const url = new URL(route.request().url());
     const json = (body: unknown, status = 200) =>
@@ -73,16 +73,16 @@ async function stub(page: Page, mode: Record<string, unknown>, stepUp = false): 
         body: JSON.stringify({ type: "https://joinedcontext.com/errors/second-factor-required", title: "Second Factor Required", status: 403 }),
       });
     }
-    if (url.pathname.endsWith(`/changes/${PROPOSAL.metadata.name}`)) return json(PROPOSAL);
-    if (url.pathname.endsWith("/changes")) return json({ ...list([PROPOSAL]), kind: "ChangeList" });
+    if (url.pathname.endsWith(`/changes/${proposal.metadata.name}`)) return json(proposal);
+    if (url.pathname.endsWith("/changes")) return json({ ...list([proposal]), kind: "ChangeList" });
     if (url.pathname === "/api/v1/projects/org/organizations") return json(list([ORGANIZATION]));
     if (url.pathname === "/api/v1/organization/limits") return json({ entries: [], projects: [] });
     if (url.pathname === "/api/v1/operator/organizations") {
       return json({
         items: [
-          { name: "marek-mraz", title: "Marek Mráz", domain: "marek-mraz.sk", hosts: { served: 2 }, approvals: { organization: "marek-mraz", singlePerson: true, peopleWithARole: 1 } },
-          { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 3 }, approvals: { organization: "bbsk", singlePerson: false, peopleWithARole: 6 } },
-          { name: "slovensko", title: "Slovensko", domain: null, hosts: {}, approvals: { organization: "slovensko", singlePerson: false, peopleWithARole: 1 } },
+          { name: "marek-mraz", title: "Marek Mráz", domain: "marek-mraz.sk", hosts: { served: 2 }, approvals: { organization: "marek-mraz", singlePerson: true, peopleWithARole: 1, automationLogins: ["marek-mraz-mcp-admin"] } },
+          { name: "bbsk", title: "Banskobystrický kraj", domain: "bbsk.sk", hosts: { served: 3 }, approvals: { organization: "bbsk", singlePerson: false, peopleWithARole: 6, automationLogins: ["bbsk-mcp-admin"] } },
+          { name: "slovensko", title: "Slovensko", domain: null, hosts: {}, approvals: { organization: "slovensko", singlePerson: false, peopleWithARole: 1, automationLogins: [] } },
         ],
         ids: [],
       });
@@ -94,10 +94,11 @@ async function stub(page: Page, mode: Record<string, unknown>, stepUp = false): 
 const ON = { organization: "marek-mraz", singlePerson: true, peopleWithARole: 1, changedAt: "2026-11-19T12:30:00Z" };
 const OFF = { organization: "marek-mraz", singlePerson: false, peopleWithARole: 1 };
 
-async function shoot(page: Page, name: string): Promise<void> {
+async function shoot(page: Page, name: string, dir = SHOTS): Promise<void> {
+  mkdirSync(dir, { recursive: true });
   for (const width of [1440, 400]) {
     await page.setViewportSize({ width, height: width === 400 ? 860 : 900 });
-    await page.screenshot({ path: join(SHOTS, `${name}-${width}.png`), fullPage: true });
+    await page.screenshot({ path: join(dir, `${name}-${width}.png`), fullPage: true });
   }
 }
 
@@ -138,4 +139,32 @@ test("the operator turns single-person approvals on or off per Organization", as
   await page.goto("/organization/operator-organizations?lang=en");
   await expect(page.getByText("Single-person approvals").first()).toBeVisible();
   await shoot(page, "operator-organizations-approvals");
+});
+
+// T-7432: an automation login proposes and never approves; the approver reads who proposed it,
+// and the operator sees which logins of each Organization the person count leaves out.
+const BY_AUTOMATION = {
+  ...PROPOSAL,
+  metadata: { ...PROPOSAL.metadata, name: "chg-7a8b9c0d" },
+  author: { name: "bbsk-mcp-admin", email: "bbsk-mcp-admin@bbsk.sk" },
+  status: {
+    ...PROPOSAL.status,
+    proposedVia: { channel: "mcp", client: "claude-code", connector: "abcdefghijklmnopqrstuvwxyz", connectorName: "bbsk-mcp", automationLogin: "bbsk-mcp-admin" },
+  },
+};
+
+test("a change an automation login proposed says a person decides it", async ({ page }) => {
+  await stub(page, ON, false, BY_AUTOMATION);
+  await page.goto(`/projects/ovzdusie/approvals/${BY_AUTOMATION.metadata.name}?lang=en`);
+  await expect(page.getByTestId("change-proposed-automation")).toHaveText(
+    "Proposed by the automation login bbsk-mcp-admin (connector bbsk-mcp). An automation login never approves: a person decides this change.",
+  );
+  await shoot(page, "approval-by-automation-login", join("test-results", "T-7432"));
+});
+
+test("the operator sees each Organization's automation logins", async ({ page }) => {
+  await stub(page, ON);
+  await page.goto("/organization/operator-organizations?lang=en");
+  await expect(page.getByText("Automation logins (not counted, never approve): bbsk-mcp-admin")).toBeVisible();
+  await shoot(page, "operator-organizations-automation", join("test-results", "T-7432"));
 });

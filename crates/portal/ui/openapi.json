@@ -51251,9 +51251,17 @@
         "required": [
           "organization",
           "singlePerson",
-          "peopleWithARole"
+          "peopleWithARole",
+          "automationLogins"
         ],
         "properties": {
+          "automationLogins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The automation logins holding a role there, which are no people here (T-7432), e.g.\n`bbsk-mcp-admin`."
+          },
           "changedAt": {
             "type": [
               "string",
@@ -51275,7 +51283,7 @@
           },
           "peopleWithARole": {
             "type": "integer",
-            "description": "How many people hold a role in the Organization now.",
+            "description": "How many people hold a role in the Organization now, its automation logins left out.",
             "minimum": 0
           },
           "singlePerson": {
@@ -53806,8 +53814,20 @@
         "type": "object",
         "description": "The rows a Change writes, as it was asked for and checked.",
         "properties": {
+          "automation": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "branding": {
             "$ref": "#/components/schemas/OrganizationAppearance"
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "host": {
             "type": [
@@ -53976,8 +53996,22 @@
           "kind"
         ],
         "properties": {
+          "automation": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`AutomationLoginSet`: `true` marks the `subject` an automation login, `false` clears it."
+          },
           "branding": {
             "$ref": "#/components/schemas/OrganizationAppearance"
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`AutomationLoginSet`: the id of the connector the login stands behind, e.g.\n`bbsk-mcp`; optional, shown beside the login."
           },
           "host": {
             "type": [
@@ -54040,7 +54074,7 @@
               "string",
               "null"
             ],
-            "description": "`OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.\n`5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`."
+            "description": "`OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.\n`5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`. `AutomationLoginSet`: the login as the\n`organization`'s RoleBinding names it (user id, username or e-mail), e.g. `bbsk-mcp-admin`."
           }
         },
         "additionalProperties": false,
@@ -61002,7 +61036,8 @@
           "SmtpSet",
           "BrandingSet",
           "ProjectMove",
-          "SinglePersonSet"
+          "SinglePersonSet",
+          "AutomationLoginSet"
         ]
       },
       "OperatorOrganization": {
@@ -64348,6 +64383,13 @@
           "client"
         ],
         "properties": {
+          "automationLogin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The automation login that proposed it (T-7432), e.g. `bbsk-mcp-admin`: a person approves."
+          },
           "channel": {
             "type": "string",
             "description": "`mcp`: a person's AI client over the Portal's MCP server."

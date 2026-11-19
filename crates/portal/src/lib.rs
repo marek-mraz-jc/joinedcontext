@@ -17,6 +17,7 @@ pub mod apps;
 pub mod artifact_store;
 pub mod assets;
 pub mod auth;
+pub mod automation;
 pub mod branding;
 pub mod brokers;
 pub mod cache;

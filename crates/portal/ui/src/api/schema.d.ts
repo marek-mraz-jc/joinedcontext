@@ -9443,6 +9443,11 @@ export interface components {
         /** @description The mode of one Organization as its Administration page and an approval show it. */
         ApprovalMode: {
             /**
+             * @description The automation logins holding a role there, which are no people here (T-7432), e.g.
+             *     `bbsk-mcp-admin`.
+             */
+            automationLogins: string[];
+            /**
              * Format: date-time
              * @description When an operator or the Portal last changed the mode.
              */
@@ -9451,7 +9456,7 @@ export interface components {
             offReason?: string | null;
             /** @description The Organization's name, e.g. `marek-mraz`. */
             organization: string;
-            /** @description How many people hold a role in the Organization now. */
+            /** @description How many people hold a role in the Organization now, its automation logins left out. */
             peopleWithARole: number;
             /** @description Whether its one person approves their own access Changes after a fresh second factor. */
             singlePerson: boolean;
@@ -10368,7 +10373,9 @@ export interface components {
         };
         /** @description The rows a Change writes, as it was asked for and checked. */
         ChangePayload: {
+            automation?: boolean | null;
             branding?: components["schemas"]["OrganizationAppearance"];
+            connector?: string | null;
             host?: string | null;
             organization?: string | null;
             organizationId?: string | null;
@@ -10429,7 +10436,14 @@ export interface components {
          *     }
          */
         ChangeRequest: {
+            /** @description `AutomationLoginSet`: `true` marks the `subject` an automation login, `false` clears it. */
+            automation?: boolean | null;
             branding?: components["schemas"]["OrganizationAppearance"];
+            /**
+             * @description `AutomationLoginSet`: the id of the connector the login stands behind, e.g.
+             *     `bbsk-mcp`; optional, shown beside the login.
+             */
+            connector?: string | null;
             /** @description `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`. */
             host?: string | null;
             kind: components["schemas"]["OperatorKind"];
@@ -10458,7 +10472,8 @@ export interface components {
             smtp?: null | components["schemas"]["SmtpRequest"];
             /**
              * @description `OperatorAdd`, `OperatorRemove`: the person's user id in the installation realm, e.g.
-             *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`.
+             *     `5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23`. `AutomationLoginSet`: the login as the
+             *     `organization`'s RoleBinding names it (user id, username or e-mail), e.g. `bbsk-mcp-admin`.
              */
             subject?: string | null;
         };
@@ -13100,7 +13115,7 @@ export interface components {
          * @description What an operator Change does.
          * @enum {string}
          */
-        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove" | "SinglePersonSet";
+        OperatorKind: "HostAdd" | "HostRemove" | "OperatorAdd" | "OperatorRemove" | "SmtpSet" | "BrandingSet" | "ProjectMove" | "SinglePersonSet" | "AutomationLoginSet";
         /** @description One Organization of the installation as the operators' list shows it. */
         OperatorOrganization: {
             /** @description Its single-person approval mode (T-7388), which a `SinglePersonSet` Change sets. */
@@ -14340,6 +14355,8 @@ export interface components {
         };
         /** @description The channel a Change came through and the OAuth client that sent it (AG-17, AG-137). */
         ProposedVia: {
+            /** @description The automation login that proposed it (T-7432), e.g. `bbsk-mcp-admin`: a person approves. */
+            automationLogin?: string | null;
             /** @description `mcp`: a person's AI client over the Portal's MCP server. */
             channel: string;
             /** @description The token's `azp`, at most 64 characters of `[A-Za-z0-9._:-]`. */

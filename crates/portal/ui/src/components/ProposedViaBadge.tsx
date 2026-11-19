@@ -55,6 +55,16 @@ export function ProposedViaHint({
             })
           : t("approvals.proposedVia.hint", { client: clientName(via.client), author })}
       </dd>
+      {via.automationLogin ? (
+        <dd className="mt-1 text-sm font-medium text-fg break-words" data-testid="change-proposed-automation">
+          {via.connectorName
+            ? t("approvals.proposedVia.automation", {
+                login: via.automationLogin,
+                connector: via.connectorName,
+              })
+            : t("approvals.proposedVia.automationAlone", { login: via.automationLogin })}
+        </dd>
+      ) : null}
       {via.plan ? (
         <dd className="mt-1 text-sm text-fg break-words" data-testid="change-proposed-plan">
           {t("approvals.proposedVia.plan", { plan: via.plan, author })}

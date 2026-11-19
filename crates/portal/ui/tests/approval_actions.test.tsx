@@ -197,6 +197,29 @@ describe("approval actions", () => {
     );
   });
 
+  // T-7432: a change an automation login proposed says so, and that a person decides it.
+  it("names the automation login that proposed a change", async () => {
+    renderDetail({
+      change: proposal({
+        status: {
+          ...proposal().status,
+          proposedVia: {
+            channel: "mcp",
+            client: "claude-code",
+            connector: "abcdefghijklmnopqrstuvwxyz",
+            connectorName: "bbsk-mcp",
+            automationLogin: "bbsk-mcp-admin",
+          },
+        },
+      }),
+    });
+    expect(await screen.findByTestId("change-proposed-automation")).toHaveTextContent(
+      en.approvals.proposedVia.automation
+        .replace("{login}", "bbsk-mcp-admin")
+        .replace("{connector}", "bbsk-mcp"),
+    );
+  });
+
   it("shows no channel badge on a change the person proposed", async () => {
     renderDetail();
     await screen.findByText("Marek Mráz");
