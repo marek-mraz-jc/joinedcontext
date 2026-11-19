@@ -121,7 +121,9 @@ impl AppearanceFont {
             Self::Humanist => {
                 "Seravek, \"Gill Sans Nova\", Ubuntu, Calibri, \"DejaVu Sans\", sans-serif"
             }
-            Self::Serif => "Charter, \"Bitstream Charter\", \"Sitka Text\", Cambria, Georgia, serif",
+            Self::Serif => {
+                "Charter, \"Bitstream Charter\", \"Sitka Text\", Cambria, Georgia, serif"
+            }
             Self::Mono => "ui-monospace, \"Cascadia Code\", Menlo, Consolas, monospace",
         }
     }
@@ -700,15 +702,30 @@ mod tests {
                 "spec.appearance.colours.primary",
             ),
             (json!({ "radius": 25 }), "spec.appearance.radius"),
-            (json!({ "hero": { "title": "<b>" } }), "spec.appearance.hero.title"),
-            (json!({ "hero": { "intro": " " } }), "spec.appearance.hero.intro"),
-            (link("javascript:alert(1)"), "spec.appearance.navLinks[0].url"),
-            (link("JavaScript:alert(1)"), "spec.appearance.navLinks[0].url"),
+            (
+                json!({ "hero": { "title": "<b>" } }),
+                "spec.appearance.hero.title",
+            ),
+            (
+                json!({ "hero": { "intro": " " } }),
+                "spec.appearance.hero.intro",
+            ),
+            (
+                link("javascript:alert(1)"),
+                "spec.appearance.navLinks[0].url",
+            ),
+            (
+                link("JavaScript:alert(1)"),
+                "spec.appearance.navLinks[0].url",
+            ),
             (link("data:text/html,x"), "spec.appearance.navLinks[0].url"),
             (link("//evil.example"), "spec.appearance.navLinks[0].url"),
             (link("/\\evil.example"), "spec.appearance.navLinks[0].url"),
             (link("https://"), "spec.appearance.navLinks[0].url"),
-            (link("https://u@evil.example"), "spec.appearance.navLinks[0].url"),
+            (
+                link("https://u@evil.example"),
+                "spec.appearance.navLinks[0].url",
+            ),
             (link("/a\" onclick=\"x"), "spec.appearance.navLinks[0].url"),
             (link("about"), "spec.appearance.navLinks[0].url"),
             (

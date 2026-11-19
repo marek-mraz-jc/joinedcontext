@@ -840,7 +840,9 @@ fn with_appearance(
         })
     };
     if readable(&block) && !readable(&shown) {
-        tracing::warn!("dataroom: an appearance colour below WCAG AA on the background; jc's colours show");
+        tracing::warn!(
+            "dataroom: an appearance colour below WCAG AA on the background; jc's colours show"
+        );
         if let Some(members) = over.as_object_mut() {
             members.remove("colours");
         }
@@ -853,8 +855,16 @@ fn with_appearance(
         hero_title: look.hero.title.clone(),
         hero_intro_html: look.hero.intro.as_deref().map(hero_intro),
         dataset_table: look.dataset_list == Some(jc_core::kinds::DatasetListLayout::Table),
-        nav_links: look.nav_links.iter().map(|l| (l.url.clone(), l.label.clone())).collect(),
-        footer_links: look.footer_links.iter().map(|l| (l.url.clone(), l.label.clone())).collect(),
+        nav_links: look
+            .nav_links
+            .iter()
+            .map(|l| (l.url.clone(), l.label.clone()))
+            .collect(),
+        footer_links: look
+            .footer_links
+            .iter()
+            .map(|l| (l.url.clone(), l.label.clone()))
+            .collect(),
     };
     // T-7031: the Organization's own page texts, each page and language over the built-in one.
     // A text the manifest's rules refuse never reaches here (jc-core validates every load), and
@@ -2562,7 +2572,11 @@ mod tests {
             .expect("an appearance");
         look.validate().expect("valid");
         let shown = with_appearance(configured.clone(), Some(&look));
-        assert!(shown.fonts.body.starts_with("Charter"), "{}", shown.fonts.body);
+        assert!(
+            shown.fonts.body.starts_with("Charter"),
+            "{}",
+            shown.fonts.body
+        );
         assert_eq!(shown.fonts.heading, shown.fonts.body);
         assert_eq!(shown.colours.primary, "#7a1f5c");
         assert_eq!(shown.layout.radius_px, Some(4));
@@ -2588,9 +2602,13 @@ mod tests {
                 "colours": { "text": "#eeeeee" },
             }))
             .expect("an appearance");
-        pale.validate().expect("one colour of a pair passes jc-core");
+        pale.validate()
+            .expect("one colour of a pair passes jc-core");
         let shown = with_appearance(configured.clone(), Some(&pale));
-        assert_eq!(shown.colours, configured.colours, "jc's colours keep it readable");
+        assert_eq!(
+            shown.colours, configured.colours,
+            "jc's colours keep it readable"
+        );
         assert_eq!(shown.instance_name, "Mesto", "the rest still shows");
     }
 
@@ -2657,7 +2675,10 @@ mod tests {
         assert_eq!(looks.len(), 3, "{:?}", looks.keys());
         assert_eq!(looks[&city].colours.primary, "#0b5394");
         assert_eq!(looks[&town], BrandingBlock::default(), "town sets nothing");
-        assert_eq!(looks[&mobility].colours.primary, "#7a1f5c", "the portal's own");
+        assert_eq!(
+            looks[&mobility].colours.primary, "#7a1f5c",
+            "the portal's own"
+        );
         assert_eq!(
             looks[&mobility].layout.hero_title.as_deref(),
             Some("City data"),
@@ -2669,7 +2690,11 @@ mod tests {
             serde_json::json!({ "domain": "city.test" }),
         ));
         let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
-        assert_eq!(looks[&city], BrandingBlock::default(), "a removed look is jc's again");
+        assert_eq!(
+            looks[&city],
+            BrandingBlock::default(),
+            "a removed look is jc's again"
+        );
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
     }
 
