@@ -2200,7 +2200,7 @@ mod tests {
         assert_eq!(store.list_harvest_sources(&ctx).await.unwrap().len(), 2);
     }
 
-    /// A source reading a host off the deployment's allow-list (ODP-10), a schedule that is not
+    /// A source reading a further host off the deployment's allow-list (ODP-10), a schedule that is not
     /// cron and a kind dataroom does not run are refused before anything is written.
     #[cfg(feature = "portal")]
     #[tokio::test]
@@ -2209,9 +2209,14 @@ mod tests {
         let portal = prod_portal();
         let (_, ctx) = catalogue().await;
         let mut orgs = ops(&ctx, &portal, docs.clone(), None);
+        // The url's own host needs no operator listing; a further host still does.
         orgs[0].harvest_hosts.retain(|h| h != "data.slovensko.sk");
+        super::super::portals::harvest_sources_of(&portal, &orgs).expect("own host admitted");
+        orgs[0]
+            .harvest_hosts
+            .retain(|h| h != "egov.banskabystrica.sk");
         let off_list = super::super::portals::harvest_sources_of(&portal, &orgs).unwrap_err();
-        assert!(off_list.contains("data.slovensko.sk"), "{off_list}");
+        assert!(off_list.contains("egov.banskabystrica.sk"), "{off_list}");
         let mut bad_cron = portal.clone();
         bad_cron.sources[1].schedule = Some("nightly".into());
         assert!(bad_cron.validate().is_err());
