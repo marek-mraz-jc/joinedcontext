@@ -327,6 +327,14 @@ configMap:
       [dataroom]
       org_id = "00000000-0000-7000-8000-000000000001"
       catalogue_id = "00000000-0000-7000-8000-000000000010"
+      {{- if (dig "catalogueHarvest" false $jc) }}
+      # prod's two catalogue harvests live in the installation Organization's `default` Portal
+      # manifest (portals/<org>-default.yaml in shako), which jc wrote once from the
+      # [[dataroom.harvest]] block this file held until T-6880 (ODP-11); the Portal shows and runs
+      # them. Every host those sources read stays on the deployment's harvest allow-list (ODP-10):
+      # this instance's gateway, where they read their datasets' Endpoints, and each source's own.
+      harvest_allowed_hosts = [{{ printf "api.%s" $global.domain | quote }}, "data.slovensko.sk", "egov.banskabystrica.sk", "dtm-banskabystrica.tmapserver.sk", "www.banskabystrica.sk", "opendata.bbsk.sk", "services-eu1.arcgis.com", "www.arcgis.com"]
+      {{- end }}
       {{- with (dig "dataroomAliases" dict $jc) }}
 
       [dataroom.aliases]
@@ -395,14 +403,6 @@ configMap:
 
       [identity]
       realm = {{ . | quote }}
-      {{- end }}
-      {{- if (dig "catalogueHarvest" false $jc) }}
-
-      # prod's two catalogue harvests, copied from the monorepo (files/harvest-sources.toml); each
-      # reads od-datasets.json beside jc.toml.
-      # A source reads its datasets' Endpoint doors on this instance's own gateway (api.{domain} in
-      # host mode, refused unless listed) and links the datasets under this instance's catalogue.
-{{ readFile "../../files/harvest-sources.toml" | replace "https://opendata.dev.joinedcontext.com/" (printf "https://opendata.%s/" $global.domain) | replace "allowed_hosts = [" (printf "allowed_hosts = [%q, " (printf "api.%s" $global.domain)) | indent 6 }}
       {{- end }}
       {{- if $proxy.enabled }}
 

@@ -30,8 +30,9 @@ jc:
     # Secret (key `key`) with the age identity the projects' SOPS files name; unset: no secretRef
     # of a project resolves.
     ageKeySecret: ""
-    # prod's catalogue harvests (hub-bbsk, nkod-banskabystrica; files/harvest-sources.toml and
-    # files/od-datasets.json from the monorepo's bins/jc/docs at the pinned jc). Egress: public 443.
+    # prod's catalogue harvests (hub-bbsk, nkod-banskabystrica): their hosts on the harvest
+    # allow-list and files/od-datasets.json beside jc.toml; the sources themselves are the
+    # installation's default Portal manifest since T-6880. Egress: public 443.
     catalogueHarvest: false
     # kaisatsu second-factor floor (T-6894): "" leaves jc's default (optional), "required" makes every
     # person enrol a TOTP. jc before c418ee1e refuses the key: set it only with a pin that carries it.
