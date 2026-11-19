@@ -1288,7 +1288,9 @@ impl PgDocStore {
         // A Cached copy is shared: replacing and evicting one is maintenance
         // work (0040), so its write-through runs on that pool.
         let cached = kind == "Cached";
-        let mut tx = if cached { &self.maint } else { &self.pool }.begin().await?;
+        let mut tx = if cached { &self.maint } else { &self.pool }
+            .begin()
+            .await?;
         set_context_tenant(&mut tx, tenant).await?;
         if cached {
             super::set_service(&mut tx).await?;
