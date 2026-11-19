@@ -152,6 +152,10 @@ pub struct CataloguePage {
     pub facets: CatalogueFacets,
     /// Catalogues that did not answer; the others still did.
     pub unavailable: Vec<String>,
+    /// Signed in: internal Endpoints the gateway did not answer about, so their datasets may be
+    /// missing from the list (T-7400).
+    #[serde(default)]
+    pub unanswered: usize,
 }
 
 /// A dataset as the list shows it.
@@ -171,6 +175,10 @@ pub struct CatalogueDataset {
     pub themes: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<String>,
+    /// Set on an internal dataset the gateway grants the caller: its Endpoint's slug, the page
+    /// `/catalogue/endpoint/{slug}` reads it live. Never in a visitor's answer (T-7400).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
 }
 
 /// Who publishes a dataset: the `dct:publisher` its project names (`name` its IRI, or the name
@@ -640,10 +648,30 @@ impl Filed {
 /// Filters, facets and pages the datasets a search returned (EP-81). Pure, so every rule is
 /// tested without a catalogue.
 pub fn page_of(datasets: &[Value], filters: &Filters, this_year: i32) -> CataloguePage {
-    let filed: Vec<Filed> = datasets
+    page_with(datasets, &[], filters, this_year)
+}
+
+/// [`page_of`] with the internal datasets granted to the caller, each `(slug, dataset)`: rows of
+/// the same list, first, counted, faceted and paged with the public ones (T-7400).
+pub fn page_with(
+    datasets: &[Value],
+    internal: &[(String, Value)],
+    filters: &Filters,
+    this_year: i32,
+) -> CataloguePage {
+    let filed: Vec<Filed> = internal
         .iter()
-        .filter(|d| d.get("private").and_then(Value::as_bool) != Some(true))
-        .map(|d| Filed::of(d, this_year))
+        .map(|(slug, d)| {
+            let mut filed = Filed::of(d, this_year);
+            filed.summary.endpoint = Some(slug.clone());
+            filed
+        })
+        .chain(
+            datasets
+                .iter()
+                .filter(|d| d.get("private").and_then(Value::as_bool) != Some(true))
+                .map(|d| Filed::of(d, this_year)),
+        )
         .collect();
 
     let mut facets = CatalogueFacets::default();
@@ -696,6 +724,7 @@ pub fn page_of(datasets: &[Value], filters: &Filters, this_year: i32) -> Catalog
         datasets,
         facets,
         unavailable: Vec::new(),
+        unanswered: 0,
     }
 }
 
@@ -774,6 +803,7 @@ fn summary(dataset: &Value) -> CatalogueDataset {
             .map(|iri| last_segment(iri))
             .collect(),
         modified: text(dataset, "metadata_modified"),
+        endpoint: None,
     }
 }
 
@@ -1119,7 +1149,7 @@ fn gzipped<T: Serialize>(body: &T) -> Option<Vec<u8>> {
     get,
     path = "/api/v1/catalogue",
     summary = "Search the Catalogue",
-    description = "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
+    description = "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). A visitor gets only what an anonymous caller of the catalogue sees, cacheable. Signed in, the internal datasets the gateway grants the caller are rows of the same list (`endpoint` set), counted, faceted under their Organization as publisher and paged with the public ones; that answer is private, no-store (T-7400). On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
     tag = "ckan",
     params(
         ("q" = Option<String>, Query, description = "Full-text search, passed to CKAN"),
@@ -1147,6 +1177,7 @@ pub async fn get_catalogue(
 ) -> Result<Response, ApiError> {
     let filters = Filters::parse(query.as_deref());
     let organization = crate::organization_host::organization();
+    let session = user.as_ref().ok().map(|user| user.0.clone());
     if let Some(project) = &filters.project {
         readable_project(&state, user, project, organization.as_deref())?;
     }
@@ -1174,13 +1205,32 @@ pub async fn get_catalogue(
         organization.as_deref(),
         filters.project.as_deref(),
     );
-    let mut page = page_of(
+    // Signed in: the internal datasets the gateway grants the person are rows of the same list
+    // (T-7400). A visitor's answer never asks, so it holds none and stays cacheable.
+    let (internal, unanswered) = match &session {
+        Some(session) => crate::api::catalogue_readable::internal_rows(
+            &state,
+            crate::api::catalogue_readable::readable_by_in(
+                &state,
+                session,
+                &headers,
+                organization.as_deref(),
+            )
+            .await,
+            &filters.q,
+            filters.project.as_deref(),
+        ),
+        None => (Vec::new(), 0),
+    };
+    let mut page = page_with(
         &datasets,
+        &internal,
         &filters,
         i32::from(jc_time::TimestampTz::now().utc().year()),
     );
     page.unavailable = unavailable;
-    if filters.project.is_some() {
+    page.unanswered = unanswered;
+    if session.is_some() || filters.project.is_some() {
         // Asked with the caller's rights: never kept by a shared cache.
         return Ok(([(header::CACHE_CONTROL, "private, no-store")], Json(page)).into_response());
     }
@@ -2518,6 +2568,118 @@ mod tests {
             ),
             Err(ApiError::Unauthorized)
         ));
+    }
+
+    /// T-7400: a visitor's answer never asks the gateway, holds no internal row and stays
+    /// cacheable; a signed-in caller's answer is private, and an Endpoint the gateway could not
+    /// be asked about is counted, never listed.
+    #[tokio::test]
+    async fn a_visitors_catalogue_holds_no_internal_dataset_and_a_signed_in_one_is_private() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("staff", "pilot"),
+            spec: json!({ "slug": "staffpilotzzzzzzzzzzzzzzzzzz", "audience": "organization", "title": "Staff counts" }),
+            status: None,
+        });
+        let ask = |user| async {
+            let response =
+                get_catalogue(State(state.clone()), user, HeaderMap::new(), RawQuery(None))
+                    .await
+                    .expect("answers");
+            let cache = response.headers()[header::CACHE_CONTROL]
+                .to_str()
+                .expect("ascii")
+                .to_owned();
+            let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .expect("body");
+            let page: CataloguePage = serde_json::from_slice(&body).expect("a page");
+            (cache, page)
+        };
+        let (cache, page) = ask(Err(ApiError::Unauthorized)).await;
+        assert!(cache.starts_with("public"), "{cache}");
+        assert_eq!((page.total, page.unanswered), (0, 0));
+        assert!(page.datasets.iter().all(|d| d.endpoint.is_none()));
+        assert!(page.facets.publisher.is_empty());
+        let session = crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:member".to_owned(),
+                username: "member".to_owned(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 0,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 0,
+            refresh_token: None,
+        };
+        // No gateway in a test Portal: the one internal Endpoint is unanswered, never shown.
+        let (cache, page) = ask(Ok(crate::auth::session::CurrentUser(session))).await;
+        assert_eq!(cache, "private, no-store");
+        assert_eq!((page.total, page.unanswered), (0, 1));
+    }
+
+    /// T-7400: internal rows lead the one list, count in its total and its pages, and file under
+    /// their Organization in the Publisher facet beside the public publishers; ticking it keeps
+    /// both kinds, a Theme they lack leaves them out, and with none the facets name none.
+    #[test]
+    fn internal_rows_are_counted_faceted_and_paged_with_the_public_ones() {
+        let public = vec![
+            dataset("air", "marek-mraz", extras(&[]), &["CSV"], false),
+            dataset(
+                "stops",
+                "hel",
+                extras(&[("theme", "ENVI")]),
+                &["CSV"],
+                false,
+            ),
+        ];
+        let internal = vec![(
+            "staffslug".to_owned(),
+            json!({ "name": "staffslug", "title": "Staff counts",
+                    "organization": { "name": "marek-mraz", "title": "Marek Mraz" } }),
+        )];
+        let filters = |query: &str| Filters::parse(Some(query));
+        let page = page_with(&public, &internal, &filters(""), 2026);
+        assert_eq!(page.total, 3);
+        assert_eq!(page.datasets[0].endpoint.as_deref(), Some("staffslug"));
+        assert_eq!(page.datasets[0].title, "Staff counts");
+        let marek = page
+            .facets
+            .publisher
+            .iter()
+            .find(|v| v.value == "marek-mraz")
+            .expect("listed");
+        assert_eq!(marek.count, 2);
+        assert_eq!(page.facets.format.iter().map(|v| v.count).sum::<usize>(), 2);
+
+        let ticked = page_with(&public, &internal, &filters("publisher=marek-mraz"), 2026);
+        let names: Vec<_> = ticked.datasets.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["staffslug", "air"]);
+        let themed = page_with(&public, &internal, &filters("theme=ENVI"), 2026);
+        assert!(themed.datasets.iter().all(|d| d.endpoint.is_none()));
+
+        let visitor = page_with(&public, &[], &filters(""), 2026);
+        assert_eq!(visitor.total, 2);
+        assert!(visitor.datasets.iter().all(|d| d.endpoint.is_none()));
+        assert_eq!(
+            visitor
+                .facets
+                .publisher
+                .iter()
+                .find(|v| v.value == "marek-mraz")
+                .map(|v| v.count),
+            Some(1)
+        );
     }
 
     #[test]

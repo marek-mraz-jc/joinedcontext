@@ -9643,16 +9643,8 @@
       "hint": "Které datové sady seznam obsahuje, např. Tento projekt ukáže jen datové sady projektu {project}."
     },
     "access": {
-      "label": "Přístup",
-      "granted": "Zpřístupněné mně",
-      "public": "Veřejné",
-      "badge": "Zpřístupněno",
-      "loading": "Ověřujeme, které datové sady jsou vám zpřístupněny…",
-      "failed": "Zpřístupněné datové sady se teď nepodařilo ověřit. Obnovte stránku za minutu.",
-      "none": "Zatím vám nebyla zpřístupněna žádná interní datová sada. Správce dat vaší organizace může vaší skupině zpřístupnit například údaje ze senzorů.",
-      "noProject": "Zatím nejste v žádném projektu této organizace. Přidat vás může vlastník projektu nebo správce této organizace.",
-      "countNone": "{count, plural, =0 {Žádná datová sada} one {# datová sada} few {# datové sady} other {# datových sad}}, zatím vám nebyla zpřístupněna žádná",
-      "countNoProject": "{count, plural, =0 {Žádná datová sada} one {# datová sada} few {# datové sady} other {# datových sad}}; zatím nejste v žádném projektu této organizace"
+      "badge": "Interní",
+      "badgeHint": "Není veřejný: zpřístupnil vám ho jeho vydavatel."
     },
     "results": {
       "label": "Datové sady",

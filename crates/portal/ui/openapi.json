@@ -1015,7 +1015,7 @@
           "ckan"
         ],
         "summary": "Search the Catalogue",
-        "description": "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
+        "description": "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). A visitor gets only what an anonymous caller of the catalogue sees, cacheable. Signed in, the internal datasets the gateway grants the caller are rows of the same list (`endpoint` set), counted, faceted under their Organization as publisher and paged with the public ones; that answer is private, no-store (T-7400). On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
         "operationId": "get_catalogue",
         "parameters": [
           {
@@ -52549,6 +52549,13 @@
           "themes"
         ],
         "properties": {
+          "endpoint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set on an internal dataset the gateway grants the caller: its Endpoint's slug, the page\n`/catalogue/endpoint/{slug}` reads it live. Never in a visitor's answer (T-7400)."
+          },
           "formats": {
             "type": "array",
             "items": {
@@ -53193,6 +53200,11 @@
           "total": {
             "type": "integer",
             "description": "Datasets matching the search and every filter.",
+            "minimum": 0
+          },
+          "unanswered": {
+            "type": "integer",
+            "description": "Signed in: internal Endpoints the gateway did not answer about, so their datasets may be\nmissing from the list (T-7400).",
             "minimum": 0
           },
           "unavailable": {

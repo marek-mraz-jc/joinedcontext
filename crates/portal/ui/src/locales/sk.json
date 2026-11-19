@@ -9643,16 +9643,8 @@
       "hint": "Ktoré datasety zoznam obsahuje, napr. Tento projekt ukáže len datasety projektu {project}."
     },
     "access": {
-      "label": "Prístup",
-      "granted": "Sprístupnené mne",
-      "public": "Verejné",
-      "badge": "Sprístupnené",
-      "loading": "Overujeme, ktoré dátové sady sú vám sprístupnené…",
-      "failed": "Sprístupnené dátové sady sa teraz nepodarilo overiť. Obnovte stránku o minútu.",
-      "none": "Zatiaľ vám nebola sprístupnená žiadna interná dátová sada. Správca dát vašej organizácie môže sprístupniť vašej skupine napríklad údaje zo senzorov.",
-      "noProject": "Zatiaľ nie ste v žiadnom projekte tejto organizácie. Pridať vás môže vlastník projektu alebo správca tejto organizácie.",
-      "countNone": "{count, plural, =0 {Žiadny dataset} one {# dataset} few {# datasety} other {# datasetov}}, zatiaľ vám nebol sprístupnený žiadny",
-      "countNoProject": "{count, plural, =0 {Žiadny dataset} one {# dataset} few {# datasety} other {# datasetov}}; zatiaľ nie ste v žiadnom projekte tejto organizácie"
+      "badge": "Interný",
+      "badgeHint": "Nie je verejný: sprístupnil vám ho jeho vydavateľ."
     },
     "results": {
       "label": "Datasety",

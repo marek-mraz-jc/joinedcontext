@@ -205,6 +205,12 @@ pub struct Syncer {
     /// The objects the last applied run held, compared with each run's to hold a mass deletion
     /// (T-6708, P-6); on the state directory when [`Self::with_state_dir`] names one.
     applied: super::removal_hold::Applied,
+    /// Where each completed run leaves what it served, and where a restarted process reads it
+    /// back before its first run ends (T-7401); `None` without a state directory.
+    last_run: Option<PathBuf>,
+    /// True while the mirror serves the last process's copy: this process's first run compares
+    /// against nothing, as it did before the copy was served, and replaces the copy whole.
+    provisional: std::sync::atomic::AtomicBool,
     /// The share of a project's objects one revision may remove unconfirmed (P-6).
     removal_hold_percent: u8,
     /// The tenants of applied and of removed Context Spaces: a removed space's data is purged at
@@ -409,6 +415,8 @@ impl Syncer {
                 std::env::temp_dir().join(format!("jc-portal-assembly-{}-{n}", std::process::id()))
             },
             applied: super::removal_hold::Applied::new(None),
+            last_run: None,
+            provisional: Default::default(),
             removal_hold_percent: super::removal_hold::DEFAULT_PERCENT,
             space_retention: super::space_retention::SpaceRetention::new(None),
             held_from: Default::default(),
@@ -577,6 +585,7 @@ impl Syncer {
             }
             self.assembly = dir.join("assembly");
             self.applied = super::removal_hold::Applied::new(Some(dir.join("applied.json")));
+            self.last_run = Some(dir.join("mirror.json"));
             self.space_retention =
                 super::space_retention::SpaceRetention::new(Some(dir.join("retained-spaces.json")));
         }
@@ -900,6 +909,9 @@ impl Syncer {
         }
 
         let before = self.status();
+        if before.revision.is_none() {
+            self.serve_last_run();
+        }
         let started = std::time::Instant::now();
         // Before anything is read: what a merge takes live after this line may be newer.
         let seen = *self.merges.lock().await;
@@ -1019,6 +1031,55 @@ impl Syncer {
         Ok(())
     }
 
+    /// A process whose first run has not ended serves what the last process's last completed run
+    /// served, so members keep their projects and Apps their routes for the minutes the first
+    /// run takes (T-7401). It grants nothing that run did not: a membership removed in Git since
+    /// stays until this process's first run replaces the copy. Nothing converges from it.
+    fn serve_last_run(&self) {
+        let Some(path) = self.last_run.as_deref() else {
+            return;
+        };
+        if !self.mirror.is_empty() {
+            return;
+        }
+        match self.mirror.restore(path) {
+            Ok(0) => {}
+            Ok(resources) => {
+                self.provisional
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!(
+                    resources,
+                    "the last completed run's mirror serves until this process's first run ends"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "the last run's mirror does not load: the Portal answers 'starting' until the first run ends");
+            }
+        }
+    }
+
+    /// Keeps what this run serves for the next process (T-7401); the copy it served at start,
+    /// if any, is replaced now.
+    fn save_last_run(&self) {
+        self.provisional
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        let Some(path) = self.last_run.as_deref() else {
+            return;
+        };
+        if let Err(error) = off_runtime(|| self.mirror.save(path)) {
+            tracing::warn!(%error, path = %path.display(), "the run's mirror was not kept: a restart serves 'starting' until its first run ends");
+        }
+    }
+
+    /// The mirror this process's last run left, which a run compares against; empty while the
+    /// mirror serves the last process's copy, as before the copy was served (T-7401).
+    fn last_run_mirror(&self) -> Mirror {
+        if self.provisional.load(std::sync::atomic::Ordering::Relaxed) {
+            return Mirror::new();
+        }
+        self.mirror.snapshot()
+    }
+
     /// A process whose runs have not read the forge yet serves the assembly the last process left
     /// on the state volume, so a restart while the forge answers `404` or not at all keeps every
     /// App host and Endpoint as it was instead of answering `404` for all of them (T-7229).
@@ -1080,6 +1141,7 @@ impl Syncer {
         transitions.keep_all(fresh_mirror);
         self.mirror.replace_all(fresh_mirror);
         drop(no_merge);
+        self.save_last_run();
         // They run after the swap and beside the rest of the run (T-5519): a catalogue that
         // answers in minutes held every merged change out of the mirror for as long.
         if let Some(previous) = catalogue {
@@ -1910,7 +1972,7 @@ impl Syncer {
             return None;
         };
         if previous.is_none() {
-            *previous = Some(publications_of(&self.mirror));
+            *previous = Some(publications_of(&self.last_run_mirror()));
         }
         Some(previous)
     }
@@ -2103,7 +2165,7 @@ impl Syncer {
             return;
         }
         // What serves now, less what `main` no longer holds.
-        let base = self.mirror.snapshot();
+        let base = self.last_run_mirror();
         for gone in base.matching(|envelope| {
             !held.contains(&crate::resource::ResourceKey {
                 namespace: envelope.metadata.namespace.clone().unwrap_or_default(),
@@ -2284,6 +2346,7 @@ impl Syncer {
         serve_leaders_phases(fresh_mirror, &self.leaders_phases().await, FOLLOWER);
         transitions.keep_all(fresh_mirror);
         self.mirror.replace_all(fresh_mirror);
+        self.save_last_run();
         // The broker is the leader's to write; a draft's preview compiles against what this
         // replica read, so it answers on every replica (T-3820, EP-85).
         if let Some(views) = self.views.as_ref() {
@@ -2309,7 +2372,7 @@ impl Syncer {
 
     async fn archive_deleted_projects(&self, fresh_mirror: &Mirror) {
         let registered = fresh_mirror.repositories();
-        for (slug, repository) in self.mirror.repositories() {
+        for (slug, repository) in self.last_run_mirror().repositories() {
             if registered.contains_key(&slug) || registered.values().any(|r| *r == repository) {
                 continue;
             }
@@ -2410,20 +2473,14 @@ impl Syncer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if fresh_mirror.removals_held() {
-            held_from.get_or_insert_with(|| {
-                let before = Mirror::new();
-                before.replace_all(&self.mirror);
-                Arc::new(before)
-            });
+            held_from.get_or_insert_with(|| Arc::new(self.last_run_mirror()));
             let now = Mirror::new();
             now.replace_all(fresh_mirror);
             return Arc::new(now);
         }
-        held_from.take().unwrap_or_else(|| {
-            let before = Mirror::new();
-            before.replace_all(&self.mirror);
-            Arc::new(before)
-        })
+        held_from
+            .take()
+            .unwrap_or_else(|| Arc::new(self.last_run_mirror()))
     }
 
     /// Only this Portal merges into a project repository's `main`, and only it writes a Change
@@ -5433,6 +5490,55 @@ output_error{stream="kpi"} 6
             after.get("b", "Endpoint", "e").is_some(),
             "the restart served nothing while the forge answered 404"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-7401: each completed run keeps its mirror on the state directory, and a restarted
+    /// process serves it before its own first run ends (the minutes in which members had no
+    /// projects and Apps answered 404); the first run replaces it and compares against nothing.
+    #[tokio::test]
+    async fn a_restart_serves_the_last_runs_mirror_until_its_first_run_ends() {
+        let org = vec![
+            (".jc/layout", "2\n".to_owned()),
+            ("organization.yaml", organization()),
+            ("projects/b.yaml", registry_entry("b")),
+        ];
+        let (forge, shako, _shared) = changing_forge(&org).await;
+        let up = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        project_repository(&forge, "b-repo", project_files("b"), up).await;
+        let shako = Arc::new(shako);
+        let dir = state_dir("last-run");
+        Syncer::new(Arc::clone(&shako), Arc::new(Mirror::new()))
+            .with_state_dir(Some(dir.clone()))
+            .sync_once()
+            .await
+            .expect("the first run loads");
+        assert!(dir.join("mirror.json").exists(), "the run kept no mirror");
+
+        let after = Arc::new(Mirror::new());
+        let restarted =
+            Syncer::new(Arc::clone(&shako), Arc::clone(&after)).with_state_dir(Some(dir.clone()));
+        restarted.serve_last_run();
+        assert!(
+            after.get("b", "Endpoint", "e").is_some(),
+            "the restart served nothing before its first run ended"
+        );
+        assert!(after.removals_held());
+        assert!(
+            restarted.last_run_mirror().is_empty(),
+            "the first run compares against the copy"
+        );
+        restarted
+            .sync_once()
+            .await
+            .expect("the restarted run loads");
+        assert!(after.get("b", "Endpoint", "e").is_some());
+        assert!(!restarted.last_run_mirror().is_empty());
+
+        // Without a state directory nothing is kept and nothing is served.
+        let bare = Arc::new(Mirror::new());
+        Syncer::new(Arc::clone(&shako), Arc::clone(&bare)).serve_last_run();
+        assert!(bare.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

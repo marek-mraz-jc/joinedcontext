@@ -6,7 +6,7 @@ import type { CatalogueSearch } from "./search";
  * matches, beside the page's own chunk, so a phone waits one round trip for both rather than the
  * chunk and then the read (T-5165).
  */
-export function catalogueKey(search: CatalogueSearch & { project?: string }) {
+export function catalogueKey(search: CatalogueSearch & { project?: string; signedIn?: boolean }) {
   return ["catalogue", search] as const;
 }
 
@@ -15,15 +15,17 @@ export function datasetKey(name: string) {
 }
 
 /**
- * One page of the catalogue; with `project`, that project's datasets alone (T-7389). Access and
- * scope pick among answers already asked for, so they are not part of the server's query.
+ * One page of the catalogue; with `project`, that project's datasets alone (T-7389). Signed in,
+ * the answer also holds the internal datasets granted to the person (T-7400): it is asked past
+ * the browser's cache, which may still hold the public answer from before the sign-in.
  */
-export function catalogueQuery(search: CatalogueSearch, project?: string) {
+export function catalogueQuery(search: CatalogueSearch, project?: string, signedIn = false) {
   return {
-    queryKey: catalogueKey({ ...search, access: undefined, scope: undefined, ...(project ? { project } : {}) }),
+    queryKey: catalogueKey({ ...search, scope: undefined, ...(project ? { project } : {}), ...(signedIn ? { signedIn } : {}) }),
     queryFn: async () =>
       unwrap(
         await api.GET("/api/v1/catalogue", {
+          ...(signedIn ? { cache: "no-store" as const } : {}),
           params: {
             query: {
               q: search.q,

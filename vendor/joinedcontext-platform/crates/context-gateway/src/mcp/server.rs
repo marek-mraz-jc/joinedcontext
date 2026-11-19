@@ -398,6 +398,7 @@ pub(crate) async fn serve(
         caller,
         server: Some(server),
         reads_only,
+        host: None,
     };
     let mut response = match hub.answer(message).await {
         Answer::Json(answer) => jsonrpc::json_response(StatusCode::OK, &answer),

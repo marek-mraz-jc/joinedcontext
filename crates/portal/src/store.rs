@@ -446,6 +446,72 @@ impl Mirror {
         copy.replace_all(self);
         copy
     }
+
+    /// Writes what the mirror serves to `path`, through a file beside it renamed over it, so a
+    /// process killed mid-write leaves the last whole copy (T-7401). Owner-only: it holds every
+    /// manifest of the installation, as the assembly beside it does.
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let saved = Saved {
+            resources: self
+                .resources
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .values()
+                .map(|env| ResourceEnvelope::clone(env))
+                .collect(),
+            repositories: self.repositories(),
+            layout: self.layout(),
+            clients: self
+                .clients
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone(),
+        };
+        let partial = path.with_extension("partial");
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        let mut file = options.open(&partial)?;
+        serde_json::to_writer(&mut file, &saved)?;
+        file.flush()?;
+        file.sync_all()?;
+        std::fs::rename(&partial, path)
+    }
+
+    /// Serves what [`Self::save`] left at `path`, replacing the mirror whole, with every removal
+    /// held: the copy is the last completed run's, not this process's (T-7401). Each resource
+    /// goes through [`Self::upsert`], so the copy holds nothing the mirror's own rules refuse.
+    /// How many resources it serves; 0 when no copy is there.
+    pub fn restore(&self, path: &std::path::Path) -> std::io::Result<usize> {
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err),
+        };
+        let saved: Saved = serde_json::from_reader(std::io::BufReader::new(file))?;
+        let fresh = Mirror::new();
+        for env in saved.resources {
+            fresh.upsert(env);
+        }
+        fresh.set_repositories(saved.repositories);
+        fresh.set_layout(saved.layout);
+        fresh.hold_removals(true);
+        self.replace_all(&fresh);
+        self.set_workload_clients(saved.clients);
+        Ok(self.len())
+    }
+}
+
+/// The file [`Mirror::save`] writes: the parts of the mirror a completed run sets.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Saved {
+    resources: Vec<ResourceEnvelope>,
+    repositories: BTreeMap<String, String>,
+    layout: u32,
+    clients: BTreeMap<String, String>,
 }
 
 /// The manifest one file holds, when it holds one of a kind and version this platform serves;
