@@ -101,6 +101,10 @@ impl ForwardTransport for Internal {
         })
     }
 
+    fn serves(&self, endpoint: &str) -> bool {
+        self.selfs.matching(endpoint).is_some()
+    }
+
     fn notifies(&self, uri: &str) -> bool {
         let Some(base) = self.selfs.matching(uri) else {
             return false;
@@ -220,6 +224,12 @@ impl Internal {
             operation = op.id(),
             "internal context source forward"
         );
+        // SHR-17: a grant that names its caller is decided as that caller,
+        // never as the source's.
+        let req = match grant.caller() {
+            Some(caller) => req.with_subject(caller),
+            None => req,
+        };
         match grant.view.as_deref() {
             None => self.ops.forward_in_process(req, self_url).await,
             Some(id) => match self.ops.view(id) {
