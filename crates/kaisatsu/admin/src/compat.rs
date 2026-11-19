@@ -1151,11 +1151,17 @@ async fn compat_get_user(
         &ctx,
         Action::Read,
         &ObjectTarget::Person {
-            realm_id: realm,
+            realm_id: realm.clone(),
             org_id: user.org_id.clone(),
             person_id: user.id.clone(),
         },
     ))?;
+    let mut user = user;
+    if !user.groups.is_empty() && !ctx.principal.is_realm_admin() {
+        let visible = visible_user_groups(&state, &ctx, &realm, &user.id).await?;
+        user.groups
+            .retain(|path| visible.iter().any(|g| &g.path == path));
+    }
     Ok(Json(user))
 }
 
@@ -1519,8 +1525,37 @@ async fn compat_list_user_groups(
             person_id: user.id.clone(),
         },
     ))?;
-    let groups = state.oidc.store.list_user_groups(&realm, &user.id).await?;
-    Ok(Json(groups))
+    Ok(Json(
+        visible_user_groups(&state, &ctx, &realm, &user.id).await?,
+    ))
+}
+
+/// The groups of person `user_id` the caller may read: a person's membership of another
+/// Organization's group stays out of an Organization manager's answer (ISO-03), as the group
+/// itself does on the single-group routes.
+async fn visible_user_groups(
+    state: &AdminState,
+    ctx: &RequestCtx,
+    realm: &str,
+    user_id: &str,
+) -> Result<Vec<GroupRepresentation>> {
+    let mut groups = state.oidc.store.list_user_groups(realm, user_id).await?;
+    groups.retain(|g| {
+        state
+            .authorizer
+            .check(
+                ctx,
+                Action::Read,
+                &ObjectTarget::Group {
+                    realm_id: realm.to_owned(),
+                    org_id: g.org_id.clone(),
+                    group_id: g.id.clone(),
+                    managed_by: g.managed_by.clone(),
+                },
+            )
+            .allowed
+    });
+    Ok(groups)
 }
 
 async fn compat_add_user_to_group(
@@ -3265,6 +3300,22 @@ async fn compat_list_client_scopes(
         },
     ))?;
     let mut scopes = state.oidc.store.list_client_scopes(&realm).await?;
+    // Each scope as its single-scope GET checks it: another Organization's scopes stay out.
+    scopes.retain(|s| {
+        state
+            .authorizer
+            .check(
+                &ctx,
+                Action::Read,
+                &ObjectTarget::ClientScope {
+                    realm_id: realm.clone(),
+                    org_id: s.org_id.clone(),
+                    scope_id: s.id.clone(),
+                    managed_by: None,
+                },
+            )
+            .allowed
+    });
     // The built-in scopes the realm does not store, as a client's scope list shows them
     // (`resolve_scope_objects`): workload_clients.rs finds `basic` here to link it back.
     let unstored: Vec<ClientScopeRepresentation> = BUILTIN_CLIENT_SCOPES

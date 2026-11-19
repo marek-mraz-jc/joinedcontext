@@ -702,6 +702,104 @@ async fn another_organizations_objects_are_404_to_an_org_admin() {
     }
 }
 
+/// ISO-03: list routes answer an Organization's admin with what its single-object routes would:
+/// another Organization's client scopes and a person's groups in another Organization stay out.
+#[tokio::test]
+async fn list_routes_leave_out_another_organizations_objects() {
+    let f = fixture().await;
+    f.store
+        .upsert_client_scope(ClientScopeRepresentation {
+            id: "sc-esp".into(),
+            realm_id: "dev".into(),
+            org_id: Some("espoo".into()),
+            name: "esp-scope".into(),
+            protocol: "openid-connect".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let (st, _, scopes) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/client-scopes"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{scopes}");
+    let names: Vec<&str> = scopes
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert!(names.contains(&"hel-scope"), "{names:?}");
+    assert!(!names.contains(&"esp-scope"), "{names:?}");
+    let (_, _, all) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/client-scopes"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert!(
+        all.as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["name"] == "esp-scope")
+    );
+
+    f.store
+        .add_user_to_group("dev", "hel-user", "esp-group")
+        .await
+        .unwrap();
+    f.store
+        .add_user_to_group("dev", "hel-user", "hel-group")
+        .await
+        .unwrap();
+    let (st, _, groups) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user/groups"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{groups}");
+    let ids: Vec<&str> = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|g| g["id"].as_str())
+        .collect();
+    assert_eq!(ids, vec!["hel-group"]);
+    let (_, _, person) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user"),
+        Some(&f.hel_admin),
+        None,
+    )
+    .await;
+    let paths = person["groups"].as_array().cloned().unwrap_or_default();
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.as_str().is_some_and(|p| p.starts_with("/espoo"))),
+        "{person}"
+    );
+    let (_, _, groups) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/hel-user/groups"),
+        Some(&f.admin),
+        None,
+    )
+    .await;
+    assert_eq!(groups.as_array().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn people_lifecycle_through_the_compat_routes() {
     let f = fixture().await;
