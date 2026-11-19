@@ -59,7 +59,7 @@ trap cleanup EXIT
 
 broker() {  # broker <log> <env…>: start the pinned broker, wait for /q/health
   local log=$1; shift
-  env ANTARES_STORE=postgres ANTARES_HTTP_PORT="$PORT" ANTARES_ALLOW_SHARED_LOCAL=1 \
+  env ANTARES_STORE=postgres ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" ANTARES_ALLOW_SHARED_LOCAL=1 \
     ANTARES_API_SURFACES=admin,views,odata,ogc,mcp ANTARES_SCHEMA_MAX_BYTES=65536 "$@" \
     taskset -c "0-$((CPUS_BROKER - 1))" "$BIN" > "$OUT/$log" 2>&1 & PID=$!
   for _ in $(seq 600); do curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health" && return; sleep 0.1; done

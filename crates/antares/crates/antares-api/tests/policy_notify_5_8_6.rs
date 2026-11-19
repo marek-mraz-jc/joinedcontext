@@ -385,6 +385,43 @@ async fn the_notification_subject_is_the_subscribers() {
     );
 }
 
+/// ISO-11: a Subscription changed by another subject is delivered as the
+/// subject who changed it, so moving someone else's Subscription to your
+/// own endpoint never receives what only its creator may read.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_subscription_changed_by_another_subject_is_delivered_as_that_subject() {
+    let (st, seen) = state(NotifyDecision::Deliver).await;
+    let (alice_uri, _alice_rx) = capture().await;
+    let (bob_uri, mut bob_rx) = capture().await;
+    subscribe(&st, &alice_uri, Some("alice")).await;
+    let id = stored_sub(&st).await["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let (code, body) = call(
+        &st,
+        "PATCH",
+        &format!("subscriptions/{id}"),
+        Some("bob"),
+        Some(json!({"notification": {"endpoint": {"uri": bob_uri}}})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
+    fire(&st, "urn:ngsi-ld:Vehicle:moved").await;
+    tokio::time::timeout(wait(), bob_rx.recv())
+        .await
+        .expect("a notification arrived");
+    assert_eq!(
+        seen.lock()
+            .expect("lock")
+            .first()
+            .cloned()
+            .unwrap_or_default(),
+        vec![("x-subject".to_owned(), "bob".to_owned())],
+        "the moved Subscription was decided as its creator"
+    );
+}
+
 /// The stored subject is the broker's own record: 5.2.12 defines no member
 /// for it, 5.8.3/5.8.4 serve that data type, and a client can neither seed
 /// it at creation nor replace it by patch.
@@ -410,12 +447,12 @@ async fn the_stored_subject_is_in_no_representation_and_no_client_can_set_it() {
     .await;
     assert_eq!(code, StatusCode::CREATED, "{body}");
 
-    // a patch that tries to replace it
+    // a patch that tries to replace it, from a caller that names no subject
     let (code, body) = call(
         &st,
         "PATCH",
         "subscriptions/urn:ngsi-ld:Subscription:policy",
-        Some("mallory"),
+        None,
         Some(json!({"__subject": [["x-subject", "mallory"]]})),
     )
     .await;

@@ -42,7 +42,7 @@ DATA=$(mktemp -d); trap 'rm -rf "$DATA"; [ -n "${PID:-}" ] && kill "$PID" 2>/dev
     [ "$n" -le $(( TOTAL / 2 )) ] || { echo "| $n | (needs $((n * 2)) physical cores, box has $TOTAL) | | | | |"; break; }
     bset=$(IFS=,; echo "${CORES[*]:0:$n}")
     lset=$(IFS=,; echo "${CORES[*]:$n}")
-    ANTARES_STORE="$STORE" ANTARES_DATA_DIR="$DATA" ANTARES_HTTP_PORT="$PORT" \
+    ANTARES_STORE="$STORE" ANTARES_DATA_DIR="$DATA" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
       taskset -c "$bset" "$BIN" > "$OUT/core-scale$SUFFIX-$n.log" 2>&1 & PID=$!
     until curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health"; do sleep 0.05; done
     probe_start "$PID"

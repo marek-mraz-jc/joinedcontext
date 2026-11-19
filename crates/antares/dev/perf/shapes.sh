@@ -84,7 +84,7 @@ unseed() {  # unseed <store>: the seeded Vehicles out again, so a PostgreSQL kee
   echo "| store | shape | concurrency | req/s | p99 |"
   echo "|---|---|---|---|---|"
   for store in memory ${DATABASE_URL:+postgres}; do
-    ANTARES_STORE="$store" ANTARES_DATA_DIR="$DATA" ANTARES_HTTP_PORT="$PORT" \
+    ANTARES_STORE="$store" ANTARES_DATA_DIR="$DATA" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
       ANTARES_DATABASE_URL="${DATABASE_URL:-}" ANTARES_ALLOW_SHARED_LOCAL=1 \
       "$BIN" > "$OUT/shapes-$store.log" 2>&1 & PID=$!
     until curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health"; do
@@ -123,7 +123,7 @@ unseed() {  # unseed <store>: the seeded Vehicles out again, so a PostgreSQL kee
   if [ -n "${BIN_SURFACES:-}" ]; then
     [ -x "$BIN_SURFACES" ] || { echo "missing $BIN_SURFACES" >&2; exit 1; }
     mkdir -p "$DATA/surfaces"
-    ANTARES_STORE=memory ANTARES_DATA_DIR="$DATA/surfaces" ANTARES_HTTP_PORT="$PORT" \
+    ANTARES_STORE=memory ANTARES_DATA_DIR="$DATA/surfaces" ANTARES_ADMIN_OPEN=1 ANTARES_HTTP_PORT="$PORT" \
       ANTARES_ALLOW_SHARED_LOCAL=1 ANTARES_API_SURFACES=admin,views,odata,mcp,ogc \
       ANTARES_SCHEMA_MAX_BYTES=65536 "$BIN_SURFACES" > "$OUT/shapes-surfaces.log" 2>&1 & PID=$!
     until curl -sf -o /dev/null "http://127.0.0.1:$PORT/q/health"; do

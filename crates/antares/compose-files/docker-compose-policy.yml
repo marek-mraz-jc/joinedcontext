@@ -21,22 +21,27 @@ services:
     environment:
       <<: *policy
       ANTARES_HTTP_PORT: "9190"
+      ANTARES_ADMIN_OPEN: "1"
   antares2:
     environment:
       <<: *policy
       ANTARES_HTTP_PORT: "9191"
+      ANTARES_ADMIN_OPEN: "1"
   antares3:
     environment:
       <<: *policy
       ANTARES_HTTP_PORT: "9192"
+      ANTARES_ADMIN_OPEN: "1"
   antares4:
     environment:
       <<: *policy
       ANTARES_HTTP_PORT: "9193"
+      ANTARES_ADMIN_OPEN: "1"
   antares5:
     environment:
       <<: *policy
       ANTARES_HTTP_PORT: "9194"
+      ANTARES_ADMIN_OPEN: "1"
   subject-proxy:
     image: haproxy:3.0-alpine
     container_name: antares-subject-proxy
