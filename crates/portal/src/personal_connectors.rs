@@ -299,19 +299,21 @@ fn db_error(err: sqlx::Error) -> ApiError {
 /// the mirror holds no Endpoints yet (a selector would resolve to nothing); does nothing without a
 /// database or old connectors, or for a client's token (AG-151: a client manages no connector).
 pub async fn move_one(state: &AppState, identity: &Identity) -> Result<Moved, ApiError> {
-    let Some(pool) = state.db.as_ref() else {
-        return Ok(Moved::default());
-    };
-    if identity.client.is_some() {
+    if state.db.is_none() || identity.client.is_some() {
         return Ok(Moved::default());
     }
     let subject = identity.subject.as_str();
-    let Some(mut doc) = crate::db::load_preferences(pool, subject)
+    // The read's transaction ends before the store's creates take a connection of their own.
+    let Some(mut tx) = crate::api::preferences::person_tx(state).await? else {
+        return Ok(Moved::default());
+    };
+    let Some(mut doc) = crate::db::load_preferences(&mut tx, subject)
         .await
         .map_err(db_error)?
     else {
         return Ok(Moved::default());
     };
+    drop(tx);
     if doc.get(KEY).is_none() {
         return Ok(Moved::default());
     }
@@ -378,9 +380,13 @@ pub async fn move_one(state: &AppState, identity: &Identity) -> Result<Moved, Ap
             object.insert(ASIDE.to_owned(), Value::Array(list));
         }
     }
-    crate::db::save_preferences(pool, subject, &doc)
+    let Some(mut tx) = crate::api::preferences::person_tx(state).await? else {
+        return Ok(moved);
+    };
+    crate::db::save_preferences(&mut tx, subject, &doc)
         .await
         .map_err(db_error)?;
+    tx.commit().await.map_err(db_error)?;
     Ok(moved)
 }
 

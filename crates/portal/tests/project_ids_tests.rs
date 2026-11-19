@@ -471,12 +471,15 @@ async fn migration_0067_keys_the_organizations_and_projects_of_today() {
         .expect("dropped");
 }
 
-const KEYED: [&str; 5] = [
+const KEYED: [&str; 8] = [
     "organization_backup_targets",
     "organization_backup_log",
     "organization_data_restores",
     "agent_run_events",
     "sync_source_state",
+    "connectors",
+    "connector_calls",
+    "user_preferences",
 ];
 
 #[tokio::test]
@@ -855,6 +858,207 @@ async fn sync_state_answers_only_under_its_projects_key() {
     );
     drop(tx);
     assert_eq!(read(Some(key)).await.as_deref(), Some("c0ffee"));
+}
+
+/// S1-27 (T-7282): a person's connectors, their calls and preferences answer only in the
+/// Organization the person used the Portal in. Before, they were read on the bare pool by subject
+/// or id, so a request on one Organization's host read, revoked or overwrote another's.
+#[tokio::test]
+async fn a_persons_rows_answer_only_in_their_organization() {
+    use joinedcontext_portal::connectors::{Call, ConnectorStore, NewConnector};
+    use joinedcontext_portal::organization_host::{scope, OrganizationHost};
+    let pool = pool().await;
+    let (a, b) = (
+        organization(&pool, "pra").await,
+        organization(&pool, "prb").await,
+    );
+    let host = |org: &str| OrganizationHost {
+        organization: org.to_owned(),
+        base: url::Url::parse(&format!("https://{org}.example")).expect("url"),
+    };
+    let ask = || -> NewConnector {
+        serde_json::from_value(json!({
+            "name": "doprava", "segments": ["data-read"], "scope": [],
+            "expiresAt": "2030-01-01T00:00:00Z"
+        }))
+        .expect("a connector")
+    };
+    let owner = run_name("f:1:ana");
+    let mirror = std::sync::Arc::new(joinedcontext_portal::store::Mirror::default());
+    // The store serves as the Portal does: a role row-level security binds (the test's own
+    // connection is a superuser, which bypasses it).
+    let admin = pool;
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE pr_serving LOGIN PASSWORD 'pr-serving' NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON connectors, connector_calls, user_preferences, \
+               organizations, project_ids TO pr_serving; \
+         GRANT USAGE ON SEQUENCE connector_calls_id_seq TO pr_serving",
+    )
+    .execute(&admin)
+    .await
+    .expect("the serving role");
+    let mut serving = url::Url::parse(
+        &std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL"),
+    )
+    .expect("url");
+    serving.set_username("pr_serving").expect("user");
+    serving.set_password(Some("pr-serving")).expect("password");
+    let pool = sqlx::PgPool::connect(serving.as_str())
+        .await
+        .expect("the serving role connects");
+    let store = ConnectorStore::new(Some((pool.clone(), std::sync::Arc::clone(&mirror))), None);
+    let base = "https://portal.test";
+
+    let made = scope(host(&a), store.create(&owner, ask(), vec![], base))
+        .await
+        .expect("created in a");
+    let call: Call = serde_json::from_value(json!({
+        "at": "2026-11-19T00:00:00Z", "subject": owner, "client": null, "tool": "query",
+        "target": null, "verdict": "allowed", "durationMs": 3
+    }))
+    .expect("a call");
+    scope(host(&a), store.record(&made.id, call))
+        .await
+        .expect("recorded");
+    assert_eq!(
+        scope(host(&a), store.calls(&made.id))
+            .await
+            .expect("calls")
+            .len(),
+        1
+    );
+    // On b's host the connector does not exist: no read, revoke, edit or call reaches it.
+    assert!(scope(host(&b), store.get(&made.id, base))
+        .await
+        .expect("get")
+        .is_none());
+    assert!(scope(host(&b), store.of_owner(&owner, base))
+        .await
+        .expect("list")
+        .is_empty());
+    assert!(scope(host(&b), store.calls(&made.id))
+        .await
+        .expect("calls")
+        .is_empty());
+    assert!(!scope(host(&b), store.revoke(&made.id, &owner))
+        .await
+        .expect("revoke"));
+    assert_eq!(
+        scope(host(&b), store.revoke_all(&owner))
+            .await
+            .expect("revoke all"),
+        0
+    );
+    assert!(scope(host(&b), store.overview(base))
+        .await
+        .expect("overview")
+        .is_empty());
+    // The same name in b is b's own connector.
+    scope(host(&b), store.create(&owner, ask(), vec![], base))
+        .await
+        .expect("the same name in b");
+    // Off any Organization host, with no installation Organization, nothing is read or kept.
+    assert!(store.of_owner(&owner, base).await.expect("list").is_empty());
+    assert!(matches!(
+        store.create(&owner, ask(), vec![], base).await,
+        Err(joinedcontext_portal::error::ApiError::Conflict(_))
+    ));
+    // The configured installation Organization places the deployment host's requests.
+    let installed = ConnectorStore::new(
+        Some((pool.clone(), std::sync::Arc::clone(&mirror))),
+        Some(a.clone()),
+    );
+    let mine = installed.of_owner(&owner, base).await.expect("list");
+    assert_eq!(
+        mine.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+        [made.id.as_str()]
+    );
+
+    // Preferences: one document per Organization, an upsert in b never meets a's.
+    let save = |org: String, theme: &'static str| {
+        let (pool, mirror, owner) = (pool.clone(), std::sync::Arc::clone(&mirror), owner.clone());
+        scope(host(&org), async move {
+            let mut tx = project_ids::person_tx(&pool, &mirror, None)
+                .await
+                .expect("tx")
+                .expect("keyed");
+            joinedcontext_portal::db::save_preferences(&mut tx, &owner, &json!({ "theme": theme }))
+                .await
+                .expect("saved");
+            tx.commit().await.expect("commit");
+        })
+    };
+    save(a.clone(), "dark").await;
+    save(b.clone(), "light").await;
+    let load = |org: String| {
+        let (pool, mirror, owner) = (pool.clone(), std::sync::Arc::clone(&mirror), owner.clone());
+        scope(host(&org), async move {
+            let mut tx = project_ids::person_tx(&pool, &mirror, None)
+                .await
+                .expect("tx")
+                .expect("keyed");
+            joinedcontext_portal::db::load_preferences(&mut tx, &owner)
+                .await
+                .expect("loaded")
+        })
+    };
+    assert_eq!(load(a.clone()).await, Some(json!({ "theme": "dark" })));
+    assert_eq!(load(b.clone()).await, Some(json!({ "theme": "light" })));
+    assert!(project_ids::person_tx(&pool, &mirror, None)
+        .await
+        .expect("tx")
+        .is_none());
+
+    // The policy, as the serving role sees it: the key unset reads no row of the three tables.
+    sqlx::raw_sql(
+        "DO $$ BEGIN CREATE ROLE pr_rls_reader NOLOGIN NOBYPASSRLS; \
+         EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON connectors, connector_calls, user_preferences \
+         TO pr_rls_reader",
+    )
+    .execute(&admin)
+    .await
+    .expect("the reader role");
+    let a_key = project_ids::reserved(&pool, &a)
+        .await
+        .expect("reserved")
+        .expect("a key");
+    for key in [None, Some(a_key)] {
+        let mut tx = match key {
+            Some(key) => joinedcontext_portal::db::tenant_tx(&admin, key)
+                .await
+                .expect("keyed"),
+            None => admin.begin().await.expect("begin"),
+        };
+        sqlx::query("SET LOCAL ROLE pr_rls_reader")
+            .execute(&mut *tx)
+            .await
+            .expect("role");
+        let seen: (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM connectors WHERE owner = $1), \
+                    (SELECT count(*) FROM connector_calls WHERE subject = $1), \
+                    (SELECT count(*) FROM user_preferences WHERE subject = $1)",
+        )
+        .bind(&owner)
+        .fetch_one(&mut *tx)
+        .await
+        .expect("counts");
+        let expected = if key.is_some() { (1, 1, 1) } else { (0, 0, 0) };
+        assert_eq!(seen, expected, "rows seen under {key:?}");
+        if key.is_none() {
+            assert!(
+                sqlx::query(
+                    "INSERT INTO user_preferences (subject, preferences) VALUES ($1, '{}')"
+                )
+                .bind(&owner)
+                .execute(&mut *tx)
+                .await
+                .is_err(),
+                "an unkeyed write is refused"
+            );
+        }
+    }
 }
 
 async fn unkeyed_visualization(pool: &sqlx::PgPool, project: &str) -> String {
@@ -1247,6 +1451,58 @@ async fn a_start_after_one_stopped_before_0080_keys_the_rows_again() {
                 .to_string();
             assert!(err.contains("project rows without a key"), "{err}");
         }
+    }
+}
+
+/// T-7282: a database of 0086 holds people's connectors, calls and preferences with no
+/// Organization (jc-dev: 35, 637 and 8). A start told the installation Organization keys each
+/// under its reserved project before 0088 forces the key, a call under its connector's, and loses
+/// none; a start without it refuses at 0088 and names the setting.
+#[tokio::test]
+async fn a_persons_rows_of_0086_are_keyed_under_the_installation_before_0088() {
+    for told in [true, false] {
+        let (pool, url) = migrated_before_at(87, if told { "pr86" } else { "pr86no" }).await;
+        sqlx::raw_sql(
+            "INSERT INTO connectors (id, owner, name, grant_doc) VALUES ('c1', 'f:1:ana', 'doprava', '{}'); \
+             INSERT INTO connector_calls (connector, subject, tool, verdict, duration_ms) \
+             VALUES ('c1', 'f:1:ana', 'query', 'allowed', 3); \
+             INSERT INTO user_preferences (subject, preferences) VALUES ('f:1:ana', '{\"theme\":\"dark\"}')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a person's rows of 0086");
+        pool.close().await;
+        let marek = joinedcontext_portal::host_registry::SeedOrganization {
+            name: "marek-mraz".to_owned(),
+            organization_id: None,
+            host: "portal.marek-mraz.example".to_owned(),
+            catalogue_id: None,
+        };
+        let started = joinedcontext_portal::db::connect_with(&url, told.then_some(&marek)).await;
+        if !told {
+            let err = started.expect_err("0088 refuses unkeyed rows").to_string();
+            assert!(err.contains("JC_PORTAL_INSTALLATION_ORGANIZATION"), "{err}");
+            continue;
+        }
+        let pool = started.expect("keyed, then 0088");
+        let key = project_ids::reserved(&pool, "marek-mraz")
+            .await
+            .expect("reserved")
+            .expect("the installation's key");
+        let keys: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT org_id::text, project_id::text FROM connectors \
+             UNION ALL SELECT org_id::text, project_id::text FROM connector_calls \
+             UNION ALL SELECT org_id::text, project_id::text FROM user_preferences",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("keys");
+        let want = (Some(key.org.to_string()), Some(key.project.to_string()));
+        assert_eq!(
+            keys,
+            vec![want.clone(), want.clone(), want],
+            "every row keyed, none lost"
+        );
     }
 }
 

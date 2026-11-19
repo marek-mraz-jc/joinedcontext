@@ -1276,9 +1276,28 @@ async fn the_serving_role_cannot_alter_the_audit_or_drop_its_triggers() {
         .await
         .expect("who");
     assert_eq!(me, role, "the Portal serves as the serving role");
-    joinedcontext_portal::db::save_preferences(&pool, &role, &json!({"theme": "dark"}))
+    // A person's row, in its Organization's key as every request writes it (T-7282).
+    let persons = joinedcontext_portal::host_registry::SeedOrganization {
+        name: "operator-persons".to_owned(),
+        organization_id: None,
+        host: "portal.operator-persons.example".to_owned(),
+        catalogue_id: None,
+    };
+    joinedcontext_portal::host_registry::seed_organizations(&pool, &[persons])
+        .await
+        .expect("an Organization");
+    let mut tx = joinedcontext_portal::project_ids::person_tx(
+        &pool,
+        &state.mirror,
+        Some("operator-persons"),
+    )
+    .await
+    .expect("the key")
+    .expect("a keyed transaction");
+    joinedcontext_portal::db::save_preferences(&mut tx, &role, &json!({"theme": "dark"}))
         .await
         .expect("the serving role writes its rows");
+    tx.commit().await.expect("committed");
     sqlx::query("INSERT INTO operator_audit (actor, action) VALUES ($1, 'probe')")
         .bind(&role)
         .execute(&pool)

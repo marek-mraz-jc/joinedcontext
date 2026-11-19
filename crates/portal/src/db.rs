@@ -24,6 +24,9 @@ pub async fn connect(url: &str) -> Result<PgPool, sqlx::Error> {
 const PROJECT_REGISTRY: i64 = 66;
 /// The migration that refuses an unkeyed project row and forces the key (0080, T-7201).
 const KEY_FORCED: i64 = 80;
+/// The migration that forces the Organization key on a person's rows (0088, T-7282); 0087 before
+/// it adds the key, which [`crate::project_ids::key_person_rows`] fills in between.
+const PERSON_FORCED: i64 = 88;
 
 /// [`connect`], keying the project rows of a database from before the project registry under
 /// `installation` before migration 0080 forces the key (T-7264). Such a database (jc-prod ran
@@ -76,6 +79,18 @@ pub async fn connect_with(
             ),
             // A release with the registry ran: its backfill keys the rows from the mirror.
             _ => {}
+        }
+    }
+    if applied < PERSON_FORCED {
+        migrator.run_to(PERSON_FORCED - 1, &pool).await?;
+        if let Some(organization) = installation {
+            let keyed = crate::project_ids::key_person_rows(&pool, organization).await?;
+            tracing::info!(
+                rows = keyed,
+                organization = %organization.name,
+                "connectors, connector calls and preferences written before the Organization key \
+                 keyed under the installation Organization"
+            );
         }
     }
     migrator.run(&pool).await?;
@@ -328,32 +343,34 @@ fn tolerate_newer(
     }
 }
 
-/// The stored document of one subject, `None` before the first save.
+/// The stored document of one subject, `None` before the first save. `conn` is a
+/// `project_ids::person_tx`: the document of the request's Organization (T-7282).
 pub async fn load_preferences(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     subject: &str,
 ) -> Result<Option<serde_json::Value>, sqlx::Error> {
     sqlx::query_scalar::<_, serde_json::Value>(
         "SELECT preferences FROM user_preferences WHERE subject = $1",
     )
     .bind(subject)
-    .fetch_optional(pool)
+    .fetch_optional(conn)
     .await
 }
 
-/// Replaces the subject's document whole (UI-10: immediate, no Git involved).
+/// Replaces the subject's document whole (UI-10: immediate, no Git involved), in the
+/// Organization of `conn`'s key ([`load_preferences`]).
 pub async fn save_preferences(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     subject: &str,
     preferences: &serde_json::Value,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO user_preferences (subject, preferences, updated_at) VALUES ($1, $2, now()) \
-         ON CONFLICT (subject) DO UPDATE SET preferences = EXCLUDED.preferences, updated_at = now()",
+         ON CONFLICT (org_id, subject) DO UPDATE SET preferences = EXCLUDED.preferences, updated_at = now()",
     )
     .bind(subject)
     .bind(preferences)
-    .execute(pool)
+    .execute(conn)
     .await
     .map(|_| ())
 }

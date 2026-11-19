@@ -350,6 +350,9 @@ pub struct Config {
     /// `JC_PORTAL_ORGANIZATION_HOSTS`, whose host it is seeded at. Read only on the start that
     /// upgrades such a database (schema before migration 0066): it keys the project rows under
     /// this Organization before migration 0080 forces the key ([`crate::db::connect_upgrading`]).
+    /// Also the Organization of the deployment host's people while the mirror names no
+    /// installation Organization: their connectors and preferences live under its reserved key,
+    /// and the start that runs migration 0088 keys the older ones there (T-7282).
     pub installation_organization: Option<crate::host_registry::SeedOrganization>,
     /// The module databases a data backup reads and jc's tenant of each module
     /// ([`crate::org_backup::modules::BackupModules::from_lookup`] names the variables).

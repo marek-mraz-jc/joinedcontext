@@ -132,7 +132,15 @@ async fn a_database_that_does_not_answer_is_503_with_a_next_step() {
         .acquire_timeout(std::time::Duration::from_millis(200))
         .connect_lazy(&format!("postgres://portal@127.0.0.1:{closed}/portal"))
         .expect("a lazy pool");
-    let config = Config::for_tests();
+    let config = Config {
+        installation_organization: Some(joinedcontext_portal::host_registry::SeedOrganization {
+            name: "preferences-persons".to_owned(),
+            organization_id: None,
+            host: "portal.preferences-persons.example".to_owned(),
+            catalogue_id: None,
+        }),
+        ..Config::for_tests()
+    };
     let cookie = session_cookie(&config, "f:1:demo.steward");
     let mut state = AppState::new(config, None);
     state.db = Some(pool);
@@ -164,6 +172,50 @@ async fn anonymous_calls_are_401_before_the_database_is_asked() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// A test configuration whose deployment host is in an Organization of the registry: a person's
+/// preferences live under its reserved key (T-7282).
+async fn placed(pool: &sqlx::PgPool) -> Config {
+    let persons = joinedcontext_portal::host_registry::SeedOrganization {
+        name: "preferences-persons".to_owned(),
+        organization_id: None,
+        host: "portal.preferences-persons.example".to_owned(),
+        catalogue_id: None,
+    };
+    joinedcontext_portal::host_registry::seed_organizations(pool, std::slice::from_ref(&persons))
+        .await
+        .expect("the installation Organization");
+    Config {
+        installation_organization: Some(persons),
+        ..Config::for_tests()
+    }
+}
+
+/// T-7282: a deployment host in no Organization keeps no preferences: a read is empty and a save
+/// is 409 naming the next step, never a row outside every Organization.
+#[tokio::test]
+async fn a_host_in_no_organization_keeps_no_preferences() {
+    let Some(url) = database_url() else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    let config = Config::for_tests();
+    let cookie = session_cookie(&config, &fresh_subject("unplaced"));
+    let app = server::app(AppState::new(config, None).with_db(pool));
+    let (status, body) = call(&app, &cookie, Method::PUT, Some(json!({ "theme": "dark" }))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("your Organization's own address")),
+        "{body}"
+    );
+    let (status, body) = call(&app, &cookie, Method::GET, None).await;
+    assert_eq!((status, body), (StatusCode::OK, json!({})));
+}
+
 #[tokio::test]
 async fn migrates_saves_and_reads_back_immediately() {
     let Some(url) = database_url() else {
@@ -178,7 +230,7 @@ async fn migrates_saves_and_reads_back_immediately() {
         .await
         .expect("migrations are idempotent");
 
-    let config = Config::for_tests();
+    let config = placed(&pool).await;
     let subject = fresh_subject("roundtrip");
     let cookie = session_cookie(&config, &subject);
     let app = server::app(AppState::new(config, None).with_db(pool));
@@ -238,7 +290,7 @@ async fn one_subject_never_sees_another_subjects_row() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("connect + migrate");
-    let config = Config::for_tests();
+    let config = placed(&pool).await;
     let alice = session_cookie(&config, &fresh_subject("alice"));
     let bob = session_cookie(&config, &fresh_subject("bob"));
     let app = server::app(AppState::new(config, None).with_db(pool));
@@ -264,7 +316,7 @@ async fn an_invalid_field_is_400_and_leaves_the_row_untouched() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("connect + migrate");
-    let config = Config::for_tests();
+    let config = placed(&pool).await;
     let cookie = session_cookie(&config, &fresh_subject("invalid"));
     let app = server::app(AppState::new(config, None).with_db(pool));
 
@@ -303,7 +355,7 @@ async fn recent_pages_are_merged_without_touching_the_rest() {
     let pool = joinedcontext_portal::db::connect(&url)
         .await
         .expect("connect + migrate");
-    let config = Config::for_tests();
+    let config = placed(&pool).await;
     let cookie = session_cookie(&config, &fresh_subject("recent"));
     let app = server::app(AppState::new(config, None).with_db(pool));
     let place = |path: &str| json!({ "path": path, "title": "t" });
