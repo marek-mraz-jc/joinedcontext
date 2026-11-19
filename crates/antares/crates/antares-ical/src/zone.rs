@@ -163,9 +163,7 @@ fn at(seconds: i64) -> DateTime {
 
 /// Seconds after the Unix epoch of the UTC wall time `t`.
 fn seconds(t: DateTime) -> i64 {
-    Offset::UTC
-        .to_timestamp(t)
-        .map_or(0, Timestamp::as_second)
+    Offset::UTC.to_timestamp(t).map_or(0, Timestamp::as_second)
 }
 
 /// `+0100`, `-0330`, `+053328`: RFC 5545 3.3.14 `utc-offset`.
