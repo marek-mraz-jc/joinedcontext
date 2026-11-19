@@ -3,11 +3,11 @@
 //! key and never from the untrusted token header (W10, W12).
 
 use crate::keys::{Kek, PublicJwk};
+use jc_time::TimestampTz;
 use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{
     Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, decode_header, encode,
 };
-use jc_time::TimestampTz;
 use kaisatsu_core::{KaisatsuError, Result, SigningKeyRecord};
 use serde::Serialize;
 use serde::de::DeserializeOwned;

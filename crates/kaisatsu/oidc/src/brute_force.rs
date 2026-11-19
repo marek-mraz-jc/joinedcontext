@@ -13,6 +13,7 @@ use jc_time::TimestampTz;
 use jiff::SignedDuration;
 use kaisatsu_core::{LoginFailureRecord, RealmConfig, Result, Store};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 pub struct BruteForceProtector {
     store: Arc<dyn Store>,
@@ -94,46 +95,57 @@ impl BruteForceProtector {
         let now_ms = now.as_millis();
         let factor = realm.failure_factor.max(1);
         let max_delta = realm.max_delta_time_seconds.max(60);
+        let wait = AtomicI64::new(0);
 
-        let mut rec = match self.store.get_login_failure(&realm.id, target_key).await? {
-            Some(existing) if (now - existing.window_started_at).as_secs() <= max_delta => existing,
-            _ => LoginFailureRecord {
-                id: uuid::Uuid::now_v7().to_string(),
-                realm_id: realm.id.clone(),
-                target_key: target_key.to_owned(),
-                num_failures: 0,
-                last_failure_ms: 0,
-                last_ip_failure: ip_address.to_owned(),
-                locked_until: None,
-                window_started_at: now,
-            },
+        // One store step: parallel failures each count (a read-modify-write here lost them).
+        let update = |current: Option<LoginFailureRecord>| {
+            let mut rec = match current {
+                Some(existing) if (now - existing.window_started_at).as_secs() <= max_delta => {
+                    existing
+                }
+                _ => LoginFailureRecord {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    realm_id: realm.id.clone(),
+                    target_key: target_key.to_owned(),
+                    num_failures: 0,
+                    last_failure_ms: 0,
+                    last_ip_failure: ip_address.to_owned(),
+                    locked_until: None,
+                    window_started_at: now,
+                },
+            };
+
+            let delta_ms = if rec.last_failure_ms > 0 {
+                (now_ms - rec.last_failure_ms).max(0)
+            } else {
+                i64::MAX
+            };
+
+            rec.num_failures += 1;
+            rec.last_failure_ms = now_ms;
+            rec.last_ip_failure = ip_address.to_owned();
+
+            let mut wait_secs = 0i64;
+            if delta_ms < realm.quick_login_check_milli_seconds {
+                wait_secs = realm.minimum_quick_login_wait_or_default();
+            }
+            if rec.num_failures >= factor && rec.num_failures % factor == 0 {
+                let multiplier = i64::from(rec.num_failures / factor);
+                let computed = (multiplier * realm.wait_increment_seconds.max(60))
+                    .min(realm.max_failure_wait_seconds.max(60));
+                wait_secs = wait_secs.max(computed);
+            }
+
+            if wait_secs > 0 {
+                rec.locked_until = Some(now + SignedDuration::from_secs(wait_secs));
+            }
+            wait.store(wait_secs, Ordering::Relaxed);
+            rec
         };
-
-        let delta_ms = if rec.last_failure_ms > 0 {
-            (now_ms - rec.last_failure_ms).max(0)
-        } else {
-            i64::MAX
-        };
-
-        rec.num_failures += 1;
-        rec.last_failure_ms = now_ms;
-        rec.last_ip_failure = ip_address.to_owned();
-
-        let mut wait_secs = 0i64;
-        if delta_ms < realm.quick_login_check_milli_seconds {
-            wait_secs = realm.minimum_quick_login_wait_or_default();
-        }
-        if rec.num_failures >= factor && rec.num_failures % factor == 0 {
-            let multiplier = i64::from(rec.num_failures / factor);
-            let computed = (multiplier * realm.wait_increment_seconds.max(60))
-                .min(realm.max_failure_wait_seconds.max(60));
-            wait_secs = wait_secs.max(computed);
-        }
-
-        if wait_secs > 0 {
-            rec.locked_until = Some(now + SignedDuration::from_secs(wait_secs));
-        }
-        self.store.upsert_login_failure(rec).await?;
+        self.store
+            .update_login_failure(&realm.id, target_key, &update)
+            .await?;
+        let wait_secs = wait.load(Ordering::Relaxed);
         Ok((wait_secs > 0).then_some(wait_secs))
     }
 }

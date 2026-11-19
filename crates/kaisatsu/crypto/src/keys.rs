@@ -393,7 +393,10 @@ impl KeyManager {
     /// Makes each staged `PASSIVE` key whose `activate_at` has passed `ACTIVE`, and demotes the
     /// `ACTIVE` keys of its algorithm as an immediate [`Self::rotate`] does. Returns the changed
     /// records, for the caller to store.
-    pub fn promote_due(keys: &mut [SigningKeyRecord], token_ttl_secs: i64) -> Vec<SigningKeyRecord> {
+    pub fn promote_due(
+        keys: &mut [SigningKeyRecord],
+        token_ttl_secs: i64,
+    ) -> Vec<SigningKeyRecord> {
         let now = TimestampTz::now();
         let mut due: Vec<usize> = (0..keys.len())
             .filter(|&i| {

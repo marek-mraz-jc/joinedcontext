@@ -2144,6 +2144,24 @@ impl Store for MemoryStore {
         })
     }
 
+    fn update_login_failure<'a>(
+        &'a self,
+        realm_id: &'a str,
+        target_key: &'a str,
+        update: &'a LoginFailureUpdate<'a>,
+    ) -> StoreFuture<'a, LoginFailureRecord> {
+        Box::pin(async move {
+            let mut st = self.inner.write();
+            let pos = st
+                .login_failures
+                .iter()
+                .position(|f| f.realm_id == realm_id && f.target_key == target_key);
+            let rec = update(pos.map(|i| st.login_failures.swap_remove(i)));
+            st.login_failures.push(rec.clone());
+            Ok(rec)
+        })
+    }
+
     fn clear_login_failure<'a>(
         &'a self,
         realm_id: &'a str,

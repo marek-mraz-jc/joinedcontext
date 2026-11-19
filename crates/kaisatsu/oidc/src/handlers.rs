@@ -1642,7 +1642,11 @@ async fn select_signing_key(
     for key in &changed {
         state.store.upsert_signing_key(key.clone()).await?;
     }
-    let keys = if changed.is_empty() { keys } else { promoted.as_slice() };
+    let keys = if changed.is_empty() {
+        keys
+    } else {
+        promoted.as_slice()
+    };
     let active = |keys: &[SigningKeyRecord], alg: &str| {
         keys.iter()
             .find(|k| k.status == "ACTIVE" && k.algorithm == alg)

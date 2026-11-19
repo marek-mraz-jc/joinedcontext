@@ -10,6 +10,11 @@ use odata_table::{Answer, QueryOptions};
 
 pub type StoreFuture<'a, T> = BoxFuture<'a, Result<T>>;
 
+/// The change [`Store::update_login_failure`] applies to the current record (`None` when there
+/// is none).
+pub type LoginFailureUpdate<'f> =
+    dyn Fn(Option<LoginFailureRecord>) -> LoginFailureRecord + Send + Sync + 'f;
+
 /// Storage interface for kaisatsu (W2, W4).
 pub trait Store: Send + Sync {
     /// Queries any of the 23 OData entity sets using `odata-table` with tenant `Scope` applied before `$filter` (W4).
@@ -378,6 +383,15 @@ pub trait Store: Send + Sync {
         target_key: &'a str,
     ) -> StoreFuture<'a, Option<LoginFailureRecord>>;
     fn upsert_login_failure<'a>(&'a self, rec: LoginFailureRecord) -> StoreFuture<'a, ()>;
+    /// Reads the record of `target_key`, applies `update` and stores the result as one step:
+    /// concurrent calls for the same key run one after another, so none overwrites another's
+    /// count. Returns the stored record.
+    fn update_login_failure<'a>(
+        &'a self,
+        realm_id: &'a str,
+        target_key: &'a str,
+        update: &'a LoginFailureUpdate<'a>,
+    ) -> StoreFuture<'a, LoginFailureRecord>;
     fn clear_login_failure<'a>(
         &'a self,
         realm_id: &'a str,

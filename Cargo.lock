@@ -7852,6 +7852,7 @@ dependencies = [
  "jiff",
  "kaisatsu-core",
  "kaisatsu-crypto",
+ "kaisatsu-oidc",
  "kaisatsu-store-memory",
  "odata-csdl 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",
  "odata-table 0.3.0 (git+https://github.com/marek-mraz-jc/Antares-NGSI-LD-Context-Broker?rev=9dc22aacc41b0f4f41a1bd493a371ba49b4ca5cd)",

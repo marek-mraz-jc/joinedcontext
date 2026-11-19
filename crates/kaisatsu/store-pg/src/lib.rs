@@ -3013,6 +3013,47 @@ impl Store for PgStore {
         })
     }
 
+    fn update_login_failure<'a>(
+        &'a self,
+        realm_id: &'a str,
+        target_key: &'a str,
+        update: &'a LoginFailureUpdate<'a>,
+    ) -> StoreFuture<'a, LoginFailureRecord> {
+        Box::pin(async move {
+            let mut tx = self.begin(realm_id, None).await?;
+            // The row may not exist yet, so FOR UPDATE alone cannot serialise the first writers.
+            sqlx::query(
+                "SELECT pg_advisory_xact_lock(hashtextextended('kaisatsu.login_failure:' || $1 || ':' || $2, 0))",
+            )
+            .bind(realm_id)
+            .bind(target_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let doc: Option<Value> = sqlx::query_scalar(
+                "SELECT doc FROM kaisatsu.login_failure WHERE realm_id = $1 AND target_key = $2",
+            )
+            .bind(realm_id)
+            .bind(target_key)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(storage)?;
+            let rec = update(opt_from_doc(doc)?);
+            sqlx::query(
+                "INSERT INTO kaisatsu.login_failure (realm_id, target_key, doc) VALUES ($1, $2, $3)
+                 ON CONFLICT (realm_id, target_key) DO UPDATE SET doc = EXCLUDED.doc",
+            )
+            .bind(realm_id)
+            .bind(target_key)
+            .bind(to_doc(&rec)?)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+            tx.commit().await.map_err(storage)?;
+            Ok(rec)
+        })
+    }
+
     fn clear_login_failure<'a>(
         &'a self,
         realm_id: &'a str,
