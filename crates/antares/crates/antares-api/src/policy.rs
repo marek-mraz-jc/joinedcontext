@@ -419,8 +419,10 @@ impl TimeBound {
         // jiff's fraction is negative before 1970; chrono's never was
         let sub = i64::from(t.subsec_nanosecond().rem_euclid(1_000_000));
         let t = if up && sub > 0 {
-            t.checked_add(jiff::SignedDuration::from_nanos(1_000_000 - sub))
-                .unwrap_or(t)
+            t.checked_add(jiff::SignedDuration::from_nanos(
+                1_000_000_i64.saturating_sub(sub),
+            ))
+            .unwrap_or(t)
         } else {
             t
         };
