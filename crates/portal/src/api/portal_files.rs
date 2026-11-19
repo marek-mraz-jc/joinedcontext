@@ -254,7 +254,7 @@ pub async fn list_portal_files(
     description = "Stores the body as a new file of the portal. The type is read from the bytes (PNG, JPEG, WebP, SVG, PDF, CSV or XLSX), never from the name; an SVG with a script, an event handler, an external reference or an entity is refused, and any SVG is served as an attachment. Refused past 10 MiB a file, or past the Organization's 500 files or 200 MiB. Writes an audit row (T-7417).",
     tag = "system",
     params(("name" = String, Path, description = "The Portal manifest's name, e.g. `bbsk-skoly`"), UploadName),
-    request_body(content = String, content_type = "application/octet-stream", description = "The file's bytes"),
+    request_body(content = String, content_type = "application/octet-stream", description = "The file's bytes", example = json!("linka;smer\n1;centrum\n")),
     responses(
         (status = 201, description = "The stored file", body = PortalFile),
         (status = 401, description = "Not signed in", body = ProblemDetails),
@@ -294,7 +294,7 @@ pub async fn upload_portal_file(
         ("name" = String, Path, description = "The Portal manifest's name, e.g. `bbsk-skoly`"),
         ("id" = String, Path, description = "The file's id, e.g. `f-0193...`")
     ),
-    request_body = FileRename,
+    request_body(content = FileRename, example = json!({"name": "Titulná fotka.png"})),
     responses(
         (status = 200, description = "The renamed file", body = PortalFile),
         (status = 401, description = "Not signed in", body = ProblemDetails),
@@ -333,7 +333,7 @@ pub async fn rename_portal_file(
         ("name" = String, Path, description = "The Portal manifest's name, e.g. `bbsk-skoly`"),
         ("id" = String, Path, description = "The file's id, e.g. `f-0193...`")
     ),
-    request_body(content = String, content_type = "application/octet-stream", description = "The new bytes"),
+    request_body(content = String, content_type = "application/octet-stream", description = "The new bytes", example = json!("linka;smer\n1;centrum\n2;nemocnica\n")),
     responses(
         (status = 200, description = "The replaced file", body = PortalFile),
         (status = 401, description = "Not signed in", body = ProblemDetails),

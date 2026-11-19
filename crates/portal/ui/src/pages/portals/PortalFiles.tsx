@@ -9,7 +9,7 @@ import { ManifestGrid } from "../../components/grid/ManifestGrid";
 import { Alert, Badge, Button, Card, EmptyState, Field, FileDropZone, FilePicker, Input, PageFailed, PageLoading } from "../../components/ui";
 import type { PortalSpec } from "./PortalsArea";
 
-type FileRow = RestAnswer<"list_portal_files">["items"][number];
+type FileRow = RestAnswer<"list_portal_files">["items"][number] & { usedBy: string[] };
 
 /** What a refused files call says, in the server's words when it named the limit or the use. */
 function refusedText(error: unknown, generic: string): string {
@@ -68,7 +68,10 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
   const files = useQuery({
     queryKey: key,
     retry: false,
-    queryFn: async () => (await door("portal_portal_files", { name })) as RestAnswer<"list_portal_files">,
+    queryFn: async () => {
+      const answer = (await door("portal_portal_files", { name })) as RestAnswer<"list_portal_files">;
+      return { ...answer, items: answer.items.map((f): FileRow => ({ ...f, usedBy: f.usedBy ?? [] })) };
+    },
   });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: key });
   const upload = async (picked: File[], replacing?: FileRow) => {
@@ -133,8 +136,8 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
       <Card className="space-y-3">
         <FileDropZone
           label={t("portals.files.choose")}
-          button={uploading ? t("portals.files.uploading", { done: uploading.done + 1, total: uploading.total, name: uploading.name }) : t("portals.files.choose")}
-          hint={t("portals.files.hint", { max: sizeText(limits.maxFileBytes) })}
+          button={t("portals.files.choose")}
+          hint={t("portals.files.hint.drop", { max: sizeText(limits.maxFileBytes) })}
           accept="image/png,image/jpeg,image/webp,image/svg+xml,application/pdf,text/csv,.csv,.xlsx"
           multiple
           primary={items.length === 0}
@@ -145,7 +148,17 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
           {uploading ? (
             <div role="status" aria-live="polite" className="w-full space-y-1">
               <p className="text-caption text-fg">{t("portals.files.uploading", { done: uploading.done + 1, total: uploading.total, name: uploading.name })}</p>
-              <progress className="h-2 w-full" max={uploading.total} value={uploading.done} aria-label={t("portals.files.progress")} />
+              {/* fetch reports no upload progress, so the bar counts files: the one on its way fills half its share, pulsing. */}
+              <div
+                role="progressbar"
+                aria-label={t("portals.files.progress")}
+                aria-valuemin={0}
+                aria-valuemax={uploading.total}
+                aria-valuenow={uploading.done}
+                className="h-2 w-full max-w-md overflow-hidden rounded-full bg-surface-muted"
+              >
+                <div className="h-full animate-pulse rounded-full bg-primary" style={{ width: `${Math.round(((uploading.done + 0.5) / uploading.total) * 100)}%` }} />
+              </div>
             </div>
           ) : null}
         </FileDropZone>
@@ -181,10 +194,10 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
               rename.mutate(renaming);
             }}
           >
-            <Field id="file-rename" label={t("portals.files.newName")} description={t("portals.files.nameHint")} required>
+            <Field id="file-rename" label={t("portals.files.newName")} description={t("portals.files.hint.name")} required>
               <Input id="file-rename" value={renaming.name} maxLength={120} onChange={(event) => setRenaming({ ...renaming, name: event.target.value })} />
             </Field>
-            <Button type="submit" variant="primary" loading={rename.isPending} disabled={renaming.name.trim() === ""} title={renaming.name.trim() === "" ? t("portals.files.nameHint") : undefined}>
+            <Button type="submit" variant="primary" loading={rename.isPending} disabled={renaming.name.trim() === ""} title={renaming.name.trim() === "" ? t("portals.files.hint.name") : undefined}>
               {t("portals.files.rename")}
             </Button>
             <Button variant="ghost" onClick={() => setRenaming(null)}>
@@ -193,6 +206,7 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
           </form>
         </Card>
       ) : null}
+      {items.some((f) => f.usedBy.length > 0) ? <p className="text-caption text-fg-muted">{t("portals.files.usedNote")}</p> : null}
       <ManifestGrid<FileRow>
         caption={t("portals.files.caption")}
         storageKey="portal-files"
@@ -240,7 +254,7 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
             </Button>
           </div>
         )}
-        empty={<EmptyState icon="inbox" title={t("portals.files.empty")} description={t("portals.files.emptyHint")} />}
+        empty={uploading ? <p className="text-caption text-fg-muted">{t("portals.files.firstUpload")}</p> : <EmptyState icon="inbox" title={t("portals.files.empty")} description={t("portals.files.emptyHint")} />}
       />
     </div>
   );

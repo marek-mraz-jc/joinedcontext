@@ -13355,7 +13355,10 @@
       "scopePortal": "Bilder und Dokumente, die Seiten, Theme und Layout dieses Portals verwenden. Sie werden nur unter den Adressen dieses Portals ausgeliefert.",
       "scopeOrganization": "Die eigenen Dateien der Organisation: auf jedem Open-Data-Portal der Organisation ausgeliefert.",
       "choose": "Dateien zum Hochladen wählen",
-      "hint": "PNG, JPEG, WebP, SVG, PDF, CSV oder XLSX, je bis {max}, zum Beispiel hero.png. Hierher ziehen oder auswählen. Der Typ wird aus der Datei selbst gelesen.",
+      "hint": {
+        "drop": "PNG, JPEG, WebP, SVG, PDF, CSV oder XLSX, je bis {max}, zum Beispiel hero.png. Hierher ziehen oder auswählen. Der Typ wird aus der Datei selbst gelesen.",
+        "name": "Eine Zeile ohne / oder \\, höchstens 120 Zeichen, zum Beispiel Titelbild.png."
+      },
       "uploading": "Lade {done} von {total} hoch: {name}",
       "progress": "Fortschritt des Hochladens",
       "limits": "{files} von {maxFiles} Dateien, {bytes} von {maxBytes} von der Organisation belegt.",
@@ -13370,7 +13373,6 @@
       "deleteBody": "Die Datei und ihre Adresse sind endgültig weg; nichts verweist jetzt darauf.",
       "deleteConfirm": "Datei löschen",
       "newName": "Neuer Name",
-      "nameHint": "Eine Zeile ohne / oder \\, höchstens 120 Zeichen, zum Beispiel Titelbild.png.",
       "rename": "Umbenennen",
       "renameNamed": "{name} umbenennen",
       "replace": "Ersetzen",
@@ -13389,7 +13391,9 @@
       "address": "Adresse",
       "empty": "Noch keine Datei",
       "emptyHint": "Laden Sie ein Logo, ein Titelbild oder ein Dokument hoch: in das Feld oben ziehen, dann im Seiten-, Theme- oder Layout-Editor auswählen.",
-      "busy": "Warten Sie, bis das Hochladen fertig ist."
+      "busy": "Warten Sie, bis das Hochladen fertig ist.",
+      "usedNote": "Eine verwendete Datei lässt sich weder ersetzen noch löschen: entfernen Sie sie zuerst dort, wo die Spalte Verwendet von sie nennt.",
+      "firstUpload": "Die erste Datei wird hochgeladen; sie erscheint hier, sobald sie gespeichert ist."
     },
     "outcome": {
       "ok": "Die Quelle hat im erwarteten Format geantwortet.",

@@ -575,7 +575,10 @@ fn portal_file(e: FileEntry) -> PortalFile {
 
 fn file_refusal(e: dataroom_core::DataroomError) -> FileRefusal {
     match e {
-        dataroom_core::DataroomError::Validation { message, .. } => FileRefusal::Invalid(message),
+        // The problem alone, without the `file: ` field prefix a person has no use for.
+        dataroom_core::DataroomError::Validation { message, fields } => {
+            FileRefusal::Invalid(fields.into_values().flatten().next().unwrap_or(message))
+        }
         other => FileRefusal::Desk(desk_error(other)),
     }
 }

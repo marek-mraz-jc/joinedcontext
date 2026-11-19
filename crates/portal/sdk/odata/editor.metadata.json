@@ -6957,6 +6957,84 @@
         }
       }
     ],
+    "portal_portal_file_delete": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "name",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_portal_file_rename": [
+      {
+        "$IsBound": true,
+        "$Kind": "Action",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "name",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "id",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          },
+          {
+            "$Name": "body",
+            "$Nullable": true,
+            "$Type": "Edm.Untyped"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
+    "portal_portal_files": [
+      {
+        "$IsBound": true,
+        "$Kind": "Function",
+        "$Parameter": [
+          {
+            "$Name": "bindingParameter",
+            "$Nullable": false,
+            "$Type": "JoinedContext.Portal.Organization"
+          },
+          {
+            "$Name": "name",
+            "$Nullable": false,
+            "$Type": "Edm.String"
+          }
+        ],
+        "$ReturnType": {
+          "$Type": "Edm.Untyped"
+        }
+      }
+    ],
     "portal_portal_host_list": [
       {
         "$IsBound": true,

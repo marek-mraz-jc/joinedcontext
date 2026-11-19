@@ -13355,7 +13355,10 @@
       "scopePortal": "Obrázky a dokumenty, ktoré používajú stránky, téma a rozloženie tohto portálu. Podávajú sa len na adresách tohto portálu.",
       "scopeOrganization": "Vlastné súbory organizácie: podávajú sa na každom portáli otvorených dát organizácie.",
       "choose": "Vybrať súbory na nahratie",
-      "hint": "PNG, JPEG, WebP, SVG, PDF, CSV alebo XLSX, každý do {max}, napríklad hero.png. Pustite ich sem alebo ich vyberte. Typ sa číta zo samotného súboru.",
+      "hint": {
+        "drop": "PNG, JPEG, WebP, SVG, PDF, CSV alebo XLSX, každý do {max}, napríklad hero.png. Pustite ich sem alebo ich vyberte. Typ sa číta zo samotného súboru.",
+        "name": "Jeden riadok bez / alebo \\, najviac 120 znakov, napríklad Titulná fotka.png."
+      },
       "uploading": "Nahrávam {done} z {total}: {name}",
       "progress": "Priebeh nahrávania",
       "limits": "{files} z {maxFiles} súborov, {bytes} z {maxBytes} využíva organizácia.",
@@ -13370,7 +13373,6 @@
       "deleteBody": "Súbor aj jeho adresa zaniknú natrvalo; nič ho teraz nepoužíva.",
       "deleteConfirm": "Zmazať súbor",
       "newName": "Nový názov",
-      "nameHint": "Jeden riadok bez / alebo \\, najviac 120 znakov, napríklad Titulná fotka.png.",
       "rename": "Premenovať",
       "renameNamed": "Premenovať {name}",
       "replace": "Nahradiť",
@@ -13389,7 +13391,9 @@
       "address": "Adresa",
       "empty": "Zatiaľ žiadny súbor",
       "emptyHint": "Nahrajte logo, titulný obrázok alebo dokument: pustite ho do poľa vyššie a potom ho vyberte v editore stránky, témy alebo rozloženia.",
-      "busy": "Počkajte na dokončenie nahrávania."
+      "busy": "Počkajte na dokončenie nahrávania.",
+      "usedNote": "Používaný súbor nemožno nahradiť ani zmazať: najprv ho odstráňte tam, kde ho uvádza stĺpec Používa.",
+      "firstUpload": "Prvý súbor sa nahráva; objaví sa tu, keď bude uložený."
     },
     "outcome": {
       "ok": "Zdroj odpovedal v očakávanom formáte.",

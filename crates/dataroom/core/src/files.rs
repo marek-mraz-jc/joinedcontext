@@ -166,6 +166,11 @@ fn url_segment(name: &str) -> String {
     out
 }
 
+/// `12.4 MB` (MiB, as the Files screen writes sizes).
+fn mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+}
+
 fn hex_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -261,9 +266,14 @@ impl FileStore {
     /// Refuses `bytes` past a cap, naming the limit; `replacing` frees its own size first.
     fn within_caps(&self, org: OrgId, bytes: u64, replacing: Option<u64>) -> Result<()> {
         if bytes > MAX_FILE_BYTES {
-            return Err(DataroomError::field_error("file", format!(
-                "the file is {bytes} bytes; one file may hold at most {MAX_FILE_BYTES} bytes (10 MiB)"
-            )));
+            return Err(DataroomError::field_error(
+                "file",
+                format!(
+                    "the file is {}; one file may hold at most {}",
+                    mb(bytes),
+                    mb(MAX_FILE_BYTES)
+                ),
+            ));
         }
         let usage = self.usage(org)?;
         if replacing.is_none() && usage.files >= MAX_ORG_FILES {
@@ -274,7 +284,9 @@ impl FileStore {
         let after = usage.bytes - replacing.unwrap_or(0).min(usage.bytes) + bytes;
         if after > MAX_ORG_BYTES {
             return Err(DataroomError::field_error("file", format!(
-                "the Organization's files would hold {after} bytes; its limit is {MAX_ORG_BYTES} bytes (200 MiB)"
+                "with it the Organization's files would hold {}; its limit is {}: delete files no portal uses",
+                mb(after),
+                mb(MAX_ORG_BYTES)
             )));
         }
         Ok(())
@@ -532,7 +544,11 @@ mod tests {
         let (files, root) = store();
         let big = vec![b'a'; (MAX_FILE_BYTES + 1) as usize];
         let err = files.put(key(3), "big.csv", &big, "ana").unwrap_err();
-        assert!(err.to_string().contains("10 MiB"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("one file may hold at most 10.0 MB"),
+            "{err}"
+        );
         assert_eq!(files.usage(key(3).0).unwrap().files, 0, "nothing stored");
         let _ = fs::remove_dir_all(root);
     }

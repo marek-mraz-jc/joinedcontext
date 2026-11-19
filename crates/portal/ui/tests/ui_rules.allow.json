@@ -93,7 +93,12 @@
       "group": "ui-forms",
       "reason": "the width of a chat bubble is a share of the column it sits in, so the person sees at a glance which side said it; a percentage is on no spacing scale and the line says so"
     },
-    "src/pages/assistant/AssistantPage.tsx": {
+    "src/pages/portals/PortalFiles.tsx": {
+    "lines": 1,
+    "group": "ui-parts",
+    "reason": "the filled part of the upload bar is the files sent plus half the one on its way, over the files picked: a computed size, the same as the quota bar, and the comment above it says so"
+  },
+  "src/pages/assistant/AssistantPage.tsx": {
       "lines": 1,
       "group": "ui-forms"
     },

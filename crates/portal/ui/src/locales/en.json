@@ -13355,7 +13355,10 @@
       "scopePortal": "Images and documents this portal's pages, theme and layout use. They are served only on this portal's addresses.",
       "scopeOrganization": "The Organization's own files: served on every open data portal of the Organization.",
       "choose": "Choose files to upload",
-      "hint": "PNG, JPEG, WebP, SVG, PDF, CSV or XLSX, up to {max} each, for example hero.png. Drop them here or choose them. The type is read from the file itself.",
+      "hint": {
+        "drop": "PNG, JPEG, WebP, SVG, PDF, CSV or XLSX, up to {max} each, for example hero.png. Drop them here or choose them. The type is read from the file itself.",
+        "name": "One line without / or \\, at most 120 characters, for example Titulná fotka.png."
+      },
       "uploading": "Uploading {done} of {total}: {name}",
       "progress": "Upload progress",
       "limits": "{files} of {maxFiles} files, {bytes} of {maxBytes} used by the Organization.",
@@ -13370,7 +13373,6 @@
       "deleteBody": "The file and its address are gone for good; nothing names it now.",
       "deleteConfirm": "Delete the file",
       "newName": "New name",
-      "nameHint": "One line without / or \\, at most 120 characters, for example Titulná fotka.png.",
       "rename": "Rename",
       "renameNamed": "Rename {name}",
       "replace": "Replace",
@@ -13389,7 +13391,9 @@
       "address": "Address",
       "empty": "No file yet",
       "emptyHint": "Upload a logo, a hero image or a document: drop it into the box above, then pick it in the page, theme or layout editor.",
-      "busy": "Wait for the upload to finish."
+      "busy": "Wait for the upload to finish.",
+      "usedNote": "A file in use cannot be replaced or deleted: take it out where the Used by column names it first.",
+      "firstUpload": "The first file is on its way; it appears here when stored."
     },
     "outcome": {
       "ok": "The source answered in the expected format.",

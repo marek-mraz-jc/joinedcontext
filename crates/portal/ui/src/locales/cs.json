@@ -13355,7 +13355,10 @@
       "scopePortal": "Obrázky a dokumenty, které používají stránky, téma a rozvržení tohoto portálu. Podávají se jen na adresách tohoto portálu.",
       "scopeOrganization": "Vlastní soubory organizace: podávají se na každém portálu otevřených dat organizace.",
       "choose": "Vybrat soubory k nahrání",
-      "hint": "PNG, JPEG, WebP, SVG, PDF, CSV nebo XLSX, každý do {max}, například hero.png. Přetáhněte je sem nebo je vyberte. Typ se čte ze samotného souboru.",
+      "hint": {
+        "drop": "PNG, JPEG, WebP, SVG, PDF, CSV nebo XLSX, každý do {max}, například hero.png. Přetáhněte je sem nebo je vyberte. Typ se čte ze samotného souboru.",
+        "name": "Jeden řádek bez / nebo \\, nejvýše 120 znaků, například Titulní fotka.png."
+      },
       "uploading": "Nahrávám {done} z {total}: {name}",
       "progress": "Průběh nahrávání",
       "limits": "{files} z {maxFiles} souborů, {bytes} z {maxBytes} využívá organizace.",
@@ -13370,7 +13373,6 @@
       "deleteBody": "Soubor i jeho adresa zaniknou natrvalo; nic ho teď nepoužívá.",
       "deleteConfirm": "Smazat soubor",
       "newName": "Nový název",
-      "nameHint": "Jeden řádek bez / nebo \\, nejvýše 120 znaků, například Titulní fotka.png.",
       "rename": "Přejmenovat",
       "renameNamed": "Přejmenovat {name}",
       "replace": "Nahradit",
@@ -13389,7 +13391,9 @@
       "address": "Adresa",
       "empty": "Zatím žádný soubor",
       "emptyHint": "Nahrajte logo, titulní obrázek nebo dokument: přetáhněte ho do pole výše a pak ho vyberte v editoru stránky, tématu nebo rozvržení.",
-      "busy": "Počkejte na dokončení nahrávání."
+      "busy": "Počkejte na dokončení nahrávání.",
+      "usedNote": "Používaný soubor nelze nahradit ani smazat: nejprve ho odstraňte tam, kde ho uvádí sloupec Používá.",
+      "firstUpload": "První soubor se nahrává; objeví se zde, až bude uložen."
     },
     "outcome": {
       "ok": "Zdroj odpověděl v očekávaném formátu.",

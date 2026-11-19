@@ -377,12 +377,12 @@ function SourceCard({
           </div>
         </Alert>
       ) : null}
-      {notice ? (
+      {notice && !confirming ? (
         <Alert tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>
           {notice.text}
         </Alert>
       ) : null}
-      {preview ? <PreviewCards preview={preview} /> : null}
+      {preview && !confirming ? <PreviewCards preview={preview} /> : null}
       {showRuns ? <RunLog queryKey={runsKey} portal={portal} source={source.name} /> : null}
     </Card>
   );

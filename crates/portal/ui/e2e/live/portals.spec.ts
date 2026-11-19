@@ -5,6 +5,8 @@
  * T-6876: the second test adds a dcat-ap source to such a portal, tests it, runs it, reads the
  * run log and hides a dataset. Its source is LIVE_DCAT_SOURCE, else the Organization's default
  * portal's own catalog.ttl (a host the harvest allow-list must hold).
+ * T-7428: the third uploads a file to such a portal, renames it, replaces its contents and deletes
+ * it, each write straight to the store with an audit row.
  *
  *   pnpm exec playwright test -c playwright.live.config.ts e2e/live/portals.spec.ts
  */
@@ -112,6 +114,56 @@ test("an administrator adds a dcat-ap source, tests it, runs it, reads its run l
     await approve(approver.page, "org", await proposedChange(page));
   } finally {
     await cleanUp(steward, "org", "portals", name, "portal sources journey");
+    await approver.context.close();
+    await steward.context.close();
+  }
+});
+
+// A 1x1 transparent PNG: the store reads the type from the bytes, so the journey sends a real image.
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
+test("an administrator uploads, renames, replaces and deletes a portal file", async ({ browser }) => {
+  const steward = await signIn(browser, STEWARD, "/portals?lang=en");
+  const approver = await signIn(browser, APPROVER, "/portals?lang=en");
+  const { page } = steward;
+  const hosts = (await (await page.request.get("/api/v1/organization/portal-hosts")).json()) as { items: { organization: string }[] };
+  const { organization } = hosts.items[0];
+  const path = `files-${Date.now().toString(36)}`;
+  const name = `${organization}-${path}`;
+  const files = `/api/v1/projects/org/portals/${name}/files`;
+  try {
+    await page.goto("/portals/new?lang=en");
+    await page.getByLabel(/^Organization/).selectOption(organization);
+    await page.getByLabel(/Name in the address/).fill(path);
+    await page.getByLabel(/Title in Slovak/).fill("Súbory portálu");
+    await page.getByRole("button", { name: "Propose the portal" }).click();
+    await approve(approver.page, "org", await proposedChange(page));
+    await expect
+      .poll(async () => (await page.request.get(`/api/v1/projects/org/portals/${name}`)).status(), { timeout: 180_000, intervals: [5_000] })
+      .toBe(200);
+
+    await page.goto(`/portals/${name}?lang=en`);
+    await page.getByRole("tab", { name: "Files" }).click();
+    await expect(page.getByText("No file yet")).toBeVisible({ timeout: 30_000 });
+    await page.getByLabel("Choose files to upload").setInputFiles({ name: "journey.png", mimeType: "image/png", buffer: PNG });
+    await expect(page.getByText("1 files uploaded.")).toBeVisible({ timeout: 60_000 });
+    const listed = (await (await page.request.get(files)).json()) as { items: { id: string; name: string; contentType: string }[] };
+    expect(listed.items.map((f) => [f.name, f.contentType])).toEqual([["journey.png", "image/png"]]);
+
+    await page.getByRole("button", { name: "Rename journey.png" }).click();
+    await page.getByLabel(/^New name/).fill("journey-hero.png");
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await expect(page.getByText("The file was renamed.")).toBeVisible();
+
+    await page.getByLabel("Replace the contents of journey-hero.png").setInputFiles({ name: "journey-hero.png", mimeType: "image/png", buffer: Buffer.concat([PNG, Buffer.from("tail")]) });
+    await expect(page.getByText("journey-hero.png was replaced.", { exact: false })).toBeVisible({ timeout: 60_000 });
+
+    await page.getByRole("button", { name: "Delete journey-hero.png" }).click();
+    await page.getByRole("button", { name: "Delete the file" }).click();
+    await expect(page.getByText("journey-hero.png was deleted.")).toBeVisible();
+    await expect(page.getByText("No file yet")).toBeVisible();
+  } finally {
+    await cleanUp(steward, "org", "portals", name, "portal files journey");
     await approver.context.close();
     await steward.context.close();
   }

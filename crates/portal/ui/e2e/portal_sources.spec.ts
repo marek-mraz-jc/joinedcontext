@@ -155,7 +155,9 @@ for (const width of [1440, 400]) {
 
       await page.getByRole("button", { name: "Add a source" }).click();
       await page.getByLabel(/^Type/).selectOption("dcat-ap");
-      await expect(page.getByLabel(/^Address/)).toBeVisible();
+      await page.getByLabel(/^Name/).fill("kosice");
+      await page.getByLabel(/^Address/).fill("https://data.kosice.sk/catalog.ttl");
+      await expect(page.getByText("Harvested from data.kosice.sk.", { exact: false })).toBeVisible();
       await shoot(page, width, info.outputPath(`sources-add-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
       await noOverflow(page);

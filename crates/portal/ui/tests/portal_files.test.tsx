@@ -90,12 +90,13 @@ describe("the files tab", () => {
   it("uploads dropped files one by one with their progress and lists them", async () => {
     const sent: { url: string; type: string | null; size: number }[] = [];
     let listed = [] as (typeof HERO)[];
-    await openFiles(async (path, request) => {
+    await openFiles((path, request) => {
       if (path === FILES && request.method === "POST") {
-        const body = await request.arrayBuffer();
-        sent.push({ url: request.url, type: request.headers.get("content-type"), size: body.byteLength });
-        listed = [HERO];
-        return jsonResponse(HERO, 201);
+        return request.arrayBuffer().then((body) => {
+          sent.push({ url: request.url, type: request.headers.get("content-type"), size: body.byteLength });
+          listed = [HERO];
+          return jsonResponse(HERO, 201);
+        });
       }
       if (path === FILES) return jsonResponse({ items: listed, limits: LIMITS });
       return undefined;
@@ -113,21 +114,23 @@ describe("the files tab", () => {
 
   it("shows the server's limit refusal for an upload over the cap", async () => {
     await openFiles((path, request) => {
-      if (path === FILES && request.method === "POST") return problem(422, "file: the Organization's files would hold 210000000 bytes; its limit is 209715200 bytes (200 MiB)");
+      if (path === FILES && request.method === "POST") return problem(422, "with it the Organization's files would hold 200.1 MB; its limit is 200.0 MB: delete files no portal uses");
       if (path === FILES) return jsonResponse({ items: [], limits: LIMITS });
       return undefined;
     });
     fireEvent.drop(await screen.findByTestId("file-drop-zone"), { dataTransfer: { files: [new File(["a,b"], "big.csv")] } });
-    expect(await screen.findByRole("alert")).toHaveTextContent("big.csv: file: the Organization's files would hold 210000000 bytes; its limit is 209715200 bytes (200 MiB)");
+    expect(await screen.findByRole("alert")).toHaveTextContent("big.csv: with it the Organization's files would hold 200.1 MB; its limit is 200.0 MB: delete files no portal uses");
   });
 
   it("renames a file and deletes an unused one only after a confirm", async () => {
     const user = userEvent.setup();
     const calls: string[] = [];
-    await openFiles(async (path, request) => {
+    await openFiles((path, request) => {
       if (path === `${FILES}/f-2` && request.method === "PATCH") {
-        calls.push(`PATCH ${JSON.stringify(await request.json())}`);
-        return jsonResponse({ ...REPORT, name: "vyrocna.pdf" });
+        return request.json().then((body) => {
+          calls.push(`PATCH ${JSON.stringify(body)}`);
+          return jsonResponse({ ...REPORT, name: "vyrocna.pdf" });
+        });
       }
       if (path === `${FILES}/f-2` && request.method === "DELETE") {
         calls.push("DELETE");

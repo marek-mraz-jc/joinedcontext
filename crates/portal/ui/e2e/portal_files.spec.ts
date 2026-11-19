@@ -66,7 +66,7 @@ async function stub(page: Page, options: Stub): Promise<string[]> {
       sent.push(`POST ${url.search}`);
       if (options.upload instanceof Promise) await options.upload;
       if (typeof options.upload === "number") {
-        return json(problem(options.upload, "file: the Organization's files would hold 214000000 bytes; its limit is 209715200 bytes (200 MiB)"), options.upload);
+        return json(problem(options.upload, "the file is 12.4 MB; one file may hold at most 10.0 MB"), options.upload);
       }
       const added = file(`f-${items.length + 1}`, url.searchParams.get("name") ?? "x", "image/png", 2048, "f");
       items = [...items, added];
@@ -139,6 +139,7 @@ for (const width of [1440, 400]) {
       await expect(page.getByRole("status").filter({ hasText: "Uploading 1 of 1" })).toBeVisible();
       await shoot(page, width, info.outputPath(`files-uploading-${width}.png`));
       release();
+      await expect(page.getByText("1 files uploaded.")).toBeVisible();
 
       await page.unrouteAll();
       await stub(page, { items: FILES });
@@ -153,7 +154,7 @@ for (const width of [1440, 400]) {
       await stub(page, { items: FILES, upload: 422 });
       await openFiles(page);
       await drop(page, "letecka-snimka.png");
-      await expect(page.getByRole("alert")).toContainText("its limit is 209715200 bytes (200 MiB)");
+      await expect(page.getByRole("alert")).toContainText("letecka-snimka.png: the file is 12.4 MB; one file may hold at most 10.0 MB");
       await shoot(page, width, info.outputPath(`files-error-${width}.png`));
     });
   });
