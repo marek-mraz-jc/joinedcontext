@@ -6,6 +6,7 @@ around them, one run against a loopback edge, the 7-day line log and the inciden
 
 import datetime as dt
 import json
+import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -396,33 +397,123 @@ def test_the_guard_refuses_writes_foreign_hosts_and_private_sources(tmp_path, ed
 class FakeBoard(watch.Board):
     def __init__(self):
         super().__init__(None, "jc-dev", "deployer")
-        self.opened, self.closed = [], []
+        self.opened, self.updated, self.closed = [], [], []
 
-    def open(self, key, row, at):
-        self.opened.append(key)
+    def open(self, key, rows, at):
+        self.opened.append((key, [r["id"] for r in rows]))
         return f"T-{len(self.opened)}"
+
+    def update(self, tid, rows, at):
+        self.updated.append((tid, [r["id"] for r in rows]))
 
     def close(self, tid, key, why, at):
         self.closed.append((tid, key, why))
 
 
 def results(**rows):
-    return {"totals": {}, "checks": [{"id": k, "target": k.split(".")[1], "result": v} for k, v in rows.items()]}
+    orgs = {k.split(".")[1] for k in rows if k.split(".")[1] != "gateway"} | {"alpha", "beta"}
+    return {"totals": {}, "organizations": {o: {} for o in orgs},
+            "checks": [{"id": k, "target": k.split(".")[1], "result": v} for k, v in rows.items()]}
 
 
-def test_incidents_open_once_per_organization_and_check_and_close_when_green():
+def test_three_red_checks_of_one_organization_are_one_incident_updated_and_closed_when_green():
     b = FakeBoard()
-    state = watch.incidents({}, results(**{"app.alpha.x": "fail", "embed.beta": "fail", "portal.alpha": "pass"}),
+    red = {"app.alpha.x": "fail", "mcp.alpha": "fail", "oidc.alpha": "fail", "portal.alpha": "pass",
+           "portal.beta": "pass"}
+    state = watch.incidents({}, results(**red), True, None, b, "t1")
+    assert b.opened == [("org/alpha", ["app.alpha.x", "mcp.alpha", "oidc.alpha"])]
+    assert state == {"org/alpha": {"task": "T-1", "checks": ["app.alpha.x", "mcp.alpha", "oidc.alpha"]}}
+    state = watch.incidents(state, results(**red), True, None, b, "t2")
+    assert len(b.opened) == 1 and b.updated == []  # same red set: no new task, no rewrite
+    state = watch.incidents(state, results(**{**red, "mcp.alpha": "pass"}), True, None, b, "t3")
+    assert b.updated == [("T-1", ["app.alpha.x", "oidc.alpha"])] and state["org/alpha"]["task"] == "T-1"
+    # An incomplete run closes nothing it did not see pass; it opens the cluster's snapshot incident.
+    state = watch.incidents(state, results(**{"oidc.alpha": "pass"}), False, "snapshot: kubectl: denied", b, "t4")
+    assert set(state) == {"org/alpha", "cluster"} and b.closed == []
+    state = watch.incidents(state, results(**{"portal.alpha": "pass", "portal.beta": "pass"}), True, None, b, "t5")
+    assert state == {} and {c[1] for c in b.closed} == {"org/alpha", "cluster"}
+
+
+def test_every_organizations_portal_red_is_one_incident_for_the_cluster():
+    b = FakeBoard()
+    rows = {"portal.alpha": "fail", "mcp.alpha": "fail", "portal.beta": "fail", "prm.gateway": "fail"}
+    state = watch.incidents({}, results(**rows), True, None, b, "t1")
+    assert b.opened == [("cluster", ["portal.alpha", "mcp.alpha", "portal.beta", "prm.gateway"])]
+    assert list(state) == ["cluster"]
+    # One Organization's portal back: the rest is that Organization's own incident again.
+    state = watch.incidents(state, results(**{**rows, "portal.alpha": "pass", "mcp.alpha": "pass"}), True, None, b, "t2")
+    assert b.opened[1] == ("org/beta", ["portal.beta"]) and set(state) == {"cluster", "org/beta"}
+    assert b.updated == [("T-1", ["prm.gateway"])]
+
+
+def test_the_per_check_incidents_of_t7309_close_on_the_next_green_run():
+    b = FakeBoard()
+    legacy = {"portal.alpha": "T-7323", "app.alpha.x": "T-7336", "prm.gateway": "T-7325", "crawl.beta.y": "T-7340"}
+    green = {"portal.alpha": "pass", "app.alpha.x": "pass", "prm.gateway": "pass", "portal.beta": "pass"}
+    state = watch.incidents(legacy, results(**green), True, None, b, "t1")
+    assert state == {} and b.opened == []
+    assert sorted(b.closed) == [("T-7323", "portal.alpha", "passes"), ("T-7325", "prm.gateway", "passes"),
+                                ("T-7336", "app.alpha.x", "passes"), ("T-7340", "crawl.beta.y", "is no longer probed")]
+    # Still red on the first run of the grouped watch: listed in the Organization's incident, closed there.
+    b = FakeBoard()
+    state = watch.incidents({"mcp.alpha": "T-7327"}, results(**{"mcp.alpha": "fail", "portal.alpha": "pass"}),
                             True, None, b, "t1")
-    assert state == {"app.alpha.x": "T-1", "embed.beta": "T-2"}
-    state = watch.incidents(state, results(**{"app.alpha.x": "fail", "embed.beta": "fail"}), True, None, b, "t2")
-    assert b.opened == ["app.alpha.x", "embed.beta"]  # still red: no second task
-    # An incomplete run closes only what passed: the App row it did not run stays open.
-    state = watch.incidents(state, results(**{"embed.beta": "pass"}), False, "snapshot: kubectl exec: denied", b, "t3")
-    assert state == {"app.alpha.x": "T-1", "snapshot": "T-3"} and b.closed == [("T-2", "embed.beta", "passes")]
-    # A complete run no longer probing the App host (the deliberate red removed) closes it.
-    state = watch.incidents(state, results(**{"portal.alpha": "pass"}), True, None, b, "t4")
-    assert state == {} and ("T-1", "app.alpha.x", "is no longer probed") in b.closed
+    assert b.closed == [("T-7327", "mcp.alpha", "is tracked in T-1")] and list(state) == ["org/alpha"]
+
+
+def window(tmp_path, text, written):
+    f = tmp_path / "maintenance-until"
+    f.write_text(text)
+    os.utime(f, (written.timestamp(), written.timestamp()))
+
+
+def test_the_maintenance_window_holds_until_its_time_capped_at_sixty_minutes(tmp_path):
+    now = dt.datetime(2026, 11, 19, 11, 30, tzinfo=dt.UTC)
+    assert watch.maintenance_until(tmp_path, now) is None  # missing
+    window(tmp_path, "2026-11-19T11:45:00Z", now - dt.timedelta(minutes=10))
+    assert watch.maintenance_until(tmp_path, now) == dt.datetime(2026, 11, 19, 11, 45, tzinfo=dt.UTC)
+    assert watch.maintenance_until(tmp_path, now + dt.timedelta(minutes=16)) is None  # after
+    window(tmp_path, "2026-11-19T15:00:00Z", now - dt.timedelta(minutes=10))  # 3.5 h ahead: capped at +60 min
+    assert watch.maintenance_until(tmp_path, now) == dt.datetime(2026, 11, 19, 12, 20, tzinfo=dt.UTC)
+    assert watch.maintenance_until(tmp_path, now + dt.timedelta(minutes=51)) is None
+    window(tmp_path, "soon", now)
+    assert watch.maintenance_until(tmp_path, now) is None  # unreadable: normal filing
+
+
+def test_a_run_inside_the_window_logs_maintenance_and_files_nothing(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    cfg = tmp_path / "watch.toml"
+    cfg.write_text(f'''cluster = "jc-dev"\nkubeconfig = "k"\nnamespace = "jc"\npg_namespace = "pg"\n
+edge = "127.0.0.1"\ndomain = "city.test"\nstate = "{state}"\nowner = "deployer"\nboard = "{tmp_path}"\n''')
+    state.mkdir()
+    (state / "incidents.json").write_text(json.dumps({"portal.alpha": "T-7323"}))
+    window(state, (dt.datetime.now(dt.UTC) + dt.timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           dt.datetime.now(dt.UTC))
+    monkeypatch.setattr(watch, "snapshot", lambda cfg, run: (_ for _ in ()).throw(RuntimeError("503")))
+    monkeypatch.setattr(watch.Board, "tool", lambda *a, **k: pytest.fail("the board was touched"))
+    assert watch.main(["--config", str(cfg)]) == 0
+    line = (state / "orgs.log").read_text().splitlines()[-1]
+    assert "no result (snapshot: 503); maintenance until" in line and line.endswith("nothing filed")
+    assert json.loads((state / "incidents.json").read_text()) == {"portal.alpha": "T-7323"}
+
+
+def test_the_board_task_lists_the_red_checks_and_the_update_rewrites_only_that_list(tmp_path):
+    (tmp_path / "newid").write_text("#!/bin/sh\necho T-9001\n")
+    (tmp_path / "note").write_text("#!/bin/sh\nexit 0\n")
+    for t in ("newid", "note"):
+        (tmp_path / t).chmod(0o755)
+    b = watch.Board(tmp_path, "jc-prod", "prod-deployer")
+    rows = [{"id": "portal.bbsk", "actual": "503", "expected": "200", "call": "GET /"},
+            {"id": "mcp.bbsk", "actual": "503", "expected": "401", "call": "POST /api/v1/mcp"}]
+    assert b.open("org/bbsk", rows, "t1") == "T-9001"
+    f = tmp_path / "T-9001-incident-jc-prod-orgs-bbsk.md"
+    text = f.read_text()
+    assert 'title: "Incident on jc-prod: Organization bbsk smoke red"' in text
+    assert "incident: jc-prod/orgs/bbsk" in text and "- `mcp.bbsk`: 503" in text
+    f.write_text(text + "\n- 2026-11-19T12:00Z **prod-deployer**: looking\n")
+    b.update("T-9001", rows[:1], "t2")
+    text = f.read_text()
+    assert "Red checks as of t2 (1):" in text and "mcp.bbsk" not in text and "**prod-deployer**: looking" in text
 
 
 def test_the_line_names_each_organization_and_the_log_keeps_seven_days(tmp_path):

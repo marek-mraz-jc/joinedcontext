@@ -30,10 +30,17 @@ Each run:
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
-4. Incidents, one per (Organization, check), in <state>/incidents.json: a failing check without
-   one opens a task on the board (owner, @ note); an open one closes when its check passes, or
-   when a complete run (snapshot read, suite finished) no longer probes it. A run that is not
-   complete opens the `snapshot` or `suite` incident of the cluster and closes nothing else.
+4. Incidents, one per (cluster, Organization), in <state>/incidents.json (T-7378): an Organization
+   with a red check and no incident opens a task on the board (owner, @ note) listing its red checks;
+   the list is rewritten when the red checks change; the task closes when a complete run (snapshot
+   read, suite finished) shows none of them red. Rows of no Organization, a broken run (`snapshot`,
+   `suite`) and a deployment-wide outage (every Organization's portal check red) are one incident
+   of the cluster. A run that is not complete closes only an incident whose checks it saw pass.
+
+Rollout window: a deployer announcing a rollout writes an ISO time into <state>/maintenance-until
+(`date -u -d '+30 min' +%FT%TZ > <state>/maintenance-until`). Runs before that time, capped at 60 min
+after the file was written, still run and log their line with "maintenance" but file, update and
+close nothing. A missing, unreadable or past file means normal filing.
 """
 
 from __future__ import annotations
@@ -213,16 +220,17 @@ class Board:
             raise RuntimeError(f"tasks/{name}: {p.stderr.strip()[:200]}")
         return p.stdout.strip()
 
-    def open(self, key: str, row: dict, at: str) -> str:
+    def open(self, key: str, rows: list[dict], at: str) -> str:
         if not self.path or self.dry:
             return f"dry-{key}"
         tid = self.tool("newid").splitlines()[0]
-        slug = re.sub(r"[^a-z0-9]+", "-", key.lower()).strip("-")[:60]
-        org = row.get("target", "")
+        org = key.removeprefix(ORG)
+        what = f"Organization {org} smoke red" if key != CLUSTER else "deployment-wide smoke red"
+        slug = re.sub(r"[^a-z0-9]+", "-", org.lower()).strip("-")[:60]
         (self.path / f"{tid}-incident-{self.cluster}-orgs-{slug}.md").write_text(
             f"""---
 id: {tid}
-title: "Incident on {self.cluster}: Organization {org} smoke red ({key})"
+title: "Incident on {self.cluster}: {what}"
 repo: joinedcontext-deployment
 status: todo
 admitted: owner 2026-11-19 T-7309 (per-Organization periodic smoke: a red Organization raises one incident)
@@ -231,66 +239,142 @@ role: deployer
 phase: mvp
 priority: 1
 group: red-cluster
-incident: {self.cluster}/orgs/{key}
+incident: {self.cluster}/orgs/{org}
 ---
 
-Opened {at} by bins/jc/smoke/orgs/watch.py (T-7309) on {self.cluster}, Organization {org}.
+Opened {at} by bins/jc/smoke/orgs/watch.py (T-7309, T-7378) on {self.cluster}: {what}.
 
-- check: {key}
-- call: {row.get('call', '')}
-- expected: {row.get('expected', '')}
-- actual: {row.get('actual', '')}
-- reason: {row.get('reason', '')}
+{checks_block(rows, at)}
 
-The watch closes this task on the first run where the check passes or is no longer probed. The
-run's rows: <state>/runs/ on s1 (watch.toml `state`).
+The watch rewrites the list above on every run whose red checks differ and closes this task on the
+first run where all of them pass. The run's rows: <state>/runs/ on s1 (watch.toml `state`).
 """)
-        self.tool("note", f"@{self.owner} {tid}: {self.cluster} Organization {org} smoke red: {key} "
-                  f"({row.get('actual', '')})")
+        self.tool("note", f"@{self.owner} {tid}: {self.cluster} {what}: {len(rows)} check(s) "
+                  f"({', '.join(r['id'] for r in rows[:5])}{', ...' if len(rows) > 5 else ''})")
         return tid
+
+    def task_file(self, tid: str) -> Path | None:
+        files = [*self.path.glob(f"{tid}-*.md"), *self.path.glob(f"finished/{tid}-*.md")] if self.path else []
+        return files[0] if files else None
+
+    def update(self, tid: str, rows: list[dict], at: str) -> None:
+        if not self.path or self.dry or tid.startswith("dry-") or not (f := self.task_file(tid)):
+            return
+        text = f.read_text()
+        block = checks_block(rows, at)
+        new, n = BLOCK.subn(lambda _: block, text, count=1)
+        f.write_text(new if n else f"{text.rstrip()}\n\n{block}\n")
 
     def close(self, tid: str, key: str, why: str, at: str) -> None:
         if not self.path or self.dry or tid.startswith("dry-"):
             return
-        files = [*self.path.glob(f"{tid}-*.md"), *self.path.glob(f"finished/{tid}-*.md")]
-        if files:
-            with files[0].open("a") as f:
-                f.write(f"\nClosed {at} by orgs/watch.py: {key} {why}.\n")
+        if f := self.task_file(tid):
+            with f.open("a") as fh:
+                fh.write(f"\nClosed {at} by orgs/watch.py: {key} {why}.\n")
         self.tool("claim", tid, "done", env={"AGENT_NAME": self.owner})
+
+
+ORG, CLUSTER = "org/", "cluster"
+BLOCK = re.compile(r"<!-- orgs-watch:checks -->.*?<!-- /orgs-watch:checks -->", re.DOTALL)
+
+
+def checks_block(rows: list[dict], at: str) -> str:
+    lines = [f"- `{r['id']}`: {r.get('actual', '')} (expected {r.get('expected', '')}; {r.get('call', '')})"
+             for r in rows]
+    return "\n".join(["<!-- orgs-watch:checks -->", f"Red checks as of {at} ({len(rows)}):", *lines,
+                      "<!-- /orgs-watch:checks -->"])
+
+
+def groups(results: dict | None, broken: str | None) -> dict[str, list[dict]]:
+    """The red rows per incident: one per Organization (`org/<name>`), and `cluster` for rows of no
+    Organization, a broken run, or a deployment-wide outage (every Organization's portal check red)."""
+    orgs = set((results or {}).get("organizations") or {})
+    red = [r for r in (results or {}).get("checks") or [] if r.get("result") == "fail"]
+    red_ids = {r["id"] for r in red}
+    wide = bool(orgs) and all(f"portal.{o}" in red_ids for o in orgs)
+    out: dict[str, list[dict]] = {}
+    for r in red:
+        key = ORG + r["target"] if r.get("target") in orgs and not wide else CLUSTER
+        out.setdefault(key, []).append(r)
+    if broken:
+        key = "snapshot" if "snapshot" in broken else "suite"
+        out.setdefault(CLUSTER, []).append({"id": key, "target": "(cluster)", "actual": broken,
+                                            "expected": "a complete run"})
+    return out
 
 
 def incidents(state: dict, results: dict | None, complete: bool, broken: str | None,
               board: Board, at: str) -> dict:
-    """The open incidents after this run: {key: task id}."""
+    """The open incidents after this run: {key: {"task": id, "checks": [red ids]}}. An entry whose value
+    is a bare task id is one of T-7309's per-check incidents: it closes when its check passes, is no
+    longer probed, or is listed in this run's incident of its Organization."""
     rows = {r["id"]: r for r in (results or {}).get("checks") or []}
-    red = {k: r for k, r in rows.items() if r.get("result") == "fail"}
-    if broken:
-        key = "snapshot" if "snapshot" in broken else "suite"
-        red[key] = {"id": key, "target": "(cluster)", "actual": broken, "expected": "a complete run"}
-    out = dict(state)
-    for key, r in red.items():
-        if key not in out:
-            try:
-                out[key] = board.open(key, r, at)
-            except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-                print(f"incident {key} not filed, next run tries again: {e}", file=sys.stderr)
-    for key, tid in list(out.items()):
+    red = groups(results, broken)
+    out = {k: v for k, v in state.items() if isinstance(v, dict)}
+
+    def close(key: str, tid: str, why: str) -> bool:
+        try:
+            board.close(tid, key, why, at)
+            return True
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            print(f"incident {key} ({tid}) not closed, next run tries again: {e}", file=sys.stderr)
+            return False
+
+    for key, reds in red.items():
+        ids = [r["id"] for r in reds]
+        try:
+            if key not in out:
+                out[key] = {"task": board.open(key, reds, at), "checks": ids}
+            elif out[key].get("checks") != ids:
+                board.update(out[key]["task"], reds, at)
+                out[key]["checks"] = ids
+        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+            print(f"incident {key} not filed or updated, next run tries again: {e}", file=sys.stderr)
+    for key, inc in list(out.items()):
         if key in red:
+            continue
+        # An incomplete run closes only an incident whose every check it ran and saw pass.
+        seen_green = all(rows.get(c, {}).get("result") == "pass" for c in inc.get("checks") or [None])
+        if (complete or seen_green) and close(key, inc["task"], "all checks pass"):
+            del out[key]
+    tracked = {r["id"]: out[k]["task"] for k, reds in red.items() if k in out for r in reds}
+    for key, tid in state.items():
+        if not isinstance(tid, str):
             continue
         row = rows.get(key)
         if row and row.get("result") == "pass":
             why = "passes"
         elif complete and row is None:
             why = "is no longer probed"
+        elif key in tracked:
+            why = f"is tracked in {tracked[key]}"
         else:
+            out[key] = tid
             continue
-        try:
-            board.close(tid, key, why, at)
-        except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
-            print(f"incident {key} ({tid}) not closed, next run tries again: {e}", file=sys.stderr)
-            continue
-        del out[key]
+        if not close(key, tid, why):
+            out[key] = tid
     return out
+
+
+MAX_WINDOW = dt.timedelta(minutes=60)
+
+
+def maintenance_until(state: Path, now: dt.datetime) -> dt.datetime | None:
+    """The end of the rollout window a deployer announced in <state>/maintenance-until (an ISO time),
+    capped at 60 min after the file was written; None when the file is missing, unreadable or past."""
+    f = state / "maintenance-until"
+    try:
+        text, written = f.read_text().strip(), dt.datetime.fromtimestamp(f.stat().st_mtime, dt.UTC)
+    except OSError:
+        return None
+    try:
+        until = dt.datetime.fromisoformat(text)
+    except ValueError:
+        print(f"{f}: {text[:40]!r} is not an ISO time; filing as usual", file=sys.stderr)
+        return None
+    until = until.replace(tzinfo=until.tzinfo or dt.UTC)
+    until = min(until, written + MAX_WINDOW)
+    return until if now < until else None
 
 
 def main(argv=None) -> int:
@@ -319,6 +403,8 @@ def main(argv=None) -> int:
         except (OSError, ValueError):
             broken = broken or "suite: no results.json"
     line = summary(cfg["cluster"], now, results, broken)
+    if until := maintenance_until(state, now):
+        line += f"; maintenance until {until.strftime('%Y-%m-%dT%H:%M:%SZ')}, nothing filed"
     keep_week(state / "orgs.log", line, now)
     prune_runs(state / "runs", now)
     board = Board(Path(cfg["board"]) if cfg.get("board") else None, cfg["cluster"], cfg["owner"], a.dry_run)
@@ -328,8 +414,10 @@ def main(argv=None) -> int:
     except (OSError, ValueError):
         open_now = {}
     at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    path.write_text(json.dumps(incidents(open_now, results, broken is None, broken, board, at), indent=1))
     print(line)
+    if until:
+        return 0
+    path.write_text(json.dumps(incidents(open_now, results, broken is None, broken, board, at), indent=1))
     return 1 if broken or (results or {}).get("totals", {}).get("fail") else 0
 
 
