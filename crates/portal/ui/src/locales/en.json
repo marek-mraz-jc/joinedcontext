@@ -6183,6 +6183,17 @@
     "nameNeeded": "A usable name is needed to open a project.",
     "planLocked": "Close the dialog and start again to change this; the plan was made for it."
   },
+  "projectsPage": {
+    "title": "Projects",
+    "lead": "Your Organization's projects you may open. Each holds its Context Spaces, Endpoints and Pipelines.",
+    "firstTitle": "Create your first project",
+    "firstLead": "A project holds your Context Spaces, Endpoints and Pipelines. You become its steward and add your colleagues under Members.",
+    "first": "Create your first project",
+    "noneTitle": "You are in no project yet",
+    "noneLead": "Ask your Organization's administrators to add you to a project. Public datasets are open to you in the catalogue.",
+    "toCatalogue": "Open the catalogue",
+    "pagesOf": "Pages of {project}"
+  },
   "entities": {
     "type": "Entity type",
     "scopeQ": "Area",
@@ -8157,7 +8168,8 @@
     },
     "title": "Administration",
     "adminOnly": "This page is for organization administrators. Ask one of them for what you need here.",
-    "installationOnly": "This section belongs to the installation: only its administrators open it.",
+    "installationOnlyTitle": "{section} is the installation's section",
+    "installationOnly": "The {section} section belongs to the installation: only its administrators open it.",
     "lead": "What is the same in every project: the organization's settings, its members, roles, groups and service accounts, and its projects. Every change here is proposed and approved.",
     "tab": {
       "settings": "Settings",
@@ -9586,7 +9598,7 @@
   },
   "catalogue": {
     "title": "Catalogue",
-    "lead": "Every public dataset of this installation's open-data catalogues. Search, filter, open a dataset and use its data.",
+    "lead": "Search and filter every open dataset of this installation.",
     "loading": "Loading the catalogue…",
     "unavailable": "These catalogues did not answer, so their datasets are missing below: {catalogues}. Try again in a minute.",
     "search": {
@@ -9620,6 +9632,25 @@
       "noMatch": "No value matches.",
       "all": "Show all {count}",
       "fewer": "Show fewer"
+    },
+    "scope": {
+      "label": "Scope",
+      "project": "This project",
+      "organization": "Whole organization",
+      "organizationHint": "Every project of this organization",
+      "hint": "Which datasets the list holds, e.g. This project lists only {project}'s."
+    },
+    "access": {
+      "label": "Access",
+      "granted": "Granted to me",
+      "public": "Public",
+      "badge": "Granted",
+      "loading": "Checking which datasets are granted to you…",
+      "failed": "Your granted datasets could not be checked just now. Reload the page in a minute.",
+      "none": "Nothing internal is shared with you yet. A data steward of your organization can grant your group access, e.g. to its sensor readings.",
+      "noProject": "You are not in a project of this organization yet. A project owner or an administrator of this organization can add you to one.",
+      "countNone": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}, none granted to you yet",
+      "countNoProject": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}; you are not in a project of this organization yet"
     },
     "results": {
       "label": "Datasets",
@@ -9824,17 +9855,6 @@
       "calendarFileNamed": "Download {title} (.ics)"
     },
     "readable": {
-      "title": "Datasets you may read",
-      "lead": "Internal datasets of your organization that you have been granted, read live from their Endpoint.",
-      "loading": "Checking which datasets you may read…",
-      "empty": {
-        "title": "No internal dataset is shared with you yet",
-        "description": "Ask a data steward of your organization to grant your group access. The public datasets below are open to everyone."
-      },
-      "noProject": {
-        "title": "You are not in a project of this organization yet",
-        "description": "A project owner or an administrator of this organization can add you to a project; its internal datasets are then listed here. The public datasets below are open to everyone."
-      },
       "unanswered": "{count} datasets could not be checked just now and are not listed. Reload the page in a minute.",
       "access": {
         "public": "Public",
@@ -9842,7 +9862,6 @@
         "group": "Group {group}",
         "granted": "Granted to you"
       },
-      "open": "Open dataset",
       "endpoint": {
         "title": "Dataset",
         "lead": "This dataset is read live from its Endpoint with your own access.",
@@ -9852,7 +9871,7 @@
         "refusedLead": "It is not among the datasets shared with you. The box below says how to get access."
       }
     },
-    "leadSignedIn": "Datasets you may read, then every public dataset of this installation's open-data catalogues. Search, filter, open a dataset and use its data."
+    "leadSignedIn": "Search and filter the open datasets and the ones granted to you."
   },
   "dataagreements": {
     "field": {
@@ -12360,7 +12379,9 @@
     "catalogue": "Catalogue",
     "connectors": "AI connectors",
     "settings": "Settings",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "projects": "Projects",
+    "administration": "Administration"
   },
   "dataAccess": {
     "title": "Data access",

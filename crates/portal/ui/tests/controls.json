@@ -1227,8 +1227,9 @@
     },
     "src/pages/catalogue/CataloguePage.tsx": {
       "controls": {
-        "Button": 12,
-        "Checkbox": 1
+        "Button": 14,
+        "Checkbox": 1,
+        "RadioGroup": 1
       },
       "tests": [
         "catalogue_page.test.tsx"
@@ -1248,6 +1249,14 @@
       },
       "tests": [
         "catalogue_page.test.tsx"
+      ]
+    },
+    "src/pages/catalogue/ReadableDatasets.tsx": {
+      "controls": {
+        "Checkbox": 1
+      },
+      "tests": [
+        "member_catalogue.test.tsx"
       ]
     },
     "src/pages/catalogue/SubscribeMenu.tsx": {
@@ -2274,6 +2283,14 @@
       },
       "tests": [
         "portal_sources.test.tsx"
+      ]
+    },
+    "src/pages/projects/ProjectsPage.tsx": {
+      "controls": {
+        "Button": 1
+      },
+      "tests": [
+        "projects_page.test.tsx"
       ]
     },
     "src/pages/repositories/PullsView.tsx": {

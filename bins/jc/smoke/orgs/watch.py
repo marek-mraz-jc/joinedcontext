@@ -325,6 +325,9 @@ def incidents(state: dict, results: dict | None, complete: bool, broken: str | N
     """The open incidents after this run: {key: {"task": id, "checks": [red ids]}}. An entry whose value
     is a bare task id is one of T-7309's per-check incidents: it closes when its check passes, is no
     longer probed, or is listed in this run's incident of its Organization."""
+    # A `dry-` id is a placeholder an older --dry-run stored: the incident was never filed, so file it now.
+    state = {k: v for k, v in state.items()
+             if not str(v.get("task", "") if isinstance(v, dict) else v).startswith("dry-")}
     rows = {r["id"]: r for r in (results or {}).get("checks") or []}
     red = groups(results, broken)
     out = {k: v for k, v in state.items() if isinstance(v, dict)}
@@ -397,7 +400,7 @@ def maintenance_until(state: Path, now: dt.datetime) -> dt.datetime | None:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="orgs/watch.py")
     p.add_argument("--config", required=True)
-    p.add_argument("--dry-run", action="store_true", help="file no incident; print the line")
+    p.add_argument("--dry-run", action="store_true", help="file no incident and leave incidents.json as it is; print the line")
     a = p.parse_args(argv)
     cfg = load(Path(a.config))
     state = Path(cfg["state"])
@@ -434,7 +437,9 @@ def main(argv=None) -> int:
     print(line)
     if until:
         return 0
-    path.write_text(json.dumps(incidents(open_now, results, broken is None, broken, board, at), indent=1))
+    after = incidents(open_now, results, broken is None, broken, board, at)
+    if not a.dry_run:  # a dry run's ids are placeholders: stored, they would hide real incidents from the next run
+        path.write_text(json.dumps(after, indent=1))
     return 1 if broken or (results or {}).get("totals", {}).get("fail") else 0
 
 

@@ -6183,6 +6183,17 @@
     "nameNeeded": "K otevření projektu je potřeba použitelné jméno.",
     "planLocked": "Chcete-li to změnit, zavřete okno a začněte znovu; plán byl připraven pro tuto hodnotu."
   },
+  "projectsPage": {
+    "title": "Projekty",
+    "lead": "Projekty vaší organizace, které můžete otevřít. Každý obsahuje své kontextové prostory, koncové body a pipeliny.",
+    "firstTitle": "Vytvořte svůj první projekt",
+    "firstLead": "Projekt obsahuje vaše kontextové prostory, koncové body a pipeliny. Stanete se jeho správcem dat a kolegy přidáte v části Členové.",
+    "first": "Vytvořit první projekt",
+    "noneTitle": "Zatím nejste v žádném projektu",
+    "noneLead": "Požádejte správce své organizace, aby vás přidali do projektu. Veřejné datové sady máte k dispozici v katalogu.",
+    "toCatalogue": "Otevřít katalog",
+    "pagesOf": "Stránky projektu {project}"
+  },
   "entities": {
     "type": "Typ entity",
     "scopeQ": "Oblast",
@@ -8157,7 +8168,8 @@
     },
     "title": "Administrace",
     "adminOnly": "Tato stránka je pro administrátory organizace. O to, co zde potřebujete, požádejte některého z nich.",
-    "installationOnly": "Tato část patří instalaci: otevírají ji jen její správci.",
+    "installationOnlyTitle": "Sekce {section} patří instalaci",
+    "installationOnly": "Část {section} patří instalaci: otevírají ji jen její správci.",
     "lead": "Co je stejné v každém projektu: nastavení organizace, její členové, role, skupiny a servisní účty a její projekty. Každá změna se zde navrhuje a schvaluje.",
     "tab": {
       "settings": "Nastavení",
@@ -9586,7 +9598,7 @@
   },
   "catalogue": {
     "title": "Katalog",
-    "lead": "Všechny veřejné datové sady otevřených katalogů této instalace. Vyhledejte, filtrujte, otevřete datovou sadu a použijte její data.",
+    "lead": "Vyhledávejte a filtrujte všechny otevřené datové sady této instalace.",
     "loading": "Načítá se katalog…",
     "unavailable": "Tyto katalogy neodpověděly, jejich datové sady proto níže chybí: {catalogues}. Zkuste to znovu za minutu.",
     "search": {
@@ -9620,6 +9632,25 @@
       "noMatch": "Žádná hodnota neodpovídá.",
       "all": "Zobrazit všech {count}",
       "fewer": "Zobrazit méně"
+    },
+    "scope": {
+      "label": "Rozsah",
+      "project": "Tento projekt",
+      "organization": "Celá organizace",
+      "organizationHint": "Všechny projekty této organizace",
+      "hint": "Které datové sady seznam obsahuje, např. Tento projekt ukáže jen datové sady projektu {project}."
+    },
+    "access": {
+      "label": "Přístup",
+      "granted": "Zpřístupněné mně",
+      "public": "Veřejné",
+      "badge": "Zpřístupněno",
+      "loading": "Ověřujeme, které datové sady jsou vám zpřístupněny…",
+      "failed": "Zpřístupněné datové sady se teď nepodařilo ověřit. Obnovte stránku za minutu.",
+      "none": "Zatím vám nebyla zpřístupněna žádná interní datová sada. Správce dat vaší organizace může vaší skupině zpřístupnit například údaje ze senzorů.",
+      "noProject": "Zatím nejste v žádném projektu této organizace. Přidat vás může vlastník projektu nebo správce této organizace.",
+      "countNone": "{count, plural, =0 {Žádná datová sada} one {# datová sada} few {# datové sady} other {# datových sad}}, zatím vám nebyla zpřístupněna žádná",
+      "countNoProject": "{count, plural, =0 {Žádná datová sada} one {# datová sada} few {# datové sady} other {# datových sad}}; zatím nejste v žádném projektu této organizace"
     },
     "results": {
       "label": "Datové sady",
@@ -9824,17 +9855,6 @@
       "calendarFileNamed": "Stáhnout {title} (.ics)"
     },
     "readable": {
-      "title": "Datové sady, které můžete číst",
-      "lead": "Interní datové sady vaší organizace, ke kterým máte přístup, čtené živě z jejich Endpointu.",
-      "loading": "Ověřuji, které datové sady můžete číst…",
-      "empty": {
-        "title": "Zatím s vámi není sdílena žádná interní datová sada",
-        "description": "Požádejte správce dat vaší organizace, aby vaší skupině udělil přístup. Veřejné datové sady níže jsou otevřené všem."
-      },
-      "noProject": {
-        "title": "Zatím nejste v žádném projektu této organizace",
-        "description": "Vlastník projektu nebo správce této organizace vás může přidat do projektu; jeho interní datové sady se pak zobrazí zde. Veřejné datové sady níže jsou otevřené všem."
-      },
       "unanswered": "{count} datových sad se teď nepodařilo ověřit a nejsou uvedeny. Načtěte stránku znovu za minutu.",
       "access": {
         "public": "Veřejné",
@@ -9842,7 +9862,6 @@
         "group": "Skupina {group}",
         "granted": "Uděleno vám"
       },
-      "open": "Otevřít datovou sadu",
       "endpoint": {
         "title": "Datová sada",
         "lead": "Tato datová sada se čte živě z jejího Endpointu s vaším vlastním přístupem.",
@@ -9852,7 +9871,7 @@
         "refusedLead": "Není mezi datovými sadami, které vám někdo zpřístupnil. Rámeček níže říká, jak získat přístup."
       }
     },
-    "leadSignedIn": "Datové sady, které můžete číst, a pak každá veřejná datová sada katalogů otevřených dat této instalace. Hledejte, filtrujte, otevřete datovou sadu a použijte její data."
+    "leadSignedIn": "Vyhledávejte a filtrujte otevřené datové sady i ty, které vám byly zpřístupněny."
   },
   "dataagreements": {
     "field": {
@@ -12360,7 +12379,9 @@
     "catalogue": "Katalog",
     "connectors": "AI konektory",
     "settings": "Nastavení",
-    "signOut": "Odhlásit se"
+    "signOut": "Odhlásit se",
+    "projects": "Projekty",
+    "administration": "Správa"
   },
   "dataAccess": {
     "title": "Přístup k datům",

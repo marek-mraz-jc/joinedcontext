@@ -498,6 +498,28 @@ def test_the_per_check_incidents_of_t7309_close_on_the_next_green_run():
     assert b.closed == [("T-7327", "mcp.alpha", "is tracked in T-1")] and list(state) == ["org/alpha"]
 
 
+def test_a_dry_placeholder_left_in_the_state_is_filed_as_a_real_incident():
+    b = FakeBoard()
+    stale = {"org/alpha": {"task": "dry-org/alpha", "checks": ["mcp.alpha"]}, "mcp.beta": "dry-mcp.beta"}
+    state = watch.incidents(stale, results(**{"mcp.alpha": "fail", "portal.alpha": "pass"}), True, None, b, "t1")
+    assert b.opened == [("org/alpha", ["mcp.alpha"])] and b.closed == []
+    assert state == {"org/alpha": {"task": "T-1", "checks": ["mcp.alpha"]}}
+
+
+def test_a_dry_run_reads_the_state_but_leaves_incidents_json_byte_identical(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    cfg = tmp_path / "watch.toml"
+    cfg.write_text(f'''cluster = "jc-dev"\nkubeconfig = "k"\nnamespace = "jc"\npg_namespace = "pg"\n
+edge = "127.0.0.1"\ndomain = "city.test"\nstate = "{state}"\nowner = "deployer"\nboard = "{tmp_path}"\n''')
+    state.mkdir()
+    before = b'{"portal.alpha": "T-7323"}'
+    (state / "incidents.json").write_bytes(before)
+    monkeypatch.setattr(watch, "snapshot", lambda cfg, run: (_ for _ in ()).throw(RuntimeError("503")))
+    monkeypatch.setattr(watch.Board, "tool", lambda *a, **k: pytest.fail("the board was touched"))
+    assert watch.main(["--config", str(cfg), "--dry-run"]) == 1  # the broken snapshot is red, nothing filed
+    assert (state / "incidents.json").read_bytes() == before
+
+
 def window(tmp_path, text, written):
     f = tmp_path / "maintenance-until"
     f.write_text(text)

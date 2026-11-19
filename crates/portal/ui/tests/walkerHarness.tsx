@@ -39,6 +39,7 @@ export const ADDRESSES: Record<string, string[]> = {
   "/": ["/"],
   "/endpoints": ["/endpoints"],
   "/catalogue": ["/catalogue"],
+  "/projects": ["/projects"],
   "/catalogue/$name": ["/catalogue/air"],
   "/catalogue/endpoint/$slug": ["/catalogue/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa"],
   "/v/$slug": ["/v/air-board"],

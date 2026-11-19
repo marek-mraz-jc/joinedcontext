@@ -193,15 +193,12 @@ impl CkanSync {
         let organizations = self.organizations.current();
         let Some(catalogue) = organizations.iter().find(|c| c.organization == org) else {
             if organization_count(repo) > 1 {
-                target.instance.organization_default = Some(org.clone());
-                target.publication.organization = Some(org);
+                target = into_organization(repo, target, org);
             }
             return target;
         };
         target.instance.url = catalogue.url.as_str().trim_end_matches('/').to_owned();
-        target.instance.organization_default = Some(catalogue.organization.clone());
-        target.publication.organization = Some(catalogue.organization.clone());
-        target
+        into_organization(repo, target, catalogue.organization.clone())
     }
 
     /// The Organization catalogue `instance` is, after [`CkanSync::routed`].
@@ -1322,6 +1319,37 @@ fn project_token(
     publisher::token(&target.instance, &folder, source).map_err(|err| err.to_string())
 }
 
+/// `target` filed under the CKAN organisation `org`, its Organization's. That organisation is the
+/// Organization's, not the instance's: it carries the Organization's own title, so the instances
+/// of its several projects do not each rename it to their own (jc-prod's `hel` read "Slovensko —
+/// otvorené dáta" on all 135 datasets of four projects, T-7389). The instance keeps its title only
+/// where the organisation is still its own `organizationDefault`.
+fn into_organization(repo: &Repository, mut target: Target, org: String) -> Target {
+    if target.instance.organization_default.as_deref() != Some(org.as_str()) {
+        target.instance_title = organization_title(repo, &org, target.language.as_deref());
+    }
+    target.instance.organization_default = Some(org.clone());
+    target.publication.organization = Some(org);
+    target
+}
+
+/// The `metadata.title` of Organization `org` in `language`, else English, else its first entry.
+fn organization_title(repo: &Repository, org: &str, language: Option<&str>) -> Option<String> {
+    let (_, organization) = repo.iter().find(|(id, _)| {
+        id.kind == "Organization"
+            && id.name == org
+            && id
+                .namespace
+                .as_deref()
+                .is_none_or(|n| n == crate::api::blueprints::ORG_NAMESPACE)
+    })?;
+    let title: jc_core::i18n::Text =
+        serde_json::from_value(organization.manifest.metadata.rest.get("title")?.clone()).ok()?;
+    let preferred: Vec<String> = language.map(str::to_owned).into_iter().collect();
+    let text = title.resolve(&preferred, "en").trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
 /// The Organization that owns `project` in `repo`, as `permissions::organization_of` reads it
 /// in the mirror: its Project's `spec.organizationRef`, else the installation's (the only
 /// Organization, or the only one that sets `spec.installation`).
@@ -1900,5 +1928,59 @@ mod tests {
             Some("hel-fi")
         );
         assert_eq!(routed.publication.organization, None);
+    }
+
+    /// T-7389: four projects of Organization `hel` publish into the CKAN organisation `hel`; each
+    /// CkanInstance's own title (slovensko's "Slovensko — otvorené dáta") renamed it for all of
+    /// them. Routed there, every project names the Organization's title, whichever publishes.
+    #[test]
+    fn a_routed_organisation_carries_its_organizations_title_not_an_instances() {
+        let mut hel = manifest("Organization", "hel", json!({ "installation": true }));
+        hel.metadata.rest.insert(
+            "title".to_owned(),
+            json!({ "en": "City of Helsinki", "sk": "Mesto Helsinki" }),
+        );
+        let repo = Repository::from_manifests(
+            vec![
+                hel,
+                manifest("Organization", "ba", json!({})),
+                manifest("Project", "slovensko", json!({ "organizationRef": "hel" })),
+                manifest("Project", "praha", json!({ "organizationRef": "hel" })),
+            ],
+            None,
+        )
+        .expect("a repository");
+        let sync = CkanSync::new("portal.example");
+        for (project, instance_title, language, expected) in [
+            (
+                "slovensko",
+                "Slovensko — otvorené dáta",
+                Some("sk"),
+                "Mesto Helsinki",
+            ),
+            (
+                "praha",
+                "Hlavní město Praha",
+                Some("cs"),
+                "City of Helsinki",
+            ),
+        ] {
+            let mut asked = target(project);
+            asked.instance_title = Some(instance_title.to_owned());
+            asked.language = language.map(str::to_owned);
+            let routed = sync.routed(&repo, asked);
+            assert_eq!(routed.publication.organization.as_deref(), Some("hel"));
+            assert_eq!(
+                routed.instance_title.as_deref(),
+                Some(expected),
+                "{project}"
+            );
+        }
+        // The instance whose own organisation it is keeps its title there.
+        let mut own = target("slovensko");
+        own.instance.organization_default = Some("hel".to_owned());
+        own.instance_title = Some("Helsinki open data".to_owned());
+        let routed = sync.routed(&repo, own);
+        assert_eq!(routed.instance_title.as_deref(), Some("Helsinki open data"));
     }
 }

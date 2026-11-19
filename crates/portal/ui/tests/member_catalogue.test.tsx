@@ -5,7 +5,8 @@
 // visitor of a non-public Endpoint, "no access" to a person without a grant, rows to a person
 // with one; a member gets the member shell.
 import type { ReactNode } from "react";
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { Granted } from "../src/pages/catalogue/ReadableDatasets";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n, { SUPPORTED_LOCALES } from "../src/i18n";
 import en from "../src/locales/en.json";
@@ -29,7 +30,7 @@ vi.mock("@tanstack/react-router", () => ({
   useSearch: () => ({}),
 }));
 
-const { ReadableDatasets } = await import("../src/pages/catalogue/ReadableDatasets");
+const { AccessFacet, GrantedCard } = await import("../src/pages/catalogue/ReadableDatasets");
 const { EndpointDatasetPage } = await import("../src/pages/catalogue/EndpointDatasetPage");
 const { MemberFrame } = await import("../src/components/layout/MemberFrame");
 
@@ -60,42 +61,79 @@ afterEach(() => {
   status = "authenticated";
 });
 
-describe("the datasets a signed-in person may read (T-6411)", () => {
+describe("the datasets a signed-in person may read (T-6411, T-7389)", () => {
   beforeEach(async () => {
     await i18n.changeLanguage("en");
   });
 
-  it("lists each internal dataset with what grants it and leaves the public ones to the search below", async () => {
-    const { container } = renderPart(<ReadableDatasets />, { answer: readable(ANALYST) });
-    const counts = await screen.findByRole("link", { name: `${en.catalogue.readable.open}: Counts` });
+  const granted = (datasets: ReturnType<typeof row>[]): Granted => ({ state: "ready", datasets, unanswered: 0 });
+
+  it("marks each granted dataset and names what grants it", async () => {
+    const { container } = renderPart(
+      <ul>
+        {ANALYST.slice(1).map((dataset) => (
+          <li key={dataset.slug}>
+            <GrantedCard dataset={dataset} />
+          </li>
+        ))}
+      </ul>,
+    );
+    const counts = await screen.findByRole("link", { name: "Counts" });
     expect(counts).toHaveAttribute("href", "/catalogue/endpoint/countszzzzzzzzzzzzzzzzzzzzzz");
-    expect(screen.getByText(en.catalogue.readable.access.organization)).toBeInTheDocument();
-    expect(screen.getByText("Group traffic-analysts")).toBeInTheDocument();
-    // The public one is listed by the open-data search below, not twice.
-    expect(screen.queryByRole("link", { name: /Bikes/ })).toBeNull();
-    // No count of public rows beside a CKAN list that may show another number (UI judge, T-6411).
-    expect(screen.queryByText(/Public datasets/)).toBeNull();
+    expect(screen.getAllByText(en.catalogue.access.badge)).toHaveLength(2);
+    expect(screen.getByText(`helsinki · ${en.catalogue.readable.access.organization}`)).toBeInTheDocument();
+    expect(screen.getByText("helsinki · Group traffic-analysts")).toBeInTheDocument();
     await expectNoViolations(container);
   });
 
-  it("shows the failure state, not a crash, when the answer holds no dataset list", async () => {
-    renderPart(<ReadableDatasets />, {
-      answer: (url: URL) => (url.pathname === "/api/v1/catalogue/readable" ? json({ unanswered: 0 }) : undefined),
-    });
-    expect(await screen.findByRole("button", { name: en.app.error.retry })).toBeInTheDocument();
+  it("counts the granted and the public datasets, and picks one of them", async () => {
+    const onSelect = vi.fn();
+    const { container } = renderPart(
+      <AccessFacet granted={granted(ANALYST.slice(1))} publicCount={626} selected={undefined} onSelect={onSelect} />,
+    );
+    const mine = await screen.findByRole("checkbox", { name: /Granted to me/ });
+    expect(mine.closest("label")?.textContent).toBe("Granted to me2");
+    expect(screen.getByRole("checkbox", { name: /Public/ }).closest("label")?.textContent).toBe("Public626");
+    fireEvent.click(mine);
+    expect(onSelect).toHaveBeenCalledWith("granted");
+    await expectNoViolations(container);
   });
 
-  it("says what to do next when nothing internal is shared, and warns of what it could not check", async () => {
-    renderPart(<ReadableDatasets />, { answer: readable([row("bikes", "public")], 2) });
-    expect(await screen.findByText(en.catalogue.readable.empty.title)).toBeInTheDocument();
-    expect(screen.getByText(en.catalogue.readable.empty.description)).toBeInTheDocument();
-    expect(screen.getByText(/2 datasets could not be checked/)).toBeInTheDocument();
+  it("unticks the chosen access", async () => {
+    const onSelect = vi.fn();
+    renderPart(<AccessFacet granted={granted(ANALYST.slice(1))} publicCount={3} selected="public" onSelect={onSelect} />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /Public/ }));
+    expect(onSelect).toHaveBeenCalledWith(undefined);
+  });
+
+  it.each([
+    ["ready", en.catalogue.access.none],
+    ["noProject", en.catalogue.access.noProject],
+    ["failed", en.catalogue.access.failed],
+    ["loading", en.catalogue.access.loading],
+  ] as const)("refuses Granted to me (0) when %s and says why", async (state, words) => {
+    const onSelect = vi.fn();
+    const { container } = renderPart(
+      <AccessFacet granted={{ state, datasets: [], unanswered: 0 }} publicCount={626} selected={undefined} onSelect={onSelect} />,
+    );
+    const mine = await screen.findByRole("checkbox", { name: /Granted to me/ });
+    expect(mine).toHaveAttribute("aria-disabled", "true");
+    expect(mine).toHaveAccessibleDescription(words);
+    fireEvent.click(mine);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getAllByText(words)).toHaveLength(2);
+    await expectNoViolations(container);
   });
 
   it.each(SUPPORTED_LOCALES)("says everything in %s with no raw key", async (locale) => {
     await i18n.changeLanguage(locale);
-    const { container } = renderPart(<ReadableDatasets />, { answer: readable(ANALYST, 1) });
-    await screen.findAllByRole("listitem");
+    const { container } = renderPart(
+      <>
+        <AccessFacet granted={{ state: "noProject", datasets: [], unanswered: 0 }} publicCount={1} selected={undefined} onSelect={() => undefined} />
+        <GrantedCard dataset={ANALYST[2]!} />
+      </>,
+    );
+    await screen.findAllByRole("checkbox");
     expectNoRawKeys(container);
   });
 });

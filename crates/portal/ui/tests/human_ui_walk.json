@@ -1139,6 +1139,7 @@
     },
     "src/pages/catalogue/DatasetMap.tsx": null,
     "src/pages/catalogue/DatasetPage.tsx": null,
+    "src/pages/catalogue/ReadableDatasets.tsx": null,
     "src/pages/catalogue/SubscribeMenu.tsx": null,
     "src/pages/catalogue/PublishDataset.tsx": {
       "walkedBy": "deployer",
@@ -2195,6 +2196,17 @@
         "evidence/T-6876/datasets-filled-400.png",
         "evidence/T-6876/datasets-refusal-1440.png",
         "evidence/T-6876/datasets-refusal-400.png"
+      ]
+    },
+    "src/pages/projects/ProjectsPage.tsx": {
+      "walkedBy": "worker-t7380",
+      "date": "2026-11-19",
+      "screenshots": [
+        "evidence/T-7380/shots/home-empty-may-create-1440.png",
+        "evidence/T-7380/shots/home-empty-may-create-400.png",
+        "evidence/T-7380/shots/projects-member-refused-1440.png",
+        "evidence/T-7380/shots/projects-list-400.png",
+        "evidence/T-7380/shots/dialog-change-proposed-400.png"
       ]
     },
     "src/pages/repositories/PullsView.tsx": {

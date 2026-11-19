@@ -43,10 +43,12 @@ export const ORGANIZATION_TABS: readonly OrganizationTab[] = ORGANIZATION_GROUPS
 
 /**
  * The sections an administrator of one Organization other than the installation's opens
- * (ADR-N-058 section 2.4, T-5248): who is bound inside it, the groups those bindings name and its
+ * (ADR-N-058 section 2.4, T-5248): its people, who is bound inside it, the groups those bindings name and its
  * own Organization manifest. The rest is the installation's.
  */
 export const OWN_ORGANIZATION_TABS: readonly OrganizationTab[] = [
+  // Its people, which the server lists inside that Organization alone (PF-91, T-7380).
+  "people",
   "members",
   "groups",
   "settings",

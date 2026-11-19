@@ -574,19 +574,25 @@ pub struct LateRouter(Arc<(std::sync::OnceLock<Router>, tokio::sync::Notify)>);
 
 impl LateRouter {
     fn router(&self) -> Router {
+        self.router_or(
+            Router::new().fallback(|| async {
+                (StatusCode::SERVICE_UNAVAILABLE, "starting").into_response()
+            }),
+        )
+    }
+
+    /// The router in place, or `starting` while there is none.
+    fn router_or(&self, starting: Router) -> Router {
         let slot = self.clone();
         Router::new().fallback(move |req: Request| {
             let slot = slot.clone();
+            let starting = starting.clone();
             async move {
-                match slot.0.0.get() {
-                    Some(router) => {
-                        use tower::ServiceExt;
-                        match router.clone().oneshot(req).await {
-                            Ok(resp) => resp,
-                            Err(never) => match never {},
-                        }
-                    }
-                    None => (StatusCode::SERVICE_UNAVAILABLE, "starting").into_response(),
+                use tower::ServiceExt;
+                let router = slot.0.0.get().cloned().unwrap_or(starting);
+                match router.oneshot(req).await {
+                    Ok(resp) => resp,
+                    Err(never) => match never {},
                 }
             }
         })
@@ -609,6 +615,49 @@ impl LateRouter {
             notified.await;
         }
     }
+}
+
+/// What the main listener answers while the modules are built (T-7384): `pong` to ekiben's
+/// `/ping` on each of ekiben's entries, as ekiben's own route answers it once built, and 503 to
+/// everything else. The kubelet's startup and liveness probes ask that ping, the readiness probe
+/// asks the Portal, so a slow start phase (a module's migration waiting on a lock) reads as not
+/// ready instead of as a dead process: before, the bound listener answered nothing until every
+/// module was built, and the probes timed out on jc-prod for minutes.
+fn starting_router(plans: &[MountPlan]) -> Router {
+    let pings: Arc<Vec<(Option<String>, String)>> = Arc::new(
+        plans
+            .iter()
+            .filter(|plan| plan.module == Module::Ekiben)
+            .flat_map(MountPlan::specs)
+            .map(|spec| {
+                let prefix = spec.path_prefix.as_deref().unwrap_or("");
+                (spec.host.clone(), format!("{prefix}/ping"))
+            })
+            .collect(),
+    );
+    Router::new().fallback(move |req: Request| {
+        let pings = pings.clone();
+        async move {
+            let host = req
+                .headers()
+                .get(header::HOST)
+                .and_then(|h| h.to_str().ok())
+                .or_else(|| req.uri().authority().map(|a| a.as_str()));
+            let ping = matches!(
+                *req.method(),
+                axum::http::Method::GET | axum::http::Method::HEAD
+            ) && pings.iter().any(|(at, path)| {
+                req.uri().path() == path
+                    && at
+                        .as_deref()
+                        .is_none_or(|at| host.is_some_and(|h| h.eq_ignore_ascii_case(at)))
+            });
+            match ping {
+                true => (StatusCode::OK, "pong").into_response(),
+                false => (StatusCode::SERVICE_UNAVAILABLE, "starting").into_response(),
+            }
+        }
+    })
 }
 
 /// The first wait between two failed Portal builds; it doubles up to [`PORTAL_RETRY_MAX`].
@@ -1268,6 +1317,13 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
     // Bound before the modules are built: the Portal's sibling addresses name this listener.
     let listener = bind(cfg.listen).await?;
     let addr = listener.local_addr().map_err(StartError::Serve)?;
+    // Served at once (T-7384, starting_router); a start that fails below stops it on drop.
+    let main = LateRouter::default();
+    let main_server = tokio_util::task::AbortOnDropHandle::new(serve(
+        listener,
+        main.router_or(starting_router(&plans)),
+        shutdown.clone(),
+    ));
     let mut siblings = Siblings::new(&plans, addr);
     // The in-pod listener: loopback only, so the modules the edge never routes to are reached
     // by their siblings without the edge and by nobody outside the pod (T-6705).
@@ -1366,7 +1422,8 @@ pub async fn start(cfg: &Config, shutdown: CancellationToken) -> Result<Running,
         vars.extend(modules::portal::reconciler_vars(cfg));
         modules::portal::config(mount, env, vars)?;
     }
-    let mut servers = vec![serve(listener, built.router, shutdown.clone())];
+    main.set(built.router);
+    let mut servers = vec![main_server.detach()];
     if let (Some(listener), Some(router)) = (in_pod_listener, built.in_pod.clone()) {
         servers.push(serve(listener, router, shutdown.clone()));
     }

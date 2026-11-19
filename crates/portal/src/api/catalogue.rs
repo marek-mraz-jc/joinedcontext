@@ -495,6 +495,8 @@ pub struct Filters {
     pub licence: Vec<String>,
     pub spatial: Vec<String>,
     pub year: Vec<String>,
+    /// `?project=`: that project's datasets alone (T-7389).
+    pub project: Option<String>,
     pub page: usize,
 }
 
@@ -519,6 +521,7 @@ impl Filters {
                 "licence" => filters.licence.push(value),
                 "spatial" => filters.spatial.push(value),
                 "year" => filters.year.push(value),
+                "project" => filters.project = Some(value),
                 "page" => filters.page = value.parse().ok().filter(|p| *p > 0).unwrap_or(1),
                 _ => {}
             }
@@ -1116,7 +1119,7 @@ fn gzipped<T: Serialize>(body: &T) -> Option<Vec<u8>> {
     get,
     path = "/api/v1/catalogue",
     summary = "Search the Catalogue",
-    description = "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees.",
+    description = "Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).",
     tag = "ckan",
     params(
         ("q" = Option<String>, Query, description = "Full-text search, passed to CKAN"),
@@ -1126,19 +1129,27 @@ fn gzipped<T: Serialize>(body: &T) -> Option<Vec<u8>> {
         ("licence" = Option<Vec<String>>, Query, description = "CKAN licence ids"),
         ("spatial" = Option<Vec<String>>, Query, description = "NUTS codes or location IRIs"),
         ("year" = Option<Vec<String>>, Query, description = "Calendar years covered"),
+        ("project" = Option<String>, Query, description = "Only the datasets of this project, which the caller must be able to read, e.g. pilot"),
         ("page" = Option<usize>, Query, description = "Page, from 1"),
     ),
     responses(
         (status = 200, description = "One page of datasets and the facets", body = CataloguePage),
+        (status = 401, description = "`project` asked without signing in", body = crate::error::ProblemDetails),
+        (status = 403, description = "`project` names a project the caller may not read, or one of another Organization", body = crate::error::ProblemDetails),
         (status = 503, description = "No catalogue answered", body = crate::error::ProblemDetails),
     )
 )]
 pub async fn get_catalogue(
     State(state): State<AppState>,
+    user: Result<crate::auth::session::CurrentUser, ApiError>,
     headers: HeaderMap,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let filters = Filters::parse(query.as_deref());
+    let organization = crate::organization_host::organization();
+    if let Some(project) = &filters.project {
+        readable_project(&state, user, project, organization.as_deref())?;
+    }
     let urls = catalogues(&state);
     let mut datasets = Vec::new();
     let mut unavailable = Vec::new();
@@ -1157,13 +1168,101 @@ pub async fn get_catalogue(
             unavailable.join(", ")
         )));
     }
+    let datasets = owned(
+        &state,
+        datasets,
+        organization.as_deref(),
+        filters.project.as_deref(),
+    );
     let mut page = page_of(
         &datasets,
         &filters,
         i32::from(jc_time::TimestampTz::now().utc().year()),
     );
     page.unavailable = unavailable;
+    if filters.project.is_some() {
+        // Asked with the caller's rights: never kept by a shared cache.
+        return Ok(([(header::CACHE_CONTROL, "private, no-store")], Json(page)).into_response());
+    }
     Ok(cached(&headers, page))
+}
+
+/// Refuses `?project=` unless the caller may read that project and, on an Organization's own
+/// host, it is one of that Organization's (T-7389). A project the caller may not read answers
+/// like one that is not there, so the refusal names no more than the caller sent.
+fn readable_project(
+    state: &AppState,
+    user: Result<crate::auth::session::CurrentUser, ApiError>,
+    project: &str,
+    organization: Option<&str>,
+) -> Result<(), ApiError> {
+    let refused = || {
+        ApiError::Denied(format!(
+            "project: you may not read the datasets of project '{}' here; choose one of your projects",
+            project.chars().take(63).collect::<String>()
+        ))
+    };
+    if !crate::resource::is_dns1123(project) {
+        return Err(refused());
+    }
+    let user = user?;
+    let readable =
+        crate::permissions::for_request(state, &user.0.identity, project).may_read_project();
+    let here = organization.is_none_or(|org| {
+        crate::permissions::organization_of(&state.mirror, project).as_deref() == Some(org)
+    });
+    if readable && here {
+        Ok(())
+    } else {
+        Err(refused())
+    }
+}
+
+/// The datasets a search on this host lists (T-7389): on an Organization's own host only those
+/// published from its projects' Endpoints, and with `project` only that project's. A dataset of
+/// no Endpoint here (a harvest) belongs to no Organization, so only the installation's own host
+/// lists it.
+fn owned(
+    state: &AppState,
+    datasets: Vec<Value>,
+    organization: Option<&str>,
+    project: Option<&str>,
+) -> Vec<Value> {
+    if organization.is_none() && project.is_none() {
+        return datasets;
+    }
+    let mut projects = std::collections::HashMap::new();
+    for namespace in state.mirror.namespaces() {
+        for endpoint in state
+            .mirror
+            .list(&namespace, "Endpoint", &ListOptions::default())
+            .items
+        {
+            if let Some(slug) = endpoint.spec["slug"].as_str() {
+                projects.insert(slug.to_owned(), namespace.clone());
+            }
+        }
+    }
+    let mut organizations = std::collections::HashMap::new();
+    datasets
+        .into_iter()
+        .filter(|dataset| {
+            let Some(of) = extra(dataset, "endpoint")
+                .and_then(|e| our_endpoint_slug(state, &e))
+                .and_then(|slug| projects.get(&slug))
+            else {
+                return false;
+            };
+            project.is_none_or(|p| p == of)
+                && organization.is_none_or(|org| {
+                    organizations
+                        .entry(of.clone())
+                        .or_insert_with(|| crate::permissions::organization_of(&state.mirror, of))
+                        .as_deref()
+                        == Some(org)
+                })
+        })
+        .collect()
 }
 
 /// The open-data datasets `q` finds in every catalogue of the installation, at most `limit`, each
@@ -2253,6 +2352,171 @@ mod tests {
             (name.as_str(), classes),
             ("air-quality", vec!["AirQualityObserved".to_owned()])
         );
+    }
+
+    /// T-7389: on an Organization's own host the list holds that Organization's projects'
+    /// datasets alone, never a harvest or another Organization's; `?project=` narrows it to one
+    /// project the caller may read there, and is refused for one they may not or of another
+    /// Organization. The installation's own host keeps every dataset.
+    #[tokio::test]
+    async fn an_organizations_host_lists_its_own_datasets_and_a_readable_project_alone() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        put(
+            "Organization",
+            "smartcity",
+            "org",
+            json!({ "installation": true }),
+        );
+        put("Organization", "marek-mraz", "org", json!({}));
+        put(
+            "Project",
+            "helsinki",
+            "org",
+            json!({ "organizationRef": "smartcity" }),
+        );
+        put(
+            "Project",
+            "pilot",
+            "org",
+            json!({ "organizationRef": "marek-mraz" }),
+        );
+        put(
+            "Project",
+            "pilot-two",
+            "org",
+            json!({ "organizationRef": "marek-mraz" }),
+        );
+        for (project, slug, audience) in [
+            ("helsinki", "stopshelsinkizzzzzzzzzzzzzzz", "public"),
+            ("pilot", "airpilotzzzzzzzzzzzzzzzzzzzz", "public"),
+            ("pilot-two", "roadspilotzzzzzzzzzzzzzzzzzz", "organization"),
+        ] {
+            put(
+                "Endpoint",
+                slug,
+                project,
+                json!({ "slug": slug, "audience": audience }),
+            );
+        }
+        let ours = |slug: &str| endpoint_url(&state.config.api_base_url(), slug);
+        let all = vec![
+            dataset(
+                "stops",
+                "hel",
+                extras(&[("endpoint", &ours("stopshelsinkizzzzzzzzzzzzzzz"))]),
+                &[],
+                false,
+            ),
+            dataset(
+                "air",
+                "hel",
+                extras(&[("endpoint", &ours("airpilotzzzzzzzzzzzzzzzzzzzz"))]),
+                &[],
+                false,
+            ),
+            dataset(
+                "roads",
+                "hel",
+                extras(&[("endpoint", &ours("roadspilotzzzzzzzzzzzzzzzzzz"))]),
+                &[],
+                false,
+            ),
+            dataset(
+                "harvested",
+                "hel",
+                extras(&[(
+                    "endpoint",
+                    "https://other.example/api/endpoint/airpilotzzzzzzzzzzzzzzzzzzzz/",
+                )]),
+                &[],
+                false,
+            ),
+            dataset("plain", "hel", extras(&[]), &[], false),
+        ];
+        let names = |org: Option<&str>, project: Option<&str>| -> Vec<String> {
+            owned(&state, all.clone(), org, project)
+                .iter()
+                .filter_map(|d| text(d, "name"))
+                .collect()
+        };
+        assert_eq!(
+            names(None, None),
+            ["stops", "air", "roads", "harvested", "plain"]
+        );
+        assert_eq!(names(Some("marek-mraz"), None), ["air", "roads"]);
+        assert_eq!(names(Some("smartcity"), None), ["stops"]);
+        assert_eq!(names(Some("bbsk"), None), Vec::<String>::new());
+        assert_eq!(names(Some("marek-mraz"), Some("pilot")), ["air"]);
+        assert_eq!(names(None, Some("helsinki")), ["stops"]);
+
+        put(
+            "Role",
+            "reader",
+            "org",
+            json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        );
+        put(
+            "RoleBinding",
+            "reader",
+            "org",
+            json!({ "subjects": [{ "user": "reader@marek-mraz.example" }], "role": "reader", "scope": { "project": "pilot" } }),
+        );
+        let who = |email: &str| {
+            Ok(crate::auth::session::CurrentUser(
+                crate::auth::session::Session {
+                    identity: crate::auth::session::Identity {
+                        client: None,
+                        subject: format!("f:1:{email}"),
+                        username: email.to_owned(),
+                        email: Some(email.to_owned()),
+                        name: None,
+                        roles: Vec::new(),
+                        groups: Vec::new(),
+                        second_factor: false,
+                    },
+                    expires_at: 0,
+                    issued_at: 0,
+                    signed_in_at: None,
+                    id_token: String::new(),
+                    access_expires_at: 0,
+                    refresh_token: None,
+                },
+            ))
+        };
+        let reader = "reader@marek-mraz.example";
+        assert!(readable_project(&state, who(reader), "pilot", Some("marek-mraz")).is_ok());
+        assert!(readable_project(&state, who(reader), "pilot", None).is_ok());
+        for (user, project, org) in [
+            (reader, "pilot-two", Some("marek-mraz")),
+            (reader, "helsinki", None),
+            (reader, "pilot", Some("smartcity")),
+            ("stranger@example.org", "pilot", Some("marek-mraz")),
+            (reader, "Pilot/../x", Some("marek-mraz")),
+        ] {
+            let refused = readable_project(&state, who(user), project, org);
+            assert!(
+                matches!(&refused, Err(ApiError::Denied(m)) if m.starts_with("project: ")),
+                "{user} {project} {org:?}: {refused:?}"
+            );
+        }
+        assert!(matches!(
+            readable_project(
+                &state,
+                Err(ApiError::Unauthorized),
+                "pilot",
+                Some("marek-mraz")
+            ),
+            Err(ApiError::Unauthorized)
+        ));
     }
 
     #[test]

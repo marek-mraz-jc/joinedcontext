@@ -232,6 +232,43 @@ export function useAdministers(): { known: boolean; administers: boolean; own?: 
 }
 
 /**
+ * Whether `permissions/me` of the organization says the caller may open a project (PF-65). Only
+ * an answer that says so counts: `/` sends a person with no project here on it, and a member who
+ * may not would land on an empty page instead of the catalogue (T-7380). The API still decides.
+ */
+export function useMayOpenProject(): { known: boolean; allowed: boolean } {
+  const permissions = usePermissions(ORG_NAMESPACE);
+  const creation = permissions.data?.projects?.creation;
+  return {
+    known: !permissions.checking,
+    allowed: !permissions.denied && creation?.allowed === true,
+  };
+}
+
+/**
+ * Where `/` sends a signed-in person (T-7380): the project last worked in; with no project,
+ * whoever may open one goes to the Organization's projects page and its "Create your first
+ * project", a member (ADR-N-067, T-6411) to the catalogue. `wait` while the right is unknown;
+ * `undefined` while the project list itself is pending or failed (the caller says so).
+ */
+export function homeOf(
+  first: string | undefined,
+  listed: boolean,
+  may: { known: boolean; allowed: boolean },
+): { project: string } | "/projects" | "/catalogue" | "wait" | undefined {
+  if (first) {
+    return { project: first };
+  }
+  if (!listed) {
+    return undefined;
+  }
+  if (!may.known) {
+    return "wait";
+  }
+  return may.allowed ? "/projects" : "/catalogue";
+}
+
+/**
  * Whether the caller is one of the installation's operators (the bootstrap group,
  * `JC_PORTAL_BOOTSTRAP_ADMINS`; T-7129, T-7140): only then does Administration show the
  * operators' sections. The server checks the group and the second factor on every door.
