@@ -192,11 +192,14 @@ impl PolicyEngine for SpeedOnly {
     }
     fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
         const DC: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
-        narrowed(op, vec![Rule {
-            types: vec![format!("{DC}Car")],
-            attributes: vec![format!("{DC}speed")],
-            ..Rule::default()
-        }])
+        narrowed(
+            op,
+            vec![Rule {
+                types: vec![format!("{DC}Car")],
+                attributes: vec![format!("{DC}speed")],
+                ..Rule::default()
+            }],
+        )
     }
     fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
         notify()

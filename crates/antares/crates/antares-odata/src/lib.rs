@@ -138,21 +138,38 @@ async fn respond(ops: &Ops, req: Request) -> Response {
         return not_found();
     };
     let version = csdl_version(&req);
-    // The model shows only what the engine lets this caller read
-    // (F-ANT4-003), as the LinkML surface narrows the same schema: its
-    // documents, and the names a URL or a body resolves against, so a hidden
-    // property is refused as an unknown one is (AUZ-06, ISO-03).
+    // The documents that name the model's types and properties show only
+    // what the engine lets this caller read (F-ANT4-003), as the LinkML
+    // surface narrows the same schema. A query naming a hidden property
+    // reads it as absent, so the model it runs over stays the view's.
     let (mut parts, body) = req.into_parts();
     let Ok(caller) = Caller::from_request_parts(&mut parts, &()).await;
     let mut req = Request::from_parts(parts, body);
+    let names_the_model = req.method() == Method::GET
+        && req
+            .uri()
+            .path()
+            .strip_prefix(&format!("/{id}/odata/v4"))
+            .is_some_and(|rest| matches!(rest, "" | "/" | "/$metadata"));
     // Absolute: a path-only context URL is read as a file path by
     // Microsoft.OData.Core on Linux (T-3688).
     let service_root = format!(
         "{}{PREFIX}/{id}/odata/v4/",
         antares_ops::public_base(req.headers())
     );
-    let visible = view.readable(&caller).await;
-    let served = kept(&id, view.clone(), visible, version, service_root);
+    let served = if names_the_model {
+        let visible = view.readable(&caller).await;
+        assembled(
+            &id,
+            view.clone(),
+            Some(&visible),
+            version,
+            service_root.clone(),
+        )
+        .map(Arc::new)
+    } else {
+        kept(&id, view.clone(), version, service_root.clone())
+    };
     let Some(served) = served else {
         return not_found();
     };
@@ -167,8 +184,14 @@ async fn respond(ops: &Ops, req: Request) -> Response {
     if req.method() == Method::POST && req.uri().path() == format!("{inner_root}$batch") {
         let path_root = format!("{PREFIX}{inner_root}");
         let roots = (path_root.as_str(), inner_root.as_str());
-        // every member resolves against the caller's model, as alone
-        return batch::serve(routed, ops, roots, req, state.url_limits.max_query_len).await;
+        // A member reading a model document is shown the narrowed one, as alone; built only
+        // when a member asks for one.
+        let narrowed = async {
+            let visible = view.readable(&caller).await;
+            assembled(&id, view, Some(&visible), version, service_root).map(|s| s.routed)
+        };
+        let routers = (routed, narrowed);
+        return batch::serve(routers, ops, roots, req, state.url_limits.max_query_len).await;
     }
     let Ok(resp) = routed.clone().oneshot(req).await;
     resp
@@ -188,9 +211,10 @@ struct Served {
     weight: u32,
 }
 
-/// [`assembled`] for what `visible` lets a caller read, kept per view, version, service root
-/// and `visible` on this pod: callers the engine shows the same names share it, and it is
-/// built again only when the view compilation, the schema revision moves (T-6619 R3-005: the model key, the state and the
+/// [`assembled`] for a request that reads no model document, kept per view, version and
+/// service root on this pod: such a request's model is the same for every caller (the engine narrows only the
+/// documents that name the model), so it is built again only when the view compilation, the
+/// schema revision moves (T-6619 R3-005: the model key, the state and the
 /// router were built per request). Weighed as [`model`] weighs, under the same bound, plus
 /// the inner router the view's `AppState` builds on its first call (~246 KiB, T-5896), which
 /// a kept entry now builds once instead of per request.
@@ -198,13 +222,12 @@ struct Served {
 fn kept(
     id: &str,
     view: ViewOps,
-    visible: antares_ops::Visible,
     version: CsdlVersion,
     service_root: String,
 ) -> Option<Arc<Served>> {
     // The service root is part of the key: one view read under two hosts kept one entry and
     // rebuilt it on every request that changed host (odata review P-2-09).
-    type Key = (String, bool, String, antares_ops::Visible);
+    type Key = (String, bool, String);
     static KEPT: LazyLock<moka::sync::Cache<Key, Arc<Served>>> = LazyLock::new(|| {
         moka::sync::Cache::builder()
             .max_capacity(MODEL_CACHE_BYTES.load(std::sync::atomic::Ordering::Relaxed))
@@ -217,7 +240,6 @@ fn kept(
         id.to_owned(),
         version == CsdlVersion::V4_01,
         service_root.clone(),
-        visible.clone(),
     );
     let generation = view.generation();
     let (revision, _) = view.schema()?;
@@ -226,7 +248,7 @@ fn kept(
             return Some(hit);
         }
     }
-    let served = Arc::new(assembled(id, view, Some(&visible), version, service_root)?);
+    let served = Arc::new(assembled(id, view, None, version, service_root)?);
     KEPT.insert(key, served.clone());
     Some(served)
 }

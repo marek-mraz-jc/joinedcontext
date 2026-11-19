@@ -52,11 +52,12 @@ const BATCH_ONLY: [&str; 6] = [
     "if-none-match",
 ];
 
-/// `POST {root}$batch`. `routed`, over the caller's narrowed model, serves a
-/// member at `/{view}/odata/v4/…` (`inner_root`); `service_root` is the root
-/// a client writes.
+/// `POST {root}$batch`. `routed` serves a member at `/{view}/odata/v4/…`
+/// (`inner_root`), `narrowed` gives the router over the caller's narrowed model
+/// that serves a member reading the service or metadata document;
+/// `service_root` is the root a client writes.
 pub(crate) async fn serve(
-    routed: &Router,
+    (routed, narrowed): (&Router, impl std::future::Future<Output = Option<Router>>),
     ops: &Ops,
     (service_root, inner_root): (&str, &str),
     req: Request,
@@ -125,21 +126,37 @@ pub(crate) async fn serve(
         else {
             return bad("a batch member carries a header a member may not set").into_response();
         };
-        checked.push((format!("{inner_root}{rest}"), headers));
+        let path = rest.split(['?', '#']).next().unwrap_or_default();
+        let names_the_model =
+            matches!(member.method, odata_batch::Method::Get) && matches!(path, "" | "$metadata");
+        checked.push((format!("{inner_root}{rest}"), headers, names_the_model));
     }
+    let mut narrowed = Some(narrowed);
+    let mut model: Option<Option<Router>> = None;
     let mut answers: Vec<odata_batch::Response> = Vec::with_capacity(checked.len());
     // Whether each member that ran failed; `dependsOn` names earlier ones.
     let mut failed: Vec<bool> = Vec::with_capacity(checked.len());
     // the member answers buffered so far share `max_answer_bytes` (F-ANT4-004)
     let mut left = ops.max_answer_bytes();
-    for (member, (target, headers)) in batch.requests.into_iter().zip(checked) {
+    for (member, (target, headers, names_the_model)) in batch.requests.into_iter().zip(checked) {
         let id = member.id.clone();
         let skip = skipped(&member.depends_on, &failed, left).await;
-        let answer = match skip {
-            Some(answer) => answer,
-            None => {
+        let serving = if names_the_model {
+            if let Some(narrowed) = narrowed.take() {
+                model = Some(narrowed.await);
+            }
+            model.as_ref().and_then(Option::as_ref)
+        } else {
+            Some(routed)
+        };
+        let answer = match (skip, serving) {
+            (Some(answer), _) => answer,
+            (None, None) => {
+                member_refused(StatusCode::NOT_FOUND, "NotFound", "the view has no model").await
+            }
+            (None, Some(serving)) => {
                 let budget = (max_query_len, &mut left);
-                run(routed, ops, &parts, member, (&target, headers), budget).await
+                run(serving, ops, &parts, member, (&target, headers), budget).await
             }
         };
         let failure = answer.status >= 400;
