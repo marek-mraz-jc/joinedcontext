@@ -776,8 +776,10 @@ async fn the_query_card_reads_back_from_the_served_model() {
         "{read}"
     );
     let card = read["contents"][0]["text"].as_str().unwrap_or_default();
+    // the data model's text, fenced as data (S2-21)
     assert!(
-        card.starts_with(&format!("NGSI-LD Endpoint {SLUG}, ETSI GS CIM 009")),
+        card.starts_with("The Endpoint's query card, from its data model")
+            && card.contains(&format!("json\nNGSI-LD Endpoint {SLUG}, ETSI GS CIM 009")),
         "{card}"
     );
     assert!(
@@ -832,7 +834,7 @@ async fn card_text() -> String {
 }
 
 /// T-5642 (T-4759 item 3): get_endpoint answers the card first, byte-identical to `card://` on
-/// the Endpoint's server and on the hub, then the links.
+/// the Endpoint's server and on the hub, then the links; the text fences both as data (S2-21).
 #[tokio::test]
 async fn get_endpoint_answers_the_card_card_reads() {
     let card = card_text().await;
@@ -843,9 +845,19 @@ async fn get_endpoint_answers_the_card_card_reads() {
     )
     .await;
     let text = answer["content"][0]["text"].as_str().unwrap_or_default();
-    assert!(text.starts_with(&format!("{card}\n\n{{")), "{text}");
+    assert!(
+        text.starts_with(&format!(
+            "{card}\n\nThe fenced block is the Endpoint's record"
+        )),
+        "{text}"
+    );
+    assert_eq!(answer["_meta"]["jc/untrusted"], json!(true), "{answer}");
     let endpoint = &answer["structuredContent"]["endpoint"];
-    assert_eq!(endpoint["card"], json!(card), "{answer}");
+    let raw = endpoint["card"].as_str().unwrap_or_default();
+    assert!(
+        raw.starts_with("NGSI-LD Endpoint") && card.contains(&format!("json\n{raw}\n")),
+        "the structured card is the text inside the fence: {answer}"
+    );
     assert_eq!(endpoint["slug"], json!(SLUG), "{answer}");
     assert!(endpoint.get("attributes").is_none(), "{answer}");
     let read = hub("resources/read", json!({ "uri": format!("card://{SLUG}") })).await;
@@ -905,16 +917,16 @@ async fn detail_attributes_lists_every_served_type_or_one() {
 
 /// T-5642 (T-4759 item 1): the per-Endpoint server's instructions start with its card, so a
 /// client knows each served type at connect; the hub over this one Endpoint carries it too.
+/// The card is the data model's text, so it comes fenced as data (S2-21).
 #[tokio::test]
 async fn initialize_instructions_carry_the_card() {
     let card = card_text().await;
     let initialized = rpc(SLUG, "initialize", json!({})).await;
     let instructions = initialized["instructions"].as_str().unwrap_or_default();
     assert!(
-        instructions.starts_with("NGSI-LD Endpoint"),
+        card.starts_with("The Endpoint's query card") && instructions.contains(&card),
         "{instructions}"
     );
-    assert!(instructions.starts_with(&card), "{instructions}");
     for line in ["\nUser: age:integer", "\nVehicle: weight"] {
         assert!(instructions.contains(line), "{line}: {instructions}");
     }

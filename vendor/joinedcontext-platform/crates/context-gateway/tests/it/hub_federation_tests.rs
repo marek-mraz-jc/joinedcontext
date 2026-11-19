@@ -566,7 +566,7 @@ async fn the_space_surface_of_a_federating_space_is_its_view_and_names_its_membe
         "the broker's own text comes first: {instructions}"
     );
     assert!(
-        instructions.contains("This space federates transport"),
+        instructions.contains("This space federates ⟦transport⟧"),
         "{instructions}"
     );
     let calls = calls.lock().expect("the call log");

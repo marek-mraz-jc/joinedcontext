@@ -21,6 +21,7 @@ pub mod search;
 pub mod server;
 pub mod tools;
 pub mod units;
+pub mod untrusted;
 pub mod writes;
 
 /// What the hub and every named server tell a client in `initialize`: catalogue first, then the

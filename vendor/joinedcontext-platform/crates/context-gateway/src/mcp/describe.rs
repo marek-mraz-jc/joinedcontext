@@ -172,7 +172,11 @@ pub(crate) async fn read(
             match card(gateway, endpoint, subject).await {
                 Ok(card) => result(
                     id,
-                    json!({ "contents": [{ "uri": uri, "mimeType": "text/plain", "text": card }] }),
+                    json!({ "contents": [{
+                        "uri": uri,
+                        "mimeType": "text/plain",
+                        "text": super::untrusted::block(CARD, &card),
+                    }] }),
                 ),
                 Err(message) => result(id, refused(&message, &Value::Null)),
             }
@@ -180,6 +184,10 @@ pub(crate) async fn read(
         Some(Resource::Card) | None => error(id, -32602, "unknown resource"),
     }
 }
+
+/// What a fenced card is named where it reaches a model: the card names the data model's types,
+/// attributes and descriptions, its authors' text (S2-21).
+pub(crate) const CARD: &str = "The Endpoint's query card, from its data model";
 
 /// The Endpoint's NGSI-LD query card for this caller (T-4759, T-4760): from the LinkML its view
 /// serves them, naming only the read tools their grants cover. Without a model, the query rules.
