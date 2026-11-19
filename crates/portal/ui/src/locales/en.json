@@ -9662,16 +9662,8 @@
       "hint": "Which datasets the list holds, e.g. This project lists only {project}'s."
     },
     "access": {
-      "label": "Access",
-      "granted": "Granted to me",
-      "public": "Public",
-      "badge": "Granted",
-      "loading": "Checking which datasets are granted to you…",
-      "failed": "Your granted datasets could not be checked just now. Reload the page in a minute.",
-      "none": "Nothing internal is shared with you yet. A data steward of your organization can grant your group access, e.g. to its sensor readings.",
-      "noProject": "You are not in a project of this organization yet. A project owner or an administrator of this organization can add you to one.",
-      "countNone": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}, none granted to you yet",
-      "countNoProject": "{count, plural, =0 {No dataset} one {# dataset} other {# datasets}}; you are not in a project of this organization yet"
+      "badge": "Internal",
+      "badgeHint": "Not public: shared with you by its publisher."
     },
     "results": {
       "label": "Datasets",
