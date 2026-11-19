@@ -19,7 +19,7 @@ on:
 permissions: { contents: read }
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write, id-token: write }
     timeout-minutes: 60
     strategy:
@@ -73,7 +73,7 @@ jobs:
       - run: echo "jc-app-${{ matrix.app }} digest ${{ steps.push.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
   scan:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write, id-token: write }
     timeout-minutes: 20
     env:

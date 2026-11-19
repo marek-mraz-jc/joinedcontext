@@ -34,7 +34,7 @@ jobs:
   # jc, kaisatsu, daiya (the -server crates' binaries) and jcctl with the Portal UI jc embeds, as one tar: tar keeps the mtimes
   # up.sh's ui-fresh.sh compares (ui/dist built after the last UI commit, jc linked after ui/dist).
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env: { CARGO_BUILD_JOBS: "3" }
     steps:
@@ -71,7 +71,7 @@ jobs:
   # (the buildx-stable-1 tag setup-buildx pulls, pushed 2026-11-03). Saved as an image tar each
   # shard loads as jc-apps:smoke.
   apps:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -98,7 +98,7 @@ jobs:
           retention-days: 1
 
   runner-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -135,7 +135,7 @@ jobs:
 
   # jc's own e2e tests (bins/jc/tests restart_pg.rs, the kaisatsu store), one row per test.
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     services:
       # The password is no role name: restart_pg checks that no module prints it, and `postgres`
@@ -186,7 +186,7 @@ jobs:
   # suite runs there. ci/test_smoke_yml.py checks that every suite runs on exactly one shard.
   shard:
     needs: [build, apps]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -242,7 +242,7 @@ jobs:
   verdict:
     needs: [runner-tests, e2e, shard]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

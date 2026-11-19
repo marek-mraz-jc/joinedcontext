@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   script:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     defaults: { run: { working-directory: crates/ekiben/crates/ekiben-js } }
     steps:
