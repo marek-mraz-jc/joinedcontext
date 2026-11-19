@@ -400,6 +400,10 @@ tokio::task_local! {
     pub(crate) static INPROCESS_DEPTH: usize;
 }
 
+/// A surface's part of a Tenant purge: stop what runs in this process for
+/// the Tenant.
+pub type PurgeHook = Arc<dyn Fn(&antares_model::TenantId) + Send + Sync>;
+
 /// The broker's state as every handler and layer receives it. Cloned at
 /// every middleware layer and extractor of every request, so a clone is
 /// three reference counts: the per-process part sits behind one `Arc`
@@ -503,6 +507,9 @@ pub struct Shared {
     pub tenant_bytes: Arc<std::sync::Mutex<std::collections::HashMap<String, crate::BytesEntry>>>,
     /// The 5.5.10 wall's memory of Tenants that exist (T-5500).
     pub known_tenants: Arc<KnownTenants>,
+    /// What a surface stops when a Tenant is purged (its running Channels,
+    /// S4-30), registered by the surface and run by `/q/tenants` DELETE.
+    pub purge_hooks: Arc<std::sync::Mutex<Vec<PurgeHook>>>,
     /// Allocator stats provider (set by the broker; None in tests/wasm).
     pub mem_stats: Option<Arc<dyn Fn() -> serde_json::Value + Send + Sync>>,
     /// Bus state provider for /q/health (`bus: {mode, connected,
@@ -908,6 +915,7 @@ impl AppState {
                 limits: Arc::new(crate::bounds::LimitStats::default()),
                 tenant_bytes: Arc::default(),
                 known_tenants: Arc::default(),
+                purge_hooks: Arc::default(),
                 mem_stats: None,
                 bus_stats: None,
                 egress: Arc::new(crate::egress::Egress::new(egress_policy)),
@@ -1184,6 +1192,65 @@ impl AppState {
     ///
     /// # Errors
     /// The store's.
+    /// Delete the broker documents that name `tenant` (S4-30, T-7306): its
+    /// policy, every grant it is a party to, the views serving it, and its
+    /// schema, retention and quality documents. Erasure records stay: they
+    /// are the record of what was erased.
+    ///
+    /// # Errors
+    /// The store's.
+    #[cfg(feature = "views")]
+    pub async fn purge_tenant_documents(
+        &self,
+        tenant: &antares_model::TenantId,
+    ) -> Result<(), String> {
+        let t = tenant.as_str();
+        self.delete_policy_doc(t).await?;
+        let named = |doc: &serde_json::Value, member: &str| {
+            doc.get(member)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        // paged reads: a reserved Tenant past the list ceiling is walked,
+        // never refused (tenant_purge_large)
+        let mut grants = Vec::new();
+        crate::csource::walk_docs(self, &grant_tenant()?, antares_store::Kind::View, |doc| {
+            if let (Some(target), Some(source)) = (named(&doc, "target"), named(&doc, "source")) {
+                if target == t || source == t {
+                    // antares-icsr's grant key: `{target}~{source}`
+                    grants.push(format!("{target}~{source}"));
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        for key in grants {
+            self.delete_grant_doc(&key).await?;
+        }
+        let mut views = Vec::new();
+        crate::csource::walk_docs(self, &view_tenant()?, antares_store::Kind::View, |doc| {
+            let Some(id) = named(&doc, "id") else {
+                return Ok(());
+            };
+            let own = crate::views::TENANT_DOC_PREFIXES
+                .iter()
+                .any(|p| id.strip_prefix(p) == Some(t));
+            // a view id holds no `:`; erasure records stay
+            let serves = !id.contains(':') && named(&doc, "tenant").as_deref() == Some(t);
+            if own || serves {
+                views.push(id);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        for id in views {
+            self.delete_view_doc(&id).await?;
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "views")]
     pub async fn policy_docs(&self) -> Result<Vec<serde_json::Value>, String> {
         self.store
@@ -2003,6 +2070,44 @@ mod jsonld_context_locality_5_13 {
             "the row is kept"
         );
         let deleted = send("DELETE", path, None).await.expect("response");
+        assert_eq!(deleted.status(), axum::http::StatusCode::NO_CONTENT);
+    }
+
+    /// S4-14 (T-7306): on a broker serving many Tenants, a request that names
+    /// no Tenant is no operator: only the admin bearer evicts or refetches a
+    /// shared Cached @context.
+    #[tokio::test]
+    async fn only_the_admin_bearer_deletes_a_cached_context_among_organizations() {
+        let mut st = AppState::new("me".into());
+        st.tenant_organization = true;
+        let token = "t".repeat(crate::admin_auth::MIN_LEN);
+        st.admin_auth = Some(Arc::new(
+            crate::admin_auth::AdminAuth::new(&token, false).expect("token"),
+        ));
+        let (url, _) = context_server("/shared-orgs.jsonld");
+        st.loader
+            .resolve_for(&antares_model::TenantId::default(), &serde_json::json!(url))
+            .await
+            .expect("cached");
+        let path = format!(
+            "/ngsi-ld/v1/jsonldContexts/{}",
+            url.replace(':', "%3A").replace('/', "%2F")
+        );
+        let send = |uri: String, bearer: Option<&str>| {
+            let mut b = axum::http::Request::builder().method("DELETE").uri(uri);
+            if let Some(t) = bearer {
+                b = b.header("Authorization", format!("Bearer {t}"));
+            }
+            let req = b.body(axum::body::Body::empty()).expect("request");
+            tower::ServiceExt::oneshot(crate::router(st.clone()), req)
+        };
+        for uri in [path.clone(), format!("{path}?reload=true")] {
+            let refused = send(uri.clone(), None).await.expect("response");
+            assert_eq!(refused.status(), axum::http::StatusCode::FORBIDDEN, "{uri}");
+            let wrong = send(uri, Some(&"x".repeat(32))).await.expect("response");
+            assert_eq!(wrong.status(), axum::http::StatusCode::FORBIDDEN);
+        }
+        let deleted = send(path, Some(&token)).await.expect("response");
         assert_eq!(deleted.status(), axum::http::StatusCode::NO_CONTENT);
     }
 

@@ -13,8 +13,9 @@
 //! The OData v4 surface (`odata/v4`, EP-104, T-3830) is the same forward to the broker's
 //! `antares-odata` surface of the view. Its reads go as OGC's do; its writes pass the guards the
 //! NGSI-LD view forward applies first (T-3939): the domain gate, the caller pinned, the body
-//! bound, no hidden attribute named, a minting Endpoint's key left to the broker, the day's
-//! creates counted. The broker's view still decides the operation (ADR-0023).
+//! bound, no hidden attribute named, an `id` that is an NGSI-LD URN, no access control in the
+//! body, a minting Endpoint's key left to the broker, the day's creates counted, the grant's
+//! kept versions marked. The broker's view still decides the operation (ADR-0023).
 
 use crate::app::{Gateway, MAX_BODY};
 use crate::auth::subject::Subject;
@@ -27,6 +28,7 @@ use crate::handlers::respond::read_only;
 use crate::handlers::writes::hidden_refusal;
 use crate::middleware::response::RESULTS_RESTRICTED;
 use crate::middleware::tenancy;
+use crate::pdp::write_guard;
 use crate::resolver::Endpoint;
 use crate::{proxy, query};
 use axum::body::Body;
@@ -771,6 +773,10 @@ async fn odata_write(
         tracing::info!(slug = %endpoint.slug, "odata write refused");
         return problem.into_response();
     }
+    if let Err(refusal) = body_held(&sent) {
+        tracing::info!(slug = %endpoint.slug, %refusal, "odata write refused");
+        return ProblemDetails::from(refusal).into_response();
+    }
     if let Err(answer) =
         chosen_id_refused(gateway, &endpoint, &view, &write, &parts.headers, &members).await
     {
@@ -791,7 +797,11 @@ async fn odata_write(
             }
         }
     }
-    let caller = crate::handlers::ngsi_ld::create_key(&subject, &parts.headers);
+    let mut headers = parts.headers;
+    crate::handlers::ngsi_ld::mark_kept_versions((&endpoint, &subject), &mut headers, || {
+        touched(&write, &members)
+    });
+    let caller = crate::handlers::ngsi_ld::create_key(&subject, &headers);
     let reserved = match reserve_create(gateway, &endpoint, &caller, write.operation) {
         Ok(reserved) => reserved,
         Err(answer) => return *answer,
@@ -807,7 +817,7 @@ async fn odata_write(
     );
     let answer = gateway
         .broker
-        .send(method, &target, parts.headers, Body::from(sent))
+        .send(method, &target, headers, Body::from(sent))
         .await;
     if let Some(now) = reserved {
         if !answer.as_ref().is_ok_and(|a| a.status().is_success()) {
@@ -856,6 +866,36 @@ fn named_refusal(endpoint: &Endpoint, write: &Write, members: &[String]) -> Opti
         .find_map(|name| {
             hidden_refusal(endpoint, &name).or_else(|| crate::quality::owned_path(Some(&name)))
         })
+}
+
+/// What the NGSI-LD view asks of every write body and reads the same in OData: an `id` member
+/// is an NGSI-LD URN (PF-43), and no member carries access control (GW29). The NGSI-LD view's
+/// per-type and model checks need its `type` member, which an OData body has not; a space with
+/// a model takes no OData write ([`unwritable`]).
+fn body_held(sent: &[u8]) -> Result<(), write_guard::Refusal> {
+    let Ok(body) = serde_json::from_slice::<Value>(sent) else {
+        return Ok(());
+    };
+    match body.get("id") {
+        None => {}
+        Some(Value::String(id)) => write_guard::check_identifier(id, None)?,
+        Some(other) => return Err(write_guard::Refusal::MalformedId(other.to_string())),
+    }
+    write_guard::check_fragment(&body, &crate::pdp::evaluator::Constraints::default())
+}
+
+/// The attributes an OData write changes, by their NGSI-LD names: the property its path names,
+/// else its body's members less the key; `None` (every attribute) for a write of no member.
+fn touched(write: &Write, members: &[String]) -> Option<std::collections::BTreeSet<String>> {
+    let names: std::collections::BTreeSet<String> = write
+        .property
+        .iter()
+        .cloned()
+        .chain(members.iter().filter_map(|member| attribute_of(member)))
+        .filter(|name| name != "id")
+        .map(|name| unmangle(&name))
+        .collect();
+    (!names.is_empty()).then_some(names)
 }
 
 /// A form's ids are minted, never chosen (EP-97): the broker mints the key a create leaves out,

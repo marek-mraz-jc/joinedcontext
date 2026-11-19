@@ -294,6 +294,84 @@ async fn purge_removes_one_tenant_and_leaves_the_other() {
 /// each still holds. They are not in `/q/tenants` — that is the inventory of
 /// customer accounts — so they are read from the reverse index that names
 /// them, which is also what a teardown removes last.
+/// S4-30 (T-7306): a purge deletes the broker documents naming the Tenant
+/// (policy, grants on both sides, views serving it, schema, retention and
+/// quality) and runs the surfaces' purge hooks; other Tenants' documents and
+/// erasure records stay.
+#[cfg(feature = "views")]
+#[tokio::test(flavor = "multi_thread")]
+async fn purge_deletes_the_documents_naming_the_tenant() {
+    let st = state().await;
+    seed(&st, "docsa", "urn:ngsi-ld:Room:1").await;
+    seed(&st, "docsb", "urn:ngsi-ld:Room:2").await;
+    st.put_policy_doc("docsa", json!({"rules": []}))
+        .await
+        .expect("policy");
+    st.put_policy_doc("docsb", json!({"rules": []}))
+        .await
+        .expect("policy");
+    for (t, s) in [("docsa", "docsb"), ("docsb", "docsa"), ("docsb", "docsc")] {
+        st.put_grant_doc(&format!("{t}~{s}"), json!({"target": t, "source": s}))
+            .await
+            .expect("grant");
+    }
+    for (id, doc) in [
+        ("va", json!({"id": "va", "tenant": "docsa"})),
+        ("vb", json!({"id": "vb", "tenant": "docsb"})),
+        ("schema:docsa", json!({"id": "schema:docsa", "text": "{}"})),
+        (
+            "retention:docsa",
+            json!({"id": "retention:docsa", "text": "{}"}),
+        ),
+        (
+            "quality:docsa",
+            json!({"id": "quality:docsa", "text": "{}"}),
+        ),
+        ("schema:docsb", json!({"id": "schema:docsb", "text": "{}"})),
+        (
+            "erasure:docsa:1",
+            json!({"id": "erasure:docsa:1", "tenant": "docsa"}),
+        ),
+    ] {
+        st.put_view_doc(id, doc).await.expect("view doc");
+    }
+    let stopped = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = Arc::clone(&stopped);
+    st.purge_hooks
+        .lock()
+        .expect("hooks")
+        .push(Arc::new(move |t: &TenantId| {
+            seen.lock().expect("seen").push(t.as_str().to_owned());
+        }));
+    let (s, body) = send(&st, "DELETE", "/q/tenants/docsa", None, None).await;
+    assert_eq!(s, StatusCode::NO_CONTENT, "{body}");
+    assert!(st.policy_doc("docsa").await.expect("read").is_none());
+    assert!(st.policy_doc("docsb").await.expect("read").is_some());
+    for (key, kept) in [
+        ("docsa~docsb", false),
+        ("docsb~docsa", false),
+        ("docsb~docsc", true),
+    ] {
+        assert_eq!(
+            st.grant_doc(key).await.expect("read").is_some(),
+            kept,
+            "{key}"
+        );
+    }
+    for (id, kept) in [
+        ("va", false),
+        ("schema:docsa", false),
+        ("retention:docsa", false),
+        ("quality:docsa", false),
+        ("vb", true),
+        ("schema:docsb", true),
+        ("erasure:docsa:1", true),
+    ] {
+        assert_eq!(st.view_doc(id).await.expect("read").is_some(), kept, "{id}");
+    }
+    assert_eq!(*stopped.lock().expect("seen"), vec!["docsa".to_owned()]);
+}
+
 async fn synth_tenants(st: &AppState) -> Vec<String> {
     let idx = TenantId::new_internal("snap-index").expect("index tenant");
     let mut out = Vec::new();

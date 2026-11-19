@@ -167,4 +167,8 @@ note = "adds jsonld_context_usage and drops the shared counters from Cached rows
 
 [0040]
 rollback = "compatible"
+note = "fills tenants.organization_id for project-key names 0036 left NULL; an older release binds the same value from TenantId::organization_of and reads the column as before"
+
+[0041]
+rollback = "compatible"
 note = "adds row-level security to each history partition; an older release reads and writes through the parents, which keep their policies, decides a partition drop under the lock as the service, which the partitions' policies admit, and creates new weeks without the policies, which the next pass of this release adds"

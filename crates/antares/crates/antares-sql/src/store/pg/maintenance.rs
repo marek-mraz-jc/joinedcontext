@@ -1301,7 +1301,7 @@ fn partition_name(keyed: bool, suffix: &str) -> String {
 }
 
 /// Row-level security on one history partition: its parent's policies,
-/// ENABLEd and FORCEd (`antares_partition_rls`, migration 0040, which did the
+/// ENABLEd and FORCEd (`antares_partition_rls`, migration 0041, which did the
 /// same for the partitions made before it). PostgreSQL applies a parent's
 /// policies only to statements that name the parent, so a statement naming
 /// the partition itself would otherwise read and write every Tenant's rows.

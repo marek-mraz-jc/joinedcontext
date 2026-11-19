@@ -795,6 +795,23 @@ pub(super) async fn tenant_purge(
         // nothing and a Tenant recreated under the name resolved the old
         // term mappings).
         crate::contexts::purge_tenant(&st, &tenant).await?;
+        // S4-30: the broker's own documents naming the Tenant, and what runs
+        // for it, go with it; a Tenant created again under the name starts
+        // with none of them
+        #[cfg(feature = "views")]
+        st.purge_tenant_documents(&tenant)
+            .await
+            .map_err(NgsiError::InternalError)?;
+        #[cfg(all(feature = "channels", not(target_arch = "wasm32")))]
+        crate::channels::purge_tenant(&st, &tenant).await?;
+        let hooks = st
+            .purge_hooks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for hook in hooks {
+            hook(&tenant);
+        }
         st.temporal.purge_tenant(&tenant).await?;
         st.store.purge_tenant(&tenant).await?;
         st.known_tenants.forget(&tenant);

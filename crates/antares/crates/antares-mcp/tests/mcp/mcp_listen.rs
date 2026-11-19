@@ -4,7 +4,7 @@
 //! subject): the tests that listen in Tenant `city` take [`CITY`] in turn.
 
 use crate::common::{endpoint, fixture, fixture_with, post_raw, prop, MODERN};
-use crate::engines::NoSubscriptions;
+use crate::engines::{NoSubscriptions, Revocable};
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode};
 use axum::Router;
@@ -324,6 +324,35 @@ async fn a_watch_the_engine_denies_makes_no_subscription() -> Result<(), String>
     assert_eq!(stream.next(Duration::from_millis(1500)).await, None);
     assert_eq!(subscriptions(&f.app, "city").await, 0);
     Ok(())
+}
+
+/// NET-08: a caller who lost the read hears of no further change, and the
+/// stream ends with its internal Subscriptions.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_ends_once_its_caller_may_no_longer_read() -> Result<(), String> {
+    let _city = CITY.lock().await;
+    let engine = Arc::new(Revocable::default());
+    let f = fixture_with(Some(engine.clone())).await?;
+    let car = "ngsi-ld://watch/entities/urn:ngsi-ld:Car:1";
+    let mut stream = listen(&f.app, "watch", &[car]).await;
+    assert!(
+        stream.next(Duration::from_secs(5)).await.is_some(),
+        "no acknowledgment"
+    );
+    until_subscriptions(&f.app, "city", 1).await?;
+    engine.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    let speed = json!({"speed": prop(&json!(13))});
+    assert_eq!(
+        patch(&f.app, "city", "urn:ngsi-ld:Car:1", &speed).await,
+        StatusCode::NO_CONTENT
+    );
+    // the stream's own end may follow; an update may not
+    let next = stream.next(Duration::from_millis(1500)).await;
+    assert!(
+        next.as_ref().is_none_or(|e| e.get("method").is_none()),
+        "{next:?}"
+    );
+    until_subscriptions(&f.app, "city", 0).await
 }
 
 /// A view that does not let its caller make a Subscription watches
