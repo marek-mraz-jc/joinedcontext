@@ -13834,7 +13834,7 @@
       "turnOff": "Ausschalten",
       "turnOnHint": "Nur für eine Organisation, in der genau eine Person eine Rolle hat, z. B. die erste Administratorin einer Stadt. Ein zweiter Betreiber genehmigt es; mit einem Betreiber gilt es sofort.",
       "onePersonOnly": "{count} Personen haben eine Rolle: Vier Augen sind möglich, der Modus bleibt aus.",
-      "automationLogins": "Automatisierungs-Logins, nie gezählt und nie genehmigend: {logins}",
+      "automationLogins": "Automatisierungs-Logins (nicht gezählt, genehmigen nie): {logins}",
       "asked": "Beantragt: Ein zweiter Betreiber genehmigt es unter Betreiber-Änderungen.",
       "applied": "Übernommen."
     },

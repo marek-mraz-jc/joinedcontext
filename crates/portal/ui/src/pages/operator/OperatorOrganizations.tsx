@@ -151,7 +151,7 @@ function SinglePersonCell({ row }: { row: OperatorOrganization }): JSX.Element {
         <span className="text-caption text-fg-muted">{t("operator.organizations.people", { count: people })}</span>
       </span>
       {row.approvals.automationLogins.length > 0 ? (
-        <span className="text-caption text-fg-muted break-words" data-testid="org-automation-logins">
+        <span className="text-caption text-fg break-words" data-testid="org-automation-logins">
           {t("operator.organizations.automationLogins", { logins: row.approvals.automationLogins.join(", ") })}
         </span>
       ) : null}

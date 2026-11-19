@@ -13834,7 +13834,7 @@
       "turnOff": "Turn off",
       "turnOnHint": "Only for an Organization where exactly one person holds a role, e.g. a city's first administrator. A second operator approves it; with one operator it applies at once.",
       "onePersonOnly": "{count} people hold a role: four eyes is possible, so the mode stays off.",
-      "automationLogins": "Automation logins, never counted or approving: {logins}",
+      "automationLogins": "Automation logins (not counted, never approve): {logins}",
       "asked": "Asked for: a second operator approves it under Operator changes.",
       "applied": "Applied."
     },

@@ -13834,7 +13834,7 @@
       "turnOff": "Vypnúť",
       "turnOnHint": "Len pre organizáciu, v ktorej má rolu práve jedna osoba, napr. prvý administrátor mesta. Schvaľuje ho druhý operátor; s jedným operátorom platí hneď.",
       "onePersonOnly": "Rolu má {count} osôb: štyri oči sú možné, režim zostáva vypnutý.",
-      "automationLogins": "Automatizačné loginy, nepočítajú sa a neschvaľujú: {logins}",
+      "automationLogins": "Automatizačné loginy (nepočítajú sa, nikdy neschvaľujú): {logins}",
       "asked": "Požiadané: schváli to druhý operátor v Zmenách operátorov.",
       "applied": "Použité."
     },

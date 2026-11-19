@@ -165,6 +165,6 @@ test("a change an automation login proposed says a person decides it", async ({ 
 test("the operator sees each Organization's automation logins", async ({ page }) => {
   await stub(page, ON);
   await page.goto("/organization/operator-organizations?lang=en");
-  await expect(page.getByText("Automation logins, never counted or approving: bbsk-mcp-admin")).toBeVisible();
+  await expect(page.getByText("Automation logins (not counted, never approve): bbsk-mcp-admin")).toBeVisible();
   await shoot(page, "operator-organizations-automation", join("test-results", "T-7432"));
 });
