@@ -41,6 +41,8 @@ GET    /q/grants
 | `source` | yes | the Tenant whose registrations may read it; equal to the path |
 | `access` | no | `read` (default) or `read-write`; a forwarded write (the 5.6 operations, batch forms included) needs `read-write` |
 | `view` | no | a view of the target (ADR-0023) that narrows what it exports; the view must serve the target and allow the operation |
+| `crossOrganization` | no | `true` lets the two Tenants sit in different Organizations (T-7306); without it a grant joins Tenants of one Organization. A registration naming another Organization's Tenant is stored only when its endpoint is a self URL, under such a grant |
+| `subject` | no | the caller every forward under the grant is decided as, in place of the source's: policy subject headers and their values, at least one, each one of `ANTARES_POLICY_SUBJECT_HEADERS` (jc's Portal writes `{"x-jc-roles": "public"}` for a shared Endpoint read as an anonymous caller, T-7422) |
 
 The broker's own Tenants (`snap-*`, `antares-views`, `antares-policy`,
 `antares-grants`, `distsub-index`) are never a party to a grant.
@@ -57,7 +59,8 @@ registration answers 502, as for any refused forward.
 The forward carries the caller's policy subject headers
 (`ANTARES_POLICY_SUBJECT_HEADERS`) and nothing else of the triggering
 request: Tenant B's engine decides about the person who asked Tenant A,
-under Tenant B. A subject header a registration's `contextSourceInfo` names
+under Tenant B. A grant with a `subject` replaces them: Tenant B's engine
+decides about that caller, and nothing of Tenant A's caller reaches it. A subject header a registration's `contextSourceInfo` names
 is never sent. A registration without `tenant` reads the default Tenant
 (TS 104 175 7.8.1). B's refusal reaches A as code 299 without its text.
 

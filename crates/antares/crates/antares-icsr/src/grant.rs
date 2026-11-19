@@ -7,14 +7,18 @@
 use antares_ops::{ngsi_problem, Ops};
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The largest grant document `/q/grants` accepts, in bytes.
 pub const MAX_GRANT_BYTES: usize = 4096;
+
+/// The most subject headers a grant's `subject` names.
+const MAX_SUBJECT_HEADERS: usize = 16;
 
 /// What a grant lets the source do in the target.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,6 +58,12 @@ pub struct ExportGrant {
     /// Organization.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub cross_organization: bool,
+    /// The caller every forward under this grant is decided as, in place
+    /// of the source's (SHR-17): policy subject headers
+    /// (`ANTARES_POLICY_SUBJECT_HEADERS`) and their values. Absent, the
+    /// target's engine is asked about the source's caller, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<BTreeMap<String, String>>,
 }
 
 impl ExportGrant {
@@ -73,6 +83,7 @@ impl ExportGrant {
                 grant.target, grant.source
             ));
         }
+        grant.subject_fine()?;
         if let Some(view) = &grant.view {
             let fine = (1..=63).contains(&view.len())
                 && view
@@ -93,6 +104,49 @@ impl ExportGrant {
         self.cross_organization
             || antares_ops::TenantId::organization_of(&self.target)
                 == antares_ops::TenantId::organization_of(&self.source)
+    }
+
+    /// Whether `subject` names a caller the target's engine can decide.
+    /// Every name is one of the subject headers and at least one is given:
+    /// a caller map holding none of them is the broker's own (ADR-0020), so
+    /// an empty or unknown `subject` would export the whole Tenant.
+    fn subject_fine(&self) -> Result<(), String> {
+        let Some(subject) = &self.subject else {
+            return Ok(());
+        };
+        if subject.is_empty() || subject.len() > MAX_SUBJECT_HEADERS {
+            return Err(format!(
+                "a grant's subject names 1 to {MAX_SUBJECT_HEADERS} subject headers"
+            ));
+        }
+        let known = &*antares_ops::policy::SUBJECT_HEADERS;
+        for (name, value) in subject {
+            if !known.iter().any(|k| k == name) {
+                return Err(format!(
+                    "{name:?} is no policy subject header of this broker (ANTARES_POLICY_SUBJECT_HEADERS)"
+                ));
+            }
+            if HeaderValue::from_str(value).is_err() {
+                return Err(format!("the subject header {name:?} has a value no header can carry"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The caller map forwards under this grant carry, when it names one.
+    #[must_use]
+    pub fn caller(&self) -> Option<HeaderMap> {
+        let subject = self.subject.as_ref()?;
+        let mut map = HeaderMap::new();
+        for (name, value) in subject {
+            if let (Ok(n), Ok(v)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(value),
+            ) {
+                map.append(n, v);
+            }
+        }
+        Some(map)
     }
 
     /// Whether it lets the source run a forward that writes when `write`.
@@ -128,7 +182,14 @@ pub async fn held(ops: &Ops, target: &str, source: &str) -> Result<Option<Export
         return Ok(None);
     };
     match serde_json::from_value::<ExportGrant>(doc) {
-        Ok(g) if g.target == target && g.source == source && g.same_organization() => Ok(Some(g)),
+        Ok(g)
+            if g.target == target
+                && g.source == source
+                && g.same_organization()
+                && g.subject_fine().is_ok() =>
+        {
+            Ok(Some(g))
+        }
         _ => {
             tracing::warn!(
                 target_tenant = target,
@@ -263,6 +324,9 @@ mod tests {
             r#"{"target":"b","source":"a","view":""}"#,
             r#"{"target":"b","source":"a","access":"write"}"#,
             r#"{"target":"b","source":"a","subject":"alice"}"#,
+            // SHR-17: a caller map with no subject header is the broker's own
+            r#"{"target":"b","source":"a","subject":{}}"#,
+            r#"{"target":"b","source":"a","subject":{"x-nobody":"public"}}"#,
             r#"{"target":"b"}"#,
             "[]",
         ] {

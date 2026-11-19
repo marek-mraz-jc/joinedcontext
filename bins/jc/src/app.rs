@@ -847,7 +847,14 @@ pub async fn build_router(
                 .then(|| ctx.setup.value(crate::setup::Secret::GatewayHopToken))
                 .flatten();
             let built =
-                modules::antares::build(&cfg.antares, ctx.setup, hop_secret, shutdown).await?;
+                modules::antares::build(
+                    &cfg.antares,
+                    ctx.setup,
+                    hop_secret,
+                    modules::antares::self_urls(ctx.siblings),
+                    shutdown,
+                )
+                .await?;
             let router = match ctx.door {
                 Some(door) => door.guard(Module::Antares, built.router, ctx.setup),
                 None => built.router,

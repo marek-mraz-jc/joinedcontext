@@ -548,7 +548,9 @@ pub async fn matching_regs(
         .filter_map(|doc| {
             // a Registration stored before the Organization rule (T-7306)
             // that names another Organization's Tenant forwards nothing
-            if !crate::csource::member_tenant_admitted(tenant, doc.get("tenant")) {
+            if !crate::csource::member_tenant_admitted(tenant, doc.get("tenant"))
+                && !served_in_process(st, doc.get("endpoint"))
+            {
                 tracing::warn!(
                     registration = doc
                         .get("id")
@@ -938,6 +940,14 @@ pub trait ForwardTransport: Send + Sync {
         Box::pin(std::future::ready(Ok(())))
     }
 
+    /// Whether this transport serves the forwards to `endpoint` in process.
+    /// Such a registration may name a Tenant of another Organization: the
+    /// transport's [`Self::admit`] and its every forward decide it under the
+    /// target's consent instead (T-7306, T-7422).
+    fn serves(&self, _endpoint: &str) -> bool {
+        false
+    }
+
     /// Whether this transport delivers the notifications sent to `uri`
     /// (ADR-0025 rule 7). Such a delivery opens no socket, so the egress
     /// guard and the breaker do not judge it; `false` leaves it to the
@@ -970,6 +980,15 @@ pub type NotifyFuture<'a> =
 /// What [`ForwardTransport::admit`] answers.
 pub type AdmitFuture<'a> =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// Whether the registered transport serves the forwards to a
+/// registration's `endpoint` without a socket.
+pub(crate) fn served_in_process(st: &AppState, endpoint: Option<&Value>) -> bool {
+    match (st.forward_transport.get(), endpoint.and_then(Value::as_str)) {
+        (Some(transport), Some(endpoint)) => transport.serves(endpoint),
+        _ => false,
+    }
+}
 
 /// The registered transport's [`ForwardTransport::admit`] for the
 /// registration document `doc` of `tenant`; `Ok` without a transport.
@@ -1080,6 +1099,16 @@ impl BuiltForward<'_> {
     #[must_use]
     pub fn subject(&self) -> &HeaderMap {
         &self.subject
+    }
+
+    /// This forward as `subject` asked it in place of the triggering
+    /// request's caller: a transport whose target's consent names the
+    /// caller it admits (an export grant's `subject`, SHR-17) hands the
+    /// target's engine that caller and nothing of the source's.
+    #[must_use]
+    pub fn with_subject(mut self, subject: HeaderMap) -> Self {
+        self.subject = subject;
+        self
     }
 }
 

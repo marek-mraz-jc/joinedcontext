@@ -25,7 +25,7 @@
 
 use crate::capped::refusal;
 use crate::store::Mirror;
-use jc_core::kinds::ContextSourceRegistrationSpec;
+use jc_core::kinds::{ContextSourceRegistrationSpec, FederationIdentity};
 use jcctl::csr::{registration, registration_id, MemberSource};
 use jcctl::loader::{RawManifest, RawMetadata};
 use serde_json::Value;
@@ -136,6 +136,9 @@ impl RegistrationSync {
     ) -> Vec<(String, String, RegistrationOutcome)> {
         let mut outcomes = Vec::new();
         let mut declared_ids: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        // The export grants this run wrote, by (broker, provider tenant, hub tenant), with the
+        // view each names.
+        let mut grants: BTreeMap<GrantKey, String> = BTreeMap::new();
 
         let (found, refused) = declared(mirror);
         // A manifest that could not be read is said to be not written, so its status does not
@@ -149,14 +152,6 @@ impl RegistrationSync {
                 .entry(space.clone())
                 .or_default()
                 .insert(id.clone());
-            let members = self.members_of(mirror, &project);
-            let body = match registration(&manifest, &members) {
-                Ok(body) => body,
-                Err(err) => {
-                    outcomes.push((project, name, RegistrationOutcome::Error(err.to_string())));
-                    continue;
-                }
-            };
             let Some(ngsi_ld) = self.ngsi_ld(mirror, &project, &hub) else {
                 let reason = format!(
                     "the hub space '{hub}' lives on a broker this Portal has no address for, so \
@@ -165,6 +160,46 @@ impl RegistrationSync {
                 outcomes.push((project, name, RegistrationOutcome::Error(reason)));
                 continue;
             };
+            let shared = match self.shared_member(mirror, &project, &manifest, &ngsi_ld) {
+                Ok(shared) => shared,
+                Err(reason) => {
+                    outcomes.push((project, name, RegistrationOutcome::Error(reason)));
+                    continue;
+                }
+            };
+            let body = match &shared {
+                Some(shared) => {
+                    let member = shared.member.clone();
+                    registration(&manifest, &move |_: &str| Some(member.clone()))
+                }
+                None => registration(&manifest, &self.members_of(mirror, &project)),
+            };
+            let body = match body {
+                Ok(body) => body,
+                Err(err) => {
+                    outcomes.push((project, name, RegistrationOutcome::Error(err.to_string())));
+                    continue;
+                }
+            };
+            // The provider space's consent goes first: the broker admits a registration naming
+            // itself only under it (ADR-0025 rule 5).
+            if let Some(shared) = &shared {
+                let key = shared.grant_key(&space);
+                if let Some(other) = grants.get(&key).filter(|view| **view != shared.slug) {
+                    let reason = format!(
+                        "another registration of this space already reads the provider's space \
+                         through Endpoint slug {other}; one shared Endpoint per provider space and \
+                         hub space"
+                    );
+                    outcomes.push((project, name, RegistrationOutcome::Error(reason)));
+                    continue;
+                }
+                if let Err(reason) = self.put_grant(shared, &space).await {
+                    outcomes.push((project, name, RegistrationOutcome::Error(reason)));
+                    continue;
+                }
+                grants.insert(key, shared.slug.clone());
+            }
             let outcome = match self.write(&ngsi_ld, &space, &id, &body).await {
                 Ok(()) => RegistrationOutcome::Written,
                 Err(reason) => RegistrationOutcome::Error(reason),
@@ -192,7 +227,141 @@ impl RegistrationSync {
                 Err(reason) => tracing::warn!(%space, %id, %reason, "registration not removed"),
             }
         }
+
+        // A shared read that is gone, or that no SharedSpaceReference covers any more, takes
+        // the provider's grant with it: the broker refuses every forward of a registration
+        // still stored at once (SHR-07).
+        for (project, _, space, hub, manifest) in declared(previous).0 {
+            let Some(ngsi_ld) = self.ngsi_ld(previous, &project, &hub) else {
+                continue;
+            };
+            let Ok(Some(shared)) = self.shared_member(previous, &project, &manifest, &ngsi_ld)
+            else {
+                continue;
+            };
+            let key = shared.grant_key(&space);
+            if grants.contains_key(&key) {
+                continue;
+            }
+            match self.delete_grant(&shared, &space).await {
+                Ok(()) => {
+                    grants.insert(key, shared.slug.clone());
+                    tracing::info!(%space, provider = %shared.tenant, "export grant removed with its shared read");
+                }
+                Err(reason) => tracing::warn!(%space, provider = %shared.tenant, %reason, "export grant not removed"),
+            }
+        }
         outcomes
+    }
+
+    /// The Endpoint another project shares with `project`, when `manifest` reads one
+    /// (SHR-15 `live`, T-7422): an anonymous registration whose `endpointRef` names another
+    /// project. It is read in process on this broker, through the shared Endpoint's view and
+    /// decided as an anonymous caller (SHR-17), and only while `project` holds a
+    /// `SharedSpaceReference` to it. `Ok(None)` for every other registration.
+    fn shared_member(
+        &self,
+        mirror: &Mirror,
+        project: &str,
+        manifest: &RawManifest,
+        hub_ngsi_ld: &str,
+    ) -> Result<Option<SharedMember>, String> {
+        let Ok(spec) = serde_json::from_value::<ContextSourceRegistrationSpec>(manifest.spec.clone())
+        else {
+            return Ok(None);
+        };
+        let Some(reference) = spec.endpoint_ref.as_ref() else {
+            return Ok(None);
+        };
+        let Some(provider) = reference.namespace().filter(|ns| *ns != project) else {
+            return Ok(None);
+        };
+        if spec.federation.identity != FederationIdentity::Anonymous {
+            return Ok(None);
+        }
+        let name = reference.name();
+        let endpoint = mirror.get(provider, "Endpoint", name).ok_or_else(|| {
+            format!(
+                "endpointRef names the Endpoint {provider}/{name}, which does not exist, so \
+                 nothing is registered"
+            )
+        })?;
+        let slug = endpoint
+            .spec
+            .get("slug")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("the Endpoint {provider}/{name} has no slug yet, so nothing is registered")
+            })?
+            .to_owned();
+        if !referenced(mirror, project, provider, name, &slug) {
+            return Err(format!(
+                "no SharedSpaceReference of project {project} names the Endpoint \
+                 {provider}/{name}; a live read of another project's Endpoint runs under one \
+                 (SHR-15)"
+            ));
+        }
+        let space = endpoint
+            .spec
+            .get("contextSpaceRef")
+            .and_then(crate::resource::reference_name)
+            .ok_or_else(|| format!("the Endpoint {provider}/{name} names no Context Space"))?
+            .to_owned();
+        let ngsi_ld = self.ngsi_ld(mirror, provider, &space).ok_or_else(|| {
+            format!(
+                "the Endpoint {provider}/{name} lives on a broker this Portal has no address \
+                 for, so nothing is registered (PF-111)"
+            )
+        })?;
+        // In process means on one broker: the hub reads the provider's tenant beside its own.
+        if ngsi_ld != hub_ngsi_ld {
+            return Err(format!(
+                "the Endpoint {provider}/{name} lives on another broker than the hub space, and a \
+                 shared read runs in process on one broker (SHR-17)"
+            ));
+        }
+        let tenant = crate::spaces::tenant(mirror, provider, &space)?;
+        Ok(Some(SharedMember {
+            broker: ngsi_ld
+                .strip_suffix("/ngsi-ld/v1")
+                .unwrap_or(&ngsi_ld)
+                .to_owned(),
+            member: MemberSource {
+                endpoint: ngsi_ld,
+                tenant: tenant.clone(),
+                gateway: None,
+            },
+            tenant,
+            slug,
+        }))
+    }
+
+    /// Writes the export grant the provider's tenant holds for the hub's (Antares ADR-0025
+    /// rule 5): through the shared Endpoint's view, reads only, decided as an anonymous caller.
+    async fn put_grant(&self, shared: &SharedMember, hub: &str) -> Result<(), String> {
+        let response = self
+            .authorized(self.http.put(shared.grant_url(hub)))?
+            .json(&shared.grant(hub))
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+        match response.status().is_success() {
+            true => Ok(()),
+            false => Err(refusal("the broker refused the provider's export grant", response, None).await),
+        }
+    }
+
+    async fn delete_grant(&self, shared: &SharedMember, hub: &str) -> Result<(), String> {
+        let response = self
+            .authorized(self.http.delete(shared.grant_url(hub)))?
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+        match response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
+        {
+            true => Ok(()),
+            false => Err(refusal("the broker refused to remove the export grant", response, None).await),
+        }
     }
 
     /// Where every Endpoint of one project is read: the broker holding it, and the tenant its
@@ -382,6 +551,70 @@ fn declared(mirror: &Mirror) -> (Vec<Declared>, Vec<Refused>) {
         }
     }
     (found, refused)
+}
+
+/// An Endpoint another project shares, read in process by a hub (SHR-15 `live`).
+struct SharedMember {
+    /// The broker both tenants live on, without `/ngsi-ld/v1`.
+    broker: String,
+    /// Where the broker reads it: itself, as the provider's tenant.
+    member: MemberSource,
+    /// The provider space's tenant.
+    tenant: String,
+    /// The shared Endpoint's slug, which is its view's id.
+    slug: String,
+}
+
+/// `(broker, provider tenant, hub tenant)`: one export grant.
+type GrantKey = (String, String, String);
+
+/// The caller a shared read is decided as: the gateway's anonymous caller, so the provider's
+/// public Policy holds and no person or token of the consumer reaches it (SHR-17).
+const ANONYMOUS_ROLES: (&str, &str) = ("x-jc-roles", "public");
+
+impl SharedMember {
+    fn grant_key(&self, hub: &str) -> GrantKey {
+        (self.broker.clone(), self.tenant.clone(), hub.to_owned())
+    }
+
+    fn grant_url(&self, hub: &str) -> String {
+        format!("{}/q/grants/{}/{hub}", self.broker, self.tenant)
+    }
+
+    /// The grant document. Two tenants of different Organizations need the mark that the
+    /// grant crosses them (Antares T-7306); the shared Endpoint's own Policy is what admits
+    /// the consumer, and its view what is exported.
+    fn grant(&self, hub: &str) -> Value {
+        let organization = |tenant: &str| tenant.split_once("__").map(|(org, _)| org.to_owned());
+        let mut grant = serde_json::json!({
+            "target": self.tenant,
+            "source": hub,
+            "view": self.slug,
+            "access": "read",
+            "subject": { ANONYMOUS_ROLES.0: ANONYMOUS_ROLES.1 },
+        });
+        if organization(&self.tenant) != organization(hub) {
+            grant["crossOrganization"] = Value::Bool(true);
+        }
+        grant
+    }
+}
+
+/// Whether `project` holds a `SharedSpaceReference` to the Endpoint `provider`/`name`, by its
+/// slug or by its `endpointRef`.
+fn referenced(mirror: &Mirror, project: &str, provider: &str, name: &str, slug: &str) -> bool {
+    mirror
+        .list(project, "SharedSpaceReference", &crate::store::ListOptions::default())
+        .items
+        .into_iter()
+        .any(|envelope| {
+            let spec = &envelope.spec;
+            spec.get("endpointSlug").and_then(Value::as_str) == Some(slug)
+                || spec.get("endpointRef").is_some_and(|r| {
+                    r.get("project").and_then(Value::as_str) == Some(provider)
+                        && r.get("name").and_then(Value::as_str) == Some(name)
+                })
+        })
 }
 
 /// A declared registration: `(project, name, hub tenant, hub space name, manifest)`.
@@ -634,6 +867,164 @@ mod tests {
         let (found, refused) = declared(&mirror);
         assert!(found.is_empty());
         assert!(refused[0].2.contains("outside its project"), "{refused:?}");
+    }
+
+    fn in_project(project: &str, mut item: ResourceEnvelope) -> ResourceEnvelope {
+        item.metadata.namespace = Some(project.into());
+        item
+    }
+
+    const SHARED_SLUG: &str = "k7m2qz4tv6xh3n5jb2ryd3wcfa";
+
+    /// Espoo shares Endpoint `shared` over its space `src`; Helsinki's hub reads it anonymously
+    /// and holds a SharedSpaceReference to it when `referenced`.
+    fn shared_read(referenced: bool) -> Mirror {
+        let mut anonymous = csr(
+            "from-espoo",
+            json!({ "kind": "Endpoint", "name": "shared", "namespace": "espoo" }),
+        );
+        anonymous.spec["federation"] = json!({ "identity": "anonymous" });
+        let mut items = vec![
+            anonymous,
+            envelope("ContextSpace", "hub", json!({ "urnSegment": "hub" })),
+            in_project(
+                "espoo",
+                envelope(
+                    "Endpoint",
+                    "shared",
+                    json!({ "contextSpaceRef": "src", "slug": SHARED_SLUG }),
+                ),
+            ),
+            in_project(
+                "espoo",
+                envelope("ContextSpace", "src", json!({ "urnSegment": "src" })),
+            ),
+        ];
+        if referenced {
+            items.push(envelope(
+                "SharedSpaceReference",
+                "espoo",
+                json!({ "alias": "espoo", "endpointSlug": SHARED_SLUG }),
+            ));
+        }
+        mirror_with(items)
+    }
+
+    /// SHR-15 `live`, SHR-17 (T-7422): an anonymous registration of another project's Endpoint
+    /// under a SharedSpaceReference is read on this broker as the provider's tenant, and the
+    /// provider's grant names the shared Endpoint's view and the anonymous caller alone: no
+    /// gateway address, no token marker, no person of the hub.
+    #[test]
+    fn a_shared_endpoint_of_another_project_is_read_in_process_as_an_anonymous_caller() {
+        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker").with_gateway(Some(
+            "http://127.0.0.1:42101/api".into(),
+        ));
+        let mirror = shared_read(true);
+        let (found, refused) = declared(&mirror);
+        assert!(refused.is_empty(), "{refused:?}");
+        let (project, _, hub, _, manifest) = &found[0];
+        let ngsi_ld = "http://127.0.0.1:42101/broker/ngsi-ld/v1";
+        let shared = sync
+            .shared_member(&mirror, project, manifest, ngsi_ld)
+            .expect("resolves")
+            .expect("a shared read");
+        let member = shared.member.clone();
+        let body = registration(manifest, &move |_: &str| Some(member.clone())).expect("renders");
+        assert_eq!(body["endpoint"], json!(ngsi_ld));
+        assert_eq!(body["tenant"], json!("espoo-src"));
+        assert!(body.get("contextSourceInfo").is_none(), "{body}");
+
+        assert_eq!(
+            shared.grant_url(hub),
+            "http://127.0.0.1:42101/broker/q/grants/espoo-src/helsinki-hub"
+        );
+        assert_eq!(
+            shared.grant(hub),
+            json!({ "target": "espoo-src", "source": "helsinki-hub", "view": SHARED_SLUG,
+                    "access": "read", "subject": { "x-jc-roles": "public" } })
+        );
+        let across = SharedMember {
+            tenant: "sk_ba__src".into(),
+            ..shared
+        };
+        assert_eq!(across.grant("sk_bbsk__hub")["crossOrganization"], json!(true));
+
+        // On another broker than the hub's, nothing is read in process.
+        let refused = sync
+            .shared_member(&mirror, project, manifest, "http://other:8080/ngsi-ld/v1")
+            .err()
+            .unwrap_or_default();
+        assert!(refused.contains("another broker"), "{refused}");
+    }
+
+    /// SHR-15: without a SharedSpaceReference to it, another project's Endpoint is not read.
+    #[test]
+    fn a_shared_read_needs_a_shared_space_reference() {
+        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker");
+        let mirror = shared_read(false);
+        let (found, _) = declared(&mirror);
+        let refused = sync
+            .shared_member(
+                &mirror,
+                &found[0].0,
+                &found[0].4,
+                "http://127.0.0.1:42101/broker/ngsi-ld/v1",
+            )
+            .err()
+            .unwrap_or_default();
+        assert!(refused.contains("SharedSpaceReference"), "{refused}");
+    }
+
+    /// One request the fake broker saw: method and path.
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+    async fn fake_broker() -> (String, Seen) {
+        let seen: Seen = Seen::default();
+        let log = seen.clone();
+        let app = axum::Router::new().fallback(move |req: axum::extract::Request| {
+            let log = log.clone();
+            async move {
+                log.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((req.method().to_string(), req.uri().path().to_owned()));
+                axum::http::StatusCode::CREATED
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("binds");
+        let base = format!("http://{}/broker", listener.local_addr().expect("addr"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        (base, seen)
+    }
+
+    /// T-7422, SHR-07: the provider's grant is written before the registration the broker
+    /// admits only under it, and taken away once no SharedSpaceReference covers the read.
+    #[tokio::test]
+    async fn the_grant_goes_before_the_registration_and_leaves_with_the_reference() {
+        let (base, seen) = fake_broker().await;
+        let sync = RegistrationSync::new(base);
+        let outcomes = sync.converge(&shared_read(true), &Mirror::new()).await;
+        assert_eq!(outcomes[0].2, RegistrationOutcome::Written, "{outcomes:?}");
+        let calls = std::mem::take(&mut *seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        assert_eq!(
+            calls,
+            [
+                ("PUT".into(), "/broker/q/grants/espoo-src/helsinki-hub".into()),
+                ("POST".into(), "/broker/ngsi-ld/v1/csourceRegistrations".into()),
+            ]
+        );
+
+        let outcomes = sync.converge(&shared_read(false), &shared_read(true)).await;
+        assert!(
+            matches!(&outcomes[0].2, RegistrationOutcome::Error(r) if r.contains("SharedSpaceReference")),
+            "{outcomes:?}"
+        );
+        let calls = std::mem::take(&mut *seen.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        assert_eq!(
+            calls,
+            [("DELETE".into(), "/broker/q/grants/espoo-src/helsinki-hub".into())]
+        );
     }
 
     #[test]

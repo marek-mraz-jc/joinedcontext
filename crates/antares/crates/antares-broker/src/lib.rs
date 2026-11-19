@@ -1540,7 +1540,7 @@ pub async fn build_state(
     #[cfg(feature = "internal-csr")]
     {
         let selfs = antares_icsr::SelfUrls::parse(
-            &std::env::var(antares_icsr::SELF_URLS_ENV).unwrap_or_default(),
+            &cfg.var(antares_icsr::SELF_URLS_ENV).unwrap_or_default(),
         )?;
         if !selfs.is_empty() {
             state = antares_ops::with_forward_transport(state, antares_icsr::transport(selfs))?;
