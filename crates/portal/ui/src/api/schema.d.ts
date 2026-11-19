@@ -380,7 +380,7 @@ export interface paths {
         };
         /**
          * Search the Catalogue
-         * @description Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). Public: it lists only what an anonymous caller of the catalogue sees. On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).
+         * @description Every public dataset of the installation's open-data catalogues, searched and faceted (EP-81). A visitor gets only what an anonymous caller of the catalogue sees, cacheable. Signed in, the internal datasets the gateway grants the caller are rows of the same list (`endpoint` set), counted, faceted under their Organization as publisher and paged with the public ones; that answer is private, no-store (T-7400). On an Organization's own host it lists only the datasets of that Organization's projects (T-7389).
          */
         get: operations["get_catalogue"];
         put?: never;
@@ -9958,6 +9958,11 @@ export interface components {
         };
         /** @description A dataset as the list shows it. */
         CatalogueDataset: {
+            /**
+             * @description Set on an internal dataset the gateway grants the caller: its Endpoint's slug, the page
+             *     `/catalogue/endpoint/{slug}` reads it live. Never in a visitor's answer (T-7400).
+             */
+            endpoint?: string | null;
             formats: string[];
             licence?: null | components["schemas"]["CatalogueLicence"];
             modified?: string | null;
@@ -10129,6 +10134,11 @@ export interface components {
             pageSize: number;
             /** @description Datasets matching the search and every filter. */
             total: number;
+            /**
+             * @description Signed in: internal Endpoints the gateway did not answer about, so their datasets may be
+             *     missing from the list (T-7400).
+             */
+            unanswered?: number;
             /** @description Catalogues that did not answer; the others still did. */
             unavailable: string[];
         };
