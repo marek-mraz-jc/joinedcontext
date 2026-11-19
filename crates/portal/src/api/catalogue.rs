@@ -1210,7 +1210,13 @@ pub async fn get_catalogue(
     let (internal, unanswered) = match &session {
         Some(session) => crate::api::catalogue_readable::internal_rows(
             &state,
-            crate::api::catalogue_readable::readable_by(&state, session, &headers).await,
+            crate::api::catalogue_readable::readable_by_in(
+                &state,
+                session,
+                &headers,
+                organization.as_deref(),
+            )
+            .await,
             &filters.q,
             filters.project.as_deref(),
         ),
@@ -2611,6 +2617,7 @@ mod tests {
             expires_at: 0,
             issued_at: 0,
             signed_in_at: None,
+            stepped_up_at: None,
             id_token: String::new(),
             access_expires_at: 0,
             refresh_token: None,

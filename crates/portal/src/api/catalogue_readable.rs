@@ -94,12 +94,24 @@ pub(crate) async fn readable_by(
     session: &Session,
     headers: &HeaderMap,
 ) -> ReadableCatalogue {
+    readable_by_in(state, session, headers, None).await
+}
+
+/// [`readable_by`] kept to the projects of `organization` when set: an Organization's own host
+/// asks the gateway about its own Endpoints alone, so neither a row nor an unanswered count of
+/// another Organization reaches its catalogue (T-7389 item 5, T-7400).
+pub(crate) async fn readable_by_in(
+    state: &AppState,
+    session: &Session,
+    headers: &HeaderMap,
+    organization: Option<&str>,
+) -> ReadableCatalogue {
     let subject = subject_of(state, session, headers);
     let ask = |slug: String, question: Value| {
         let state = state.clone();
         async move { ask_gateway(&state, &slug, &question).await }
     };
-    readable(state, Some(&subject), ask).await
+    readable_in(state, Some(&subject), organization, ask).await
 }
 
 /// The organization claims of the token this request was verified with: `jc_org` and
@@ -168,9 +180,28 @@ where
     F: Fn(String, Value) -> Fut,
     Fut: Future<Output = Result<Value, ApiError>>,
 {
+    readable_in(state, subject, None, ask).await
+}
+
+/// [`readable`] over the projects of `organization` alone when set.
+async fn readable_in<F, Fut>(
+    state: &AppState,
+    subject: Option<&Value>,
+    organization: Option<&str>,
+    ask: F,
+) -> ReadableCatalogue
+where
+    F: Fn(String, Value) -> Fut,
+    Fut: Future<Output = Result<Value, ApiError>>,
+{
     let mut datasets = Vec::new();
     let mut closed = Vec::new();
     for project in state.mirror.namespaces() {
+        if organization.is_some_and(|org| {
+            crate::permissions::organization_of(&state.mirror, &project).as_deref() != Some(org)
+        }) {
+            continue;
+        }
         for endpoint in state
             .mirror
             .list(&project, "Endpoint", &ListOptions::default())
@@ -526,6 +557,53 @@ mod tests {
         assert_eq!(rows("", Some("helsinki")).await.len(), 2);
         let public = readable(&state, None, ask).await;
         assert!(internal_rows(&state, public, "", None).0.is_empty());
+    }
+
+    /// T-7400 (T-7389 item 5): on an Organization's own host a person granted Endpoints of two
+    /// Organizations gets that Organization's internal rows alone, and the gateway is never asked
+    /// about another Organization's Endpoint, so its silence is not counted there either.
+    #[tokio::test]
+    async fn an_organizations_host_lists_no_internal_row_of_another_organization() {
+        let state = world();
+        for (project, organization) in [("helsinki", "helsinki"), ("espoo", "espoo")] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: "Project".to_owned(),
+                metadata: crate::resource::ObjectMeta::new(project, "org"),
+                spec: json!({ "organizationRef": organization }),
+                status: None,
+            });
+        }
+        let both = person(&["helsinki", "espoo"], &[]);
+        let asked = std::sync::Mutex::new(Vec::new());
+        let ask = |slug: String, question: Value| {
+            asked.lock().map(|mut a| a.push(slug.clone())).ok();
+            async move {
+                if slug.starts_with("parking") {
+                    Err(ApiError::Unavailable("gateway down".to_owned()))
+                } else {
+                    gateway(&question["subject"], &slug)
+                }
+            }
+        };
+        let names = |catalogue: ReadableCatalogue| {
+            let (rows, unanswered) = internal_rows(&state, catalogue, "", None);
+            let slugs: Vec<_> = rows
+                .into_iter()
+                .map(|(slug, _)| slug.trim_end_matches('z').to_owned())
+                .collect();
+            (slugs, unanswered)
+        };
+        let here = readable_in(&state, Some(&both), Some("helsinki"), ask).await;
+        assert_eq!(names(here), (vec!["counts".to_owned()], 0));
+        assert!(
+            asked
+                .lock()
+                .is_ok_and(|a| a.iter().all(|s| !s.starts_with("parking"))),
+            "the gateway is not asked about espoo's Endpoint on helsinki's host"
+        );
+        let installation = readable_in(&state, Some(&both), None, ask).await;
+        assert_eq!(names(installation), (vec!["counts".to_owned()], 1));
     }
 
     /// A signed-in person the gateway grants nothing reads the public Endpoints alone, and the
