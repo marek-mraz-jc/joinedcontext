@@ -887,6 +887,14 @@ pub(crate) async fn layer(
         }
         resp
     };
+    // An in-process call (a view, a socket, a channel) runs inline: its
+    // caller's task-locals (the view, the @context, the call depth) do not
+    // cross a spawn, and its caller holds the request off the socket.
+    // ponytail: a dropped in-process call still drops its buffers; the
+    // upgrade is to carry those task-locals into the spawned job.
+    if crate::state::in_process_depth() > 0 {
+        return job.await;
+    }
     match tokio::spawn(tracing::Instrument::in_current_span(job)).await {
         Ok(resp) => resp,
         // the router's catch-panic layer answers it, as before the spawn
@@ -1075,6 +1083,34 @@ mod tests {
             .await;
         let ids: Vec<&str> = buffered.iter().map(|e| e.entity_id.as_str()).collect();
         assert_eq!(ids, ["urn:b"]);
+    }
+
+    /// An in-process request keeps its caller's task-locals through the
+    /// layer: the views and sockets read theirs inside the handler.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_in_process_request_keeps_its_callers_scope() {
+        use tower::ServiceExt;
+        let st = AppState::new("antares-history-inprocess".into());
+        let app = axum::Router::new()
+            .route(
+                "/r",
+                axum::routing::get(|| async {
+                    if crate::state::in_process_depth() == 1 {
+                        axum::http::StatusCode::NO_CONTENT
+                    } else {
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn_with_state(st, layer));
+        let req = axum::http::Request::get("/r")
+            .body(axum::body::Body::empty())
+            .expect("request");
+        let resp = crate::state::INPROCESS_DEPTH
+            .scope(1, app.oneshot(req))
+            .await
+            .expect("infallible");
+        assert_eq!(resp.status(), axum::http::StatusCode::NO_CONTENT);
     }
 
     /// S4-07: a client that hangs up after the store committed its write
