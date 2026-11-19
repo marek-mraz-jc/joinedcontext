@@ -1,6 +1,8 @@
 name: ship
 # The jc image (every module, default features, the Portal UI embedded): built from a release
-# binary this workflow compiles on the runner (warm target cache and sccache), then put into the
+# binary this workflow compiles in the Dockerfile's own Rust image (trixie, by digest, so the image's
+# glibc and not the runner's decides what it links) with the runner's warm target cache and
+# sccache mounted in (.github/scripts/build-in-base.sh), then put into the
 # image by bins/jc/Dockerfile with that binary as its `build` stage (a BuildKit named context, so
 # nothing compiles twice), smoke-tested, pushed as ghcr.io/<owner>/jc:<sha> by digest, and signed
 # with cosign. Deployments pin the digest (deployment components/jc/images.yaml), never a tag;
@@ -30,8 +32,6 @@ env:
 jobs:
   build:
     if: inputs.mode != 'sign'
-    # The binary built here runs on the trixie base (glibc 2.41): ubuntu-latest became 26.04
-    # (glibc 2.43) and its binary failed the image smoke with "GLIBC_2.43 not found".
     runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write }
     timeout-minutes: 90
@@ -82,12 +82,16 @@ jobs:
             crates/portal/ui/dist-explorer
             crates/portal/sdk/dist
           key: ${{ steps.ui.outputs.cache-primary-key }}
-      # The Dockerfile's toolchain (rust:1.99.0), so both ways of building the image use one compiler.
+      # The target cache and sccache (rust-cache reads the toolchain's version for its key: the
+      # Dockerfile's, rust:1.99.0). The key names the build's distro: a cache built on the runner's
+      # Ubuntu holds build-script output of another glibc.
       - uses: ./.github/actions/rust
-        with: { key: release, toolchain: "1.99.0" }
+        with: { key: release-trixie, toolchain: "1.99.0" }
       # jc embeds the explorer bundle from ui/dist-explorer (bins/jc/src/modules/viz.rs), cached with the UI.
       - run: test -s crates/portal/ui/dist-explorer/explorer.js && test -s crates/portal/ui/dist-explorer/explorer.css
-      - run: cargo build --release --locked -p jc -p kaisatsu-server
+      # In bins/jc/Dockerfile's rust stage image, not on the runner: ubuntu-latest became 26.04
+      # (glibc 2.43) and a runner-built jc failed the trixie image smoke with "GLIBC_2.43 not found".
+      - run: sh .github/scripts/build-in-base.sh
       - id: bin
         run: |
           set -eu
@@ -130,7 +134,7 @@ jobs:
     if: >-
       always() && (inputs.mode == 'sign' ||
       (inputs.mode != 'build' && needs.build.result == 'success'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions: { contents: read, packages: write, id-token: write }
     timeout-minutes: 10
     env:

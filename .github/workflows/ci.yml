@@ -36,7 +36,7 @@ env:
   CARGO_INCREMENTAL: "0"
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Reads this commit's other push runs of ci.yml in this repository (changes.sh REUSE).
     permissions: { contents: read, actions: read }
@@ -93,7 +93,7 @@ jobs:
       # A deny.toml ignore whose reason says `remove by YYYY-MM-DD` is red after that day (T-7232).
       - run: python3 .github/scripts/deny-ignore-dates.py --selftest && python3 .github/scripts/deny-ignore-dates.py
       - if: steps.paths.outputs.workflows == 'true'
-        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
+        run: sh .github/scripts/changes.sh --selftest && sh .github/scripts/deploy-pin.sh --selftest && python3 .github/scripts/test-part.py --selftest && sh .github/scripts/cache-prune.sh --selftest && sh .github/scripts/free-disk.sh --selftest && sh .github/scripts/build-in-base.sh --selftest && sh .github/scripts/check-runners.sh --selftest && sh .github/scripts/check-runners.sh && sh .github/scripts/check-build-context.sh --selftest && sh .github/scripts/check-build-context.sh
       - if: steps.paths.outputs.workflows == 'true'
         run: >-
           docker run --rm -v "$PWD:/repo" -w /repo
@@ -113,7 +113,7 @@ jobs:
   deploy-changes:
     needs: changes
     if: needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     defaults: { run: { working-directory: deploy } }
     outputs:
@@ -132,7 +132,7 @@ jobs:
         run: python3 scripts/ci/changes.py "$BASE" "$GITHUB_SHA" | tee -a "$GITHUB_OUTPUT"
   deploy-render:
     needs: deploy-changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     defaults: { run: { working-directory: deploy } }
     env:
@@ -220,7 +220,7 @@ jobs:
     # T-6444: the one kube-hetzner module, without a token: nothing reads a Hetzner project.
     needs: deploy-changes
     if: needs.deploy-changes.outputs.cluster == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults: { run: { working-directory: deploy } }
     env:
@@ -242,7 +242,7 @@ jobs:
   deploy-tests:
     needs: deploy-changes
     if: needs.deploy-changes.outputs.full == 'true' || needs.deploy-changes.outputs.tests != ''
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # actions: read lets a shard download this run's deploy-base-renders artifact (T-6111).
     permissions: { contents: read, actions: read }
@@ -338,7 +338,7 @@ jobs:
   root-clippy:
     needs: changes
     if: needs.changes.outputs.root == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -365,7 +365,7 @@ jobs:
     name: root-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.root == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -472,7 +472,7 @@ jobs:
   platform-test:
     needs: changes
     if: needs.changes.outputs.platform == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults: { run: { working-directory: vendor/joinedcontext-platform } }
     steps:
@@ -487,7 +487,7 @@ jobs:
   antares-clippy:
     needs: changes
     if: needs.changes.outputs.antares == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults: { run: { working-directory: crates/antares } }
     steps:
@@ -508,7 +508,7 @@ jobs:
     name: antares-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.antares == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -559,7 +559,7 @@ jobs:
   ekiben:
     needs: changes
     if: needs.changes.outputs.ekiben == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults: { run: { working-directory: crates/ekiben } }
     # The sql parity cases (tests/parity/sql, T-6834) replay against the images Bento's sql
@@ -634,7 +634,7 @@ jobs:
   portal-clippy:
     needs: changes
     if: needs.changes.outputs.portal == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults: { run: { working-directory: crates/portal } }
     env:
@@ -655,7 +655,7 @@ jobs:
     name: portal-test-${{ matrix.part }}
     needs: changes
     if: needs.changes.outputs.portal == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -705,7 +705,7 @@ jobs:
   ui:
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults: { run: { working-directory: crates/portal } }
     steps:
@@ -733,7 +733,7 @@ jobs:
     name: ui-test-${{ matrix.shard }}
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -756,7 +756,7 @@ jobs:
   supply-chain:
     needs: changes
     if: needs.changes.outputs.supply == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -789,7 +789,7 @@ jobs:
     if: >-
       needs.changes.outputs.image == 'true' && needs.changes.outputs.release != 'true' &&
       github.ref != 'refs/heads/jc-portal-1'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
