@@ -210,8 +210,10 @@ args+=(--with "subscriptions=--realm-secrets-dir $home/secrets/realm")
 # The assistant is a kept component on dev beside jc (tasks/GOAL-jc-dev.md): rows the rehearsal's
 # assistant module being off prevents are named skips, never known failures.
 args+=(--with "assistant=--kept-component")
-# restore backs this environment up, restores it beside it (its own Postgres and ports) and compares.
-args+=(--with "restore=--home $home")
+# restore backs this environment up, restores it beside it (its own Postgres and ports) and compares;
+# on its own shard it first waits, at most 15 min, for the Pipelines' first runs the import queued
+# (a first run writes new types between its before and after run: smoke 43683591053).
+args+=(--with "restore=--home $home --drain 900")
 # multiorg judges the composed bundle on its own two jcs (each --with wins over the common flags);
 # --composed makes a bundle that is missing or not composed a failure, never the setup skip.
 args+=(--with "multiorg=--base-url http://127.0.0.1:$mo_port --export $mo_export --composed

@@ -5,6 +5,11 @@ state dir, start jc on the copy, and compare.
        [--export e] [--state s] [--log-file f] [--admin-url u] [--admin-token-file f]
        [--suites endpoints,names] [--with <suite>=<args>]... [--backup-dir d] [--restore-env name]
        [--restore-port p] [--restore-pg-port p] [--jc-bin f] [--keep] [--converge s]
+       [--drain s] [--drain-window s]
+
+With --drain s the suite first waits, at most s seconds, until the Portal's Pipeline statuses show no
+first run running, queued or due within --drain-window s (row `control.drained`, red naming the
+pending Pipelines when the wait runs out): a first run writes types between the before and the after run.
 
 Steps, each timed (the dev move's rollback is exactly this): `before` runs the compared suites
 against the source; `dump` takes pg_dumpall --roles-only and a pg_dump -Fc of every database of the
@@ -46,13 +51,14 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SMOKE = HERE.parent
 REPO = SMOKE.parent.parent.parent
 sys.path.insert(0, str(SMOKE))
-from common import FAIL, PASS, Http, Results, loopback_only
+from common import FAIL, PASS, Http, Results, as_json, loopback_only
 
 # What the backup holds beside the databases (dirs of <home>; dashboards may be a link), and the
 # runner's two files up.sh reads from <home> (its resources file and gtfs-realtime.proto).
@@ -310,6 +316,56 @@ def unsettled(http: Http, paths: list[str]) -> list[str]:
     return out
 
 
+# The Portal's Pipeline status (src/reconciler/run_queue.rs outcome): where its run stands, and
+# "the last run ended ..." or "the last run, ended ..., failed" once it ran.
+RUNNING = re.compile(r"running since (\S+?Z)")
+QUEUED = re.compile(r"queued, due (\S+?Z)")
+DUE = re.compile(r"next (?:run|try) (\S+?Z)")
+RAN = re.compile(r"the last run,? ended ")
+
+
+def _ts(text: str) -> float:
+    return datetime.fromisoformat(text).timestamp()
+
+
+def first_runs_pending(items: list[dict], now: float, window: float) -> list[str]:
+    """Of the Pipelines `items` (GET /api/v1/projects/{p}/pipelines), those whose first run is still
+    to write: never ran and running, queued, or due within `window` s of `now`. A Pipeline that ran
+    once writes again into types the before run already saw (no new row); only a first run creates
+    a type between the before and the after run (smoke 43683591053: TrafficFlowObserved)."""
+    left = []
+    for item in items:
+        status = item.get("status") if isinstance(item.get("status"), dict) else {}
+        said = " ".join(c.get("message") or "" for c in status.get("conditions") or [])
+        meta = item.get("metadata") or {}
+        name = f"{meta.get('namespace') or '?'}/{meta.get('name') or '?'}"
+        if RAN.search(said):
+            continue
+        if m := RUNNING.search(said):
+            left.append(f"{name} running since {m[1]}")
+        elif m := QUEUED.search(said):
+            left.append(f"{name} queued, due {m[1]}")
+        elif (m := DUE.search(said)) and _ts(m[1]) <= now + window:
+            left.append(f"{name} first run due {m[1]}")
+    return left
+
+
+def drain_wait(fetch, timeout: float, window: float) -> tuple[list[str], float]:
+    """Polls `fetch()` (every Pipeline item, or raises naming why it could not list them) every 10 s
+    until no first run is pending (first_runs_pending) or `timeout` s passed. Answers what is still
+    pending (empty when drained) and the seconds waited."""
+    t0 = time.time()
+    while True:
+        try:
+            left = first_runs_pending(fetch(), time.time(), window)
+        except RuntimeError as e:
+            left = [str(e)]
+        waited = time.time() - t0
+        if not left or waited >= timeout:
+            return left, round(waited, 1)
+        time.sleep(min(10.0, max(0.0, timeout - waited)))
+
+
 def parse_counts(text: str) -> dict[str, int]:
     out = {}
     for line in text.splitlines():
@@ -484,6 +540,35 @@ class Ops:
             raise Refused(f"needs ~{need >> 20} MiB; the disk would be {used_after:.1%} full (> {self.a.max_disk:.0%}: "
                           f"the host sweeper deletes build dirs at 93 %)")
         return {"databases": dbs, "needBytes": need}
+
+    def drain(self, timeout: float, window: float) -> tuple[list[str], float]:
+        """drain_wait over the Portal's Pipeline statuses of every project of --export, read by a
+        test administrator signed in with --state (deleted again before the before run)."""
+        sys.path.insert(0, str(SMOKE / "pipelines"))
+        # the pipelines suite's person: Pipeline statuses need a session
+        from people import Admin
+
+        projects = sorted({d.parent.name for d in Path(self.a.export).glob("gitea/files/*/*/pipelines")})
+        admin = Admin(self.a.base_url, Path(self.a.state))
+        try:
+            admin.sign_in()
+
+            def fetch() -> list[dict]:
+                items = []
+                for p in projects:
+                    path = f"/api/v1/projects/{p}/pipelines?limit=1000"
+                    st, _, raw = admin.browser.call("GET", path)
+                    doc = as_json(raw) if st == 200 else None
+                    got = doc.get("items") if isinstance(doc, dict) else None
+                    if got is None:
+                        raise RuntimeError(f"GET {path}: {st}")
+                    for item in got:  # the list's metadata may omit the project
+                        (item.setdefault("metadata", {}) or {}).setdefault("namespace", p)
+                        items.append(item)
+                return items
+            return drain_wait(fetch, timeout, window)
+        finally:
+            admin.close()
 
     def suite(self, name: str, argv: list[str], out: Path) -> tuple[int, str]:
         call = [sys.executable, str(SMOKE / "run"), name, *argv, "--out", str(out)]
@@ -679,6 +764,19 @@ def pipeline(a, res: Results, ops: Ops, out: Path) -> dict:
     dbs = info["databases"]
     meta["databases"] = dbs
     try:
+        # restore has a shard of its own (T-7313): the import queued every Pipeline's first run, and
+        # one that writes a new type between the before and the after run flips its row (runs
+        # 43683591053, 43685936569). So the before run waits, bounded, for those first runs.
+        if a.drain > 0:
+            try:
+                left, waited = ops.drain(a.drain, a.drain_window)
+            except Exception as e:  # noqa: BLE001 - no session or no export: the wait's own red row
+                left, waited = [f"{type(e).__name__}: {e}"], 0.0
+            meta["drainSeconds"] = waited
+            res.check("control.drained", "restore", "the Portal's Pipeline statuses, every 10 s",
+                      f"no first run running, queued or due within {a.drain_window:g} s, within {a.drain:g} s",
+                      f"{len(left)} still pending after {waited:g} s" if left else f"drained after {waited:g} s",
+                      not left, "; ".join(left[:6])[:600])
         # UTC, rounded up to the next second: a type created in the run's first second is not excused
         since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(time.time()) + 1))
         steps.run("before", f"run {','.join(suites)} on the source", before)
@@ -790,6 +888,10 @@ def main(argv=None) -> int:
     p.add_argument("--converge", type=float, default=300)
     p.add_argument("--settle", type=float, default=300,
                    help="seconds the copy may take to answer the before run's /types whole (default 300)")
+    p.add_argument("--drain", type=float, default=0,
+                   help="seconds the before run waits for the Pipelines' first runs to end (default 0: no wait)")
+    p.add_argument("--drain-window", type=float, default=900,
+                   help="a first run due within this many seconds counts as pending (default 900, the suite's run)")
     p.add_argument("--max-disk", type=float, default=0.92, help="refuse when the disk would be fuller (0..1)")
     p.add_argument("--suite-timeout", type=float, default=3600)
     p.add_argument("--keep", action="store_true", help="leave the copy running")
