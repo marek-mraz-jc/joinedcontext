@@ -306,8 +306,18 @@ pub(crate) async fn execute_targets_with_authorizer(
         .on_behalf_of
         .as_ref()
         .map(|sub| format!("person:{sub}"));
+    // The credential a driver forwards shapes the rows an Endpoint answers: two tokens of one
+    // subject (a person and a narrower Connection, a token minted before a revocation) never
+    // share an entry.
+    let credential = req_ctx
+        .subject
+        .bearer_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("credential:{}", daiya_model::sha256_hex(token.as_bytes())));
     let mut principals = req_ctx.subject.principals();
     principals.extend(person.as_deref());
+    principals.extend(credential.as_deref());
 
     for (ds_uid, query, raw_target) in ds_targets {
         if !has_expressions && hidden_ds_refs.contains(&query.ref_id) {
