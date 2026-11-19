@@ -107,13 +107,19 @@ def snapshot(port: int) -> dict:
             {"name": "gone", "host": "portal.gone.test", "state": "removed", "hosts": []},
             {"name": "gamma", "host": "portal.gamma.test", "state": "active", "hosts": []},
         ],
+        # sites.organization holds the site's domain; the project names the Organization.
+        "projects": [{"name": "alpha-web", "organization": "alpha"}, {"name": "beta-web", "organization": "beta"},
+                     {"name": "beta-files", "organization": "beta"}, {"name": "gone-web", "organization": "gone"}],
         "knowledge": [
-            {"organization": "alpha", "project": "web", "source": "site", "root": f"http://www.alpha.example:{port}/",
-             "lastCrawl": at(2), "pending": 3, "errors": 0},
-            {"organization": "beta", "project": "web", "source": "site", "root": f"http://www.beta.example:{port}/",
-             "lastCrawl": at(100), "pending": 0, "errors": 7},
-            {"organization": "beta", "project": "files", "source": "upload", "root": None, "lastCrawl": None,
+            {"domain": "alpha.example", "project": "alpha-web", "source": "site",
+             "root": f"http://www.alpha.example:{port}/", "lastCrawl": at(2), "pending": 3, "errors": 0,
+             "titles": [{"title": "Parking permits", "lang": "en"}]},
+            {"domain": "beta.example", "project": "beta-web", "source": "site", "root": f"http://www.beta.example:{port}/",
+             "lastCrawl": at(100), "pending": 0, "errors": 7, "titles": []},
+            {"domain": "beta.example", "project": "beta-files", "source": "upload", "root": None, "lastCrawl": None,
              "pending": 0, "errors": 0},
+            {"domain": "alpha", "project": "unmapped", "source": "site", "root": "http://www.other.example/",
+             "lastCrawl": at(1), "pending": 0, "errors": 0},
         ],
     }
 
@@ -127,6 +133,7 @@ def test_rows_follow_each_organizations_own_configuration():
                           "api": "api.alpha.test", "idm": "idm.alpha.test"}
     assert b["hosts"] == {"portal": "portal.beta.test", "opendata": "data.beta.test"}
     assert [s["name"] for s in a["harvest"]] == ["alpha-nkod"] and [s["name"] for s in b["harvest"]] == ["beta-arcgis"]
+    # Through the project, never by the domain column: "unmapped" names alpha as its domain and stays out.
     assert [c["root"] for c in a["crawl"]] == ["http://www.alpha.example:1/"]
     assert [c["source"] for c in b["crawl"]] == ["site", "upload"]
     assert (a["assistant"], b["assistant"]) == ("alpha-chat", None)
@@ -143,10 +150,44 @@ def test_pairs_take_only_org_equals_value():
             orgs.pairs([bad], "--app-host")
 
 
+def test_a_source_belongs_to_the_organization_of_its_project():
+    doc = orgs.tomllib.loads(TOML.replace("{port}", "1"))
+    snap = {"projects": [{"name": "p1", "organization": "beta"}],
+            "knowledge": [{"domain": "alpha", "project": "p1", "source": "s"},
+                          {"domain": "beta", "project": "p2", "source": "s"}]}
+    got = orgs.build(doc, snap)
+    assert [c["project"] for c in got["beta"]["crawl"]] == ["p1"] and got["alpha"]["crawl"] == []
+
+
+def test_the_route_comes_from_the_done_event_and_only_search_counts():
+    assert orgs.route([("done", {"cached": False, "stagesMs": {"route": 9, "search": 40, "answer": 900}})]) == "search"
+    assert orgs.route([("done", {"cached": True, "stagesMs": {"route": 3}})]) == "cached"
+    assert orgs.route([("done", {"cached": False, "stagesMs": {"route": 9, "answer": 500}})]) == "direct"
+    assert orgs.route([("answer", {"text": "x"})]) == "direct"
+
+
+def test_the_question_names_a_page_title_and_never_repeats_the_previous_one():
+    titles = [{"title": "Parkovanie\n v centre", "lang": "sk-SK"}, {"title": "Opening hours", "lang": None},
+              {"title": "x", "lang": "en"}, "not a row"]
+    rng = orgs.random.Random(7)
+    asked = {orgs.question(titles, None, rng) for _ in range(200)}
+    assert asked == {q.format(t="Parkovanie v centre") for q in orgs.ASK["sk"]} | \
+        {q.format(t="Opening hours") for q in orgs.ASK["en"]}
+    prev = orgs.ASK["en"][0].format(t="Opening hours")
+    # Another title first; with one title left, its other phrasing; never the previous question.
+    assert all("Opening hours" not in orgs.question(titles, prev, rng) for _ in range(100))
+    one = [{"title": "Opening hours", "lang": "en"}]
+    assert {orgs.question(one, prev, rng) for _ in range(50)} == {orgs.ASK["en"][1].format(t="Opening hours")}
+    assert orgs.question([{"title": "  ", "lang": "en"}], None, rng) is None
+    assert len(orgs.question([{"title": "a" * 500}], None, rng)) < orgs.TITLE_MAX + 40
+    assert orgs.previous_questions(None) == {}
+
+
 @pytest.fixture
 def edge():
     """A loopback edge answering as each Organization's jc would; it records what reached it."""
     seen = []
+    done = {"cached": False, "stagesMs": {"route": 5, "search": 30, "answer": 400}}
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -191,9 +232,10 @@ def edge():
             if path == "/api/v1/d/alpha-chat/token":
                 return j({"token": "t"})
             if path == "/api/v1/d/alpha-chat/chat" and self.headers.get("X-JC-Visitor") == "t":
+                seen.append(("ASK", host, json.loads(raw)["message"]))
                 sse = (b'event: answer\ndata: {"text": "x"}\n\n'
                        b'event: citations\ndata: [{"n": 1, "url": "https://www.alpha.example/about"}]\n\n'
-                       b'event: done\ndata: {}\n\n')
+                       b'event: done\ndata: ' + json.dumps(done).encode() + b'\n\n')
                 return self.reply(200, sse, "text/event-stream")
             if host.startswith("portal.") and path == "/":
                 return self.reply(302)
@@ -207,7 +249,7 @@ def edge():
 
     srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield srv.server_port, seen
+    yield srv.server_port, seen, done
     srv.shutdown()
 
 
@@ -237,8 +279,8 @@ def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, 
     code, res = run(tmp_path, public_sources, "--app-host", "alpha=nosuch.apps.alpha.test")
     rows = {r["id"]: r for r in res["checks"]}
     green = ["prm.gateway", "portal.alpha", "oidc.alpha", "prm.alpha", "catalogue.alpha", "mcp.alpha", "harvest.alpha.alpha-nkod",
-             "crawl.alpha.web/site", "crawl.alpha.web/site.fresh", "embed.alpha", "assistant.alpha",
-             "portal.beta", "oidc.beta", "catalogue.beta", "crawl.beta.web/site"]
+             "crawl.alpha.alpha-web/site", "crawl.alpha.alpha-web/site.fresh", "embed.alpha", "assistant.alpha",
+             "portal.beta", "oidc.beta", "catalogue.beta", "crawl.beta.beta-web/site"]
     assert {k: rows[k]["result"] for k in green} == {k: "pass" for k in green}, rows
     red = {k for k, r in rows.items() if r["result"] == "fail"}
     # beta: the installation realm's metadata names realm alpha; its harvest source answers 503;
@@ -248,15 +290,45 @@ def test_one_run_probes_each_organization_and_names_what_is_red(tmp_path, edge, 
     assert rows["prm.alpha"]["call"] == "GET portal.alpha.test/.well-known/oauth-protected-resource/api/v1/mcp"
     # The gateway's /api/mcp metadata is asked of the gateway host only, never of an Organization host.
     assert [h for m, h, p in edge[1] if p == "/.well-known/oauth-protected-resource/api/mcp"] == ["api.city.test"]
-    assert {"prm.beta", "prm.gamma", "harvest.beta.beta-arcgis", "crawl.beta.web/site.fresh", "embed.beta",
+    assert {"prm.beta", "prm.gamma", "harvest.beta.beta-arcgis", "crawl.beta.beta-web/site.fresh", "embed.beta",
             "app.alpha.nosuch.apps.alpha.test"} <= red
     assert rows["embed.beta"]["actual"] == "7 refused, 0 waiting"
-    assert rows["crawl.beta.files/upload"]["result"] == "skip"
+    assert rows["crawl.beta.beta-files/upload"]["result"] == "skip"
     assert rows["assistant.beta"]["result"] == "skip" and "--assistant beta=" in rows["assistant.beta"]["reason"]
     assert code == 1
     assert res["organizations"]["alpha"]["fail"] == 1 and res["organizations"]["beta"]["fail"] >= 4
     # No answer body reaches a row: statuses and counts only.
     assert not any("query_entities" in r["actual"] or "issuer" in r["actual"] for r in res["checks"])
+
+
+def test_the_assistant_row_asks_about_an_own_page_and_fails_a_cached_or_direct_route(tmp_path, edge, public_sources):
+    _, res = run(tmp_path, public_sources)
+    row = {r["id"]: r for r in res["checks"]}["assistant.alpha"]
+    asked = [m for k, h, m in edge[1] if k == "ASK"]
+    assert len(asked) == 1 and "Parking permits" in asked[0] and res["questions"] == {"alpha": asked[0]}
+    assert (row["result"], row["actual"]) == ("pass", "200, route search, answer, 1/1 own citations")
+    # The next run reads this one's results and asks the other phrasing: no answer-cache key repeats.
+    prev = tmp_path / "prev.json"
+    prev.write_text(json.dumps(res))
+    for done, route in (({"cached": True, "stagesMs": {"route": 2}}, "cached"),
+                        ({"cached": False, "stagesMs": {"route": 4, "answer": 300}}, "direct")):
+        edge[2].clear()
+        edge[2].update(done)
+        out = tmp_path / route
+        out.mkdir()
+        _, again = run(out, public_sources, "--previous", str(prev))
+        row = {r["id"]: r for r in again["checks"]}["assistant.alpha"]
+        assert row["result"] == "fail" and f"route {route}" in row["actual"] and row["reason"].startswith(route)
+        assert again["questions"]["alpha"] != asked[0]
+
+
+def test_an_index_without_a_titled_page_fails_the_assistant_row_by_name(tmp_path, edge, public_sources):
+    doc = snapshot(public_sources)
+    doc["knowledge"][0]["titles"] = []
+    _, res = run(tmp_path, public_sources, snap_doc=doc)
+    row = {r["id"]: r for r in res["checks"]}["assistant.alpha"]
+    assert row["result"] == "fail" and "no public, embedded page with a title" in row["reason"]
+    assert not [m for k, h, m in edge[1] if k == "ASK"]
 
 
 def test_an_assistant_schema_before_migration_0025_skips_the_embed_row(tmp_path, edge, public_sources):
@@ -270,7 +342,7 @@ def test_an_assistant_schema_before_migration_0025_skips_the_embed_row(tmp_path,
 
 
 def test_the_guard_refuses_writes_foreign_hosts_and_private_sources(tmp_path, edge, monkeypatch):
-    port, seen = edge
+    port, seen, _ = edge
     toml = TOML.replace("{port}", str(port))
     got = orgs.build(orgs.tomllib.loads(toml), snapshot(port))
     cfg = live.config("t", "city.test", "127.0.0.1", toml, tmp_path, rate=1000, edge_port=port, scheme="http",

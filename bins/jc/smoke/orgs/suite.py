@@ -3,7 +3,7 @@ anonymous and read-only behind live.py's guard.
 
     bins/jc/smoke/run orgs --jc-config <jc.toml> --deployment <name> --domain <d> --edge <ip>
         --out <dir> [--snapshot <json>] [--assistant ORG=PUBLICID]... [--app-host ORG=HOST]...
-        [--question <text>] [--max-crawl-hours 48] [--rate 2]
+        [--previous <results.json>] [--max-crawl-hours 48] [--rate 2]
 
 The Organizations are jc.toml's [[organizations]] (the seed) joined with the registry rows of the
 snapshot (`watch.py` reads it read-only from the Portal's and the assistant's databases): a new
@@ -11,8 +11,12 @@ Organization, host, crawl source or harvest source is covered on the next run wi
 Snapshot, every key optional:
 
     {"organizations": [{"name", "host", "catalogueId", "hosts": [{"host", "role"}]}],
-     "knowledge": [{"organization", "project", "source", "root", "lastCrawl", "pending", "errors"}]}
+     "projects": [{"name", "organization"}],
+     "knowledge": [{"domain", "project", "source", "root", "lastCrawl", "pending", "errors",
+                    "titles": [{"title", "lang"}]}]}
 
+A knowledge source belongs to O through its project: the Portal registry's project row names the
+Organization (sites.organization holds the site's domain, never the Organization's name).
 Rows, per Organization O (target O; ids carry O so an incident is one Organization and one check):
 - portal.O: its working host answers 2xx/3xx.
 - oidc.O: its realm's discovery (O on hosts.idm, else the installation realm on the sign-in host)
@@ -29,8 +33,12 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
   than --max-crawl-hours.
 - embed.O: no passage of O's crawl sources holds an embedder refusal (`chunks.embed_error`); a
   skip on an assistant schema before migration 0025 (no such column: `errors` null).
-- assistant.O: with --assistant O=<publicId>, one fixed question through the visitor flow answers
-  (no `error` event, an `answer`) citing at least one page of O's own crawl roots.
+- assistant.O: with --assistant O=<publicId>, one question through the visitor flow takes the
+  search route (the `done` event's stagesMs has `search`; `cached` true or no search is a fail
+  named `cached` or `direct`), answers (no `error` event, an `answer`) and cites at least one page
+  of O's own crawl roots. The question names one page title of O's public, embedded index, picked
+  at random each run and never the previous run's question (--previous), so the answer cache
+  cannot answer it and the router has to search O's pages.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
 Result lines carry statuses and counts, never a response body or a person's data."""
 
@@ -39,6 +47,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import random
 import re
 import sys
 import tomllib
@@ -56,7 +65,15 @@ from common import FAIL, Http, Results, as_json, events, solve
 
 SUITE = "orgs"
 NAME = re.compile(r"[a-z][a-z0-9_-]{0,62}")
-QUESTION = "Čo nájdem na vašej stránke?"
+# Two phrasings per language, so one titled page still yields a question unlike the previous run's.
+ASK = {
+    "sk": ("Čo sa píše na vašej stránke „{t}“?", "Zhrňte mi, prosím, vašu stránku „{t}“."),
+    "cs": ("Co se píše na vaší stránce „{t}“?", "Shrňte mi, prosím, vaši stránku „{t}“."),
+    "fi": ("Mitä sivullanne ”{t}” kerrotaan?", "Tiivistäkää sivunne ”{t}” sisältö."),
+    "de": ("Was steht auf Ihrer Seite „{t}“?", "Fassen Sie bitte Ihre Seite „{t}“ zusammen."),
+    "en": ("What does your page \"{t}\" say?", "Please sum up your page \"{t}\"."),
+}
+TITLE_MAX = 120
 ROLES = {"working": "portal", "opendata": "opendata", "api": "api", "signin": "idm", "apps": "apps"}
 
 
@@ -69,6 +86,36 @@ def pairs(values: list[str], what: str) -> dict[str, list[str]]:
             raise SystemExit(f"{what} {v!r}: ORG=VALUE")
         out.setdefault(org, []).append(val.strip().lower())
     return out
+
+
+def clean_title(t) -> str:
+    """A page title as one line: controls dropped, spaces collapsed, cut at TITLE_MAX."""
+    t = "".join(c if c.isprintable() else " " for c in str(t or ""))
+    return " ".join(t.split())[:TITLE_MAX].strip()
+
+
+def question(titles: list[dict], previous: str | None, rng: random.Random) -> str | None:
+    """One question naming a page title of O's index, never `previous`; a title other than the
+    previous run's first. None when the index holds no usable title."""
+    asks = []
+    for t in titles:
+        title = clean_title(t.get("title") if isinstance(t, dict) else None)
+        if len(title) >= 3:
+            lang = str(t.get("lang") or "").lower()[:2]
+            asks += [(title, q.format(t=title)) for q in ASK.get(lang, ASK["en"])]
+    asks = [(t, q) for t, q in asks if q != previous]
+    fresh = [q for t, q in asks if not previous or t not in previous]
+    pool = fresh or [q for _, q in asks]
+    return rng.choice(pool) if pool else None
+
+
+def route(evs: list) -> str:
+    """The route an anonymous answer took, from its `done` event: cached, search or direct."""
+    done = next((d for n, d in evs if n == "done" and isinstance(d, dict)), {})
+    if done.get("cached") is True:
+        return "cached"
+    stages = done.get("stagesMs")
+    return "search" if isinstance(stages, dict) and "search" in stages else "direct"
 
 
 def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | None = None) -> dict[str, dict]:
@@ -106,9 +153,10 @@ def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | No
     for seed in (doc.get("dataroom") or {}).get("harvest") or []:
         if seed.get("organization") in orgs and seed.get("enabled", True):
             orgs[seed["organization"]]["harvest"].append({"name": seed["name"], "url": seed["url"]})
+    owner = {p.get("name"): p.get("organization") for p in snap.get("projects") or [] if isinstance(p, dict)}
     for k in snap.get("knowledge") or []:
-        if k.get("organization") in orgs:
-            orgs[k["organization"]]["crawl"].append(k)
+        if owner.get(k.get("project")) in orgs:
+            orgs[owner[k["project"]]]["crawl"].append(k)
     for name, ids in (assistants or {}).items():
         if name in orgs:
             orgs[name]["assistant"] = ids[0]
@@ -149,6 +197,9 @@ def answered(st: int) -> bool:
 class Suite:
     def __init__(self, doc: dict, orgs: dict, res: Results, a):
         self.doc, self.orgs, self.r, self.a = doc, orgs, res, a
+        self.previous = previous_questions(a.previous)
+        self.asked: dict[str, str] = {}
+        self.rng = random.Random()
         self.scheme = a.scheme
         self.installation = (doc.get("identity") or {}).get("realm") or "jc"
         mount = (doc.get("mounts") or {}).get("kaisatsu")
@@ -261,6 +312,14 @@ class Suite:
             self.r.skip(rid, o, "POST /api/v1/d/<publicId>/chat", "an answer citing O's own pages",
                         f"no public assistant named for {o} (watch --assistant {o}=<publicId>)")
             return
+        titles = [t for c in e["crawl"] for t in c.get("titles") or []]
+        q = question(titles, self.previous.get(o), self.rng)
+        if not q:
+            self.r.check(rid, o, "a page title of O's public, embedded index", "a question naming one of O's pages",
+                         f"no titled page in {len(e['crawl'])} knowledge sources", False,
+                         "O's index holds no public, embedded page with a title to ask about")
+            return
+        self.asked[o] = q
         h = self.http(self.assistant_host or e["hosts"]["portal"])
         call = f"POST {h.base.split('://')[1]}/api/v1/d/{pid}/chat"
         st, _, raw = h.call("GET", f"/api/v1/d/{pid}/challenge")
@@ -274,7 +333,7 @@ class Suite:
         if not tok:
             self.r.check(rid, o, call, "a visitor token", f"token {st}", False)
             return
-        st, _, raw = h.call("POST", f"/api/v1/d/{pid}/chat", body={"message": self.a.question},
+        st, _, raw = h.call("POST", f"/api/v1/d/{pid}/chat", body={"message": q},
                             headers={"X-JC-Visitor": tok, "Accept": "text/event-stream"})
         evs = events(raw) if st == 200 else []
         errors = [d.get("status") for n, d in evs if n == "error" and isinstance(d, dict)]
@@ -283,10 +342,22 @@ class Suite:
         own = {host_of(c.get("root") or "") for c in e["crawl"]} - {""}
         mine = [u for u in cited if not own or host_of(u) in own]
         has_answer = any(n == "answer" for n, _ in evs)
-        actual = f"{st}, {'answer' if has_answer else 'no answer'}, {len(mine)}/{len(cited)} own citations" + \
-            (f", error {errors}" if errors else "")
-        self.r.check(rid, o, call, "an answer, no error event, a citation of O's own pages", actual,
-                     st == 200 and has_answer and not errors and bool(mine))
+        took = route(evs) if st == 200 else "none"
+        actual = f"{st}, route {took}, {'answer' if has_answer else 'no answer'}, " \
+            f"{len(mine)}/{len(cited)} own citations" + (f", error {errors}" if errors else "")
+        why = {"cached": "cached: the answer cache answered, nothing was searched",
+               "direct": "direct: the router answered without searching O's index"}.get(took, "")
+        self.r.check(rid, o, call, "route search, an answer, no error event, a citation of O's own pages", actual,
+                     st == 200 and took == "search" and has_answer and not errors and bool(mine), why)
+
+
+def previous_questions(path: str | None) -> dict[str, str]:
+    """{org: question} the previous run asked (its results.json `questions`); {} when unreadable."""
+    try:
+        got = json.loads(Path(path).read_text()).get("questions") if path else None
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {o: q for o, q in got.items() if isinstance(q, str)} if isinstance(got, dict) else {}
 
 
 def main(argv) -> int:
@@ -302,7 +373,7 @@ def main(argv) -> int:
     p.add_argument("--snapshot", help="the registry and knowledge snapshot watch.py reads (JSON)")
     p.add_argument("--assistant", action="append", default=[], help="ORG=PUBLICID of O's public assistant")
     p.add_argument("--app-host", action="append", default=[], help="ORG=HOST of one of O's Apps")
-    p.add_argument("--question", default=QUESTION)
+    p.add_argument("--previous", help="the previous run's results.json: its questions are not asked again")
     p.add_argument("--max-crawl-hours", type=float, default=48)
     p.add_argument("--rate", type=float, default=2.0, help="requests per second, all hosts together")
     p.add_argument("--timeout", type=float, default=30)
@@ -321,8 +392,9 @@ def main(argv) -> int:
     if not orgs:
         res.skip("organizations", a.deployment, "jc.toml and the registry", "an Organization",
                  "no Organization with a working host")
+    suite = Suite(doc, orgs, res, a)
     try:
-        Suite(doc, orgs, res, a).run()
+        suite.run()
     finally:
         live.uninstall()
     per = {o: {"checks": 0, "fail": 0} for o in orgs}
@@ -330,5 +402,5 @@ def main(argv) -> int:
         if row["target"] in per:
             per[row["target"]]["checks"] += 1
             per[row["target"]]["fail"] += row["result"] == FAIL
-    res.write(out, {"organizations": per})
+    res.write(out, {"organizations": per, "questions": suite.asked})
     return 1 if res.totals()["fail"] else 0

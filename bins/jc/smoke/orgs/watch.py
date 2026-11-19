@@ -23,8 +23,10 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
 Each run:
 1. Snapshot, read-only: jc.toml from the ConfigMap jc's pod mounts (the jc image has no `cat`),
    then one query each on the Portal's and the assistant's databases on the CNPG primary, inside SET default_transaction_read_only (the
-   Organizations, their served hosts and catalogue; each knowledge source's root, last crawl and
-   embedder refusals). Counts and addresses only: no passage text, no person.
+   Organizations, their served hosts and catalogue, each project's Organization; each knowledge
+   source's root, last crawl, embedder refusals and up to 12 page titles of its public, embedded
+   pages, sampled anew each run for the assistant's question). Counts, addresses and public page
+   titles only: no passage text, no person.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
@@ -56,14 +58,25 @@ PORTAL_SQL = """SELECT json_build_object('organizations', coalesce(json_agg(json
   'name', o.name, 'host', o.host, 'state', o.state, 'catalogueId', o.catalogue_id,
   'hosts', (SELECT coalesce(json_agg(json_build_object('host', h.host, 'role', h.role)), '[]')
             FROM organization_hosts h WHERE h.organization = o.name AND h.state IN ('cert-issued', 'served'))
-) ORDER BY o.name), '[]')) FROM organizations o"""
+) ORDER BY o.name), '[]'),
+  'projects', (SELECT coalesce(json_agg(json_build_object('name', p.name, 'organization', p.organization)
+               ORDER BY p.name), '[]')
+               FROM project_ids p WHERE p.parent IS NULL AND NOT p.reserved AND p.organization IS NOT NULL)
+) FROM organizations o"""
 
 ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_build_object(
-  'organization', s.organization, 'project', s.project, 'source', s.source,
+  'domain', s.organization, 'project', s.project, 'source', s.source,
   'lastCrawl', to_char(s.last_crawl AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'root', (SELECT p.url FROM pages p WHERE p.site_id = s.id AND p.depth = 0 ORDER BY p.id LIMIT 1),
   'pending', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL{pending}),
-  'errors', {errors}
+  'errors', {errors},
+  'titles', (SELECT coalesce(json_agg(json_build_object('title', t.title, 'lang', t.language)), '[]')
+             FROM (SELECT d.title, d.language FROM (SELECT DISTINCT p.title, p.language
+                   FROM chunks c JOIN pages p ON p.id = c.page_id
+                   WHERE c.project = s.project AND c.site_id = s.id AND c.visibility = 'public'
+                     AND c.embedding IS NOT NULL AND s.visibility = 'public' AND p.included
+                     AND length(btrim(p.title)) BETWEEN 3 AND 200) d
+                   ORDER BY random() LIMIT 12) t)
 ) ORDER BY s.organization, s.project, s.source), '[]')) FROM sites s"""
 # chunks.embed_error arrives with assistant migration 0025: before it, the errors are unknown (null).
 EMBED_ERROR_SQL = """SELECT json_build_object('embedError', EXISTS (SELECT 1 FROM information_schema.columns
@@ -127,11 +140,19 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
     return toml, path
 
 
+def previous_results(runs: Path, run: Path) -> Path | None:
+    """The newest earlier run's results.json, whose questions this run does not ask again."""
+    done = sorted(d / "orgs" / "results.json" for d in runs.iterdir() if d.name < run.name) if runs.is_dir() else []
+    return next((f for f in reversed(done) if f.is_file()), None)
+
+
 def suite_argv(cfg: dict, toml: Path, snap: Path | None, run: Path) -> list[str]:
     argv = [sys.executable, str(SMOKE / "run"), "orgs", "--out", str(run / "orgs"), "--jc-config", str(toml),
             "--deployment", cfg["cluster"], "--domain", cfg["domain"], "--edge", cfg["edge"]]
     if snap:
         argv += ["--snapshot", str(snap)]
+    if prev := previous_results(run.parent, run):
+        argv += ["--previous", str(prev)]
     for v in cfg.get("assistant") or []:
         argv += ["--assistant", v]
     for v in cfg.get("app_hosts") or []:
