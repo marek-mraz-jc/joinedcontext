@@ -3,7 +3,7 @@ anonymous and read-only behind live.py's guard.
 
     bins/jc/smoke/run orgs --jc-config <jc.toml> --deployment <name> --domain <d> --edge <ip>
         --out <dir> [--snapshot <json>] [--assistant ORG=PUBLICID[@PROJECT[/SOURCE],...]]... [--app-host ORG=HOST]...
-        [--previous <results.json>] [--max-crawl-hours 48] [--rate 2]
+        [--previous <results.json>] [--max-crawl-hours 48] [--manifests <dir>] [--rate 2]
 
 The Organizations are jc.toml's [[organizations]] (the seed) joined with the registry rows of the
 snapshot (`watch.py` reads it read-only from the Portal's and the assistant's databases): a new
@@ -13,6 +13,7 @@ Snapshot, every key optional:
     {"organizations": [{"name", "host", "catalogueId", "hosts": [{"host", "role"}]}],
      "projects": [{"name", "organization"}],
      "knowledge": [{"domain", "project", "source", "root", "lastCrawl", "pending", "errors",
+                    "lastDone": {"at", "kind"}, "lastEnd": {"state", "at", "kind", "errorClass"},
                     "titles": [{"title", "lang"}]}]}
 
 A knowledge source belongs to O through its project: the Portal registry's project row names the
@@ -29,8 +30,15 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
 - mcp.O: MCP initialize and tools/list on its API host, anonymous, list at least one tool.
 - app.O.<host>: each App host (--app-host) answers 2xx/3xx.
 - harvest.O.<name>: each enabled [[dataroom.harvest]] source of O answers HEAD (any status < 500).
-- crawl.O.<project>/<source>: each crawl root answers HEAD (< 500), and its last crawl is younger
-  than --max-crawl-hours.
+- crawl.O.<project>/<source>: each crawl root answers HEAD (< 500).
+- crawl.O.<project>/<source>.job: the source's newest finished crawl job (crawl_jobs, full or
+  sitemap) is done; a failed one is red with its error class (the text before the first colon).
+- crawl.O.<project>/<source>.fresh (T-7398): the newest done crawl job of any kind (the weekly full
+  crawl or the daily sitemap check), or sites.last_crawl when newer, is younger than the source's
+  own cadence plus 24 h: its KnowledgeSource manifest's schedule (under --manifests, the seed in
+  Git), daily when the source is a website with sitemap checks (the assistant checks it every day
+  the schedule does not name), the assistant's default 0 3 * * * when the manifest names none, and
+  --max-crawl-hours when no manifest names the source.
 - embed.O: no passage of O's crawl sources holds an embedder refusal (`chunks.embed_error`); a
   skip on an assistant schema before migration 0025 (no such column: `errors` null).
 - assistant.O: with --assistant O=<publicId>, one question through the visitor flow takes the
@@ -48,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import itertools
 import json
 import random
 import re
@@ -194,6 +203,96 @@ def parse_time(s: str | None) -> dt.datetime | None:
         return None
 
 
+SEED = HERE.parents[3] / "deploy" / "components" / "context-gateway" / "seed"
+DEFAULT_CRON = "0 3 * * *"  # the assistant's schedule::DEFAULT
+SLACK_HOURS = 24.0
+CRON_RANGES = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+
+
+def cron_sets(cron: str) -> list[set[int]] | None:
+    """The five fields of `cron` as sets of values, read as jc_core::cron does (lists, ranges,
+    steps, weekday 7 = Sunday); None for anything else."""
+    fields = str(cron).split()
+    if len(fields) != 5:
+        return None
+    out = []
+    for f, (lo, hi) in zip(fields, CRON_RANGES):
+        vals: set[int] = set()
+        for part in f.split(","):
+            base, slash, step = part.partition("/")
+            try:
+                a, b = (lo, hi) if base == "*" else (int(x) for x in (base.split("-", 1) * 2)[:2])
+                if slash and "-" not in base and base != "*":
+                    b = hi
+                n = int(step) if slash else 1
+            except ValueError:
+                return None
+            if not (lo <= a <= b <= hi) or n < 1:
+                return None
+            vals.update(range(a, b + 1, n))
+        out.append(vals)
+    if 7 in out[4]:
+        out[4] = (out[4] - {7}) | {0}
+    return [*out, fields[2] == "*", fields[4] == "*"]
+
+
+def cron_period_hours(cron: str) -> float | None:
+    """The longest gap between two runs of `cron`, to the hour, over a year from a fixed Monday;
+    None when it is not a schedule or runs less than twice."""
+    sets = cron_sets(cron)
+    if not sets or not sets[0]:
+        return None
+    _, hours, days, months, weekdays, any_day, any_weekday = sets
+    t, runs = dt.datetime(2026, 1, 5, tzinfo=dt.UTC), []
+    for _ in range(400 * 24):
+        day_ok, wd_ok = t.day in days, (t.isoweekday() % 7) in weekdays
+        if t.hour in hours and t.month in months and \
+                ((day_ok or wd_ok) if not (any_day or any_weekday) else (day_ok and wd_ok)):
+            runs.append(t)
+        t += dt.timedelta(hours=1)
+    gaps = [(b - a).total_seconds() / 3600 for a, b in itertools.pairwise(runs)]
+    return max(gaps) if gaps else None
+
+
+def schedules(root: Path) -> dict[tuple[str, str], dict]:
+    """{(project, source): its KnowledgeSource spec} of every manifest under `root`; a file that
+    does not read as YAML (a template) is left out."""
+    import yaml
+    out: dict[tuple[str, str], dict] = {}
+    for f in sorted(root.rglob("*.yaml")) if root.is_dir() else []:
+        try:
+            docs = list(yaml.safe_load_all(f.read_text()))
+        except (OSError, yaml.YAMLError):
+            continue
+        for d in docs:
+            meta = d.get("metadata") if isinstance(d, dict) else None
+            if d and d.get("kind") == "KnowledgeSource" and isinstance(meta, dict) and isinstance(d.get("spec"), dict):
+                out[(str(meta.get("namespace")), str(meta.get("name")))] = d["spec"]
+    return out
+
+
+def crawl_limit(spec: dict | None, fallback: float) -> tuple[float, str]:
+    """The hours a source's newest crawl may be old, and why: its cadence plus SLACK_HOURS."""
+    if spec is None:
+        return fallback, "no manifest names the source"
+    cron = str(spec.get("schedule") or DEFAULT_CRON)
+    checks = spec.get("source") == "website" and spec.get("sitemap") is True
+    sets = cron_sets(cron)
+    cadence = cron_period_hours(f"{cron.split()[0]} {cron.split()[1]} * * *" if checks and sets else cron)
+    if cadence is None:
+        return fallback, f"schedule {cron!r} not readable"
+    return cadence + SLACK_HOURS, f"schedule {cron}" + (" with daily sitemap checks" if checks else "")
+
+
+def newest_crawl(c: dict) -> tuple[dt.datetime | None, str]:
+    """The newest done crawl of a source and what it was: a crawl job of any kind or last_crawl."""
+    done = c.get("lastDone") if isinstance(c.get("lastDone"), dict) else {}
+    job, last = parse_time(done.get("at")), parse_time(c.get("lastCrawl"))
+    if job and (not last or job >= last):
+        return job, f"{clean_title(done.get('kind'))[:20] or 'crawl'} job"
+    return last, "sites.last_crawl"
+
+
 def answered(st: int) -> bool:
     return 200 <= st < 400
 
@@ -205,6 +304,7 @@ class Suite:
         self.asked: dict[str, str] = {}
         self.rng = random.Random()
         self.scheme = a.scheme
+        self.schedules = schedules(Path(a.manifests))
         self.installation = (doc.get("identity") or {}).get("realm") or "jc"
         mount = (doc.get("mounts") or {}).get("kaisatsu")
         mount = mount if isinstance(mount, dict) else {}
@@ -262,13 +362,17 @@ class Suite:
             if not c.get("root"):
                 self.r.skip(rid, o, "the crawl root", "a root page", "no root page: an upload source or not crawled yet")
                 continue
-            last = parse_time(c.get("lastCrawl"))
+            self.job(f"{rid}.job", o, c)
+            last, what = newest_crawl(c)
             age = (now - last).total_seconds() / 3600 if last else None
             if not self.reach(rid, o, c["root"]):
                 continue
-            self.r.check(f"{rid}.fresh", o, "sites.last_crawl", f"under {self.a.max_crawl_hours} h",
-                         f"{age:.1f} h" if age is not None else "never",
-                         age is not None and age <= self.a.max_crawl_hours)
+            limit, why = crawl_limit(self.schedules.get((str(c.get("project")), str(c.get("source")))),
+                                     self.a.max_crawl_hours)
+            self.r.check(f"{rid}.fresh", o, "crawl_jobs done (full or sitemap), sites.last_crawl",
+                         f"under {limit:g} h ({why})",
+                         f"{age:.1f} h ({what})" if age is not None else "never",
+                         age is not None and age <= limit)
         if e["crawl"] and all(c.get("errors") is None for c in e["crawl"]):
             self.r.skip(f"embed.{o}", o, "chunks.embed_error of O's sources", "0 refused passages",
                         "the assistant schema has no chunks.embed_error yet (assistant migration 0025)")
@@ -278,6 +382,17 @@ class Suite:
             self.r.check(f"embed.{o}", o, "chunks.embed_error of O's sources", "0 refused passages",
                          f"{errors} refused, {pending} waiting", errors == 0)
         self.assistant(o, e)
+
+    def job(self, rid: str, o: str, c: dict) -> None:
+        """The source's newest finished crawl job is done; a failed one names its error class."""
+        end = c.get("lastEnd") if isinstance(c.get("lastEnd"), dict) else None
+        if not end or end.get("state") not in ("done", "failed"):
+            self.r.skip(rid, o, "crawl_jobs", "the newest finished job done", "no finished crawl job")
+            return
+        kind = clean_title(end.get("kind"))[:20] or "crawl"
+        got = f"{kind} {end['state']}" + (f": {clean_title(end.get('errorClass'))[:80] or 'no error text'}"
+                                          if end["state"] == "failed" else "")
+        self.r.check(rid, o, "crawl_jobs", "the newest finished job done", got, end["state"] == "done")
 
     def reach(self, rid: str, o: str, url: str) -> bool:
         u = urllib.parse.urlsplit(url)
@@ -384,7 +499,10 @@ def main(argv) -> int:
     p.add_argument("--assistant", action="append", default=[], help="ORG=PUBLICID[@PROJECT[/SOURCE],...] of O's public assistant; @ what it searches")
     p.add_argument("--app-host", action="append", default=[], help="ORG=HOST of one of O's Apps")
     p.add_argument("--previous", help="the previous run's results.json: its questions are not asked again")
-    p.add_argument("--max-crawl-hours", type=float, default=48)
+    p.add_argument("--max-crawl-hours", type=float, default=48,
+                   help="the freshness limit of a source no manifest under --manifests names")
+    p.add_argument("--manifests", default=str(SEED),
+                   help="the KnowledgeSource manifests whose schedules set each source's freshness limit")
     p.add_argument("--rate", type=float, default=2.0, help="requests per second, all hosts together")
     p.add_argument("--timeout", type=float, default=30)
     a = p.parse_args(argv)

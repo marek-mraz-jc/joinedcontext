@@ -24,7 +24,8 @@ Each run:
 1. Snapshot, read-only: jc.toml from the ConfigMap jc's pod mounts (the jc image has no `cat`),
    then one query each on the Portal's and the assistant's databases on the CNPG primary, inside SET default_transaction_read_only (the
    Organizations, their served hosts and catalogue, each project's Organization; each knowledge
-   source's root, last crawl, embedder refusals and up to 12 titles of its public, embedded pages and
+   source's root, last crawl, newest done and newest finished crawl job (time, kind and, when it
+   failed, the error text before its first colon), embedder refusals and up to 12 titles of its public, embedded pages and
    documents, sampled anew each run for the assistant's question). Counts, addresses and public page
    titles only: no passage text, no person.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
@@ -75,6 +76,16 @@ ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_
   'domain', s.organization, 'project', s.project, 'source', s.source,
   'lastCrawl', to_char(s.last_crawl AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
   'root', (SELECT p.url FROM pages p WHERE p.site_id = s.id AND p.depth = 0 ORDER BY p.id LIMIT 1),
+  'lastDone', (SELECT json_build_object('at', to_char(j.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                                        'kind', j.kind)
+               FROM crawl_jobs j WHERE j.project = s.project AND j.source = s.source AND j.state = 'done'
+                 AND j.finished_at IS NOT NULL ORDER BY j.finished_at DESC LIMIT 1),
+  'lastEnd', (SELECT json_build_object('state', j.state, 'kind', j.kind,
+                                       'at', to_char(j.finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                                       'errorClass', CASE WHEN j.state = 'failed'
+                                                     THEN left(split_part(coalesce(j.error, ''), ':', 1), 80) END)
+              FROM crawl_jobs j WHERE j.project = s.project AND j.source = s.source
+                AND j.state IN ('done', 'failed') AND j.finished_at IS NOT NULL ORDER BY j.finished_at DESC LIMIT 1),
   'pending', (SELECT count(*) FROM chunks c WHERE c.site_id = s.id AND c.embedding IS NULL{pending}),
   'errors', {errors},
   'titles', (SELECT coalesce(json_agg(json_build_object('title', t.title, 'lang', t.language)), '[]')
