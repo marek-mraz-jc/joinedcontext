@@ -842,10 +842,12 @@ fn realm_with_update(stored: RealmConfig, body: Value) -> Result<RealmConfig> {
         .map_err(|e| KaisatsuError::BadRequest(format!("realm body: {e}")))?;
     realm.id = stored.id;
     realm.realm = stored.realm;
-    if let (Some(new), Some(old)) = (realm.smtp_server.as_mut(), stored.smtp_server) {
-        if new.password.is_empty() && new.host == old.host && new.user == old.user {
-            new.password = old.password;
-        }
+    if let (Some(new), Some(old)) = (realm.smtp_server.as_mut(), stored.smtp_server)
+        && new.password.is_empty()
+        && new.host == old.host
+        && new.user == old.user
+    {
+        new.password = old.password;
     }
     Ok(realm)
 }
