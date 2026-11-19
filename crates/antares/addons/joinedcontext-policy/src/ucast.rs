@@ -236,7 +236,7 @@ mod tests {
     use crate::document::compile;
     use crate::subject::Caller;
     use antares_api::policy::Subject;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     const AREA: &str =
         "georel=within;geometry=Polygon;coordinates=[[[0,0],[1,0],[1,1],[0,1],[0,0]]]";
@@ -247,7 +247,7 @@ mod tests {
             tenant: antares_model::TenantId::default(),
             headers: vec![("x-jc-roles".into(), String::new())],
         });
-        let grants = Grants::of(Some(&t), &public, Utc::now());
+        let grants = Grants::of(Some(&t), &public, Timestamp::now());
         Ok(grant_ast(&grants, &|_| true))
     }
 

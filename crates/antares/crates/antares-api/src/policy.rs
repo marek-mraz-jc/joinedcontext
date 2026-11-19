@@ -397,6 +397,30 @@ pub enum TimeBound {
 }
 
 impl TimeBound {
+    /// The bound at the jiff instant `t`; `None` outside chrono's range. ponytail: a shim
+    /// for callers already off chrono (joinedcontext-policy, T-7249); it goes when this
+    /// crate moves to jiff (T-7233's antares slices).
+    #[must_use]
+    pub fn instant(t: jiff::Timestamp) -> Option<Self> {
+        let (secs, nanos) = (t.as_second(), t.subsec_nanosecond());
+        let (secs, nanos) = if nanos < 0 {
+            (secs.checked_sub(1)?, nanos.checked_add(1_000_000_000)?)
+        } else {
+            (secs, nanos)
+        };
+        chrono::DateTime::from_timestamp(secs, u32::try_from(nanos).ok()?).map(Self::At)
+    }
+
+    /// The bound `d` before now; `None` for a negative `d` or one past chrono's range (the
+    /// same shim as [`Self::instant`]).
+    #[must_use]
+    pub fn before_now(d: jiff::SignedDuration) -> Option<Self> {
+        let nanos = u32::try_from(d.subsec_nanos()).ok()?;
+        chrono::Duration::new(d.as_secs(), nanos)
+            .filter(|_| !d.is_negative())
+            .map(Self::Ago)
+    }
+
     fn at(self, now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
         match self {
             Self::At(t) => t,

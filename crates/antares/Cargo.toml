@@ -98,6 +98,9 @@ async-trait = "0.1"
 # platform store (the image carries one) widened by ANTARES_EXTRA_CA_FILE.
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "query"] }
 chrono = { version = "0.4", features = ["serde"] }
+# T-7233: chrono -> jiff; RFC 3339 written byte for byte as chrono did, Postgres timestamptz
+jc-time = { path = "../shared/jc-time" }
+jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 # 4.23.3 EXAMPLES 6/7: orderBy collation — ICU4X collator, compiled data
 icu_collator = "2"
 icu_locale_core = "2"

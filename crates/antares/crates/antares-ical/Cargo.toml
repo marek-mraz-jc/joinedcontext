@@ -16,9 +16,9 @@ protocols = []
 [dependencies]
 antares-ops = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["query"] }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+jc-time = { workspace = true }
 # IANA zones, bundled so a container without /usr/share/zoneinfo answers the same (T-7233)
-jiff = { version = "0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff = { workspace = true }
 metrics = { version = "0.24", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1", default-features = false, features = ["std"] }

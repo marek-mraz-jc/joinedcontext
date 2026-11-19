@@ -189,7 +189,7 @@ fn instances(attribute: Option<&Value>) -> Vec<&Value> {
 /// Whether, for one of `rule`'s types the Entity has, some instance of that
 /// type's attribute was observed before `cut`. An instance without a
 /// readable `observedAt` is not judged: nothing says it is old.
-fn stale(doc: &Value, rule: &Rule, cut: chrono::DateTime<chrono::Utc>) -> bool {
+fn stale(doc: &Value, rule: &Rule, cut: jiff::Timestamp) -> bool {
     let types = doc.get("type");
     let has = |ty: &str| match types {
         Some(Value::Array(all)) => all.iter().any(|t| t.as_str() == Some(ty)),
@@ -204,7 +204,7 @@ fn stale(doc: &Value, rule: &Rule, cut: chrono::DateTime<chrono::Utc>) -> bool {
             inst.get("observedAt")
                 .and_then(Value::as_str)
                 // A comma may stand for the fraction's point (ISO 8601).
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s.replacen(',', ".", 1)).ok())
+                .and_then(|s| jc_time::parse_rfc3339(&s.replacen(',', ".", 1)))
                 .is_some_and(|at| at < cut)
         })
 }
@@ -234,7 +234,7 @@ fn property(value: &Value, ts: &str) -> Value {
 /// What `rule` would change on `doc` as `cut` judges it now: `Some(true)`
 /// mark, `Some(false)` lift, `None` when the Entity already says what the
 /// rule says.
-fn verdict(doc: &Value, rule: &Rule, cut: chrono::DateTime<chrono::Utc>) -> Option<bool> {
+fn verdict(doc: &Value, rule: &Rule, cut: jiff::Timestamp) -> Option<bool> {
     let is_stale = stale(doc, rule, cut);
     (is_stale != marked_by(doc).contains(&rule.name)).then_some(is_stale)
 }
@@ -242,12 +242,7 @@ fn verdict(doc: &Value, rule: &Rule, cut: chrono::DateTime<chrono::Utc>) -> Opti
 /// Mark or lift `rule` on `doc` as `cut` judges it now, stamped `ts`; what
 /// [`verdict`] says, and nothing written on `None` or on a document that is
 /// no object.
-fn judge(
-    doc: &mut Value,
-    rule: &Rule,
-    cut: chrono::DateTime<chrono::Utc>,
-    ts: &str,
-) -> Option<bool> {
+fn judge(doc: &mut Value, rule: &Rule, cut: jiff::Timestamp, ts: &str) -> Option<bool> {
     let is_stale = verdict(doc, rule, cut)?;
     let mut names = marked_by(doc);
     let object = doc.as_object_mut()?;
@@ -270,7 +265,7 @@ fn judge(
 
 /// One sweep at `now` over the rules the last reload found. Logs and counts
 /// how many Entities each rule marked or lifted, never which.
-pub(super) async fn sweep(r: &Reloader, now: chrono::DateTime<chrono::Utc>) -> Vec<Changed> {
+pub(super) async fn sweep(r: &Reloader, now: jiff::Timestamp) -> Vec<Changed> {
     let rules = r.quality_rules();
     let mut out = Vec::new();
     for (t, list) in rules.iter() {
@@ -301,16 +296,12 @@ pub(super) async fn sweep(r: &Reloader, now: chrono::DateTime<chrono::Utc>) -> V
 /// whole document included, leaves no Entity quarantined (hidden) for good.
 /// Read like [`judge_rule`]: at most [`ROUNDS`] pages of the Entities that
 /// hold a mark, then each one rewritten under its row lock.
-async fn lift_orphans(
-    state: &AppState,
-    rules: &Rules,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Vec<Changed> {
+async fn lift_orphans(state: &AppState, rules: &Rules, now: jiff::Timestamp) -> Vec<Changed> {
     let mut tenants: Vec<String> = state.tenant_names().await.unwrap_or_default();
     tenants.extend(rules.iter().map(|(t, _)| t.as_str().to_owned()));
     tenants.sort();
     tenants.dedup();
-    let ts = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let ts = jc_time::format_rfc3339(now, jc_time::SecondsFormat::Millis, true);
     let mut out = Vec::new();
     for t in tenants.iter().filter_map(|n| TenantId::new(n).ok()) {
         let tenant = t.as_str().to_owned();
@@ -446,7 +437,7 @@ async fn judge_rule(
     state: &AppState,
     t: &TenantId,
     rule: &Rule,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
 ) -> Vec<Changed> {
     let tenant = t.as_str();
     let mut types: Vec<String> = Vec::new();
@@ -464,11 +455,11 @@ async fn judge_rule(
         tracing::warn!(tenant, r#type = type_iri.as_str(), rule = rule.name.as_str(), error = %e, "quality sweep failed");
     };
     // A maxAge holds at most ten years, so the cut is always in range.
-    let cut = chrono::Duration::from_std(rule.max_age)
+    let cut = jiff::SignedDuration::try_from(rule.max_age)
         .ok()
-        .and_then(|age| now.checked_sub_signed(age))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC);
-    let ts = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        .and_then(|age| now.checked_sub(age).ok())
+        .unwrap_or(jiff::Timestamp::MIN);
+    let ts = jc_time::format_rfc3339(now, jc_time::SecondsFormat::Millis, true);
     let mut pending: Vec<String> = Vec::new();
     for round in 0..ROUNDS {
         let rows = match state
@@ -617,16 +608,53 @@ mod tests {
     }
 
     /// `now` less `minutes`, as an `observedAt`.
-    fn at(now: chrono::DateTime<chrono::Utc>, minutes: i64) -> String {
-        now.checked_sub_signed(chrono::Duration::minutes(minutes))
-            .unwrap_or(now)
-            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    fn at(now: jiff::Timestamp, minutes: i64) -> String {
+        let then = now
+            .checked_sub(jiff::SignedDuration::from_mins(minutes))
+            .unwrap_or(now);
+        jc_time::format_rfc3339(then, jc_time::SecondsFormat::Millis, true)
     }
 
-    fn cut_of(now: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
-        now.checked_sub_signed(chrono::Duration::minutes(10))
+    fn cut_of(now: jiff::Timestamp) -> jiff::Timestamp {
+        now.checked_sub(jiff::SignedDuration::from_mins(10))
             .unwrap_or(now)
     }
+
+    /// T-7250: which `observedAt` texts read as older than the cut, pinned from the chrono
+    /// build: offsets, the ISO 8601 comma, fraction digits, texts it does not read.
+    #[test]
+    fn staleness_reads_as_the_chrono_build_did() {
+        let cut = "2026-10-25T01:30:00.5Z".parse().unwrap_or_default();
+        let got: Vec<String> = [
+            "2026-10-25T01:30:00.499Z",
+            "2026-10-25T01:30:00.5Z",
+            "2026-10-25T03:30:00.4+02:00",
+            "2026-10-25T01:30:00,4Z",
+            "2026-10-25t01:30:00z",
+            "2026-10-25 01:30:00Z",
+            "2026-10-25T01:29Z",
+            "2026-10-25",
+        ]
+        .iter()
+        .map(|at| {
+            let mut doc = json!({"type": V});
+            doc[LOCATION] = json!({"type": "GeoProperty", "observedAt": at});
+            format!("{at} => {}", stale(&doc, &rule(), cut))
+        })
+        .collect();
+        assert_eq!(got.join("\n").trim(), STALE.trim(), "\n{}", got.join("\n"));
+    }
+
+    const STALE: &str = r"
+2026-10-25T01:30:00.499Z => true
+2026-10-25T01:30:00.5Z => false
+2026-10-25T03:30:00.4+02:00 => true
+2026-10-25T01:30:00,4Z => true
+2026-10-25t01:30:00z => true
+2026-10-25 01:30:00Z => true
+2026-10-25T01:29Z => false
+2026-10-25 => false
+";
 
     #[test]
     fn a_document_names_labels_and_expanded_iris_once() {
@@ -698,7 +726,7 @@ mod tests {
     #[test]
     fn a_stale_entity_is_marked_once_and_lifted_when_fresh() {
         let r = rule();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let cut = cut_of(now);
         let mut doc = json!({"id": "urn:v:1", "type": [V],
             LOCATION: [{"type": "Property", "value": 1, "observedAt": at(now, 11)}]});
@@ -731,7 +759,7 @@ mod tests {
     #[test]
     fn a_mark_beside_another_rules_keeps_the_first_quarantined_at() {
         let r = rule();
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let mut doc = json!({"id": "urn:v:1", "type": V,
             LOCATION: {"type": "Property", "value": 1, "observedAt": at(now, 30)},
             QUARANTINE_RULES: [{"type": "Property", "value": "other"}],
@@ -765,7 +793,7 @@ mod tests {
             ],
             max_age: Duration::from_secs(600),
         };
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let cut = cut_of(now);
         let mut doc = json!({"id": "urn:v:1", "type": [V, "https://e.org/S"],
             "https://e.org/x": [{"type": "Property", "value": 1, "observedAt": at(now, 30)}],
@@ -782,6 +810,6 @@ mod tests {
     fn an_instance_without_observed_at_is_not_judged() {
         let mut doc =
             json!({"id": "urn:v:1", "type": [V], LOCATION: [{"type": "Property", "value": 1}]});
-        assert_eq!(judge(&mut doc, &rule(), chrono::Utc::now(), "t"), None);
+        assert_eq!(judge(&mut doc, &rule(), jiff::Timestamp::now(), "t"), None);
     }
 }

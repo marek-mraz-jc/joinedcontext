@@ -352,14 +352,14 @@ pub struct Deleted {
 /// current state, then its history, each in at most [`ROUNDS`] statements
 /// of [`BATCH`] rows. Logs, counts and totals per pod what it deleted, never
 /// what it held.
-pub(super) async fn sweep(r: &Reloader, now: chrono::DateTime<chrono::Utc>) -> Vec<Deleted> {
+pub(super) async fn sweep(r: &Reloader, now: jiff::Timestamp) -> Vec<Deleted> {
     sweep_within(r, now, SWEEP_BUDGET).await
 }
 
 /// [`sweep`] with `budget` in place of [`SWEEP_BUDGET`].
 pub(super) async fn sweep_within(
     r: &Reloader,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
     budget: Duration,
 ) -> Vec<Deleted> {
     let plan = Plan {
@@ -392,7 +392,7 @@ pub(super) async fn sweep_within(
 /// The audit sweep (T-6337, ADR-N-054 2.7): audit rows older than the
 /// audit retention, at most [`BATCH`] per history table each sweep; the
 /// history rules never delete them. Logs and counts how many, never which.
-async fn sweep_audit(r: &Reloader, now: chrono::DateTime<chrono::Utc>) {
+async fn sweep_audit(r: &Reloader, now: jiff::Timestamp) {
     match r
         .state
         .temporal
@@ -418,7 +418,7 @@ struct Plan<'a> {
     /// The platform default (`ANTARES_RETENTION_HISTORY_DEFAULT`), applied to
     /// every Tenant without a `*` rule; `None` keeps what nothing rules.
     platform: Option<Duration>,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
     dry_run: bool,
     /// Run level 1, the Entities' own retention; a preview of one draft
     /// document leaves it out, as the draft does not change it.
@@ -480,7 +480,7 @@ struct Step {
 /// a duration nor `off` is logged and left to its type's rule.
 async fn overrides(
     state: &AppState,
-    now: chrono::DateTime<chrono::Utc>,
+    now: jiff::Timestamp,
     cap: usize,
 ) -> (
     std::collections::BTreeMap<String, Vec<(String, String)>>,
@@ -522,13 +522,13 @@ async fn overrides(
 }
 
 /// The instant `keep` before `now`, as the store compares it.
-fn cut(now: chrono::DateTime<chrono::Utc>, keep: Duration) -> String {
+fn cut(now: jiff::Timestamp, keep: Duration) -> String {
     // A rule holds at most ten years, so the cut is always in range.
-    chrono::Duration::from_std(keep)
+    let at = jiff::SignedDuration::try_from(keep)
         .ok()
-        .and_then(|k| now.checked_sub_signed(k))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MIN_UTC)
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+        .and_then(|k| now.checked_sub(k).ok())
+        .unwrap_or(jiff::Timestamp::MIN);
+    jc_time::format_rfc3339(at, jc_time::SecondsFormat::Millis, true)
 }
 
 /// The steps of `plan`, level by level (DM-97): the Entities' own retention,
@@ -975,7 +975,7 @@ async fn preview(r: Arc<Reloader>, tenant: String, body: Bytes) -> Result<Respon
     let plan = Plan {
         rules: &rules,
         platform: r.platform_history,
-        now: chrono::Utc::now(),
+        now: jiff::Timestamp::now(),
         dry_run: true,
         entities: false,
     };
@@ -1005,6 +1005,34 @@ fn deleted(r: &Reloader, tenant: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7250: the cut as the chrono build wrote it (RFC 3339 in UTC, `Z`, three fraction
+    /// digits, the rest dropped).
+    #[test]
+    fn the_cut_keeps_the_chrono_wire_format() {
+        let got: Vec<String> = [
+            ("2026-10-20T00:00:00Z", 0),
+            ("2026-10-20T00:00:00.123456789Z", 1),
+            ("2026-10-25T03:30:00.5+02:00", 3600),
+            ("2026-03-29T01:00:00Z", 86_400 * 365),
+            ("2024-03-01T00:00:00Z", 86_400),
+        ]
+        .iter()
+        .map(|(now, keep)| {
+            let at = now.parse().unwrap_or_default();
+            format!("{now} {keep} => {}", cut(at, Duration::from_secs(*keep)))
+        })
+        .collect();
+        assert_eq!(got.join("\n").trim(), CUTS.trim(), "\n{}", got.join("\n"));
+    }
+
+    const CUTS: &str = r"
+2026-10-20T00:00:00Z 0 => 2026-10-20T00:00:00.000Z
+2026-10-20T00:00:00.123456789Z 1 => 2026-10-19T23:59:59.123Z
+2026-10-25T03:30:00.5+02:00 3600 => 2026-10-25T00:30:00.500Z
+2026-03-29T01:00:00Z 31536000 => 2025-03-29T01:00:00.000Z
+2024-03-01T00:00:00Z 86400 => 2024-02-29T00:00:00.000Z
+";
 
     #[test]
     fn durations_read_iso_and_short_forms_within_bounds() {
@@ -1198,7 +1226,7 @@ mod tests {
         let plan = Plan {
             rules: &rules,
             platform: Some(Duration::from_hours(24)),
-            now: chrono::Utc::now(),
+            now: jiff::Timestamp::now(),
             dry_run: false,
             entities: true,
         };
@@ -1244,9 +1272,7 @@ mod tests {
             // no `*` rule and no platform default: the other types keep all
             (tenant("farm"), doc(br#"{"rules":[{"type":"https://e.org/V","history":"P1D"}]}"#)),
         ];
-        let now = chrono::DateTime::parse_from_rfc3339("2026-10-20T00:00:00Z")
-            .expect("instant")
-            .with_timezone(&chrono::Utc);
+        let now = jc_time::parse_rfc3339("2026-10-20T00:00:00Z").expect("instant");
         let own = std::collections::BTreeMap::from([(
             "city".to_owned(),
             vec![(

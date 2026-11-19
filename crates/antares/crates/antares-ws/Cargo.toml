@@ -18,7 +18,8 @@ feature = "ws"
 
 [dependencies]
 antares-ops = { workspace = true }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+jc-time = { workspace = true }
+jiff = { workspace = true }
 axum = { version = "0.8", default-features = false }
 data-encoding = { version = "2", default-features = false, features = ["alloc"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

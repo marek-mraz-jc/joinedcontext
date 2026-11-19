@@ -19,7 +19,7 @@ use crate::document::Table;
 use antares_api::policy::{Decision, Operation, StoredImage, Subject, FILTERABLE};
 use antares_ql::geo::GeoQuery;
 use antares_ql::QNode;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::sync::{Arc, Weak};
@@ -44,8 +44,8 @@ struct Slot {
     body: Option<Value>,
     stored: Option<StoredImage>,
     /// No policy of the table comes into or out of force in `[from, until)`.
-    from: Option<DateTime<Utc>>,
-    until: Option<DateTime<Utc>>,
+    from: Option<Timestamp>,
+    until: Option<Timestamp>,
     decision: Decision,
 }
 
@@ -55,7 +55,7 @@ impl Slot {
         table: &Arc<Table>,
         subject: &Subject,
         op: &Operation<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> bool {
         std::ptr::eq(self.table.as_ptr(), Arc::as_ptr(table))
             && self.from.is_none_or(|from| now >= from)
@@ -89,7 +89,7 @@ pub(crate) fn decided(
     table: Option<&Arc<Table>>,
     subject: &Subject,
     op: &Operation<'_>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     decide: impl FnOnce() -> Decision,
 ) -> Decision {
     let Some(table) = table.filter(|_| FILTERABLE.contains(&op.clause)) else {
@@ -132,7 +132,7 @@ pub(crate) fn decided(
 
 /// The span around `now` in which no policy of `table` comes into or out of
 /// force: the latest validity bound at or before `now` and the first after.
-fn steady(table: &Table, now: DateTime<Utc>) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+fn steady(table: &Table, now: Timestamp) -> (Option<Timestamp>, Option<Timestamp>) {
     let bounds = table
         .policies
         .iter()
@@ -142,10 +142,7 @@ fn steady(table: &Table, now: DateTime<Utc>) -> (Option<DateTime<Utc>>, Option<D
         if b <= now {
             (from.max(Some(b)), until)
         } else {
-            (
-                from,
-                until.map_or(Some(b), |u: DateTime<Utc>| Some(u.min(b))),
-            )
+            (from, until.map_or(Some(b), |u: Timestamp| Some(u.min(b))))
         }
     })
 }
@@ -154,7 +151,7 @@ fn steady(table: &Table, now: DateTime<Utc>) -> (Option<DateTime<Utc>>, Option<D
 mod tests {
     use super::*;
     use crate::document::compile;
-    use chrono::Duration;
+    use jiff::SignedDuration;
     use serde_json::json;
     use std::cell::Cell;
 
@@ -185,7 +182,7 @@ mod tests {
         t: &Arc<Table>,
         s: &Subject,
         op: &Operation<'_>,
-        now: DateTime<Utc>,
+        now: Timestamp,
         runs: &Cell<u32>,
     ) -> Decision {
         decided(Some(t), s, op, now, || {
@@ -216,7 +213,7 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let (now, runs) = (Utc::now(), Cell::new(0));
+        let (now, runs) = (Timestamp::now(), Cell::new(0));
         let first = ask(&t, &s, &op, now, &runs);
         let again = ask(&t, &s, &op, now, &runs);
         assert!(Arc::ptr_eq(filter(&first)?, filter(&again)?));
@@ -249,7 +246,7 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let (now, runs) = (Utc::now(), Cell::new(0));
+        let (now, runs) = (Timestamp::now(), Cell::new(0));
         let city = subject("t6618-other", "city")?;
         let (stranger, elsewhere) = (subject("t6618-other", "x")?, subject("t6618-else", "city")?);
         let q = antares_ql::parse_q("speed>1").map_err(|e| e.to_string())?;
@@ -353,7 +350,7 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let (now, runs) = (Utc::now(), Cell::new(0));
+        let (now, runs) = (Timestamp::now(), Cell::new(0));
         let granted = table(&json!([grant("city")]))?;
         filter(&ask(&granted, &s, &op, now, &runs))?;
         let revoked = table(&json!([grant("other")]))?;
@@ -386,7 +383,7 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let (now, runs) = (Utc::now(), Cell::new(0));
+        let (now, runs) = (Timestamp::now(), Cell::new(0));
         let (a, b) = (through("a")?, through("b")?);
         filter(&ask(&t, &a, &op, now, &runs))?;
         assert!(matches!(ask(&t, &b, &op, now, &runs), Decision::Deny(_)));
@@ -405,11 +402,11 @@ mod tests {
     /// A grant whose validity ends refuses from that instant, kept answer or not.
     #[test]
     fn a_grant_that_expires_is_decided_afresh() -> Result<(), String> {
-        let now = Utc::now();
-        let end = now + Duration::seconds(30);
+        let now = Timestamp::now();
+        let end = now + SignedDuration::from_secs(30);
         let mut timed = grant("city");
         if let Some(o) = timed.as_object_mut() {
-            o.insert("validity".into(), json!({"to": end.to_rfc3339()}));
+            o.insert("validity".into(), json!({"to": end.to_string()}));
         }
         let t = table(&json!([timed]))?;
         let s = subject("t6618-expiry", "city")?;
@@ -420,7 +417,13 @@ mod tests {
         };
         let runs = Cell::new(0);
         filter(&ask(&t, &s, &op, now, &runs))?;
-        filter(&ask(&t, &s, &op, now + Duration::seconds(29), &runs))?;
+        filter(&ask(
+            &t,
+            &s,
+            &op,
+            now + SignedDuration::from_secs(29),
+            &runs,
+        ))?;
         assert_eq!(runs.get(), 1);
         assert!(matches!(ask(&t, &s, &op, end, &runs), Decision::Deny(_)));
         assert_eq!(runs.get(), 2);

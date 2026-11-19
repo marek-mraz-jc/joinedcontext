@@ -142,7 +142,7 @@ async fn erase(r: Arc<Reloader>, tenant: String, body: Bytes) -> Result<Response
         "subject": req.subject,
         "actor": req.actor,
         "reason": req.reason,
-        "at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        "at": jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true),
     });
     // the tombstone first: nothing is deleted without one, and an erasure
     // that fails halfway is finished by the next start's re-apply

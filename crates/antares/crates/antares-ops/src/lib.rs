@@ -1554,7 +1554,7 @@ pub mod test_kit {
         /// One retention sweep at `now` (T-3900), as the minute loop runs it.
         pub async fn sweep_retention(
             &self,
-            now: chrono::DateTime<chrono::Utc>,
+            now: jiff::Timestamp,
         ) -> Vec<crate::views::retention::Deleted> {
             self.reload.sweep_retention(now).await
         }
@@ -1562,7 +1562,7 @@ pub mod test_kit {
         /// One retention sweep at `now` that starts no statement after `budget`.
         pub async fn sweep_retention_within(
             &self,
-            now: chrono::DateTime<chrono::Utc>,
+            now: jiff::Timestamp,
             budget: std::time::Duration,
         ) -> Vec<crate::views::retention::Deleted> {
             self.reload.sweep_retention_within(now, budget).await
@@ -1571,7 +1571,7 @@ pub mod test_kit {
         /// One quality sweep at `now` (T-4018), as the minute loop runs it.
         pub async fn sweep_quality(
             &self,
-            now: chrono::DateTime<chrono::Utc>,
+            now: jiff::Timestamp,
         ) -> Vec<crate::views::quality::Changed> {
             self.reload.sweep_quality(now).await
         }

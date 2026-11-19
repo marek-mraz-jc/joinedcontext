@@ -196,7 +196,7 @@ pub(crate) struct Profile {
     /// The profile basis.
     pub basis: Basis,
     /// When the profile was computed.
-    pub computed: chrono::DateTime<chrono::Utc>,
+    pub computed: jiff::Timestamp,
     /// Range of `observedAt` timestamps if present: `(min, max)`.
     pub observed_at: Option<(String, String)>,
     /// Top profiled attributes.
@@ -224,7 +224,14 @@ impl Profile {
                 "skipped": self.basis.skipped,
             }),
         );
-        map.insert("computed".into(), json!(self.computed.to_rfc3339()));
+        map.insert(
+            "computed".into(),
+            json!(jc_time::format_rfc3339(
+                self.computed,
+                jc_time::SecondsFormat::AutoSi,
+                false
+            )),
+        );
 
         if self.basis.reason == BasisReason::Tight {
             map.insert(
@@ -421,8 +428,7 @@ fn attr_to_json(attr: &AttrStat) -> Value {
 
 /// The day of an RFC 3339 instant or of a `YYYY-MM-DD` date.
 fn parse_rfc3339_or_date(s: &str) -> Option<String> {
-    let valid = chrono::DateTime::parse_from_rfc3339(s).is_ok()
-        || chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok();
+    let valid = jc_time::parse_rfc3339(s).is_some() || jc_time::parse_date(s).is_some();
     valid.then(|| s.get(..10)).flatten().map(str::to_owned)
 }
 
@@ -545,7 +551,7 @@ pub(crate) fn profile(
         .unwrap_or("")
         .to_owned();
 
-    let computed = chrono::Utc::now();
+    let computed = jiff::Timestamp::now();
     let total_loaded = rows.len();
 
     if basis.reason == BasisReason::Tight || total_loaded == 0 {
@@ -1218,7 +1224,7 @@ fn render_internal(profile: &Profile, include_samples: bool, full_attrs_count: u
     let count_val = profile
         .count
         .unwrap_or_else(|| u64::try_from(profile.basis.loaded).unwrap_or(u64::MAX));
-    let computed_str = profile.computed.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let computed_str = profile.computed.strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     if profile.basis.reason == BasisReason::Tight {
         lines.push(format!(
@@ -1331,6 +1337,59 @@ pub(crate) fn render(profile: &Profile) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7249: `computed` as the chrono build wrote it, RFC 3339 with `+00:00` and the
+    /// fewest of 0/3/6/9 fraction digits in the JSON, whole seconds with `Z` in the text;
+    /// and the days `observedAt` ranges keep.
+    #[test]
+    fn computed_keeps_the_chrono_wire_format() {
+        let basis = Basis {
+            loaded: 0,
+            total: Some(0),
+            reason: BasisReason::All,
+            skipped: 0,
+        };
+        let mut p = profile(&[], Some(0), basis, None);
+        let mut got = Vec::new();
+        for at in [
+            "2026-10-25T01:30:00Z",
+            "2026-10-25T01:30:00.5Z",
+            "2026-10-25T03:30:00.123456+02:00",
+            "2026-10-25T01:30:00.123456789Z",
+        ] {
+            p.computed = at.parse().unwrap_or_default();
+            let text = render(&p);
+            let short = text
+                .split("computed=")
+                .nth(1)
+                .and_then(|t| t.get(..20))
+                .unwrap_or_default();
+            let json = p.to_json().get("computed").cloned().unwrap_or_default();
+            got.push(format!("{at} => {json} {short}"));
+        }
+        for day in [
+            "2026-10-25T01:30:00+02:00",
+            "2026-10-25",
+            "2026-1-5",
+            "2026-10-25T01:30Z",
+            "x",
+        ] {
+            got.push(format!("{day} => {:?}", parse_rfc3339_or_date(day)));
+        }
+        assert_eq!(got.join("\n"), COMPUTED.trim(), "\n{}", got.join("\n"));
+    }
+
+    const COMPUTED: &str = r#"
+2026-10-25T01:30:00Z => "2026-10-25T01:30:00+00:00" 2026-10-25T01:30:00Z
+2026-10-25T01:30:00.5Z => "2026-10-25T01:30:00.500+00:00" 2026-10-25T01:30:00Z
+2026-10-25T03:30:00.123456+02:00 => "2026-10-25T01:30:00.123456+00:00" 2026-10-25T01:30:00Z
+2026-10-25T01:30:00.123456789Z => "2026-10-25T01:30:00.123456789+00:00" 2026-10-25T01:30:00Z
+2026-10-25T01:30:00+02:00 => Some("2026-10-25")
+2026-10-25 => Some("2026-10-25")
+2026-1-5 => None
+2026-10-25T01:30Z => None
+x => None
+"#;
 
     fn bridge_fixture() -> Vec<Value> {
         (0u32..10u32)

@@ -142,19 +142,21 @@ const NULL: &str = "urn:ngsi-ld:null";
 
 /// The `expiresAt` a socket Subscription is given (rule 7a): the lease
 /// from now, or the client's own `wish` when it is earlier. A wish that is
-/// no `DateTime` is passed on as it is, for the operation to refuse.
+/// no `DateTime` is passed on as it is, for the operation to refuse. A lease past
+/// jiff's last instant (9999-12-30T22:00Z) ends there.
 fn leased(wish: Option<&str>, lease: std::time::Duration) -> String {
-    let until = chrono::Duration::from_std(lease)
+    let until = jiff::SignedDuration::try_from(lease)
         .ok()
-        .and_then(|d| chrono::Utc::now().checked_add_signed(d))
-        .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC);
+        .and_then(|d| jiff::Timestamp::now().checked_add(d).ok())
+        .unwrap_or(jiff::Timestamp::MAX);
+    let written = || jc_time::format_rfc3339(until, jc_time::SecondsFormat::Millis, true);
     match wish {
-        Some(w) => match chrono::DateTime::parse_from_rfc3339(w) {
-            Ok(at) if at < until => w.to_owned(),
-            Ok(_) => until.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-            Err(_) => w.to_owned(),
+        Some(w) => match jc_time::parse_rfc3339(w) {
+            Some(at) if at < until => w.to_owned(),
+            Some(_) => written(),
+            None => w.to_owned(),
         },
-        None => until.to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        None => written(),
     }
 }
 
@@ -700,20 +702,36 @@ mod tests {
     #[test]
     fn a_lease_keeps_an_earlier_wish_and_passes_a_wrong_one_on() {
         let lease = std::time::Duration::from_secs(60);
-        let now = chrono::Utc::now();
-        let until = |s: &str| chrono::DateTime::parse_from_rfc3339(s).map(|t| t.to_utc());
-        let free = until(&leased(None, lease)).unwrap_or(now);
+        let now = jiff::Timestamp::now();
+        let in_secs = |s: i64| jiff::Timestamp::now() + jiff::SignedDuration::from_secs(s);
+        let written = leased(None, lease);
+        // the wire form: RFC 3339 in UTC with `Z` and three fraction digits
+        assert_eq!(
+            (written.len(), &written[19..20], &written[23..]),
+            (24, ".", "Z"),
+            "{written}"
+        );
+        let free = jc_time::parse_rfc3339(&written).unwrap_or(now);
         assert!(free > now);
-        assert!(free <= chrono::Utc::now() + chrono::Duration::seconds(60));
-        let held = until(&leased(Some("2999-01-01T00:00:00Z"), lease)).unwrap_or(now);
-        assert!(held < chrono::Utc::now() + chrono::Duration::seconds(61));
+        assert!(free <= in_secs(60));
+        let held =
+            jc_time::parse_rfc3339(&leased(Some("2999-01-01T00:00:00Z"), lease)).unwrap_or(now);
+        assert!(held < in_secs(61));
+        // a wish with an offset is compared as the instant it names
+        assert_eq!(
+            leased(Some("2020-01-01T02:00:00.5+02:00"), lease),
+            "2020-01-01T02:00:00.5+02:00"
+        );
         assert_eq!(
             leased(Some("2020-01-01T00:00:00Z"), lease),
             "2020-01-01T00:00:00Z"
         );
         assert_eq!(leased(Some("tomorrow"), lease), "tomorrow");
-        // a lease past every DateTime is the last one
-        assert!(leased(None, std::time::Duration::MAX).starts_with("+262142-12-31"));
+        // a lease past every DateTime is the last one jiff holds (chrono wrote +262142-12-31)
+        assert_eq!(
+            leased(None, std::time::Duration::MAX),
+            "9999-12-30T22:00:00.999Z"
+        );
     }
 
     #[test]

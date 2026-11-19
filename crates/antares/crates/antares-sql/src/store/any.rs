@@ -70,7 +70,7 @@ pub(crate) fn db(e: sqlx::Error) -> NgsiError {
 /// instances against this stamp (UTC Z, millisecond precision, the same form
 /// the broker writes into system timestamps).
 pub(crate) fn now_utc() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    jc_time::TimestampTz::now().to_rfc3339_opts(jc_time::SecondsFormat::Millis, true)
 }
 
 /// A document as its JSON text ([`AnyStore::query_entities_text`]).
@@ -2457,12 +2457,8 @@ impl antares_store::TemporalDriver for AnyStore {
     ) -> Result<u64, NgsiError> {
         match self {
             AnyStore::Mem(_) => {
-                let instant = |t: &str| {
-                    chrono::DateTime::parse_from_rfc3339(
-                        &antares_store::filter::canonical_datetime(t),
-                    )
-                    .ok()
-                };
+                let instant =
+                    |t: &str| jc_time::parse_rfc3339(&antares_store::filter::canonical_datetime(t));
                 // an instance goes when it was observed at or before the cut,
                 // timed as the Postgres arm's `observed_at` column times it
                 // (F-R2ANT3-006: one recorded without observedAt survived the

@@ -166,8 +166,8 @@ pub fn vehicle_of(entity: &Value, known: Option<&Vehicle>) -> Option<Vehicle> {
 /// The time the bus was at its point, from `location.observedAt`, for the latency (T-3581).
 fn observed_at(entity: &Value) -> Option<SystemTime> {
     let at = entity.get("location")?.get("observedAt")?.as_str()?;
-    let parsed = chrono::DateTime::parse_from_rfc3339(at).ok()?;
-    let millis = u64::try_from(parsed.timestamp_millis()).ok()?;
+    let parsed: jiff::Timestamp = at.parse().ok()?;
+    let millis = u64::try_from(parsed.as_millisecond()).ok()?;
     Some(SystemTime::UNIX_EPOCH + Duration::from_millis(millis))
 }
 
@@ -324,7 +324,7 @@ impl App {
             if lost.is_some() {
                 return false;
             }
-            *lost = Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            *lost = Some(crate::stamp_now());
             true
         });
     }

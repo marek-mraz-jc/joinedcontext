@@ -54,14 +54,18 @@ async fn send(
 }
 
 /// Now shifted by `minutes` (negative is the past).
-fn shift(minutes: i64) -> chrono::DateTime<chrono::Utc> {
-    chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::minutes(minutes))
+fn shift(minutes: i64) -> jiff::Timestamp {
+    jiff::Timestamp::now()
+        .checked_add(jiff::SignedDuration::from_mins(minutes))
         .unwrap_or_default()
 }
 
+fn stamp(at: jiff::Timestamp) -> String {
+    jc_time::format_rfc3339(at, jc_time::SecondsFormat::Millis, true)
+}
+
 fn ago(minutes: i64) -> String {
-    shift(minutes.saturating_neg()).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    stamp(shift(minutes.saturating_neg()))
 }
 
 const RULES: &str =
@@ -186,7 +190,7 @@ async fn a_bad_tenant_and_an_oversized_document_are_refused() {
 /// instances (6 and 4 minutes old) of `urn:v:hist` in both Tenants.
 async fn seed(app: &Router) {
     let app = app.clone();
-    let far = shift(1440).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let far = stamp(shift(1440));
     for (tenant, entity) in [
         ("city", json!({"id": "urn:v:1", "type": V})),
         (
@@ -255,7 +259,7 @@ async fn the_sweep_removes_one_type_of_one_tenant_and_a_writers_expiry_wins() {
     };
 
     // Now: the 6-minute instance is past the 5-minute history; every entity was just written.
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     assert_eq!(
         deleted
             .iter()
@@ -340,7 +344,7 @@ async fn a_backlog_drains_in_batches_within_one_sweep() {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{body}");
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     assert_eq!(
         deleted
             .iter()
@@ -379,7 +383,7 @@ async fn a_sweep_past_its_budget_stops_and_the_next_goes_on() {
     )
     .await;
     assert_eq!(s, StatusCode::CREATED, "{body}");
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     assert!(
         b.sweep_retention_within(now, std::time::Duration::ZERO)
             .await
@@ -445,7 +449,7 @@ async fn a_preview_counts_without_deleting_and_the_totals_follow_the_sweeps() {
         .0,
         StatusCode::CREATED
     );
-    assert_eq!(b.sweep_retention(chrono::Utc::now()).await.len(), 1);
+    assert_eq!(b.sweep_retention(jiff::Timestamp::now()).await.len(), 1);
     assert_eq!(totals("city").await, would);
     assert_eq!(totals("port").await, json!([]), "per tenant");
 
@@ -598,7 +602,7 @@ async fn a_type_with_history_off_loses_what_it_held_and_reads_empty() {
     history_off(&app).await;
 
     // The sweep removes what the Vehicle held before the rule, and only that.
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     assert_eq!(
         deleted
             .iter()
@@ -715,7 +719,7 @@ async fn the_most_specific_history_retention_wins() {
     own_retention(&app, "city", "urn:v:short", V, "PT5M").await;
     own_retention(&app, "city", "urn:s:long", S, "PT1H").await;
 
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     let mut by_level: Vec<_> = deleted
         .iter()
         .map(|d| (d.tenant.as_str(), d.type_iri.as_str(), d.count))
@@ -741,7 +745,7 @@ async fn the_most_specific_history_retention_wins() {
         assert_eq!(instances(&app, tenant, id).await, left, "{tenant} {id}");
     }
     assert!(
-        b.sweep_retention(chrono::Utc::now()).await.is_empty(),
+        b.sweep_retention(jiff::Timestamp::now()).await.is_empty(),
         "a second sweep finds nothing"
     );
 }
@@ -839,7 +843,7 @@ async fn an_entity_off_loses_its_history_and_forever_holds_the_platform_back() {
     own_retention(&app, "city", "urn:v:off2", V, "off").await;
     own_retention(&app, "city", "urn:v:typo", V, "forever").await;
 
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     let mut seen: Vec<_> = deleted
         .iter()
         .map(|d| (d.tenant.as_str(), d.type_iri.as_str(), d.count))
@@ -886,7 +890,7 @@ async fn a_vehicle_keeps_an_hour_of_track_and_nothing_else_loses_any() {
         seed_history(&app, tenant, id, ty, &[180, 61, 59, 5]).await;
     }
 
-    let deleted = b.sweep_retention(chrono::Utc::now()).await;
+    let deleted = b.sweep_retention(jiff::Timestamp::now()).await;
     let gone: Vec<_> = deleted
         .iter()
         .map(|d| (d.tenant.as_str(), d.type_iri.as_str(), d.kind, d.count))
@@ -916,7 +920,7 @@ async fn a_short_history_of_one_tenant_leaves_the_same_type_of_another() {
         );
         seed_history(&app, tenant, "urn:v:same", V, &[1, 30, 60]).await;
     }
-    b.sweep_retention(chrono::Utc::now()).await;
+    b.sweep_retention(jiff::Timestamp::now()).await;
     assert_eq!(instances(&app, "city", "urn:v:same").await, 1);
     assert_eq!(instances(&app, "town", "urn:v:same").await, 3);
 }

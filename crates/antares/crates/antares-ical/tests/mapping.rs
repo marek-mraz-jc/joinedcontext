@@ -4,13 +4,11 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use antares_ical::mapping::{escape, fold, reason, Outcome, Plan, When, Window};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::{json, Map, Value};
 
-fn now() -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-10-18T00:00:00Z")
-        .expect("time")
-        .with_timezone(&Utc)
+fn now() -> Timestamp {
+    "2026-10-18T00:00:00Z".parse().expect("time")
 }
 
 fn prop(v: Value) -> Value {
@@ -49,7 +47,7 @@ fn feed(extra: &[(&str, Value)]) -> Vec<String> {
     lines(&vevent(&event(extra), &Window::default(), now()))
 }
 
-fn vevent(entity: &Value, window: &Window, now: DateTime<Utc>) -> Outcome {
+fn vevent(entity: &Value, window: &Window, now: Timestamp) -> Outcome {
     Plan::default().vevent(entity, window, now)
 }
 

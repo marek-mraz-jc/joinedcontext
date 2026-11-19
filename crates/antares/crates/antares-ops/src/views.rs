@@ -952,7 +952,7 @@ pub(crate) async fn install_with(
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
-            let now = chrono::Utc::now();
+            let now = jiff::Timestamp::now();
             retention::sweep(&sweeping, now).await;
             quality::sweep(&sweeping, now).await;
         }
@@ -1002,17 +1002,14 @@ pub struct Reload(Arc<Reloader>);
 impl Reload {
     /// One retention sweep at `now` over the rules the last reload found
     /// (the loop [`install`] starts runs it every minute).
-    pub async fn sweep_retention(
-        &self,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<retention::Deleted> {
+    pub async fn sweep_retention(&self, now: jiff::Timestamp) -> Vec<retention::Deleted> {
         retention::sweep(&self.0, now).await
     }
 
     /// [`Self::sweep_retention`] that starts no statement after `budget`.
     pub async fn sweep_retention_within(
         &self,
-        now: chrono::DateTime<chrono::Utc>,
+        now: jiff::Timestamp,
         budget: std::time::Duration,
     ) -> Vec<retention::Deleted> {
         retention::sweep_within(&self.0, now, budget).await
@@ -1020,7 +1017,7 @@ impl Reload {
 
     /// One quality sweep at `now` over the rules the last reload found (the
     /// minute loop [`install`] starts runs it after the retention sweep).
-    pub async fn sweep_quality(&self, now: chrono::DateTime<chrono::Utc>) -> Vec<quality::Changed> {
+    pub async fn sweep_quality(&self, now: jiff::Timestamp) -> Vec<quality::Changed> {
         quality::sweep(&self.0, now).await
     }
 

@@ -6,7 +6,8 @@
 use antares_api::policy::metadata::Metadata;
 use antares_api::policy::{Rule, TimeBound, Window};
 use antares_ql::geo::GeoQuery;
-use chrono::{DateTime, Duration, Utc};
+use jc_time::TimestampTz;
+use jiff::{SignedDuration, Timestamp};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -87,9 +88,9 @@ pub enum Kind {
 #[serde(deny_unknown_fields)]
 struct Validity {
     #[serde(default)]
-    from: Option<DateTime<Utc>>,
+    from: Option<TimestampTz>,
     #[serde(default)]
-    to: Option<DateTime<Utc>>,
+    to: Option<TimestampTz>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -316,7 +317,7 @@ pub struct Policy {
     /// The CIM 009 clauses it speaks about.
     pub clauses: BTreeSet<String>,
     /// `[from, to)`; an open end is unbounded.
-    pub validity: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    pub validity: (Option<Timestamp>, Option<Timestamp>),
     /// One rule per selector: its type, id or pattern and the Attributes its
     /// information shows, with the policy's conditions. Empty = every type.
     pub selectors: Vec<Rule>,
@@ -367,7 +368,7 @@ pub struct Selector {
 impl Policy {
     /// Whether the policy is in force at `now`.
     #[must_use]
-    pub fn in_force(&self, now: DateTime<Utc>) -> bool {
+    pub fn in_force(&self, now: Timestamp) -> bool {
         self.validity.0.is_none_or(|from| now >= from) && self.validity.1.is_none_or(|to| now < to)
     }
 
@@ -502,7 +503,9 @@ fn policy(p: PolicyDoc) -> Result<Vec<Policy>, String> {
             Some(tree.join(","))
         }
     };
-    let (from, to) = p.validity.map_or((None, None), |v| (v.from, v.to));
+    let (from, to) = p
+        .validity
+        .map_or((None, None), |v| (v.from.map(|t| t.0), v.to.map(|t| t.0)));
     let mut source = Source {
         assigner: p.assigner,
         selectors: Vec::new(),
@@ -554,7 +557,7 @@ struct Parts {
     id: String,
     prohibit: bool,
     assignee: Assignee,
-    validity: (Option<DateTime<Utc>>, Option<DateTime<Utc>>),
+    validity: (Option<Timestamp>, Option<Timestamp>),
     conditions: Rule,
     source: Source,
     metadata: Metadata,
@@ -795,29 +798,35 @@ fn window(raw: &str) -> Result<Window, String> {
 }
 
 fn bound(raw: &str) -> Result<TimeBound, String> {
-    if let Ok(at) = DateTime::parse_from_rfc3339(raw) {
-        return Ok(TimeBound::At(at.with_timezone(&Utc)));
+    let neither = || {
+        format!(
+            "{raw:?} is neither an instant nor a duration in weeks, days, hours, minutes and seconds"
+        )
+    };
+    if let Some(at) = jc_time::parse_rfc3339(raw) {
+        return TimeBound::instant(at).ok_or_else(neither);
     }
     match duration(raw) {
-        Some(d) if d < Duration::zero() => Ok(TimeBound::Ago(d.abs())),
+        Some(d) if d.is_negative() => d
+            .checked_neg()
+            .and_then(TimeBound::before_now)
+            .ok_or_else(neither),
         // zero is now, which no window reaches back to
         Some(_) => Err(format!("{raw:?} does not lie in the past")),
-        None => Err(format!(
-            "{raw:?} is neither an instant nor a duration in weeks, days, hours, minutes and seconds"
-        )),
+        None => Err(neither()),
     }
 }
 
 /// An ISO 8601 duration as a signed offset (`P-1D` and `-P1D` are a day
 /// ago); months and years have no fixed length and are refused.
-fn duration(raw: &str) -> Option<Duration> {
+fn duration(raw: &str) -> Option<SignedDuration> {
     let (mut sign, rest) = match raw.strip_prefix('-') {
         Some(rest) => (-1i32, rest),
         None => (1i32, raw),
     };
     let rest = rest.strip_prefix('P')?;
     let (date, time) = rest.split_once('T').unwrap_or((rest, ""));
-    let mut total = Duration::zero();
+    let mut total = SignedDuration::ZERO;
     let mut digits = String::new();
     let mut units_seen = false;
     for (part, units) in [(date, "WD"), (time, "HMS")] {
@@ -829,13 +838,19 @@ fn duration(raw: &str) -> Option<Duration> {
                     let n: i64 = digits.parse().ok()?;
                     digits.clear();
                     units_seen = true;
-                    total = total.checked_add(&match u {
-                        'W' => Duration::try_weeks(n)?,
-                        'D' => Duration::try_days(n)?,
-                        'H' => Duration::try_hours(n)?,
-                        'M' => Duration::try_minutes(n)?,
-                        _ => Duration::try_seconds(n)?,
-                    })?;
+                    let unit: i64 = match u {
+                        'W' => 604_800,
+                        'D' => 86_400,
+                        'H' => 3_600,
+                        'M' => 60,
+                        _ => 1,
+                    };
+                    total = total.checked_add(SignedDuration::from_secs(n.checked_mul(unit)?))?;
+                    // chrono's TimeDelta range (milliseconds in an i64), which
+                    // `TimeBound::Ago` still holds
+                    if total.as_secs() > i64::MAX / 1000 {
+                        return None;
+                    }
                 }
                 _ => return None,
             }
@@ -1177,6 +1192,72 @@ mod tests {
         Ok(())
     }
 
+    /// T-7249: which `validity` and `temporalQ` stamps a policy reads, and what they mean,
+    /// pinned from the chrono build (its serde read is the relaxed RFC 3339 one).
+    /// Decided (worker-t7247, owner may override): a refused `validity` names the value and
+    /// the form it lacks instead of chrono's parser state ("premature end of input"),
+    /// because the person fixing the document needs the value; options: emulate chrono's
+    /// error kinds.
+    #[test]
+    fn stamps_read_as_the_chrono_build_did() {
+        let now = "2026-06-01T00:00:00.5Z".parse().unwrap_or_default();
+        let mut got = Vec::new();
+        for from in [
+            "2026-06-01T00:00:00.5Z",
+            "2026-06-01T00:00:00.500000001Z",
+            "2026-06-01T02:00:00.4+02:00",
+            "2026-06-01 00:00:00Z",
+            " 2026-06-01T00:00:00 +02:00 ",
+            "2026-06-01T00:00:00UTC",
+            "2026-6-1T0:0:0Z",
+            "2026-06-01T00:00Z",
+            "2026-06-01",
+        ] {
+            let mut p = with("q", json!("speed<100"));
+            if let Some(o) = p.as_object_mut() {
+                o.insert("validity".into(), json!({"from": from}));
+            }
+            let read = one(&p).map(|p| p.in_force(now));
+            got.push(format!("{from:?} => {read:?}"));
+        }
+        for at in [
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T02:00:00.25+02:00",
+            "2026-01-01t00:00:00z",
+            "2026-01-01T00:00Z",
+            "-P1W",
+            "P-1DT2H",
+            "-PT90M",
+            "PT1H",
+            "-P1M",
+        ] {
+            let read = bound(at).map_err(|_| "refused");
+            got.push(format!("{at} => {read:?}"));
+        }
+        assert_eq!(got.join("\n").trim(), STAMPS.trim(), "\n{}", got.join("\n"));
+    }
+
+    const STAMPS: &str = r#"
+"2026-06-01T00:00:00.5Z" => Ok(true)
+"2026-06-01T00:00:00.500000001Z" => Ok(false)
+"2026-06-01T02:00:00.4+02:00" => Ok(true)
+"2026-06-01 00:00:00Z" => Ok(true)
+" 2026-06-01T00:00:00 +02:00 " => Ok(true)
+"2026-06-01T00:00:00UTC" => Ok(true)
+"2026-6-1T0:0:0Z" => Ok(true)
+"2026-06-01T00:00Z" => Err("the rule document: invalid value: string \"2026-06-01T00:00Z\", expected an RFC 3339 formatted date and time string")
+"2026-06-01" => Err("the rule document: invalid value: string \"2026-06-01\", expected an RFC 3339 formatted date and time string")
+2026-01-01T00:00:00Z => Ok(At(2026-01-01T00:00:00Z))
+2026-01-01T02:00:00.25+02:00 => Ok(At(2026-01-01T00:00:00.250Z))
+2026-01-01t00:00:00z => Ok(At(2026-01-01T00:00:00Z))
+2026-01-01T00:00Z => Err("refused")
+-P1W => Ok(Ago(TimeDelta { secs: 604800, nanos: 0 }))
+P-1DT2H => Ok(Ago(TimeDelta { secs: 93600, nanos: 0 }))
+-PT90M => Ok(Ago(TimeDelta { secs: 5400, nanos: 0 }))
+PT1H => Err("refused")
+-P1M => Err("refused")
+"#;
+
     #[test]
     fn conditions_and_validity_compile() -> Result<(), String> {
         let mut p = with("q", json!("speed<100"));
@@ -1202,13 +1283,9 @@ mod tests {
         assert!(p.prohibit && p.is_conditional());
         assert_eq!(
             p.conditions.temporal.first().and_then(|w| w.to),
-            Some(TimeBound::Ago(Duration::hours(1)))
+            TimeBound::before_now(SignedDuration::from_hours(1))
         );
-        let at = |s: &str| {
-            DateTime::parse_from_rfc3339(s)
-                .map(|d| d.with_timezone(&Utc))
-                .unwrap_or_default()
-        };
+        let at = |s: &str| jc_time::parse_rfc3339(s).unwrap_or_default();
         assert!(!p.in_force(at("2025-12-31T23:59:59Z")));
         assert!(p.in_force(at("2026-01-01T00:00:00Z")));
         assert!(!p.in_force(at("2027-01-01T00:00:00Z")));
@@ -1219,12 +1296,12 @@ mod tests {
 
     #[test]
     fn durations_read_as_the_platform_wrote_them() {
-        assert_eq!(duration("P-1D"), Some(-Duration::days(1)));
-        assert_eq!(duration("-P1D"), Some(-Duration::days(1)));
-        assert_eq!(duration("-PT1H30M"), Some(-Duration::minutes(90)));
+        assert_eq!(duration("P-1D"), Some(-SignedDuration::from_hours(24)));
+        assert_eq!(duration("-P1D"), Some(-SignedDuration::from_hours(24)));
+        assert_eq!(duration("-PT1H30M"), Some(-SignedDuration::from_mins(90)));
         assert_eq!(
             duration("P1W2DT3S"),
-            Some(Duration::days(9) + Duration::seconds(3))
+            Some(SignedDuration::from_secs(9 * 86_400 + 3))
         );
         // the last sums past what a Duration holds
         for bad in [
@@ -1240,7 +1317,7 @@ mod tests {
             assert_eq!(duration(bad), None, "{bad}");
         }
         // T-3729: a bound is a duration strictly before now
-        assert_eq!(duration("P0D"), Some(Duration::zero()));
+        assert_eq!(duration("P0D"), Some(SignedDuration::ZERO));
         for (raw, ok) in [("P0D", false), ("PT1S", false), ("-PT1S", true)] {
             assert_eq!(bound(raw).is_ok(), ok, "{raw}");
         }

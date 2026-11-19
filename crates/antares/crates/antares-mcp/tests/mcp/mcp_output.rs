@@ -408,10 +408,10 @@ async fn a_cut_history_names_the_window_that_continues_it() -> Result<(), String
 #[tokio::test(flavor = "multi_thread")]
 async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), String> {
     let f = fixture().await?;
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let ago = |minutes: i64| {
-        (now - chrono::Duration::minutes(minutes))
-            .format("%Y-%m-%dT%H:%M:%SZ")
+        (now - jiff::SignedDuration::from_mins(minutes))
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
     };
     let id = "urn:ngsi-ld:Car:h";
@@ -457,10 +457,10 @@ async fn a_long_cut_history_window_answers_hourly_averages() -> Result<(), Strin
 #[tokio::test(flavor = "multi_thread")]
 async fn averages_take_the_numbers_and_name_the_text() -> Result<(), String> {
     let f = fixture().await?;
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let ago = move |minutes: i64| {
-        (now - chrono::Duration::minutes(minutes))
-            .format("%Y-%m-%dT%H:%M:%SZ")
+        (now - jiff::SignedDuration::from_mins(minutes))
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
     };
     let history = |id: &'static str, numbers: bool| {
@@ -536,10 +536,10 @@ async fn averages_take_the_numbers_and_name_the_text() -> Result<(), String> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_whole_history_past_the_budget_is_averaged() -> Result<(), String> {
     let f = fixture().await?;
-    let now = chrono::Utc::now();
+    let now = jiff::Timestamp::now();
     let ago = |minutes: i64| {
-        (now - chrono::Duration::minutes(minutes))
-            .format("%Y-%m-%dT%H:%M:%SZ")
+        (now - jiff::SignedDuration::from_mins(minutes))
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_string()
     };
     let id = "urn:ngsi-ld:Car:long";
