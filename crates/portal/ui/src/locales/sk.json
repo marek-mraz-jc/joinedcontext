@@ -13572,6 +13572,7 @@
       "recoveryFingerprint": "Odtlačok záložného kľúča",
       "identity": "Identita, ktorá otvorí archív",
       "identityHint": "Vložte pracovnú alebo záložnú identitu age, jeden riadok, napr. AGE-SECRET-KEY-1… (riadok z vášho súboru s kľúčom). Použije sa len pre túto požiadavku a nikdy sa neuloží.",
+      "identityRefused": "Identita nebola prijatá: {reason}",
       "identityFirst": "Najprv vložte identitu",
       "restoreLead": "Najprv kontrola: archív sa otvorí vaším kľúčom a porovná s dnešným stavom organizácie. Nič sa nezapíše, kým to neschváli druhý správca.",
       "check": "Skontrolovať túto verziu",

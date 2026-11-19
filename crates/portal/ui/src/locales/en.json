@@ -13572,6 +13572,7 @@
       "recoveryFingerprint": "Recovery key fingerprint",
       "identity": "Identity that opens the archive",
       "identityHint": "Paste the working or the recovery age identity, one line, e.g. AGE-SECRET-KEY-1… (the line in your key file). It is used for this request only and never stored.",
+      "identityRefused": "The identity was not accepted: {reason}",
       "identityFirst": "Paste the identity first",
       "restoreLead": "Check first: the archive is opened with your key and compared with the Organization today. Nothing is written until a second administrator approves.",
       "check": "Check this version",

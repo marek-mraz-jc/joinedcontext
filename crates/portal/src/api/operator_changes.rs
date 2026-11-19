@@ -1299,11 +1299,7 @@ async fn apply_smtp(
     }
     let password = sealed
         .map(|sealed| {
-            crate::org_backup::unseal(
-                state,
-                &crate::org_backup::smtp_context(&target),
-                &sealed,
-            )
+            crate::org_backup::unseal(state, &crate::org_backup::smtp_context(&target), &sealed)
         })
         .transpose()?;
     let admin = people(state)?.admin().await?;

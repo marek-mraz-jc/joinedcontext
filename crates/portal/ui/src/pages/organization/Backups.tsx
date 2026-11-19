@@ -393,7 +393,10 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
         {shown ? null : (
           <form onSubmit={check} className="flex flex-col gap-3" noValidate>
             <IdentityField id="backup-configuration-identity" value={identity} onChange={setIdentity} error={keyError} />
-            <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="secondary" type="button" onClick={onClose}>
+                {t("backups.restore.close")}
+              </Button>
               <Button
                 variant="primary"
                 type="submit"
@@ -456,7 +459,7 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
             {group.change ? <Alert tone="success">{t("backups.restore.proposed")}</Alert> : null}
           </section>
         ))}
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2" hidden={!shown}>
           <Button variant="secondary" onClick={onClose}>
             {t("backups.restore.close")}
           </Button>
@@ -475,7 +478,12 @@ function Restore({ version, onClose }: { version: string; onClose: () => void })
 function IdentityField({ id, value, onChange, error }: { id: string; value: string; onChange: (v: string) => void; error?: string }): JSX.Element {
   const { t } = useTranslation();
   return (
-    <Field id={id} label={t("backups.data.identity")} help={t("backups.data.identityHint")} errors={error ? [error] : undefined}>
+    <Field
+      id={id}
+      label={t("backups.data.identity")}
+      help={t("backups.data.identityHint")}
+      errors={error ? [t("backups.data.identityRefused", { reason: error })] : undefined}
+    >
       <Input id={id} type="password" autoComplete="off" spellCheck={false} value={value} onChange={(e) => onChange(e.target.value)} />
     </Field>
   );

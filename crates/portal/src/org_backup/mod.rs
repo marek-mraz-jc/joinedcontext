@@ -676,7 +676,9 @@ fn open(state: &AppState, sealed: &str) -> Result<Zeroizing<String>, ApiError> {
         .decrypt(identities.iter().map(|i| i as &dyn age::Identity))
         .map_err(|_| unreadable())?;
     let mut plain = Zeroizing::new(String::new());
-    reader.read_to_string(&mut plain).map_err(|_| unreadable())?;
+    reader
+        .read_to_string(&mut plain)
+        .map_err(|_| unreadable())?;
     Ok(plain)
 }
 
@@ -705,11 +707,7 @@ fn bound_secret(plain: &str, context: &str) -> Option<Zeroizing<String>> {
 
 /// The new seal of a value sealed before the binding (T-7268), or `None` when `sealed` is bound
 /// already or does not open. Bound to `context`, the record the value is stored in now.
-pub fn rebound(
-    state: &AppState,
-    context: &str,
-    sealed: &str,
-) -> Result<Option<String>, ApiError> {
+pub fn rebound(state: &AppState, context: &str, sealed: &str) -> Result<Option<String>, ApiError> {
     let Ok(plain) = open(state, sealed) else {
         return Ok(None);
     };
@@ -1282,7 +1280,9 @@ pub fn spawn_schedule(state: AppState) {
         match reseal_unbound(&state).await {
             Ok(0) => {}
             Ok(moved) => tracing::info!(moved, "sealed secrets bound to their records"),
-            Err(err) => tracing::warn!(error = %err, "sealed secrets not bound; retried at the next start"),
+            Err(err) => {
+                tracing::warn!(error = %err, "sealed secrets not bound; retried at the next start")
+            }
         }
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {

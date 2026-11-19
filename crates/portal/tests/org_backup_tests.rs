@@ -580,7 +580,10 @@ async fn the_bundle_leaves_the_portal_only_encrypted_to_both_recipients() {
         &world.state,
         person("ada"),
         "GET",
-        &format!("{DOOR}/versions/{}", run["versionId"].as_str().expect("version")),
+        &format!(
+            "{DOOR}/versions/{}",
+            run["versionId"].as_str().expect("version")
+        ),
         None,
     )
     .await;
@@ -591,11 +594,26 @@ async fn the_bundle_leaves_the_portal_only_encrypted_to_both_recipients() {
 async fn a_configuration_target_without_recipients_is_refused_naming_the_field() {
     let world = world("alfa", "Enabled").await;
     let mut input = target(&world.endpoint);
-    input.as_object_mut().expect("object").remove("workingRecipient");
-    input.as_object_mut().expect("object").remove("recoveryRecipient");
+    input
+        .as_object_mut()
+        .expect("object")
+        .remove("workingRecipient");
+    input
+        .as_object_mut()
+        .expect("object")
+        .remove("recoveryRecipient");
     let refused = send(&world.state, person("ada"), "PUT", DOOR, Some(input)).await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.text);
-    assert!(refused.text.contains("workingRecipient"), "{}", refused.text);
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused.text.contains("workingRecipient"),
+        "{}",
+        refused.text
+    );
 
     // A target saved before T-7268 holds no recipients: its run is refused, nothing uploads.
     saved_and_run(&world, "ada").await;
@@ -610,10 +628,20 @@ async fn a_configuration_target_without_recipients_is_refused_naming_the_field()
     world.state.org_backups.save(&old).await.expect("saved");
     let key = key_of(&world, "alfa", "configuration").await;
     let before = world.bucket.lock().expect("bucket").objects[&key].len();
-    let run = send(&world.state, person("ada"), "POST", &format!("{DOOR}/run"), None).await;
+    let run = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/run"),
+        None,
+    )
+    .await;
     assert_eq!(run.status, StatusCode::CONFLICT, "{}", run.text);
     assert!(run.text.contains("workingRecipient"), "{}", run.text);
-    assert_eq!(world.bucket.lock().expect("bucket").objects[&key].len(), before);
+    assert_eq!(
+        world.bucket.lock().expect("bucket").objects[&key].len(),
+        before
+    );
 }
 
 #[tokio::test]
@@ -634,7 +662,11 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
         .objects
         .get_mut(&key)
         .expect("alfa's bundle")
-        .push(("plain".into(), Some(plain), "2026-11-16T11:00:00.000Z".into()));
+        .push((
+            "plain".into(),
+            Some(plain),
+            "2026-11-16T11:00:00.000Z".into(),
+        ));
     let refused = send(
         &world.state,
         person("ada"),
@@ -643,13 +675,20 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
         Some(json!({ "identity": identity(), "apply": true })),
     )
     .await;
-    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", refused.text);
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
     assert!(refused.text.contains("unencrypted"), "{}", refused.text);
     assert!(refused.text.contains(&taken), "{}", refused.text);
 
     // The wrong identity opens nothing and says which field.
     let other = secret_of(&age::x25519::Identity::generate());
-    let version = world.bucket.lock().expect("bucket").objects[&key][0].0.clone();
+    let version = world.bucket.lock().expect("bucket").objects[&key][0]
+        .0
+        .clone();
     let wrong = send(
         &world.state,
         person("ada"),
@@ -658,8 +697,17 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
         Some(json!({ "identity": other })),
     )
     .await;
-    assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", wrong.text);
-    assert!(wrong.text.contains(r#""path":"identity""#), "{}", wrong.text);
+    assert_eq!(
+        wrong.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        wrong.text
+    );
+    assert!(
+        wrong.text.contains(r#""path":"identity""#),
+        "{}",
+        wrong.text
+    );
     assert!(!wrong.text.contains(&other), "the identity is never echoed");
 }
 
@@ -711,7 +759,10 @@ fn unbound_seal(state: &AppState, secret: &str) -> String {
         .expect("armor");
     let mut writer = encryptor.wrap_output(armor).expect("encrypt");
     std::io::Write::write_all(&mut writer, secret.as_bytes()).expect("write");
-    writer.finish().and_then(|armor| armor.finish()).expect("finish");
+    writer
+        .finish()
+        .and_then(|armor| armor.finish())
+        .expect("finish");
     String::from_utf8(out).expect("armored")
 }
 
@@ -729,10 +780,14 @@ async fn a_seal_from_before_the_binding_is_bound_to_its_row_once() {
         .expect("rebound")
         .expect("moved");
     assert_eq!(
-        unseal(&world.state, &context, &bound).expect("opens").as_str(),
+        unseal(&world.state, &context, &bound)
+            .expect("opens")
+            .as_str(),
         SECRET
     );
-    assert!(rebound(&world.state, &context, &bound).expect("rebound").is_none());
+    assert!(rebound(&world.state, &context, &bound)
+        .expect("rebound")
+        .is_none());
 
     if !with_db {
         return;
