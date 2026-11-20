@@ -119,6 +119,70 @@ impl SchemaApi for PeerSchemaApi {
     }
 }
 
+/// The in-process half: an Endpoint this instance serves, read from its broker's view instead of
+/// over the public URL (SHR-16, T-7425). On a local instance the public URL is `http://127.0.0.1`,
+/// which [`PeerSchemaApi`] rightly refuses, and inside a cluster it is the edge the Portal should
+/// not loop through.
+///
+/// Only `{public_url}/api/endpoint/{slug}/schema/…` is answered: the slug and the path are checked
+/// before anything is requested, so a URL a catalogue made up reaches no other route of the
+/// broker. The mirror asks only for references whose Endpoint shares with the project (the pass's
+/// admission), so this reads nothing a share does not cover.
+pub struct LocalSchemaApi {
+    prefix: String,
+    views: Arc<crate::reconciler::views::ViewSync>,
+    runtime: tokio::runtime::Handle,
+}
+
+impl LocalSchemaApi {
+    /// Reads for `public_url`'s Endpoints through `views`, on `runtime` (the caller is the
+    /// mirror's blocking task, which may wait on it).
+    pub fn new(
+        public_url: &str,
+        views: Arc<crate::reconciler::views::ViewSync>,
+        runtime: tokio::runtime::Handle,
+    ) -> Self {
+        Self {
+            prefix: format!("{}/api/endpoint/", public_url.trim_end_matches('/')),
+            views,
+            runtime,
+        }
+    }
+
+    /// The view and the path under its `linkml/` a URL of this instance names, or why not.
+    fn route<'u>(&self, url: &'u str) -> Result<(&'u str, &'u str), FetchError> {
+        let not_ours = || {
+            FetchError::Unavailable(format!(
+                "{url} is not a schema document of an Endpoint this instance serves"
+            ))
+        };
+        let (slug, rest) = url
+            .strip_prefix(&self.prefix)
+            .and_then(|rest| rest.split_once('/'))
+            .ok_or_else(not_ours)?;
+        let slug_ok = !slug.is_empty() && slug.bytes().all(|b| b.is_ascii_alphanumeric());
+        let rest_ok = rest.starts_with("schema/")
+            && !rest.contains(['?', '#', '%', '\\'])
+            && rest
+                .split('/')
+                .all(|segment| !segment.is_empty() && segment != "." && segment != "..");
+        if slug_ok && rest_ok {
+            Ok((slug, rest))
+        } else {
+            Err(not_ours())
+        }
+    }
+}
+
+impl SchemaApi for LocalSchemaApi {
+    fn get(&self, url: &str) -> Result<Option<Vec<u8>>, FetchError> {
+        let (slug, rest) = self.route(url)?;
+        self.runtime
+            .block_on(self.views.view_linkml(slug, rest, MAX_BODY as usize))
+            .map_err(|why| FetchError::Unavailable(format!("{url}: {why}")))
+    }
+}
+
 /// What went wrong, without the URL's credentials — there are none on this hop, and this keeps
 /// it that way if one is ever added.
 fn reason(err: reqwest::Error) -> String {
@@ -137,6 +201,35 @@ fn reason(err: reqwest::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn only_a_schema_document_of_one_of_our_endpoints_is_routed() {
+        let api = LocalSchemaApi::new(
+            "http://127.0.0.1:42101/",
+            Arc::new(crate::reconciler::views::ViewSync::new(
+                "http://broker",
+                "/nonexistent",
+            )),
+            tokio::runtime::Handle::current(),
+        );
+        let base = "http://127.0.0.1:42101/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa";
+        assert_eq!(
+            api.route(&format!("{base}/schema/v1/model.linkml.yaml"))
+                .ok(),
+            Some(("k7m2qz4tv6xh3n5jb2ryd3wcfa", "schema/v1/model.linkml.yaml"))
+        );
+        for url in [
+            format!("{base}/ngsi-ld/v1/entities"),
+            format!("{base}/schema/../../q/views"),
+            format!("{base}/schema/%2e%2e/x"),
+            format!("{base}/schema/index.json?x=1"),
+            "http://127.0.0.1:42101/api/endpoint/a.b/schema/index.json".to_owned(),
+            "https://peer.example/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/schema/index.json"
+                .to_owned(),
+        ] {
+            assert!(api.route(&url).is_err(), "{url}");
+        }
+    }
 
     #[test]
     fn a_plaintext_surface_is_refused_before_anything_is_requested() {

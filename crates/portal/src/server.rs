@@ -336,11 +336,28 @@ pub fn spawn_background(state: &AppState) {
         if let Some(shako) = state.shako.as_ref() {
             match crate::sync::schema_api::PeerSchemaApi::new() {
                 Ok(peers) => {
+                    let peers: crate::sync::mirror::Peers = std::sync::Arc::new(peers);
+                    let public_url = state.config.public_base_url.to_string();
+                    // An Endpoint this instance serves is read from its broker's view in
+                    // process (SHR-16); a Portal that writes no views reads them over `peers`,
+                    // which refuses what is not public https.
+                    let local: crate::sync::mirror::Peers = match syncer.views() {
+                        Some(views) => {
+                            std::sync::Arc::new(crate::sync::schema_api::LocalSchemaApi::new(
+                                &public_url,
+                                views,
+                                tokio::runtime::Handle::current(),
+                            ))
+                        }
+                        None => peers.clone(),
+                    };
                     crate::sync::mirror::spawn_periodic(
                         shako.clone(),
                         syncer.clone(),
-                        state.config.public_base_url.to_string(),
-                        std::sync::Arc::new(peers),
+                        state.mirror.clone(),
+                        public_url,
+                        peers,
+                        local,
                     );
                 }
                 Err(err) => {

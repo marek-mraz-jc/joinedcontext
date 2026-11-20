@@ -13,7 +13,7 @@
 //! A peer whose models are all unchanged produces no branch and no commit, which is what makes
 //! a daily mirror of a quiet peer silent (CC-18).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,7 +26,6 @@ use jcctl::loader::{RawManifest, Repository};
 use super::proposal::{self, Proposal};
 use crate::forge::{GitError, ShakoClient};
 use crate::reconciler::daemon::SyncError;
-use crate::reconciler::staging::stage;
 
 /// The kinds that carry a peer's schema surface (DM-48).
 const REFERENCE_KINDS: [&str; 2] = ["SharedSpaceReference", "ContextSourceRegistration"];
@@ -58,22 +57,89 @@ pub enum RunError {
     Mirror(#[from] MirrorError),
 }
 
-/// When each reference was last fetched, so a schedule means something between ticks.
+/// When each reference was last fetched, so a schedule means something between ticks, and when
+/// one last failed, so a peer that is down is asked once an hour rather than on every tick.
 ///
 /// In memory on purpose. A restarted Portal re-fetches each peer once, and an unchanged peer
 /// produces no commit, so the cost of forgetting is one HTTP request per reference per restart
 /// — much less than a table nothing else needs.
 #[derive(Debug, Default)]
-pub struct LastFetch(Mutex<HashMap<String, u64>>);
+pub struct LastFetch(Mutex<HashMap<String, (Option<u64>, Option<u64>)>>);
+
+/// How long a reference that was flagged waits before it is tried again.
+const RETRY: u64 = 60 * 60;
 
 impl LastFetch {
     fn get(&self, key: &str) -> Option<u64> {
-        self.0.lock().ok()?.get(key).copied()
+        self.0.lock().ok()?.get(key)?.0
     }
 
     fn set(&self, key: &str, at: u64) {
         if let Ok(mut map) = self.0.lock() {
-            map.insert(key.to_owned(), at);
+            map.insert(key.to_owned(), (Some(at), None));
+        }
+    }
+
+    fn failed(&self, key: &str, at: u64) {
+        if let Ok(mut map) = self.0.lock() {
+            map.entry(key.to_owned()).or_default().1 = Some(at);
+        }
+    }
+
+    fn waiting(&self, key: &str, now: u64) -> bool {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|map| map.get(key)?.1)
+            .is_some_and(|at| now.saturating_sub(at) < RETRY)
+    }
+}
+
+/// What one pass reads: the repository as the last sync accepted it, assembled with every
+/// registered project at `projects/{slug}/` in layout 2 (CC-86), where each project's files live,
+/// and which `SharedSpaceReference`s a share admits.
+pub struct Tree {
+    /// The accepted repository (`Syncer::accepted`).
+    pub repository: Arc<Repository>,
+    /// Each registered project's repository by slug (layout 2); a project not named lives in the
+    /// organization repository.
+    pub repositories: BTreeMap<String, String>,
+    /// `(project, reference)` of every `SharedSpaceReference` whose Endpoint's audience admits
+    /// its project (`api::assistant::shared_endpoints`). A reference not named here is flagged
+    /// and never read: the reference alone opens nothing (EP-15).
+    pub admitted: BTreeSet<(String, String)>,
+}
+
+impl Tree {
+    /// The tree of the last accepted sync, or `None` before the first one.
+    pub fn of(syncer: &crate::reconciler::Syncer, mirror: &crate::store::Mirror) -> Option<Self> {
+        let repository = syncer.accepted()?;
+        let mut admitted = BTreeSet::new();
+        let projects: BTreeSet<&str> = repository
+            .iter()
+            .filter(|(id, _)| id.kind == "SharedSpaceReference")
+            .filter_map(|(id, _)| id.namespace.as_deref())
+            .collect();
+        for project in projects {
+            for (reference, _) in crate::api::assistant::shared_endpoints(mirror, project) {
+                admitted.insert((project.to_owned(), reference.metadata.name.clone()));
+            }
+        }
+        Some(Self {
+            repository: Arc::clone(&repository),
+            repositories: mirror.repositories(),
+            admitted,
+        })
+    }
+
+    /// The forge a mirror for `project` is proposed on: the project's own repository in layout 2
+    /// (the paths stay render paths, `for_project` strips its mount), else the organization's.
+    fn forge_for(&self, shako: &ShakoClient, project: &str) -> ShakoClient {
+        match self.repositories.get(project) {
+            Some(repository) if *repository != shako.repo => {
+                shako.for_project(repository.as_str(), project)
+            }
+            _ => shako.clone(),
         }
     }
 }
@@ -94,10 +160,11 @@ impl SchemaApi for Shared {
     }
 }
 
-/// How often the mirror looks at the repository. The reference's own `schedule` decides
-/// whether a peer is fetched (24 hours by default, DM-49); this only has to be finer than
-/// that, and an hour is fine enough to be sure a daily mirror happens on the day.
-const TICK: Duration = Duration::from_secs(60 * 60);
+/// How often the mirror looks at the references. The reference's own `schedule` decides
+/// whether a peer is fetched (24 hours by default, DM-49, as fine as a minute); a tick reads the
+/// repository the last sync accepted, in memory, so a reference that is not due costs nothing
+/// and a new one is fetched within a minute of its sync (T-7425).
+const TICK: Duration = Duration::from_secs(60);
 
 /// The mirror on its own timer, on the replica that reconciles (DM-49, CC-03).
 ///
@@ -108,8 +175,10 @@ const TICK: Duration = Duration::from_secs(60 * 60);
 pub fn spawn_periodic(
     shako: Arc<ShakoClient>,
     syncer: Arc<crate::reconciler::Syncer>,
+    mirror: Arc<crate::store::Mirror>,
     public_url: String,
     peers: Peers,
+    local: Peers,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let last_fetch = LastFetch::default();
@@ -119,8 +188,15 @@ pub fn spawn_periodic(
             if !syncer.is_leader() {
                 continue;
             }
+            let Some(tree) = Tree::of(&syncer, &mirror) else {
+                continue;
+            };
             let now = crate::auth::session::now_unix().max(0) as u64;
-            match run_once(&shako, &public_url, &peers, &last_fetch, now).await {
+            let transports = Transports {
+                peers: &peers,
+                local: &local,
+            };
+            match run_once(&shako, &tree, &public_url, &transports, &last_fetch, now).await {
                 Ok(run) => {
                     for flag in &run.flags {
                         tracing::warn!(flag = %flag, "foreign model mirror");
@@ -139,62 +215,86 @@ pub fn spawn_periodic(
     })
 }
 
-/// One pass over every reference in the repository (DM-48, DM-49).
+/// The two hops a schema surface is read over: `peers` for another instance (`https`, public
+/// addresses only), `local` for an Endpoint this instance serves, read in process (SHR-16).
+pub struct Transports<'a> {
+    pub peers: &'a Peers,
+    pub local: &'a Peers,
+}
+
+/// One pass over every reference in the accepted tree (DM-48, DM-49).
 ///
 /// `public_url` is this instance's own base: a `SharedSpaceReference` names an Endpoint this
 /// instance serves, so its surface cannot be derived without it. A Portal that does not know
 /// its own URL mirrors only the peers that name an address themselves.
 pub async fn run_once(
     shako: &ShakoClient,
+    tree: &Tree,
     public_url: &str,
-    peers: &Peers,
+    transports: &Transports<'_>,
     last_fetch: &LastFetch,
     now: u64,
 ) -> Result<Run, RunError> {
-    let revision = shako.branch_head(&shako.default_branch().await?).await?;
-    let scratch = stage(shako, &revision).await?;
-    let repository = Repository::load(scratch.path())?;
-
+    let repository = &tree.repository;
     let mut run = Run::default();
     for (id, resource) in repository.iter() {
         if !REFERENCE_KINDS.contains(&id.kind.as_str()) {
             continue;
         }
+        let project = id.namespace.as_deref().unwrap_or_default();
         let key = format!("{}/{}", id.namespace.as_deref().unwrap_or("-"), id.name);
         let schedule = schedule_of(&resource.manifest);
-        if !foreign_models::due(schedule.as_ref(), last_fetch.get(&key), now) {
+        if !foreign_models::due(schedule.as_ref(), last_fetch.get(&key), now)
+            || last_fetch.waiting(&key, now)
+        {
             continue;
         }
 
-        let base = match foreign_models::surface_of(&resource.manifest, public_url, &repository) {
-            Ok(Surface::At(base)) => base,
-            Ok(Surface::None(reason)) => {
-                run.flags.push(format!("{key}: {reason}"));
-                continue;
-            }
-            Err(err) => {
-                run.flags.push(format!("{key}: {err}"));
-                continue;
-            }
+        let fetch = |base, local, api: &Peers| Fetch {
+            base,
+            local,
+            api: Arc::clone(api),
         };
-
-        match mirror_one(
-            shako,
-            &key,
-            &resource.manifest,
-            &base,
-            &repository,
-            peers,
-            now,
-        )
-        .await
-        {
+        let from = match foreign_models::surface_of(&resource.manifest, public_url, repository) {
+            Ok(Surface::At(base)) => Ok(fetch(base, false, transports.peers)),
+            Ok(Surface::Local { base, .. }) => Ok(fetch(base, true, transports.local)),
+            Ok(Surface::None(reason)) => Err(reason),
+            Err(err) => Err(err.to_string()),
+        };
+        // A SharedSpaceReference names an Endpoint by slug, and the slug alone opens nothing:
+        // only one whose audience admits the project is read (EP-15).
+        let from = from.and_then(|from| {
+            let shared = id.kind == "SharedSpaceReference";
+            if shared
+                && !tree
+                    .admitted
+                    .contains(&(project.to_owned(), id.name.clone()))
+            {
+                return Err(
+                    "the Endpoint it names does not share with this project, so no \
+                            model is mirrored (EP-15)"
+                        .to_owned(),
+                );
+            }
+            Ok(from)
+        });
+        let result = match from {
+            Ok(from) => {
+                let forge = tree.forge_for(shako, project);
+                mirror_one(&forge, &key, &resource.manifest, &from, repository, now)
+                    .await
+                    .map_err(|err| err.to_string())
+            }
+            Err(reason) => Err(reason),
+        };
+        match result {
             Ok(Some(url)) => run.proposed.push(url),
             Ok(None) => run.unchanged += 1,
-            Err(err) => {
+            Err(reason) => {
                 // One unreachable peer is not a failed pass: the others still mirror, and the
                 // reference stands with whatever the repository already pinned (DM-48).
-                run.flags.push(format!("{key}: {err}"));
+                run.flags.push(format!("{key}: {reason}"));
+                last_fetch.failed(&key, now);
                 continue;
             }
         }
@@ -203,18 +303,24 @@ pub async fn run_once(
     Ok(run)
 }
 
+/// Where a reference's documents come from.
+struct Fetch {
+    base: String,
+    /// An Endpoint this instance serves, read with `mirror_local`.
+    local: bool,
+    api: Peers,
+}
+
 /// Mirrors one reference and proposes the result, or `None` when nothing changed.
-#[allow(clippy::too_many_arguments)]
 async fn mirror_one(
     shako: &ShakoClient,
     key: &str,
     reference: &RawManifest,
-    base: &str,
-    repository: &Repository,
-    peers: &Peers,
+    from: &Fetch,
+    repository: &Arc<Repository>,
     now: u64,
 ) -> Result<Option<String>, RunError> {
-    let plan = fetch(reference.clone(), base.to_owned(), repository, peers, now).await?;
+    let plan = fetch(reference.clone(), from, repository, now).await?;
 
     let changed = plan
         .models
@@ -275,25 +381,21 @@ async fn mirror_one(
 /// while a peer takes its time.
 async fn fetch(
     reference: RawManifest,
-    base: String,
-    repository: &Repository,
-    peers: &Peers,
+    from: &Fetch,
+    repository: &Arc<Repository>,
     now: u64,
 ) -> Result<MirrorPlan, RunError> {
     let fetched_at = rfc3339(now);
-    // The loaded repository cannot cross to the blocking thread, so the one thing that half
-    // needs travels instead: the staged directory it was loaded from.
-    let dir = repository.root().to_path_buf();
-    let api = Shared(Arc::clone(peers));
+    let repository = Arc::clone(repository);
+    let api = Shared(Arc::clone(&from.api));
+    let (base, local) = (from.base.clone(), from.local);
     tokio::task::spawn_blocking(move || {
-        let repository = Repository::load(&dir)?;
-        Ok(foreign_models::mirror(
-            &reference,
-            &base,
-            &fetched_at,
-            &repository,
-            &api,
-        )?)
+        let mirror = if local {
+            foreign_models::mirror_local
+        } else {
+            foreign_models::mirror
+        };
+        Ok(mirror(&reference, &base, &fetched_at, &repository, &api)?)
     })
     .await
     .map_err(|err| RunError::Client(format!("the mirror task did not finish: {err}")))?
