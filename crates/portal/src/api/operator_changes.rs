@@ -739,26 +739,62 @@ async fn move_holds(
     state: &AppState,
     pool: &sqlx::PgPool,
     payload: &ChangePayload,
+    approving: bool,
 ) -> Result<crate::project_move::MovePlan, ApiError> {
     let project = payload.project.as_deref().unwrap_or_default();
     let to = payload.organization.as_deref().unwrap_or_default();
-    let plan = crate::project_move::plan(pool, &state.mirror, project, to)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| {
-            invalid(
-                "project",
-                format!("'{project}' is no live project of the registry"),
-            )
-        })?;
-    if plan.blockers.is_empty() {
+    let plan = move_plan(state, pool, project, to).await?.ok_or_else(|| {
+        invalid(
+            "project",
+            format!("'{project}' is no live project of the registry"),
+        )
+    })?;
+    // A proposal may come before what the approval waits on (T-7462): it is what lets the
+    // Project Change name the target.
+    let mut refused = plan.blockers.clone();
+    if approving {
+        refused.extend(plan.waits.iter().cloned());
+    }
+    if refused.is_empty() {
         Ok(plan)
     } else {
         Err(ApiError::Unprocessable {
-            detail: format!("the project cannot move now: {}", plan.blockers.join("; ")),
-            errors: plan.blockers,
+            detail: format!("the project cannot move now: {}", refused.join("; ")),
+            errors: refused,
         })
     }
+}
+
+/// The plan of moving `project` to `to`, with the project's open Changes among what the approval
+/// waits on (T-7462): approved after the move, each would commit what was judged under the
+/// Organization the project left. Without a forge no Change is open.
+async fn move_plan(
+    state: &AppState,
+    pool: &sqlx::PgPool,
+    project: &str,
+    to: &str,
+) -> Result<Option<crate::project_move::MovePlan>, ApiError> {
+    let Some(mut plan) = crate::project_move::plan(pool, &state.mirror, project, to)
+        .await
+        .map_err(db)?
+    else {
+        return Ok(None);
+    };
+    if state.shako.is_some() && !plan.done {
+        let open: Vec<String> = crate::api::changes::list_changes_for(state, project)
+            .await?
+            .items
+            .into_iter()
+            .map(|change| change.metadata.name)
+            .collect();
+        if !open.is_empty() {
+            plan.waits.push(format!(
+                "project: '{project}' has open Changes ({}); approve, reject or close them first",
+                open.join(", ")
+            ));
+        }
+    }
+    Ok(Some(plan))
 }
 
 /// The installation's look holds jc-core's rules for an Organization's appearance (plain one-line
@@ -898,14 +934,15 @@ fn proposal<'a>(payload: &'a ChangePayload, by: &'a str) -> Proposal<'a> {
     }
 }
 
-/// What the kind needs to hold when it is asked for and again when it is approved, before
-/// anything is written.
+/// What the kind needs to hold when it is asked for and again when it is approved (`approving`),
+/// before anything is written.
 async fn holds(
     state: &AppState,
     pool: &sqlx::PgPool,
     kind: OperatorKind,
     payload: &ChangePayload,
     by: &str,
+    approving: bool,
 ) -> Result<(), ApiError> {
     match kind {
         // The Organization is one of the registry's active rows (T-7181), checked in the same
@@ -978,7 +1015,7 @@ async fn holds(
             Ok(())
         }
         OperatorKind::BrandingSet => Ok(()),
-        OperatorKind::ProjectMove => move_holds(state, pool, payload).await.map(drop),
+        OperatorKind::ProjectMove => move_holds(state, pool, payload, approving).await.map(drop),
         OperatorKind::SinglePersonSet => single_person_holds(state, pool, payload).await,
         OperatorKind::AutomationLoginSet => automation_holds(state, pool, payload).await,
     }
@@ -1286,7 +1323,7 @@ pub async fn propose(
     }
     let (kind, payload, target, secret) = payload(body)?;
     let pool = database(&state)?;
-    holds(&state, pool, kind, &payload, &identity.subject).await?;
+    holds(&state, pool, kind, &payload, &identity.subject, false).await?;
     let stored = serde_json::to_value(&payload)
         .map_err(|e| ApiError::Internal(format!("operator change: {e}")))?;
     let sealed = secret
@@ -1511,7 +1548,15 @@ pub async fn approve(
                 .into(),
         ));
     }
-    holds(&state, pool, found.kind, &found.payload, &found.proposed_by).await?;
+    holds(
+        &state,
+        pool,
+        found.kind,
+        &found.payload,
+        &found.proposed_by,
+        true,
+    )
+    .await?;
     // A host Change re-reads its proposer where the realm can be asked; an operator Change
     // always does, under its lock (`operators_hold`).
     if let (
@@ -2414,21 +2459,15 @@ pub async fn project_move_plan(
         ));
     }
     let pool = database(&state)?;
-    crate::project_move::plan(
-        pool,
-        &state.mirror,
-        &query.project,
-        query.organization.trim(),
-    )
-    .await
-    .map_err(db)?
-    .map(Json)
-    .ok_or_else(|| {
-        ApiError::NotFound(format!(
-            "the registry holds no live project '{}'",
-            query.project
-        ))
-    })
+    move_plan(&state, pool, &query.project, query.organization.trim())
+        .await?
+        .map(Json)
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the registry holds no live project '{}'",
+                query.project
+            ))
+        })
 }
 
 pub fn router() -> Router<AppState> {
