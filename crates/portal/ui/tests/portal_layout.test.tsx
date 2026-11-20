@@ -188,6 +188,8 @@ describe("the layout tab", () => {
     const { container } = await openLayout({}, proposals(sent));
     await user.click(await screen.findByRole("button", { name: "Start from the built-in home" }));
     // The hero's image: raster files of this portal only.
+    // A finished block folds to its heading line; Edit opens its form.
+    await user.click(screen.getByRole("button", { name: "Edit Hero" }));
     const image = screen.getByLabelText("Image") as HTMLSelectElement;
     expect(Array.from(image.options).map((o) => o.textContent)).toEqual(["No image", "hero.png"]);
     fireEvent.change(image, { target: { value: `/files/${SHA}/hero.png` } });
@@ -236,10 +238,41 @@ describe("the layout tab", () => {
         ? problem(403, "You may not propose a change to Portal bbsk-mobility.")
         : undefined,
     );
-    await user.type(await screen.findByLabelText(/^Text/), " more");
+    await user.click(await screen.findByRole("button", { name: "Edit Text" }));
+    await user.type(screen.getByLabelText(/^Text/), " more");
     await user.click(screen.getByRole("button", { name: "Publish layout" }));
     const alert = (await screen.findByText("The portal refused the layout")).closest("[role=alert]") as HTMLElement;
     expect(within(alert).getByText(/You may not propose a change to Portal bbsk-mobility/)).toBeInTheDocument();
+  });
+
+  it("folds a finished block to its heading line and opens it on Edit", async () => {
+    const user = userEvent.setup();
+    await openLayout({ pages: [{ slug: "home", rows: [{ blocks: [{ type: "text", markdown: { en: "## About\n\nThe region." } }] }] }] });
+    const edit = await screen.findByRole("button", { name: "Edit Text" });
+    expect(edit).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("About")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Text/)).toBeNull();
+    await user.click(edit);
+    expect(screen.getByRole("button", { name: "Fold Text" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText(/^Text/)).toHaveValue("## About\n\nThe region.");
+  });
+
+  it("names each marked field in the banner and goes to it on its page", async () => {
+    const user = userEvent.setup();
+    const pages = [
+      { slug: "home", rows: [{ blocks: [{ type: "text", markdown: { en: "x" } }] }] },
+      { slug: "doprava", title: { en: "Transport" }, rows: [{ blocks: [{ type: "text", markdown: { en: "y" } }] }] },
+    ];
+    await openLayout({ pages });
+    await user.click(await screen.findByRole("button", { name: "Transport" }));
+    await user.click(await screen.findByRole("button", { name: "Edit Text" }));
+    await user.clear(screen.getByLabelText(/^Text/));
+    await user.click(screen.getByRole("button", { name: "Home page" }));
+    await user.click(screen.getByRole("button", { name: "Publish layout" }));
+    const alert = (await screen.findByText("Some blocks are not complete")).closest("[role=alert]") as HTMLElement;
+    await user.click(within(alert).getByRole("button", { name: "Transport › Row 1 › Text: Text" }));
+    expect(await screen.findByRole("heading", { name: "/page/doprava" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(/^Text/)).toHaveFocus());
   });
 
   it("adds the block type chosen in a row beside that row's blocks", async () => {
@@ -263,7 +296,8 @@ describe("the layout tab", () => {
         ? jsonResponse({ type: "about:blank", title: "Refused", status: 422, detail: "Refused", errors: ["spec.pages[1].rows[0].blocks[0].markdown.en: Markdown of 1 to 8 KiB"] }, 422)
         : undefined,
     );
-    await user.type(await screen.findByLabelText(/^Text/), " more");
+    await user.click(await screen.findByRole("button", { name: "Edit Text" }));
+    await user.type(screen.getByLabelText(/^Text/), " more");
     await user.click(screen.getByRole("button", { name: "Publish layout" }));
     const alert = (await screen.findByText("The portal refused the layout")).closest("[role=alert]") as HTMLElement;
     expect(within(alert).getByText("Fix the marked field, then publish again.")).toBeInTheDocument();

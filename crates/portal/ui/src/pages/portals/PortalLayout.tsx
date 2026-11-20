@@ -102,6 +102,37 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
   };
   const page = pages[current];
   const marked = Object.keys(shownFaults).length;
+  const [target, setTarget] = useState("");
+  const markedList = Object.keys(shownFaults)
+    .map((path) => markedField(path, pages, lang, t))
+    .filter((field): field is NonNullable<typeof field> => field !== null);
+  const fieldLinks =
+    markedList.length > 0 ? (
+      <ul className="mt-1 flex flex-col items-start gap-1">
+        {markedList.map((field) => (
+          <li key={field.name}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="underline"
+              onClick={() => {
+                setCurrent(field.page);
+                setTarget(field.target || field.name);
+              }}
+            >
+              {field.name}
+            </Button>
+          </li>
+        ))}
+      </ul>
+    ) : null;
+  useEffect(() => {
+    if (!target) return;
+    const chosen = document.getElementById(target) ?? document.querySelector<HTMLElement>("[aria-invalid='true']");
+    chosen?.scrollIntoView?.({ block: "center" });
+    chosen?.focus({ preventScroll: true });
+    setTarget("");
+  }, [target, current]);
   useEffect(() => {
     if (marked === 0) return;
     const first = document.querySelector<HTMLElement>("[aria-invalid='true']");
@@ -144,6 +175,7 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
       {refusal.length > 0 ? (
         <Alert tone="danger" role="alert" title={t("portals.layout.refused")}>
           {Object.keys(server.fields).length > 0 ? <p>{t("portals.layout.refusedHint")}</p> : null}
+          {Object.keys(server.fields).length > 0 ? fieldLinks : null}
           {server.rest.length > 0 ? <p>{server.rest.join("; ")}</p> : null}
         </Alert>
       ) : null}
@@ -176,6 +208,7 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
       {tried && Object.keys(faults).length > 0 ? (
         <Alert tone="danger" role="alert" title={t("portals.layout.fix")}>
           {t("portals.layout.fixHint", { count: Object.keys(faults).length })}
+          {fieldLinks}
         </Alert>
       ) : null}
       <PageBar
@@ -323,6 +356,57 @@ function PageBar({
   );
 }
 
+const FIELD_LABELS: Record<string, string> = {
+  markdown: "markdown",
+  title: "blockTitle",
+  intro: "intro",
+  image: "image",
+  tag: "tag",
+  limit: "limit",
+  items: "numbers",
+  files: "files",
+  datasets: "addDataset",
+};
+
+/**
+ * A marked field as the banner names it ("Transport › Row 2 › Chart: Dataset in the chart"), its
+ * page and the id of its control, from the server's path of the field.
+ */
+export function markedField(
+  path: string,
+  pages: PortalPage[],
+  lang: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): { page: number; name: string; target: string } | null {
+  const named = /^spec\.pages\[(\d+)\]\.(?:rows\[(\d+)\]\.blocks\[(\d+)\]\.)?(.+)$/.exec(path);
+  if (!named?.[1] || !named[4]) return null;
+  const at = Number(named[1]);
+  const page = pages[at];
+  if (!page) return null;
+  const pageName = page.slug === HOME ? t("portals.layout.home") : textOf(page.title, lang) || page.slug;
+  const rest = named[4];
+  if (named[2] === undefined || named[3] === undefined) {
+    return { page: at, name: `${pageName}: ${t(rest === "slug" ? "portals.layout.slug" : "portals.layout.pageTitle")}`, target: rest === "title" ? "layout-page-title" : "" };
+  }
+  const row = Number(named[2]);
+  const block = page.rows?.[row]?.blocks[Number(named[3])];
+  if (!block) return null;
+  const id = `spec.pages[${at}].rows[${row}].blocks[${named[3]}]`.replace(/[^a-z0-9]+/gi, "-");
+  const card = /^cards\[(\d+)\]\.(title|url|text)$/.exec(rest);
+  const label = card
+    ? `card${card[2] === "url" ? "Url" : card[2] === "text" ? "Text" : "Title"}`
+    : rest === "dataset"
+      ? block.type === "map"
+        ? "mapDataset"
+        : "chartDataset"
+      : (FIELD_LABELS[rest] ?? "blockTitle");
+  return {
+    page: at,
+    name: `${pageName} › ${t("portals.layout.row", { n: row + 1 })} › ${t(`portals.layout.type.${block.type}`)}: ${t(`portals.layout.${label}`)}`,
+    target: card ? `${id}-card${card[1]}-${card[2]}` : `${id}-${rest}`,
+  };
+}
+
 /** A block type to put beside the blocks of one row, chosen in that row. */
 function RowAdd({ id, onAdd }: { id: string; onAdd: (type: BlockType) => void }): JSX.Element {
   const { t } = useTranslation();
@@ -430,6 +514,7 @@ function PageForm({
                 key={`${r}-${b}-${block.type}`}
                 block={block}
                 path={`spec.pages[${at}].rows[${r}].blocks[${b}]`}
+                faulted={Object.keys(faults).some((key) => key.startsWith(`spec.pages[${at}].rows[${r}].blocks[${b}].`))}
                 lang={lang}
                 choices={choices}
                 fault={fault}
@@ -477,6 +562,7 @@ function BlockCard({
   canLeft,
   canRight,
   canDuplicate,
+  faulted,
   onChange,
   onMove,
   onDuplicate,
@@ -492,6 +578,8 @@ function BlockCard({
   canLeft: boolean;
   canRight: boolean;
   canDuplicate: boolean;
+  /** A field of the block is marked: its form stays open. */
+  faulted: boolean;
   onChange: (block: PortalBlock) => void;
   onMove: (where: "up" | "down" | "left" | "right") => void;
   onDuplicate: () => void;
@@ -500,6 +588,10 @@ function BlockCard({
   const { t } = useTranslation();
   const typeLabel = t(`portals.layout.type.${block.type}`);
   const id = path.replace(/[^a-z0-9]+/gi, "-");
+  // A finished block folds to its heading line; a new or incomplete one opens with its form.
+  const [editing, setEditing] = useState(() => Object.keys(faultsOfPages([{ slug: HOME, rows: [{ blocks: [block] }] }])).length > 0);
+  const open = editing || faulted;
+  const summary = block.type === "text" ? (textOf(block.markdown, lang).split("\n").find((line) => line.trim() !== "") ?? "").replace(/^#+\s*/, "") : textOf(block.title, lang);
   const edge = t("portals.layout.cannotMove");
   const titleField =
     block.type === "text" ? null : (
@@ -522,7 +614,13 @@ function BlockCard({
   return (
     <Card padding="md" className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-body font-semibold">{typeLabel}</h4>
+        <div className="min-w-0 flex-1">
+          <h4 className="text-body font-semibold">{typeLabel}</h4>
+          {!open && summary ? <p className="truncate text-caption text-fg-muted">{summary}</p> : null}
+        </div>
+        <Button size="sm" variant="secondary" aria-expanded={open} aria-controls={`${id}-form`} disabled={faulted} disabledReason={t("portals.layout.why.marked")} onClick={() => setEditing(!editing)}>
+          {open ? t("portals.layout.fold", { type: typeLabel }) : t("portals.layout.edit", { type: typeLabel })}
+        </Button>
         <RowActions
           label={typeLabel}
           actions={[
@@ -535,6 +633,8 @@ function BlockCard({
           ]}
         />
       </div>
+      {open ? (
+        <div id={`${id}-form`} className="space-y-3">
       {titleField}
       {block.type === "hero" ? (
         <>
@@ -657,6 +757,8 @@ function BlockCard({
           ))}
           {fault(`${path}.files`) ? <InlineError>{fault(`${path}.files`)?.[0]}</InlineError> : null}
         </fieldset>
+      ) : null}
+        </div>
       ) : null}
     </Card>
   );

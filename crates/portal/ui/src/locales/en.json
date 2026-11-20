@@ -13599,7 +13599,8 @@
         "newPage": "Fill in an unused address and a title first.",
         "rows": "A page holds at most {max} rows.",
         "lastCard": "A link block keeps at least one card; remove the block instead.",
-        "cards": "A block holds at most {max} cards."
+        "cards": "A block holds at most {max} cards.",
+        "marked": "A marked field of this block needs a value first."
       },
       "hint": {
         "slug": "Lower-case letters, digits and dashes, for example doprava: the page answers at /page/doprava.",
@@ -13626,7 +13627,9 @@
       },
       "rowType": "Block to add to this row",
       "addHere": "Add to this row",
-      "addBlock": "Add a block to this row"
+      "addBlock": "Add a block to this row",
+      "edit": "Edit {type}",
+      "fold": "Fold {type}"
     }
   },
   "assistantGuides": {

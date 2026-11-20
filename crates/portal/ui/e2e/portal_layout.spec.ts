@@ -156,6 +156,7 @@ for (const width of [1440, 400]) {
       await page.getByRole("button", { name: "Publish layout" }).click();
       await expect(page.getByText("Some blocks are not complete")).toBeVisible();
       await expect(page.getByText("Choose a dataset of this portal.")).toBeVisible();
+      await expect(page.getByRole("button", { name: /Row 2 › Chart: Dataset in the chart/ })).toBeVisible();
       await shoot(page, width, info.outputPath(`layout-error-${width}.png`));
       expect(await axeViolations(page)).toEqual([]);
 
@@ -163,6 +164,7 @@ for (const width of [1440, 400]) {
       await manifestReadsAsRest(page);
       await stub(page, BUILT, "spec.pages[0].rows[0].blocks[0].title.en: one line of 1 to 120 characters without < or >");
       await openLayout(page);
+      await page.getByRole("button", { name: "Edit Hero" }).click();
       await page.getByLabel(/^Heading/).first().fill("Open data <Banská Bystrica>");
       await page.getByRole("button", { name: "Publish layout" }).click();
       await expect(page.getByText("The portal refused the layout")).toBeVisible();
@@ -178,6 +180,7 @@ test("build a home and a page from blocks and publish them as one checked Change
   const sent = await stub(page, undefined);
   await openLayout(page);
   await page.getByRole("button", { name: "Start from the built-in home" }).click();
+  await page.getByRole("button", { name: "Edit Hero" }).click();
   await page.getByLabel(/^Heading/).first().fill("Open data of the region");
   await page.getByLabel("Image").selectOption({ label: "titulka-doprava.jpg" });
   await page.getByLabel(/^Block type/).selectOption("featured-datasets");
