@@ -8,7 +8,6 @@ import importlib.util
 import json
 import re
 import tempfile
-import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -374,19 +373,14 @@ class PortalJc:
                 spec = body["spec"]
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
-                src = (spec["sources"] or [{}])[0]
-                url_host = urllib.parse.urlsplit(src.get("url", "")).hostname
-                if url_host and url_host not in src.get("allowedHosts", []):
-                    # jc-core's spec check: allowedHosts lists the url's host name, no port
-                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", "path": "",
-                                 "message": f"invalid spec.sources[0].allowedHosts: must list `{url_host}`, the url's own host"}]}}
                 if spec["sources"] and jc.wrong_reason:
                     # refused for a reason that is not the isolation rule (a loopback guard)
                     return 422, {"detail": "spec.sources[0].url: loopback address refused"}
                 if spec["sources"] and not jc.leaky:
                     finding = ({"path": "spec.sources[0].projects", "message": "x is no project of yours"}
                                if spec["sources"][0]["type"] == "endpoints" else
-                               {"path": "spec.sources[0].allowedHosts", "message": "x is not in the deployment's harvest allow-list"})
+                               {"path": "spec.sources[0].url", "message": "x is an address of this installation outside every "
+                                "Organization's public catalogue; ... (ODP-12)"})
                     return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", **finding}]}}
                 return 200, {}
 

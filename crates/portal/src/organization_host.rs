@@ -60,6 +60,13 @@ impl<T> Swappable<T> {
     }
 }
 
+impl<T: PartialEq> PartialEq for Swappable<T> {
+    fn eq(&self, other: &Self) -> bool {
+        *self.current() == *other.current()
+    }
+}
+impl<T: Eq> Eq for Swappable<T> {}
+
 /// The Organizations' Portal hosts (T-7183): `JC_PORTAL_ORGANIZATION_HOSTS` at start, replaced
 /// whenever jc's Organization registry runs another set
 /// ([`AppState::replace_organization_hosts`]).
