@@ -92,6 +92,11 @@ pub struct PortalSettings {
     pub harvest_hosts: Vec<String>,
     /// The Organizations' own portal hosts in the host registry (T-7415).
     pub sites: Sites,
+    /// Every Organization's addresses as jc's host registry routes them, the same set the
+    /// state holds and jc replaces at run time (T-7013).
+    pub addresses: crate::organization_host::OrganizationAddressList,
+    /// The host of the Portal's own public base (`JC_PORTAL_PUBLIC_URL`).
+    pub own_host: Option<String>,
 }
 
 /// `JC_PORTAL_PORTAL_HOSTS` and `JC_PORTAL_PORTALS_MAX`, checked: a plain host each, no host
@@ -259,6 +264,21 @@ pub fn check(
         // The url's own host is the source's: the admin names it, the harvest guard (https,
         // pinned public addresses, every redirect hop re-checked) carries it. A further host
         // stays the operator's (ODP-10, SEC-05, T-7416).
+        if let Some(host) = source
+            .url
+            .as_deref()
+            .and_then(|url| installation_address(settings, url))
+        {
+            return Err(refused(
+                &format!("spec.sources[{i}].url"),
+                format!(
+                    "{host} is an address of this installation outside every Organization's \
+                     public catalogue; another Organization's data enters only as a source at \
+                     its open data catalogue, e.g. https://opendata.example.org/catalog.ttl, \
+                     this Organization's own as an endpoints source (ODP-12)"
+                ),
+            ));
+        }
         let own = source.url.as_deref().and_then(http_url_host);
         if let Some(own) = &own {
             if is_internal_name(own) {
@@ -299,6 +319,32 @@ pub fn check(
         }
     }
     Ok(())
+}
+
+/// The host of `url` when it is one of this installation's own (an Organization's address or the
+/// Portal's base) and `url` lies under no Organization's open data catalogue: a harvest there
+/// reads another Organization's APIs, which ODP-12 closes to everything but its public
+/// catalogue. Decided by the configured addresses, never by how the name resolves, so the
+/// loopback guard below is no part of it.
+fn installation_address(settings: &PortalSettings, url: &str) -> Option<String> {
+    use crate::organization_host::AddressKind;
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    let same = |a: &url::Url| {
+        a.host_str()
+            .is_some_and(|h| h.trim_end_matches('.').eq_ignore_ascii_case(&host))
+    };
+    let all = settings.addresses.current();
+    let mut addresses = all.iter().flat_map(|o| &o.addresses);
+    let catalogue = addresses.clone().any(|a| {
+        a.kind == AddressKind::Opendata && same(&a.url) && url.path().starts_with(a.url.path())
+    });
+    let ours = settings
+        .own_host
+        .as_deref()
+        .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+        || addresses.any(|a| same(&a.url));
+    (ours && !catalogue).then_some(host)
 }
 
 /// An IP literal or a name only an internal resolver answers: never a source's own host.
@@ -644,6 +690,57 @@ mod tests {
             detail.starts_with("spec.sources[0].allowedHosts: files.praha.eu is not in"),
             "{detail}"
         );
+    }
+
+    #[test]
+    fn another_organizations_api_host_is_refused_and_its_public_catalogue_admitted() {
+        // ODP-12 on public names, where no loopback guard can stand in: Organization ba's
+        // source reaches bbsk only at bbsk's open data catalogue.
+        let mirror = mirror();
+        let s = settings(10);
+        s.addresses.store(
+            crate::organization_host::parse_addresses(
+                r#"[{"organization": "bbsk", "addresses": [
+                    {"kind": "portal", "url": "https://portal.bbsk.example.org/"},
+                    {"kind": "opendata", "url": "https://opendata.bbsk.example.org/"},
+                    {"kind": "api", "url": "https://api.bbsk.example.org/"},
+                    {"kind": "shared", "url": "https://shared.example.org/sk_bbsk/"}]},
+                   {"organization": "zilina", "addresses": [
+                    {"kind": "opendata", "url": "https://portal.zilina.example.org/opendata/"},
+                    {"kind": "api", "url": "https://portal.zilina.example.org/api/endpoint/"}]}]"#,
+            )
+            .expect("addresses"),
+        );
+        let mut s = s;
+        s.own_host = Some("jc.example.org".into());
+        let source = |url: &str| {
+            let mut p = portal("ba-region", "ba", "region", None);
+            p.spec["sources"] = json!([{ "name": "theirs", "type": "dcat-ap", "url": url }]);
+            p
+        };
+        for admitted in [
+            "https://opendata.bbsk.example.org/catalog.ttl",
+            "https://portal.zilina.example.org/opendata/catalog.ttl",
+            "https://data.kosice.sk/catalog.ttl",
+        ] {
+            check(&mirror, Some(&s), &source(admitted)).expect(admitted);
+        }
+        for refused in [
+            "https://api.bbsk.example.org/api/endpoint/closed/",
+            "https://API.bbsk.example.org./catalog.ttl",
+            "https://portal.bbsk.example.org/",
+            "https://shared.example.org/sk_bbsk/api/endpoint/closed/",
+            "https://portal.zilina.example.org/api/endpoint/closed/",
+            "https://portal.zilina.example.org/opendata/../api/endpoint/closed/",
+            "https://portal.zilina.example.org/opendata-x/catalog.ttl",
+            "https://jc.example.org:8443/api/endpoint/closed/",
+        ] {
+            let detail = field(check(&mirror, Some(&s), &source(refused)).unwrap_err());
+            assert!(
+                detail.starts_with("spec.sources[0].url: ") && detail.ends_with("(ODP-12)"),
+                "{refused}: {detail}"
+            );
+        }
     }
 
     #[test]

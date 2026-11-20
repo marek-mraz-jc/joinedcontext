@@ -476,7 +476,25 @@ pub async fn get_metrics(
     // rather than handed its throughput. `metrics_for` itself stays open: the catalog search
     // calls it behind its own access filter (AG-58).
     readable_pipeline(&state, &user, &project, &name)?;
-    Ok(Json(metrics_for(&state, &project, &name).await?))
+    Ok(Json(
+        metrics_read(&state, &project, &name, LAST_ANSWER_KEPT).await?,
+    ))
+}
+
+/// How long the runner's last whole answer for a project stands in for a read of it that failed
+/// on a busy host (T-7439: two page reads at once, one answered in 1985 ms, the other past both
+/// 2 s tries). Only the metrics route uses it, whose answer says how old it is (`scrapedAt`);
+/// the rates route and the diagnostics read the runner every time.
+const LAST_ANSWER_KEPT: Duration = Duration::from_secs(30);
+
+/// The runner's last whole answer per runner URL: when it was read, RFC 3339 and as an instant,
+/// and the text.
+type LastAnswers =
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, String, String)>>;
+
+fn last_answers() -> &'static LastAnswers {
+    static LAST: OnceLock<LastAnswers> = OnceLock::new();
+    LAST.get_or_init(Default::default)
 }
 
 /// The runner's counters for one pipeline; the read behind the metrics route and the
@@ -485,6 +503,17 @@ pub async fn metrics_for(
     state: &AppState,
     project: &str,
     name: &str,
+) -> Result<PipelineMetrics, ApiError> {
+    metrics_read(state, project, name, Duration::ZERO).await
+}
+
+/// [`metrics_for`], answering from the runner's last whole answer for the project when it is at
+/// most `kept` old and this read fails.
+async fn metrics_read(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    kept: Duration,
 ) -> Result<PipelineMetrics, ApiError> {
     let not_found = || ApiError::NotFound(format!("pipeline '{name}' not found in '{project}'"));
     // The names go into the runner URL, so they are checked before anything is built from them,
@@ -507,13 +536,33 @@ pub async fn metrics_for(
         template.replace("{project}", project).trim_end_matches('/')
     );
 
-    let body = read_metrics(&runner_http(&state.config), &url, project).await?;
+    let (body, scraped_at) = match read_metrics(&runner_http(&state.config), &url, project).await {
+        Ok(body) => {
+            let at = now_rfc3339();
+            let mut last = last_answers()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            last.retain(|_, (read, _, _)| read.elapsed() <= LAST_ANSWER_KEPT);
+            last.insert(
+                url.clone(),
+                (std::time::Instant::now(), at.clone(), body.clone()),
+            );
+            (body, at)
+        }
+        Err(err) => last_answers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&url)
+            .filter(|(read, _, _)| read.elapsed() <= kept)
+            .map(|(_, at, body)| (body.clone(), at.clone()))
+            .ok_or(err)?,
+    };
 
     // The runner knows the stream by its project-qualified id; the answer names the pipeline.
     let mut metrics = scrape(
         &body,
         &crate::reconciler::streams::stream_id(project, name),
-        now_rfc3339(),
+        scraped_at,
     );
     metrics.pipeline = name.to_owned();
     Ok(metrics)
