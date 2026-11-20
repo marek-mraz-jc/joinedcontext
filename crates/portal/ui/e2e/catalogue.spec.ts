@@ -179,6 +179,45 @@ test.describe("the public catalogue", () => {
     });
   }
 
+  // T-7431: a value every row shares leaves a phone's columns for the line above the grid; a period
+  // or a list there reads as words for a signed-in outsider, never as its JSON (pageChecks raw-json).
+  for (const width of [1440, 400]) {
+    test(`a shared period and list read as words for a signed-in outsider (${width} px)`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await stubApi(page, []);
+      const rows = ["Unemployment", "Employment"].map((name, i) => ({
+        ...KPI_ROWS[0],
+        id: `${KPI_ROWS[0].id}${i}`,
+        name: { type: "Property", value: name },
+        category: { type: "Property", value: ["quantitative"] },
+        calculationPeriod: { type: "Property", value: { to: "2026-12-31", from: "2026-01-01" } },
+      }));
+      await page.route(`**/api/endpoint/${SLUG}/ngsi-ld/v1/entities*`, (route) =>
+        route.fulfill({ contentType: "application/json", headers: { "NGSILD-Results-Count": "2" }, body: JSON.stringify(rows) }),
+      );
+      await page.route("**/api/v1/auth/me", (route) =>
+        route.fulfill({ contentType: "application/json", body: JSON.stringify({ subject: "s9", username: "outsider@example.org", name: "Outsider", roles: [] }) }),
+      );
+      await page.goto("/catalogue/bbsk-kpi?lang=en");
+      const data = page.locator('section[aria-labelledby="catalogue-data"]');
+      await expect(data.getByRole("grid").getByText("Employment", { exact: true })).toBeVisible();
+      if (width === 400) {
+        const line = data.locator(".jc-grid-typeline");
+        await expect(line).toContainText("quantitative");
+        await expect(line).toContainText(/Jan\s1,\s2026\s*–\u2060?\s*Dec\s31,\s2026/);
+      }
+      const raw = await data.evaluate((section) =>
+        [...section.querySelectorAll("*")]
+          .filter((el) => !el.closest("pre, code"))
+          .flatMap((el) => [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => (n.textContent ?? "").trim()))
+          .filter((text) => /^\s*[[{]\s*"|"\s*:\s*[[{"]/.test(text)),
+      );
+      expect(raw).toEqual([]);
+      await data.scrollIntoViewIfNeeded();
+      await shot(page, `dataset-shared-values-outsider-en-${width}`);
+    });
+  }
+
   // T-6869: an open dataset read without a session names no one's access: no "Your access" button
   // or panel on any cell, none in a row's detail, and the phone's page never scrolls sideways.
   for (const width of [1440, 400]) {
