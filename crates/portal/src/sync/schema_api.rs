@@ -150,7 +150,7 @@ impl LocalSchemaApi {
     }
 
     /// The view and the path under its `linkml/` a URL of this instance names, or why not.
-    fn route<'u>(&self, url: &'u str) -> Result<(&'u str, &'u str), FetchError> {
+    fn resolve<'u>(&self, url: &'u str) -> Result<(&'u str, &'u str), FetchError> {
         let not_ours = || {
             FetchError::Unavailable(format!(
                 "{url} is not a schema document of an Endpoint this instance serves"
@@ -176,7 +176,7 @@ impl LocalSchemaApi {
 
 impl SchemaApi for LocalSchemaApi {
     fn get(&self, url: &str) -> Result<Option<Vec<u8>>, FetchError> {
-        let (slug, rest) = self.route(url)?;
+        let (slug, rest) = self.resolve(url)?;
         self.runtime
             .block_on(self.views.view_linkml(slug, rest, MAX_BODY as usize))
             .map_err(|why| FetchError::Unavailable(format!("{url}: {why}")))
@@ -214,7 +214,7 @@ mod tests {
         );
         let base = "http://127.0.0.1:42101/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa";
         assert_eq!(
-            api.route(&format!("{base}/schema/v1/model.linkml.yaml"))
+            api.resolve(&format!("{base}/schema/v1/model.linkml.yaml"))
                 .ok(),
             Some(("k7m2qz4tv6xh3n5jb2ryd3wcfa", "schema/v1/model.linkml.yaml"))
         );
@@ -227,7 +227,7 @@ mod tests {
             "https://peer.example/api/endpoint/k7m2qz4tv6xh3n5jb2ryd3wcfa/schema/index.json"
                 .to_owned(),
         ] {
-            assert!(api.route(&url).is_err(), "{url}");
+            assert!(api.resolve(&url).is_err(), "{url}");
         }
     }
 
