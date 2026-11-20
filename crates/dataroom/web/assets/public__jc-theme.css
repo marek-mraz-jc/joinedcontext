@@ -957,3 +957,4 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   .jc-row { gap: 1rem; }
   .jc-hero-image { max-height: 9rem; }
 }
+.jc-block .jc-cards { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
