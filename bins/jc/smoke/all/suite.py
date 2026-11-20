@@ -184,12 +184,21 @@ def run_e2e(out: Path, timeout: float) -> dict:
     return {"suite": "e2e", "rows": rows, "seconds": round(time.time() - started), "exit": code, "call": call}
 
 
+# A silent pipeline is an incident, never a known row (T-7445, T-7444: jc-dev's known list held the
+# rows that would have shown jc-prod's 253 silent pipelines, so the stamp rule passed).
+NEVER_KNOWN = ("orgs/pipelines.delivering.p/n", "pipelines/delivering.p/n")
+
+
 def load_known(path: str | None) -> list[tuple[re.Pattern, str]]:
     out = []
-    for line in (Path(path).read_text().splitlines() if path else []):
+    for n, line in enumerate(Path(path).read_text().splitlines() if path else [], 1):
         pattern, _, reason = line.partition("#")
         if pattern.strip():
-            out.append((re.compile(pattern.strip()), reason.strip()))
+            rx = re.compile(pattern.strip())
+            if "delivering" in rx.pattern or any(rx.search(i) for i in NEVER_KNOWN):
+                raise SystemExit(f"{path}:{n}: {rx.pattern!r} would hold pipelines.delivering rows: a pipeline "
+                                 "that stopped delivering is an incident, never a known failure (T-7445)")
+            out.append((rx, reason.strip()))
     return out
 
 
