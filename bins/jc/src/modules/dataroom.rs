@@ -1015,6 +1015,7 @@ pub async fn seed_hidden(
 
 /// The converted datasets of `path` (prod's `od-datasets.json`), each `dataset` URL moved from
 /// `base` to this catalogue's `site`, as prod's harvest CronJob replaces `datasetsBase`.
+#[cfg(feature = "portal")]
 pub(crate) fn converted_datasets(
     path: &std::path::Path,
     base: Option<&str>,
