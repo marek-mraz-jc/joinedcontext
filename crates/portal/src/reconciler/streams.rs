@@ -2902,6 +2902,44 @@ output:
         assert!(render(BENTO).is_ok());
     }
 
+    /// T-7461: a bento.yaml step may name the variable its own source's credential is injected
+    /// as (praha's golemio-garages sends its Golemio key on a second read), and still no other
+    /// runner variable: another source's key or another project's client stays refused.
+    #[test]
+    fn a_bento_step_reads_its_own_sources_credential_and_no_other() {
+        let mut spec = helsinki_pipeline_spec();
+        spec.compute = None;
+        let ds: DataSourceSpec = serde_json::from_value(serde_json::json!({
+            "type": "http",
+            "http": { "url": "https://api.golemio.cz/v3/parking", "verb": "GET",
+                      "authorization": { "header": "X-Access-Token",
+                                         "headerRef": { "name": "golemio", "key": "token" } } }
+        }))
+        .expect("http source");
+        let step = |var: &str| {
+            format!("pipeline:\n  processors:\n    - http: {{ url: 'https://api.golemio.cz/v3/parking-tariffs', verb: GET, headers: {{ X-Access-Token: '${{{var}}}' }} }}\n")
+        };
+        let render = |bento: &str| {
+            render_stream(
+                &spec,
+                "golemio-garages",
+                "praha",
+                &ds,
+                "golemio-mr-parkit",
+                "abc123",
+                Some(bento),
+            )
+        };
+        assert!(render(&step("DS_GOLEMIO_MR_PARKIT_TOKEN")).is_ok());
+        for other in ["DS_OTHER_SOURCE_TOKEN", "JC_CLIENT_SECRET_HELSINKI", "HOME"] {
+            let refused = render(&step(other)).expect_err(other);
+            assert!(
+                matches!(refused, RenderError::Bento(_)),
+                "{other}: {refused:?}"
+            );
+        }
+    }
+
     /// PL-90, PL-55 (T-4882): a typed `endpointRef` reads the Endpoint of the project it names, and
     /// only when that Endpoint admits the pipeline's project; a bare name stays in its own.
     #[test]

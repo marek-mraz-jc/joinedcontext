@@ -2465,6 +2465,42 @@ async fn the_portal_doors_answer_as_their_rest_doors() {
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
+/// T-7459: the Portal draws the installation's ops dashboards under the project `org` (the
+/// Organization's own repository), which the mirror lists as no project: a door bound to
+/// `projects('org')` reaches its REST door, which answers by the same rule, for every caller.
+#[tokio::test]
+async fn a_door_bound_to_the_organizations_own_repository_answers_as_its_rest_door() {
+    let state = state();
+    for who in ["root", "hel-only", "ba-only"] {
+        let cookie = cookies(&state.config, person(who, groups_of(who)), "hel").await;
+        let odata = raw(
+            &state,
+            "GET",
+            "/api/v1/projects('org')/JoinedContext.Portal.portal_grafana_dashboard(uid=@uid)?@uid='jc-portal'",
+            &cookie,
+            None,
+        )
+        .await;
+        let rest = raw(
+            &state,
+            "GET",
+            "/api/v1/projects/org/grafana/dashboards/jc-portal",
+            &cookie,
+            None,
+        )
+        .await;
+        assert_eq!(
+            odata.status, rest.status,
+            "{who}: OData {} / REST {}",
+            odata.text, rest.text
+        );
+        if who == "root" {
+            // No dashboards service in the test state: the REST door's own answer, past the guard.
+            assert_eq!(rest.status, StatusCode::CONFLICT, "{}", rest.text);
+        }
+    }
+}
+
 /// T-7100: a Portal door answers no bearer token (odata_portal's unit test proves a service
 /// account's or agent's identity is refused before the handler runs), and a person's session
 /// finds it in `$metadata` as their rights list it; another Organization's singleton offers none.

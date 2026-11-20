@@ -48,7 +48,18 @@ pub fn render_stream(
             }
         }
         (None, Some(bento)) => {
-            processors.extend(bento_processors(bento, &pipeline.own_variables())?)
+            // The runner also holds its own source's credentials under the names the daemon
+            // injects them as (daemon.rs `secret_refs`, T-2957): praha's golemio-garages reads
+            // its tariffs with the key the DataSource's headerRef puts there (T-7461).
+            let source_vars: Vec<String> = source
+                .secrets
+                .iter()
+                .chain(source.secret_refs())
+                .map(|reference| jc_core::kinds::data_source::env_var_of(source_name, reference))
+                .collect();
+            let mut own = pipeline.own_variables();
+            own.extend(source_vars.iter().map(String::as_str));
+            processors.extend(bento_processors(bento, &own)?)
         }
         (None, None) => {}
     }

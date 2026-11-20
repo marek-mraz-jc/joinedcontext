@@ -233,6 +233,27 @@ def test_the_shako_check_ids_carry_no_credential_shape():
         assert logscan.credential_shapes(rid) == [], rid
 
 
+def test_the_shako_browser_rows_take_the_clone_door_only_refusal(monkeypatch):
+    """jc-dev 144317Z (T-7460): public /git keeps only the clone door (T-6896), so /git/ answers 404;
+    raw shako still has to send the browser to the Portal, and a 200 page or a 500 stays red."""
+    class R:
+        def __init__(self, status, location=""):
+            self.status, self.headers = status, {"location": location}
+
+    def rows(answers):
+        res = Results("ui", "http://127.0.0.1:1")
+        w = type("W", (), {"base": "http://127.0.0.1:1", "res": res})()
+        monkeypatch.setattr(suite, "browser_get", lambda page, url, **k: answers(url, k))
+        suite.other_uis(w, None, "admin", "bbsk")
+        return [r["result"] for r in res.rows]
+
+    assert rows(lambda url, k: R(404)) == ["pass", "pass"]
+    moved = {"/git/": "/", "/git/joinedcontext/bbsk": "/projects/bbsk/repositories/bbsk"}
+    assert rows(lambda url, k: R(302, moved[url.split(":1", 1)[1]]) if k else R(200)) == ["pass", "pass"]
+    for status in (200, 500):
+        assert rows(lambda url, k, s=status: R(s)) == ["fail", "fail"]
+
+
 def test_the_persona_admin_calls_the_realm_it_is_given():
     import personas
 

@@ -760,7 +760,10 @@ class Live:
         cid = CONNECTOR_ID
         st, _, raw = self.http.call("GET", f"/c/{cid}/.well-known/oauth-protected-resource")
         doc = as_json(raw) or {}
-        issuer = self.issuer
+        # The metadata names jc's configured issuer, its public address on jc-dev, where the
+        # discovery document read through the forward follows the Host (T-7005, T-7460).
+        site = public_origin(self.http, self.realm)
+        issuer = f"{site}/login/realms/{self.realm}" if site else self.issuer
         self.row("connector.metadata", f"/c/{cid}", f"GET /c/{cid}/.well-known/oauth-protected-resource",
                  f"200, authorization server {issuer}, scope connector:{cid}",
                  f"{st}, {doc.get('authorization_servers')}, {doc.get('scopes_supported')}",

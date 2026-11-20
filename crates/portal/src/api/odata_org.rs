@@ -3295,7 +3295,21 @@ fn door_target(
         odata_portal::Bound::Project if entity == ORGANIZATION => Err(no(not_found(format!(
             "{name} is bound to a project, e.g. projects('air')/{NAMESPACE}.{name}"
         )))),
-        odata_portal::Bound::Project => operation_project(state, user, org, entity).map(Some),
+        odata_portal::Bound::Project => match bound_to(entity)? {
+            // The installation Organization's own repository (its ops dashboards, T-7459) is no
+            // project of the mirror's list; its REST doors answer by `may_read_project` there.
+            (project, None)
+                if project == ORG_NAMESPACE
+                    && crate::permissions::organization_of(&state.mirror, ORG_NAMESPACE)
+                        .as_deref()
+                        == Some(org)
+                    && crate::permissions::for_request(state, &user.0.identity, ORG_NAMESPACE)
+                        .may_read_project() =>
+            {
+                Ok(Some(project))
+            }
+            _ => operation_project(state, user, org, entity).map(Some),
+        },
     }
 }
 
