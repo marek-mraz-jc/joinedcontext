@@ -16,7 +16,7 @@ section 45, docs Architecture/04 sections 5 and 5a, Architecture/18 section 3):
   B's member queries B's Endpoint over it.
 
 Columns are what B's member reads on each way: NGSI-LD (query by type, retrieve by id, temporal,
-a websocket subscription notified after A writes), MCP (initialize, tools/list, query_entities,
+a websocket subscription notified within --wait of A's write, on w3 of the copy landing), MCP (initialize, tools/list, query_entities,
 get_entity, describe_schema on the Endpoint the way gives B) and LinkML (the schema surface in
 format linkml, the @context of the shared type, the foreign DataModel mirrored into B's project
 with its sha256 (DM-48), describe_schema format linkml naming the same class and attributes).
@@ -172,6 +172,23 @@ def names_attribute(doc, name: str) -> bool:
         return True
     text = doc if isinstance(doc, str) else json.dumps(doc, ensure_ascii=False)
     return bool(re.search(rf'(["\'/#:]{re.escape(name)}["\']|^\s*{re.escape(name)}\s*:|\\"{re.escape(name)}\\")', text, re.MULTILINE))
+
+
+def notification_verdict(arrived, landed, wait: float, msg) -> tuple[bool, str]:
+    """B's subscription row. `arrived`: seconds after A's write that B's socket was notified (None:
+    never); `landed`: seconds after A's write that the change stood at B's door, 0 where B's door
+    reads A's entity itself (w1, w2) and the copy's arrival for w3, whose Pipeline copies on its
+    1 m schedule (None: the copy never took the write). A pass is a notification within `wait` s of
+    the change landing that names no attribute A's grant leaves out."""
+    if landed is None:
+        return False, "the copy never took A's write, so nothing could notify"
+    if arrived is None:
+        return False, f"nothing within {wait:g} s" + (f" of the copy landing at {landed:.0f} s" if landed else "")
+    if names_attribute(msg, HIDDEN):
+        return False, f"notified with the hidden attribute {HIDDEN}"
+    if arrived - landed > wait:
+        return False, f"notified {arrived - landed:.0f} s after the change landed, over {wait:g} s"
+    return True, "notified" + (f" {max(arrived - landed, 0):.0f} s after the copy landed at {landed:.0f} s" if landed else "")
 
 
 def mcp_text(res) -> str:
@@ -658,28 +675,53 @@ class Suite(mo.Suite):
                 return None, f"x-subscribe {status or 'no answer'}"
             return s, None
 
-        def notified(s, box, key):
+        def notified(s, box, key, budget):
             try:
-                box[key] = bool(s.until(lambda m: wsclient.op(m) == "x-notification"
-                                         and any(u in json.dumps(m) for u in (self.urn, self.copy_urn)), self.a.wait))
+                # the write's own note: a Pipeline tick copying an earlier write notifies too
+                m = s.until(lambda m: wsclient.op(m) == "x-notification" and note in json.dumps(m)
+                            and any(u in json.dumps(m) for u in (self.urn, self.copy_urn)), budget)
+                box[key] = (time.time() - box["written"], m) if m else None
             except (OSError, wsclient.Closed):
-                box[key] = False
+                box[key] = None
 
+        # w3's change reaches B's door only when B's Pipeline copies it (a 1 m schedule): B's
+        # socket waits for the copy, then the notification is judged from the copy landing
+        copied = way == "w3"
         socks = {"b": sock("b-member", self.door(way)), "a": sock("a-admin", self.control_door(way))}
-        box: dict = {}
-        threads = [threading.Thread(target=notified, args=(s, box, k)) for k, (s, _) in socks.items() if s]
+        budget = {"b": self.a.wait + (self.a.copy_wait if copied else 0), "a": self.a.wait}
+        note = f"notify {way} {secrets.token_hex(3)}"
+        box: dict = {"written": time.time()}
+        threads = [threading.Thread(target=notified, args=(s, box, k, budget[k])) for k, (s, _) in socks.items() if s]
         for t in threads:
             t.start()
         time.sleep(2)  # the hub's broker subscription is made after the 201
-        st, _ = self.upsert("a-admin", "sh-shared", {"level": "9", "note": f"notify {way}", HIDDEN: "kept"})
+        box["written"] = time.time()
+        st, _ = self.upsert("a-admin", "sh-shared", {"level": "9", "note": note, HIDDEN: "kept"})
+        landed = self.copy_landed(note, box["written"]) if copied else 0
         for t in threads:
             t.join()
         for s, _ in socks.values():
             if s:
                 s.close()
-        ctl = (box.get("a", False), f"A's write {st}; A's socket {socks['a'][1] or ('notified' if box.get('a') else 'nothing')}")
-        b_why = socks["b"][1] or ("notified" if box.get("b") else f"nothing within {self.a.wait:g} s")
-        self.put(f"{way}.ngsi-ld.subscription", bool(box.get("b")), b_why, ctl)
+        ctl = (bool(box.get("a")), f"A's write {st}; A's socket {socks['a'][1] or ('notified' if box.get('a') else 'nothing')}")
+        if socks["b"][1]:
+            self.put(f"{way}.ngsi-ld.subscription", False, socks["b"][1], ctl)
+            return
+        arrived, msg = box.get("b") or (None, None)
+        self.put(f"{way}.ngsi-ld.subscription", *notification_verdict(arrived, landed, self.a.wait, msg), ctl)
+
+    def copy_landed(self, note: str, written: float):
+        """Seconds after A's write `written` that B's copy carried `note` (None: not within
+        --copy-wait), polled every 2 s so the notification bound starts from the landing."""
+        while time.time() - written < self.a.copy_wait:
+            st, doc = self.get("b-member", "sh-copy", f"/ngsi-ld/v1/entities?type={TYPE}")
+            if st == 200 and isinstance(doc, list) and any(
+                    isinstance(e, dict) and e.get("id") == self.copy_urn
+                    and ((e.get("note") or {}).get("value") if isinstance(e.get("note"), dict) else e.get("note")) == note
+                    for e in doc):
+                return time.time() - written
+            time.sleep(2)
+        return None
 
     def mirror(self):
         """DM-48: the foreign DataModel mirrored into B's project, proposed as a merge request whose

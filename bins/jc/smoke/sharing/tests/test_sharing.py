@@ -261,3 +261,23 @@ def test_a_forge_refusing_the_fixtures_is_one_skip_row_and_no_persona(tmp_path, 
 def test_in_the_lane_a_forge_refusing_the_fixtures_fails(tmp_path, monkeypatch):
     s, _forge, fails = refused_run(tmp_path, monkeypatch, set(json.loads(suite.LANE.read_text())["cells"]))
     assert fails > 0 and not s.skipped
+
+
+def test_subscription_verdict_waits_for_the_copy_then_bounds_the_notification():
+    v = suite.notification_verdict
+    # w1/w2: B's door reads A's entity, the bound starts at A's write
+    assert v(3.0, 0, 15, {"note": "x"})[0]
+    assert v(None, 0, 15, None) == (False, "nothing within 15 s")
+    # w3: the copy lands on the Pipeline's 1 m tick; the bound starts there, not at A's write
+    ok, why = v(52.0, 48.0, 15, {"id": "urn:copy"})
+    assert ok and "after the copy landed at 48 s" in why
+    assert not v(70.0, 48.0, 15, {"id": "urn:copy"})[0]
+    assert v(None, 48.0, 15, None) == (False, "nothing within 15 s of the copy landing at 48 s")
+    assert not v(None, None, 15, None)[0]
+    # a notification before the copy poll saw the landing is still the copy's
+    assert v(47.0, 48.0, 15, {"id": "urn:copy"})[0]
+
+
+def test_subscription_verdict_refuses_a_notification_naming_the_hidden_attribute():
+    ok, why = suite.notification_verdict(2.0, 0, 15, {"data": [{"id": "urn:a", suite.HIDDEN: {"value": "kept"}}]})
+    assert not ok and suite.HIDDEN in why
