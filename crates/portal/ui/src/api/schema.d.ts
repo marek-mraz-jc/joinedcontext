@@ -10501,7 +10501,8 @@ export interface components {
             kind: components["schemas"]["OperatorKind"];
             /**
              * @description `HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the
-             *     project moves to, e.g. `bbsk`.
+             *     project moves to, e.g. `bbsk`. `SinglePersonSet`, `AutomationLoginSet`: the Organization,
+             *     e.g. `bbsk`; the installation Organization also by the name its forge gives it.
              */
             organization?: string | null;
             /**

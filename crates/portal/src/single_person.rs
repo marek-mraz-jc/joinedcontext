@@ -91,7 +91,11 @@ pub async fn humans_with_a_role(
 ) -> Result<std::collections::BTreeSet<String>, ApiError> {
     let people = crate::permissions::people_with_a_role(
         &state.mirror,
-        organization,
+        &crate::organization_host::repository_name(
+            &state.mirror,
+            &state.organization_hosts.current(),
+            organization,
+        ),
         jc_time::TimestampTz::now(),
     );
     crate::automation::humans(state, organization, people).await
