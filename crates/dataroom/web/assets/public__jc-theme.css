@@ -962,3 +962,10 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   /* A block without a heading in a row of several starts on its neighbours' first content line. */
   .jc-row-2 > .jc-block:not(:has(> h2)), .jc-row-3 > .jc-block:not(:has(> h2)) { padding-top: calc(1.375rem * 1.2 + .75rem); }
 }
+@media (max-width: 599px) {
+  .jc-block .jc-cards { gap: .625rem; }
+  .jc-block .jc-card { padding: .75rem 1rem; }
+  .jc-block .jc-card-text { margin-bottom: .25rem; }
+  /* A block without a heading, stacked on a phone, is set apart from the block above it. */
+  .jc-row > .jc-block:not(:has(> h2)):not(:first-child) { padding-top: 1rem; border-top: 1px solid rgba(15, 23, 42, .1); }
+}

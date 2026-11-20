@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import type { JSX } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -102,7 +103,6 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
   };
   const page = pages[current];
   const marked = Object.keys(shownFaults).length;
-  const [target, setTarget] = useState("");
   // Below xl the preview would sit under the whole form: it opens on demand, above the form.
   const [showPreview, setShowPreview] = useState(false);
   const markedList = Object.keys(shownFaults)
@@ -118,8 +118,10 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
               variant="ghost"
               className="underline"
               onClick={() => {
-                setCurrent(field.page);
-                setTarget(field.target || field.name);
+                flushSync(() => setCurrent(field.page));
+                const chosen = (field.target ? document.getElementById(field.target) : null) ?? document.querySelector<HTMLElement>("[aria-invalid='true']");
+                chosen?.scrollIntoView?.({ block: "center" });
+                chosen?.focus({ preventScroll: true });
               }}
             >
               {field.name}
@@ -128,13 +130,6 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
         ))}
       </ul>
     ) : null;
-  useEffect(() => {
-    if (!target) return;
-    const chosen = document.getElementById(target) ?? document.querySelector<HTMLElement>("[aria-invalid='true']");
-    chosen?.scrollIntoView?.({ block: "center" });
-    chosen?.focus({ preventScroll: true });
-    setTarget("");
-  }, [target, current]);
   useEffect(() => {
     if (marked === 0) return;
     const first = document.querySelector<HTMLElement>("[aria-invalid='true']");
