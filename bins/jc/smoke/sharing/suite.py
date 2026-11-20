@@ -101,6 +101,12 @@ def cells() -> list[dict]:
         for check in WRITES[way]:
             out.append({"id": f"{way}.write.{check}", "way": way, "surface": "write", "check": check,
                         "control": check == "write-granted"})
+    # SHR-03: a second copy Pipeline whose account A grants no `store` is refused at plan time
+    out.append({"id": "w3.plan.store-refused", "way": "w3", "surface": "plan", "check": "store-refused",
+                "control": False})
+    # ... and the copy Pipeline whose `store` A's revocation ended is held out at the next sync
+    out.append({"id": "w3.plan.store-revoked", "way": "w3", "surface": "plan", "check": "store-revoked",
+                "control": False})
     return out
 
 
@@ -244,13 +250,14 @@ def endpoint(project, space, name, slug, audience, extra="") -> tuple:
             "  enabledRepresentations: [ngsi-ld, mcp, websocket]\n")
 
 
-def policy(project, space, name, kind, pid, ops, attrs=None, until=None) -> tuple:
+def policy(project, space, name, kind, pid, ops, attrs=None, until=None, actions=None) -> tuple:
     who = f"{{ kind: {kind}, id: {pid} }}" if pid else f"{{ kind: {kind} }}"
+    acts = f"  actions: [{', '.join(actions)}]\n" if actions else ""
     names = f"      propertyNames: [{', '.join(attrs)}]\n" if attrs else ""
     valid = f"  validity: {{ to: '{until}' }}\n" if until else ""
     return (f"spaces/{space}/policies/{name}.yaml", head("Policy", name, project)
             + f"spec:\n  contextSpaceRef: {{ kind: ContextSpace, name: {space} }}\n  assigner: did:web:{{orgDomain}}\n"
-            f"  assignee: {who}\n  operations: [{', '.join(ops)}]\n{valid}  information:\n"
+            f"  assignee: {who}\n  operations: [{', '.join(ops)}]\n{acts}{valid}  information:\n"
             f"    - entities:\n        - type: {TYPE}\n{names}")
 
 
@@ -307,8 +314,9 @@ class Suite(mo.Suite):
                 policy(PA, "sh-src", "sh-admin", "user", self.ids("a-admin"), READS + WRITE),
                 policy(PA, "sh-src", "sh-share-member", "user", self.ids("b-member"), READS, SHOWN, revoke),
                 policy(PA, "sh-src", "sh-share-admin", "user", self.ids("b-admin"), READS + WRITE, SHOWN, revoke),
+                # the copy is materializing: A permits `store` to that one Pipeline's account (SHR-03)
                 policy(PA, "sh-src", "sh-share-pipeline", "serviceAccount", f"{PB}/pl-sh-copy", ["retrieveOps", "queryBatch"],
-                       SHOWN, revoke),
+                       SHOWN, revoke, ["store"]),
                 # w2-protected: B's hub reads as B's ServiceAccount, which A grants by name (FED-15)
                 policy(PA, "sh-src", "sh-share-hub", "serviceAccount", f"{PB}/{HUB_ACCOUNT}", READS, SHOWN, revoke),
                 policy(PA, "sh-src", "sh-public", "role", "public", ["retrieveOps"], SHOWN, revoke)]
@@ -341,8 +349,12 @@ class Suite(mo.Suite):
                    + "spec:\n  class: auto\n  period: 30s\n  source:\n"
                    f"    endpointRef: {{ kind: Endpoint, name: sh-shared, namespace: {PA} }}\n"
                    f"    query:\n      type: {TYPE}\n"
-                   # an Endpoint-sourced stream runs a mapping (streams::eligible); the copy is the identity
-                   "  compute: { kind: bloblang, bloblang: 'root = this' }\n"
+                   # an Endpoint-sourced stream runs a mapping (streams::eligible) over each page read;
+                   # the copy keeps every attribute A's grant shows and takes an id under B's
+                   # Organization (ADR-N-068)
+                   "  compute:\n    kind: bloblang\n    bloblang: |\n"
+                   "      root = this.map_each(this.assign({\"id\": "
+                   f"\"{self.copy_urn.rsplit(':', 1)[0]}:\" + this.id.split(\":\").index(-1)}}))\n"
                    "  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:sh-copy:sh-copy\n"
                    f"  output: {{ type: {TYPE}, mode: upsert }}\n"),
                   (f"shared/{PA}.yaml", head("SharedSpaceReference", PA, PB)
@@ -361,6 +373,10 @@ class Suite(mo.Suite):
         self.org_a, self.org_b, self.org_c = self.a.provider, self.a.consumer, self.a.outsider
         self.domain_a = self.domain_of(self.org_a)
         self.urn = owned_urn(self.domain_a)
+        # the copy is B's entity: B's Endpoint refuses a URN naming A (ADR-N-068), so the Pipeline
+        # re-mints it under B's Organization
+        self.domain_b = self.domain_of(self.org_b)
+        self.copy_urn = owned_urn(self.domain_b)
         h = self.client()
         auth = {"Authorization": f"token {R.read_secret(self.state, 'shako-token')}"}
         # the repositories before any persona: a forge that refuses them leaves nothing to remove
@@ -495,21 +511,22 @@ class Suite(mo.Suite):
         """Every read of the matrix on one Endpoint as one person: name -> (ok, actual, document)."""
         out = {}
         since = (datetime.now(UTC) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        q = urllib.parse.quote(self.urn, safe="")
+        urn = self.urn_for(door)
+        q = urllib.parse.quote(urn, safe="")
         for name, path, want in (("query", f"/ngsi-ld/v1/entities?type={TYPE}&limit=100", "list"),
                                  ("retrieve", f"/ngsi-ld/v1/entities/{q}", "entity"),
                                  ("temporal", f"/ngsi-ld/v1/temporal/entities?type={TYPE}&timerel=after&timeAt={since}&lastN=5",
                                   "list")):
             st, doc = self.get(key, door, path)
-            ok = st == 200 and (any(isinstance(e, dict) and e.get("id") == self.urn for e in doc) if want == "list" and isinstance(doc, list)
-                                else isinstance(doc, dict) and doc.get("id") == self.urn)
+            ok = st == 200 and (any(isinstance(e, dict) and e.get("id") == urn for e in doc) if want == "list" and isinstance(doc, list)
+                                else isinstance(doc, dict) and doc.get("id") == urn)
             out[("ngsi-ld", name)] = (ok, f"{st}" + ("" if ok else f", {self.brief(doc)}"), doc)
         for name, method, params in (
                 ("initialize", "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
                                               "clientInfo": {"name": "sharing-smoke", "version": "1"}}),
                 ("tools-list", "tools/list", {}),
                 ("query-entities", "tools/call", {"name": "query_entities", "arguments": {"type": [TYPE]}}),
-                ("get-entity", "tools/call", {"name": "get_entity", "arguments": {"id": self.urn}}),
+                ("get-entity", "tools/call", {"name": "get_entity", "arguments": {"id": urn}}),
                 ("describe-schema", "tools/call", {"name": "describe_schema", "arguments": {"entityType": TYPE}}),
                 ("describe-linkml", "tools/call", {"name": "describe_schema", "arguments": {"format": "linkml", "entityType": TYPE}})):
             st, res = self.mcp(key, door, method, params)
@@ -520,7 +537,7 @@ class Suite(mo.Suite):
                 tools = {t.get("name") for t in ((res or {}).get("result") or {}).get("tools", [])} if isinstance(res, dict) else set()
                 ok = st == 200 and {"query_entities", "get_entity", "describe_schema"} <= tools
             elif name in ("query-entities", "get-entity"):
-                ok = mcp_ok(st, res) and self.urn in text
+                ok = mcp_ok(st, res) and urn in text
             else:
                 ok = mcp_ok(st, res) and TYPE in text and all(names_attribute(text, s) for s in SHOWN)
             surface = "linkml" if name == "describe-linkml" else "mcp"
@@ -568,6 +585,10 @@ class Suite(mo.Suite):
         return str(doc)[:100]
 
     # ---- the ways
+    def urn_for(self, door) -> str:
+        """The shared entity's id as a door serves it: B's copy under B's Organization."""
+        return self.copy_urn if door == "sh-copy" else self.urn
+
     def door(self, way) -> str:
         return {"w1": "sh-shared", "w2-public": "sh-fedpub", "w2-protected": "sh-fedprot", "w3": "sh-copy"}[way]
 
@@ -595,7 +616,7 @@ class Suite(mo.Suite):
         for surface in SURFACES:
             got = sorted(n for (s, n), (ok, _, _) in c.items() if s == surface and ok and n not in ("initialize", "tools-list"))
             leaked = [n for (s, n), (_, _, doc) in c.items() if s == surface and doc is not None
-                      and self.urn in (doc if isinstance(doc, str) else json.dumps(doc))]
+                      and self.urn_for(door) in (doc if isinstance(doc, str) else json.dumps(doc))]
             self.put(f"{way}.{surface}.outsider", not got and not leaked,
                      f"answered {got}, entity named in {leaked}" if got or leaked else "nothing answered")
         # a write by B's member: refused (A granted none, B's own doors grant reads only)
@@ -639,7 +660,8 @@ class Suite(mo.Suite):
 
         def notified(s, box, key):
             try:
-                box[key] = bool(s.until(lambda m: wsclient.op(m) == "x-notification" and self.urn in json.dumps(m), self.a.wait))
+                box[key] = bool(s.until(lambda m: wsclient.op(m) == "x-notification"
+                                         and any(u in json.dumps(m) for u in (self.urn, self.copy_urn)), self.a.wait))
             except (OSError, wsclient.Closed):
                 box[key] = False
 
@@ -692,13 +714,45 @@ class Suite(mo.Suite):
                          headers=auth)
         return base64.b64decode(cur.get("content", "")).decode() if st == 200 and isinstance(cur, dict) else None
 
+    def store_refused(self):
+        """SHR-03 at plan time: B's admin's dry run of a second copy Pipeline, whose account
+        `pl-sh-nostore` A grants no `store`, is refused on its source with a reason naming it."""
+        body = {"apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+                "metadata": {"name": "sh-nostore", "namespace": PB},
+                "spec": {"class": "auto", "period": "30s",
+                         "source": {"endpointRef": {"kind": "Endpoint", "name": "sh-shared", "namespace": PA},
+                                    "query": {"type": TYPE}},
+                         "compute": {"kind": "bloblang", "bloblang": "root = this"},
+                         "targetEndpoint": f"urn:ngsi-ld:Endpoint:{self.domain_b}:sh-copy:sh-copy",
+                         "output": {"type": TYPE, "mode": "upsert"}}}
+        st, doc = self.session("b-admin").json("POST", f"/api/v1/projects/{PB}/pipelines?dryRun=All", body=body)
+        text = json.dumps(doc, ensure_ascii=False) if doc is not None else ""
+        refused = isinstance(doc, dict) and doc.get("valid") is False or st == 422
+        # the door judges the second shape: `spec.source` reads as `spec.sources[0]` (PL-54)
+        found = re.search(r"spec\.sources?(\[0\])?\.endpointRef[^}]*", text)
+        named = bool(found) and "store" in found.group(0) and f"{PB}/pl-sh-nostore" in found.group(0)
+        self.put("w3.plan.store-refused", refused and named, f"{st}, {(found.group(0) if found else text)[:400]}")
+
+    def held_unstored(self, start: float) -> tuple:
+        """Whether B's copy Pipeline reads Error `StoreNotGranted` within the revocation window."""
+        why = "not read"
+        while True:
+            st, pl = self.session("b-admin").json("GET", f"/api/v1/projects/{PB}/pipelines/sh-copy")
+            conds = ((pl or {}).get("status") or {}).get("conditions") or [] if isinstance(pl, dict) else []
+            why = f"{st} " + json.dumps(conds[:1], ensure_ascii=False)[:300]
+            if any(c.get("reason") == "StoreNotGranted" for c in conds if isinstance(c, dict)):
+                return True, f"held after {time.time() - start:.0f} s: {why}"
+            if time.time() - start >= self.a.revoke_window:
+                return False, f"still running after {self.a.revoke_window} s: {why}"
+            time.sleep(5)
+
     def w3_arrived(self) -> bool:
         """The Pipeline's copy reached B's space (the A-admin control read of sh-copy is not one:
         A's admin has no right in B), polled up to --copy-wait."""
         deadline = time.time() + self.a.copy_wait
         while time.time() < deadline:
             st, doc = self.get("b-member", "sh-copy", f"/ngsi-ld/v1/entities?type={TYPE}")
-            if st == 200 and isinstance(doc, list) and any(isinstance(e, dict) and e.get("id") == self.urn for e in doc):
+            if st == 200 and isinstance(doc, list) and any(isinstance(e, dict) and e.get("id") == self.copy_urn for e in doc):
                 return True
             time.sleep(10)
         return False
@@ -747,7 +801,8 @@ class Suite(mo.Suite):
                          f"refused after {t[0]:.0f} s ({t[1]})" if t else f"still answering after {self.a.revoke_window} s",
                          (bool(before and before["result"] == "pass"), f"before the revocation: {before['actual'] if before else 'not read'}"))
         st, doc = self.get("b-member", "sh-copy", f"/ngsi-ld/v1/entities?type={TYPE}")
-        remains = st == 200 and self.urn in json.dumps(doc)
+        remains = st == 200 and self.copy_urn in json.dumps(doc)
+        self.put("w3.plan.store-revoked", *self.held_unstored(start))
         for surface in SURFACES:
             self.put(f"w3.{surface}.copy-remains", True,
                      f"the copy {'remains' if remains else 'is gone'} in B ({st}): a replica outlives the grant by design")
@@ -773,6 +828,8 @@ class Suite(mo.Suite):
                 why = json.dumps((pl or {}).get("status"), ensure_ascii=False)[:300] if isinstance(pl, dict) else str(st)
                 self.row("setup.w3-copy", f"{self.org_b}/{PB}", "B's Pipeline copies A's entity", "copied", "nothing within "
                          f"{self.a.copy_wait} s; pipeline {st} status {why}", False, "every w3 read below fails for this reason")
+            if self.wanted("w3.plan"):
+                self.store_refused()
             for way in WAYS:
                 self.check_way(way, control[way])
                 self.subscription(way)

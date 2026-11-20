@@ -1,5 +1,5 @@
 {
- "source": "cells green on the measured run of 2026-11-19 (T-7402 table, jc-portal-1 8faf6bce + this branch), judged in the train smoke lane by run sharing --lane; a cell joins when its fix lands; T-7424 and T-7426 cells from the gate of 2026-11-20",
+ "source": "cells green on the measured run of 2026-11-19 (T-7402 table, jc-portal-1 8faf6bce + this branch), judged in the train smoke lane by run sharing --lane; a cell joins when its fix lands; T-7424 and T-7426 cells from the gate of 2026-11-20; T-7437 and T-7440 w3 cells from the gate of 2026-11-20 03:20Z (sharing@full, copy within --copy-wait 180)",
  "cells": [
   "w1.linkml.context",
   "w1.linkml.describe-linkml",
@@ -59,12 +59,21 @@
   "w3.linkml.schema",
   "w3.mcp.copy-remains",
   "w3.mcp.describe-schema",
+  "w3.mcp.get-entity",
   "w3.mcp.hidden",
   "w3.mcp.initialize",
   "w3.mcp.outsider",
+  "w3.mcp.query-entities",
   "w3.mcp.tools-list",
   "w3.ngsi-ld.copy-remains",
+  "w3.ngsi-ld.hidden",
   "w3.ngsi-ld.outsider",
+  "w3.ngsi-ld.query",
+  "w3.ngsi-ld.retrieve",
+  "w3.ngsi-ld.subscription",
+  "w3.ngsi-ld.temporal",
+  "w3.plan.store-refused",
+  "w3.plan.store-revoked",
   "w3.write.write-refused"
  ]
 }

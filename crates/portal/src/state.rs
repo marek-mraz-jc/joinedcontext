@@ -769,6 +769,7 @@ impl AppState {
         }
         // A pipeline keeps only its proposer's and approver's reach (PL-95), the realm asked
         // for their groups when the Portal holds its admin client.
+        syncer = syncer.with_pipeline_identity(self.config.pipeline_identity);
         syncer = syncer.with_author_rights(crate::reconciler::pipeline_authors::AuthorRights::new(
             self.config.bootstrap_admins.clone(),
             self.people.clone(),

@@ -108,6 +108,9 @@ fn a_pipelines_own_client_resolves_to_its_derived_account() {
     assert_eq!(account.roles_in("helsinki", "events", true).len(), 1);
     assert!(account.roles_in("helsinki", "parking", true).is_empty());
     assert!(accounts.resolve("helsinki-pl-something-else").is_none());
+    // T-7440: the project's host client, with no `pipelines` ServiceAccount declared, holds no
+    // account, so no Policy can grant it; a stream reads another project as its own client.
+    assert!(accounts.resolve("helsinki-pipelines").is_none());
 }
 
 /// PL-20: the endpoint of the space the pipeline writes carries its write grant over the type it

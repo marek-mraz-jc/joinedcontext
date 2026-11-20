@@ -33,7 +33,7 @@ Desired specification of a `Policy` resource (ADR 002, R1..R9).
 
 What a Policy grants beyond CIM 009's operations (ADR-N-054 2.4, 2.6; T-4666).
 
-Type: one of `"readVersions"`, `"personalData"`
+Type: one of `"readVersions"`, `"personalData"`, `"store"`
 
 ## Principal
 

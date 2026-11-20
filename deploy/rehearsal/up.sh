@@ -202,14 +202,13 @@ case $layout in
   *) echo "up.sh: REHEARSAL_LAYOUT is one or split, not '$layout'" >&2; exit 1 ;;
 esac
 export JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR=false JC_PORTAL_SYNC_INTERVAL=10
-# An imported realm with each Pipeline's own client <project>-pl-<pipeline> (prod's, PL-19): every
-# stream signs in as its pipeline's client by that client's secret, whose audience is the Endpoints
-# that pipeline writes, never as the project's <project>-pipelines (jc-pipeline-audience).
-if grep -q -- '-pl-' "$home/state/realm-pipeline-clients.txt" 2>/dev/null; then
-  export JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret
-else
-  unset JC_PORTAL_PIPELINE_IDENTITY
-fi
+# Every stream signs in as its Pipeline's own client <project>-pl-<pipeline> by that client's
+# secret, prod's identity (PL-19), whose audience is the Endpoints that pipeline reads and writes,
+# never as the project's <project>-pipelines (jc-pipeline-audience). An imported realm brings the
+# client; for a Pipeline the realm lacks (the gate's synth realm has none) the Portal's workload
+# wave makes it. The host client resolves to no account at the gateway, so no Policy of another
+# project could grant it a read (T-7440).
+export JC_PORTAL_PIPELINE_IDENTITY=pipeline-secret
 # The old deployment's global.orgDomain (smartcity: hel.fi). Pipelines mint
 # urn:ngsi-ld:{Type}:{orgDomain}:{space}:{id}; without it jc falls back to jc.invalid on a loopback
 # host and every pipeline run writes a second copy of each imported entity under other ids.

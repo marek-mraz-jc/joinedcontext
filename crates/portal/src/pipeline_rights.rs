@@ -13,12 +13,16 @@
 //! on `Entity` there. A source Endpoint whose audience is public reads what anybody reads. An
 //! Endpoint the mirror does not hold yet says nothing here: the reference check refuses a name
 //! that never appears.
+//!
+//! A source Endpoint of another project is that project's to admit at the gateway, and to copy
+//! only where its Policy permits `store` to the pipeline's account ([`unstored`], SHR-03): that
+//! refusal binds every door's caller, a bootstrap admin too, and the reconciler at each render.
 
 use crate::error::ApiError;
 use crate::permissions::{effective, Effective};
 use crate::state::AppState;
 use crate::store::Mirror;
-use jc_core::kinds::{PipelineSpec, Verb};
+use jc_core::kinds::{PipelineSpec, PlatformAction, PolicySpec, PrincipalKind, Verb};
 use jc_time::TimestampTz;
 use serde_json::Value;
 
@@ -32,6 +36,21 @@ pub fn check(
     manifest: &Value,
     verb: Verb,
 ) -> Result<(), ApiError> {
+    // The provider's agreement binds every proposer, a bootstrap admin included (SHR-03).
+    let unstored = unstored(
+        &state.mirror,
+        project,
+        manifest,
+        &account(state.config.pipeline_identity, manifest),
+    );
+    if !unstored.is_empty() {
+        return Err(ApiError::Unprocessable {
+            detail: "a pipeline copies another project's Endpoint only where that project's \
+                     Policy permits store (SHR-03)"
+                .to_owned(),
+            errors: unstored,
+        });
+    }
     let missing = missing(
         &state.mirror,
         &state.config.bootstrap_admins,
@@ -156,6 +175,95 @@ fn unreachable(
         }
     }
     missing
+}
+
+/// The account the Pipeline `manifest` runs as: its own `pl-{pipeline}` under per-pipeline
+/// identity (PL-19), else its project's shared `pipelines` account.
+pub fn account(pipeline_identity: bool, manifest: &Value) -> String {
+    let name = manifest
+        .pointer("/metadata/name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match pipeline_identity {
+        true => jc_core::kinds::pipeline_identity::account_name(name),
+        false => crate::reconciler::streams::PIPELINE_ACCOUNT.to_owned(),
+    }
+}
+
+/// One entry per source Endpoint of another project that the Pipeline `manifest` of `project`
+/// would copy without the provider's consent (SHR-03): no permission Policy of that Endpoint's
+/// space, in force now, names the pipeline's `account` as `serviceAccount {project}/{account}`
+/// with the action `store`, or a prohibition takes `store` from it. Each entry is
+/// `<field>: <reason>` and names the Policy to change. The doors refuse on it and the
+/// reconciler holds the pipeline out on it, so a revoked `store` stops the next run. `store`
+/// grants no read: the gateway still judges every read by the Policy's own operations.
+pub fn unstored(mirror: &Mirror, project: &str, manifest: &Value, account: &str) -> Vec<String> {
+    if manifest.get("kind").and_then(Value::as_str) != Some("Pipeline") {
+        return Vec::new();
+    }
+    let Some(spec) = manifest
+        .get("spec")
+        .and_then(|spec| serde_json::from_value::<PipelineSpec>(spec.clone()).ok())
+    else {
+        return Vec::new();
+    };
+    let principal = format!("{project}/{account}");
+    let now = TimestampTz::now();
+    let mut refused = Vec::new();
+    for (index, source) in spec.sources().iter().enumerate() {
+        let Some(reference) = &source.endpoint_ref else {
+            continue;
+        };
+        let Some(owner) = reference.namespace().filter(|owner| *owner != project) else {
+            continue;
+        };
+        let name = reference.name();
+        // An Endpoint the mirror does not hold is the reference check's refusal, not this one.
+        let Some(space) = crate::pipeline_expiry::space_of_endpoint(mirror, owner, name) else {
+            continue;
+        };
+        let field = match spec.is_second_shape() {
+            true => format!("spec.sources[{index}].endpointRef"),
+            false => "spec.source.endpointRef".to_owned(),
+        };
+        let policies: Vec<_> = crate::pipeline_expiry::policies(mirror, owner)
+            .into_iter()
+            .filter(|(_, policy)| {
+                policy.context_space_ref.name() == space
+                    && policy.assignee.kind == PrincipalKind::ServiceAccount
+                    && policy.assignee.id == principal
+                    && in_force(policy, now)
+            })
+            .collect();
+        let stores = |prohibition: bool| {
+            policies.iter().any(|(_, policy)| {
+                policy.effect.is_prohibition() == prohibition
+                    && policy.actions.contains(&PlatformAction::Store)
+            })
+        };
+        if stores(false) && !stores(true) {
+            continue;
+        }
+        let grant = policies
+            .iter()
+            .find(|(_, policy)| !policy.effect.is_prohibition())
+            .map_or_else(
+                || format!("a Policy of space {space} for serviceAccount {principal}"),
+                |(rule, _)| format!("Policy {}", PolicySpec::policy_of(rule)),
+            );
+        refused.push(format!(
+            "{field}: Endpoint {name} of project {owner} permits no copy to this pipeline's \
+             account {principal}; project {owner} adds `actions: [store]` to {grant} (SHR-03)"
+        ));
+    }
+    refused
+}
+
+/// Whether `policy`'s validity window holds `now` (no window holds always).
+fn in_force(policy: &PolicySpec, now: TimestampTz) -> bool {
+    policy.validity.as_ref().is_none_or(|validity| {
+        validity.from.is_none_or(|from| from <= now) && validity.to.is_none_or(|to| now < to)
+    })
 }
 
 #[cfg(test)]
@@ -408,6 +516,108 @@ mod tests {
         )
         .expect("refused");
         assert!(message.contains("source Endpoint ep-gone"), "{message}");
+    }
+
+    /// Praha's Endpoint `shared` into its space `s`, and one Policy per `grants` entry naming
+    /// `{account}` with its effect, its actions and its validity end.
+    fn shared_by_praha(state: &AppState, grants: &[(&str, &str, Value, Option<&str>)]) {
+        state.mirror.upsert(manifest(
+            "Endpoint",
+            "shared",
+            "praha",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "s" },
+                    "slug": "shared", "audience": "project-list", "allowedProjects": ["helsinki"] }),
+        ));
+        for (n, (assignee, effect, actions, until)) in grants.iter().enumerate() {
+            let mut spec = json!({ "contextSpaceRef": "s", "assigner": "did:web:praha.eu",
+                                   "assignee": { "kind": "serviceAccount", "id": assignee },
+                                   "effect": effect, "operations": ["queryBatch"], "actions": actions });
+            if let Some(until) = until {
+                spec["validity"] = json!({ "to": until });
+            }
+            state
+                .mirror
+                .upsert(manifest("Policy", &format!("share-{n}"), "praha", spec));
+        }
+    }
+
+    fn copy_of_praha() -> Value {
+        pipeline(
+            json!({ "endpointRef": { "kind": "Endpoint", "name": "shared", "namespace": "praha" },
+                    "query": { "type": "Vehicle" } }),
+            "ep-a",
+        )
+    }
+
+    /// SHR-03: a copy of another project's Endpoint passes only with a `store` that project's
+    /// Policy grants this pipeline's own account, in force and not taken back.
+    #[test]
+    fn a_copy_of_another_projects_endpoint_needs_its_store_for_the_pipelines_account() {
+        let unstored_with = |grants: &[(&str, &str, Value, Option<&str>)]| {
+            let state = world();
+            shared_by_praha(&state, grants);
+            unstored(&state.mirror, "helsinki", &copy_of_praha(), "pl-route")
+        };
+        let own = "helsinki/pl-route";
+        assert!(unstored_with(&[(own, "permission", json!(["store"]), None)]).is_empty());
+
+        let read_only = unstored_with(&[(own, "permission", json!([]), None)]);
+        assert_eq!(read_only.len(), 1, "{read_only:?}");
+        assert!(
+            read_only[0]
+                .starts_with("spec.sources[0].endpointRef: Endpoint shared of project praha"),
+            "{read_only:?}"
+        );
+        assert!(
+            read_only[0].contains("adds `actions: [store]` to Policy share-0"),
+            "{read_only:?}"
+        );
+        let nothing = unstored_with(&[]);
+        assert!(
+            nothing[0].contains("to a Policy of space s for serviceAccount helsinki/pl-route"),
+            "{nothing:?}"
+        );
+        // Another account's store, an ended one, or one a prohibition takes back copies nothing.
+        for grants in [
+            vec![("helsinki/pl-other", "permission", json!(["store"]), None)],
+            vec![("pl-route", "permission", json!(["store"]), None)],
+            vec![(
+                own,
+                "permission",
+                json!(["store"]),
+                Some("2020-01-01T00:00:00Z"),
+            )],
+            vec![
+                (own, "permission", json!(["store"]), None),
+                (own, "prohibition", json!(["store"]), None),
+            ],
+        ] {
+            assert_eq!(unstored_with(&grants).len(), 1, "{grants:?}");
+        }
+    }
+
+    /// SHR-03 at the door: the refusal is a 422 naming the field, a bootstrap admin included.
+    #[test]
+    fn the_door_refuses_a_copy_without_store_with_the_field() {
+        let state = world();
+        shared_by_praha(
+            &state,
+            &[("helsinki/pipelines", "permission", json!([]), None)],
+        );
+        let mut admin = person("root@hel.fi");
+        admin.groups = vec![state.config.bootstrap_admins.clone()];
+        match check(&state, &admin, "helsinki", &copy_of_praha(), Verb::Propose) {
+            Err(ApiError::Unprocessable { errors, .. }) => {
+                assert!(errors[0].contains("helsinki/pipelines"), "{errors:?}")
+            }
+            other => panic!("expected a 422, got {other:?}"),
+        }
+        let state = world();
+        shared_by_praha(
+            &state,
+            &[("helsinki/pipelines", "permission", json!(["store"]), None)],
+        );
+        assert!(check(&state, &admin, "helsinki", &copy_of_praha(), Verb::Propose).is_ok());
     }
 
     #[test]
