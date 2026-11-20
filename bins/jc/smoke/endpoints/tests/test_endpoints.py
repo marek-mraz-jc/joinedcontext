@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent.parent))
 
+import common  # noqa: E402
 import export as ex  # noqa: E402
 import suite  # noqa: E402
 
@@ -202,6 +203,8 @@ class Fake:
                 return 200, {}, {"items": [{"slug": "c" * 32}], "nextCursor": "1"}
             return 200, {}, {"items": [{"slug": OPEN}]}
         if p.startswith("/opendata/api/3/action/package_show"):
+            if self.broken == "portal-page":  # jc-dev's jc pod: no dataroom, the Portal's page
+                return 200, {"Content-Type": "text/html"}, b'<!doctype html> <html lang="en">'
             return 200, {}, {"success": True, "result": {"resources": [{"url": "x"}]}}
         slug = p.split("/")[3]
         rest = p.split("/", 4)[4] if p.count("/") >= 4 else ""
@@ -390,6 +393,32 @@ def test_each_broken_rule_turns_its_check_red(tmp_path, serve, broken, check):
     code, res = run(tmp_path, serve(Fake(broken)), now_iso())
     red = {r["id"] for r in res["checks"] if r["result"] == "fail"}
     assert code == 1 and check in red, red
+
+
+def test_a_door_answering_a_page_for_the_catalogue_names_it_and_the_opendata_origin_reads_it(
+        tmp_path, serve, monkeypatch):
+    # jc-dev 094525Z: 610 dataset rows "200 resources=0" were the Portal's page on the jc pod's door
+    # while the edge's /opendata answered every package (T-7454).
+    portal, dataroom = serve(Fake("portal-page")), serve(Fake())
+    monkeypatch.delenv(common.OPENDATA_ORIGIN, raising=False)
+    _, res = run(tmp_path / "a", portal, now_iso())
+    row = next(r for r in res["checks"] if r["id"] == "dataset")
+    assert row["result"] == "fail" and "not CKAN JSON" in row["actual"] and "--opendata-origin" in row["reason"]
+    monkeypatch.setenv(common.OPENDATA_ORIGIN, dataroom)
+    _, res = run(tmp_path / "b", portal, now_iso())
+    assert [r["result"] for r in res["checks"] if r["id"] == "dataset"] == ["pass"]
+
+
+def test_the_opendata_origin_takes_only_opendata_paths_and_only_loopback(monkeypatch):
+    monkeypatch.setenv(common.OPENDATA_ORIGIN, "http://127.0.0.1:9")
+    assert common.opendata_door("http://127.0.0.1:1/opendata/api/3/action/package_list?x=1") == \
+        "http://127.0.0.1:9/opendata/api/3/action/package_list?x=1"
+    assert common.opendata_door("http://127.0.0.1:1/opendata") == "http://127.0.0.1:9/opendata"
+    for other in ("http://127.0.0.1:1/api/endpoints", "http://127.0.0.1:1/opendatax/a"):
+        assert common.opendata_door(other) == other
+    monkeypatch.setenv(common.OPENDATA_ORIGIN, "https://opendata.smartcity.example")
+    with pytest.raises(SystemExit):
+        common.opendata_door("http://127.0.0.1:1/opendata/")
 
 
 def test_a_cut_types_listing_names_the_brokers_warning(tmp_path, serve, monkeypatch):

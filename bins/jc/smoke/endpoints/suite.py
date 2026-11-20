@@ -685,9 +685,14 @@ class Suite:
             body = as_json(raw)
             res = (body or {}).get("result") or {} if isinstance(body, dict) else {}
             n = len(res.get("resources") or []) if isinstance(res, dict) else 0
+            # A 200 page instead of CKAN JSON: this door does not reach the dataroom (run all
+            # --opendata-origin), which is no answer about the dataset.
+            page = st == 200 and not isinstance(body, dict)
             self.r.check("dataset", f"{e.slug} {name}", f"GET {path}", "200 success, >= 1 resource",
+                         f"{st} not CKAN JSON: {short(raw, 60)}" if page else
                          f"{st} resources={n} {short(raw, 100) if st != 200 else ''}",
-                         st == 200 and bool((body or {}).get("success")) and n >= 1)
+                         st == 200 and bool((body or {}).get("success")) and n >= 1,
+                         "the door answered a page, not the dataroom: give run all --opendata-origin" if page else "")
         for name in e.slices:
             self.ok_json("dataset.record", f"{e.slug} {name}", f"/api/endpoint/{e.slug}/datasets/{q(name)}",
                          accept="application/json")
