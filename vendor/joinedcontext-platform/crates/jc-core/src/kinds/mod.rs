@@ -42,6 +42,7 @@ pub mod pipeline_source_deletes;
 pub mod policy;
 pub mod policy_odrl;
 pub mod portal;
+pub mod portal_page;
 pub mod role;
 pub mod script;
 pub mod service_account;

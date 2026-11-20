@@ -45,7 +45,8 @@ use dataroom_web::i18n::{resolve_request_language, LanguageResolution};
 use dataroom_web::{
     csp_header_for_branding, render_about_page, render_dataset_list_page, render_home_page_mounted,
     render_map_page, render_organization_list_page, render_organization_read_page,
-    render_resource_page, render_static_page, JC_ENUMS_JSON, JC_LOGO_SVG, JC_THEME_CSS,
+    render_portal_page, render_resource_page, render_static_page, PageInputs, JC_ENUMS_JSON,
+    JC_LOGO_SVG, JC_THEME_CSS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -1343,6 +1344,89 @@ async fn handle_serve_asset(
     }
 }
 
+/// The file stores a request's catalogue reads: its own, then its Organization's own catalogue's
+/// (an Organization-wide file). Never another Organization's.
+fn file_keys(state: &DataroomState, ctx: &RequestCtx) -> Vec<(OrgId, CatalogueId)> {
+    let own = state
+        .organization_catalogues
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .find(|(org, _)| *org == ctx.org_id)
+        .map(|(_, cat)| *cat);
+    let mut keys = vec![(ctx.org_id, ctx.catalogue_id)];
+    keys.extend(
+        own.filter(|c| *c != ctx.catalogue_id)
+            .map(|c| (ctx.org_id, c)),
+    );
+    keys
+}
+
+/// Page `slug` of a portal built from blocks (T-7433), with the files and chart views its blocks
+/// read; `None` when the portal has no such page.
+#[allow(clippy::too_many_arguments)]
+async fn portal_page(
+    state: &DataroomState,
+    ctx: &RequestCtx,
+    cat: &Catalogue,
+    slug: &str,
+    q: &str,
+    lang: &str,
+    had_url_prefix: bool,
+    nonce: &str,
+) -> Option<String> {
+    let branding = state.branding_of(cat);
+    branding.layout.page(slug)?;
+    let mut datasets = state.store.list_datasets(ctx).await.unwrap_or_default();
+    datasets.retain(|d| !is_dashboard(d));
+    let publishers = state.store.list_publishers(ctx).await.unwrap_or_default();
+    let files = match state.files.clone() {
+        Some(store) => {
+            let keys = file_keys(state, ctx);
+            tokio::task::spawn_blocking(move || {
+                let mut all = Vec::new();
+                for key in keys {
+                    all.extend(store.list(key.0, key.1).unwrap_or_default());
+                }
+                all
+            })
+            .await
+            .unwrap_or_default()
+        }
+        None => Vec::new(),
+    };
+    let mut views = BTreeMap::new();
+    for name in dataroom_web::chart_datasets(&branding, slug) {
+        let Some(d) = datasets.iter().find(|d| d.name == name) else {
+            continue;
+        };
+        let mut all = Vec::new();
+        for dist in &d.distributions {
+            if let Ok(v) = state.store.list_resource_views(ctx, &dist.id).await {
+                all.extend(v);
+            }
+        }
+        views.insert(name, all);
+    }
+    render_portal_page(
+        cat,
+        Some(&branding),
+        slug,
+        PageInputs {
+            datasets: &datasets,
+            publishers: &publishers,
+            files: &files,
+            views: &views,
+            now: jc_time::TimestampTz::now(),
+        },
+        q,
+        lang,
+        had_url_prefix,
+        &state.mount_prefix(),
+        nonce,
+    )
+}
+
 /// A portal's uploaded file (T-7417), on its own catalogue's hosts only: the file of this
 /// catalogue, else the Organization-wide one of this catalogue's Organization. Never another
 /// Organization's. Raster images inline; every other type as an attachment that runs nothing.
@@ -1359,18 +1443,7 @@ async fn handle_serve_file(
         Ok(v) => v,
         Err(e) => return problem_response(e),
     };
-    let own = state
-        .organization_catalogues
-        .read()
-        .unwrap_or_else(|e| e.into_inner())
-        .values()
-        .find(|(org, _)| *org == ctx.org_id)
-        .map(|(_, cat)| *cat);
-    let mut keys = vec![(ctx.org_id, ctx.catalogue_id)];
-    keys.extend(
-        own.filter(|c| *c != ctx.catalogue_id)
-            .map(|c| (ctx.org_id, c)),
-    );
+    let keys = file_keys(&state, &ctx);
     let found = tokio::task::spawn_blocking(move || {
         keys.into_iter()
             .find_map(|key| files.read(key, &sha256).transpose())
@@ -1859,6 +1932,13 @@ async fn dispatch_ui_route(
     match segments.as_slice() {
         // D1: Home page (`/`, `/sk/`)
         [] => {
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            // T-7433: a portal whose Portal builds a home from blocks shows it instead.
+            if let Some(html) =
+                portal_page(&state, &ctx, &cat, "home", q, &lang, had_url_prefix, &nonce).await
+            {
+                return html_response_with_csp(html, &nonce, &branding, false);
+            }
             let mut datasets = state.store.list_datasets(&ctx).await.unwrap_or_default();
             datasets.retain(|d| !is_dashboard(d));
             let publishers = state.store.list_publishers(&ctx).await.unwrap_or_default();
@@ -2351,6 +2431,14 @@ async fn dispatch_ui_route(
                 StatusCode::FOUND,
                 &format!("{prefix}/dataset/?vocab_jc_topic={enc}"),
             )
+        }
+        // T-7433: a further page of the portal built from blocks (`/page/{slug}`).
+        ["page", slug] if *slug != "home" => {
+            let q = q_params.get("q").map(String::as_str).unwrap_or("");
+            match portal_page(&state, &ctx, &cat, slug, q, &lang, had_url_prefix, &nonce).await {
+                Some(html) => html_response_with_csp(html, &nonce, &branding, false),
+                None => problem_response(DataroomError::NotFound("page not found".into())),
+            }
         }
         // D6: About page (`/about`)
         ["about"] => {

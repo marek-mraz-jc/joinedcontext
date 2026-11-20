@@ -20,6 +20,7 @@ Desired specification of a `Portal` (ODP-08).
 | `host` | string | no | A host the operator listed for the Organization, e.g. `mobility.bratislava.sk`; absent: the slug address. |
 | `languages` | list of string | no | The languages the portal is shown in, the first one the default, e.g. `[sk, en]`. |
 | `organizationRef` | string | yes | The Organization the portal belongs to, e.g. `bratislava`. |
+| `pages` | list of [PortalPage](#portalpage) | no | The portal's pages built from blocks (T-7418): `home` replaces the built-in home, each other page answers at `/page/{slug}`; absent: the built-in home alone. |
 | `path` | string | yes | The portal's name inside the Organization, a DNS label such as `mobility`: `/{org}/opendata/-/mobility/`; `default` is the Organization's own portal. |
 | `profiles` | list of string | no | The DCAT-AP profiles its feeds serve, e.g. `[dcat-ap-3.0.1]`. |
 | `slug` | [SlugAddress](#slugaddress) | no | With a `host`: what the slug address does. |
@@ -50,6 +51,17 @@ Desired specification of a `Portal` (ODP-08).
 | `publisher` | string | no | The legal publisher named in the footer and the open data portal, e.g. `Mesto Banská Bystrica`. |
 | `radius` | integer (uint8) | no | The corner radius of cards, buttons and fields in pixels, 0 to 24, e.g. `8`. |
 | `shortName` | string | no | Short name on sidebars and tabs, e.g. `BB`. |
+
+## PortalPage
+
+One page of the portal (T-7418).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `menu` | boolean | no | Whether the header menu lists the page; the home page is the logo's link. |
+| `rows` | list of [PortalRow](#portalrow) | no | The rows from top to bottom. |
+| `slug` | string | yes | `home` for the home page, else a DNS label such as `doprava`: the page answers at `/page/doprava`. |
+| `title` | map of string | no | The page's title and menu entry per language, e.g. `{sk: Doprava, en: Mobility}`. |
 
 ## SlugAddress
 
@@ -141,6 +153,14 @@ Type: one of `"system"`, `"humanist"`, `"serif"`, `"mono"`
 | `markdown` | string | yes | The page in Markdown, its first `# heading` the title, at most 16 KiB, e.g. `# Podpora\n\nNapíšte nám na opendata@mesto.sk.`; raw HTML shows as text. |
 | `page` | string | yes | The page: `connector`, `privacy`, `terms`, `support` or `accessibility`. |
 
+## PortalRow
+
+One row of a page: one to three blocks side by side, stacked on a phone.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `blocks` | list of [PortalBlock](#portalblock) | yes | The blocks from left to right. |
+
 ## HarvestBudget
 
 The most a harvest run of a source reads before it fails and changes nothing (ODP-13).
@@ -155,3 +175,111 @@ The most a harvest run of a source reads before it fails and changes nothing (OD
 Where a [`PortalSource`] takes its datasets from (ODP-10).
 
 Type: one of `"endpoints"`, `"dcat-ap"`, `"ckan-action"`, `"nkod-sparql"`, `"arcgis-hub"`, `"arcgis-rest"`, `"ogc-records"`
+
+## PortalBlock
+
+One block of a row, told apart by `type`.
+
+
+### `type: hero`
+
+A heading, an introduction, an image and the dataset search box.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `image` | string | no | A raster image of the portal's files, e.g. `/files/{sha256}/hero.png`. |
+| `intro` | map of string | no | The introduction per language in Markdown of at most 2 KiB, e.g. `Dáta mesta na **jednom mieste**.` |
+| `search` | boolean | no | Whether the dataset search box shows. |
+| `title` | map of string | no | The heading per language; absent: the portal's title. |
+
+### `type: text`
+
+Markdown.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `markdown` | map of string | yes | Markdown per language, at most 8 KiB each, e.g. `## O portáli\n\nDáta mesta...`; raw HTML shows as text. |
+
+### `type: dataset-gallery`
+
+The datasets a query of this portal's public datasets finds, newest first.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `format` | string | no | Only datasets with a distribution of this format, e.g. `CSV`. |
+| `layout` | [DatasetListLayout](#datasetlistlayout) | no | Cards (the default) or a table. |
+| `limit` | integer (uint8) | no | How many datasets show, 1 to 24. |
+| `publisher` | string | no | Only datasets of this publisher by name, e.g. `mesto-bb`. |
+| `tag` | string | no | Only datasets with this keyword, e.g. `doprava`. |
+| `theme` | string | no | Only datasets of this theme by its EU code, e.g. `TRAN`. |
+| `title` | map of string | no | The heading per language, e.g. `{sk: Doprava}`. |
+
+### `type: featured-datasets`
+
+Datasets picked by name, in that order.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `datasets` | list of string | yes | One to 12 dataset names, e.g. `[ovzdusie-bb, mhd-zastavky]`. |
+| `title` | map of string | no | The heading per language. |
+
+### `type: map`
+
+The map of one dataset with a location, on the deployment's basemap.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dataset` | string | yes | The dataset by name, one with a GeoJSON or OGC API Features distribution. |
+| `title` | map of string | no | The heading per language. |
+
+### `type: numbers`
+
+Counts of the portal's public datasets.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `items` | list of [PortalNumber](#portalnumber) | yes | One to three counts, each once, e.g. `[datasets, publishers]`. |
+| `title` | map of string | no | The heading per language. |
+
+### `type: chart`
+
+A chart of one dataset's Endpoint, the chart its own page shows.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `dataset` | string | yes | The dataset by name whose Endpoint the chart reads, e.g. `ovzdusie-bb`. |
+| `title` | map of string | no | The heading per language. |
+
+### `type: link-cards`
+
+Cards that each link somewhere.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `cards` | list of [LinkCard](#linkcard) | yes | One to 12 cards. |
+| `title` | map of string | no | The heading per language. |
+
+### `type: file-list`
+
+Files of the portal's store to download.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `files` | list of string | yes | One to 12 files of the portal, each `/files/{sha256}/{name}`. |
+| `title` | map of string | no | The heading per language. |
+
+## PortalNumber
+
+One count of a [`NumbersBlock`].
+
+Type: one of `"datasets"`, `"publishers"`, `"updated-this-month"`
+
+## LinkCard
+
+One card of a [`LinkCardsBlock`].
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `text` | map of string | no | One line under it per language. |
+| `title` | map of string | yes | The card's heading per language, e.g. `{sk: Rozpočet}`. |
+| `url` | string | yes | An `https://` address or a path on the portal, e.g. `/page/rozpocet`. |

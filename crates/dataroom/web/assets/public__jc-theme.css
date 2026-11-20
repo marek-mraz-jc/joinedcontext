@@ -918,3 +918,67 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-dashboard-grid { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
 @media (min-width: 992px) { .jc-dashboard-grid { grid-template-columns: 1fr 1fr; } .jc-dashboard-wide { grid-column: 1 / -1; } }
 .jc-dashboard-grid .jc-viz { margin: 0; min-width: 0; }
+
+/* A portal's pages built from blocks (T-7433): rows of one to three blocks, stacked on a phone. */
+.jc-blocks .jc-row-wrap { margin-block: 1.5rem; }
+.jc-row { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+@media (min-width: 768px) {
+  .jc-row-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jc-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.jc-block > h2 { font-size: 1.375rem; margin-bottom: .75rem; }
+.jc-block-hero { border-radius: var(--jc-radius-lg, 12px); padding: clamp(1.5rem, 4vw, 3rem); }
+.jc-block-hero h2 { color: var(--jc-primary-fg); font-size: clamp(1.5rem, 1.2rem + 1.4vw, 2.25rem); }
+.jc-hero-image { display: block; max-width: 100%; height: auto; max-height: 20rem; object-fit: cover; border-radius: var(--jc-radius, 8px); margin-bottom: 1rem; }
+.jc-numbers { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 1rem 2.5rem; }
+.jc-numbers strong { display: block; font-size: 2rem; line-height: 1.1; color: var(--jc-primary); }
+.jc-files { list-style: none; padding: 0; margin: 0; }
+.jc-files li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem 0; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+.jc-file-name { overflow-wrap: anywhere; }
+.jc-map-frame { width: 100%; height: 24rem; border: 0; border-radius: var(--jc-radius, 8px); }
+.jc-table-wrap { overflow-x: auto; }
+.jc-block-more { margin-top: .75rem; }
+.jc-block .table { width: 100%; border-collapse: collapse; }
+.jc-block .table th, .jc-block .table td { text-align: left; vertical-align: top; padding: .625rem .75rem; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+.jc-row > * { min-width: 0; }
+.jc-map-frame, .jc-viz-frame { background: transparent; border: 1px solid rgba(15, 23, 42, .1); }
+/* A frame's state sits behind it: the frame paints over it once it loads, a failed load leaves it. */
+.jc-frame { position: relative; background: rgba(15, 23, 42, .04); border-radius: var(--jc-radius, 8px); }
+.jc-frame iframe { position: relative; display: block; }
+.jc-frame-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 1.5rem; text-align: center; color: rgba(15, 23, 42, .7); }
+.jc-frame-failed { min-height: 8rem; }
+.jc-frame-failed iframe { display: none; }
+.jc-frame-empty { margin: 0; padding: 1.5rem; border: 1px dashed rgba(15, 23, 42, .25); border-radius: var(--jc-radius, 8px); color: rgba(15, 23, 42, .75); background: rgba(15, 23, 42, .03); }
+@media (max-width: 599px) { .jc-map-frame { height: 18rem; } }
+@media (max-width: 639px) {
+  .jc-block .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .jc-block .table tr { display: block; padding: .625rem 0; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+  .jc-block .table td { display: inline; padding: 0; border: 0; }
+  .jc-block .table td:first-child { display: block; font-weight: 600; }
+  .jc-block .table td + td + td::before { content: " · "; }
+  .jc-viz-frame { max-height: 18rem; }
+}
+.jc-hero-image { width: 100%; max-height: 14rem; }
+@media (max-width: 599px) {
+  .jc-blocks .jc-row-wrap { margin-block: .75rem; }
+  .jc-row { gap: 1rem; }
+  .jc-hero-image { max-height: 9rem; }
+}
+.jc-block .jc-cards { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+@media (min-width: 768px) {
+  /* A block without a heading in a row of several starts on its neighbours' first content line. */
+  .jc-row-2 > .jc-block:not(:has(> h2)), .jc-row-3 > .jc-block:not(:has(> h2)) { padding-top: calc(1.375rem * 1.2 + .75rem); }
+}
+@media (max-width: 599px) {
+  .jc-block .jc-cards { gap: .625rem; }
+  .jc-block .jc-card { padding: .75rem 1rem; }
+  .jc-block .jc-card-text { margin-bottom: .25rem; }
+  /* A block without a heading, stacked on a phone, is set apart from the block above it. */
+  .jc-row > .jc-block:not(:has(> h2)):not(:first-child) { padding-top: 1rem; border-top: 1px solid rgba(15, 23, 42, .1); }
+}
+.jc-block-links .jc-cards { align-items: start; }
+@media (min-width: 768px) {
+  /* Counts need little width: beside one other block they take a third of the row. */
+  .jc-row-2:has(> .jc-block-numbers:first-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+  .jc-row-2:has(> .jc-block-numbers:last-child) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+}

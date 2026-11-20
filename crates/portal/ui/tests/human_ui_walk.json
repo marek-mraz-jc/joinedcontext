@@ -2240,6 +2240,22 @@
         "evidence/T-7415/portal-hosts-none-400.png"
       ]
     },
+    "src/pages/portals/PortalLayout.tsx": {
+      "walkedBy": "worker-t7418",
+      "date": "2026-11-20",
+      "screenshots": [
+        "evidence/T-7434/layout-empty-1440.png",
+        "evidence/T-7434/layout-empty-400.png",
+        "evidence/T-7434/layout-filled-1440.png",
+        "evidence/T-7434/layout-filled-400.png",
+        "evidence/T-7434/layout-page-1440.png",
+        "evidence/T-7434/layout-page-400.png",
+        "evidence/T-7434/layout-error-1440.png",
+        "evidence/T-7434/layout-error-400.png",
+        "evidence/T-7434/layout-refusal-1440.png",
+        "evidence/T-7434/layout-refusal-400.png"
+      ]
+    },
     "src/pages/portals/PortalSources.tsx": {
       "walkedBy": "worker-t6880",
       "date": "2026-11-14",

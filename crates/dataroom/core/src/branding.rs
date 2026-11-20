@@ -169,9 +169,18 @@ pub struct BrandingLayout {
     pub nav_links: Vec<(String, String)>,
     /// Footer links after the built-in ones, each `(href, label)`.
     pub footer_links: Vec<(String, String)>,
+    /// The portal's pages built from blocks (`spec.pages` of its Portal, T-7418), each checked by
+    /// jc-core; a `home` page replaces the built-in home.
+    pub pages: Vec<jc_core::kinds::portal_page::PortalPage>,
 }
 
 impl BrandingLayout {
+    /// The page with `slug`, `home` for the home page.
+    #[must_use]
+    pub fn page(&self, slug: &str) -> Option<&jc_core::kinds::portal_page::PortalPage> {
+        self.pages.iter().find(|p| p.slug == slug)
+    }
+
     /// The radius custom properties for the page's `:root`, empty when unset; numbers only.
     #[must_use]
     pub fn radius_css(&self) -> String {

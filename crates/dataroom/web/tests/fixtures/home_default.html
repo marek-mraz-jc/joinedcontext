@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="sk">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    
+    <title>Vitajte - Otvorené dáta</title>
+    <link rel="shortcut icon" href="/logo.svg" />
+    <link rel="alternate" type="text/n3" href="https://opendata.dev.joinedcontext.com/catalog.n3"/>
+    <link rel="alternate" type="text/turtle" href="https://opendata.dev.joinedcontext.com/catalog.ttl"/>
+    <link rel="alternate" type="application/rdf+xml" href="https://opendata.dev.joinedcontext.com/catalog.xml"/>
+    <link rel="alternate" type="application/ld+json" href="https://opendata.dev.joinedcontext.com/catalog.jsonld"/>
+    
+    <link rel="alternate" hreflang="sk" href="/sk/" />
+    
+    <link rel="alternate" hreflang="en" href="/en/" />
+    
+    <link rel="alternate" hreflang="cs" href="/cs/" />
+    
+<style nonce="n0nce-T3st">
+  :root {
+    --jc-primary: #1d4ed8;
+    --jc-primary-fg: #ffffff;
+    --jc-primary-rgb: 29, 78, 216;
+    --jc-secondary: #0f766e;
+    --jc-accent: #f59e0b;
+    --jc-background: #ffffff;
+    --jc-text: #0f172a;
+    --jc-font-heading: system-ui, sans-serif;
+    --jc-font-body: system-ui, sans-serif;
+    
+  }
+</style>
+<link rel="stylesheet" href="/jc-theme.css">
+  <script nonce="n0nce-T3st" src="/jc-dock.js"></script>
+  <script nonce="n0nce-T3st" src="/jc-copy.js" defer></script>
+  <script nonce="n0nce-T3st" src="/jc-forms.js" defer></script>
+  </head>
+  <body data-site-root="https://opendata.dev.joinedcontext.com/" data-locale-root="https://opendata.dev.joinedcontext.com/">
+    <div class="visually-hidden-focusable"><a href="#content">Skip to main content</a></div>
+
+<div class="account-masthead">
+  <div class="container">
+    <nav class="account not-authed" aria-label="Account">
+      <ul class="list-unstyled">
+        <li><a href="/user/login">Prihlásiť sa</a></li>
+      </ul>
+    </nav>
+  </div>
+</div>
+<header class="masthead">
+  <div class="container">
+    <nav class="navbar navbar-expand-lg navbar-light">
+      <hgroup class="header-image navbar-left">
+        <a class="logo jc-brand" href="/">
+          <img src="/jc-logo.svg" alt="Otvorené dáta" width="171" height="36">
+        </a>
+      </hgroup>
+      <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          <li><a href="/dataset/">Datasety</a></li><li><a href="/organization/">Vydavatelia</a></li><li><a href="/about">O katalógu</a></li>
+        </ul>
+        <form class="d-flex site-search" action="/dataset/" method="get">
+          <label class="d-none" for="field-sitewide-search">Vyhľadať datasety...</label>
+          <input id="field-sitewide-search" class="form-control me-2" type="text" name="q" value="" placeholder="Hľadať" aria-label="Vyhľadať datasety..."/>
+          <button class="btn" type="submit" aria-label="Submit"><svg class="jc-icon" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+        </form>
+      </div>
+    </nav>
+  </div>
+</header>
+<div class="homepage">
+  <div id="content" class="container">
+    <div class="flash-messages"></div>
+  </div>
+  <div role="main">
+    <section class="jc-hero" aria-labelledby="jc-hero-title">
+      <div class="container">
+        <h1 id="jc-hero-title">Otvorené dáta</h1>
+        <p class="jc-hero-lead">Prezrite si ich, stiahnite alebo sa na ne opýtajte asistenta.</p>
+        <form class="jc-hero-search" role="search" method="get" action="/dataset/">
+          <label for="jc-hero-q">Hľadať v otvorených dátach</label>
+          <div class="jc-hero-field">
+            <input id="jc-hero-q" class="form-control" type="search" name="q" value="" autocomplete="off" placeholder="napr. kvalita ovzdušia, bicykle, rozpočet">
+            <button class="btn btn-primary" type="submit">Hľadať</button>
+          </div>
+        </form>
+        <ul class="jc-hero-stats">
+          <li><strong>8</strong> datasetov</li>
+          <li><strong>2</strong> vydavateľov</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="container"><div class="jc-home">
+      <div class="jc-main">
+      
+        <section aria-labelledby="jc-topics-title">
+          <h2 id="jc-topics-title">Podľa témy</h2>
+          <ul class="jc-topics">
+            
+              <li><a href="/dataset/?vocab_jc_topic=ENVI"><span class="jc-topic-name">Životné prostredie</span><span class="jc-count">5 datasetov</span></a></li>
+            
+              <li><a href="/dataset/?vocab_jc_topic=TRAN"><span class="jc-topic-name">Doprava</span><span class="jc-count">3 datasety</span></a></li>
+            
+          </ul>
+        </section>
+      
+      
+      <section aria-labelledby="jc-recent-title">
+        <div class="jc-home-head">
+          <h2 id="jc-recent-title">Nedávno aktualizované</h2>
+          <a href="/dataset/">Všetky datasety →</a>
+        </div>
+        <div class="sdk-datagrid" data-grid-config="{&quot;columns&quot;:[{&quot;attr&quot;:&quot;title&quot;,&quot;format&quot;:&quot;text&quot;,&quot;label&quot;:&quot;Dataset&quot;},{&quot;attr&quot;:&quot;publisher_id&quot;,&quot;format&quot;:&quot;text&quot;,&quot;label&quot;:&quot;Vydavateľ&quot;},{&quot;attr&quot;:&quot;modified&quot;,&quot;format&quot;:&quot;date&quot;,&quot;label&quot;:&quot;Aktualizované&quot;}],&quot;density&quot;:&quot;comfortable&quot;,&quot;map&quot;:{&quot;enabled&quot;:false},&quot;mode&quot;:&quot;view&quot;,&quot;pageSize&quot;:50,&quot;source&quot;:{&quot;entitySet&quot;:&quot;Datasets&quot;,&quot;kind&quot;:&quot;odata&quot;,&quot;url&quot;:&quot;/odata/v4&quot;},&quot;type&quot;:&quot;Dataset&quot;}">
+        
+          <ul class="jc-cards">
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d7">Dataset d7</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-17T00:00:00+00:00">Aktualizované 17. októbra 2026</time>
+                </div>
+              </li>
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d6">Dataset d6</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-16T00:00:00+00:00">Aktualizované 16. októbra 2026</time>
+                </div>
+              </li>
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d5">Dataset d5</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-15T00:00:00+00:00">Aktualizované 15. októbra 2026</time>
+                </div>
+              </li>
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d4">Dataset d4</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-14T00:00:00+00:00">Aktualizované 14. októbra 2026</time>
+                </div>
+              </li>
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d3">Dataset d3</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-13T00:00:00+00:00">Aktualizované 13. októbra 2026</time>
+                </div>
+              </li>
+            
+              <li class="jc-card">
+                <p class="jc-card-org">Vydavateľ big</p>
+                <h3><a href="/dataset/d2">Dataset d2</a></h3>
+                <p class="jc-card-text">Popis dát</p>
+                <div class="jc-card-foot">
+                  
+                  <time datetime="2026-10-12T00:00:00+00:00">Aktualizované 12. októbra 2026</time>
+                </div>
+              </li>
+            
+          </ul>
+        
+        </div>
+      </section>
+      </div>
+
+      <div class="jc-side">
+        
+          <section aria-labelledby="jc-publishers-title" class="sdk-datagrid" data-grid-config="{&quot;columns&quot;:[{&quot;attr&quot;:&quot;title&quot;,&quot;format&quot;:&quot;text&quot;,&quot;label&quot;:&quot;Dataset&quot;},{&quot;attr&quot;:&quot;uri&quot;,&quot;format&quot;:&quot;link&quot;,&quot;label&quot;:&quot;IRI&quot;}],&quot;density&quot;:&quot;comfortable&quot;,&quot;map&quot;:{&quot;enabled&quot;:false},&quot;mode&quot;:&quot;view&quot;,&quot;pageSize&quot;:50,&quot;source&quot;:{&quot;entitySet&quot;:&quot;Publishers&quot;,&quot;kind&quot;:&quot;odata&quot;,&quot;url&quot;:&quot;/odata/v4&quot;},&quot;type&quot;:&quot;Publisher&quot;}">
+            <h2 id="jc-publishers-title">Podľa vydavateľa</h2>
+            <ul class="jc-facet">
+              
+                <li><a href="/dataset/?organization=big"><span>Vydavateľ big</span><span class="jc-count">6</span></a></li>
+              
+                <li><a href="/dataset/?organization=small"><span>Vydavateľ small</span><span class="jc-count">2</span></a></li>
+              
+            </ul>
+          </section>
+        
+        
+          <section aria-labelledby="jc-tags-title">
+            <h2 id="jc-tags-title">Časté kľúčové slová</h2>
+            <ul class="jc-tags">
+              
+                <li><a class="tag" href="/dataset/?tags=doprava">doprava</a></li>
+              
+                <li><a class="tag" href="/dataset/?tags=vzduch">vzduch</a></li>
+              
+            </ul>
+          </section>
+        
+      </div>
+    </div></div>
+  </div>
+</div>
+
+
+<div class="jc-corner">
+  
+  <a class="jc-assistants-link" href="/connector#assistants" aria-label="Použite dáta v ChatGPT, Claude alebo v akomkoľvek klientovi MCP"><span class="jc-seg jc-seg-claude"><svg class="jc-ai-logo" width="24" height="24" aria-hidden="true" focusable="false" viewBox="0 0 248 248" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#fff"/></svg></span><span class="jc-seg jc-seg-chatgpt"><svg class="jc-ai-logo" width="24" height="24" aria-hidden="true" focusable="false" viewBox="3.5 3.4 16.6 16.6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9.94494 9.59163V8.13227C9.94494 8.00935 9.99105 7.91713 10.0985 7.85575L13.0327 6.16599C13.4321 5.93558 13.9083 5.8281 14.3998 5.8281C16.2432 5.8281 17.4108 7.25677 17.4108 8.77751C17.4108 8.885 17.4108 9.00792 17.3953 9.13083L14.3537 7.34884C14.1694 7.24135 13.985 7.24135 13.8007 7.34884L9.94494 9.59163ZM16.7963 15.2755V11.7883C16.7963 11.5732 16.704 11.4196 16.5197 11.3121L12.664 9.0693L13.9236 8.34725C14.0311 8.28587 14.1234 8.28587 14.2308 8.34725L17.165 10.037C18.0099 10.5287 18.5782 11.5732 18.5782 12.587C18.5782 13.7544 17.887 14.8298 16.7963 15.2753V15.2755ZM9.03861 12.2031L7.77896 11.4658C7.67146 11.4045 7.62535 11.3122 7.62535 11.1893V7.8098C7.62535 6.16613 8.88501 4.92176 10.5902 4.92176C11.2354 4.92176 11.8344 5.13689 12.3415 5.52089L9.31526 7.27218C9.13097 7.37968 9.03875 7.53328 9.03875 7.74841V12.2033L9.03861 12.2031ZM11.75 13.77L9.94494 12.7562V10.6056L11.75 9.59178L13.5549 10.6056V12.7562L11.75 13.77ZM12.9098 18.44C12.2645 18.44 11.6655 18.2249 11.1585 17.8409L14.1847 16.0896C14.369 15.9821 14.4612 15.8285 14.4612 15.6134V11.1585L15.7363 11.8958C15.8438 11.9572 15.8899 12.0494 15.8899 12.1723V15.5519C15.8899 17.1955 14.6148 18.44 12.9098 18.44ZM9.26901 15.0144L6.33486 13.3246C5.4899 12.833 4.92161 11.7885 4.92161 10.7746C4.92161 9.59177 5.62824 8.53183 6.71886 8.0863V11.5887C6.71886 11.8039 6.81109 11.9575 6.99538 12.065L10.8359 14.2923L9.57621 15.0144C9.46872 15.0758 9.37649 15.0758 9.26901 15.0144ZM9.10013 17.5337C7.36426 17.5337 6.08919 16.2279 6.08919 14.6149C6.08919 14.492 6.1046 14.3691 6.11988 14.2462L9.1461 15.9975C9.33039 16.105 9.51483 16.105 9.69912 15.9975L13.5549 13.7702V15.2295C13.5549 15.3524 13.5088 15.4446 13.4013 15.506L10.4671 17.1958C10.0677 17.4262 9.59148 17.5337 9.09999 17.5337H9.10013ZM12.9098 19.3616C14.7685 19.3616 16.32 18.0406 16.6735 16.2893C18.3939 15.8438 19.5 14.2308 19.5 12.5872C19.5 11.5118 19.0391 10.4673 18.2096 9.71454C18.2864 9.39192 18.3326 9.0693 18.3326 8.74682C18.3326 6.55014 16.5505 4.90634 14.4921 4.90634C14.0774 4.90634 13.6779 4.96772 13.2785 5.10605C12.5872 4.43011 11.6347 4 10.5902 4C8.7314 4 7.17996 5.32103 6.8265 7.07232C5.10605 7.51786 4 9.13083 4 10.7745C4 11.8498 4.4608 12.8944 5.29035 13.6471C5.21354 13.9697 5.16743 14.2923 5.16743 14.6148C5.16743 16.8114 6.94941 18.4552 9.00792 18.4552C9.42261 18.4552 9.82204 18.3939 10.2215 18.2556C10.9127 18.9315 11.8651 19.3616 12.9098 19.3616Z" fill="#fff"/></svg></span><span class="jc-seg jc-seg-mcp"><svg class="jc-ai-logo" width="24" height="24" aria-hidden="true" focusable="false" viewBox="10 10 160 160" fill="none" xmlns="http://www.w3.org/2000/svg"><g><path d="M23.5996 85.2532L86.2021 22.6507C94.8457 14.0071 108.86 14.0071 117.503 22.6507C126.147 31.2942 126.147 45.3083 117.503 53.9519L70.2254 101.23" stroke="#fff" stroke-width="11.0667" stroke-linecap="round"/><path d="M70.8789 100.578L117.504 53.952C126.148 45.3083 140.163 45.3083 148.806 53.952L149.132 54.278C157.776 62.9216 157.776 76.9357 149.132 85.5792L92.5139 142.198C89.6327 145.079 89.6327 149.75 92.5139 152.631L104.14 164.257" stroke="#fff" stroke-width="11.0667" stroke-linecap="round"/><path d="M101.853 38.3013L55.553 84.6011C46.9094 93.2447 46.9094 107.258 55.553 115.902C64.1966 124.546 78.2106 124.546 86.8543 115.902L133.154 69.6025" stroke="#fff" stroke-width="11.0667" stroke-linecap="round"/></g></svg></span></a>
+  
+  
+  <details class="jc-assistant" id="jc-assistant">
+    <summary><svg class="jc-assistant-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Opýtajte sa asistenta</span></summary>
+    <iframe src="https://assistant.dev.joinedcontext.com/d/data/widget?embed=1&amp;dock=1&amp;lang=sk&amp;scheme=light" title="Opýtajte sa asistenta" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </details>
+  
+</div>
+<script nonce="n0nce-T3st" src="/jc-assistant.js"></script>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="jc-footer-grid">
+      <div class="jc-footer-lines">
+        <div class="jc-footer-brand">
+          
+          <span>joinedcontext</span>
+        </div>
+        
+        
+        
+      </div>
+      <nav class="footer-links" aria-label="O tomto katalógu">
+        <ul class="list-unstyled">
+          <li><a href="/about">O tomto katalógu</a></li>
+          <li><a href="https://portal.dev.joinedcontext.com/">Portál</a></li>
+          <li><a href="/about#api">API katalógu</a></li>
+          
+            <li><a href="/connector">MCP konektor</a></li>
+          
+            <li><a href="/privacy">Ochrana súkromia</a></li>
+          
+            <li><a href="/terms">Podmienky používania</a></li>
+          
+            <li><a href="/support">Podpora</a></li>
+          
+            <li><a href="/accessibility">Vyhlásenie o prístupnosti</a></li>
+          
+          
+        </ul>
+      </nav>
+      
+      <div class="attribution">
+        <form class="lang-select" action="/util/redirect" method="POST">
+          <label for="field-lang-select">Jazyk</label>
+          <div class="jc-footer-lang">
+            <select id="field-lang-select" class="form-select" name="url">
+              
+              <option value="/sk/" lang="sk" selected="selected">
+                slovenčina
+              </option>
+              
+              <option value="/en/" lang="en">
+                English
+              </option>
+              
+              <option value="/cs/" lang="cs">
+                čeština
+              </option>
+              
+            </select>
+            <button class="btn btn-default js-hide" type="submit">Ísť</button>
+          </div>
+        </form>
+      </div>
+      
+    </div>
+  </div>
+</footer>
+  </body>
+</html>

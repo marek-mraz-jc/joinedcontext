@@ -95,6 +95,8 @@
   --spacing-preview-min: var(--portal-preview-min-height);
   --spacing-below-header: var(--portal-below-header);
   --container-content: var(--portal-content-max);
+  /* A phone screen in CSS px, for previews drawn at phone width (T-7434); px, not rem, so the UI scale leaves it alone. */
+  --container-phone: 400px;
   --radius-sm: var(--portal-radius-sm);
   --radius-md: var(--portal-radius-md);
   --radius-lg: var(--portal-radius-lg);
