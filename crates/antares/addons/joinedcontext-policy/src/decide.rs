@@ -442,7 +442,7 @@ fn withheld<'p>(
 }
 
 /// Whether a write touches an Attribute of `withheld`: one it names or its body carries; a
-/// replace (5.6.18, and an upsert, 5.6.8, whose mode the operation does not tell) also
+/// replace (5.6.18, and an upsert, 5.6.8, unless it `keeps_unwritten`) also
 /// removes what the stored Entity holds, and a write naming no Attribute and carrying no body
 /// (a delete of the Entity) touches everything it holds, or everything when none is stored.
 fn touches(op: &Operation<'_>, withheld: &BTreeMap<String, Vec<String>>) -> bool {
@@ -459,7 +459,7 @@ fn touches(op: &Operation<'_>, withheld: &BTreeMap<String, Vec<String>>) -> bool
             .body
             .and_then(Value::as_object)
             .is_some_and(|o| o.keys().any(|k| hit(k)))
-        || ((whole || ["5.6.18", "5.6.8"].contains(&op.clause))
+        || ((whole || (["5.6.18", "5.6.8"].contains(&op.clause) && !op.keeps_unwritten))
             && op
                 .stored
                 .is_some_and(|s| s.attribute_names.iter().any(|a| hit(a))))
@@ -756,7 +756,7 @@ fn admits(p: &Policy, op: &Operation<'_>, types: &[String]) -> Vec<Admit> {
 }
 
 /// The writes that remove what the stored Entity holds: a delete of the Entity (5.6.6, 5.6.10)
-/// and a replace (5.6.18, and an upsert, 5.6.8, whose mode the operation does not tell).
+/// and a replace (5.6.18, and an upsert, 5.6.8, unless it `keeps_unwritten`: options=update).
 const REMOVES_STORED: [&str; 4] = ["5.6.6", "5.6.8", "5.6.10", "5.6.18"];
 
 /// A grant listing Attributes admits a write that removes stored Attributes only when it lists
@@ -765,6 +765,7 @@ const REMOVES_STORED: [&str; 4] = ["5.6.6", "5.6.8", "5.6.10", "5.6.18"];
 fn removes_only_granted(s: &Rule, op: &Operation<'_>) -> bool {
     s.attributes.is_empty()
         || !REMOVES_STORED.contains(&op.clause)
+        || op.keeps_unwritten
         || op.stored.is_none_or(|stored| {
             stored
                 .attribute_names
