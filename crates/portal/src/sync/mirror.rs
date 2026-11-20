@@ -64,25 +64,38 @@ pub enum RunError {
 /// produces no commit, so the cost of forgetting is one HTTP request per reference per restart
 /// — much less than a table nothing else needs.
 #[derive(Debug, Default)]
-pub struct LastFetch(Mutex<HashMap<String, (Option<u64>, Option<u64>)>>);
+pub struct LastFetch(Mutex<HashMap<String, Attempts>>);
+
+/// When a reference was last fetched, and when it last failed since.
+#[derive(Debug, Default, Clone, Copy)]
+struct Attempts {
+    fetched: Option<u64>,
+    failed: Option<u64>,
+}
 
 /// How long a reference that was flagged waits before it is tried again.
 const RETRY: u64 = 60 * 60;
 
 impl LastFetch {
     fn get(&self, key: &str) -> Option<u64> {
-        self.0.lock().ok()?.get(key)?.0
+        self.0.lock().ok()?.get(key)?.fetched
     }
 
     fn set(&self, key: &str, at: u64) {
         if let Ok(mut map) = self.0.lock() {
-            map.insert(key.to_owned(), (Some(at), None));
+            map.insert(
+                key.to_owned(),
+                Attempts {
+                    fetched: Some(at),
+                    failed: None,
+                },
+            );
         }
     }
 
     fn failed(&self, key: &str, at: u64) {
         if let Ok(mut map) = self.0.lock() {
-            map.entry(key.to_owned()).or_default().1 = Some(at);
+            map.entry(key.to_owned()).or_default().failed = Some(at);
         }
     }
 
@@ -90,7 +103,7 @@ impl LastFetch {
         self.0
             .lock()
             .ok()
-            .and_then(|map| map.get(key)?.1)
+            .and_then(|map| map.get(key)?.failed)
             .is_some_and(|at| now.saturating_sub(at) < RETRY)
     }
 }
