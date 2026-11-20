@@ -969,3 +969,9 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   /* A block without a heading, stacked on a phone, is set apart from the block above it. */
   .jc-row > .jc-block:not(:has(> h2)):not(:first-child) { padding-top: 1rem; border-top: 1px solid rgba(15, 23, 42, .1); }
 }
+.jc-block-links .jc-cards { align-items: start; }
+@media (min-width: 768px) {
+  /* Counts need little width: beside one other block they take a third of the row. */
+  .jc-row-2:has(> .jc-block-numbers:first-child) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+  .jc-row-2:has(> .jc-block-numbers:last-child) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+}
