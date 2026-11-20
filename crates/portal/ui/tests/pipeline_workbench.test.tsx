@@ -570,6 +570,21 @@ describe("the pipeline workbench", () => {
     expect(seen.ops.map((op) => op.name)).toEqual(["jc_pipeline_sample_source"]);
   });
 
+  // T-7443: the train's air-quality edit page showed the runner's refusal as its JSON; each
+  // lint the Portal reads out of it is a line of the alert, in words.
+  it("a_sample_the_runner_refuses_lists_each_lint_in_words_never_as_json", async () => {
+    const lints = [
+      { stage: "lint", message: "project 'helsinki' has no pipeline client on the runner yet: the Portal creates it at the project's next sync, usually within a minute; try again then" },
+      { stage: "lint", line: 3, message: "line 3 char 7: expected a mapping" },
+    ];
+    stub({ sample: { ...SAMPLE, records: [], fields: [], count: 0, errors: lints } }, { ops: [] });
+    show({ source: { dataSourceRef: "shmu-csv" } });
+    const alert = await within(step(en.pipelines.workbench.sample.title)).findByRole("alert");
+    const items = within(alert).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(lints.map((lint) => lint.message));
+    expect(alert.textContent).not.toMatch(/[{}]|lint_errors/);
+  });
+
   // Gate 2026-11-09T192034Z: the edit page of banskabystrica/kataster asked the sample of its
   // generate source on load and met the server's 400. The manifest says a test reads nothing there.
   it.each([

@@ -479,6 +479,17 @@ fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos, own: bool) -> Vec<Bo
             }
             reach.extend(named);
         }
+        // The test harness signs in as `{project}-pl-pipeline-test` under the same identity
+        // (`credentialed`, T-7443): its one audience the internal listener, like the bound one.
+        if own {
+            accounts.push(BoundAccount {
+                project: project.clone(),
+                name: account_name(HARNESS),
+                reach: Reach::Internal,
+                auth: Auth::External(ClientCredential::Secret),
+                reports: false,
+            });
+        }
         if declared {
             continue;
         }
@@ -1042,7 +1053,7 @@ impl WorkloadClientSync {
             let mut outcome = self
                 .converge_one(&token, mirror, account, &audiences, &imported)
                 .await;
-            if host && matches!(account.reach, Reach::Pipeline(_)) {
+            if host && (matches!(account.reach, Reach::Pipeline(_)) || host_derived(account)) {
                 if outcome.error.is_none() {
                     self.read_host_secret(&token, mirror, account, &mut secrets, &mut outcome)
                         .await;

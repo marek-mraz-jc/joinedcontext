@@ -2096,6 +2096,11 @@ async fn a_pipeline_made_after_start_gets_its_own_client_when_streams_sign_in_as
     creates(&keycloak, "zilina-pl-drepo", own).await;
     mappers(&keycloak, "uuid-pl", json!([])).await;
     secret_of(&keycloak, "uuid-pl", "drepo-generated").await;
+    let mut harness = desired_external("zilina", "pl-pipeline-test", &ClientCredential::Secret);
+    harness["id"] = json!("uuid-harness");
+    creates(&keycloak, "zilina-pl-pipeline-test", harness).await;
+    mappers(&keycloak, "uuid-harness", json!([])).await;
+    secret_of(&keycloak, "uuid-harness", "harness-generated").await;
     let mirror = mirror_with(vec![
         drepo(),
         endpoint("zilina", "zilina-uniza", "zilina-uniza", SLUG),
@@ -2134,10 +2139,23 @@ async fn a_pipeline_made_after_start_gets_its_own_client_when_streams_sign_in_as
     let mut want = vec![SLUG, "portal-internal"];
     want.sort_unstable();
     assert_eq!(audiences_of(&keycloak, "uuid-pl").await, want);
+    // T-7443: the test harness signs in as its own client too, the internal listener its one
+    // audience, and the runner holds its secret.
+    assert_eq!(
+        audiences_of(&keycloak, "uuid-harness").await,
+        vec!["portal-internal"]
+    );
     let secrets = wave.host_secrets();
     assert_eq!(
         secrets.keys().collect::<Vec<_>>(),
-        ["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"]
+        [
+            "JC_PIPELINE_SECRET_ZILINA_PL_DREPO",
+            "JC_PIPELINE_SECRET_ZILINA_PL_PIPELINE_TEST"
+        ]
+    );
+    assert_eq!(
+        secrets["JC_PIPELINE_SECRET_ZILINA_PL_PIPELINE_TEST"],
+        "harness-generated"
     );
     assert_eq!(
         secrets["JC_PIPELINE_SECRET_ZILINA_PL_DREPO"],

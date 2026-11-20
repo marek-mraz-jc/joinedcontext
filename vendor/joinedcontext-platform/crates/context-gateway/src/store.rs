@@ -966,10 +966,9 @@ fn endpoints_from(
 ) -> Vec<Endpoint> {
     let ModelSet { models, declared } = models;
     let publishers = publishers_of(repo);
-    let policies = policies_by_space(repo);
-    let doors = jc_manifest::pipeline_identity::endpoint_grants(
-        &jc_manifest::pipeline_identity::derived(repo),
-    );
+    let pipelines = pipeline_identities(repo, declared);
+    let policies = policies_by_space(repo, &pipelines);
+    let doors = jc_manifest::pipeline_identity::endpoint_grants(&pipelines);
     let views = view_mappings(repo, root);
     let projections = projections(repo);
     // ponytail: the installation's catalogue is the Portal's setting, unknown here; a project
@@ -1243,7 +1242,7 @@ fn view_mappings(
 /// caller answers 404, which is what a space that does not exist answers (SP-06, SP-11).
 fn spaces_from(repo: &Repository, models: &ModelSet, names: TenantNames) -> Vec<Space> {
     let ModelSet { models, declared } = models;
-    let policies = policies_by_space(repo);
+    let policies = policies_by_space(repo, &pipeline_identities(repo, declared));
     let assigner = format!("did:web:{}", repo.org_domain().unwrap_or_default());
 
     let mut spaces = Vec::new();
@@ -1418,7 +1417,10 @@ fn language_map(
 /// Every Policy of every space, by project and space, with the manifest name it is bound
 /// to by `spec.policyRef` (`urn:ngsi-ld:Policy:{org}:{space}:{name}`).
 #[allow(clippy::type_complexity)]
-fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(String, PolicySpec)>> {
+fn policies_by_space(
+    repo: &Repository,
+    pipelines: &[(String, jc_core::kinds::pipeline_identity::Derived)],
+) -> BTreeMap<(String, String), Vec<(String, PolicySpec)>> {
     let mut policies: BTreeMap<(String, String), Vec<(String, PolicySpec)>> = BTreeMap::new();
     // A Policy the gateway cannot read may be a prohibition, so its space grants nothing here
     // rather than everything the others permit (ISO-01): `(project, Some(space))`, or the whole
@@ -1462,12 +1464,12 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
         }
     }
     // Each Pipeline's Policies, granted to its own account and derived with it (PL-20).
-    for (project, derived) in jc_manifest::pipeline_identity::derived(repo) {
-        for (name, spec) in derived.policies {
+    for (project, derived) in pipelines {
+        for (name, spec) in &derived.policies {
             policies
                 .entry((project.clone(), spec.context_space_ref.name().to_owned()))
                 .or_default()
-                .push((name, of_own_project(spec, &project)));
+                .push((name.clone(), of_own_project(spec.clone(), project)));
         }
     }
     for (project, space) in unreadable {
@@ -1482,6 +1484,64 @@ fn policies_by_space(repo: &Repository) -> BTreeMap<(String, String), Vec<(Strin
         }
     }
     policies
+}
+
+/// Every Pipeline's own identity of `repo` (PL-19, PL-20), each write Policy joined by a read,
+/// `{write}-ref`, of the classes the stored relationship ends of its type point at in its space
+/// (DM-70, T-7443), bound to the same Endpoint. The gateway checks a written relationship's
+/// target through the Endpoint written with the writer's own read grant, so a Pipeline writing
+/// `CityWork.refDistrict` reads the `AdministrativeArea` it names there, and no other class. A
+/// write Policy that names no type, or whose type relates nothing, gains no read.
+fn pipeline_identities(
+    repo: &Repository,
+    declared: &BTreeMap<(String, String), Arc<DeclaredTypes>>,
+) -> Vec<(String, jc_core::kinds::pipeline_identity::Derived)> {
+    let mut pipelines = jc_manifest::pipeline_identity::derived(repo);
+    for (project, derived) in &mut pipelines {
+        let mut reads = Vec::new();
+        for (name, write) in &derived.policies {
+            let writes = write
+                .operations
+                .contains(&OperationRef::Single(Operation::CreateBatch));
+            let space = (project.clone(), write.context_space_ref.name().to_owned());
+            let (true, Some(endpoint), Some(model)) =
+                (writes, derived.endpoints.get(name), declared.get(&space))
+            else {
+                continue;
+            };
+            let targets: BTreeSet<String> = write
+                .information
+                .iter()
+                .flat_map(|info| &info.entities)
+                .flat_map(|selector| model.relationships.targets(&selector.entity_type))
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            let mut read = write.clone();
+            read.operations = vec![OperationRef::Single(Operation::QueryBatch)];
+            read.information = vec![RegistrationInfo {
+                entities: targets
+                    .into_iter()
+                    .map(|entity_type| EntitySelector {
+                        entity_type,
+                        id: None,
+                        id_pattern: None,
+                    })
+                    .collect(),
+                property_names: Vec::new(),
+                relationship_names: Vec::new(),
+                attributes: Default::default(),
+            }];
+            let read_name = jc_core::kinds::pipeline_identity::bounded(&format!("{name}-ref"));
+            reads.push((read_name, read, endpoint.clone()));
+        }
+        for (name, read, endpoint) in reads {
+            derived.endpoints.insert(name.clone(), endpoint);
+            derived.policies.push((name, read));
+        }
+    }
+    pipelines
 }
 
 /// Whether the rule `name` may be served: a stored grant to the role `public` that changes data
@@ -1954,7 +2014,7 @@ mod tests {
             }
             let repo = super::Repository::load(&dir).expect("the repository loads");
             let _ = std::fs::remove_dir_all(&dir);
-            super::policies_by_space(&repo)
+            super::policies_by_space(&repo, &jc_manifest::pipeline_identity::derived(&repo))
                 .into_iter()
                 .map(|((project, space), rules)| (format!("{project}/{space}"), rules.len()))
                 .collect::<BTreeMap<_, _>>()
@@ -2177,6 +2237,114 @@ mod tests {
         };
         assert!(decided(&ingest_of("city-a")));
         assert!(!decided(&ingest_of("city-b")));
+    }
+
+    /// DM-70, T-7443: a Pipeline writing `CityWork`, whose `refDistrict` points at an
+    /// `AdministrativeArea`, reads that class through the Endpoint it writes, so the target check
+    /// finds the district; it reads no other class, and a Pipeline whose type relates nothing
+    /// gains no read.
+    #[test]
+    fn a_pipeline_reads_the_classes_its_written_type_points_at_and_no_other() {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-pipeline-refs-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        let header = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+        let pipeline = |name: &str, entity_type: &str| {
+            format!(
+                "{header} Pipeline\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  \
+                 class: auto\n  period: 6h\n  schedule: '40 */6 * * *'\n  \
+                 source: {{ dataSourceRef: {{ kind: DataSource, name: src }} }}\n  \
+                 targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:city:city-all\n  \
+                 output: {{ type: {entity_type}, mode: upsert }}\n"
+            )
+        };
+        for (file, body) in [
+            (
+                "space.yaml",
+                format!("{header} ContextSpace\nmetadata:\n  name: city\n  namespace: helsinki\nspec:\n  isSandbox: false\n  urnSegment: city\n"),
+            ),
+            (
+                "endpoint.yaml",
+                format!("{header} Endpoint\nmetadata:\n  name: city-all\n  namespace: helsinki\nspec:\n  contextSpaceRef: city\n  slug: cccccccccccccccccccccccccc\n  audience: organization\n  enabledRepresentations: [ngsi-ld]\n"),
+            ),
+            ("area-events.yaml", pipeline("area-events", "CityWork")),
+            ("trees.yaml", pipeline("trees", "Tree")),
+        ] {
+            std::fs::write(dir.join(file), body).expect("a manifest");
+        }
+        let repo = super::Repository::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        let model = DeclaredTypes {
+            relationships: super::RelationshipRules::from_schema(&json!({ "definitions": {
+                "CityWork": { "properties": { "refDistrict": { "type": "string",
+                    "x-ngsi-ld-relationship": { "target": "AdministrativeArea" } } } },
+                "Tree": { "properties": { "name": { "type": "string" } } }
+            } })),
+            ..declared(json!({ "type": "string" }))
+        };
+        let declared =
+            BTreeMap::from([(("helsinki".to_owned(), "city".to_owned()), Arc::new(model))]);
+        let pipelines = super::pipeline_identities(&repo, &declared);
+        let of = |pipeline: &str| {
+            let (_, derived) = pipelines
+                .iter()
+                .find(|(_, derived)| derived.name == format!("pl-{pipeline}"))
+                .expect("the pipeline's identity");
+            derived.clone()
+        };
+        let area_events = of("area-events");
+        assert_eq!(
+            area_events
+                .endpoints
+                .get("pl-area-events-w-1-ref")
+                .map(String::as_str),
+            Some("city-all"),
+            "the read binds the Endpoint written"
+        );
+        let subject = Subject {
+            service_account: Some("pl-area-events".to_owned()),
+            service_account_project: Some("helsinki".to_owned()),
+            ..Subject::default()
+        };
+        let reads = |policies: &[(String, jc_core::kinds::PolicySpec)], entity_type: &str| {
+            let grants: Vec<_> = policies
+                .iter()
+                .map(|(_, policy)| of_own_project(policy.clone(), "helsinki"))
+                .collect();
+            let request = Request {
+                types: std::collections::BTreeSet::from([entity_type.to_owned()]),
+                ..Request::default()
+            };
+            // What the target check takes for a read (`read_grant`): a rewrite that is not empty.
+            matches!(
+                evaluate(
+                    &subject,
+                    Operation::QueryBatch,
+                    &request,
+                    "t",
+                    &grants,
+                    jc_time::TimestampTz::now(),
+                ),
+                crate::pdp::evaluator::Verdict::Rewrite(read) if !read.empty
+            )
+        };
+        assert!(reads(&area_events.policies, "AdministrativeArea"));
+        assert!(reads(&area_events.policies, "CityWork"));
+        assert!(!reads(&area_events.policies, "Vehicle"), "no other class");
+        let derived_alone = jc_manifest::pipeline_identity::derived(&repo);
+        let (_, alone) = derived_alone
+            .iter()
+            .find(|(_, derived)| derived.name == "pl-area-events")
+            .expect("the derived identity");
+        assert!(
+            !reads(&alone.policies, "AdministrativeArea"),
+            "the write grant alone reads no district (the refusal T-7443 saw)"
+        );
+        assert_eq!(of("trees").policies.len(), 1, "Tree relates nothing");
     }
 
     /// T-5168: a space whose model marks personal data lets the Portal's own account find and
