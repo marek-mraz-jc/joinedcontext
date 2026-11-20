@@ -41,9 +41,29 @@ fn a_portal_without_pages_renders_todays_home() {
     let html = home_fixture();
     let want = std::fs::read_to_string(path).expect("the snapshot");
     assert!(
-        html == want,
+        split_grid_configs(&html) == split_grid_configs(&want),
         "the default home changed; diff {path} against this render"
     );
+}
+
+/// The page with each `data-grid-config` JSON cut out, and those configs parsed. Their key order
+/// follows serde_json's `preserve_order`, which the whole-workspace build turns on (ekiben, jc)
+/// and a `-p dataroom-web` build does not; the markup around them is compared byte for byte.
+fn split_grid_configs(html: &str) -> (String, Vec<serde_json::Value>) {
+    const ATTR: &str = "data-grid-config=\"";
+    let (mut rest, mut page, mut configs) = (html, String::new(), Vec::new());
+    while let Some(at) = rest.find(ATTR) {
+        let start = at + ATTR.len();
+        let end = start + rest[start..].find('"').expect("closed attribute");
+        page.push_str(&rest[..start]);
+        let json = rest[start..end]
+            .replace("&quot;", "\"")
+            .replace("&amp;", "&");
+        configs.push(serde_json::from_str(&json).expect("grid config JSON"));
+        rest = &rest[end..];
+    }
+    page.push_str(rest);
+    (page, configs)
 }
 
 const SHA_PDF: &str = "1111111111111111111111111111111111111111111111111111111111111111";
