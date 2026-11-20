@@ -259,6 +259,29 @@ fn a_gallery_shows_at_most_its_limit_and_never_more_than_24() {
 }
 
 #[test]
+fn a_map_or_chart_says_what_it_waits_for_and_when_there_is_nothing_to_draw() {
+    let b = with_pages(json!([{ "slug": "home", "rows": [
+        { "blocks": [{ "type": "map", "dataset": "zastavky" }, { "type": "chart", "dataset": "d00" }] },
+        { "blocks": [{ "type": "map", "dataset": "d01" }, { "type": "chart", "dataset": "d02" }] },
+    ] }]));
+    let html = render(&b, &fixture(), "home", "sk").expect("home");
+    // Drawable: a waiting line behind each frame, which a failed load leaves in place.
+    assert_eq!(html.matches("<iframe class=\"jc-map-frame\"").count(), 1);
+    assert_eq!(html.matches("<iframe class=\"jc-viz-frame\"").count(), 1);
+    assert!(html.contains("Načítava sa mapa. Ak sa nezobrazí, otvorte dataset nižšie."));
+    assert!(html.contains("Načítava sa graf. Ak sa nezobrazí, otvorte dataset nižšie."));
+    // Nothing to draw: the block stays, says so and leads to the dataset.
+    assert!(html.contains("Tento dataset nemá miesta, ktoré by sa dali ukázať na mape."));
+    assert!(html.contains("Tento dataset zatiaľ nemá graf; údaje sú na stránke datasetu."));
+    for name in ["zastavky", "d00", "d01", "d02"] {
+        assert!(
+            html.contains(&format!("<a href=\"/m/dataset/{name}\">Otvoriť dataset →</a>")),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn an_internal_or_restricted_dataset_never_shows_in_any_block() {
     let b = with_pages(json!([{ "slug": "home", "rows": [
         { "blocks": [{ "type": "dataset-gallery", "tag": "doprava", "limit": 24 }] },

@@ -1147,6 +1147,38 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Ehhez a válogatáshoz még nincs adatkészlet.",
     );
     add(
+        "block_map_waiting",
+        "Loading the map. If it does not appear, open the dataset below.",
+        "Načítava sa mapa. Ak sa nezobrazí, otvorte dataset nižšie.",
+        "Načítá se mapa. Pokud se nezobrazí, otevřete datovou sadu níže.",
+        "Die Karte wird geladen. Erscheint sie nicht, öffnen Sie den Datensatz unten.",
+        "A térkép betöltése folyamatban. Ha nem jelenik meg, nyissa meg lent az adatkészletet.",
+    );
+    add(
+        "block_chart_waiting",
+        "Loading the chart. If it does not appear, open the dataset below.",
+        "Načítava sa graf. Ak sa nezobrazí, otvorte dataset nižšie.",
+        "Načítá se graf. Pokud se nezobrazí, otevřete datovou sadu níže.",
+        "Das Diagramm wird geladen. Erscheint es nicht, öffnen Sie den Datensatz unten.",
+        "A diagram betöltése folyamatban. Ha nem jelenik meg, nyissa meg lent az adatkészletet.",
+    );
+    add(
+        "block_chart_empty",
+        "This dataset has no chart yet; its data is on the dataset page.",
+        "Tento dataset zatiaľ nemá graf; údaje sú na stránke datasetu.",
+        "Tato datová sada zatím nemá graf; data jsou na stránce datové sady.",
+        "Dieser Datensatz hat noch kein Diagramm; die Daten stehen auf seiner Seite.",
+        "Ennek az adatkészletnek még nincs diagramja; az adatok az adatkészlet oldalán vannak.",
+    );
+    add(
+        "block_open_dataset",
+        "Open the dataset",
+        "Otvoriť dataset",
+        "Otevřít datovou sadu",
+        "Datensatz öffnen",
+        "Az adatkészlet megnyitása",
+    );
+    add(
         "updated_month",
         "updated in the last 30 days",
         "aktualizovaných za 30 dní",

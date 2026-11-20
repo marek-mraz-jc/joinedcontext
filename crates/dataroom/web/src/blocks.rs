@@ -100,9 +100,15 @@ pub struct DatasetsView {
 #[derive(Debug, Clone)]
 pub struct FrameView {
     pub title: String,
-    pub src: String,
+    /// The frame's address; `None` when the dataset has nothing to draw (`empty` says so).
+    pub src: Option<String>,
     pub sandbox: String,
     pub origin: String,
+    /// Behind the frame until it paints, and what stays when it fails to load.
+    pub waiting: String,
+    pub empty: String,
+    /// The dataset's page: the way on when the frame shows nothing.
+    pub href: String,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +169,7 @@ pub struct PortalPageTemplate {
     pub updated_label: String,
     pub download_label: String,
     pub gallery_empty: String,
+    pub open_dataset: String,
 }
 
 /// The public, active, listed datasets of the catalogue: the only ones a block shows.
@@ -238,6 +245,10 @@ impl Ctx<'_> {
 
     fn dataset(&self, name: &str) -> Option<&Dataset> {
         self.public.iter().copied().find(|d| d.name == name)
+    }
+
+    fn dataset_href(&self, d: &Dataset) -> String {
+        format!("{}/dataset/{}", self.chrome.lang_prefix, d.name)
     }
 
     /// The store's file a block names, by the hash in its address; `None` for a file this
@@ -356,43 +367,63 @@ impl Ctx<'_> {
             }),
             PortalBlock::Map(b) => {
                 let d = self.dataset(&b.dataset)?;
-                crate::helpers::jc_map_config(
+                let drawable = crate::helpers::jc_map_config(
                     self.catalogue,
                     d,
                     None,
                     &self.chrome.branding,
                     &self.chrome.lang,
-                )?;
-                let title = Some(self.text(&b.title))
-                    .filter(|t| !t.is_empty())
-                    .unwrap_or_else(|| self.row(d).title);
+                )
+                .is_some();
                 BlockView::Map(FrameView {
-                    src: format!("{}/map/{}", self.chrome.lang_prefix, d.name),
-                    title,
+                    title: Some(self.text(&b.title))
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| self.row(d).title),
+                    src: drawable.then(|| format!("{}/map/{}", self.chrome.lang_prefix, d.name)),
                     sandbox: "allow-scripts allow-same-origin".into(),
                     origin: String::new(),
+                    waiting: jc_t("block_map_waiting", &self.chrome.lang),
+                    empty: jc_t("map_empty", &self.chrome.lang),
+                    href: self.dataset_href(d),
                 })
             }
             PortalBlock::Chart(b) => {
                 let d = self.dataset(&b.dataset)?;
-                let views = self.inputs.views.get(&d.name)?;
-                let chart = crate::helpers::jc_visualizations(
-                    d,
-                    views,
-                    &self.chrome.branding,
-                    &self.chrome.lang,
-                    &self.chrome.lang_prefix,
-                )
-                .into_iter()
-                .next()?;
-                BlockView::Chart(FrameView {
-                    title: Some(self.text(&b.title))
-                        .filter(|t| !t.is_empty())
-                        .unwrap_or(chart.title),
-                    src: chart.src,
-                    sandbox: chart.sandbox,
-                    origin: chart.origin,
-                })
+                let chart = self.inputs.views.get(&d.name).and_then(|views| {
+                    crate::helpers::jc_visualizations(
+                        d,
+                        views,
+                        &self.chrome.branding,
+                        &self.chrome.lang,
+                        &self.chrome.lang_prefix,
+                    )
+                    .into_iter()
+                    .next()
+                });
+                let title = Some(self.text(&b.title)).filter(|t| !t.is_empty());
+                let waiting = jc_t("block_chart_waiting", &self.chrome.lang);
+                let empty = jc_t("block_chart_empty", &self.chrome.lang);
+                let href = self.dataset_href(d);
+                match chart {
+                    Some(chart) => BlockView::Chart(FrameView {
+                        title: title.unwrap_or(chart.title),
+                        src: Some(chart.src),
+                        sandbox: chart.sandbox,
+                        origin: chart.origin,
+                        waiting,
+                        empty,
+                        href,
+                    }),
+                    None => BlockView::Chart(FrameView {
+                        title: title.unwrap_or_else(|| self.row(d).title),
+                        src: None,
+                        sandbox: String::new(),
+                        origin: String::new(),
+                        waiting,
+                        empty,
+                        href,
+                    }),
+                }
             }
             PortalBlock::Numbers(b) => {
                 let month_ago = self.inputs.now.as_second() - 30 * 24 * 3600;
@@ -544,7 +575,7 @@ pub fn render_portal_page(
     let frames = rows
         .iter()
         .flat_map(|r| &r.blocks)
-        .any(|b| matches!(b, BlockView::Map(_) | BlockView::Chart(_)));
+        .any(|b| matches!(b, BlockView::Map(f) | BlockView::Chart(f) if f.src.is_some()));
     let title = text_in(&page.title, &chrome.lang, &catalogue.default_language)
         .map(str::to_owned)
         .unwrap_or_else(|| {
@@ -565,6 +596,7 @@ pub fn render_portal_page(
         updated_label: labels.updated.clone(),
         download_label: jc_t("download", &chrome.lang),
         gallery_empty: jc_t("gallery_empty", &chrome.lang),
+        open_dataset: jc_t("block_open_dataset", &chrome.lang),
         labels,
         chrome,
     };

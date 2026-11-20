@@ -941,7 +941,12 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-block .table { width: 100%; border-collapse: collapse; }
 .jc-block .table th, .jc-block .table td { text-align: left; vertical-align: top; padding: .625rem .75rem; border-bottom: 1px solid rgba(15, 23, 42, .1); }
 .jc-row > * { min-width: 0; }
-.jc-map-frame, .jc-viz-frame { background: rgba(15, 23, 42, .04); border: 1px solid rgba(15, 23, 42, .1); }
+.jc-map-frame, .jc-viz-frame { background: transparent; border: 1px solid rgba(15, 23, 42, .1); }
+/* A frame's state sits behind it: the frame paints over it once it loads, a failed load leaves it. */
+.jc-frame { position: relative; background: rgba(15, 23, 42, .04); border-radius: var(--jc-radius, 8px); }
+.jc-frame iframe { position: relative; display: block; }
+.jc-frame-state { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0; padding: 1.5rem; text-align: center; color: rgba(15, 23, 42, .7); }
+.jc-frame-empty { margin: 0; padding: 1.5rem; border: 1px dashed rgba(15, 23, 42, .25); border-radius: var(--jc-radius, 8px); color: rgba(15, 23, 42, .75); background: rgba(15, 23, 42, .03); }
 @media (max-width: 599px) { .jc-map-frame { height: 18rem; } }
 @media (max-width: 639px) {
   .jc-block .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
