@@ -507,28 +507,31 @@ def test_three_red_checks_of_one_organization_are_one_incident_updated_and_close
     b = FakeBoard()
     red = {"app.alpha.x": "fail", "mcp.alpha": "fail", "oidc.alpha": "fail", "portal.alpha": "pass",
            "portal.beta": "pass"}
-    state = watch.incidents({}, results(**red), True, None, b, "t1")
+    state = watch.incidents({}, results(**red), None, b, "t1")
     assert b.opened == [("org/alpha", ["app.alpha.x", "mcp.alpha", "oidc.alpha"])]
     assert state == {"org/alpha": {"task": "T-1", "checks": ["app.alpha.x", "mcp.alpha", "oidc.alpha"]}}
-    state = watch.incidents(state, results(**red), True, None, b, "t2")
+    state = watch.incidents(state, results(**red), None, b, "t2")
     assert len(b.opened) == 1 and b.updated == []  # same red set: no new task, no rewrite
-    state = watch.incidents(state, results(**{**red, "mcp.alpha": "pass"}), True, None, b, "t3")
+    state = watch.incidents(state, results(**{**red, "mcp.alpha": "pass"}), None, b, "t3")
     assert b.updated == [("T-1", ["app.alpha.x", "oidc.alpha"])] and state["org/alpha"]["task"] == "T-1"
     # An incomplete run closes nothing it did not see pass; it opens the cluster's snapshot incident.
-    state = watch.incidents(state, results(**{"oidc.alpha": "pass"}), False, "snapshot: kubectl: denied", b, "t4")
+    state = watch.incidents(state, results(**{"oidc.alpha": "pass"}), "snapshot: kubectl: denied", b, "t4")
     assert set(state) == {"org/alpha", "cluster"} and b.closed == []
-    state = watch.incidents(state, results(**{"portal.alpha": "pass", "portal.beta": "pass"}), True, None, b, "t5")
-    assert state == {} and {c[1] for c in b.closed} == {"org/alpha", "cluster"}
+    # A complete run that did not run alpha's held checks closes only the cluster's (T-7467).
+    state = watch.incidents(state, results(**{"portal.alpha": "pass", "portal.beta": "pass"}), None, b, "t5")
+    assert set(state) == {"org/alpha"} and [c[1] for c in b.closed] == ["cluster"]
+    state = watch.incidents(state, results(**{"app.alpha.x": "pass", "oidc.alpha": "pass"}), None, b, "t6")
+    assert state == {} and [c[1] for c in b.closed] == ["cluster", "org/alpha"]
 
 
 def test_every_organizations_portal_red_is_one_incident_for_the_cluster():
     b = FakeBoard()
     rows = {"portal.alpha": "fail", "mcp.alpha": "fail", "portal.beta": "fail", "prm.gateway": "fail"}
-    state = watch.incidents({}, results(**rows), True, None, b, "t1")
+    state = watch.incidents({}, results(**rows), None, b, "t1")
     assert b.opened == [("cluster", ["portal.alpha", "mcp.alpha", "portal.beta", "prm.gateway"])]
     assert list(state) == ["cluster"]
     # One Organization's portal back: the rest is that Organization's own incident again.
-    state = watch.incidents(state, results(**{**rows, "portal.alpha": "pass", "mcp.alpha": "pass"}), True, None, b, "t2")
+    state = watch.incidents(state, results(**{**rows, "portal.alpha": "pass", "mcp.alpha": "pass"}), None, b, "t2")
     assert b.opened[1] == ("org/beta", ["portal.beta"]) and set(state) == {"cluster", "org/beta"}
     assert b.updated == [("T-1", ["prm.gateway"])]
 
@@ -537,21 +540,22 @@ def test_the_per_check_incidents_of_t7309_close_on_the_next_green_run():
     b = FakeBoard()
     legacy = {"portal.alpha": "T-7323", "app.alpha.x": "T-7336", "prm.gateway": "T-7325", "crawl.beta.y": "T-7340"}
     green = {"portal.alpha": "pass", "app.alpha.x": "pass", "prm.gateway": "pass", "portal.beta": "pass"}
-    state = watch.incidents(legacy, results(**green), True, None, b, "t1")
-    assert state == {} and b.opened == []
+    state = watch.incidents(legacy, results(**green), None, b, "t1")
+    # crawl.beta.y did not run: its incident stays open (T-7467), a person closes a check gone for good
+    assert state == {"crawl.beta.y": "T-7340"} and b.opened == []
     assert sorted(b.closed) == [("T-7323", "portal.alpha", "passes"), ("T-7325", "prm.gateway", "passes"),
-                                ("T-7336", "app.alpha.x", "passes"), ("T-7340", "crawl.beta.y", "is no longer probed")]
+                                ("T-7336", "app.alpha.x", "passes")]
     # Still red on the first run of the grouped watch: listed in the Organization's incident, closed there.
     b = FakeBoard()
     state = watch.incidents({"mcp.alpha": "T-7327"}, results(**{"mcp.alpha": "fail", "portal.alpha": "pass"}),
-                            True, None, b, "t1")
+                            None, b, "t1")
     assert b.closed == [("T-7327", "mcp.alpha", "is tracked in T-1")] and list(state) == ["org/alpha"]
 
 
 def test_a_dry_placeholder_left_in_the_state_is_filed_as_a_real_incident():
     b = FakeBoard()
     stale = {"org/alpha": {"task": "dry-org/alpha", "checks": ["mcp.alpha"]}, "mcp.beta": "dry-mcp.beta"}
-    state = watch.incidents(stale, results(**{"mcp.alpha": "fail", "portal.alpha": "pass"}), True, None, b, "t1")
+    state = watch.incidents(stale, results(**{"mcp.alpha": "fail", "portal.alpha": "pass"}), None, b, "t1")
     assert b.opened == [("org/alpha", ["mcp.alpha"])] and b.closed == []
     assert state == {"org/alpha": {"task": "T-1", "checks": ["mcp.alpha"]}}
 
@@ -618,7 +622,7 @@ def test_the_board_task_lists_the_red_checks_and_the_update_rewrites_only_that_l
     f.write_text(text + "\n- 2026-11-19T12:00Z **prod-deployer**: looking\n")
     b.update("T-9001", rows[:1], "t2")
     text = f.read_text()
-    assert "Red checks as of t2 (1):" in text and "mcp.bbsk" not in text and "**prod-deployer**: looking" in text
+    assert "Open checks as of t2 (1):" in text and "mcp.bbsk" not in text and "**prod-deployer**: looking" in text
 
 
 # tasks/claim's rule (tasks/claim on s1): a claim is the dir .claims/<id>; a status changes only
@@ -716,7 +720,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
-    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG)}
+    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG),
+                                            "refusedCounter": {"window": "30m", "error": "watch.toml names no prometheus_namespace"}}
     # the log of every jc pod's jc-server container, the last 30 min only
     assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true",
             "--prefix=false") in calls
@@ -824,11 +829,11 @@ def test_a_log_that_cannot_be_read_is_named_never_an_empty_window(monkeypatch):
 def test_refused_pipeline_writes_fail_the_row_naming_project_account_and_count():
     result, got = orgs.refused_writes(watch.log_facts(LOG))
     assert result == "fail"
-    assert got == ("3 refused in the last 30m: barcelona/pl-equipaments 2 (an open-data Endpoint); "
+    assert got == ("3 refused in the jc-server log of the last 30m: barcelona/pl-equipaments 2 (an open-data Endpoint); "
                    "zilina/pipelines 1 (no Policy grants it)")
-    # placed and delivering: no refusal in the window
-    assert orgs.refused_writes(watch.log_facts(LOG.splitlines()[5])) == (
-        "pass", "0 refused writes of a Pipeline in the last 30m")
+    # no refusal in the log and no counter read: the log never passes the row (T-7467)
+    result, got = orgs.refused_writes(watch.log_facts(LOG.splitlines()[5]))
+    assert result == "skip" and "never passes this row" in got and "no gateway counter" in got
     assert orgs.refused_writes({})[0] == "skip"
 
 
@@ -862,7 +867,7 @@ def test_a_refusal_of_a_jc_before_t7458_names_no_account_and_still_fails_by_slug
     assert facts["unattributedRefusals"] == [
         {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 3}]
     assert orgs.refused_writes(facts) == (
-        "fail", "3 refused in the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")
+        "fail", "3 refused in the jc-server log of the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")
 
 
 # The lines jc writes on every cluster (log_format = "json"): the refusal exactly as the gateway's
@@ -907,16 +912,112 @@ def test_a_log_window_truncated_by_rotation_never_passes_the_refused_row():
              '{"timestamp":"2026-11-20T18:18:00Z","level":"INFO","fields":{"message":"y"}}\n')
     facts = watch.log_facts(quiet, now)
     assert facts["logMinutes"] == 3
-    assert orgs.refused_writes(facts) == (
-        "skip", "0 refused, but the log window was truncated to 3 min of 30m (log rotated)")
+    result, got = orgs.refused_writes(facts)
+    assert result == "skip" and got.startswith("0 refused in the jc-server log (3 min of 30m read)")
     # refusals inside a short window still fail: a red is never hidden
     refused = watch.log_facts(LOG_JSON.splitlines()[0].replace("17:42:22", "18:15:00"), now)
     assert orgs.refused_writes(refused)[0] == "fail"
-    # the full window (1 min slack) passes; text lines carry their time at the start
+    # even the full window never passes: only the gateway counter does (T-7467); text lines carry
+    # their time at the start
     full = watch.log_facts("2026-11-20T17:49:00Z  INFO jc: started\n" + quiet, now)
-    assert full["logMinutes"] == 29 and orgs.refused_writes(full)[0] == "pass"
+    assert full["logMinutes"] == 29 and orgs.refused_writes(full)[0] == "skip"
     # no line with a time: the window is unknown, never green
     assert watch.log_facts("", now)["logMinutes"] is None
     assert orgs.refused_writes(watch.log_facts("", now))[0] == "skip"
     # a time inside a message does not stretch the window
     assert watch.log_facts("INFO y at 2026-11-20T10:00:00Z\n", now)["logMinutes"] is None
+
+
+# T-7467: jc-prod's T-7465 closed at 20:00:03Z on a run whose pipelines.refused skipped (log rotated)
+# while barcelona was still refused.
+def test_an_incident_whose_check_skips_stays_open_and_closes_only_on_pass():
+    b = FakeBoard()
+    rows = lambda v: {**results(**{"portal.alpha": "pass"}),
+                      "checks": [{"id": "pipelines.refused", "target": "jc-prod", "result": v},
+                                 {"id": "portal.alpha", "target": "alpha", "result": "pass"}]}
+    state = watch.incidents({}, rows("fail"), None, b, "t1")
+    assert b.opened == [("cluster", ["pipelines.refused"])]
+    state = watch.incidents(state, rows("skip"), None, b, "t2")
+    assert b.closed == [] and state["cluster"]["checks"] == ["pipelines.refused"]
+    # missing row (not probed this run) keeps it open as well
+    state = watch.incidents(state, results(**{"portal.alpha": "pass"}), None, b, "t3")
+    assert b.closed == [] and list(state) == ["cluster"]
+    state = watch.incidents(state, rows("pass"), None, b, "t4")
+    assert state == {} and b.closed == [("T-1", "cluster", "all checks pass")]
+
+
+def test_a_held_check_that_turns_skip_stays_listed_while_another_is_red():
+    b = FakeBoard()
+    state = watch.incidents({}, results(**{"mcp.alpha": "fail", "oidc.alpha": "fail"}), None, b, "t1")
+    state = watch.incidents(state, results(**{"mcp.alpha": "skip", "oidc.alpha": "fail"}), None, b, "t2")
+    # the list is not rewritten: mcp.alpha skipped, it did not pass
+    assert b.updated == [] and state["org/alpha"]["checks"] == ["mcp.alpha", "oidc.alpha"]
+    state = watch.incidents(state, results(**{"mcp.alpha": "pass", "oidc.alpha": "fail"}), None, b, "t3")
+    assert b.updated == [("T-1", ["oidc.alpha"])] and b.closed == []
+    block = watch.checks_block([{"id": "mcp.alpha", "result": "skip", "actual": "rotated"}], "t")
+    assert "(skip, not yet green) rotated" in block
+
+
+COUNTER = {"refusedCounter": {"window": "30m", "rows": [
+    {"project": "barcelona", "account": "pl-equipaments", "reason": "open-data", "count": 186},
+    {"project": "bratislava", "account": "pl-mhd", "reason": "open-data", "count": 4}]}}
+
+
+def test_the_counter_decides_the_refused_row_and_the_log_can_only_fail_it():
+    # barcelona still unplaced, the log rotated to 3 min with nothing in it: red from the counter
+    now = dt.datetime(2026, 11, 20, 18, 18, 17, tzinfo=dt.UTC)
+    rotated = watch.log_facts('{"timestamp":"2026-11-20T18:15:00Z","level":"INFO","fields":{"message":"x"}}\n', now)
+    assert orgs.refused_writes({**rotated, **COUNTER}) == (
+        "fail", ("190 refused in the last 30m (gateway counter): barcelona/pl-equipaments 186 (open-data); "
+                 "bratislava/pl-mhd 4 (open-data)"))
+    zero = {"refusedCounter": {"window": "30m", "rows": []}}
+    assert orgs.refused_writes({**rotated, **zero}) == (
+        "pass", "0 refused writes of a Pipeline in the last 30m (gateway counter)")
+    # the counter at 0 and refusals in the log: the log still fails it
+    result, got = orgs.refused_writes({**watch.log_facts(LOG), **zero})
+    assert result == "fail" and "the counter shows 0" in got
+    # a log that could not be read does not matter while the counter answers
+    assert orgs.refused_writes({"logWindow": "30m", "logError": "forbidden", **zero})[0] == "pass"
+    # the counter unread: skip with its reason, or fail when the log names refusals
+    unread = {"refusedCounter": {"window": "30m", "error": "jc's admin listener in jc was not scraped"}}
+    result, got = orgs.refused_writes({**rotated, **unread})
+    assert result == "skip" and "not scraped" in got
+    assert orgs.refused_writes({**watch.log_facts(LOG), **unread})[0] == "fail"
+
+
+def test_the_counter_is_read_with_promtool_inside_the_prometheus_pod(monkeypatch):
+    calls = []
+    answers = {"SCRAPED": '[{"metric":{},"value":[1795206856.2,"1"]}]',
+               "REFUSED": '[{"metric":{"account":"pl-equipaments","account_project":"barcelona","reason":"open-data"},'
+                          '"value":[1795206856.2,"186.00000000000003"]},'
+                          '{"metric":{"account":"pl-x","account_project":"zilina","reason":"no-policy"},"value":[1,"0"]}]'}
+
+    def fake(cfg, *args, timeout=60):
+        calls.append(args)
+        if "get" in args:
+            return "pod/prometheus-prometheus-0\n"
+        return answers["SCRAPED" if args[-1].startswith("min(") else "REFUSED"]
+
+    monkeypatch.setattr(watch, "kubectl", fake)
+    cfg = {"namespace": "jc-prod", "prometheus_namespace": "prometheus"}
+    assert watch.refused_counter(cfg) == {"refusedCounter": {"window": "30m", "rows": [
+        {"project": "barcelona", "account": "pl-equipaments", "reason": "open-data", "count": 186}]}}
+    assert calls[0] == ("-n", "prometheus", "get", "pod", "-o", "name", "-l", "app.kubernetes.io/name=prometheus")
+    expr = calls[2][-1]
+    assert calls[2][:12] == ("-n", "prometheus", "exec", "pod/prometheus-prometheus-0", "-c", "prometheus", "--",
+                             "promtool", "query", "instant", "-o", "json")
+    assert 'jc_gateway_writes_refused_total{namespace="jc-prod"}' in expr and "increase(" in expr and "offset 30m" in expr
+    # not scraped through the window, or Prometheus not reachable: an error, never an empty list
+    answers["SCRAPED"] = '[{"metric":{},"value":[1,"0"]}]'
+    assert "not scraped" in watch.refused_counter(cfg)["refusedCounter"]["error"]
+    answers["SCRAPED"] = "[]"
+    assert "rows" not in watch.refused_counter(cfg)["refusedCounter"]
+
+    def refuse(cfg, *args, timeout=60):
+        raise RuntimeError("kubectl exec prometheus-prometheus-0: forbidden")
+
+    monkeypatch.setattr(watch, "kubectl", refuse)
+    assert watch.refused_counter(cfg) == {"refusedCounter": {"window": "30m",
+                                                             "error": "kubectl exec prometheus-prometheus-0: forbidden"}}
+    assert watch.refused_counter({"namespace": "jc"})["refusedCounter"]["error"].startswith("watch.toml names no")
+
