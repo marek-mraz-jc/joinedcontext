@@ -44,6 +44,36 @@ describe("EntityGrid compact (T-6748)", () => {
     expect(heads(container)[0]).toMatch(/^Title/);
   });
 
+  it("says a shared period, list and record in words on the line above, never as their JSON (T-7431)", async () => {
+    const shaped = entities.map((each) => ({
+      ...each,
+      category: { type: "Property", value: ["quantitative", "annual"] },
+      period: { type: "Property", value: { to: "2026-12-31", from: "2026-01-01" } },
+      note: { type: "Property", value: { unit: "count", scale: 1 } },
+      tags: { type: "ListProperty", valueList: ["a", "b"] },
+    }));
+    const shapedConfig = parseGridConfig({
+      source: { kind: "fixture", name: "t" },
+      type: "PointOfInterest",
+      columns: [
+        { attr: "title", label: "Title", pinned: true },
+        { attr: "category", label: "Category" },
+        { attr: "period", label: "Period" },
+        { attr: "note", label: "Note" },
+        { attr: "tags", label: "Tags" },
+      ],
+      pageSize: 10,
+    }).config!;
+    const { container } = render(<EntityGrid config={shapedConfig} source={fixtureSource(shaped)} compact filterRow={false} locale="en" />);
+    await waitFor(() => expect(container.querySelector(".jc-grid-typeline")).toHaveTextContent("Period"));
+    const line = container.querySelector(".jc-grid-typeline")!;
+    expect(line).toHaveTextContent("quantitative, annual");
+    expect(line).toHaveTextContent(/Jan 1, 2026\s*–\u2060?\s*Dec 31, 2026/);
+    expect(line).toHaveTextContent("unit: count · scale: 1");
+    expect(line).toHaveTextContent("a, b");
+    expect(line.textContent).not.toMatch(/[[{]\s*"|":/);
+  });
+
   it("offers the area picker on the line above, since a phone's table has no filter row (T-7072)", async () => {
     const placed = entities.map((each, i) => ({ ...each, location: { type: "GeoProperty", value: { type: "Point", coordinates: [24.93 + i / 100, 60.17] } } }));
     const located = parseGridConfig({

@@ -132,6 +132,15 @@ class Person:
     token: str | None = field(default=None, repr=False)
 
 
+def _json(st: int, raw: bytes, what: str):
+    """The JSON body of an answer, or an error naming the call, its status and the body's start: an
+    edge or SPA page answering in HTML read only as "Expecting value" (T-7195, portal.personas.setup)."""
+    try:
+        return json.loads(raw)
+    except ValueError:
+        raise RuntimeError(f"{what}: {st}, not JSON: {raw[:120]!r}") from None
+
+
 class Fixture:
     def __init__(self, base: str, state: Path, config_repo: str, log=print):
         self.base, self.state, self.log = base, state, log
@@ -157,7 +166,7 @@ class Fixture:
                                     headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         if st != 200:
             raise RuntimeError(f"{ADMIN_CLIENT} token: {st}")
-        return json.loads(raw)["access_token"]
+        return _json(st, raw, f"{ADMIN_CLIENT} token")["access_token"]
 
     # -------------------------------------------------------------- people
 
@@ -170,7 +179,10 @@ class Fixture:
             raise RuntimeError(f"create {p.username}: {st} {raw[:160]!r}")
         st, _, raw = self.http.call("GET", f"/login/admin/realms/{self.realm}/users?username={p.username}&exact=true",
                                     token=admin)
-        p.uid = json.loads(raw)[0]["id"]
+        found = _json(st, raw, f"look up {p.username}")
+        if st != 200 or not found:
+            raise RuntimeError(f"look up {p.username}: {st} {raw[:160]!r}")
+        p.uid = found[0]["id"]
         st, _, raw = self.http.call("PUT", f"/login/admin/realms/{self.realm}/users/{p.uid}/reset-password", token=admin,
                                     body={"type": "password", "value": p.password, "temporary": False})
         if st not in (200, 204):
@@ -204,7 +216,7 @@ class Fixture:
                                           headers={"Content-Type": "application/x-www-form-urlencoded"}, body=form)
         if st != 200:
             raise RuntimeError(f"token for {p.username} ({scope}): {st} {raw[:200]!r}")
-        return json.loads(raw)["access_token"]
+        return _json(st, raw, f"token for {p.username}")["access_token"]
 
     def portal_session(self, p: Person) -> Browser:
         """The person signed in to the Portal in a browser of its own (session cookie + CSRF)."""
@@ -228,7 +240,7 @@ class Fixture:
         st, _, raw = self._shako("GET", f"/repos/{self.owner}/{self.repo}/git/trees/main?recursive=true&per_page=1000")
         if st != 200:
             raise RuntimeError(f"shako tree of {self.owner}/{self.repo}: {st}")
-        for e in json.loads(raw).get("tree", []):
+        for e in _json(st, raw, f"shako tree of {self.owner}/{self.repo}").get("tree", []):
             if e.get("path") == path:
                 return e.get("sha")
         return None
