@@ -261,6 +261,14 @@
       "class": "FREE",
       "reason": "a hex colour such as #0b5394 for the installation's look; nothing of the platform to pick from, and jc-core checks its form on the server (T-7188)"
     },
+    "src/pages/portals/PortalLayout.tsx :: Keyword": {
+      "class": "FREE",
+      "reason": "a keyword the gallery filters the portal's public datasets by, e.g. doprava; a keyword no dataset carries shows the gallery's empty line, and jc-core checks its form (422 naming spec.pages[n].rows[n].blocks[n].tag)"
+    },
+    "src/pages/portals/PortalLayout.tsx :: (no label)": {
+      "class": "FREE",
+      "reason": "the Markdown of a text block or a hero introduction, written by the person; jc-core caps its size and the portal renders it through its sanitising Markdown renderer (T-7031)"
+    },
     "src/pages/operator/OperatorInstallation.tsx :: User": {
       "class": "FREE",
       "reason": "the SMTP server's own account name, which the mail provider issues; no person of the realm"

@@ -36,6 +36,7 @@ import {
   tabPanelProps,
 } from "../../components/ui";
 import { PortalFilesTab } from "./PortalFiles";
+import { PortalLayoutTab } from "./PortalLayout";
 import { PortalHostsPanel } from "./PortalHosts";
 import { PortalDatasetsTab, PortalSourcesTab } from "./PortalSources";
 
@@ -64,6 +65,8 @@ export interface PortalSpec {
   profiles?: string[];
   sources?: unknown[];
   hidden?: string[];
+  /** The pages built from blocks (T-7418, `./portalPages`). */
+  pages?: unknown[];
 }
 
 interface PortalManifest {
@@ -388,7 +391,7 @@ export function PortalEditor({ name }: { name: string }): JSX.Element {
   );
 }
 
-type PortalTab = "settings" | "sources" | "datasets" | "files";
+type PortalTab = "settings" | "sources" | "datasets" | "layout" | "files";
 
 /** The views of an existing portal (ODP-15): its settings, its sources and run log, its datasets. */
 function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalManifest; form: JSX.Element }): JSX.Element {
@@ -405,6 +408,7 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
           { value: "settings", label: t("portals.tabs.settings") },
           { value: "sources", label: t("portals.tabs.sources") },
           { value: "datasets", label: t("portals.tabs.datasets") },
+          { value: "layout", label: t("portals.tabs.layout") },
           { value: "files", label: t("portals.tabs.files") },
         ]}
       />
@@ -413,6 +417,8 @@ function PortalTabs({ name, manifest, form }: { name: string; manifest: PortalMa
           form
         ) : tab === "sources" ? (
           <PortalSourcesTab name={name} spec={manifest.spec} />
+        ) : tab === "layout" ? (
+          <PortalLayoutTab name={name} spec={manifest.spec} />
         ) : tab === "files" ? (
           <PortalFilesTab name={name} spec={manifest.spec} />
         ) : (

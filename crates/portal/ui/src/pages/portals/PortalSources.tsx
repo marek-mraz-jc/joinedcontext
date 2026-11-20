@@ -162,13 +162,13 @@ export function sourceFieldOfRefusal(line: string, index: number): SourceField |
 }
 
 /** The lines of a refusal: each finding of a 422, else its detail. */
-function linesOf(error: unknown, generic: string): string[] {
+export function linesOf(error: unknown, generic: string): string[] {
   if (!(error instanceof ApiError)) return [generic];
   return error.problem?.errors?.length ? error.problem.errors : [error.problem?.detail ?? error.message];
 }
 
 /** Proposes the Portal `name` with `next` as its spec, a Change for an approver. */
-function usePortalChange(name: string) {
+export function usePortalChange(name: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (spec: PortalSpec) => {
@@ -664,7 +664,7 @@ interface DatasetRow {
 }
 
 /** The portal's datasets, its first {@link MOST}, page by page. */
-async function readDatasets(name: string): Promise<{ total: number; items: DatasetRow[] }> {
+export async function readDatasets(name: string): Promise<{ total: number; items: DatasetRow[] }> {
   const read = async (offset: number) =>
     (await door("portal_portal_datasets", { name, offset, limit: PAGE })) as RestAnswer<"list_portal_datasets">;
   const first = await read(0);
