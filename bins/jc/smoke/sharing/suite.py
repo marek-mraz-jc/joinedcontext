@@ -104,6 +104,9 @@ def cells() -> list[dict]:
     # SHR-03: a second copy Pipeline whose account A grants no `store` is refused at plan time
     out.append({"id": "w3.plan.store-refused", "way": "w3", "surface": "plan", "check": "store-refused",
                 "control": False})
+    # ... and the copy Pipeline whose `store` A's revocation ended is held out at the next sync
+    out.append({"id": "w3.plan.store-revoked", "way": "w3", "surface": "plan", "check": "store-revoked",
+                "control": False})
     return out
 
 
@@ -730,6 +733,19 @@ class Suite(mo.Suite):
         named = bool(found) and "store" in found.group(0) and f"{PB}/pl-sh-nostore" in found.group(0)
         self.put("w3.plan.store-refused", refused and named, f"{st}, {(found.group(0) if found else text)[:400]}")
 
+    def held_unstored(self, start: float) -> tuple:
+        """Whether B's copy Pipeline reads Error `StoreNotGranted` within the revocation window."""
+        why = "not read"
+        while True:
+            st, pl = self.session("b-admin").json("GET", f"/api/v1/projects/{PB}/pipelines/sh-copy")
+            conds = ((pl or {}).get("status") or {}).get("conditions") or [] if isinstance(pl, dict) else []
+            why = f"{st} " + json.dumps(conds[:1], ensure_ascii=False)[:300]
+            if any(c.get("reason") == "StoreNotGranted" for c in conds if isinstance(c, dict)):
+                return True, f"held after {time.time() - start:.0f} s: {why}"
+            if time.time() - start >= self.a.revoke_window:
+                return False, f"still running after {self.a.revoke_window} s: {why}"
+            time.sleep(5)
+
     def w3_arrived(self) -> bool:
         """The Pipeline's copy reached B's space (the A-admin control read of sh-copy is not one:
         A's admin has no right in B), polled up to --copy-wait."""
@@ -786,6 +802,7 @@ class Suite(mo.Suite):
                          (bool(before and before["result"] == "pass"), f"before the revocation: {before['actual'] if before else 'not read'}"))
         st, doc = self.get("b-member", "sh-copy", f"/ngsi-ld/v1/entities?type={TYPE}")
         remains = st == 200 and self.copy_urn in json.dumps(doc)
+        self.put("w3.plan.store-revoked", *self.held_unstored(start))
         for surface in SURFACES:
             self.put(f"w3.{surface}.copy-remains", True,
                      f"the copy {'remains' if remains else 'is gone'} in B ({st}): a replica outlives the grant by design")
