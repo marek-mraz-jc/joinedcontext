@@ -6,11 +6,12 @@
   "use strict";
 
   var chart = document.getElementById("chart");
-  var host = location.origin; // the host page's origin: the URL's, ours is opaque
   var domain = location.hostname.replace(/^viz\./, "");
 
+  // To any parent: beside the Portal (jc slug mode) the host page is an opaque origin too, which no
+  // named target matches, and a ready, a height or a refusal tells a framer nothing it lacks.
   function tell(message) {
-    window.parent.postMessage(message, host);
+    window.parent.postMessage(message, "*");
   }
 
   function height() {
@@ -87,7 +88,9 @@
   }
 
   window.addEventListener("message", function (event) {
-    if (event.source !== window.parent || event.origin !== host) return;
+    // Our parent alone: on its own origin the host page's (the URL's; ours is opaque), beside the
+    // Portal `null`, as the host runs sandboxed there too. The spec is checked again below.
+    if (event.source !== window.parent || (event.origin !== location.origin && event.origin !== "null")) return;
     var message = event.data || {};
     if (message.type !== "jc-viz-render") return;
     document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";

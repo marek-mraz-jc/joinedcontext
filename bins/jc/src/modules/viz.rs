@@ -7,8 +7,8 @@
 //!
 //! The deployment's pages find the gateway, tiles and catalogue by their own host
 //! (`viz.{domain}` → `api.`, `tiles.`, `opendata.{domain}`). Here they answer beside other modules,
-//! so `/explore.html` and `/embed.html` carry `<meta name="jc-viz">` naming those three addresses
-//! (never a URL parameter), and each page's CSP names exactly them.
+//! so `/explore.html`, `/embed.html` and the chart host `/` carry `<meta name="jc-viz">` naming
+//! those three addresses (never a URL parameter), and each page's CSP names exactly them.
 //!
 //! The pages render untrusted Endpoint data. On dev and prod they live on `viz.{domain}`, an
 //! origin of their own. When this mount shares its origin with the Portal, the catalogue or the
@@ -403,7 +403,7 @@ fn serve(site: &Site, method: &Method, path: &str, req: &header::HeaderMap) -> R
             INERT,
             Body::from("ok\n"),
         ),
-        "" => html("index.html", &site.index, false),
+        "" => html("index.html", &site.index, true),
         "render.html" => html("render.html", &site.render, false),
         "map.html" => html("map.html", &site.map, false),
         "explore.html" => html("explore.html", &site.explore, true),
@@ -679,6 +679,30 @@ mod tests {
         );
         assert!(csp.ends_with("frame-ancestors *"), "{csp}");
         assert!(text(embed).await.contains("jc-viz"));
+    }
+
+    /// The chart host reads the published view from the catalogue the meta names: in slug mode
+    /// (one host) a host derived `opendata.{host}`, a name that exists nowhere and that its own
+    /// `connect-src` refused (jc-smoke 2026-11-20T170726Z, barcelona-charging). Its CSP connects
+    /// to the gateway and the catalogue alone.
+    #[tokio::test]
+    async fn the_chart_host_names_its_catalogue_in_a_meta_and_connects_there_alone() {
+        let res = get("/");
+        assert_eq!(res.status(), StatusCode::OK);
+        let csp = header(&res, "content-security-policy").to_owned();
+        let connect = csp
+            .split(';')
+            .map(str::trim)
+            .find_map(|d| d.strip_prefix("connect-src "))
+            .map(str::to_owned);
+        assert_eq!(
+            connect.as_deref(),
+            Some("https://api.city.test http://city.test:8080"),
+            "{csp}"
+        );
+        let body = text(res).await;
+        assert!(body.contains(r#"<meta name="jc-viz" content="{&quot;api&quot;:&quot;https://api.city.test&quot;,&quot;tiles&quot;:&quot;https://tiles.city.test&quot;,&quot;catalogue&quot;:&quot;http://city.test:8080/opendata&quot;}">"#), "{body}");
+        assert!(body.contains(r#"<script src="host.js" defer>"#), "{body}");
     }
 
     /// Beside the Portal or the catalogue (one origin, slug mode) every page is a CSP sandbox
