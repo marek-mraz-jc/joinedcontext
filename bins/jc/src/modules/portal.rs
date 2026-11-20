@@ -769,8 +769,13 @@ pub(crate) fn organization_vars(
             .portals_max(cfg.organizations.len())
             .to_string(),
     );
-    if cfg.roles.contains(&Module::Dataroom) {
-        let reach = crate::siblings::reach(listener);
+    // Dataroom here: its catalogues on this jc's listener. Dataroom in a Deployment of its own
+    // (`[remote.modules] dataroom`, the role split): the edge routes each working host's `/data`
+    // there, and that jc grants the same token files (T-7470: without these entries jc-dev's
+    // Portal published every Organization's datasets into the shared catalogue).
+    let local = cfg.roles.contains(&Module::Dataroom);
+    if local || cfg.remote_modules.contains_key(&Module::Dataroom) {
+        let reach = local.then(|| crate::siblings::reach(listener));
         let catalogues: Vec<serde_json::Value> = cfg
             .organizations
             .iter()
@@ -792,12 +797,12 @@ pub(crate) fn organization_vars(
 }
 
 /// One Organization's catalogue as the Portal publishes into it (`OrganizationCatalogue`, without
-/// its token): at its open data base, called on this jc's `reach` under the working host's
-/// `/data`, its datasets linking its API base.
+/// its token): at its open data base, called under the working host's `/data` on this jc's
+/// `reach`, or through the edge without one, its datasets linking its API base.
 fn catalogue_entry(
     org: &crate::config::OrganizationSection,
     scheme: &str,
-    reach: std::net::SocketAddr,
+    reach: Option<std::net::SocketAddr>,
 ) -> serde_json::Value {
     // The gateway links a dataset's resources; off https a whole origin.
     let data_host = match scheme {
@@ -811,13 +816,16 @@ fn catalogue_entry(
         org.hosts.portal,
         crate::config::DATAROOM_ON_WORKING_HOST
     );
-    serde_json::json!({
+    let mut entry = serde_json::json!({
         "organization": org.name,
         "url": format!("{scheme}://{}", org.opendata_base()),
-        "api": format!("http://{writes}"),
-        "reach": reach.to_string(),
+        "api": format!("{}://{writes}", if reach.is_some() { "http" } else { scheme }),
         "dataHost": data_host,
-    })
+    });
+    if let Some(reach) = reach {
+        entry["reach"] = serde_json::json!(reach.to_string());
+    }
+    entry
 }
 
 /// The Portal's catalogues and addresses of the registry's run-time Organizations (T-7185):
@@ -852,13 +860,16 @@ fn run_time_entries(
         let Some(reach) = reach.filter(|_| !org.catalogue_id.is_empty()) else {
             continue;
         };
-        let entry =
-            serde_json::from_value::<OrganizationCatalogue>(catalogue_entry(org, scheme, reach))
-                .map_err(|e| e.to_string())
-                .and_then(|mut c| {
-                    c.token = Some(CatalogueToken(super::follow::catalogue_token(&org.name)?));
-                    Ok(c)
-                });
+        let entry = serde_json::from_value::<OrganizationCatalogue>(catalogue_entry(
+            org,
+            scheme,
+            Some(reach),
+        ))
+        .map_err(|e| e.to_string())
+        .and_then(|mut c| {
+            c.token = Some(CatalogueToken(super::follow::catalogue_token(&org.name)?));
+            Ok(c)
+        });
         match entry {
             Ok(c) => catalogues.push(c),
             Err(e) => {
@@ -1298,6 +1309,27 @@ mod tests {
         portal_only.organizations[0].portal_token_file = Some("/run/alpha-token".into());
         let vars = organization_vars(&portal_only, listener);
         assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_CATALOGUES"));
+        // T-7470: dataroom in a Deployment of its own (the role split, jc-dev): each
+        // Organization's catalogue is still the Portal's target, written on its working host's
+        // `/data` through the edge, which routes it to that Deployment.
+        let mut split = portal_only.clone();
+        split
+            .remote_modules
+            .insert(Module::Dataroom, "https://jc.base.test/opendata".into());
+        let parsed = joinedcontext_portal::organization_host::parse_catalogues(
+            &organization_vars(&split, listener)["JC_PORTAL_ORGANIZATION_CATALOGUES"],
+        )
+        .expect("the Portal reads it");
+        assert_eq!(parsed.len(), 1, "beta has no token: {parsed:?}");
+        assert_eq!(
+            parsed[0].api.as_ref().map(url::Url::as_str),
+            Some(format!("{s}://portal.alpha.test/data").as_str())
+        );
+        assert_eq!(parsed[0].reach, None, "this jc serves no catalogue");
+        assert_eq!(
+            parsed[0].url.as_str(),
+            format!("{s}://opendata.alpha.test/")
+        );
         portal_only.organizations.clear();
         assert!(organization_vars(&portal_only, listener).is_empty());
     }

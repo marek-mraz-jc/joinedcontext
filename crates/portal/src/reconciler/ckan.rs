@@ -263,6 +263,10 @@ impl CkanSync {
         }
         let gap = if catalogue.reach.is_some() {
             Duration::ZERO
+        } else if api_url.starts_with("https://") {
+            // The working host's `/data` through the public edge, as jc's role split writes
+            // into a dataroom of its own Deployment (T-7470): the edge's pace holds.
+            catalogue_gap(&api_url, &api_url)
         } else {
             catalogue_gap(&api_url, catalogue.url.as_str().trim_end_matches('/'))
         };
@@ -1883,6 +1887,27 @@ mod tests {
             let other = if org == "hel" { "ba" } else { "hel" };
             assert!(!routed.instance.url.contains(other), "{project}");
         }
+        // T-7470: on jc's own listener unpaced; through the edge on the working host (dataroom
+        // in a Deployment of its own) at the edge's pace.
+        let (_, _, _, gap) = sync
+            .client(&sync.routed(&repo, target("helsinki")), &dir, source)
+            .expect("hel");
+        assert_eq!(gap, Duration::ZERO);
+        let edge = CkanSync::new("portal.example").for_organizations(
+            crate::organization_host::OrganizationCatalogues::new(vec![
+                crate::organization_host::OrganizationCatalogue {
+                    url: "https://opendata.ba.example".parse().unwrap(),
+                    api: Some("https://portal.ba.example/data".parse().unwrap()),
+                    reach: None,
+                    ..catalogue("ba")
+                },
+            ]),
+        );
+        let routed = edge.routed(&repo, target("bratislava"));
+        assert_eq!(routed.instance.url, "https://opendata.ba.example");
+        let (_, api_url, _, gap) = edge.client(&routed, &dir, source).expect("ba");
+        assert_eq!(api_url, "https://portal.ba.example/data");
+        assert_eq!(gap, CALL_GAP);
         // Without its token file the run says so, and never falls back to another's.
         std::fs::remove_file(dir.join("ba.token")).expect("rm");
         let routed = sync.routed(&repo, target("bratislava"));
