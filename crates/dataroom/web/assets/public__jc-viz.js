@@ -11,10 +11,26 @@ window.addEventListener("message", function (event) {
   }
   document.querySelectorAll("iframe[data-jc-viz]").forEach(function (frame) {
     if (frame.contentWindow === event.source && frame.getAttribute("data-jc-viz") === event.origin) {
+      frame.jcVizSaid = true;
       frame.style.height = Math.min(Math.max(Math.round(data.height), 120), JC_VIZ_MAX) + "px";
       // Where the frame's map starts (explore.js), for jc-viz-near below.
       frame.jcVizMap = typeof data.map === "number" && isFinite(data.map) ? data.map : null;
     }
+  });
+});
+// A portal block's chart (T-7433) that loaded yet never said its height drew an error page, not
+// the chart: the frame goes and the line behind it says so. A slow chart gets ten seconds.
+document.querySelectorAll(".jc-frame iframe[data-jc-viz]").forEach(function (frame) {
+  frame.addEventListener("load", function () {
+    setTimeout(function () {
+      var state = frame.parentNode.querySelector(".jc-frame-state");
+      if (frame.jcVizSaid || !state) return;
+      state.textContent = state.getAttribute("data-jc-failed");
+      state.removeAttribute("aria-hidden");
+      state.setAttribute("role", "status");
+      frame.hidden = true;
+      frame.parentNode.classList.add("jc-frame-failed");
+    }, 10000);
   });
 });
 // T-5192: a frame as tall as its content has no viewport of its own, so a dialog it centres lands

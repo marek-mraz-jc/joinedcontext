@@ -1163,6 +1163,14 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "A diagram betöltése folyamatban. Ha nem jelenik meg, nyissa meg lent az adatkészletet.",
     );
     add(
+        "block_chart_failed",
+        "The chart could not load; its data is on the dataset page.",
+        "Graf sa nepodarilo načítať; údaje sú na stránke datasetu.",
+        "Graf se nepodařilo načíst; data jsou na stránce datové sady.",
+        "Das Diagramm konnte nicht laden; die Daten stehen auf der Seite des Datensatzes.",
+        "A diagramot nem sikerült betölteni; az adatok az adatkészlet oldalán vannak.",
+    );
+    add(
         "block_chart_empty",
         "This dataset has no chart yet; its data is on the dataset page.",
         "Tento dataset zatiaľ nemá graf; údaje sú na stránke datasetu.",

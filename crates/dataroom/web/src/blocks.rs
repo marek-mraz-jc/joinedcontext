@@ -106,6 +106,8 @@ pub struct FrameView {
     pub origin: String,
     /// Behind the frame until it paints, and what stays when it fails to load.
     pub waiting: String,
+    /// What the waiting line turns into when a chart frame loads an error page instead.
+    pub failed: String,
     pub empty: String,
     /// The dataset's page: the way on when the frame shows nothing.
     pub href: String,
@@ -383,6 +385,7 @@ impl Ctx<'_> {
                     sandbox: "allow-scripts allow-same-origin".into(),
                     origin: String::new(),
                     waiting: jc_t("block_map_waiting", &self.chrome.lang),
+                    failed: String::new(),
                     empty: jc_t("map_empty", &self.chrome.lang),
                     href: self.dataset_href(d),
                 })
@@ -402,6 +405,7 @@ impl Ctx<'_> {
                 });
                 let title = Some(self.text(&b.title)).filter(|t| !t.is_empty());
                 let waiting = jc_t("block_chart_waiting", &self.chrome.lang);
+                let failed = jc_t("block_chart_failed", &self.chrome.lang);
                 let empty = jc_t("block_chart_empty", &self.chrome.lang);
                 let href = self.dataset_href(d);
                 match chart {
@@ -411,6 +415,7 @@ impl Ctx<'_> {
                         sandbox: chart.sandbox,
                         origin: chart.origin,
                         waiting,
+                        failed: failed.clone(),
                         empty,
                         href,
                     }),
@@ -420,6 +425,7 @@ impl Ctx<'_> {
                         sandbox: String::new(),
                         origin: String::new(),
                         waiting,
+                        failed,
                         empty,
                         href,
                     }),

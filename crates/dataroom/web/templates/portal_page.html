@@ -136,7 +136,7 @@
       <section class="jc-block jc-block-chart">
         <h2>{{ f.title }}</h2>
         {% if let Some(src) = f.src %}
-        <div class="jc-frame"><p class="jc-frame-state" aria-hidden="true">{{ f.waiting }}</p><iframe class="jc-viz-frame" loading="lazy" title="{{ f.title }}" src="{{ src }}" data-jc-viz="{{ f.origin }}" referrerpolicy="no-referrer" sandbox="{{ f.sandbox }}"></iframe></div>
+        <div class="jc-frame"><p class="jc-frame-state" aria-hidden="true" data-jc-failed="{{ f.failed }}">{{ f.waiting }}</p><iframe class="jc-viz-frame" loading="lazy" title="{{ f.title }}" src="{{ src }}" data-jc-viz="{{ f.origin }}" referrerpolicy="no-referrer" sandbox="{{ f.sandbox }}"></iframe></div>
         {% else %}
         <p class="jc-frame-empty">{{ f.empty }}</p>
         {% endif %}
