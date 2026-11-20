@@ -1897,7 +1897,10 @@ async fn listed(
 
 /// Every open change of `project`, unfiltered: a caller reads it through
 /// [`list_changes_readable`], which keeps what its rights read (F-R2POR4-011).
-async fn list_changes_for(state: &AppState, project: &str) -> Result<ChangeList, ApiError> {
+pub(crate) async fn list_changes_for(
+    state: &AppState,
+    project: &str,
+) -> Result<ChangeList, ApiError> {
     let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
@@ -2806,6 +2809,17 @@ pub async fn approve_change_as(
         )));
     }
     judge_at_approval(state, project, &judged)?;
+    // A Project names the Organization the registry files it under, or one a proposed
+    // ProjectMove takes it to (T-7462): a Change from any door meets it at its approval.
+    for envelope in judged.iter().filter(|e| e.kind == "Project") {
+        crate::project_move::placed(
+            state,
+            &envelope.metadata.name,
+            &envelope.spec,
+            ApiError::Conflict,
+        )
+        .await?;
+    }
 
     // The Portal's forge token authored the pull request, and the forge refuses a review from the
     // author (422 "approve your own pull is not allowed"), so the approval is not a forge review:

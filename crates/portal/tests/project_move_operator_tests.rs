@@ -17,7 +17,9 @@ use joinedcontext_portal::permissions::ORG_NAMESPACE;
 use joinedcontext_portal::state::AppState;
 use serde_json::{json, Value};
 
-use common::{envelope, person, send};
+use common::{envelope, person, send, REPO};
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CHANGES: &str = "/api/v1/operator/changes";
 
@@ -122,6 +124,36 @@ fn manifest(state: &AppState, project: &str, organization: &str) {
     ));
 }
 
+/// The rows of every keyed table under (`key.org`, `key.project`), counted as the tables' owner,
+/// past row-level security.
+async fn rows_under(project: &str, key: ProjectKey) -> i64 {
+    let owner = sqlx::PgPool::connect(
+        &std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL"),
+    )
+    .await
+    .expect("the owner");
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name::text FROM information_schema.columns WHERE table_schema = 'public' \
+         AND column_name IN ('org_id', 'project_id') GROUP BY table_name HAVING count(*) = 2",
+    )
+    .fetch_all(&owner)
+    .await
+    .expect("catalog");
+    let mut rows = 0;
+    for table in tables {
+        let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM \"{table}\" WHERE org_id = $1::uuid AND project_id = $2::uuid"
+        )))
+        .bind(key.org.as_uuid().to_string())
+        .bind(key.project.as_uuid().to_string())
+        .fetch_one(&owner)
+        .await
+        .unwrap_or_else(|e| panic!("{table} of {project}: {e}"));
+        rows += held;
+    }
+    rows
+}
+
 /// The drafts a transaction keyed with `key` reads of `project`.
 async fn drafts_under(state: &AppState, key: ProjectKey, project: &str) -> i64 {
     let mut tx = joinedcontext_portal::db::tenant_tx(pool(state), key)
@@ -163,9 +195,19 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     let old = placed(&state, &project, &from, &to).await;
     assert_eq!(drafts_under(&state, old, &project).await, 1);
 
-    // The manifest still names the old Organization: the move would key the project where the
-    // mirror does not place it.
-    let (status, refused) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    // The move is asked for while the manifest still names the old Organization (T-7462): the
+    // proposal is what lets the Project Change name the target, and the approval waits for it.
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("an id").to_owned();
+    let (status, waiting) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{waiting}");
+    assert_eq!(waiting["blockers"], json!([]), "{waiting}");
+    assert!(
+        waiting["waits"].to_string().contains("spec.organizationRef"),
+        "{waiting}"
+    );
+    let (status, refused) = approve(&state, operator(&state, "ops-b"), &id).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
     assert!(
         refused.to_string().contains("spec.organizationRef"),
@@ -177,6 +219,7 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     assert_eq!(status, StatusCode::OK, "{planned}");
     assert_eq!(planned["from"], json!(from));
     assert_eq!(planned["blockers"], json!([]));
+    assert_eq!(planned["waits"], json!([]));
     assert_eq!(planned["done"], json!(false));
     let tables = planned["tables"].as_array().expect("tables");
     assert!(
@@ -185,9 +228,6 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
         "{planned}"
     );
 
-    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
-    assert_eq!(status, StatusCode::CREATED, "{made}");
-    let id = made["id"].as_str().expect("an id").to_owned();
     let (status, self_approved) = approve(&state, operator(&state, "ops-a"), &id).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{self_approved}");
     let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
@@ -229,6 +269,13 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     .await
     .expect("the audit row");
     assert_eq!(after["rows"], json!(2), "{after}");
+    assert_eq!(after["rows"], planned["rows"], "the dry run counts what the apply moves");
+    assert_eq!(after["tables"], planned["tables"], "{after} against {planned}");
+    assert_eq!(
+        rows_under(&project, old).await,
+        0,
+        "no keyed row of the project keeps the old Organization's key"
+    );
     assert!(
         !after.to_string().contains("air"),
         "no row content: {after}"
@@ -360,4 +407,154 @@ async fn only_an_operator_moves_and_nothing_else_moves_a_project() {
     .await
     .expect("catalog");
     assert_eq!(unforced, Vec::<String>::new());
+}
+
+/// A forge holding one open Change of `project`, #5, which adds the Context Space `air`.
+async fn forge_with_open_change(project: &str) -> MockServer {
+    let shako = common::forge().await;
+    let branch = "portal/create-contextspace-air-00000005";
+    let pull = json!({
+        "Number": 5,
+        "HtmlUrl": "https://shako.example/pulls/5",
+        "State": "open",
+        "Title": "air",
+        "Head": branch,
+        "Base": "main",
+        "CreatedAt": "2026-11-20T09:00:00Z",
+        "Author": "author",
+        "AuthorName": "Author",
+        "AuthorEmail": "author@hel.fi",
+        "Mergeable": true,
+        "Merged": false
+    });
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .and(query_param("$filter", "State eq 'open'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [pull] })))
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests(5)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pull))
+        .mount(&shako)
+        .await;
+    let file = format!("projects/{project}/spaces/air/space.yaml");
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests(5)/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [{ "Filename": file, "Status": "added" }]
+        })))
+        .mount(&shako)
+        .await;
+    let space = serde_norway::to_string(&json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "ContextSpace",
+        "metadata": { "name": "air", "namespace": project },
+        "spec": {}
+    }))
+    .expect("yaml");
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file}'")))
+        .and(query_param("@r", format!("'{branch}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-5",
+            "Content": common::encode(&space)
+        })))
+        .mount(&shako)
+        .await;
+    shako
+}
+
+/// T-7462: a project with an open Change moves only once it is decided. The move may be asked
+/// for, the plan names the Change, and the approval is refused naming it.
+#[tokio::test]
+async fn a_project_with_open_changes_waits_for_them() {
+    let project = run("busy");
+    let shako = forge_with_open_change(&project).await;
+    let client = joinedcontext_portal::forge::ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = world().await.with_shako(std::sync::Arc::new(client));
+    let from = run("hel");
+    let to = run("zilina");
+    placed(&state, &project, &from, &to).await;
+    manifest(&state, &project, &to);
+
+    let (status, planned) = plan(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::OK, "{planned}");
+    assert!(
+        planned["waits"].to_string().contains("chg-00000005"),
+        "{planned}"
+    );
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("an id").to_owned();
+    let (status, refused) = approve(&state, operator(&state, "ops-b"), &id).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused.to_string().contains("open Changes"), "{refused}");
+    assert!(refused.to_string().contains("chg-00000005"), "{refused}");
+}
+
+/// T-7462: a Project manifest places the project where the registry files it, or where a
+/// proposed ProjectMove takes it. Before the move is asked for, a manifest naming the target is
+/// refused; once asked for it passes; after the move, one naming the old Organization or the
+/// installation claim (jc-prod's forge says `hel` for its registry's `smartcity`) is refused.
+#[tokio::test]
+async fn a_project_manifest_names_the_organization_the_registry_files_it_under() {
+    let state = world().await;
+    let from = run("smartcity");
+    let to = run("barcelona");
+    let project = run("placed");
+    let claim = run("hel");
+    // The forge names the installation `claim`; the registry holds it as `from`.
+    state.mirror.set_configured_installation(&from);
+    state.mirror.upsert(envelope(
+        "Organization",
+        &claim,
+        ORG_NAMESPACE,
+        json!({ "installation": true }),
+    ));
+    placed(&state, &project, &from, &to).await;
+    let check = |named: String| {
+        let state = state.clone();
+        let project = project.clone();
+        async move {
+            joinedcontext_portal::project_move::check_manifest(
+                pool(&state),
+                &state.mirror,
+                &project,
+                &json!({ "organizationRef": named }),
+            )
+            .await
+            .expect("registry")
+        }
+    };
+    assert_eq!(check(from.clone()).await, Ok(()));
+    assert_eq!(check(claim.clone()).await, Ok(()), "the claim is the installation");
+    let refused = check(to.clone()).await.expect_err("no move asked for");
+    assert!(
+        refused.starts_with("spec.organizationRef:")
+            && refused.contains(&from)
+            && refused.contains(&to),
+        "{refused}"
+    );
+
+    let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let id = made["id"].as_str().expect("an id").to_owned();
+    assert_eq!(check(to.clone()).await, Ok(()), "the move is asked for");
+    manifest(&state, &project, &to);
+    let (status, applied) = approve(&state, operator(&state, "ops-b"), &id).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+
+    assert_eq!(check(to.clone()).await, Ok(()));
+    for named in [from.clone(), claim.clone()] {
+        let refused = check(named.clone()).await.expect_err("moved away");
+        assert!(refused.contains(&to) && refused.contains(&named), "{refused}");
+    }
 }
