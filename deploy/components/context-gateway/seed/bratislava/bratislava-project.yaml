@@ -19,11 +19,12 @@ spec:
       uri: https://data.gov.sk/id/legal-subject/00603481
     contactPoint: { name: joinedcontext platform, email: hello@joinedcontext.com }
   # The same quotas as every demo project (T-2873, PF-73): the mechanism stays, nobody reaches it.
-  # Public Endpoints: one per hub dataset (333 since T-5274) and room for the next batches.
+  # Public Endpoints: one per hub dataset (453 with the overview Endpoint, T-5274) and room for the
+  # next batches; at 450 the Portal refused the last three by name and the catalogue lost them (T-7455).
   quotas:
     contextSpaces: 100
     residentPipelines: 100
-    publicEndpoints: 450
+    publicEndpoints: 500
     apps: 100
     ingestEventsPerSecond: 500
     agentRunsPerDay: 2000

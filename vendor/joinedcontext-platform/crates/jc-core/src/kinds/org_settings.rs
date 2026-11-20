@@ -343,9 +343,11 @@ pub const CATALOG: &[Entry] = &[
     entry(
         "spec.projects.quota.publicEndpoints",
         Section::Projects,
-        Some(450),
+        // 500, not the 450 the bratislava seed once set: it holds 453 public Endpoints, and at 450
+        // the load of `main` refused the last three by name and the catalogue lost them (T-7455).
+        Some(500),
         1,
-        Some(450),
+        Some(500),
         BoundKind::Number,
     ),
     entry(
@@ -951,7 +953,7 @@ mod tests {
     #[test]
     fn the_quota_ceiling_is_todays_values_and_a_project_only_narrows_it() {
         let ceiling = OrganizationBounds::default().quota_ceiling();
-        let today = [100, 100, 450, 500, 100, 2_000, 1_000_000, 6_000];
+        let today = [100, 100, 500, 500, 100, 2_000, 1_000_000, 6_000];
         for ((name, limit), expected) in ceiling.dimensions().into_iter().zip(today) {
             assert_eq!(limit, Some(expected), "{name}");
         }
