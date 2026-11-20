@@ -668,11 +668,6 @@ fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
     })
 }
 
-/// Apply one delta to a mirror of `kind`: a written row is read from the
-/// store, which opens its sealed credentials, so the bus never carries
-/// them. A row the store no longer has is a delete. A store that keeps
-/// failing leaves the entry as it was and logs it, the divergence the
-/// write side's retry ladder names.
 /// Reopen the subscription KV watch, then reseed the mirror from the store.
 ///
 /// Watch first, so a change made during the reseed waits in the new watch.
@@ -694,6 +689,11 @@ async fn reopen_sub_watch(
     Ok(watch)
 }
 
+/// Apply one delta to a mirror of `kind`: a written row is read from the
+/// store, which opens its sealed credentials, so the bus never carries
+/// them. A row the store no longer has is a delete. A store that keeps
+/// failing leaves the entry as it was and logs it, the divergence the
+/// write side's retry ladder names.
 async fn apply_delta(
     mirror: &dyn antares_api::mirror::Mirror,
     store: &dyn antares_store::CurrentStateDriver,
