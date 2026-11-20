@@ -92,6 +92,20 @@ def test_the_persona_fixture_signs_in_at_the_realm_the_state_names(tmp_path, mon
     assert seen == ["/login/realms/smartcity/protocol/openid-connect/token"]
 
 
+def test_a_persona_setup_answered_with_a_page_names_the_call_and_its_status(tmp_path, monkeypatch):
+    """jc-dev smoke 2026-11-20T113720Z: portal.personas.setup said only "Expecting value: line 1
+    column 1 (char 0)"; the row names the call, its status and the body's start (T-7195)."""
+    import common
+    import personas
+    answers = iter([(201, {}, b""), (200, {}, b"<!doctype html><title>Portal</title>")])
+    monkeypatch.setattr(common.Http, "call", lambda self, m, path, *a, **k: next(answers, (401, {}, b"")))
+    (tmp_path / "realm-name.txt").write_text("dev")
+    f = personas.Fixture("http://127.0.0.1:9", tmp_path, "o/r")
+    answers = iter([(201, {}, b""), (200, {}, b"<!doctype html><title>Portal</title>")])
+    with pytest.raises(RuntimeError, match=r"look up smoke-x: 200, not JSON: b'<!doctype html>"):
+        f.make_person(personas.Person("x", "smoke-x", "org-admin", "org"), "admin")
+
+
 def test_through_a_forward_a_persona_token_is_minted_at_jcs_public_address(tmp_path, monkeypatch):
     """jc-dev smoke 2026-11-15T150737Z and 2026-11-16T102331Z: kaisatsu's issuer follows the Host
     since T-7005, so a token minted through the loopback forward named https://127.0.0.1:18081 and
