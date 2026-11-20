@@ -60,7 +60,10 @@ async fn a_hook_secret_survives_a_restart_sealed_and_per_organization() {
     let instance = InstanceId::from_u128(1);
     let org = OrgId::from_u128(1);
     let other_org = OrgId::from_u128(2);
-    let kek = Kek::generate_for_tests();
+    // A fixed key whose `shako-secrets` subkey ends in 0x0a (T-7452): such a subkey must load
+    // as the 32-byte key it is, never lose its last byte to newline trimming.
+    let kek = Kek::from_bytes([117u8; 32]);
+    assert_eq!(kek.derive_subkey("shako-secrets")[31], 0x0a);
 
     let first = PgStore::connect_with(app_opts.clone(), 2)
         .await
