@@ -143,6 +143,22 @@ UNPLACED = re.compile(r"projects with Pipelines and no Organization.*\bprojects=
 PROJECT_COUNT = re.compile(r"([a-z0-9][a-z0-9-]{0,62}):(\d{1,6})")
 
 
+def event_line(line: str) -> str:
+    """One log line as `message key=value ...`: jc's JSON format (log_format = "json", every
+    cluster: {"fields": {"message", ...}}) in its fields' order, a text line as it is (up.sh's
+    --log-format text)."""
+    if not line.lstrip().startswith("{"):
+        return line
+    try:
+        fields = json.loads(line).get("fields")
+    except (ValueError, AttributeError):
+        return line
+    if not isinstance(fields, dict):
+        return line
+    rest = " ".join(f"{k}={v}" for k, v in fields.items() if k != "message" and isinstance(v, (str, int)))
+    return f"{fields.get('message', '')} {rest}".strip()
+
+
 def log_facts(text: str) -> dict:
     """{refusedWrites: [{project, account, reason, count}], unattributedRefusals: [{slug, reason, count}],
     unplacedReport: None | [{project, pipelines}]} of a window of the jc-server log; unplacedReport is
@@ -150,7 +166,7 @@ def log_facts(text: str) -> dict:
     refused: dict[tuple[str, str, str], int] = {}
     unattributed: dict[tuple[str, str], int] = {}
     report = None
-    for line in ANSI.sub("", text).splitlines():
+    for line in map(event_line, ANSI.sub("", text).splitlines()):
         if m := REFUSED.search(line):
             key = (m["project"], m["account"], m["why"].strip()[:80])
             refused[key] = refused.get(key, 0) + 1

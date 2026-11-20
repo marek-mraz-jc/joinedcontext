@@ -1583,7 +1583,7 @@ mod tests {
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let guard = tracing::subscriber::set_default(subscriber);
         let gateway = Gateway::new(
             proxy::Broker::new("http://localhost:9"),
             Box::new(crate::pdp::PolicyPdp),
@@ -1659,6 +1659,38 @@ mod tests {
             refusals[1].contains("account=- account_project=-"),
             "{text}"
         );
+        drop(guard);
+
+        // jc logs JSON on every cluster (bins/jc/src/runtime.rs): the same fields under `fields`,
+        // as bins/jc/smoke/orgs/tests/test_orgs.py LOG_JSON reads them.
+        let json = Lines::default();
+        let writer = json.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let mut request = Request::new(Body::empty());
+        let _ = view_request(
+            &gateway,
+            &endpoint,
+            &pipeline,
+            "/entities",
+            Operation::CreateEntity,
+            &mut request,
+        )
+        .await;
+        let text = String::from_utf8_lossy(&json.0.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_owned();
+        let line: Value = serde_json::from_str(text.trim()).expect("one JSON line");
+        let fields = &line["fields"];
+        assert_eq!(
+            fields["message"], "write refused: an open-data Endpoint",
+            "{line}"
+        );
+        assert_eq!(fields["slug"], "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "{line}");
+        assert_eq!(fields["account"], "pl-equipaments", "{line}");
+        assert_eq!(fields["account_project"], "barcelona", "{line}");
     }
 
     /// DM-128: a streamed file's personal_read line names the query's parameters, never a

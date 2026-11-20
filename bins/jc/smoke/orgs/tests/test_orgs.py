@@ -861,3 +861,27 @@ def test_a_refusal_of_a_jc_before_t7458_names_no_account_and_still_fails_by_slug
         {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 3}]
     assert orgs.refused_writes(facts) == (
         "fail", "3 refused in the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")
+
+
+# The lines jc writes on every cluster (log_format = "json"): the refusal exactly as the gateway's
+# test a_refused_write_names_the_workload_and_its_project writes it in .json() mode, the Portal's
+# report in the same shape (T-7458 bounce: the text regexes alone passed on 0 there).
+LOG_JSON = """{"timestamp":"2026-11-20T17:42:22.471166Z","level":"INFO","fields":{"message":"write refused: an open-data Endpoint","slug":"pbyqbuyoeikryocvqb5uev7nxbx5mr4a","operation":"createEntity","account":"pl-equipaments","account_project":"barcelona"},"target":"context_gateway::handlers::ngsi_ld"}
+{"timestamp":"2026-11-20T17:42:23Z","level":"INFO","fields":{"message":"write refused: an open-data Endpoint","slug":"pbyqbuyoeikryocvqb5uev7nxbx5mr4a","operation":"createEntity"},"target":"context_gateway::handlers::ngsi_ld"}
+{"timestamp":"2026-11-20T17:40:00Z","level":"INFO","fields":{"message":"every project with Pipelines has an Organization"},"target":"joinedcontext_portal::host_registry"}
+{"timestamp":"2026-11-20T17:45:00Z","level":"WARN","fields":{"message":"projects with Pipelines and no Organization: their runs keep no history and their imports cannot be checked; an operator adds each Organization on the Organizations page","projects":"barcelona:19,zilina:3"},"target":"joinedcontext_portal::host_registry"}
+not json {"
+"""
+
+
+def test_the_json_lines_jc_writes_on_the_clusters_fail_both_rows():
+    facts = watch.log_facts(LOG_JSON)
+    assert facts["refusedWrites"] == [
+        {"project": "barcelona", "account": "pl-equipaments", "reason": "an open-data Endpoint", "count": 1}]
+    assert facts["unattributedRefusals"] == [
+        {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 1}]
+    assert facts["unplacedReport"] == [{"project": "barcelona", "pipelines": 19}, {"project": "zilina", "pipelines": 3}]
+    assert orgs.refused_writes(facts)[0] == orgs.unplaced_projects(facts)[0] == "fail"
+    # the newest report wins in JSON too: a later "none" line passes the row
+    placed = LOG_JSON.splitlines()[3] + "\n" + LOG_JSON.splitlines()[2]
+    assert orgs.unplaced_projects(watch.log_facts(placed))[0] == "pass"
