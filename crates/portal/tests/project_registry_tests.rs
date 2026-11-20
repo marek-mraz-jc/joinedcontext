@@ -346,7 +346,7 @@ async fn put_project(state: &AppState, body: Value) -> (Answer, Option<Answer>) 
         Some(body.clone()),
     )
     .await;
-    if checked.status != StatusCode::OK {
+    if checked.status != StatusCode::OK || checked.text.contains("\"valid\":false") {
         return (checked, None);
     }
     let proposed = send(state, person("vlasta"), "PUT", uri, Some(body)).await;
@@ -361,26 +361,18 @@ async fn put_project(state: &AppState, body: Value) -> (Answer, Option<Answer>) 
 async fn a_layout_two_project_update_lands_in_the_project_repository() {
     let (server, state) = world().await;
     common::mount_repository(&server, PROJECT_REPO).await;
-    let stored = own_project(Some(450));
     state
         .mirror
-        .upsert(serde_json::from_value(stored).expect("envelope"));
-    file(
-        &server,
-        PROJECT_REPO,
-        "project.yaml",
-        "main",
-        &serde_norway::to_string(&own_project(Some(450))).expect("yaml"),
-    )
-    .await;
+        .upsert(serde_json::from_value(own_project(None)).expect("envelope"));
 
     let (checked, proposed) = put_project(&state, own_project(Some(500))).await;
     assert_eq!(checked.status, StatusCode::OK, "{}", checked.text);
     let proposed = proposed.expect("the dry run passed");
     assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
     let change: Value = serde_json::from_str(&proposed.text).expect("change");
-    assert_eq!(change["metadata"]["name"], "chg-9", "{change}");
-    assert_eq!(change["metadata"]["project"], "ovzdusie", "{change}");
+    assert_eq!(change["metadata"]["name"], "chg-00000009", "{change}");
+    assert_eq!(change["metadata"]["namespace"], "ovzdusie", "{change}");
+    assert_eq!(change["status"]["repository"], "ovzdusie", "{change}");
 
     let written: Vec<String> = writes(&server).await;
     assert!(
@@ -420,13 +412,18 @@ async fn a_layout_two_project_change_that_would_miss_its_repository_is_refused_a
         .mirror
         .upsert(serde_json::from_value(own_project(Some(450))).expect("envelope"));
 
-    let mut with_registry = own_project(Some(500));
-    with_registry["spec"]["ref"] = json!("main");
+    // The registry entry's own shape: valid as a Project, wrong as project.yaml.
+    let mut with_registry = own_project(None);
+    with_registry["spec"] = json!({
+        "organizationRef": "bb",
+        "repository": { "name": "ovzdusie" },
+        "ref": "main",
+    });
     let (checked, proposed) = put_project(&state, with_registry).await;
     assert!(proposed.is_none());
     refused(
         &checked,
-        StatusCode::BAD_REQUEST,
+        StatusCode::OK,
         "PUT /api/v1/projects/ovzdusie/registry",
     );
 
@@ -440,7 +437,7 @@ async fn a_layout_two_project_change_that_would_miss_its_repository_is_refused_a
         Some(fresh),
     )
     .await;
-    refused(&created, StatusCode::BAD_REQUEST, "POST /api/v1/projects");
+    refused(&created, StatusCode::OK, "POST /api/v1/projects (CC-85)");
 
     state.mirror.set_repositories(BTreeMap::new());
     let (checked, proposed) = put_project(&state, own_project(Some(500))).await;
