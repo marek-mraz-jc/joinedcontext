@@ -8,6 +8,7 @@ import importlib.util
 import json
 import re
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -373,6 +374,11 @@ class PortalJc:
                 spec = body["spec"]
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
+                src = (spec["sources"] or [{}])[0]
+                if "url" in src and urllib.parse.urlparse(src["url"]).hostname not in src.get("allowedHosts", []):
+                    # the kind's own parse (jc-core PortalSource::validate) runs before the judge
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", "path": "",
+                                 "message": "invalid spec.sources[0].allowedHosts: must list the url's own host"}]}}
                 if spec["sources"] and jc.wrong_reason:
                     # refused for a reason that is not the isolation rule (a loopback guard)
                     return 422, {"detail": "spec.sources[0].url: loopback address refused"}

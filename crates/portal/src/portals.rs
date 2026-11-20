@@ -713,9 +713,17 @@ mod tests {
         );
         let mut s = s;
         s.own_host = Some("jc.example.org".into());
+        // Each source passes the kind's own parse first, as at the door: jc-core wants the
+        // url's own host in allowedHosts, so ODP-12 is the rule left to refuse it.
         let source = |url: &str| {
             let mut p = portal("ba-region", "ba", "region", None);
-            p.spec["sources"] = json!([{ "name": "theirs", "type": "dcat-ap", "url": url }]);
+            let host = http_url_host(url).expect("an https url");
+            p.spec["sources"] = json!([{ "name": "theirs", "type": "dcat-ap", "url": url,
+                "allowedHosts": [host] }]);
+            serde_json::from_value::<PortalSpec>(p.spec.clone())
+                .expect("a Portal spec")
+                .validate()
+                .expect(url);
             p
         };
         for admitted in [
@@ -727,7 +735,7 @@ mod tests {
         }
         for refused in [
             "https://api.bbsk.example.org/api/endpoint/closed/",
-            "https://API.bbsk.example.org./catalog.ttl",
+            "https://API.bbsk.example.org/catalog.ttl",
             "https://portal.bbsk.example.org/",
             "https://shared.example.org/sk_bbsk/api/endpoint/closed/",
             "https://portal.zilina.example.org/api/endpoint/closed/",
