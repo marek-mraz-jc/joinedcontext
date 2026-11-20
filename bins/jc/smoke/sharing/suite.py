@@ -346,10 +346,12 @@ class Suite(mo.Suite):
                    + "spec:\n  class: auto\n  period: 30s\n  source:\n"
                    f"    endpointRef: {{ kind: Endpoint, name: sh-shared, namespace: {PA} }}\n"
                    f"    query:\n      type: {TYPE}\n"
-                   # an Endpoint-sourced stream runs a mapping (streams::eligible); the copy keeps every
-                   # attribute A's grant shows and takes an id under B's Organization (ADR-N-068)
-                   "  compute:\n    kind: bloblang\n    bloblang: |\n      root = this\n"
-                   f"      root.id = \"{self.copy_urn.rsplit(':', 1)[0]}:\" + this.id.split(\":\").index(-1)\n"
+                   # an Endpoint-sourced stream runs a mapping (streams::eligible) over each page read;
+                   # the copy keeps every attribute A's grant shows and takes an id under B's
+                   # Organization (ADR-N-068)
+                   "  compute:\n    kind: bloblang\n    bloblang: |\n"
+                   "      root = this.map_each(this.assign({\"id\": "
+                   f"\"{self.copy_urn.rsplit(':', 1)[0]}:\" + this.id.split(\":\").index(-1)}}))\n"
                    "  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:sh-copy:sh-copy\n"
                    f"  output: {{ type: {TYPE}, mode: upsert }}\n"),
                   (f"shared/{PA}.yaml", head("SharedSpaceReference", PA, PB)
@@ -723,8 +725,9 @@ class Suite(mo.Suite):
         st, doc = self.session("b-admin").json("POST", f"/api/v1/projects/{PB}/pipelines?dryRun=All", body=body)
         text = json.dumps(doc, ensure_ascii=False) if doc is not None else ""
         refused = isinstance(doc, dict) and doc.get("valid") is False or st == 422
-        named = "spec.source.endpointRef" in text and "store" in text and f"{PB}/pl-sh-nostore" in text
-        found = re.search(r"spec\.source\.endpointRef[^}]*", text)
+        # the door judges the second shape: `spec.source` reads as `spec.sources[0]` (PL-54)
+        found = re.search(r"spec\.sources?(\[0\])?\.endpointRef[^}]*", text)
+        named = bool(found) and "store" in found.group(0) and f"{PB}/pl-sh-nostore" in found.group(0)
         self.put("w3.plan.store-refused", refused and named, f"{st}, {(found.group(0) if found else text)[:400]}")
 
     def w3_arrived(self) -> bool:

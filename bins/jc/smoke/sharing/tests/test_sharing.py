@@ -192,7 +192,8 @@ def test_the_fixtures_are_manifests_the_share_policies_leave_the_hidden_attribut
     assert docs[stores[0]]["spec"]["assignee"]["id"] == f"{suite.PB}/pl-sh-copy"
     # the copy re-mints A's id under B's Organization (ADR-N-068)
     compute = docs["pipelines/sh-copy/pipeline.yaml"]["spec"]["compute"]["bloblang"]
-    assert f'root.id = "urn:ngsi-ld:{suite.TYPE}:sk_zilina:" + this.id.split(":").index(-1)' in compute, compute
+    assert ('root = this.map_each(this.assign({"id": '
+            f'"urn:ngsi-ld:{suite.TYPE}:sk_zilina:" + this.id.split(":").index(-1)}}))') in compute, compute
     admin = docs["spaces/sh-src/policies/sh-admin.yaml"]["spec"]
     assert "propertyNames" not in admin["information"][0]  # the control sees every attribute
     csr = docs["spaces/sh-fedprot/registrations/sh-shared.yaml"]["spec"]
