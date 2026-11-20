@@ -200,10 +200,13 @@ async fn a_runner_that_refuses_is_unavailable_not_an_internal_error() {
     );
 }
 
-/// A runner on a raw socket: each of the first `cut` connections gets the headers and half the
-/// body before the socket closes, as a stream restart or a read past the timeout does (T-7114);
-/// later ones get the whole answer. Returns its base URL and the count of connections taken.
-fn runner_cutting_the_body(cut: usize) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+/// A runner on a raw socket: each connection `n` (from 0) that `cuts(n)` gets the headers and
+/// half the body before the socket closes, as a stream restart or a read past the timeout does
+/// (T-7114); the others get the whole answer. Returns its base URL and the count of connections
+/// taken.
+fn runner_cutting_the_body(
+    cuts: fn(usize) -> bool,
+) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
     use std::io::{Read, Write};
     use std::sync::atomic::Ordering;
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -219,7 +222,7 @@ fn runner_cutting_the_body(cut: usize) -> (String, Arc<std::sync::atomic::Atomic
                 "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                 RUNNER_BODY.len()
             );
-            let body = if n < cut {
+            let body = if cuts(n) {
                 &RUNNER_BODY[..RUNNER_BODY.len() / 2]
             } else {
                 RUNNER_BODY
@@ -234,7 +237,7 @@ fn runner_cutting_the_body(cut: usize) -> (String, Arc<std::sync::atomic::Atomic
 
 #[tokio::test]
 async fn a_body_cut_once_is_read_again_and_answered() {
-    let (runner, taken) = runner_cutting_the_body(1);
+    let (runner, taken) = runner_cutting_the_body(|n| n < 1);
     let mut config = Config::for_tests();
     config.pipeline_runner_url = Some(runner);
 
@@ -251,7 +254,7 @@ async fn a_body_cut_once_is_read_again_and_answered() {
 
 #[tokio::test]
 async fn a_body_cut_twice_is_503_after_one_retry_and_no_more() {
-    let (runner, taken) = runner_cutting_the_body(usize::MAX);
+    let (runner, taken) = runner_cutting_the_body(|_| true);
     let mut config = Config::for_tests();
     config.pipeline_runner_url = Some(runner.clone());
 
@@ -271,6 +274,31 @@ async fn a_body_cut_twice_is_503_after_one_retry_and_no_more() {
         taken.load(std::sync::atomic::Ordering::SeqCst),
         2,
         "the retry is bounded to one"
+    );
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_a_whole_answer_gets_that_answer_with_its_read_time() {
+    // T-7439: on a busy host one page read got the runner's answer and the next ran past both
+    // tries; the second answers what the first read, saying when (scrapedAt), not 503.
+    let (runner, taken) = runner_cutting_the_body(|n| n >= 1);
+    let mut config = Config::for_tests();
+    config.pipeline_runner_url = Some(runner);
+    let uri = "/api/v1/projects/ovzdusie/pipelines/aq-mqtt-ingest/metrics";
+    let (status, first) = get(config.clone(), uri).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+
+    let (status, again) = get(config, uri).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["received"], 128401);
+    assert_eq!(
+        again["scrapedAt"], first["scrapedAt"],
+        "the answer says it is the earlier read"
+    );
+    assert_eq!(
+        taken.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "the runner was asked again, twice, before the kept answer stood in"
     );
 }
 

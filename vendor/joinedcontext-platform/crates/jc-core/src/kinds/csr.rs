@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 /// source gave the named account; `Caller` reads it with the caller's own; `Anonymous` reads an
 /// address outside this platform with no credential at all, so it sees what any visitor of that
 /// address sees. In each, the hub Endpoint's policy set applies as well and the narrower one wins.
+/// An Endpoint another project shares (`endpointRef` with its namespace, SHR-15 `live`) is read
+/// in process on one broker, as the anonymous caller or as the hub project's ServiceAccount the
+/// provider's Policy names (`serviceAccount {project}/{name}`, FED-15); no token is made for it
+/// (SHR-17).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum FederationIdentity {
@@ -284,17 +288,23 @@ impl ContextSourceRegistrationSpec {
                 self.federation.service_account_ref.as_ref(),
             ),
         ] {
-            let anonymous_member = field == "spec.endpointRef.namespace"
-                && self.federation.identity == FederationIdentity::Anonymous;
+            let shared_member = field == "spec.endpointRef.namespace"
+                && matches!(
+                    self.federation.identity,
+                    FederationIdentity::Anonymous | FederationIdentity::ServiceAccount
+                );
             let Some(namespace) = reference.and_then(Ref::namespace) else {
                 continue;
             };
-            // SHR-15 `live` (T-7422): an anonymous member is an Endpoint another project shares
-            // with this one, read in process as an anonymous caller under that Endpoint's own
-            // view and Policy; the reconciler registers it only under a SharedSpaceReference
-            // naming it. Its own project's Endpoint is read as serviceAccount or caller.
-            if anonymous_member {
-                if Some(namespace) == project {
+            // SHR-15 `live` (T-7422, T-7426): an anonymous or serviceAccount member is an
+            // Endpoint another project shares with this one, read in process under that
+            // Endpoint's own view and Policy as the anonymous caller or as this project's
+            // ServiceAccount; the reconciler registers it only under a SharedSpaceReference
+            // naming it. An anonymous read of its own project's Endpoint would skip its Policy.
+            if shared_member {
+                if Some(namespace) == project
+                    && self.federation.identity == FederationIdentity::Anonymous
+                {
                     return Err(Error::Name {
                         field,
                         value: namespace.to_owned(),
@@ -392,8 +402,9 @@ mod tests {
 
     /// SHR-15 `live` (T-7422): an anonymous registration may name an Endpoint another project
     /// shares, and only that: the same Endpoint of the registration's own project, an Endpoint
-    /// with no namespace, or another project's Endpoint read as the caller or a ServiceAccount
-    /// stay refused (PF-48, SHR-17).
+    /// with no namespace, or another project's Endpoint read as the caller stay refused (PF-48,
+    /// SHR-17). T-7426: read as a ServiceAccount of the registration's own project it passes; a
+    /// ServiceAccount of the provider's project stays refused.
     #[test]
     fn an_anonymous_member_is_an_endpoint_of_another_project() {
         let anonymous = serde_json::json!({"identity": "anonymous"});
@@ -439,6 +450,27 @@ mod tests {
             .map_err(|e| e.to_string());
         assert!(
             said.as_ref().is_err_and(|e| e.contains("espoo")),
+            "{said:?}"
+        );
+
+        let account = |namespace: Option<&str>| {
+            let mut reference = serde_json::json!({"kind": "ServiceAccount", "name": "hub-reader"});
+            if let Some(ns) = namespace {
+                reference["namespace"] = ns.into();
+            }
+            spec(
+                serde_json::json!({"kind": "Endpoint", "name": "shared", "namespace": "espoo"}),
+                serde_json::json!({"identity": "serviceAccount", "serviceAccountRef": reference}),
+            )
+        };
+        assert!(account(None).validate().is_ok());
+        assert!(account(None).validate_scope(Some("helsinki")).is_ok());
+        let said = account(Some("espoo"))
+            .validate_scope(Some("helsinki"))
+            .map_err(|e| e.to_string());
+        assert!(
+            said.as_ref()
+                .is_err_and(|e| e.contains("spec.federation.serviceAccountRef.namespace")),
             "{said:?}"
         );
     }

@@ -82,7 +82,7 @@ Structured typed resource reference (MF-07).
 
 Which identity a forwarded request carries (PF-48).
 
-No mode is a grant. `ServiceAccount` reads a source with the grants a `Policy` on that source gave the named account; `Caller` reads it with the caller's own; `Anonymous` reads an address outside this platform with no credential at all, so it sees what any visitor of that address sees. In each, the hub Endpoint's policy set applies as well and the narrower one wins.
+No mode is a grant. `ServiceAccount` reads a source with the grants a `Policy` on that source gave the named account; `Caller` reads it with the caller's own; `Anonymous` reads an address outside this platform with no credential at all, so it sees what any visitor of that address sees. In each, the hub Endpoint's policy set applies as well and the narrower one wins. An Endpoint another project shares (`endpointRef` with its namespace, SHR-15 `live`) is read in process on one broker, as the anonymous caller or as the hub project's ServiceAccount the provider's Policy names (`serviceAccount {project}/{name}`, FED-15); no token is made for it (SHR-17).
 
 Type: one of `"serviceAccount"`, `"caller"`, `"anonymous"`
 

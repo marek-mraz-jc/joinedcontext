@@ -126,7 +126,8 @@ pub struct ChangeRequest {
     /// `HostAdd`, `HostRemove`: the host, lowercase, without a port, e.g. `smartcity.bbsk.sk`.
     pub host: Option<String>,
     /// `HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the
-    /// project moves to, e.g. `bbsk`.
+    /// project moves to, e.g. `bbsk`. `SinglePersonSet`, `AutomationLoginSet`: the Organization,
+    /// e.g. `bbsk`; the installation Organization also by the name its forge gives it.
     pub organization: Option<String>,
     /// `HostAdd`: the minted Organization id the host is proved by, e.g. `sk_bbsk`; needed for a
     /// host outside the installation's domain.
@@ -700,8 +701,14 @@ async fn automation_holds(
         .iter()
         .any(|row| row.login == login);
     if payload.automation == Some(true) {
+        // The installation's bindings scope the name its forge gives it (T-7436).
+        let named = crate::organization_host::repository_name(
+            &state.mirror,
+            &state.organization_hosts.current(),
+            organization,
+        );
         let people =
-            crate::permissions::people_with_a_role(&state.mirror, organization, TimestampTz::now());
+            crate::permissions::people_with_a_role(&state.mirror, &named, TimestampTz::now());
         if !people.contains(login) {
             return Err(invalid(
                 "subject",
@@ -1262,7 +1269,21 @@ pub async fn propose(
 ) -> Result<(StatusCode, Json<OperatorChange>), ApiError> {
     let identity = &user.0.identity;
     operator(&state, identity)?;
-    let Json(body) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let Json(mut body) = body.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    // An Organization's mode and marks are kept under its registry name; the installation's
+    // forge name is accepted for it (T-7436).
+    if matches!(
+        body.kind,
+        OperatorKind::SinglePersonSet | OperatorKind::AutomationLoginSet
+    ) {
+        body.organization = body.organization.map(|name| {
+            crate::organization_host::registry_name(
+                &state.mirror,
+                &state.organization_hosts.current(),
+                name.trim(),
+            )
+        });
+    }
     let (kind, payload, target, secret) = payload(body)?;
     let pool = database(&state)?;
     holds(&state, pool, kind, &payload, &identity.subject).await?;

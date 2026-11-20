@@ -880,6 +880,20 @@ impl Syncer {
         self
     }
 
+    /// The repository the last sync accepted, every registered project assembled at
+    /// `projects/{slug}/` in layout 2; `None` before the first sync loaded.
+    pub fn accepted(&self) -> Option<Arc<Repository>> {
+        self.accepted
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// The broker writer of views, when this Portal writes them.
+    pub fn views(&self) -> Option<Arc<super::views::ViewSync>> {
+        self.views.clone()
+    }
+
     /// Whether this replica currently reconciles.
     pub fn is_leader(&self) -> bool {
         self.leadership.as_ref().is_none_or(|l| l.is_leader())

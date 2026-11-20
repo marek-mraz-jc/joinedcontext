@@ -94,5 +94,5 @@ Where a mirrored foreign data model came from (DM-48, DM-49).
 |---|---|---|---|
 | `fetchedAt` | string (date-time) | yes | When the fetch happened. |
 | `sha256` | string | yes | SHA-256 of the fetched source, 64 lowercase hexadecimal characters; a change opens a merge request. |
-| `url` | string | yes | Schema surface the model was fetched from; `https://` only. |
+| `url` | string | yes | Schema surface the model was fetched from; `https://`, or `http://` on a loopback host (an instance mirroring its own Endpoint). |
 | `version` | [SemVer](#semver) | yes | Version the peer published. |

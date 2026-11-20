@@ -60,6 +60,13 @@ impl<T> Swappable<T> {
     }
 }
 
+impl<T: PartialEq> PartialEq for Swappable<T> {
+    fn eq(&self, other: &Self) -> bool {
+        *self.current() == *other.current()
+    }
+}
+impl<T: Eq> Eq for Swappable<T> {}
+
 /// The Organizations' Portal hosts (T-7183): `JC_PORTAL_ORGANIZATION_HOSTS` at start, replaced
 /// whenever jc's Organization registry runs another set
 /// ([`AppState::replace_organization_hosts`]).
@@ -361,6 +368,23 @@ pub fn repository_name(
         .flatten()
         .filter(|claim| !hosts.iter().any(|h| &h.organization == claim))
         .unwrap_or_else(|| organization.to_owned())
+}
+
+/// The registry's name for the Organization the repository names `name`: the inverse of
+/// [`repository_name`], so the installation Organization's forge name (jc-prod: `hel`) reads as
+/// the configured one (`smartcity`) and every other name stays as given (T-7436).
+pub fn registry_name(
+    mirror: &crate::store::Mirror,
+    hosts: &[OrganizationHost],
+    name: &str,
+) -> String {
+    mirror
+        .configured_installation()
+        .filter(|configured| {
+            *configured != name && repository_name(mirror, hosts, configured) == name
+        })
+        .unwrap_or(name)
+        .to_owned()
 }
 
 /// The public base of the running request: its Organization host's, else the configured one.

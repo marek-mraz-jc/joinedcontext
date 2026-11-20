@@ -452,7 +452,7 @@
           "type": "string"
         },
         "url": {
-          "description": "Schema surface the model was fetched from; `https://` only.",
+          "description": "Schema surface the model was fetched from; `https://`, or `http://` on a loopback host (an instance mirroring its own Endpoint).",
           "type": "string"
         },
         "version": {

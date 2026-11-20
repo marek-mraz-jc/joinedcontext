@@ -2042,9 +2042,11 @@ class Suite:
         """`org`'s admin proposes its own Portal with a source reaching `other`: an `endpoints`
         source naming `other`'s project, a `dcat-ap` source at `other`'s private Endpoint
         address. Both 422 naming the source and the rule that stops it; the same Portal with no
-        source dry-runs 200. The `dcat-ap` case asserts the allow-list reason: the judge has no
-        other check on a url, so any refusal (a malformed body, a loopback guard) proves nothing
-        about ODP-12; the other Organization's API host must never be harvestable."""
+        source dry-runs 200. The `dcat-ap` case asserts the ODP-12 reason on `spec.sources[0].url`:
+        the judge refuses an address of this installation outside every Organization's open data
+        catalogue by the configured addresses, before the loopback guard, so a refusal for any
+        other reason (a malformed body, a .localhost name) fails the row. The other Organization's
+        API host is never harvestable; its public catalogue is (portals.rs unit test)."""
         h = self.session(f"{org}-admin")
         def propose(sources):
             body = json.loads(portal_manifest(f"{tag}-{org}", org, sources, path=tag))
@@ -2055,12 +2057,13 @@ class Suite:
         closed = sorted(s for p in self.exp[other]["projects"].values() for s in p["closed"])
         api = self.hosts[other]["api"] if self.hosts else urllib.parse.urlparse(self.base).hostname
         cases = {"foreign-project": [{"name": "theirs", "type": "endpoints", "projects": projects[:1]}] if projects else None,
-                 # allowedHosts names the url's host without the port (jc-core's spec check)
+                 # allowedHosts names the url's host without the port: jc-core's spec check
+                 # refuses a source without it before the ODP-12 rule runs
                  "foreign-endpoint": [{"name": "theirs", "type": "dcat-ap", "url": f"https://{api}/api/endpoint/{closed[0]}/",
                                        "allowedHosts": [urllib.parse.urlsplit(f"//{api}").hostname]}] if closed else None}
         # the member the refusal names and a phrase of its reason (crates/portal/src/portals.rs)
         reasons = {"foreign-project": ("spec.sources[0].projects", "no project of"),
-                   "foreign-endpoint": ("spec.sources[0].allowedHosts", "harvest allow-list")}
+                   "foreign-endpoint": ("spec.sources[0].url", "(ODP-12)")}
         for case, sources in cases.items():
             rid = f"portals.{org}-admin.source.{case}.{other}"
             if sources is None:
