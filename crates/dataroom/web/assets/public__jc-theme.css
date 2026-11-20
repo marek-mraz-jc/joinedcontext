@@ -938,3 +938,8 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-map-frame { width: 100%; height: 24rem; border: 0; border-radius: var(--jc-radius, 8px); }
 .jc-table-wrap { overflow-x: auto; }
 .jc-block-more { margin-top: .75rem; }
+.jc-block .table { width: 100%; border-collapse: collapse; }
+.jc-block .table th, .jc-block .table td { text-align: left; vertical-align: top; padding: .625rem .75rem; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+.jc-row > * { min-width: 0; }
+.jc-map-frame, .jc-viz-frame { background: rgba(15, 23, 42, .04); border: 1px solid rgba(15, 23, 42, .1); }
+@media (max-width: 599px) { .jc-map-frame { height: 18rem; } }
