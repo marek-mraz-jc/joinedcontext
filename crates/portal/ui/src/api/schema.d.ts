@@ -12733,7 +12733,7 @@ export interface components {
         MovePlan: {
             /** @description The project's own `RoleBinding`s, which move with it. */
             bindings: string[];
-            /** @description Why the move cannot be applied now, each naming its next step; empty when it can. */
+            /** @description Why the move cannot be asked for now, each naming its next step; empty when it can. */
             blockers: string[];
             /** @description The project sits under `to` already: approving changes nothing. */
             done: boolean;
@@ -12747,6 +12747,12 @@ export interface components {
             /** @description Rows keyed by the project under `from`, per table; only tables holding any are listed. */
             tables: components["schemas"]["TableRows"][];
             to: string;
+            /**
+             * @description What must finish before a second operator approves, each naming its next step: the
+             *     manifest naming `to`, the project's open Changes merged or closed (T-7462). A proposal may
+             *     come first, and it is what lets the Project Change name `to` ([`check_manifest`]).
+             */
+            waits: string[];
         };
         /** @description Where the space goes. */
         MoveRequest: {

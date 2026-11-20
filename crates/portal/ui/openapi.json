@@ -60369,7 +60369,8 @@
           "rows",
           "bindings",
           "done",
-          "blockers"
+          "blockers",
+          "waits"
         ],
         "properties": {
           "bindings": {
@@ -60384,7 +60385,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Why the move cannot be applied now, each naming its next step; empty when it can."
+            "description": "Why the move cannot be asked for now, each naming its next step; empty when it can."
           },
           "done": {
             "type": "boolean",
@@ -60421,6 +60422,13 @@
           },
           "to": {
             "type": "string"
+          },
+          "waits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What must finish before a second operator approves, each naming its next step: the\nmanifest naming `to`, the project's open Changes merged or closed (T-7462). A proposal may\ncome first, and it is what lets the Project Change name `to` ([`check_manifest`])."
           }
         }
       },

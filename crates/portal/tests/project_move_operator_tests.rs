@@ -204,7 +204,9 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     assert_eq!(status, StatusCode::OK, "{waiting}");
     assert_eq!(waiting["blockers"], json!([]), "{waiting}");
     assert!(
-        waiting["waits"].to_string().contains("spec.organizationRef"),
+        waiting["waits"]
+            .to_string()
+            .contains("spec.organizationRef"),
         "{waiting}"
     );
     let (status, refused) = approve(&state, operator(&state, "ops-b"), &id).await;
@@ -269,8 +271,14 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     .await
     .expect("the audit row");
     assert_eq!(after["rows"], json!(2), "{after}");
-    assert_eq!(after["rows"], planned["rows"], "the dry run counts what the apply moves");
-    assert_eq!(after["tables"], planned["tables"], "{after} against {planned}");
+    assert_eq!(
+        after["rows"], planned["rows"],
+        "the dry run counts what the apply moves"
+    );
+    assert_eq!(
+        after["tables"], planned["tables"],
+        "{after} against {planned}"
+    );
     assert_eq!(
         rows_under(&project, old).await,
         0,
@@ -535,13 +543,47 @@ async fn a_project_manifest_names_the_organization_the_registry_files_it_under()
         }
     };
     assert_eq!(check(from.clone()).await, Ok(()));
-    assert_eq!(check(claim.clone()).await, Ok(()), "the claim is the installation");
+    assert_eq!(
+        check(claim.clone()).await,
+        Ok(()),
+        "the claim is the installation"
+    );
     let refused = check(to.clone()).await.expect_err("no move asked for");
     assert!(
         refused.starts_with("spec.organizationRef:")
             && refused.contains(&from)
             && refused.contains(&to),
         "{refused}"
+    );
+
+    // The Project door answers the same refusal at its dry run, naming the field.
+    let door = send(
+        &state,
+        operator(&state, "ops-a"),
+        "PUT",
+        &format!("/api/v1/projects/{ORG_NAMESPACE}/projects/{project}?dryRun=All"),
+        Some(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": { "name": project, "namespace": ORG_NAMESPACE },
+            "spec": { "organizationRef": to }
+        })),
+    )
+    .await;
+    assert_eq!(door.status, StatusCode::OK, "{}", door.text);
+    let finding = &body(&door.text)["verdict"]["findings"][0];
+    assert_eq!(
+        finding["path"],
+        json!("spec.organizationRef"),
+        "{}",
+        door.text
+    );
+    assert!(
+        finding["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("the registry files project")),
+        "{}",
+        door.text
     );
 
     let (status, made) = propose(&state, operator(&state, "ops-a"), &project, &to).await;
@@ -555,6 +597,9 @@ async fn a_project_manifest_names_the_organization_the_registry_files_it_under()
     assert_eq!(check(to.clone()).await, Ok(()));
     for named in [from.clone(), claim.clone()] {
         let refused = check(named.clone()).await.expect_err("moved away");
-        assert!(refused.contains(&to) && refused.contains(&named), "{refused}");
+        assert!(
+            refused.contains(&to) && refused.contains(&named),
+            "{refused}"
+        );
     }
 }

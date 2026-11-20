@@ -1548,7 +1548,15 @@ pub async fn approve(
                 .into(),
         ));
     }
-    holds(&state, pool, found.kind, &found.payload, &found.proposed_by, true).await?;
+    holds(
+        &state,
+        pool,
+        found.kind,
+        &found.payload,
+        &found.proposed_by,
+        true,
+    )
+    .await?;
     // A host Change re-reads its proposer where the realm can be asked; an operator Change
     // always does, under its lock (`operators_hold`).
     if let (
@@ -2454,12 +2462,12 @@ pub async fn project_move_plan(
     move_plan(&state, pool, &query.project, query.organization.trim())
         .await?
         .map(Json)
-    .ok_or_else(|| {
-        ApiError::NotFound(format!(
-            "the registry holds no live project '{}'",
-            query.project
-        ))
-    })
+        .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "the registry holds no live project '{}'",
+                query.project
+            ))
+        })
 }
 
 pub fn router() -> Router<AppState> {
