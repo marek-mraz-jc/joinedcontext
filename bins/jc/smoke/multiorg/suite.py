@@ -2058,9 +2058,7 @@ class Suite:
         api = self.hosts[other]["api"] if self.hosts else urllib.parse.urlparse(self.base).hostname
         cases = {"foreign-project": [{"name": "theirs", "type": "endpoints", "projects": projects[:1]}] if projects else None,
                  "foreign-endpoint": [{"name": "theirs", "type": "dcat-ap",
-                                       "url": f"https://{api}/api/endpoint/{closed[0]}/",
-                                       # jc-core wants the url's own host listed; ODP-12 is then the rule left
-                                       "allowedHosts": [urllib.parse.urlparse(f"https://{api}").hostname]}] if closed else None}
+                                       "url": f"https://{api}/api/endpoint/{closed[0]}/"}] if closed else None}
         # the member the refusal names and a phrase of its reason (crates/portal/src/portals.rs)
         reasons = {"foreign-project": ("spec.sources[0].projects", "no project of"),
                    "foreign-endpoint": ("spec.sources[0].url", "(ODP-12)")}
