@@ -7528,6 +7528,91 @@ output_error{stream="kpi"} 6
         assert!(run(&[(path, fixed)], "dddd4444").is_empty(), "unchanged");
     }
 
+    /// T-7455: an open-data Endpoint the load refused for its project's quota is served, and so
+    /// planned by the next catalogue wave, once a later `main` raises the quota, though the
+    /// Endpoint's own manifest never changed (jc-dev: bratislava-zs-kapacita and -ziaci).
+    #[test]
+    fn an_endpoint_refused_for_its_quota_is_planned_once_the_quota_is_raised() {
+        let render = |root: &Path| Render {
+            layout: 1,
+            root: root.to_path_buf(),
+            _staged: Vec::new(),
+            projects: BTreeMap::new(),
+            unstaged: Vec::new(),
+            unloaded: Vec::new(),
+            refused: Vec::new(),
+            listings: BTreeMap::new(),
+        };
+        let syncer = bare_syncer();
+        let run = |files: &[(&str, String)], revision: &str| {
+            let dir = Scratch::new("t7455").expect("a scratch directory");
+            let files: Vec<(&str, &str)> = files.iter().map(|(p, c)| (*p, c.as_str())).collect();
+            write_tree(dir.path(), &files);
+            let loaded = Repository::load(dir.path()).expect("the repository loads");
+            let (served, refusals) =
+                syncer.refuse_invalid(&render(dir.path()), Arc::new(loaded), revision, "main");
+            *syncer.accepted.lock().expect("lock") = Some(Arc::clone(&served));
+            let (fresh, _) = syncer
+                .load_mirror(&render(dir.path()), &served, &refusals, revision, "main")
+                .expect("the mirror loads");
+            syncer.mirror.replace_all(&fresh);
+            let (planned, _) = jcctl::commands::publish_ckan::targets_with(&served, "city", None)
+                .expect("the publications read");
+            let planned: Vec<String> = planned.iter().map(|t| t.id.name.clone()).collect();
+            (refusals, planned)
+        };
+        let project = |public: u32| {
+            serde_json::to_string(&json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": {"name": "city", "namespace": "org"},
+                "spec": {"organizationRef": "bb", "quotas": {"publicEndpoints": public}},
+            }))
+            .expect("JSON")
+        };
+        let open = |name: &str, slug: &str| {
+            manifest(
+                "Endpoint",
+                name,
+                json!({
+                    "contextSpaceRef": "air",
+                    "slug": slug,
+                    "audience": "public",
+                    "enabledRepresentations": ["ngsi-ld"],
+                    "publish": {"ckan": {"instanceRef": {"kind": "CkanInstance", "name": "hel-fi"}}},
+                }),
+            )
+        };
+        let files = |public: u32| {
+            vec![
+                ("projects/city/project.yaml", project(public)),
+                second_catalogue(),
+                (
+                    "projects/city/spaces/air/endpoints/air-a.yaml",
+                    open("air-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ),
+                (
+                    "projects/city/spaces/air/endpoints/air-b.yaml",
+                    open("air-b", "bbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                ),
+            ]
+        };
+
+        let (refusals, planned) = run(&files(1), "aaaa1111");
+        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(reasons[0].contains("publicEndpoints"), "{reasons:?}");
+        assert_eq!(planned, ["air-a"]);
+
+        let (refusals, planned) = run(&files(2), "bbbb2222");
+        let reasons: Vec<&String> = refusals.values().map(|r| &r.reason).collect();
+        assert!(reasons.is_empty(), "{reasons:?}");
+        assert_eq!(planned, ["air-a", "air-b"]);
+        let (refusals, planned) = run(&files(2), "cccc3333");
+        assert!(refusals.is_empty(), "the next run keeps it");
+        assert_eq!(planned, ["air-a", "air-b"]);
+    }
+
     /// EP-187 (T-7219): an open-data Endpoint already on `main` that binds a write stays in the
     /// mirror after a restart (no `accepted` yet), marked `Degraded`, beside the write Policy and
     /// the Pipeline aimed at it; the load refuses none of them, where a proposal is a 422.
