@@ -8,6 +8,7 @@ import importlib.util
 import json
 import re
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -357,8 +358,8 @@ class PortalJc:
     """A jc answering the Portal rows (check_portals): `leaky`, it answers as if isolation were
     broken: every Organization's Portals readable, writable and listing each other's datasets."""
 
-    def __init__(self, orgs, leaky, wrong_reason=False):
-        self.orgs, self.leaky, self.wrong_reason = orgs, leaky, wrong_reason
+    def __init__(self, orgs, leaky, wrong_reason=False, no_hosts=False):
+        self.orgs, self.leaky, self.wrong_reason, self.no_hosts = orgs, leaky, wrong_reason, no_hosts
 
     def ours(self, org, other):
         return self.leaky or org == other
@@ -373,6 +374,14 @@ class PortalJc:
                 spec = body["spec"]
                 if not jc.ours(org, spec["organizationRef"]):
                     return 403, {"detail": "not yours"}
+                src = (spec["sources"] or [{}])[0]
+                if jc.no_hosts:
+                    src.pop("allowedHosts", None)  # the fixture T-7439 shipped
+                url_host = urllib.parse.urlsplit(src.get("url", "")).hostname
+                if url_host and url_host not in src.get("allowedHosts", []):
+                    # jc-core's spec check runs first: allowedHosts lists the url's host name, no port
+                    return 200, {"valid": False, "verdict": {"ok": False, "findings": [{"level": "error", "path": "",
+                                 "message": f"invalid spec.sources[0].allowedHosts: must list `{url_host}`, the url's own host"}]}}
                 if spec["sources"] and jc.wrong_reason:
                     # refused for a reason that is not the isolation rule (a loopback guard)
                     return 422, {"detail": "spec.sources[0].url: loopback address refused"}
@@ -449,6 +458,24 @@ def test_a_source_refused_for_another_reason_does_not_pass_the_source_rows(tmp_p
     sources = [r for r in got if ".source." in r]
     assert len(sources) == 4 and {got[r] for r in sources} == {"fail"}, got
     assert {got[r] for r in got if ".source." not in r} == {"pass"}, got
+
+
+def test_a_foreign_endpoint_source_without_allowed_hosts_never_reaches_the_odp12_rule(tmp_path):
+    # T-7441: jc-core's spec check refuses a dcat-ap source whose allowedHosts misses the url's
+    # host before the Portal's ODP-12 rule runs, so that refusal fails the row by its reason.
+    s = suite.Suite(args(tmp_path))
+    s.a.sync_timeout = 0
+    orgs = ("hel", "zilina")
+    s.exp = {"hel": {"projects": {"helsinki": EMPTY | {"closed": {"hslug": ("bikes", "organization")}}}},
+             "zilina": {"projects": {"zilina": EMPTY | {"closed": {"zslug": ("air", "organization")}}}}}
+    s.hosts = {o: {k: f"{k}.{o}.localhost:42301" for k in ("portal", "opendata", "api", "mcp")} for o in orgs}
+    jc = PortalJc(orgs, False, no_hosts=True)
+    s.session, s.client = jc.session, jc.client
+    s.check_portals()
+    got = {r["id"]: r["result"] for r in s.rows}
+    endpoint = [r for r in got if ".source.foreign-endpoint." in r]
+    assert len(endpoint) == 2 and {got[r] for r in endpoint} == {"fail"}, got
+    assert {got[r] for r in got if ".source.foreign-endpoint." not in r} == {"pass"}, got
 
 
 _cspec = importlib.util.spec_from_file_location("smoke_multiorg_compose", HERE.parent / "compose.py")
