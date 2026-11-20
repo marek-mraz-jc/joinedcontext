@@ -172,6 +172,7 @@ def test_the_outsider_cell_fails_when_c_reads_the_entity():
 def fixture_suite():
     s = Stub({})
     s.org_a, s.org_b, s.domain_a = "hel", "zilina", "hel.fi"
+    s.copy_urn = suite.owned_urn("zilina.sk")
     s.people = {k: {"id": f"00000000-0000-4000-8000-00000000000{i}"} for i, k in
                 enumerate(("a-admin", "b-admin", "b-member", "c-member"))}
     return s
@@ -189,6 +190,9 @@ def test_the_fixtures_are_manifests_the_share_policies_leave_the_hidden_attribut
     stores = [n for n, d in docs.items() if "store" in (d.get("spec") or {}).get("actions", [])]
     assert stores == ["spaces/sh-src/policies/sh-share-pipeline.yaml"], stores
     assert docs[stores[0]]["spec"]["assignee"]["id"] == f"{suite.PB}/pl-sh-copy"
+    # the copy re-mints A's id under B's Organization (ADR-N-068)
+    compute = docs["pipelines/sh-copy/pipeline.yaml"]["spec"]["compute"]["bloblang"]
+    assert f'root.id = "urn:ngsi-ld:{suite.TYPE}:sk_zilina:" + this.id.split(":").index(-1)' in compute, compute
     admin = docs["spaces/sh-src/policies/sh-admin.yaml"]["spec"]
     assert "propertyNames" not in admin["information"][0]  # the control sees every attribute
     csr = docs["spaces/sh-fedprot/registrations/sh-shared.yaml"]["spec"]
