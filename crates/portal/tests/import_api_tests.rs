@@ -713,6 +713,23 @@ async fn a_dry_run_reports_what_it_would_do_and_writes_nothing() {
     );
 }
 
+/// T-7458, jc-prod 2026-11-20: the dry run of a project with no Organization in the registry
+/// answers 409 naming the project, never a green report the import then refuses as unchecked.
+#[tokio::test]
+async fn a_dry_run_into_a_project_with_no_organization_answers_409_naming_it() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let state = common::unplaced(state, PROJECT).await;
+    let (content_type, body) = multipart(&bundle_archive(), &[]);
+    let uri = format!("/api/v1/projects/{PROJECT}/import?dryRun=All");
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    let text = problem.to_string();
+    assert!(text.contains(PROJECT), "{problem}");
+    assert!(text.contains("no active Organization"), "{problem}");
+    assert!(written(&server).await.is_empty(), "{problem}");
+}
+
 // --- format=files: a repository's files as they are (T-6972) -----------------------------
 
 const FILES_POLICY: &str = r#"apiVersion: joinedcontext.com/v1alpha1
@@ -837,6 +854,22 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
         text(FILES_ENDPOINT_PATH).contains("slug: mluyob4nz52lok3ssk7pgn5vwt"),
         "{committed:?}"
     );
+}
+
+/// T-7458: the files door answers the same 409 for a project with no Organization (barcelona's
+/// door move on jc-prod got 200, then 409 verdict_absent with no reason).
+#[tokio::test]
+async fn a_files_dry_run_into_a_project_with_no_organization_answers_409_naming_it() {
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    let state = common::unplaced(state, PROJECT).await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files&dryRun=All");
+    let (content_type, body) = multipart(&files_archive(), &[]);
+    let (status, problem) = send(state, &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    let text = problem.to_string();
+    assert!(text.contains(PROJECT), "{problem}");
+    assert!(text.contains("no active Organization"), "{problem}");
+    assert!(written(&server).await.is_empty(), "{problem}");
 }
 
 /// T-6972, jc-dev 2026-11-16: a project of layout 2 keeps its files at its own repository's

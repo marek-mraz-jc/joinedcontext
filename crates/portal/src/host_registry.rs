@@ -263,6 +263,55 @@ pub async fn report_drift(
     Ok(Some(drift))
 }
 
+/// The projects of the mirror that hold a Pipeline and have no tenancy key, by name, with their
+/// count of Pipelines (T-7458): their runs keep no history (pipeline_log) and the import of their
+/// files cannot be checked, while their Pipelines still run. A branch is no project of its own.
+pub async fn unplaced_pipelines(
+    pool: &PgPool,
+    mirror: &Mirror,
+) -> Result<Vec<(String, usize)>, sqlx::Error> {
+    let mut unplaced = Vec::new();
+    for project in mirror.namespaces() {
+        if project == crate::permissions::ORG_NAMESPACE || jc_router::branch_name(&project) {
+            continue;
+        }
+        let pipelines = mirror
+            .list(&project, "Pipeline", &crate::store::ListOptions::default())
+            .items
+            .len();
+        if pipelines > 0
+            && crate::project_ids::key_of(pool, mirror, &project)
+                .await?
+                .is_none()
+        {
+            unplaced.push((project, pipelines));
+        }
+    }
+    Ok(unplaced)
+}
+
+/// [`unplaced_pipelines`], logged every round of the drift report: a warning naming each project
+/// (`projects=barcelona:19,zilina:3`), or one line that there is none, so the installation smoke
+/// (bins/jc/smoke/orgs, `pipelines.unplaced`) reads a verdict from every window of the log.
+pub async fn report_unplaced_pipelines(pool: &PgPool, mirror: &Mirror) -> Result<(), sqlx::Error> {
+    let unplaced = unplaced_pipelines(pool, mirror).await?;
+    if unplaced.is_empty() {
+        tracing::info!("every project with Pipelines has an Organization");
+        return Ok(());
+    }
+    let projects = unplaced
+        .iter()
+        .map(|(project, n)| format!("{project}:{n}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    tracing::warn!(
+        %projects,
+        "projects with Pipelines and no Organization: their runs keep no history and their \
+         imports cannot be checked; an operator adds each Organization on the Organizations page"
+    );
+    Ok(())
+}
+
 /// Every row, removed ones included, by host.
 pub async fn rows(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
     sqlx::query_as(

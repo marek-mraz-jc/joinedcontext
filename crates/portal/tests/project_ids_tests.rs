@@ -372,6 +372,39 @@ async fn no_key_without_an_active_organization_of_the_registry() {
     );
 }
 
+/// T-7458: a project whose Pipelines run with no active Organization of the registry is named
+/// with its count of Pipelines; a placed project and one with no Pipeline are not.
+#[tokio::test]
+async fn the_projects_with_pipelines_and_no_organization_are_named() {
+    let pool = pool().await;
+    let state = AppState::new(Config::for_tests(), None).with_db(pool.clone());
+    let placed = run_name("placed");
+    let unplaced = run_name("unplaced");
+    let empty = run_name("empty");
+    common::keyed_project(&state, &pool, &placed, &run_name("home")).await;
+    for project in [&unplaced, &empty] {
+        state.mirror.upsert(envelope(
+            "Project",
+            project,
+            joinedcontext_portal::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": run_name("nowhere") }),
+        ));
+    }
+    for (project, pipeline) in [(&placed, "aq"), (&unplaced, "aq"), (&unplaced, "trees")] {
+        state
+            .mirror
+            .upsert(envelope("Pipeline", pipeline, project, json!({})));
+    }
+    let named: Vec<(String, usize)> =
+        joinedcontext_portal::host_registry::unplaced_pipelines(&pool, &state.mirror)
+            .await
+            .expect("the unplaced projects")
+            .into_iter()
+            .filter(|(project, _)| [&placed, &unplaced, &empty].contains(&project))
+            .collect();
+    assert_eq!(named, [(unplaced.clone(), 2)]);
+}
+
 #[tokio::test]
 async fn migration_0067_keys_the_organizations_and_projects_of_today() {
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").expect("JC_PORTAL_TEST_DATABASE_URL");

@@ -435,7 +435,9 @@ async fn one_persons_import_check_is_never_anothers_and_never_another_bundles() 
     let stefan = identity("stefan", &["devs"]);
     let bundle = json!({ "files": ["projects/ovzdusie/spaces/main.yaml"], "count": 1 });
 
-    ops::record_import_check(&state, &jana, PROJECT, &bundle).await;
+    ops::record_import_check(&state, &jana, PROJECT, &bundle)
+        .await
+        .expect("the check is recorded");
     assert!(
         passed(ops::verdict_for_import(&state, &jana, PROJECT, &bundle).await),
         "the person who checked the bundle was refused"
@@ -463,7 +465,9 @@ async fn one_persons_import_check_is_never_anothers_and_never_another_bundles() 
     assert_eq!(body["reason"], json!("stale"));
 
     // Forgetting takes this person's check and leaves the other's, and the next import is checked.
-    ops::record_import_check(&state, &stefan, PROJECT, &bundle).await;
+    ops::record_import_check(&state, &stefan, PROJECT, &bundle)
+        .await
+        .expect("the check is recorded");
     ops::forget_import_check(&state, &jana, PROJECT).await;
     assert!(ops::verdict_for_import(&state, &jana, PROJECT, &bundle)
         .await

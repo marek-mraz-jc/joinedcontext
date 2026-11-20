@@ -122,7 +122,7 @@ pub async fn import(
     // PF-57: the dry run is the check of exactly these bytes; the import needs it fresh.
     let subject = subject(bytes);
     if dry_run {
-        crate::ops::record_import_check(state, identity, project, &subject).await;
+        crate::ops::record_import_check(state, identity, project, &subject).await?;
         return Ok((StatusCode::OK, as_json(&report)?));
     }
     crate::ops::verdict_for_import(state, identity, project, &subject).await?;

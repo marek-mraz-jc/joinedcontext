@@ -30470,7 +30470,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description A resource already exists and the policy is 'fail', or the bundle has no fresh check of its own (`verdict_required`, PF-57) */
+            /** @description A resource already exists and the policy is 'fail', the bundle has no fresh check of its own (`verdict_required`, PF-57), or the project has no Organization key to keep the check under (T-7458) */
             409: {
                 headers: {
                     [name: string]: unknown;

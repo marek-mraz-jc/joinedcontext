@@ -547,6 +547,31 @@ async fn the_dry_run_answers_the_repository_and_creates_nothing() {
     nothing_created(&server).await;
 }
 
+/// T-7458: an App's dry run into a project with no Organization in the registry answers 409
+/// naming the project and creates nothing.
+#[tokio::test]
+async fn the_dry_run_into_a_project_with_no_organization_answers_409_naming_it() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    let file = exported(&state).await;
+    let state = common::unplaced(state, "doprava").await;
+    let answer = import(
+        &state,
+        person("jana"),
+        "?format=app&dryRun=All",
+        &file,
+        &[("name", "mapa")],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("doprava"), "{}", answer.text);
+    assert!(
+        answer.text.contains("no active Organization"),
+        "{}",
+        answer.text
+    );
+    nothing_created(&server).await;
+}
+
 /// UI-87: who does not administer the organization is refused before the upload is read, and
 /// who does not read the project is told nothing about it.
 #[tokio::test]
