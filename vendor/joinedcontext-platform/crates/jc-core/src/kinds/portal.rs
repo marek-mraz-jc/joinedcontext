@@ -191,6 +191,10 @@ pub struct PortalSpec {
     /// Dataset names the portal does not list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    /// The portal's pages built from blocks (T-7418): `home` replaces the built-in home, each
+    /// other page answers at `/page/{slug}`; absent: the built-in home alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<crate::kinds::portal_page::PortalPage>,
 }
 
 impl Kind for PortalSpec {
@@ -281,7 +285,7 @@ impl PortalSpec {
             }
             seen.push(&source.name);
         }
-        Ok(())
+        crate::kinds::portal_page::validate_pages(&self.pages)
     }
 }
 
@@ -530,6 +534,25 @@ mod tests {
         );
         let back = serde_json::to_value(&spec).unwrap();
         assert!(back["sources"][0].get("enabled").is_none(), "{back}");
+    }
+
+    #[test]
+    fn a_portal_checks_its_pages_through_the_manifest() {
+        let yaml = |blocks: &str| {
+            format!(
+                "{HEAD}spec:\n  organizationRef: ba\n  path: x\n  pages:\n    - slug: home\n      \
+                 rows:\n        - blocks: [{blocks}]\n"
+            )
+        };
+        parse(&yaml("{type: numbers, items: [datasets]}")).expect("valid");
+        let err = parse(&yaml("{type: chart, dataset: 'A B'}")).expect_err("bad name");
+        assert!(
+            err.to_string()
+                .contains("spec.pages[0].rows[0].blocks[0].dataset"),
+            "{err}"
+        );
+        let err = parse(&yaml("{type: text, markdown: {sk: x}, html: '<b>'}")).expect_err("html");
+        assert!(err.to_string().contains("html"), "{err}");
     }
 
     #[test]

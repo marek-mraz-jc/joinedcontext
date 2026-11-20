@@ -168,8 +168,62 @@ fn section(out: &mut String, title: &str, schema: &Value, queue: &mut VecDeque<S
                 ));
             }
         }
-        _ => out.push_str(&format!("Type: {}\n", cell(&type_of(schema, queue)))),
+        _ => match tagged_variants(schema) {
+            Some(variants) => {
+                for (tag, part) in variants {
+                    out.push_str(&format!("\n### `type: {tag}`\n\n"));
+                    let mut fields = part.clone();
+                    if let Some(props) = fields.get_mut("properties").and_then(Value::as_object_mut)
+                    {
+                        props.remove("type");
+                    }
+                    // A newtype variant names its struct, whose own section lists the fields.
+                    for inner in part
+                        .get("allOf")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        if let Some(name) = ref_name(inner) {
+                            out.push_str(&format!("Fields: [{name}](#{}).\n", anchor(name)));
+                            queue.push_back(name.to_owned());
+                        }
+                    }
+                    if fields
+                        .get("properties")
+                        .and_then(Value::as_object)
+                        .is_some_and(|p| !p.is_empty())
+                    {
+                        section_body(out, &fields, queue);
+                    }
+                }
+            }
+            None => out.push_str(&format!("Type: {}\n", cell(&type_of(schema, queue)))),
+        },
     }
+}
+
+/// The variants of an enum told apart by a `type` member, each with its one tag value.
+fn tagged_variants(schema: &Value) -> Option<Vec<(String, &Value)>> {
+    schema
+        .get("oneOf")?
+        .as_array()?
+        .iter()
+        .map(|part| {
+            let tag = values_of(part.get("properties")?.get("type")?)?;
+            match tag.as_slice() {
+                [one] => Some((one.trim_matches('`').trim_matches('"').to_owned(), part)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// A variant's description and fields under its heading.
+fn section_body(out: &mut String, schema: &Value, queue: &mut VecDeque<String>) {
+    let mut part = String::new();
+    section(&mut part, "", schema, queue);
+    out.push_str(part.trim_start_matches("\n## \n\n"));
 }
 
 /// The reference page of one kind.
