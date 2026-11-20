@@ -47,9 +47,20 @@
   }
 
   // viz.{domain} → {domain}: the hosts the page reads are named by its own, never by a parameter.
-  function hosts(hostname) {
+  // jc's viz mount answers beside other modules and names the gateway and the catalogue in
+  // `<meta name="jc-viz">` (as explore.js reads it): a meta that is present names both, and one it
+  // leaves out or names badly is "" (none), never a guess.
+  function hosts(meta, hostname) {
     var domain = String(hostname).replace(/^viz\./, "");
-    return { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
+    var own = { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
+    if (meta == null) return own;
+    var given = {};
+    try { given = JSON.parse(meta) || {}; } catch (e) { given = {}; }
+    [["api", "api"], ["data", "catalogue"]].forEach(function (pair) {
+      var v = given[pair[1]];
+      own[pair[0]] = typeof v === "string" && /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/.test(v) ? v.replace(/\/+$/, "") : "";
+    });
+    return own;
   }
 
   // Whether a parent may hand this page a spec (`#show`, ADR-N-053 §2.9): https on the domain or
@@ -466,7 +477,8 @@
 
   function main() {
     var where = parseHash(location.hash);
-    var h = hosts(location.hostname);
+    var meta = document.querySelector('meta[name="jc-viz"]');
+    var h = hosts(meta ? meta.getAttribute("content") : null, location.hostname);
     var status = document.getElementById("status");
     var frame = document.getElementById("frame");
     var lang = (where && where.lang) || (navigator.language || "en").slice(0, 2);
@@ -484,6 +496,7 @@
     }
     if (location.hash === "#show") return show(h, frame, fail);
     if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
+    if (!h.data || !h.api) return fail("This page names no open-data catalogue to draw a chart from.");
     if (where.inline) document.body.classList.add("inline");
     var controller = new AbortController();
     var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
