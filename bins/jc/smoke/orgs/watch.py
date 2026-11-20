@@ -141,12 +141,15 @@ UNATTRIBUTED = re.compile(r"write refused: (?P<why>[^=]+?) slug=(?P<slug>[a-z0-9
 UNPLACED = re.compile(r"projects with Pipelines and no Organization.*\bprojects=(?P<projects>\S+)"
                       r"|(?P<none>every project with Pipelines has an Organization)")
 PROJECT_COUNT = re.compile(r"([a-z0-9][a-z0-9-]{0,62}):(\d{1,6})")
+POD_PREFIX = re.compile(r"^\[pod/[^\]\s]+\] ")
 
 
 def event_line(line: str) -> str:
     """One log line as `message key=value ...`: jc's JSON format (log_format = "json", every
     cluster: {"fields": {"message", ...}}) in its fields' order, a text line as it is (up.sh's
-    --log-format text)."""
+    --log-format text). A `[pod/<pod>/<container>] ` prefix (kubectl logs --all-pods with --prefix)
+    is dropped first, or no JSON line would parse."""
+    line = POD_PREFIX.sub("", line)
     if not line.lstrip().startswith("{"):
         return line
     try:
@@ -189,7 +192,7 @@ def jc_log(cfg: dict) -> dict:
     try:
         text = kubectl(cfg, "-n", cfg["namespace"], "logs", cfg.get("jc_workload", "deploy/jc"),
                        "-c", cfg.get("jc_container", "jc-server"),
-                       f"--since={LOG_WINDOW}", "--all-pods=true", timeout=180)
+                       f"--since={LOG_WINDOW}", "--all-pods=true", "--prefix=false", timeout=180)
     except (RuntimeError, subprocess.TimeoutExpired) as err:
         return {"logWindow": LOG_WINDOW, "logError": str(err)[:200]}
     return log_facts(text)

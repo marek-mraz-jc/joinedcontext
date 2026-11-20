@@ -718,7 +718,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert toml.read_text() == 'mode = "host"\n'
     assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG)}
     # the log of every jc pod's jc-server container, the last 30 min only
-    assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true") in calls
+    assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true",
+            "--prefix=false") in calls
     queries = [c for c in calls if c[-1].startswith(("SELECT", "WITH"))]
     assert len(queries) == 4 and all("SET default_transaction_read_only = on" in c for c in queries)
     # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
@@ -885,3 +886,13 @@ def test_the_json_lines_jc_writes_on_the_clusters_fail_both_rows():
     # the newest report wins in JSON too: a later "none" line passes the row
     placed = LOG_JSON.splitlines()[3] + "\n" + LOG_JSON.splitlines()[2]
     assert orgs.unplaced_projects(watch.log_facts(placed))[0] == "pass"
+
+
+def test_lines_with_kubectls_pod_prefix_count_the_same():
+    # kubectl logs --all-pods=true prefixes each line with [pod/<pod>/<container>] unless
+    # --prefix=false: on jc-prod 154 barcelona refusals counted 0 that way (T-7458 bounce 18:11Z)
+    prefixed = "\n".join(f"[pod/jc-7d9f8c6b5-x2k4q/jc-server] {line}" for line in LOG_JSON.splitlines())
+    assert watch.log_facts(prefixed) == watch.log_facts(LOG_JSON)
+    text = "[pod/jc-1/jc-server] INFO write refused: an open-data Endpoint slug=abc operation=createEntity"
+    assert watch.log_facts(text)["unattributedRefusals"] == [
+        {"slug": "abc", "reason": "an open-data Endpoint", "count": 1}]
