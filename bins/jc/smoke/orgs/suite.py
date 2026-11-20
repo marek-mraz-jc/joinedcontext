@@ -352,6 +352,12 @@ def refused_writes(snap: dict) -> tuple[str, str]:
     rows += [{**r, "project": "?", "account": f"slug {r.get('slug')}"}
              for r in snap.get("unattributedRefusals") or [] if isinstance(r, dict)]
     total = sum(int(r.get("count") or 0) for r in rows)
+    minutes = snap.get("logMinutes")
+    if not total and not isinstance(minutes, int):
+        return SKIP, f"no line of the last {snap['logWindow']} carries a time: the window it read is unknown"
+    # a rotated log file leaves a shorter window than asked: never green on it (1 min slack)
+    if not total and minutes < int(snap["logWindow"].rstrip("m")) - 1:
+        return SKIP, f"0 refused, but the log window was truncated to {minutes} min of {snap['logWindow']} (log rotated)"
     if not total:
         return PASS, f"0 refused writes of a Pipeline in the last {snap['logWindow']}"
     named = "; ".join(f"{clean_title(r.get('project'))[:63]}/{clean_title(r.get('account'))[:70]} "

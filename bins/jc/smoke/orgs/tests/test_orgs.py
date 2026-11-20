@@ -806,7 +806,8 @@ def test_the_log_window_counts_each_pipelines_refused_writes_and_the_newest_unpl
     assert facts["unplacedReport"] == [{"project": "barcelona", "pipelines": 19}, {"project": "zilina", "pipelines": 3}]
     assert facts["unattributedRefusals"] == []
     quiet = watch.log_facts(LOG.splitlines()[5] + "\n")
-    assert quiet == {"logWindow": "30m", "unplacedReport": [], "refusedWrites": [], "unattributedRefusals": []}
+    assert quiet == {"logWindow": "30m", "unplacedReport": [], "refusedWrites": [], "unattributedRefusals": [],
+                     "logMinutes": quiet["logMinutes"]}
     assert watch.log_facts("")["unplacedReport"] is None
 
 
@@ -896,3 +897,26 @@ def test_lines_with_kubectls_pod_prefix_count_the_same():
     text = "[pod/jc-1/jc-server] INFO write refused: an open-data Endpoint slug=abc operation=createEntity"
     assert watch.log_facts(text)["unattributedRefusals"] == [
         {"slug": "abc", "reason": "an open-data Endpoint", "count": 1}]
+
+
+def test_a_log_window_truncated_by_rotation_never_passes_the_refused_row():
+    # kubelet rotated jc-server's file at 18:14:38Z: --since=30m at 18:18Z read 4 min, 0 refusals,
+    # and the row passed (jc-prod 2026-11-20T18:18Z, T-7458)
+    now = dt.datetime(2026, 11, 20, 18, 18, 17, tzinfo=dt.UTC)
+    quiet = ('[pod/jc-1/jc-server] {"timestamp":"2026-11-20T18:14:38.120Z","level":"INFO","fields":{"message":"x"}}\n'
+             '{"timestamp":"2026-11-20T18:18:00Z","level":"INFO","fields":{"message":"y"}}\n')
+    facts = watch.log_facts(quiet, now)
+    assert facts["logMinutes"] == 3
+    assert orgs.refused_writes(facts) == (
+        "skip", "0 refused, but the log window was truncated to 3 min of 30m (log rotated)")
+    # refusals inside a short window still fail: a red is never hidden
+    refused = watch.log_facts(LOG_JSON.splitlines()[0].replace("17:42:22", "18:15:00"), now)
+    assert orgs.refused_writes(refused)[0] == "fail"
+    # the full window (1 min slack) passes; text lines carry their time at the start
+    full = watch.log_facts("2026-11-20T17:49:00Z  INFO jc: started\n" + quiet, now)
+    assert full["logMinutes"] == 29 and orgs.refused_writes(full)[0] == "pass"
+    # no line with a time: the window is unknown, never green
+    assert watch.log_facts("", now)["logMinutes"] is None
+    assert orgs.refused_writes(watch.log_facts("", now))[0] == "skip"
+    # a time inside a message does not stretch the window
+    assert watch.log_facts("INFO y at 2026-11-20T10:00:00Z\n", now)["logMinutes"] is None

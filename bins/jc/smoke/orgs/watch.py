@@ -142,6 +142,8 @@ UNPLACED = re.compile(r"projects with Pipelines and no Organization.*\bprojects=
                       r"|(?P<none>every project with Pipelines has an Organization)")
 PROJECT_COUNT = re.compile(r"([a-z0-9][a-z0-9-]{0,62}):(\d{1,6})")
 POD_PREFIX = re.compile(r"^\[pod/[^\]\s]+\] ")
+# The time a line was written: a text line starts with it, a JSON line with its "timestamp" field.
+LINE_AT = re.compile(r'^\s*(?:\{"timestamp":")?(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.\d+)?Z')
 
 
 def event_line(line: str) -> str:
@@ -162,14 +164,22 @@ def event_line(line: str) -> str:
     return f"{fields.get('message', '')} {rest}".strip()
 
 
-def log_facts(text: str) -> dict:
+def log_facts(text: str, now: dt.datetime | None = None) -> dict:
     """{refusedWrites: [{project, account, reason, count}], unattributedRefusals: [{slug, reason, count}],
-    unplacedReport: None | [{project, pipelines}]} of a window of the jc-server log; unplacedReport is
-    None when the window holds no report."""
+    unplacedReport: None | [{project, pipelines}], logMinutes: None | int} of a window of the jc-server
+    log; unplacedReport is None when the window holds no report. logMinutes is how far back the
+    oldest line reaches: kubelet rotates the file and `--since` reads only the current one, so a
+    window can hold 4 min of the 30 asked (jc-prod 2026-11-20T18:18Z); None when no line has a time.
+    ponytail: the oldest line over every pod, a second pod's shorter file is not seen; per pod once
+    kubectl's prefix is reliable."""
     refused: dict[tuple[str, str, str], int] = {}
     unattributed: dict[tuple[str, str], int] = {}
     report = None
-    for line in map(event_line, ANSI.sub("", text).splitlines()):
+    oldest = None
+    raw = [POD_PREFIX.sub("", ln) for ln in ANSI.sub("", text).splitlines()]
+    for at in (m[1] for ln in raw if (m := LINE_AT.match(ln))):
+        oldest = at if oldest is None or at < oldest else oldest
+    for line in map(event_line, raw):
         if m := REFUSED.search(line):
             key = (m["project"], m["account"], m["why"].strip()[:80])
             refused[key] = refused.get(key, 0) + 1
@@ -179,7 +189,11 @@ def log_facts(text: str) -> dict:
         elif m := UNPLACED.search(line):
             report = [] if m["none"] else [{"project": p, "pipelines": int(n)}
                                            for p, n in PROJECT_COUNT.findall(m["projects"])]
-    return {"logWindow": LOG_WINDOW, "unplacedReport": report,
+    minutes = None
+    if oldest:
+        since = dt.datetime.strptime(oldest, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.UTC)
+        minutes = max(0, int(((now or dt.datetime.now(dt.UTC)) - since).total_seconds() // 60))
+    return {"logWindow": LOG_WINDOW, "logMinutes": minutes, "unplacedReport": report,
             "refusedWrites": [{"project": p, "account": a, "reason": why, "count": n}
                               for (p, a, why), n in sorted(refused.items(), key=lambda kv: (-kv[1], kv[0]))],
             "unattributedRefusals": [{"slug": slug, "reason": why, "count": n}
