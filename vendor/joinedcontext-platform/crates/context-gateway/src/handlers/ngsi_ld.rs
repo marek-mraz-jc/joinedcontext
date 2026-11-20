@@ -1121,6 +1121,7 @@ pub(crate) async fn view_request(
     // S-49 (T-5955): every surface's hop to the broker passes here, the MCP tools' included.
     if subject.read_only && operation.is_write() {
         tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: a read-only token");
+        crate::telemetry::write_refused(account, account_project, "read-only-token");
         return Err(Box::new(
             ProblemDetails::forbidden()
                 .with_detail("a read-only connector's token reads and never writes")
@@ -1132,6 +1133,7 @@ pub(crate) async fn view_request(
     // data, only the caller's own notifications, so a signed-in reader still subscribes.
     if endpoint.open_data && OperationRef::Single(operation).writes_entities() {
         tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: an open-data Endpoint");
+        crate::telemetry::write_refused(account, account_project, "open-data");
         return Err(Box::new(open_data_read_only(operation).into_response()));
     }
     if let Some(refusal) = anonymous_subscription_refusal(subject, operation) {
@@ -1140,6 +1142,7 @@ pub(crate) async fn view_request(
     }
     if let Some(refusal) = ungranted_write_refusal(gateway, endpoint, subject, operation) {
         tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: no Policy grants it");
+        crate::telemetry::write_refused(account, account_project, "no-policy");
         return Err(Box::new(refusal));
     }
     if operation.is_write() {
@@ -1149,6 +1152,7 @@ pub(crate) async fn view_request(
             .refusal_for(domain.as_deref(), &endpoint.project)
         {
             tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: the domain is not verified");
+            crate::telemetry::write_refused(account, account_project, "domain-unverified");
             return Err(Box::new(refusal.into_response()));
         }
     }
@@ -1630,6 +1634,10 @@ mod tests {
             user: Some("jana".into()),
             ..Subject::default()
         };
+        // T-7467: the same refusal is counted by account, project and reason, and nothing else.
+        crate::telemetry::install();
+        let series = r#"jc_gateway_writes_refused_total{account="pl-equipaments",account_project="barcelona",reason="open-data"}"#;
+        let before = scraped(series).await;
         for subject in [&pipeline, &person] {
             let mut request = Request::new(Body::empty());
             let refused = view_request(
@@ -1660,6 +1668,25 @@ mod tests {
             "{text}"
         );
         drop(guard);
+        assert_eq!(
+            scraped(series).await - before,
+            1.0,
+            "the Pipeline's refusal is counted"
+        );
+        let scrape = crate::telemetry::metrics().await;
+        let scrape = axum::body::to_bytes(scrape.into_body(), usize::MAX)
+            .await
+            .expect("the scrape");
+        let scrape = String::from_utf8_lossy(&scrape);
+        for line in scrape
+            .lines()
+            .filter(|l| l.starts_with("jc_gateway_writes_refused_total{"))
+        {
+            assert!(
+                !line.contains("pbyqbuyoeikryocvqb5uev7nxbx5mr4a") && !line.contains("/entities"),
+                "no slug or path in a label: {line}"
+            );
+        }
 
         // jc logs JSON on every cluster (bins/jc/src/runtime.rs): the same fields under `fields`,
         // as bins/jc/smoke/orgs/tests/test_orgs.py LOG_JSON reads them.
@@ -1691,6 +1718,18 @@ mod tests {
         assert_eq!(fields["slug"], "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "{line}");
         assert_eq!(fields["account"], "pl-equipaments", "{line}");
         assert_eq!(fields["account_project"], "barcelona", "{line}");
+    }
+
+    /// The value of one series on the gateway's scrape, 0 when it is not there yet.
+    async fn scraped(series: &str) -> f64 {
+        let scrape = crate::telemetry::metrics().await;
+        let bytes = axum::body::to_bytes(scrape.into_body(), usize::MAX)
+            .await
+            .expect("the scrape");
+        String::from_utf8_lossy(&bytes)
+            .lines()
+            .find_map(|line| line.strip_prefix(series)?.trim().parse().ok())
+            .unwrap_or_default()
     }
 
     /// DM-128: a streamed file's personal_read line names the query's parameters, never a

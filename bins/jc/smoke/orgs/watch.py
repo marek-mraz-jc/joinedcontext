@@ -12,6 +12,7 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
     jc_configmap = "jc"              # default; the ConfigMap jc mounts at /etc/jc (key jc.toml)
     jc_workload = "deploy/jc"        # default; whose jc-server log the installation rows read
     jc_container = "jc-server"       # default
+    prometheus_namespace = "prometheus"  # the Prometheus that scrapes jc's admin listener; unset, pipelines.refused never passes
     pg_namespace = "postgres"        # the shared CNPG cluster's namespace
     pg_cluster = "postgres-cluster"  # default
     edge = "203.0.113.10"            # the edge's address
@@ -33,16 +34,19 @@ Each run:
    addresses, public page titles and pipeline error text only: no passage text, no record, no person.
    Then the jc-server log of the last 30 min (T-7458): the gateway's refused writes counted per
    project, workload account and reason, and the Portal's newest report of projects with Pipelines
-   and no Organization; names and counts only.
+   and no Organization; names and counts only. Then the gateway's refused-write counter over the same
+   30 min from Prometheus (T-7467), which pipelines.refused reads: the log rotates in minutes at
+   jc-prod's volume, so it can only fail that row or explain a skip.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
 4. Incidents, one per (cluster, Organization), in <state>/incidents.json (T-7378): an Organization
    with a red check and no incident opens a task on the board (owner, @ note) listing its red checks;
-   the list is rewritten when the red checks change; the task closes when a complete run (snapshot
-   read, suite finished) shows none of them red. Rows of no Organization, a broken run (`snapshot`,
-   `suite`) and a deployment-wide outage (every Organization's portal check red) are one incident
-   of the cluster. A run that is not complete closes only an incident whose checks it saw pass.
+   the list is rewritten when the red checks change; the task closes only when a run shows every
+   check it lists pass (T-7467): a check that skipped or did not run stays listed and keeps it open.
+   Rows of no Organization, a broken run (`snapshot`, `suite`, which pass on a run that is not
+   broken) and a deployment-wide outage (every Organization's portal check red) are one incident
+   of the cluster.
 
 Rollout window: a deployer announcing a rollout writes an ISO time into <state>/maintenance-until
 (`date -u -d '+30 min' +%FT%TZ > <state>/maintenance-until`). Runs before that time, capped at 60 min
@@ -212,6 +216,47 @@ def jc_log(cfg: dict) -> dict:
     return log_facts(text)
 
 
+# T-7467: the gateway's refused writes over the window, from the Prometheus that scrapes jc's admin
+# listener (components/monitoring, job jc). A series born inside the window (the first refusal of an
+# account) counts its whole value, which increase() would drop; the rest count their increase.
+REFUSED_QUERY = ('sum by (account_project, account, reason) (({m} unless {m} offset {w}) or increase({m}[{w}]))')
+REFUSED_METRIC = 'jc_gateway_writes_refused_total{{namespace="{ns}"}}'
+# Scraped through the whole window, or a 0 means nothing.
+SCRAPED_QUERY = 'min(min_over_time(up{{namespace="{ns}",endpoint="admin"}}[{w}]))'
+
+
+def refused_counter(cfg: dict) -> dict:
+    """{refusedCounter: {window, rows: [{project, account, reason, count}]}} of jc's
+    jc_gateway_writes_refused_total over the last 30 min, read with promtool inside the Prometheus
+    pod of `prometheus_namespace` (the distroless image has no shell; the pod's NetworkPolicy admits
+    only Grafana, so no port-forward or service proxy); {window, error} when it cannot be read or the
+    admin listener was not scraped the whole window. Names and counts only.
+    ponytail: a Prometheus outage inside the window is not seen; count_over_time(up) if one bites."""
+    ns = cfg.get("prometheus_namespace")
+    if not ns:
+        return {"refusedCounter": {"window": LOG_WINDOW, "error": "watch.toml names no prometheus_namespace"}}
+    try:
+        pods = kubectl(cfg, "-n", ns, "get", "pod", "-o", "name", "-l", "app.kubernetes.io/name=prometheus").split()
+        if not pods:
+            raise RuntimeError(f"no pod app.kubernetes.io/name=prometheus in {ns}")
+
+        def instant(expr: str) -> list:
+            return json.loads(kubectl(cfg, "-n", ns, "exec", pods[0], "-c", "prometheus", "--", "promtool",
+                                      "query", "instant", "-o", "json", "http://localhost:9090", expr))
+
+        scraped = instant(SCRAPED_QUERY.format(ns=cfg["namespace"], w=LOG_WINDOW))
+        if not scraped or float(scraped[0]["value"][1]) < 1:
+            raise RuntimeError(f"jc's admin listener in {cfg['namespace']} was not scraped through the last {LOG_WINDOW}")
+        metric = REFUSED_METRIC.format(ns=cfg["namespace"])
+        rows = [{"project": str(r["metric"].get("account_project", "-")), "account": str(r["metric"].get("account", "-")),
+                 "reason": str(r["metric"].get("reason", "-")), "count": round(float(r["value"][1]))}
+                for r in instant(REFUSED_QUERY.format(m=metric, w=LOG_WINDOW))]
+    except (RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError, IndexError, TypeError) as err:
+        return {"refusedCounter": {"window": LOG_WINDOW, "error": str(err)[:200]}}
+    rows = sorted((r for r in rows if r["count"] > 0), key=lambda r: (-r["count"], r["project"], r["account"]))
+    return {"refusedCounter": {"window": LOG_WINDOW, "rows": rows}}
+
+
 def assistant_sql(embed_error: bool) -> str:
     if embed_error:
         return ASSISTANT_SQL.format(
@@ -232,8 +277,8 @@ def load(path: Path) -> dict:
     cfg.setdefault("jc_container", "jc-server")
     if not re.fullmatch(r"(deploy|deployment|statefulset)/[a-z0-9][a-z0-9-]{0,62}", str(cfg["jc_workload"])):
         raise SystemExit(f"{path}: jc_workload {cfg['jc_workload']!r} is not deploy/<name>")
-    for k in ("cluster", "owner", "namespace", "pg_namespace", "jc_configmap", "jc_container"):
-        if not NAME.fullmatch(str(cfg[k])):
+    for k in ("cluster", "owner", "namespace", "pg_namespace", "jc_configmap", "jc_container", "prometheus_namespace"):
+        if k in cfg and not NAME.fullmatch(str(cfg[k])):
             raise SystemExit(f"{path}: {k} {cfg[k]!r} is not a lower-case name")
     cfg.setdefault("pg_cluster", "postgres-cluster")
     return cfg
@@ -267,7 +312,7 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
     snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_portal", PIPELINES_SQL),
-            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg)}
+            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg), **refused_counter(cfg)}
     path = run / "snapshot.json"
     path.write_text(json.dumps(snap, indent=1))
     return toml, path
@@ -420,9 +465,10 @@ BLOCK = re.compile(r"<!-- orgs-watch:checks -->.*?<!-- /orgs-watch:checks -->", 
 
 
 def checks_block(rows: list[dict], at: str) -> str:
-    lines = [f"- `{r['id']}`: {r.get('actual', '')} (expected {r.get('expected', '')}; {r.get('call', '')})"
-             for r in rows]
-    return "\n".join(["<!-- orgs-watch:checks -->", f"Red checks as of {at} ({len(rows)}):", *lines,
+    """The open checks: red ones, and held ones that skipped or did not run (marked), which keep it open."""
+    lines = [f"- `{r['id']}`: {'' if r.get('result', 'fail') == 'fail' else '(' + str(r['result']) + ', not yet green) '}"
+             f"{r.get('actual', '')} (expected {r.get('expected', '')}; {r.get('call', '')})" for r in rows]
+    return "\n".join(["<!-- orgs-watch:checks -->", f"Open checks as of {at} ({len(rows)}):", *lines,
                       "<!-- /orgs-watch:checks -->"])
 
 
@@ -444,17 +490,34 @@ def groups(results: dict | None, broken: str | None) -> dict[str, list[dict]]:
     return out
 
 
-def incidents(state: dict, results: dict | None, complete: bool, broken: str | None,
+def incidents(state: dict, results: dict | None, broken: str | None,
               board: Board, at: str) -> dict:
-    """The open incidents after this run: {key: {"task": id, "checks": [red ids]}}. An entry whose value
-    is a bare task id is one of T-7309's per-check incidents: it closes when its check passes, is no
-    longer probed, or is listed in this run's incident of its Organization."""
+    """The open incidents after this run: {key: {"task": id, "checks": [ids]}}. An incident closes only
+    when every check it holds ran and passed (T-7467): a check that skipped (a rotated log window) or
+    did not run stays held, complete run or not. An entry whose value is a bare task id is one of
+    T-7309's per-check incidents: it closes when its check passes or is listed in this run's incident
+    of its Organization."""
     # A `dry-` id is a placeholder an older --dry-run stored: the incident was never filed, so file it now.
     state = {k: v for k, v in state.items()
              if not str(v.get("task", "") if isinstance(v, dict) else v).startswith("dry-")}
     rows = {r["id"]: r for r in (results or {}).get("checks") or []}
     red = groups(results, broken)
     out = {k: v for k, v in state.items() if isinstance(v, dict)}
+
+    def passed(check: str | None) -> bool:
+        # the broken-run rows of groups() pass on a run that is not broken
+        if check in ("snapshot", "suite"):
+            return broken is None
+        return rows.get(check or "", {}).get("result") == "pass"
+
+    # a check red in another incident this run is that incident's now (an outage that narrowed)
+    owner = {r["id"]: k for k, reds in red.items() for r in reds}
+
+    def settled(key: str, check: str | None) -> bool:
+        return passed(check) or owner.get(check or "", key) != key
+
+    def held(check: str) -> dict:
+        return rows.get(check) or {"id": check, "result": "not run", "actual": "not run this time"}
 
     def close(key: str, tid: str, why: str) -> bool:
         try:
@@ -465,11 +528,14 @@ def incidents(state: dict, results: dict | None, complete: bool, broken: str | N
             return False
 
     for key, reds in red.items():
+        # a held check that is not red now but did not pass either stays on the list
+        reds = reds + [held(c) for c in (out.get(key) or {}).get("checks") or []
+                       if not settled(key, c) and c not in {r["id"] for r in reds}]
         ids = [r["id"] for r in reds]
         try:
             if key not in out:
                 out[key] = {"task": board.open(key, reds, at), "checks": ids}
-            elif out[key].get("checks") != ids:
+            elif set(out[key].get("checks") or []) != set(ids):
                 board.update(out[key]["task"], reds, at)
                 out[key]["checks"] = ids
         except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
@@ -477,9 +543,9 @@ def incidents(state: dict, results: dict | None, complete: bool, broken: str | N
     for key, inc in list(out.items()):
         if key in red:
             continue
-        # An incomplete run closes only an incident whose every check it ran and saw pass.
-        seen_green = all(rows.get(c, {}).get("result") == "pass" for c in inc.get("checks") or [None])
-        if (complete or seen_green) and close(key, inc["task"], "all checks pass"):
+        if not all(settled(key, c) for c in inc.get("checks") or [None]):
+            continue
+        if close(key, inc["task"], "all checks pass"):
             del out[key]
     tracked = {r["id"]: out[k]["task"] for k, reds in red.items() if k in out for r in reds}
     for key, tid in state.items():
@@ -488,8 +554,6 @@ def incidents(state: dict, results: dict | None, complete: bool, broken: str | N
         row = rows.get(key)
         if row and row.get("result") == "pass":
             why = "passes"
-        elif complete and row is None:
-            why = "is no longer probed"
         elif key in tracked:
             why = f"is tracked in {tracked[key]}"
         else:
@@ -561,7 +625,7 @@ def main(argv=None) -> int:
     print(line)
     if until:
         return 0
-    after = incidents(open_now, results, broken is None, broken, board, at)
+    after = incidents(open_now, results, broken, board, at)
     if not a.dry_run:  # a dry run's ids are placeholders: stored, they would hide real incidents from the next run
         path.write_text(json.dumps(after, indent=1))
     return 1 if broken or (results or {}).get("totals", {}).get("fail") else 0

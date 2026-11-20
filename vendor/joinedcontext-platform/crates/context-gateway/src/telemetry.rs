@@ -39,6 +39,10 @@ pub const URN_OWNER_MISMATCH: &str = "jc_gateway_urn_owner_mismatch_total";
 /// The broker round trip inside one answer, which is most of a slow request.
 const BROKER_SECONDS: &str = "jc_gateway_broker_request_duration_seconds";
 const SPACE_HELD: &str = "jc_gateway_space_held";
+/// Writes refused before the broker, by the verified workload account, its project and the
+/// refusal (T-7467). The orgs watch's pipelines.refused reads its 30-min increase: kubelet rotates
+/// the log in minutes at jc-prod's volume, the scrape keeps the count.
+const WRITES_REFUSED: &str = "jc_gateway_writes_refused_total";
 /// The W3C Server Timing header; the http crate names no constant for it.
 const SERVER_TIMING: HeaderName = HeaderName::from_static("server-timing");
 
@@ -98,6 +102,10 @@ fn describe() {
         "entities written under warn whose URN does not name the space's owning Organization"
     );
     metrics::describe_histogram!(BROKER_SECONDS, "seconds of one broker round trip");
+    metrics::describe_counter!(
+        WRITES_REFUSED,
+        "writes refused before the broker, by workload account, its project and reason"
+    );
     metrics::describe_gauge!(
         SPACE_HELD,
         "1 while a move holds the space read-only, 0 once it no longer does (PF-115)"
@@ -130,6 +138,19 @@ pub fn router() -> axum::Router {
 /// The scrape.
 pub async fn metrics() -> Response<Body> {
     ([(CONTENT_TYPE, TEXT_FORMAT)], handle().render()).into_response()
+}
+
+/// One write refused before the broker (T-7467). `account` and `project` are the verified
+/// token's ServiceAccount and its project (declared in the repository, so bounded), `-` for a
+/// person; `reason` is a fixed code. No path, slug, payload or token reaches a label.
+pub fn write_refused(account: &str, project: &str, reason: &'static str) {
+    metrics::counter!(
+        WRITES_REFUSED,
+        "account" => account.to_owned(),
+        "account_project" => project.to_owned(),
+        "reason" => reason
+    )
+    .increment(1);
 }
 
 /// One decision, as the decision point made it (GW1).

@@ -61,7 +61,10 @@ Rows of the installation (target the deployment; T-7458), from the snapshot's jc
   in the window (an open-data Endpoint, no Policy, a read-only token, an unverified domain, no
   reason); the actual names project/account, count and reason per workload, most first. A 401 has
   no verified caller and names no Pipeline, so it is not counted. A refusal line with no account
-  field (a jc before T-7458) fails the row too, named ?/slug <slug>.
+  field (a jc before T-7458) fails the row too, named ?/slug <slug>. The gateway's counter
+  jc_gateway_writes_refused_total over 30 min decides the row (T-7467, watch.py reads it from
+  Prometheus); the log, which rotates in minutes at jc-prod's volume, can fail it or leave it
+  skipped, never pass it.
 - pipelines.unplaced: the Portal's newest report in the window names no project whose Pipelines
   have no Organization; the actual names each project and its count of Pipelines. No report in
   the window is a skip. A log the watch could not read fails both rows.
@@ -341,29 +344,39 @@ def delivering(pl: dict, now: dt.datetime) -> tuple[str, str]:
     return FAIL, got + f"; newest error: {clean_title(pl.get('error'))[:160] or 'no error text kept'}"
 
 
+def named_refusals(rows: list[dict]) -> str:
+    named = "; ".join(f"{clean_title(r.get('project'))[:63]}/{clean_title(r.get('account'))[:70]} "
+                      f"{int(r.get('count') or 0)} ({clean_title(r.get('reason'))[:80]})" for r in rows[:12])
+    return named + (f"; {len(rows) - 12} more" if len(rows) > 12 else "")
+
+
 def refused_writes(snap: dict) -> tuple[str, str]:
-    """(pass, fail or skip, the actual) of pipelines.refused over the snapshot's log window."""
-    if "logWindow" not in snap:
-        return SKIP, "no jc-server log in the snapshot (watch.py reads it)"
-    if snap.get("logError"):
-        return FAIL, f"the jc-server log was not read: {clean_title(snap['logError'])[:160]}"
+    """(pass, fail or skip, the actual) of pipelines.refused. The gateway's counter over 30 min decides
+    (T-7467); the jc-server log, which rotates in minutes at jc-prod's volume, can only fail the row
+    or leave it skipped, never pass it."""
     rows = [r for r in snap.get("refusedWrites") or [] if isinstance(r, dict)]
     # a jc before T-7458 logs no account: its refusals count by slug, the caller unknown
     rows += [{**r, "project": "?", "account": f"slug {r.get('slug')}"}
              for r in snap.get("unattributedRefusals") or [] if isinstance(r, dict)]
     total = sum(int(r.get("count") or 0) for r in rows)
-    minutes = snap.get("logMinutes")
-    if not total and not isinstance(minutes, int):
-        return SKIP, f"no line of the last {snap['logWindow']} carries a time: the window it read is unknown"
-    # a rotated log file leaves a shorter window than asked: never green on it (1 min slack)
-    if not total and minutes < int(snap["logWindow"].rstrip("m")) - 1:
-        return SKIP, f"0 refused, but the log window was truncated to {minutes} min of {snap['logWindow']} (log rotated)"
-    if not total:
-        return PASS, f"0 refused writes of a Pipeline in the last {snap['logWindow']}"
-    named = "; ".join(f"{clean_title(r.get('project'))[:63]}/{clean_title(r.get('account'))[:70]} "
-                      f"{int(r.get('count') or 0)} ({clean_title(r.get('reason'))[:80]})" for r in rows[:12])
-    more = f"; {len(rows) - 12} more" if len(rows) > 12 else ""
-    return FAIL, f"{total} refused in the last {snap['logWindow']}: {named}{more}"
+    counter = snap.get("refusedCounter") if isinstance(snap.get("refusedCounter"), dict) else {}
+    if isinstance(counter.get("rows"), list):
+        crows = [r for r in counter["rows"] if isinstance(r, dict)]
+        if ctotal := sum(int(r.get("count") or 0) for r in crows):
+            return FAIL, f"{ctotal} refused in the last {counter.get('window')} (gateway counter): {named_refusals(crows)}"
+        if total:
+            return FAIL, (f"{total} refused in the jc-server log of the last {snap.get('logWindow')} "
+                          f"(the counter shows 0): {named_refusals(rows)}")
+        return PASS, f"0 refused writes of a Pipeline in the last {counter.get('window')} (gateway counter)"
+    why = clean_title(counter.get("error"))[:160] or "no gateway counter in the snapshot (watch.py reads it)"
+    if "logWindow" not in snap:
+        return SKIP, f"the gateway counter was not read: {why}"
+    if snap.get("logError"):
+        return FAIL, f"neither the counter ({why}) nor the jc-server log was read: {clean_title(snap['logError'])[:160]}"
+    if total:
+        return FAIL, f"{total} refused in the jc-server log of the last {snap['logWindow']}: {named_refusals(rows)}"
+    read = f"{snap['logMinutes']} min of {snap['logWindow']}" if isinstance(snap.get("logMinutes"), int) else snap["logWindow"]
+    return SKIP, f"0 refused in the jc-server log ({read} read), which never passes this row; the gateway counter was not read: {why}"
 
 
 def unplaced_projects(snap: dict) -> tuple[str, str]:
