@@ -54493,7 +54493,7 @@
               "string",
               "null"
             ],
-            "description": "`HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the\nproject moves to, e.g. `bbsk`."
+            "description": "`HostAdd`: the Organization's name, e.g. `bbsk`. `ProjectMove`: the Organization the\nproject moves to, e.g. `bbsk`. `SinglePersonSet`, `AutomationLoginSet`: the Organization,\ne.g. `bbsk`; the installation Organization also by the name its forge gives it."
           },
           "organizationId": {
             "type": [
