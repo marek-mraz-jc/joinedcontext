@@ -3,7 +3,7 @@
    bins/jc/smoke/run all --base-url <url> --out <dir> [--export e] [--state s] [--log-file f]
        [--admin-url u] [--admin-token-file f] [--person-token-file f] [--e2e]
        [--only a,b] [--skip a,b] [--with <suite>=<args>]... [--suite-timeout s] [--known <file>]
-       [--shard <name>] [--opendata-origin <url>]
+       [--shard <name>] [--opendata-origin <url>] [--dashboards-origin <url>] [--git-origin <url>]
    bins/jc/smoke/run all --deployment <name> --domain <d> --edge <ip> --jc-config <jc.toml>
        --export <bundle> --out <dir> [--rate n] [--only a,b] ...
 
@@ -30,6 +30,9 @@ red; any other failure does. A known line that matches no failure is listed as f
 --opendata-origin <url> sends every request under /opendata, of every suite, to that loopback
 origin with the same path: the door to a dataroom that runs in a pod of its own behind the edge
 (jc-dev), where the jc pod's door answers /opendata with the Portal's page.
+--dashboards-origin and --git-origin do the same for daiya's /dashboards and shako's /git (T-7459,
+T-7460): jc-dev runs both in pods of their own, and its edge keeps /git closed (T-6896), so the
+/git door is a forward of shako's Service.
 
 --deployment runs the anonymous read parts of the suites in LIVE against a named deployment on a
 cluster, behind live.py's guard (read-only, anonymous, rate-capped, TLS verified); every other
@@ -52,7 +55,15 @@ SMOKE = HERE.parent
 REPO = SMOKE.parent.parent.parent
 sys.path.insert(0, str(SMOKE))
 import live
-from common import FAIL, OPENDATA_ORIGIN, PASS, SKIP, loopback_only
+from common import (
+    DASHBOARDS_ORIGIN,
+    FAIL,
+    GIT_ORIGIN,
+    OPENDATA_ORIGIN,
+    PASS,
+    SKIP,
+    loopback_only,
+)
 
 # Flags `all` hands on, each only to a suite whose suite.py declares it.
 COMMON = ("--export", "--state", "--log-file", "--admin-url", "--admin-token-file", "--person-token-file")
@@ -301,14 +312,17 @@ def main(argv=None) -> int:
     p.add_argument("--shard", help="this run is one shard of the gate: its name (ci/merge.py)")
     p.add_argument("--opendata-origin", help="loopback origin serving /opendata when the base's door does not "
                                              "(a dataroom in its own pod behind the edge), e.g. http://127.0.0.1:18084")
+    p.add_argument("--dashboards-origin", help="loopback origin serving /dashboards when the base's door does not "
+                                               "(daiya in its own pod behind the edge), e.g. http://127.0.0.1:18092")
+    p.add_argument("--git-origin", help="loopback origin serving /git (shako's API) when the base's door does not "
+                                        "(shako in its own pod; a forward of its Service), e.g. http://127.0.0.1:18094")
     a = p.parse_args(argv)
     out = Path(a.out)
     cfg = None
     if a.deployment:
         missing = [f for f in ("domain", "edge", "jc_config", "export") if not getattr(a, f)]
         given = [f for f in COMMON[1:] if getattr(a, f[2:].replace("-", "_"))] + (["--base-url"] if a.base_url else [])
-        if a.opendata_origin:
-            given.append("--opendata-origin")
+        given += [f"--{flag}-origin" for flag in ("opendata", "dashboards", "git") if getattr(a, f"{flag}_origin")]
         if missing or given or a.e2e:
             p.error(f"--deployment needs --{', --'.join(m.replace('_', '-') for m in missing) or ' '} and takes "
                     f"no {', '.join(given + (['--e2e'] if a.e2e else [])) or 'token flag'}")
@@ -319,9 +333,11 @@ def main(argv=None) -> int:
     elif not a.base_url:
         p.error("--base-url or --deployment")
     loopback_only(a.base_url)
-    if a.opendata_origin:
-        loopback_only(a.opendata_origin)
-        os.environ[OPENDATA_ORIGIN] = a.opendata_origin.rstrip("/")
+    for origin, var in ((a.opendata_origin, OPENDATA_ORIGIN), (a.dashboards_origin, DASHBOARDS_ORIGIN),
+                        (a.git_origin, GIT_ORIGIN)):
+        if origin:
+            loopback_only(origin)
+            os.environ[var] = origin.rstrip("/")
     a.extra = {}
     for x in a.extra_args:
         k, _, v = x.partition("=")

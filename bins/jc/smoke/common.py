@@ -85,21 +85,26 @@ def jwt_claims(token: str | None) -> dict:
 
 
 OPENDATA_ORIGIN = "JC_SMOKE_OPENDATA_ORIGIN"
+DASHBOARDS_ORIGIN = "JC_SMOKE_DASHBOARDS_ORIGIN"
+GIT_ORIGIN = "JC_SMOKE_GIT_ORIGIN"
+# The path each module answers under, and the variable naming its loopback door.
+MODULE_DOORS = (("/opendata", OPENDATA_ORIGIN), ("/dashboards", DASHBOARDS_ORIGIN), ("/git", GIT_ORIGIN))
 
 
-def opendata_door(url: str) -> str:
-    """`run all --opendata-origin <url>`: a request under /opendata goes to that loopback origin
-    with the same path. A deployment whose dataroom runs in a pod of its own behind the edge
-    (jc-dev: `[remote.modules] dataroom`) answers /opendata on the jc pod's door with the
-    Portal's page, so its catalogue is read through a second door (the edge, or the dataroom's
-    service)."""
-    origin = os.environ.get(OPENDATA_ORIGIN)
+def module_door(url: str) -> str:
+    """`run all --opendata-origin / --dashboards-origin / --git-origin <url>`: a request under that
+    module's path goes to the loopback origin given for it, with the same path. A deployment whose
+    dataroom, daiya or shako runs in a pod of its own (jc-dev: `[remote.modules]`, T-7009) answers
+    those paths on the jc pod's door with the Portal's page, so the module is read through a second
+    door (the edge, or the module's service; jc-dev's edge keeps /git closed, T-6896)."""
     u = urllib.parse.urlsplit(url)
-    if not origin or not re.match(r"/opendata(/|$)", u.path):
-        return url
-    loopback_only(origin)
-    o = urllib.parse.urlsplit(origin)
-    return urllib.parse.urlunsplit((o.scheme, o.netloc, u.path, u.query, u.fragment))
+    for prefix, var in MODULE_DOORS:
+        origin = os.environ.get(var)
+        if origin and re.match(re.escape(prefix) + r"(/|$)", u.path):
+            loopback_only(origin)
+            o = urllib.parse.urlsplit(origin)
+            return urllib.parse.urlunsplit((o.scheme, o.netloc, u.path, u.query, u.fragment))
+    return url
 
 
 class Http:
@@ -124,7 +129,7 @@ class Http:
         if body is not None:
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             headers.setdefault("Content-Type", "application/json")
-        req = urllib.request.Request(opendata_door(self.base + path), data=data, method=method, headers=headers)
+        req = urllib.request.Request(module_door(self.base + path), data=data, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
                 return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
