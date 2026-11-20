@@ -335,7 +335,7 @@ async fn the_installation_is_marked_and_counted_under_either_name() {
     forge_named(&state, &registry, &forge, &[OWNER, SECOND, &bot.username]).await;
 
     marked(&state, &registry, &bot.username).await;
-    assert_eq!(stored(&state, &bot.username).await, [registry.clone()]);
+    assert_eq!(stored(&state, &bot.username).await, [registry.as_str()]);
 
     // The forge's name clears it, and marks it again under the registry's.
     let clear = json!({ "kind": "AutomationLoginSet", "organization": forge, "subject": bot.username, "automation": false });
@@ -366,7 +366,7 @@ async fn the_installation_is_marked_and_counted_under_either_name() {
     assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
     assert!(stored(&state, &bot.username).await.is_empty());
     marked(&state, &forge, &bot.username).await;
-    assert_eq!(stored(&state, &bot.username).await, [registry.clone()]);
+    assert_eq!(stored(&state, &bot.username).await, [registry.as_str()]);
 
     // Two people hold a role through the forge-named binding: the mode stays off.
     let (status, refused) = propose(&state, operator(&state, "op-a"), &registry, true).await;
