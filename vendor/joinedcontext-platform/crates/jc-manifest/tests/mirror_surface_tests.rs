@@ -99,6 +99,13 @@ fn load(dir: &Path) -> Repository {
     Repository::load(dir).expect("the repository loads")
 }
 
+fn local(base: &str) -> Surface {
+    Surface::Local {
+        base: format!("{base}/api/endpoint/{SLUG}"),
+        slug: SLUG.to_owned(),
+    }
+}
+
 fn surface(reference: &RawManifest, repo: &Repository) -> Surface {
     foreign_models::surface_of(reference, HERE, repo).expect("the reference resolves")
 }
@@ -108,7 +115,7 @@ fn a_shared_space_reference_resolves_against_this_instance() {
     let dir = repo_dir("shared");
     assert_eq!(
         surface(&shared_reference(), &load(&dir)),
-        Surface::At(format!("{HERE}/api/endpoint/{SLUG}"))
+        local(HERE)
     );
 }
 
@@ -118,7 +125,7 @@ fn a_trailing_slash_on_our_own_url_does_not_double_up() {
     let resolved =
         foreign_models::surface_of(&shared_reference(), &format!("{HERE}/"), &load(&dir))
             .expect("resolves");
-    assert_eq!(resolved, Surface::At(format!("{HERE}/api/endpoint/{SLUG}")));
+    assert_eq!(resolved, local(HERE));
 }
 
 #[test]
@@ -133,13 +140,27 @@ fn a_plaintext_instance_url_is_refused_before_anything_is_fetched() {
 }
 
 #[test]
+fn a_loopback_instance_reads_its_own_endpoints_in_process() {
+    // A local instance on 127.0.0.1 (the train's gate) mirrors a model of its own Endpoint
+    // (T-7425): nothing goes over a network, so loopback http is its own URL as https is.
+    let dir = repo_dir("loopback-self");
+    let resolved = foreign_models::surface_of(
+        &shared_reference(),
+        "http://127.0.0.1:42101/",
+        &load(&dir),
+    )
+    .expect("loopback is this instance");
+    assert_eq!(resolved, local("http://127.0.0.1:42101"));
+}
+
+#[test]
 fn a_registration_pointing_at_one_of_our_endpoints_resolves_through_the_repository() {
     let dir = repo_dir("endpointref");
     write_endpoint(&dir, "doprava", "transport-internal", SLUG);
     let reference = registration("endpointRef: { kind: Endpoint, name: transport-internal }");
     assert_eq!(
         surface(&reference, &load(&dir)),
-        Surface::At(format!("{HERE}/api/endpoint/{SLUG}"))
+        local(HERE)
     );
 }
 

@@ -201,8 +201,32 @@ pub fn mirror(
     repo: &Repository,
     api: &impl SchemaApi,
 ) -> Result<Mirror, MirrorError> {
+    mirror_at(reference, &secure_base(base)?, fetched_at, repo, api)
+}
+
+/// [`mirror`] of an Endpoint this instance serves ([`Surface::Local`]), which `api` reads in
+/// process (SHR-16, T-7425). The base is this instance's own configuration, never a URL a
+/// reference typed, so it is `https://` or `http://` on a loopback host: what the mirrored
+/// manifest records as its source.
+pub fn mirror_local(
+    reference: &RawManifest,
+    base: &str,
+    fetched_at: &str,
+    repo: &Repository,
+    api: &impl SchemaApi,
+) -> Result<Mirror, MirrorError> {
+    mirror_at(reference, &local_base(base)?, fetched_at, repo, api)
+}
+
+fn mirror_at(
+    reference: &RawManifest,
+    base: &str,
+    fetched_at: &str,
+    repo: &Repository,
+    api: &impl SchemaApi,
+) -> Result<Mirror, MirrorError> {
     let target = target_of(reference)?;
-    let base = secure_base(base)?;
+    let base = base.to_owned();
 
     let mut out = Mirror::default();
     let Some(body) = api.get(&format!("{base}/{INDEX}"))? else {
@@ -318,6 +342,18 @@ fn secure_base(base: &str) -> Result<String, MirrorError> {
         return Err(MirrorError::InsecureBase(base.to_owned()));
     }
     Ok(trimmed.to_owned())
+}
+
+/// This instance's own base: [`secure_base`], or `http://` on a loopback host, which the
+/// mirrored DataModel may record too (jc-core `loopback_http`).
+fn local_base(base: &str) -> Result<String, MirrorError> {
+    let trimmed = base.trim_end_matches('/');
+    if jc_core::kinds::data_model::loopback_http(trimmed)
+        && !trimmed.split('/').any(|segment| segment == "..")
+    {
+        return Ok(trimmed.to_owned());
+    }
+    secure_base(base)
 }
 
 /// One catalogue entry as one foreign DataModel, or `None` with a flag saying why not.
@@ -541,6 +577,14 @@ fn hex(bytes: &[u8]) -> String {
 pub enum Surface {
     /// The base URL `mirror` fetches `schema/…` under.
     At(String),
+    /// An Endpoint this instance serves, at `{publicUrl}/api/endpoint/{slug}`: read in process
+    /// with [`mirror_local`], never over the public URL (SHR-16, T-7425).
+    Local {
+        /// The base the mirrored manifest records.
+        base: String,
+        /// The Endpoint's slug, which the in-process read resolves.
+        slug: String,
+    },
     /// Nothing to fetch, and the sentence a plan prints saying why.
     ///
     /// This is not an error. DM-48 is explicit that a peer without a schema surface "MAY still
@@ -560,8 +604,9 @@ pub enum Surface {
 ///   any NGSI-LD implementation and need not be one of ours. Its surface is the NGSI-LD base
 ///   with the trailing `/ngsi-ld/v1` removed.
 ///
-/// `public_url` is the instance's own base and is checked like a peer's: a plaintext instance
-/// URL would make every local mirror an unauthenticated fetch over the wire.
+/// `public_url` is the instance's own base and is checked like a peer's, but for `http://` on a
+/// loopback host: an Endpoint this instance serves is read in process ([`Surface::Local`]), so
+/// only a plaintext URL another machine would reach is refused.
 pub fn surface_of(
     reference: &RawManifest,
     public_url: &str,
@@ -577,7 +622,7 @@ pub fn surface_of(
             // The loader rendered an `endpointRef` it could resolve as the slug (EP-77); one
             // left unresolved is a validate finding and serves no surface here.
             match spec.endpoint_slug {
-                Some(slug) => Ok(Surface::At(local_surface(public_url, slug.as_str())?)),
+                Some(slug) => local_surface(public_url, slug.as_str()),
                 None => Ok(Surface::None(
                     "endpointRef did not resolve to an Endpoint shared with this project, so no \
                      schema surface is derived (EP-77)"
@@ -595,7 +640,7 @@ pub fn surface_of(
             if let Some(reference_to_endpoint) = &spec.endpoint_ref {
                 let project = reference.metadata.namespace.as_deref();
                 return match endpoint_slug(repo, project, reference_to_endpoint.name()) {
-                    Some(slug) => Ok(Surface::At(local_surface(public_url, &slug)?)),
+                    Some(slug) => local_surface(public_url, &slug),
                     None => Ok(Surface::None(format!(
                         "endpointRef names `{}`, which is not an Endpoint in this repository, so \
                          no schema surface is derived and no model is mirrored (DM-48)",
@@ -680,9 +725,12 @@ pub fn plan_flags(repo: &Repository) -> Vec<String> {
 }
 
 /// `{public_url}/api/endpoint/{slug}` for an endpoint this instance serves.
-fn local_surface(public_url: &str, slug: &str) -> Result<String, MirrorError> {
-    let base = secure_base(public_url)?;
-    Ok(format!("{base}/api/endpoint/{slug}"))
+fn local_surface(public_url: &str, slug: &str) -> Result<Surface, MirrorError> {
+    let base = local_base(public_url)?;
+    Ok(Surface::Local {
+        base: format!("{base}/api/endpoint/{slug}"),
+        slug: slug.to_owned(),
+    })
 }
 
 /// The slug of the Endpoint a registration names, if the repository holds it.

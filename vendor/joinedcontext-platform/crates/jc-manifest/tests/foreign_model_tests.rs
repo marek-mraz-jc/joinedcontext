@@ -331,6 +331,50 @@ fn a_surface_in_the_clear_is_refused_before_anything_is_asked_for() {
     assert!(peer.asked.borrow().is_empty());
 }
 
+/// T-7425: an Endpoint this instance serves is read in process, so a loopback instance (the
+/// train's gate) mirrors it from its http base and the DataModel records that base; a plaintext
+/// base on any other host stays refused before anything is asked for.
+#[test]
+fn an_endpoint_of_this_instance_mirrors_from_a_loopback_base() {
+    const LOCAL: &str = "http://127.0.0.1:42101/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y";
+    struct InProcess(Peer);
+    impl SchemaApi for InProcess {
+        fn get(&self, url: &str) -> Result<Option<Vec<u8>>, FetchError> {
+            self.0.get(&url.replacen(LOCAL, BASE, 1))
+        }
+    }
+    let dir = repo_dir("local");
+    let api = InProcess(Peer::air());
+    let mirror = foreign_models::mirror_local(
+        &reference(),
+        LOCAL,
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &api,
+    )
+    .expect("the mirror runs");
+    assert!(mirror.flags.is_empty(), "{:?}", mirror.flags);
+    assert_eq!(mirror.models.len(), 1);
+    let spec: jc_core::kinds::DataModelSpec =
+        serde_json::from_value(mirror.models[0].manifest.spec.clone()).expect("a DataModel");
+    assert!(spec.validate().is_ok(), "{:?}", spec.validate());
+    let remote = spec.source.and_then(|source| source.remote).expect("a remote source");
+    assert_eq!(remote.url, format!("{LOCAL}/schema/v1/{LINKML}"));
+    assert_eq!(remote.sha256, sha256(LINKML_BODY));
+
+    let elsewhere = InProcess(Peer::air());
+    let error = foreign_models::mirror_local(
+        &reference(),
+        "http://portal.example/api/endpoint/zt4qm7ge2xdv6ksb3ncf5arw2y",
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &elsewhere,
+    )
+    .expect_err("plaintext off loopback is refused");
+    assert!(matches!(error, MirrorError::InsecureBase(_)), "{error}");
+    assert!(elsewhere.0.asked.borrow().is_empty());
+}
+
 /// CC-18: a second run over an unchanged peer writes nothing at all.
 #[test]
 fn an_unchanged_mirror_writes_nothing() {
