@@ -65,6 +65,12 @@ fn operator(state: &AppState, name: &str) -> Identity {
 /// The Organization `organization` in the registry and the mirror, `people` bound to an
 /// administrator's role across it.
 async fn organization(state: &AppState, organization: &str, people: &[&str]) {
+    forge_named(state, organization, organization, people).await;
+}
+
+/// [`organization`] with the forge keeping its manifest and binding under `forge` (jc-prod:
+/// registry `smartcity`, forge `hel`).
+async fn forge_named(state: &AppState, organization: &str, forge: &str, people: &[&str]) {
     sqlx::query(
         "INSERT INTO organizations (name, host, state, created_by) \
          VALUES ($1, $1 || '.example', 'active', 'test') ON CONFLICT DO NOTHING",
@@ -75,7 +81,7 @@ async fn organization(state: &AppState, organization: &str, people: &[&str]) {
     .expect("an Organization");
     state.mirror.upsert(envelope(
         "Organization",
-        organization,
+        forge,
         ORG_NAMESPACE,
         json!({ "installation": true }),
     ));
@@ -90,7 +96,7 @@ async fn organization(state: &AppState, organization: &str, people: &[&str]) {
         "RoleBinding",
         "admin-binding",
         ORG_NAMESPACE,
-        json!({ "subjects": subjects, "role": "admin-role", "scope": { "organization": organization } }),
+        json!({ "subjects": subjects, "role": "admin-role", "scope": { "organization": forge } }),
     ));
 }
 
@@ -299,6 +305,58 @@ async fn only_an_operator_marks_an_automation_login_and_people_count_without_it(
             .contains("2 people"),
         "{refused}"
     );
+}
+
+/// jc-prod (T-7436): the forge keeps the installation Organization under another name than the
+/// registry. The operator door takes either name, keeps the mark under the registry's, and
+/// counts the people its forge-named bindings hold.
+#[tokio::test]
+async fn the_installation_is_marked_and_counted_under_either_name() {
+    let state = AppState::new(Config::for_tests(), None).with_db(pool().await);
+    let registry = run("smartcity");
+    let forge = run("hel");
+    let bot = bot("mcp-alias");
+    state.mirror.set_configured_installation(&registry);
+    assert_eq!(state.mirror.configured_installation(), Some(registry.as_str()));
+    forge_named(&state, &registry, &forge, &[OWNER, SECOND, &bot.username]).await;
+    let stored = |state: &AppState| {
+        let state = state.clone();
+        async move {
+            joinedcontext_portal::automation::marked(&state, None)
+                .await
+                .expect("marks")
+                .into_iter()
+                .filter(|row| row.login == bot.username)
+                .map(|row| row.organization)
+                .collect::<Vec<_>>()
+        }
+    };
+
+    marked(&state, &registry, &bot.username).await;
+    assert_eq!(stored(&state).await, [registry.clone()]);
+
+    // The forge's name clears it, and marks it again under the registry's.
+    let clear = json!({ "kind": "AutomationLoginSet", "organization": forge, "subject": bot.username, "automation": false });
+    let proposed = send(&state, operator(&state, "op-a"), "POST", CHANGES, Some(clear)).await;
+    assert_eq!(proposed.status, StatusCode::CREATED, "{}", proposed.text);
+    let proposed: Value = serde_json::from_str(&proposed.text).expect("json");
+    assert_eq!(proposed["payload"]["organization"], registry.as_str(), "{proposed}");
+    let id = proposed["id"].as_str().expect("an id");
+    let applied = send(&state, operator(&state, "op-b"), "POST", &format!("{CHANGES}/{id}/approve"), None).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+    assert!(stored(&state).await.is_empty());
+    marked(&state, &forge, &bot.username).await;
+    assert_eq!(stored(&state).await, [registry.clone()]);
+
+    // Two people hold a role through the forge-named binding: the mode stays off.
+    let (status, refused) = propose(&state, operator(&state, "op-a"), &registry, true).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
+    assert!(refused["detail"].as_str().unwrap_or_default().contains("2 people"), "{refused}");
+
+    // An Organization the registry lacks is still refused.
+    let (status, unknown) = mark(&state, operator(&state, "op-a"), &run("nowhere"), &bot.username).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{unknown}");
+    assert_eq!(unknown["errors"][0]["path"], "organization", "{unknown}");
 }
 
 #[tokio::test]
