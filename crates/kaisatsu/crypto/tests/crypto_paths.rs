@@ -55,6 +55,19 @@ fn kek_files_accept_raw_hex_and_base64_and_refuse_everything_else() {
             Err(KaisatsuError::Crypto(_))
         ));
     }
+    // Exactly 32 bytes are the key even when they end in a newline byte (T-7452); a longer input
+    // still loses one trailing newline.
+    for key in [
+        [[7u8; 31].as_slice(), b"\n"].concat(),
+        [[7u8; 30].as_slice(), b"\r\n"].concat(),
+    ] {
+        let exact: [u8; 32] = key.as_slice().try_into().unwrap();
+        let sealed = Kek::from_bytes(exact).encrypt(b"aad", b"secret").unwrap();
+        for input in [key.clone(), [key.as_slice(), b"\n"].concat()] {
+            let kek = Kek::from_raw_bytes(&input).unwrap();
+            assert_eq!(kek.decrypt(b"aad", &sealed).unwrap(), b"secret");
+        }
+    }
     let missing = Kek::from_file(&dir.join("missing"))
         .unwrap_err()
         .to_string();

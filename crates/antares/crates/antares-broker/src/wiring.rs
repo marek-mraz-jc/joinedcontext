@@ -363,7 +363,7 @@ pub async fn wire_nats(
                 // re-hydrate leaves the mirror holding what it had before the
                 // gap, which the federation path will serve as current: say
                 // so at error level rather than let it pass as a warning.
-                if let Err(e) = antares_api::notify::seed_mirror(
+                if let Err(e) = antares_api::notify::reseed_mirror(
                     &*store_for_reg,
                     reg_mirror.as_ref(),
                     Kind::Registration,
@@ -498,9 +498,9 @@ pub async fn wire_nats(
             // Same restart contract as the registry consumer: the watch ends
             // on a NATS restart, and a task that returns there stops seeing
             // every subscription change — i.e. this pod silently stops
-            // notifying — for the process lifetime. `watch_all` replays the
-            // bucket's current values, so re-opening also re-converges the
-            // mirror over the gap.
+            // notifying — for the process lifetime. The reopen reseeds the
+            // mirror from the store: `watch_all` replays only what the bucket
+            // still holds, and a delete's entry is gone after the grace.
             let mut watch = watch;
             loop {
                 while let Some(entry) = watch.next().await {
@@ -511,7 +511,7 @@ pub async fn wire_nats(
                 }
                 tracing::warn!("subscription KV watch ended — reopening");
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                match kv.watch_all().await {
+                match reopen_sub_watch(&kv, &*store, sub_mirror.as_ref()).await {
                     Ok(w) => watch = w,
                     Err(e) => tracing::warn!("subscription KV watch reopen failed: {e}"),
                 }
@@ -666,6 +666,27 @@ fn decode_delta(delta: &serde_json::Value) -> Option<Delta<'_>> {
         id,
         present,
     })
+}
+
+/// Reopen the subscription KV watch, then reseed the mirror from the store.
+///
+/// Watch first, so a change made during the reseed waits in the new watch.
+/// The reseed is what drops a subscription deleted while the old watch was
+/// down: its `present:false` entry is purged `SUBS_TOMBSTONE_GRACE` after the
+/// delete, so a gap longer than that replays nothing for it (T-7451).
+async fn reopen_sub_watch(
+    kv: &nats::KvStore,
+    store: &dyn antares_store::CurrentStateDriver,
+    mirror: &antares_api::mirror::SubMirror,
+) -> Result<nats::KvWatch, nats::KvWatchError> {
+    let watch = kv.watch_all().await?;
+    if let Err(e) = antares_api::notify::reseed_mirror(store, mirror, Kind::Subscription).await {
+        tracing::error!(
+            "subscription mirror re-hydrate failed ({e}); \
+             this pod may notify subscriptions deleted during the gap"
+        );
+    }
+    Ok(watch)
 }
 
 /// Apply one delta to a mirror of `kind`: a written row is read from the
@@ -1177,6 +1198,74 @@ mod tests {
 
         let _ = st.store.delete(&tenant, Kind::Entity, id).await;
         let _ = antares_sql::store::pg::outbox::reap_published(&pool, 0).await;
+    }
+
+    /// T-7451, against a live NATS (env-gated on ANTARES_TEST_NATS_URL). Pod A's
+    /// watch is down while pod B deletes a subscription, and the gap outlasts
+    /// the grace: B's retire has purged the `present:false` entry, so A's
+    /// reopened `watch_all` replays nothing for it. The reseed is what takes
+    /// the subscription out of A's mirror; the matcher reads candidates from
+    /// that mirror alone, so an empty candidate set is A sending nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watch_reopened_past_the_grace_drops_a_subscription_deleted_meanwhile() {
+        let Ok(url) = std::env::var("ANTARES_TEST_NATS_URL") else {
+            eprintln!("SKIP: ANTARES_TEST_NATS_URL not set");
+            return;
+        };
+        const VEHICLE: &str = "https://example.org/Vehicle";
+        let bus = NatsBus::connect(&url).await.expect("connect");
+        let kv = bus.subs_kv().await.expect("kv bucket");
+        let st = AppState::new("antares".into());
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let name = format!("t7451x{nonce}");
+        let tenant = TenantId::new(&name).expect("tenant");
+        let id = "urn:ngsi-ld:Subscription:revoked";
+        let doc = json!({"id": id, "type": "Subscription", "entities": [{"type": VEHICLE}],
+                         "notification": {"endpoint": {"uri": "http://receiver.invalid/n"}}});
+        st.store
+            .create(&tenant, Kind::Subscription, id, doc)
+            .await
+            .expect("create");
+        let key = kv_key(&name, Kind::Subscription, id);
+        let entry = |present: bool| {
+            serde_json::to_vec(&json!({"tenant": name, "id": id, "present": present}))
+                .expect("json")
+        };
+        kv.put(&key, entry(true).into()).await.expect("put");
+        let mirror = antares_api::mirror::SubMirror::default();
+        antares_api::notify::seed_mirror(&*st.store, &mirror, Kind::Subscription)
+            .await
+            .expect("seed");
+        assert_eq!(mirror.candidates(&name, &[VEHICLE], &[]).len(), 1);
+
+        // A's watch is down. B deletes the subscription, and its retire runs:
+        // the step the sub_sync hook takes once SUBS_TOMBSTONE_GRACE is over.
+        st.store
+            .delete(&tenant, Kind::Subscription, id)
+            .await
+            .expect("delete");
+        let revision = kv.put(&key, entry(false).into()).await.expect("tombstone");
+        bus.retire_subscription_key(&key, revision)
+            .await
+            .expect("retire");
+
+        let mut watch = reopen_sub_watch(&kv, &*st.store, &mirror)
+            .await
+            .expect("reopen");
+        while let Ok(Some(Ok(e))) =
+            tokio::time::timeout(std::time::Duration::from_millis(500), watch.next()).await
+        {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&e.value) {
+                apply_delta(&mirror, &*st.store, Kind::Subscription, &v).await;
+            }
+        }
+        assert!(
+            mirror.candidates(&name, &[VEHICLE], &[]).is_empty(),
+            "a change to a Vehicle still reaches the subscription B deleted during the gap"
+        );
     }
 
     /// The outbox-drain switch is a config value like any other: the two

@@ -45,7 +45,18 @@ impl Kek {
         Self::from_raw_bytes(&raw)
     }
 
+    /// A KEK from exactly 32 key bytes, parsed no further (a subkey from [`Self::derive_subkey`]).
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self { bytes }
+    }
+
+    /// Exactly 32 bytes are the key as they are, whatever their last byte; only a longer input
+    /// loses one trailing `\n` or `\r\n` before the raw, hex and base64 checks.
     pub fn from_raw_bytes(raw: &[u8]) -> Result<Self> {
+        if let Ok(bytes) = <[u8; 32]>::try_from(raw) {
+            return Ok(Self { bytes });
+        }
         let trimmed = raw
             .strip_suffix(b"\r\n")
             .or_else(|| raw.strip_suffix(b"\n"))
