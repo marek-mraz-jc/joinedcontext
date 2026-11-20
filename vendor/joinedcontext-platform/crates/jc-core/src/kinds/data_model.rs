@@ -597,7 +597,9 @@ pub fn loopback_http(url: &str) -> bool {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     let host = match authority.strip_prefix('[') {
         Some(v6) => v6.split(']').next().unwrap_or_default(),
-        None => authority.rsplit_once(':').map_or(authority, |(host, _)| host),
+        None => authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host),
     };
     !authority.contains('@')
         && (host.eq_ignore_ascii_case("localhost")
@@ -615,7 +617,10 @@ mod loopback_tests {
         // An instance on loopback mirrors its own Endpoint in process (T-7425); every other
         // plaintext host, a userinfo or subdomain trick included, stays refused.
         for (url, ok) in [
-            ("http://127.0.0.1:42101/api/endpoint/abc/schema/v1/schema.linkml.yaml", true),
+            (
+                "http://127.0.0.1:42101/api/endpoint/abc/schema/v1/schema.linkml.yaml",
+                true,
+            ),
             ("http://localhost/api/endpoint/abc/schema", true),
             ("http://[::1]:8080/api/endpoint/abc/schema", true),
             ("http://127.0.0.1.evil.example/schema", false),

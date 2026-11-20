@@ -358,7 +358,10 @@ fn an_endpoint_of_this_instance_mirrors_from_a_loopback_base() {
     let spec: jc_core::kinds::DataModelSpec =
         serde_json::from_value(mirror.models[0].manifest.spec.clone()).expect("a DataModel");
     assert!(spec.validate().is_ok(), "{:?}", spec.validate());
-    let remote = spec.source.and_then(|source| source.remote).expect("a remote source");
+    let remote = spec
+        .source
+        .and_then(|source| source.remote)
+        .expect("a remote source");
     assert_eq!(remote.url, format!("{LOCAL}/schema/v1/{LINKML}"));
     assert_eq!(remote.sha256, sha256(LINKML_BODY));
 
