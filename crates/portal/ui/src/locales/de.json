@@ -13599,8 +13599,7 @@
         "newPage": "Füllen Sie zuerst eine freie Adresse und einen Titel aus.",
         "rows": "Eine Seite hat höchstens {max} Zeilen.",
         "lastCard": "Ein Link-Block behält mindestens eine Karte; entfernen Sie stattdessen den Block.",
-        "cards": "Ein Block hat höchstens {max} Karten.",
-        "marked": "Ein markiertes Feld dieses Blocks braucht zuerst einen Wert."
+        "cards": "Ein Block hat höchstens {max} Karten."
       },
       "hint": {
         "slug": "Kleinbuchstaben, Ziffern und Bindestriche, zum Beispiel doprava: die Seite antwortet unter /page/doprava.",

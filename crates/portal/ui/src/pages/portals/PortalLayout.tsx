@@ -623,9 +623,11 @@ function BlockCard({
           <h4 className="text-body font-semibold">{typeLabel}</h4>
           {!open && summary ? <p className="truncate text-caption text-fg-muted">{summary}</p> : null}
         </div>
-        <Button size="sm" variant="secondary" aria-expanded={open} aria-controls={`${id}-form`} disabled={faulted} disabledReason={t("portals.layout.why.marked")} onClick={() => setEditing(!editing)}>
-          {open ? t("portals.layout.fold", { type: typeLabel }) : t("portals.layout.edit", { type: typeLabel })}
-        </Button>
+        {faulted ? null : (
+          <Button size="sm" variant="secondary" aria-expanded={open} aria-controls={`${id}-form`} onClick={() => setEditing(!editing)}>
+            {open ? t("portals.layout.fold", { type: typeLabel }) : t("portals.layout.edit", { type: typeLabel })}
+          </Button>
+        )}
         <RowActions
           label={typeLabel}
           actions={[

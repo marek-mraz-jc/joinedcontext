@@ -13599,8 +13599,7 @@
         "newPage": "Najprv vyplňte nepoužitú adresu a názov.",
         "rows": "Stránka má najviac {max} riadkov.",
         "lastCard": "Blok odkazov má aspoň jednu kartu; odstráňte radšej celý blok.",
-        "cards": "Blok má najviac {max} kariet.",
-        "marked": "Označené pole tohto bloku treba najprv vyplniť."
+        "cards": "Blok má najviac {max} kariet."
       },
       "hint": {
         "slug": "Malé písmená, číslice a pomlčky, napríklad doprava: stránka bude na /page/doprava.",
