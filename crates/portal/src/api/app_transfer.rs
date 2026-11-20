@@ -317,7 +317,7 @@ pub async fn import(
         head: bundled.head.clone(),
     };
     if input.dry_run {
-        crate::ops::record_import_check(state, identity, project, &subject).await;
+        crate::ops::record_import_check(state, identity, project, &subject).await?;
         let plan = GitImportPlan {
             repositories: vec![planned],
             parameters: Value::Object(Default::default()),

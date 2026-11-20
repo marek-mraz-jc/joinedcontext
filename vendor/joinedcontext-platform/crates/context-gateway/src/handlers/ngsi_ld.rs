@@ -1114,9 +1114,13 @@ pub(crate) async fn view_request(
     operation: Operation,
     request: &mut Request,
 ) -> Result<(), Box<Response<Body>>> {
+    // The workload a refusal names (T-7458): the smoke counts a Pipeline's refused writes by its
+    // verified service account and project, never by anything the caller claims.
+    let account = subject.service_account.as_deref().unwrap_or("-");
+    let account_project = subject.service_account_project.as_deref().unwrap_or("-");
     // S-49 (T-5955): every surface's hop to the broker passes here, the MCP tools' included.
     if subject.read_only && operation.is_write() {
-        tracing::info!(slug = %endpoint.slug, %operation, "write refused: a read-only token");
+        tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: a read-only token");
         return Err(Box::new(
             ProblemDetails::forbidden()
                 .with_detail("a read-only connector's token reads and never writes")
@@ -1127,7 +1131,7 @@ pub(crate) async fn view_request(
     // manifest that predates the validation writes nothing either. A subscription changes no
     // data, only the caller's own notifications, so a signed-in reader still subscribes.
     if endpoint.open_data && OperationRef::Single(operation).writes_entities() {
-        tracing::info!(slug = %endpoint.slug, %operation, "write refused: an open-data Endpoint");
+        tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: an open-data Endpoint");
         return Err(Box::new(open_data_read_only(operation).into_response()));
     }
     if let Some(refusal) = anonymous_subscription_refusal(subject, operation) {
@@ -1135,7 +1139,7 @@ pub(crate) async fn view_request(
         return Err(Box::new(refusal));
     }
     if let Some(refusal) = ungranted_write_refusal(gateway, endpoint, subject, operation) {
-        tracing::info!(slug = %endpoint.slug, %operation, "write refused: no Policy grants it");
+        tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: no Policy grants it");
         return Err(Box::new(refusal));
     }
     if operation.is_write() {
@@ -1144,7 +1148,7 @@ pub(crate) async fn view_request(
             .domain_gate
             .refusal_for(domain.as_deref(), &endpoint.project)
         {
-            tracing::info!(slug = %endpoint.slug, %operation, "write refused: the domain is not verified");
+            tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: the domain is not verified");
             return Err(Box::new(refusal.into_response()));
         }
     }
@@ -1165,7 +1169,7 @@ pub(crate) async fn view_request(
     }
     let record_version = record_version(operation, request.headers_mut())?;
     if let Some(refusal) = reason_refusal(operation, subject, request.headers()) {
-        tracing::info!(slug = %endpoint.slug, %operation, "write refused: no reason given");
+        tracing::info!(slug = %endpoint.slug, %operation, %account, %account_project, "write refused: no reason given");
         return Err(Box::new(refusal));
     }
     tenancy::pin_caller(request, endpoint.tenant.as_ref(), subject).map_err(|unpinned| {
@@ -1553,6 +1557,141 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7458: a refused write names the verified workload and its project, the fields the
+    /// installation smoke counts a Pipeline's refusals by; a person's names none.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_refused_write_names_the_workload_and_its_project() {
+        use std::sync::{Mutex, PoisonError};
+        #[derive(Clone, Default)]
+        struct Lines(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let gateway = Gateway::new(
+            proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let endpoint = Endpoint {
+            declared_types: None,
+            roles: Default::default(),
+            slug: "pbyqbuyoeikryocvqb5uev7nxbx5mr4a".to_owned(),
+            title: Default::default(),
+            description: Default::default(),
+            space: "barcelona".to_owned(),
+            tenant: None,
+            project: "barcelona".to_owned(),
+            audience: jc_core::kinds::Audience::Public,
+            allowed_projects: Vec::new(),
+            representations: vec![Representation::NgsiLd],
+            rate_limit: None,
+            creates: None,
+            file_limits: None,
+            hidden_attributes: Default::default(),
+            projection: None,
+            view_mapping: None,
+            catalog: None,
+            deprecation: None,
+            feeds: Vec::new(),
+            calendars: Vec::new(),
+            map_defaults: Default::default(),
+            page: None,
+            open_data: true,
+            base_path: "/api/endpoint/pbyqbuyoeikryocvqb5uev7nxbx5mr4a".to_owned(),
+            models: Vec::new(),
+            policy_names: Vec::new(),
+            manifest_name: String::new(),
+            policies: Vec::new(),
+        };
+        let pipeline = Subject {
+            user: Some("service-account-barcelona-pl-equipaments".into()),
+            service_account: Some("pl-equipaments".into()),
+            service_account_project: Some("barcelona".into()),
+            ..Subject::default()
+        };
+        let person = Subject {
+            user: Some("jana".into()),
+            ..Subject::default()
+        };
+        for subject in [&pipeline, &person] {
+            let mut request = Request::new(Body::empty());
+            let refused = view_request(
+                &gateway,
+                &endpoint,
+                subject,
+                "/entities",
+                Operation::CreateEntity,
+                &mut request,
+            )
+            .await
+            .expect_err("an open-data Endpoint refuses every write");
+            assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        }
+        let text = String::from_utf8_lossy(&lines.0.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_owned();
+        let refusals: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("write refused: an open-data Endpoint"))
+            .collect();
+        assert_eq!(refusals.len(), 2, "{text}");
+        assert!(
+            refusals[0].contains("account=pl-equipaments account_project=barcelona"),
+            "{text}"
+        );
+        assert!(
+            refusals[1].contains("account=- account_project=-"),
+            "{text}"
+        );
+        drop(guard);
+
+        // jc logs JSON on every cluster (bins/jc/src/runtime.rs): the same fields under `fields`,
+        // as bins/jc/smoke/orgs/tests/test_orgs.py LOG_JSON reads them.
+        let json = Lines::default();
+        let writer = json.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(move || writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let mut request = Request::new(Body::empty());
+        let _ = view_request(
+            &gateway,
+            &endpoint,
+            &pipeline,
+            "/entities",
+            Operation::CreateEntity,
+            &mut request,
+        )
+        .await;
+        let text = String::from_utf8_lossy(&json.0.lock().unwrap_or_else(PoisonError::into_inner))
+            .into_owned();
+        let line: Value = serde_json::from_str(text.trim()).expect("one JSON line");
+        let fields = &line["fields"];
+        assert_eq!(
+            fields["message"], "write refused: an open-data Endpoint",
+            "{line}"
+        );
+        assert_eq!(fields["slug"], "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "{line}");
+        assert_eq!(fields["account"], "pl-equipaments", "{line}");
+        assert_eq!(fields["account_project"], "barcelona", "{line}");
+    }
 
     /// DM-128: a streamed file's personal_read line names the query's parameters, never a
     /// value a filter carries.

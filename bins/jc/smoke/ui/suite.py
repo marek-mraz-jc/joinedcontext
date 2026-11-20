@@ -329,7 +329,9 @@ def daiya_page(page, base: str, project: str, uid: str) -> str:
 def other_uis(w: Walker, page, who: str, project: str):
     """shako as the signed-in person's browser. shako keeps no sessions, so a browser without a bearer
     is sent (302, from the path alone) to the Portal's page for the same repository, and that page
-    answers the person 200 (crates/shako/web browser_to_portal)."""
+    answers the person 200 (crates/shako/web browser_to_portal). Where /git is the public mount, jc
+    keeps only the read-only clone door there and the edge closes the rest (T-6896, jc-dev's slug mode
+    all of it): a 404 is that refusal, never a browser page."""
     for path, want in (("/git/", "/"),
                        (f"/git/joinedcontext/{project}", f"/projects/{project}/repositories/{project}")):
         r = browser_get(page, f"{w.base}{path}", max_redirects=0)
@@ -339,8 +341,8 @@ def other_uis(w: Walker, page, who: str, project: str):
         landed = browser_get(page, target).status if moved else None
         w.res.check(f"shako.browser:{who}" + ("" if path == "/git/" else ":repository"), "shako",
                     f"GET {path} in a signed-in browser as {who}",
-                    f"302 to the Portal's {want}, which answers 200", f"{r.status} -> {target} {landed or ''}".strip(),
-                    moved and landed == 200)
+                    f"302 to the Portal's {want}, which answers 200, or 404 (public /git: the clone door only, T-6896)",
+                    f"{r.status} -> {target} {landed or ''}".strip(), (moved and landed == 200) or r.status == 404)
 
 
 def dataroom(w: Walker):

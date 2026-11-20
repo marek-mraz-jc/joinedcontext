@@ -539,15 +539,28 @@ impl AppState {
         state.attach_wasm_apps();
         // The forge's Organizations against the registry's, at start and every few minutes after
         // (T-7319): a drift shows in the log, `jc_organization_drift` and the operators'
-        // Organizations page, never repaired here.
+        // Organizations page, never repaired here. Then the projects whose Pipelines run with no
+        // Organization (T-7458), for the installation smoke.
         if let Some(pool) = state.db.clone() {
             let mirror = Arc::clone(&state.mirror);
             tokio::spawn(async move {
                 let mut every = tokio::time::interval(std::time::Duration::from_secs(300));
                 loop {
                     every.tick().await;
-                    if let Err(err) = crate::host_registry::report_drift(&pool, &mirror).await {
-                        tracing::warn!(error = %err, "the Organization drift could not be read");
+                    match crate::host_registry::report_drift(&pool, &mirror).await {
+                        // A loaded mirror only: before the first sync every project looks empty.
+                        Ok(Some(_)) => {
+                            if let Err(err) =
+                                crate::host_registry::report_unplaced_pipelines(&pool, &mirror)
+                                    .await
+                            {
+                                tracing::warn!(error = %err, "the unplaced projects could not be read");
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            tracing::warn!(error = %err, "the Organization drift could not be read")
+                        }
                     }
                 }
             });

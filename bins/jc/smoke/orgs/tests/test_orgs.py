@@ -705,6 +705,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
             return "SET\n" + json.dumps({"pipelines": []})
         if args[-1].startswith("SELECT"):
             return "SET\n" + json.dumps({"organizations": []} if "organizations" in args[-1] else {"knowledge": []})
+        if "logs" in args:
+            return LOG
         return "pod/postgres-cluster-1\n" if "pod" in args else 'mode = "host"\n'
 
     monkeypatch.setattr(watch, "kubectl", fake)
@@ -714,7 +716,10 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
-    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": []}
+    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG)}
+    # the log of every jc pod's jc-server container, the last 30 min only
+    assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true",
+            "--prefix=false") in calls
     queries = [c for c in calls if c[-1].startswith(("SELECT", "WITH"))]
     assert len(queries) == 4 and all("SET default_transaction_read_only = on" in c for c in queries)
     # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
@@ -777,3 +782,141 @@ def test_the_delivering_rows_belong_to_the_projects_organization(tmp_path, edge,
     red = rows["pipelines.delivering.beta-web/events"]
     assert (red["target"], red["result"]) == ("beta", "fail") and "403 Open Data Is Read-Only" in red["actual"]
     assert rows["pipelines.delivering.alpha-web/air"]["result"] == "pass"
+
+
+# jc-server lines as tracing's text format writes them (T-7458): two refusals of one Pipeline's
+# account, one of the project account, a person's (account "-", not counted), a quality refusal
+# (no account), and two drift rounds, the newest of which wins.
+LOG = """\x1b[2m2026-11-20T17:01:00Z\x1b[0m  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: an open-data Endpoint slug=pbyq operation=createEntity account=pl-equipaments account_project=barcelona
+2026-11-20T17:01:30Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: an open-data Endpoint slug=pbyq operation=upsertEntities account=pl-equipaments account_project=barcelona
+2026-11-20T17:02:00Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: no Policy grants it slug=dhiw operation=createEntity account=pipelines account_project=zilina
+2026-11-20T17:02:10Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: no Policy grants it slug=dhiw operation=createEntity account=- account_project=-
+2026-11-20T17:02:20Z  INFO request{module="gateway"}: context_gateway::quality: write refused: it breaks a quality rule space=air rule=r1
+2026-11-20T17:00:00Z  INFO joinedcontext_portal::host_registry: every project with Pipelines has an Organization
+2026-11-20T17:05:00Z  WARN joinedcontext_portal::host_registry: projects with Pipelines and no Organization: their runs keep no history and their imports cannot be checked; an operator adds each Organization on the Organizations page projects=barcelona:19,zilina:3
+"""
+
+
+def test_the_log_window_counts_each_pipelines_refused_writes_and_the_newest_unplaced_report():
+    facts = watch.log_facts(LOG)
+    assert facts["refusedWrites"] == [
+        {"project": "barcelona", "account": "pl-equipaments", "reason": "an open-data Endpoint", "count": 2},
+        {"project": "zilina", "account": "pipelines", "reason": "no Policy grants it", "count": 1},
+    ]
+    assert facts["unplacedReport"] == [{"project": "barcelona", "pipelines": 19}, {"project": "zilina", "pipelines": 3}]
+    assert facts["unattributedRefusals"] == []
+    quiet = watch.log_facts(LOG.splitlines()[5] + "\n")
+    assert quiet == {"logWindow": "30m", "unplacedReport": [], "refusedWrites": [], "unattributedRefusals": [],
+                     "logMinutes": quiet["logMinutes"]}
+    assert watch.log_facts("")["unplacedReport"] is None
+
+
+def test_a_log_that_cannot_be_read_is_named_never_an_empty_window(monkeypatch):
+    def refuse(cfg, *args, timeout=60):
+        raise RuntimeError("kubectl logs deploy/jc: forbidden")
+
+    monkeypatch.setattr(watch, "kubectl", refuse)
+    got = watch.jc_log({"namespace": "jc"})
+    assert got == {"logWindow": "30m", "logError": "kubectl logs deploy/jc: forbidden"}
+    assert orgs.refused_writes(got)[0] == orgs.unplaced_projects(got)[0] == "fail"
+
+
+def test_refused_pipeline_writes_fail_the_row_naming_project_account_and_count():
+    result, got = orgs.refused_writes(watch.log_facts(LOG))
+    assert result == "fail"
+    assert got == ("3 refused in the last 30m: barcelona/pl-equipaments 2 (an open-data Endpoint); "
+                   "zilina/pipelines 1 (no Policy grants it)")
+    # placed and delivering: no refusal in the window
+    assert orgs.refused_writes(watch.log_facts(LOG.splitlines()[5])) == (
+        "pass", "0 refused writes of a Pipeline in the last 30m")
+    assert orgs.refused_writes({})[0] == "skip"
+
+
+def test_a_project_with_pipelines_and_no_organization_fails_the_row_by_name():
+    result, got = orgs.unplaced_projects(watch.log_facts(LOG))
+    assert (result, got) == ("fail", "2 without an Organization: barcelona (19 Pipelines), zilina (3 Pipelines)")
+    assert orgs.unplaced_projects(watch.log_facts(LOG.splitlines()[5])) == (
+        "pass", "every project with Pipelines has an Organization")
+    assert orgs.unplaced_projects(watch.log_facts(""))[0] == "skip"
+    assert orgs.unplaced_projects({})[0] == "skip"
+
+
+def test_the_installation_rows_belong_to_the_deployment_and_fail_the_run(tmp_path, edge, public_sources):
+    doc = {**snapshot(public_sources), **watch.log_facts(LOG)}
+    code, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {r["id"]: r for r in res["checks"] if r["id"] in ("pipelines.refused", "pipelines.unplaced")}
+    assert {(i, r["target"], r["result"]) for i, r in rows.items()} == {
+        ("pipelines.refused", "t", "fail"), ("pipelines.unplaced", "t", "fail")}
+    assert "barcelona/pl-equipaments 2" in rows["pipelines.refused"]["actual"]
+    assert "barcelona (19 Pipelines)" in rows["pipelines.unplaced"]["actual"]
+    assert code == 1
+    # no token, body or record in the rows: names and counts only
+    assert not any(w in json.dumps(rows) for w in ("slug=", "Bearer", "operation="))
+
+
+def test_a_refusal_of_a_jc_before_t7458_names_no_account_and_still_fails_by_slug():
+    old = ("2026-11-20T17:03:00Z  INFO request{module=\"gateway\"}: context_gateway::handlers::ngsi_ld: "
+           "write refused: an open-data Endpoint slug=pbyqbuyoeikryocvqb5uev7nxbx5mr4a operation=createEntity\n")
+    facts = watch.log_facts(old * 3)
+    assert facts["refusedWrites"] == []
+    assert facts["unattributedRefusals"] == [
+        {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 3}]
+    assert orgs.refused_writes(facts) == (
+        "fail", "3 refused in the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")
+
+
+# The lines jc writes on every cluster (log_format = "json"): the refusal exactly as the gateway's
+# test a_refused_write_names_the_workload_and_its_project writes it in .json() mode, the Portal's
+# report in the same shape (T-7458 bounce: the text regexes alone passed on 0 there).
+LOG_JSON = """{"timestamp":"2026-11-20T17:42:22.471166Z","level":"INFO","fields":{"message":"write refused: an open-data Endpoint","slug":"pbyqbuyoeikryocvqb5uev7nxbx5mr4a","operation":"createEntity","account":"pl-equipaments","account_project":"barcelona"},"target":"context_gateway::handlers::ngsi_ld"}
+{"timestamp":"2026-11-20T17:42:23Z","level":"INFO","fields":{"message":"write refused: an open-data Endpoint","slug":"pbyqbuyoeikryocvqb5uev7nxbx5mr4a","operation":"createEntity"},"target":"context_gateway::handlers::ngsi_ld"}
+{"timestamp":"2026-11-20T17:40:00Z","level":"INFO","fields":{"message":"every project with Pipelines has an Organization"},"target":"joinedcontext_portal::host_registry"}
+{"timestamp":"2026-11-20T17:45:00Z","level":"WARN","fields":{"message":"projects with Pipelines and no Organization: their runs keep no history and their imports cannot be checked; an operator adds each Organization on the Organizations page","projects":"barcelona:19,zilina:3"},"target":"joinedcontext_portal::host_registry"}
+not json {"
+"""
+
+
+def test_the_json_lines_jc_writes_on_the_clusters_fail_both_rows():
+    facts = watch.log_facts(LOG_JSON)
+    assert facts["refusedWrites"] == [
+        {"project": "barcelona", "account": "pl-equipaments", "reason": "an open-data Endpoint", "count": 1}]
+    assert facts["unattributedRefusals"] == [
+        {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 1}]
+    assert facts["unplacedReport"] == [{"project": "barcelona", "pipelines": 19}, {"project": "zilina", "pipelines": 3}]
+    assert orgs.refused_writes(facts)[0] == orgs.unplaced_projects(facts)[0] == "fail"
+    # the newest report wins in JSON too: a later "none" line passes the row
+    placed = LOG_JSON.splitlines()[3] + "\n" + LOG_JSON.splitlines()[2]
+    assert orgs.unplaced_projects(watch.log_facts(placed))[0] == "pass"
+
+
+def test_lines_with_kubectls_pod_prefix_count_the_same():
+    # kubectl logs --all-pods=true prefixes each line with [pod/<pod>/<container>] unless
+    # --prefix=false: on jc-prod 154 barcelona refusals counted 0 that way (T-7458 bounce 18:11Z)
+    prefixed = "\n".join(f"[pod/jc-7d9f8c6b5-x2k4q/jc-server] {line}" for line in LOG_JSON.splitlines())
+    assert watch.log_facts(prefixed) == watch.log_facts(LOG_JSON)
+    text = "[pod/jc-1/jc-server] INFO write refused: an open-data Endpoint slug=abc operation=createEntity"
+    assert watch.log_facts(text)["unattributedRefusals"] == [
+        {"slug": "abc", "reason": "an open-data Endpoint", "count": 1}]
+
+
+def test_a_log_window_truncated_by_rotation_never_passes_the_refused_row():
+    # kubelet rotated jc-server's file at 18:14:38Z: --since=30m at 18:18Z read 4 min, 0 refusals,
+    # and the row passed (jc-prod 2026-11-20T18:18Z, T-7458)
+    now = dt.datetime(2026, 11, 20, 18, 18, 17, tzinfo=dt.UTC)
+    quiet = ('[pod/jc-1/jc-server] {"timestamp":"2026-11-20T18:14:38.120Z","level":"INFO","fields":{"message":"x"}}\n'
+             '{"timestamp":"2026-11-20T18:18:00Z","level":"INFO","fields":{"message":"y"}}\n')
+    facts = watch.log_facts(quiet, now)
+    assert facts["logMinutes"] == 3
+    assert orgs.refused_writes(facts) == (
+        "skip", "0 refused, but the log window was truncated to 3 min of 30m (log rotated)")
+    # refusals inside a short window still fail: a red is never hidden
+    refused = watch.log_facts(LOG_JSON.splitlines()[0].replace("17:42:22", "18:15:00"), now)
+    assert orgs.refused_writes(refused)[0] == "fail"
+    # the full window (1 min slack) passes; text lines carry their time at the start
+    full = watch.log_facts("2026-11-20T17:49:00Z  INFO jc: started\n" + quiet, now)
+    assert full["logMinutes"] == 29 and orgs.refused_writes(full)[0] == "pass"
+    # no line with a time: the window is unknown, never green
+    assert watch.log_facts("", now)["logMinutes"] is None
+    assert orgs.refused_writes(watch.log_facts("", now))[0] == "skip"
+    # a time inside a message does not stretch the window
+    assert watch.log_facts("INFO y at 2026-11-20T10:00:00Z\n", now)["logMinutes"] is None

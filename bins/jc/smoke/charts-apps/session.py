@@ -11,7 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import SECOND_FACTOR
+from common import SECOND_FACTOR, module_door
 
 # The realm of the rehearsal (common.realm_of): callers pass `realm`, default jc's own.
 REALM = "jc"
@@ -76,7 +76,7 @@ class Session:
             headers.setdefault("Cookie", cookies)
         if method not in ("GET", "HEAD") and "__Host-jc_csrf" in self.jar:
             headers.setdefault("x-csrf-token", self.jar["__Host-jc_csrf"][0])
-        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        req = urllib.request.Request(module_door(url), data=data, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
                 self._store(r.headers)

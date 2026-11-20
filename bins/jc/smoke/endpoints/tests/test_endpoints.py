@@ -411,14 +411,33 @@ def test_a_door_answering_a_page_for_the_catalogue_names_it_and_the_opendata_ori
 
 def test_the_opendata_origin_takes_only_opendata_paths_and_only_loopback(monkeypatch):
     monkeypatch.setenv(common.OPENDATA_ORIGIN, "http://127.0.0.1:9")
-    assert common.opendata_door("http://127.0.0.1:1/opendata/api/3/action/package_list?x=1") == \
+    assert common.module_door("http://127.0.0.1:1/opendata/api/3/action/package_list?x=1") == \
         "http://127.0.0.1:9/opendata/api/3/action/package_list?x=1"
-    assert common.opendata_door("http://127.0.0.1:1/opendata") == "http://127.0.0.1:9/opendata"
+    assert common.module_door("http://127.0.0.1:1/opendata") == "http://127.0.0.1:9/opendata"
     for other in ("http://127.0.0.1:1/api/endpoints", "http://127.0.0.1:1/opendatax/a"):
-        assert common.opendata_door(other) == other
+        assert common.module_door(other) == other
     monkeypatch.setenv(common.OPENDATA_ORIGIN, "https://opendata.smartcity.example")
     with pytest.raises(SystemExit):
-        common.opendata_door("http://127.0.0.1:1/opendata/")
+        common.module_door("http://127.0.0.1:1/opendata/")
+
+
+def test_each_module_origin_takes_only_its_own_paths(monkeypatch):
+    # jc-dev 144317Z: daiya's /dashboards/api and shako's /git/api read the Portal's page on the jc
+    # pod's door, as /opendata did (T-7459, T-7460); each module gets a door of its own.
+    for var in (common.OPENDATA_ORIGIN, common.DASHBOARDS_ORIGIN, common.GIT_ORIGIN):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv(common.DASHBOARDS_ORIGIN, "http://127.0.0.1:8")
+    monkeypatch.setenv(common.GIT_ORIGIN, "http://127.0.0.1:7")
+    assert common.module_door("http://127.0.0.1:1/dashboards/api/orgs/name/bbsk") == \
+        "http://127.0.0.1:8/dashboards/api/orgs/name/bbsk"
+    assert common.module_door("http://127.0.0.1:1/git/api/v1/repos/joinedcontext/configuration") == \
+        "http://127.0.0.1:7/git/api/v1/repos/joinedcontext/configuration"
+    for other in ("http://127.0.0.1:1/opendata/", "http://127.0.0.1:1/api/v1/projects/bbsk/grafana/dashboards",
+                  "http://127.0.0.1:1/gitx", "http://127.0.0.1:1/projects/org/grafana/dashboards/jc-slo"):
+        assert common.module_door(other) == other
+    monkeypatch.setenv(common.GIT_ORIGIN, "https://jc.jcdev.example")
+    with pytest.raises(SystemExit):
+        common.module_door("http://127.0.0.1:1/git/api/v1/version")
 
 
 def test_a_cut_types_listing_names_the_brokers_warning(tmp_path, serve, monkeypatch):

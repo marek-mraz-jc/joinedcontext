@@ -1748,6 +1748,15 @@ async fn check_content(
         check_surfaces(state, project, &envelope.metadata.name, &envelope.spec).await?;
     }
 
+    // 4b-organization. A Project names the Organization the registry files it under, or one an
+    //       operator asked to move it to by a ProjectMove Change (T-7462).
+    if kind == "Project" {
+        crate::project_move::placed(state, &envelope.metadata.name, &envelope.spec, |line| {
+            unprocessable(vec![line])
+        })
+        .await?;
+    }
+
     // 4b-mqtt. A project's own allowance written only by an org admin, and roles naming only
     //       accounts the proposer reads (PF-117, PF-118, ADR-N-048 §2.9, T-5590).
     crate::mqtt_allowance::check_manifest(state, identity, project, envelope)?;

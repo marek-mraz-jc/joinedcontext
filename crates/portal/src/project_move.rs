@@ -12,7 +12,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use utoipa::ToSchema;
 
-use crate::permissions::{organization_of, ORG_NAMESPACE};
+use crate::permissions::{installation_organization, organization_of, ORG_NAMESPACE};
 use crate::store::{ListOptions, Mirror};
 
 /// The rows of one keyed table that move.
@@ -48,8 +48,12 @@ pub struct MovePlan {
     pub bindings: Vec<String>,
     /// The project sits under `to` already: approving changes nothing.
     pub done: bool,
-    /// Why the move cannot be applied now, each naming its next step; empty when it can.
+    /// Why the move cannot be asked for now, each naming its next step; empty when it can.
     pub blockers: Vec<String>,
+    /// What must finish before a second operator approves, each naming its next step: the
+    /// manifest naming `to`, the project's open Changes merged or closed (T-7462). A proposal may
+    /// come first, and it is what lets the Project Change name `to` ([`check_manifest`]).
+    pub waits: Vec<String>,
 }
 
 /// The registry's record of a live project: its id and the Organization's name and key.
@@ -186,9 +190,13 @@ pub async fn plan(
         blockers.push(format!(
             "project: the Portal's configuration holds no Project '{project}'"
         ));
-    } else if manifest_organization.as_deref() != Some(to) {
-        blockers.push(format!(
-            "organization: Project '{project}' names Organization '{}' in its manifest; set its spec.organizationRef to '{to}' (a Project Change) and approve the move once it is synced",
+    }
+    let mut waits = Vec::new();
+    if mirror.get(ORG_NAMESPACE, "Project", project).is_some()
+        && manifest_organization.as_deref() != Some(to)
+    {
+        waits.push(format!(
+            "organization: Project '{project}' names Organization '{}' in its manifest; with this move asked for, set its spec.organizationRef to '{to}' (a Project Change) and approve the move once it is synced",
             manifest_organization.as_deref().unwrap_or("none")
         ));
     }
@@ -224,7 +232,75 @@ pub async fn plan(
         bindings: bindings(mirror, project),
         done,
         blockers,
+        waits,
     }))
+}
+
+/// The registry's name of the Organization a manifest names: the name itself when the registry
+/// holds it active, else the configured installation Organization when the name is the
+/// repository's installation claim (jc-prod's forge says `hel`, its registry `smartcity`; as
+/// `project_ids::key_of` resolves it, T-7414).
+async fn registry_name(pool: &PgPool, mirror: &Mirror, named: &str) -> Result<String, sqlx::Error> {
+    if active_key(pool, named).await?.is_some() {
+        return Ok(named.to_owned());
+    }
+    Ok(match mirror.configured_installation() {
+        Some(configured) if installation_organization(mirror).as_deref() == Some(named) => {
+            configured.to_owned()
+        }
+        _ => named.to_owned(),
+    })
+}
+
+/// Refuses a Project manifest whose `spec.organizationRef` places a project the registry files
+/// under another Organization (T-7462), unless an operator asked to move it there: a
+/// `ProjectMove` Change of `project` to that Organization is proposed. Without it the mirror
+/// would place the project where its keyed rows are not, and every keyed read would answer 404;
+/// a manifest naming the Organization the project moved away from (or the installation claim
+/// after a move off it) is refused the same way. A project the registry files under none yet
+/// takes the one its manifest names at its first keyed write.
+pub async fn check_manifest(
+    pool: &PgPool,
+    mirror: &Mirror,
+    project: &str,
+    spec: &serde_json::Value,
+) -> Result<Result<(), String>, sqlx::Error> {
+    let Some(Recorded {
+        organization: Some(filed),
+        ..
+    }) = recorded(pool, project).await?
+    else {
+        return Ok(Ok(()));
+    };
+    let named = spec
+        .get("organizationRef")
+        .and_then(crate::resource::reference_name)
+        .map(str::to_owned)
+        .or_else(|| installation_organization(mirror));
+    let Some(named) = named else {
+        return Ok(Ok(()));
+    };
+    let target = registry_name(pool, mirror, &named).await?;
+    if target == filed {
+        return Ok(Ok(()));
+    }
+    let asked: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM operator_changes WHERE kind = 'ProjectMove' \
+         AND state = 'proposed' AND payload->>'project' = $1 AND payload->>'organization' = $2)",
+    )
+    .bind(project)
+    .bind(&target)
+    .fetch_one(pool)
+    .await?;
+    if asked {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "spec.organizationRef: the registry files project '{project}' under Organization \
+         '{filed}', and '{named}' names another; an operator moves a project by a ProjectMove \
+         Change to '{target}' (Operator, Changes), and this Project Change is accepted once that \
+         move is asked for"
+    )))
 }
 
 /// Why an apply did not move the project.
@@ -316,5 +392,29 @@ pub async fn apply(
         tables: moved,
         bindings: bindings(mirror, project),
         blockers: Vec::new(),
+        waits: Vec::new(),
     })
+}
+
+/// [`check_manifest`] as a door asks it, for a Portal with a database: `refusal` makes the line
+/// its answer (a form error on a door, a conflict at approval); a registry that does not answer
+/// is 503.
+pub async fn placed(
+    state: &crate::state::AppState,
+    project: &str,
+    spec: &serde_json::Value,
+    refusal: fn(String) -> crate::error::ApiError,
+) -> Result<(), crate::error::ApiError> {
+    let Some(pool) = state.db.as_ref() else {
+        return Ok(());
+    };
+    check_manifest(pool, &state.mirror, project, spec)
+        .await
+        .map_err(|err| {
+            tracing::warn!(error = %err, %project, "the project registry could not be read");
+            crate::error::ApiError::Unavailable(
+                "the project registry could not be read; try again".into(),
+            )
+        })?
+        .map_err(refusal)
 }

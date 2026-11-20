@@ -234,6 +234,51 @@ def test_the_public_origin_is_the_issuers_only_when_it_differs_from_the_base():
             srv.shutdown()
 
 
+def test_on_a_forward_to_jc_the_connector_metadata_names_jcs_public_issuer(tmp_path):
+    """jc-dev smoke 2026-11-20T144317Z (T-7460): /c/{id}'s metadata names jc's configured issuer,
+    https://<public>/login/realms/dev, while the discovery document read through the forward names
+    the forward; the row compares against the public one, and a foreign issuer still fails."""
+    cid = suite.CONNECTOR_ID
+
+    def jc(servers):
+        class Jc(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                port = self.server.server_port
+                if self.path == "/api/v1/auth/login":
+                    self.send_response(303)
+                    self.send_header("Location", "https://jc.smoke.invalid/login/realms/dev/protocol/openid-connect/auth"
+                                     "?redirect_uri=https%3A%2F%2Fjc.smoke.invalid%2Fapi%2Fv1%2Fauth%2Fcallback")
+                    self.end_headers()
+                    return
+                body = ({"authorization_servers": [f"{servers}/login/realms/dev"], "scopes_supported": [f"connector:{cid}"]}
+                        if self.path.startswith(f"/c/{cid}/") else {"issuer": f"https://127.0.0.1:{port}/login/realms/dev"})
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
+
+            def do_POST(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", f'Bearer resource_metadata="x", scope="connector:{cid}"')
+                self.end_headers()
+        return Jc
+
+    for servers, want in (("https://jc.smoke.invalid", "pass"), ("https://evil.invalid", "fail")):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), jc(servers))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            res = suite.Results("kaisatsu", f"http://127.0.0.1:{srv.server_port}")
+            live = suite.Live(suite.argparse.Namespace(base_url=res.base, state=str(tmp_path)), res, "dev")
+            live.issuer = suite.issuer_of(live.http, "dev")
+            live.connector_door()
+            rows = {r["id"]: r for r in res.rows}
+            assert rows["connector.metadata"]["result"] == want, rows["connector.metadata"]
+        finally:
+            srv.shutdown()
+
+
 def test_the_public_origin_is_the_portals_sign_in_address_over_an_issuer_that_follows_the_host():
     """jc-dev since T-7005: through the forward the issuer names https://<forward>, nothing listens
     there; the Portal's sign-in redirect names jc's configured public URL, the address the realm

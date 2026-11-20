@@ -347,7 +347,7 @@ pub async fn import(
         "displayName": input.display_name,
     });
     if input.dry_run {
-        crate::ops::record_import_check(state, identity, project, &subject).await;
+        crate::ops::record_import_check(state, identity, project, &subject).await?;
         let plan = GitImportPlan {
             repositories: planned,
             parameters: serde_json::to_value(&own.spec.parameters)
