@@ -325,6 +325,127 @@ async fn who_may_repoint_and_what_is_refused() {
     assert_eq!(writes(&server).await, Vec::<String>::new());
 }
 
+/// The Project as the mirror reads it in layout 2: the project's own `project.yaml` on `main`,
+/// with no registry field, plus `quotas` when `public_endpoints` is given.
+fn own_project(public_endpoints: Option<u64>) -> Value {
+    let mut manifest: Value = serde_norway::from_str(&project_yaml(false)).expect("project.yaml");
+    if let Some(limit) = public_endpoints {
+        manifest["spec"]["quotas"] = json!({ "publicEndpoints": limit });
+    }
+    manifest
+}
+
+/// A dry run of the generic Project door, then the proposal when the dry run passed (PF-57).
+async fn put_project(state: &AppState, body: Value) -> (Answer, Option<Answer>) {
+    let uri = "/api/v1/projects/org/projects/ovzdusie";
+    let checked = send(
+        state,
+        person("vlasta"),
+        "PUT",
+        &format!("{uri}?dryRun=All"),
+        Some(body.clone()),
+    )
+    .await;
+    if checked.status != StatusCode::OK || checked.text.contains("\"valid\":false") {
+        return (checked, None);
+    }
+    let proposed = send(state, person("vlasta"), "PUT", uri, Some(body)).await;
+    (checked, Some(proposed))
+}
+
+/// CC-85, CC-87, T-7455: in layout 2 a Project's own file is `project.yaml` of its repository.
+/// A quota edit through the generic door is a Change of that repository, under the project,
+/// and the organization repository, which holds only `projects/{slug}.yaml`, is never written:
+/// a `projects/{slug}/project.yaml` there stops every load of `main`.
+#[tokio::test]
+async fn a_layout_two_project_update_lands_in_the_project_repository() {
+    let (server, state) = world().await;
+    common::mount_repository(&server, PROJECT_REPO).await;
+    state
+        .mirror
+        .upsert(serde_json::from_value(own_project(None)).expect("envelope"));
+
+    let (checked, proposed) = put_project(&state, own_project(Some(500))).await;
+    assert_eq!(checked.status, StatusCode::OK, "{}", checked.text);
+    let proposed = proposed.expect("the dry run passed");
+    assert_eq!(proposed.status, StatusCode::ACCEPTED, "{}", proposed.text);
+    let change: Value = serde_json::from_str(&proposed.text).expect("change");
+    assert_eq!(change["metadata"]["name"], "chg-00000009", "{change}");
+    assert_eq!(change["metadata"]["namespace"], "ovzdusie", "{change}");
+    assert_eq!(change["status"]["repository"], "ovzdusie", "{change}");
+
+    let written: Vec<String> = writes(&server).await;
+    assert!(
+        written
+            .iter()
+            .all(|w| !w.starts_with(&format!("POST {REPO}/"))),
+        "the organization repository is never written: {written:?}"
+    );
+    let commits: Vec<Value> = server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .filter(|r| r.url.path() == format!("{PROJECT_REPO}/Shako.CommitFiles"))
+        .flat_map(|r| {
+            let body: Value = serde_json::from_slice(&r.body).expect("json body");
+            body["Files"].as_array().cloned().unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(commits.len(), 1, "{commits:?}");
+    assert_eq!(commits[0]["path"], "project.yaml", "{commits:?}");
+    let content = STANDARD
+        .decode(commits[0]["content"].as_str().unwrap_or_default())
+        .expect("base64");
+    let manifest: Value = serde_norway::from_slice(&content).expect("yaml");
+    assert_eq!(manifest["spec"]["quotas"]["publicEndpoints"], 500);
+    assert!(manifest["spec"].get("repository").is_none(), "{manifest}");
+}
+
+/// T-7455: what would put a project directory or a registry field into the wrong file is refused
+/// at the dry run, before anything is written: a create at the generic door, a registry field in
+/// `project.yaml`, and a project the mirror holds no repository for.
+#[tokio::test]
+async fn a_layout_two_project_change_that_would_miss_its_repository_is_refused_at_the_dry_run() {
+    let (server, state) = world().await;
+    state
+        .mirror
+        .upsert(serde_json::from_value(own_project(Some(450))).expect("envelope"));
+
+    // The registry entry's own shape: valid as a Project, wrong as project.yaml.
+    let mut with_registry = own_project(None);
+    with_registry["spec"] = json!({
+        "organizationRef": "bb",
+        "repository": { "name": "ovzdusie" },
+        "ref": "main",
+    });
+    let (checked, proposed) = put_project(&state, with_registry).await;
+    assert!(proposed.is_none());
+    refused(
+        &checked,
+        StatusCode::OK,
+        "PUT /api/v1/projects/ovzdusie/registry",
+    );
+
+    let mut fresh = own_project(None);
+    fresh["metadata"]["name"] = json!("novy");
+    let created = send(
+        &state,
+        person("vlasta"),
+        "POST",
+        "/api/v1/projects/org/projects?dryRun=All",
+        Some(fresh),
+    )
+    .await;
+    refused(&created, StatusCode::OK, "POST /api/v1/projects (CC-85)");
+
+    state.mirror.set_repositories(BTreeMap::new());
+    let (checked, proposed) = put_project(&state, own_project(Some(500))).await;
+    assert!(proposed.is_none());
+    refused(&checked, StatusCode::CONFLICT, "no repository of its own");
+    assert_eq!(writes(&server).await, Vec::<String>::new());
+}
+
 /// Layout 1 has no registry entry to repoint.
 #[tokio::test]
 async fn layout_one_has_no_registry_entry() {
