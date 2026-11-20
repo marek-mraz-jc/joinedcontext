@@ -2184,7 +2184,7 @@ impl Config {
             reason,
         })?;
 
-        let portal_settings = crate::portals::parse(
+        let mut portal_settings = crate::portals::parse(
             &lookup("JC_PORTAL_PORTAL_HOSTS").unwrap_or_default(),
             lookup("JC_PORTAL_PORTALS_MAX").as_deref(),
             &lookup("JC_PORTAL_HARVEST_HOSTS").unwrap_or_default(),
@@ -2193,6 +2193,7 @@ impl Config {
             var: "JC_PORTAL_PORTAL_HOSTS",
             reason,
         })?;
+        portal_settings.own_host = public_base_url.host_str().map(str::to_ascii_lowercase);
 
         let branches = crate::api::branches::parse(
             lookup("JC_PORTAL_BRANCHES_PER_PROJECT").as_deref(),

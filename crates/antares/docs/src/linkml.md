@@ -63,6 +63,13 @@ ADR-0023 rule 5), never from the stored schema (LK1):
 - the narrowed schema's `id` is `<source id>/views/<view>`, so it never
   claims to be the full model.
 
+A request carrying the broker's admin token (`ANTARES_ADMIN_TOKEN_FILE`, the
+Portal's alone; the gateway strips every `Authorization` before it
+forwards) is narrowed by the view alone, the engine not asked: the view's
+own projection, one digest whoever reads it, which the Portal pins when it
+mirrors a shared Endpoint's model (SHR-16, T-7425). A broker without an
+admin token answers no request this way.
+
 ## 3. Paths
 
 Each path is one discovery operation of the view, asked through

@@ -318,6 +318,9 @@ async fn a_manifest_that_does_not_parse_is_reported_and_the_rest_of_the_pass_con
     );
     let mut outside = declared("helsinki", "hub", "bikes");
     outside[0].spec["endpointRef"]["namespace"] = json!("espoo");
+    // A caller read of another project's Endpoint is PF-48's case; a ServiceAccount one is a
+    // shared read (T-7426) with its own refusals.
+    outside[0].spec["federation"] = json!({ "identity": "caller" });
     let now = mirror(vec![
         declared("helsinki", "hub", "transport"),
         vec![broken],

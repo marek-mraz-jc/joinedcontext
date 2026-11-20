@@ -247,7 +247,7 @@ impl AppState {
         }
     }
 
-    pub fn new(config: Config, oidc: Option<OidcClient>) -> Self {
+    pub fn new(mut config: Config, oidc: Option<OidcClient>) -> Self {
         let mirror = Arc::new(Mirror::new());
         if let Some(installation) = config.installation_organization.as_ref() {
             mirror.set_configured_installation(&installation.name);
@@ -282,6 +282,8 @@ impl AppState {
         let organization_addresses = crate::organization_host::OrganizationAddressList::new(
             config.organization_addresses.clone(),
         );
+        // One set: the Portal judge reads the addresses jc replaces at run time (ODP-12).
+        config.portal_settings.addresses = organization_addresses.clone();
         let draft_events = DraftHub::new();
         let drafts = DraftStore::new(None, Arc::default()).with_hub(draft_events.clone());
         let space_usage = Arc::new(

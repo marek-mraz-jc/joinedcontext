@@ -224,7 +224,7 @@ pub struct DataModelSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RemoteSource {
-    /// Schema surface the model was fetched from; `https://` only.
+    /// Schema surface the model was fetched from; `https://`, or `http://` on a loopback host (an instance mirroring its own Endpoint).
     pub url: String,
     /// Version the peer published.
     pub version: SemVer,
@@ -285,11 +285,11 @@ impl DataModelSource {
         }
 
         if let Some(remote) = &self.remote {
-            if !remote.url.starts_with("https://") {
+            if !remote.url.starts_with("https://") && !loopback_http(&remote.url) {
                 return Err(Error::Name {
                     field: "source.remote.url",
                     value: remote.url.clone(),
-                    reason: "remote url must be an https:// URL",
+                    reason: "remote url must be an https:// URL (http:// only on a loopback host)",
                 });
             }
             if !SHA256_RE.is_match(&remote.sha256) {
@@ -584,5 +584,53 @@ impl DataModelSpec {
     /// Returns `true` if transitioning from current lifecycle to `next` is permitted (DM-26).
     pub fn allows_transition_to(&self, next: DataModelLifecycle) -> bool {
         self.lifecycle.allows_transition_to(next)
+    }
+}
+
+/// `http://` on a loopback host: an instance on `127.0.0.1` mirrors a model of its own Endpoint
+/// (SHR-16, T-7425), read in process, so no byte of it crossed a network a plaintext URL exposes.
+/// Anything else in the clear stays refused.
+pub fn loopback_http(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority
+            .rsplit_once(':')
+            .map_or(authority, |(host, _)| host),
+    };
+    !authority.contains('@')
+        && (host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback()))
+}
+
+#[cfg(test)]
+mod loopback_tests {
+    use super::loopback_http;
+
+    #[test]
+    fn only_a_loopback_host_is_accepted_in_the_clear() {
+        // An instance on loopback mirrors its own Endpoint in process (T-7425); every other
+        // plaintext host, a userinfo or subdomain trick included, stays refused.
+        for (url, ok) in [
+            (
+                "http://127.0.0.1:42101/api/endpoint/abc/schema/v1/schema.linkml.yaml",
+                true,
+            ),
+            ("http://localhost/api/endpoint/abc/schema", true),
+            ("http://[::1]:8080/api/endpoint/abc/schema", true),
+            ("http://127.0.0.1.evil.example/schema", false),
+            ("http://127.0.0.1@evil.example/schema", false),
+            ("http://evil.example#@127.0.0.1/", false),
+            ("http://10.0.0.1/schema", false),
+            ("ftp://127.0.0.1/schema", false),
+            ("https://127.0.0.1/schema", false),
+        ] {
+            assert_eq!(loopback_http(url), ok, "{url}");
+        }
     }
 }

@@ -1926,6 +1926,31 @@ impl ViewSync {
             .await
     }
 
+    /// One document of the LinkML surface of the stored view `id` (an Endpoint's slug), `rest`
+    /// the path under `linkml/` (antares-linkml `GET /x/views/{id}/linkml/…`), read with the admin
+    /// token: the view's schema as the view projects it, the one digest a mirror pins (SHR-16,
+    /// T-7425). `Ok(None)` on 404; at most `max` bytes.
+    pub async fn view_linkml(
+        &self,
+        id: &str,
+        rest: &str,
+        max: usize,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let (base, token) = self.broker_of(id)?;
+        let answer = self
+            .http
+            .get(format!("{base}/x/views/{id}/linkml/{rest}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|err| format!("the broker did not answer: {}", err.without_url()))?;
+        match answer.status() {
+            reqwest::StatusCode::NOT_FOUND => Ok(None),
+            status if status.is_success() => crate::capped::bytes(answer, max).await.map(Some),
+            status => Err(format!("the broker answered {status}")),
+        }
+    }
+
     /// POSTs `body` to `path` on the broker of view `id`'s space with the admin token.
     async fn broker_post(
         &self,
@@ -1934,6 +1959,23 @@ impl ViewSync {
         body: &Value,
         headers: &reqwest::header::HeaderMap,
     ) -> Result<(u16, Value), String> {
+        let (base, token) = self.broker_of(id)?;
+        // The person's request id: the broker's line for the preview (a refusal too) carries it.
+        let request = crate::request_id::forward(self.http.post(format!("{base}/{path}")))
+            .bearer_auth(token)
+            .json(body)
+            .headers(headers.clone());
+        let answer = request
+            .send()
+            .await
+            .map_err(|err| format!("the broker did not answer: {}", err.without_url()))?;
+        let status = answer.status().as_u16();
+        let body = crate::capped::json(answer, crate::capped::ANSWER_BYTES).await;
+        Ok((status, body.unwrap_or(Value::Null)))
+    }
+
+    /// The address of the broker serving view `id`'s space and the admin token for it.
+    fn broker_of(&self, id: &str) -> Result<(String, String), String> {
         let token = match std::fs::read_to_string(&self.token_file) {
             Ok(token) if !token.trim().is_empty() => token.trim().to_owned(),
             _ => return Err("the broker's admin token is not readable".into()),
@@ -1952,18 +1994,7 @@ impl ViewSync {
         let base = self
             .address(&broker)
             .ok_or_else(|| format!("the space's broker '{broker}' has no address"))?;
-        // The person's request id: the broker's line for the preview (a refusal too) carries it.
-        let request = crate::request_id::forward(self.http.post(format!("{base}/{path}")))
-            .bearer_auth(token)
-            .json(body)
-            .headers(headers.clone());
-        let answer = request
-            .send()
-            .await
-            .map_err(|err| format!("the broker did not answer: {}", err.without_url()))?;
-        let status = answer.status().as_u16();
-        let body = crate::capped::json(answer, crate::capped::ANSWER_BYTES).await;
-        Ok((status, body.unwrap_or(Value::Null)))
+        Ok((base, token))
     }
 
     async fn apply(&self, desired: Desired, pass: Pass) -> Vec<(Owner, ViewOutcome)> {

@@ -6,7 +6,7 @@
 use antares_ops::policy::{
     Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Rule, Subject,
 };
-use antares_ops::test_kit::TestBroker;
+use antares_ops::test_kit::{AdminAuth, TestBroker};
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::Router;
@@ -389,6 +389,54 @@ async fn linkml_schema_is_cached_per_view_and_subject_and_never_served_across_th
     );
     engine.0.store(false, Ordering::SeqCst);
     assert_eq!(get(&app, "schema/v2/model.linkml.yaml").await.2, wide);
+}
+
+/// SHR-16, T-7425: the broker's admin token (the Portal's alone; the gateway
+/// strips every `Authorization`) reads the view's own projection, the engine
+/// not asked, so a mirror pins one digest; every other caller stays narrowed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_admin_token_reads_the_views_projection_without_the_engine() {
+    // At least 32 bytes, and no secret: a repeated word.
+    let token = "linkml-".repeat(6);
+    std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, SCHEMA_MAX.to_string());
+    let app = TestBroker::new()
+        .await
+        .expect("a broker")
+        .with_policy(Arc::new(DenyAll))
+        .with_admin_auth(AdminAuth::new(&token, true).expect("an admin token"))
+        .serve(antares_linkml::Linkml)
+        .expect("the surface serves");
+    let bearer = format!("Bearer {token}");
+    let admin = [("Authorization", bearer.as_str())];
+    for (path, body) in [
+        ("/q/views/cars", view(&READS)),
+        ("/q/schemas/city", schema()),
+    ] {
+        let (s, _, b) = send(&app, "PUT", path, &admin, Some(&body)).await;
+        assert!(s.is_success(), "{path}: {s} {b}");
+    }
+    let index = "/x/views/cars/linkml/schema/index.json";
+    let (s, _, _) = send(&app, "GET", index, &[], None).await;
+    assert_ne!(s, StatusCode::OK, "the engine denies a caller");
+    let (s, _, _) = send(
+        &app,
+        "GET",
+        index,
+        &[("Authorization", "Bearer not-the-token")],
+        None,
+    )
+    .await;
+    assert_ne!(s, StatusCode::OK, "another token is any caller");
+    let (s, _, body) = send(&app, "GET", index, &admin, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(body.contains("\"models\""), "{body}");
+    let model = "/x/views/cars/linkml/schema/v2/model.linkml.yaml";
+    let (s, _, body) = send(&app, "GET", model, &admin, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(
+        body.contains("\n  speed:\n"),
+        "the view shows speed: {body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
