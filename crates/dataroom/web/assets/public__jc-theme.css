@@ -951,3 +951,9 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
   .jc-block .table td + td + td::before { content: " · "; }
   .jc-viz-frame { max-height: 18rem; }
 }
+.jc-hero-image { width: 100%; max-height: 14rem; }
+@media (max-width: 599px) {
+  .jc-blocks .jc-row-wrap { margin-block: .75rem; }
+  .jc-row { gap: 1rem; }
+  .jc-hero-image { max-height: 9rem; }
+}
