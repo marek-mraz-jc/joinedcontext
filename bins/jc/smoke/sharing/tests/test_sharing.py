@@ -56,28 +56,27 @@ def test_a_cell_whose_control_failed_is_blind_never_a_pass_or_a_fail():
     assert suite.judge(cell("w1.ngsi-ld.outsider"), True, "nothing answered")["result"] == "pass"
 
 
-def test_the_known_list_names_w2_protected_with_its_spec_reference():
+def test_the_known_list_names_w2_protected_temporal_and_subscription_alone():
     known = suite.load_known()
-    assert "45.1" in suite.known_for("w2-protected.ngsi-ld.query", known)
-    assert suite.known_for("w2-protected.mcp.get-entity", known)
-    # a revocation of a read that is not built cannot be measured: excused with the read
-    assert suite.known_for("w2-protected.mcp.revoked", known)
-    # an outsider or a write row is never excused (security), nor any row of another way
-    for cid in ("w2-protected.ngsi-ld.outsider", "w2-protected.write.write-refused", "w2-protected.linkml.hidden",
+    assert "T-7422" in suite.known_for("w2-protected.ngsi-ld.temporal", known)
+    assert suite.known_for("w2-protected.ngsi-ld.subscription", known)
+    # T-7426: the identity cells are measured, never excused; an outsider or a write row neither
+    for cid in ("w2-protected.ngsi-ld.query", "w2-protected.mcp.get-entity", "w2-protected.mcp.revoked",
+                "w2-protected.ngsi-ld.outsider", "w2-protected.write.write-refused", "w2-protected.linkml.hidden",
                 "w1.ngsi-ld.query", "w1.ngsi-ld.revoked", "w2-public.ngsi-ld.query"):
         assert suite.known_for(cid, known) is None, cid
 
 
 def test_settle_turns_red_only_for_a_failing_cell_off_the_known_list():
     known = suite.load_known()
-    rows = [suite.judge(cell("w2-protected.ngsi-ld.query"), False, "200, list of 0", (True, "200")),
+    rows = [suite.judge(cell("w2-protected.ngsi-ld.temporal"), False, "200, list of 0", (True, "200")),
             suite.judge(cell("w1.ngsi-ld.query"), False, "403", (True, "200")),
-            suite.judge(cell("w2-protected.mcp.get-entity"), True, "200", (True, "200")),
+            suite.judge(cell("w2-protected.ngsi-ld.subscription"), True, "notified", (True, "204")),
             suite.judge(cell("w1.mcp.get-entity"), True, "200", (False, "404"))]
     s = {r["id"]: r for r in suite.settle(rows, known)}
-    assert s["w2-protected.ngsi-ld.query"]["status"] == "not built" and not s["w2-protected.ngsi-ld.query"]["red"]
+    assert s["w2-protected.ngsi-ld.temporal"]["status"] == "not built" and not s["w2-protected.ngsi-ld.temporal"]["red"]
     assert s["w1.ngsi-ld.query"]["red"]
-    assert "stale" in s["w2-protected.mcp.get-entity"]["status"]
+    assert "stale" in s["w2-protected.ngsi-ld.subscription"]["status"]
     assert s["w1.mcp.get-entity"]["status"] == "blind" and s["w1.mcp.get-entity"]["red"]
 
 
