@@ -19,6 +19,12 @@
 
 use crate::{subjects, ChangeEvent};
 use async_nats::jetstream::{self, consumer, stream};
+
+/// The subscription bucket's handle, watch and watch error, so a caller of
+/// [`NatsBus::subs_kv`] can name them without its own async-nats dependency.
+pub use async_nats::jetstream::kv::{
+    Store as KvStore, Watch as KvWatch, WatchError as KvWatchError,
+};
 use futures_util::StreamExt;
 
 /// Bus failures. String-typed on purpose: callers either retry (drain loop)

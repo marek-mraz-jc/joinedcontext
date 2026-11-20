@@ -181,6 +181,10 @@ impl RegIndex {
 pub trait Mirror: Send + Sync {
     fn apply(&self, tenant: &str, id: &str, doc: Option<Value>);
 
+    /// Every `(tenant, id)` the mirror holds now: what a reseed checks
+    /// against the store to drop the ids a missed delete left behind.
+    fn held(&self) -> Vec<(String, String)>;
+
     /// A Context Source Registration Subscription was written somewhere.
     /// Mirrors that serve no interval sweep have nothing to do.
     fn csub_written(&self) {}
@@ -189,6 +193,15 @@ pub trait Mirror: Send + Sync {
 impl Mirror for DocMirror {
     fn apply(&self, tenant: &str, id: &str, doc: Option<Value>) {
         DocMirror::apply(self, tenant, id, doc);
+    }
+
+    fn held(&self) -> Vec<(String, String)> {
+        self.map
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .flat_map(|(t, i)| i.docs.keys().map(|id| (t.clone(), id.clone())))
+            .collect()
     }
 }
 
@@ -507,6 +520,15 @@ impl SubMirror {
 impl Mirror for SubMirror {
     fn apply(&self, tenant: &str, id: &str, doc: Option<Value>) {
         SubMirror::apply(self, tenant, id, doc);
+    }
+
+    fn held(&self) -> Vec<(String, String)> {
+        self.map
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .flat_map(|(t, i)| i.docs.keys().map(|id| (t.clone(), id.clone())))
+            .collect()
     }
 
     fn csub_written(&self) {

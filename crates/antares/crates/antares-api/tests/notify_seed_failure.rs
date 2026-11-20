@@ -309,3 +309,87 @@ async fn the_same_seed_fills_a_registration_mirror_past_a_refused_list() {
         "an unseeded tenant must read empty rather than borrow another tenant's rows"
     );
 }
+
+/// A subscription stored with an `entities` selector on `VEHICLE`.
+fn vehicle_sub(id: &str) -> Value {
+    json!({"id": id, "type": "Subscription", "entities": [{"type": VEHICLE}],
+           "notification": {"endpoint": {"uri": "http://receiver.invalid/n"}}})
+}
+
+const VEHICLE: &str = "https://example.org/Vehicle";
+
+/// T-7451: a pod whose bus feed was down while another pod deleted a
+/// subscription never sees that delete replayed (the bucket purges the
+/// tombstone after `SUBS_TOMBSTONE_GRACE`). The reseed on reopen is what
+/// takes the subscription out of the mirror the matcher reads candidates
+/// from; without it the pod kept notifying a receiver whose subscription
+/// was deleted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reseed_drops_the_subscriptions_the_store_no_longer_holds() {
+    let st = AppState::new("me".into());
+    let tenant = TenantId::new("me").expect("tenant");
+    let (kept, gone) = (
+        "urn:ngsi-ld:Subscription:kept",
+        "urn:ngsi-ld:Subscription:gone",
+    );
+    for id in [kept, gone] {
+        st.store
+            .create(&tenant, Kind::Subscription, id, vehicle_sub(id))
+            .await
+            .expect("seed a subscription");
+    }
+    let mirror = antares_api::mirror::SubMirror::default();
+    antares_api::notify::seed_mirror(&*st.store, &mirror, Kind::Subscription)
+        .await
+        .expect("seed");
+    // The delete another pod made during the gap: in the store, never in this mirror.
+    st.store
+        .delete(&tenant, Kind::Subscription, gone)
+        .await
+        .expect("delete");
+
+    antares_api::notify::reseed_mirror(&*st.store, &mirror, Kind::Subscription)
+        .await
+        .expect("reseed");
+
+    let ids: Vec<Value> = mirror
+        .candidates("me", &[VEHICLE], &[])
+        .iter()
+        .map(|d| d["id"].clone())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![json!(kept)],
+        "a change to a Vehicle still reaches the deleted subscription"
+    );
+}
+
+/// Half a walk proves no absence: a reseed that cannot read the store keeps
+/// what the mirror held rather than drop subscriptions it never got to.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reseed_that_cannot_read_the_store_drops_nothing() {
+    let st = AppState::new("me".into());
+    let tenant = TenantId::new("me").expect("tenant");
+    let id = "urn:ngsi-ld:Subscription:held";
+    st.store
+        .create(&tenant, Kind::Subscription, id, vehicle_sub(id))
+        .await
+        .expect("seed a subscription");
+    let mirror = antares_api::mirror::SubMirror::default();
+    antares_api::notify::seed_mirror(&*st.store, &mirror, Kind::Subscription)
+        .await
+        .expect("seed");
+
+    let store = Double::overloaded(st.store.clone());
+    assert!(
+        antares_api::notify::reseed_mirror(&store, &mirror, Kind::Subscription)
+            .await
+            .is_err(),
+        "the double must actually refuse the walk"
+    );
+    assert_eq!(
+        mirror.candidates("me", &[VEHICLE], &[]).len(),
+        1,
+        "a failed reseed emptied the mirror"
+    );
+}

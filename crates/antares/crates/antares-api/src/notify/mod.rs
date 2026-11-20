@@ -168,6 +168,43 @@ pub async fn seed_mirror(
     mirror: &dyn Mirror,
     kind: Kind,
 ) -> Result<(), antares_model::NgsiError> {
+    seed(store, mirror, kind).await.map(drop)
+}
+
+/// [`seed_mirror`] for a mirror that has been running: also drops every id
+/// it holds that the store no longer has.
+///
+/// A reopened feed replays what the bus still carries, and the bus forgets a
+/// delete (the subscription bucket purges its tombstone after
+/// `SUBS_TOMBSTONE_GRACE`; a fresh registry consumer starts at NEW). An id
+/// deleted while this pod's feed was down would otherwise stay in the
+/// mirror, and the matcher, reading candidates from the mirror alone, kept
+/// notifying a receiver whose subscription its owner had deleted. Nothing is
+/// dropped unless the whole walk succeeded: half a walk proves no absence.
+/// The caller applies no delta during the walk; the feed it opened first
+/// holds them, so a write racing the walk lands after it.
+pub async fn reseed_mirror(
+    store: &dyn antares_store::CurrentStateDriver,
+    mirror: &dyn Mirror,
+    kind: Kind,
+) -> Result<(), antares_model::NgsiError> {
+    let before = mirror.held();
+    let seen = seed(store, mirror, kind).await?;
+    for key in before {
+        if !seen.contains(&key) {
+            mirror.apply(&key.0, &key.1, None);
+        }
+    }
+    Ok(())
+}
+
+/// The walk behind both seeds; returns every `(tenant, id)` it applied.
+async fn seed(
+    store: &dyn antares_store::CurrentStateDriver,
+    mirror: &dyn Mirror,
+    kind: Kind,
+) -> Result<std::collections::HashSet<(String, String)>, antares_model::NgsiError> {
+    let mut seen = std::collections::HashSet::new();
     for tenant_str in store.subscription_tenants().await? {
         // The store's own enumeration, so the grammar is all that is left to
         // check: 5.5.15 permits a Subscription inside a Snapshot, and its
@@ -185,6 +222,7 @@ pub async fn seed_mirror(
                     let id = id.to_owned();
                     after = Some(id.clone());
                     mirror.apply(&tenant_str, &id, Some(doc));
+                    seen.insert((tenant_str.clone(), id));
                 }
             }
             // A short page is the end. A cursor that did not move is also the
@@ -198,7 +236,7 @@ pub async fn seed_mirror(
             }
         }
     }
-    Ok(())
+    Ok(seen)
 }
 
 /// Documents per mirror-seed page: the peak transient allocation of the
