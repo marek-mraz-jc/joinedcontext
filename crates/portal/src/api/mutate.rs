@@ -1193,6 +1193,16 @@ async fn propose_engine(
     // change in what people are asking the platform to do.
     crate::telemetry::proposed(lane, kind_info.kind);
 
+    // 6a. The repository the change is written to: a layout 2 Project's own file lives in the
+    //     project's repository, which a dry run already names (T-7455).
+    let home = forge_home(state, kind_info.kind, project, &envelope, operation)?;
+    if home != project && (workspace.is_some() || bundle.is_some()) {
+        return Err(ApiError::BadRequest(format!(
+            "Project {home} lives in its own repository; propose its project.yaml as a change of \
+             its own, outside a workspace or a plan of several changes (CC-87)"
+        )));
+    }
+
     // 7. Dry run short-circuit; an `http` DataSource is also fetched once (MF-39).
     if dry_run {
         let probe = if kind_info.kind == "DataSource" {
@@ -1233,7 +1243,7 @@ async fn propose_engine(
 
     // 8. Commit to Git merge request via the forge client
     let shako = state
-        .forge_for(project)
+        .forge_for(&home)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     let shako: &crate::forge::ShakoClient = &shako;
 
@@ -1360,7 +1370,7 @@ async fn propose_engine(
             // operation, so a second proposal while one is pending would rewrite the open pull
             // request under its approver. Refused before anything is written, naming the change
             // to decide first (T-0883).
-            if let Some(pending) = open_change_on(state, shako, &branch, project).await? {
+            if let Some(pending) = open_change_on(state, shako, &branch, &home).await? {
                 return Err(ApiError::Conflict(format!(
                     "a change for {} '{}' is already open: {}; approve or reject it first",
                     kind_info.kind, envelope.metadata.name, pending.name
@@ -1481,7 +1491,7 @@ async fn propose_engine(
         .await?;
 
     // 9. Answer 202 Accepted with Change resource
-    let change_meta = crate::api::changes::change_meta(state, shako, pr.number, project);
+    let change_meta = crate::api::changes::change_meta(state, shako, pr.number, &home);
     let change_status = ChangeStatus::new(lane, ChangePhase::PendingApproval, plan.summary)
         .in_repository(&pr.repository)
         .proposed_through(&pr.body)
@@ -1497,6 +1507,54 @@ async fn propose_engine(
     };
 
     Ok(ProposeOutcome::Change(change))
+}
+
+/// The project whose repository a change of `kind` in `project` is written to (CC-87):
+/// `project` itself, except a Project in a layout 2 organization. There the organization
+/// repository holds only the registry entry `projects/{slug}.yaml`, and the Project's own
+/// `project.yaml` lives in the project's repository (CC-85, PF-86), so its update is a Change of
+/// that project. A project directory in the organization repository stops every load of `main`
+/// (T-7455), so a create here and an update of a project without a repository of its own are
+/// refused, as is a registry field, which the registry door writes.
+fn forge_home(
+    state: &AppState,
+    kind: &str,
+    project: &str,
+    envelope: &ResourceEnvelope,
+    operation: Operation,
+) -> Result<String, ApiError> {
+    if kind != "Project"
+        || project != crate::permissions::ORG_NAMESPACE
+        || state.mirror.layout() != 2
+        || operation == Operation::Delete
+    {
+        return Ok(project.to_owned());
+    }
+    let name = &envelope.metadata.name;
+    if operation == Operation::Create {
+        return Err(ApiError::BadRequest(format!(
+            "a project of this organization opens with a repository of its own: open {name} \
+             with POST /api/v1/projects (CC-85)"
+        )));
+    }
+    if ["repository", "ref"]
+        .iter()
+        .any(|field| envelope.spec.get(field).is_some())
+    {
+        return Err(ApiError::BadRequest(format!(
+            "Project {name}: spec.repository and spec.ref belong to its registry entry; change \
+             them with PUT /api/v1/projects/{name}/registry, and leave them out of project.yaml \
+             (PF-86)"
+        )));
+    }
+    match state.mirror.repository_of(name) {
+        Some(_) => Ok(name.clone()),
+        None => Err(ApiError::Conflict(format!(
+            "Project {name} has no repository of its own in the Portal's last read of main, \
+             and the organization repository holds only its registry entry; wait for the next \
+             load, then send the change again (CC-85)"
+        ))),
+    }
 }
 
 /// A kind filed once per scope already held under another name (DS-07, T-2855): a create would
