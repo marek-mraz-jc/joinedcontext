@@ -211,6 +211,7 @@ impl BatchRun<'_> {
                 attrs,
                 body: body.as_ref(),
                 stored: pre.stored.as_ref(),
+                keeps_unwritten: self.opts.mode == BatchMode::Upsert && self.opts.update,
                 ..crate::policy::Operation::new(self.opts.mode.clause())
             })
             .collect();

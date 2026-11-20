@@ -257,9 +257,10 @@ impl RegistrationSync {
     }
 
     /// The Endpoint another project shares with `project`, when `manifest` reads one
-    /// (SHR-15 `live`, T-7422): an anonymous registration whose `endpointRef` names another
-    /// project. It is read in process on this broker, through the shared Endpoint's view and
-    /// decided as an anonymous caller (SHR-17), and only while `project` holds a
+    /// (SHR-15 `live`, T-7422): an anonymous or serviceAccount registration whose `endpointRef`
+    /// names another project. It is read in process on this broker, through the shared
+    /// Endpoint's view, decided as the anonymous caller or as `project`'s ServiceAccount the
+    /// provider's Policy names (SHR-17, FED-15, T-7426), and only while `project` holds a
     /// `SharedSpaceReference` to it. `Ok(None)` for every other registration.
     fn shared_member(
         &self,
@@ -279,16 +280,44 @@ impl RegistrationSync {
         let Some(provider) = reference.namespace().filter(|ns| *ns != project) else {
             return Ok(None);
         };
-        if spec.federation.identity != FederationIdentity::Anonymous {
-            return Ok(None);
-        }
         let name = reference.name();
+        let caller = match spec.federation.identity {
+            FederationIdentity::Anonymous => (ANONYMOUS_ROLES.0, ANONYMOUS_ROLES.1.to_owned()),
+            FederationIdentity::ServiceAccount => {
+                let account = spec
+                    .federation
+                    .service_account_ref
+                    .as_ref()
+                    .map(|r| r.name().to_owned())
+                    .unwrap_or_default();
+                if mirror.get(project, "ServiceAccount", &account).is_none() {
+                    return Err(format!(
+                        "federation.serviceAccountRef names the ServiceAccount {project}/{account}, \
+                         which does not exist, so nothing is registered"
+                    ));
+                }
+                // The broker compares the header with a Policy assignee as written: an account
+                // is `{project}/{name}` there (PL-92), never a bare name another project shares.
+                (SERVICE_ACCOUNT_CLIENT, format!("{project}/{account}"))
+            }
+            FederationIdentity::Caller => return Ok(None),
+        };
         let endpoint = mirror.get(provider, "Endpoint", name).ok_or_else(|| {
             format!(
                 "endpointRef names the Endpoint {provider}/{name}, which does not exist, so \
                  nothing is registered"
             )
         })?;
+        // A workload is a named caller: the shared Endpoint's audience has to admit its project,
+        // as it would a call on the Endpoint itself (the anonymous caller is the public Policy's).
+        if caller.0 == SERVICE_ACCOUNT_CLIENT
+            && !super::streams::render::admits(mirror, &endpoint.spec, provider, project)
+        {
+            return Err(format!(
+                "the Endpoint {provider}/{name} does not admit project {project}, so nothing is \
+                 registered: ask its owner to share it with {project}"
+            ));
+        }
         let slug = endpoint
             .spec
             .get("slug")
@@ -336,11 +365,12 @@ impl RegistrationSync {
             },
             tenant,
             slug,
+            caller,
         }))
     }
 
     /// Writes the export grant the provider's tenant holds for the hub's (Antares ADR-0025
-    /// rule 5): through the shared Endpoint's view, reads only, decided as an anonymous caller.
+    /// rule 5): through the shared Endpoint's view, reads only, decided as its `caller`.
     async fn put_grant(&self, shared: &SharedMember, hub: &str) -> Result<(), String> {
         let response = self
             .authorized(self.http.put(shared.grant_url(hub)))?
@@ -576,6 +606,8 @@ struct SharedMember {
     tenant: String,
     /// The shared Endpoint's slug, which is its view's id.
     slug: String,
+    /// The policy subject header and value every forward under the grant is decided as.
+    caller: (&'static str, String),
 }
 
 /// `(broker, provider tenant, hub tenant)`: one export grant.
@@ -584,6 +616,10 @@ type GrantKey = (String, String, String);
 /// The caller a shared read is decided as: the gateway's anonymous caller, so the provider's
 /// public Policy holds and no person or token of the consumer reaches it (SHR-17).
 const ANONYMOUS_ROLES: (&str, &str) = ("x-jc-roles", "public");
+
+/// The header a `serviceAccount` shared read is decided by: the hub project's account, as the
+/// provider's Policy assigns it (`serviceAccount {project}/{name}`, FED-15, T-7426).
+const SERVICE_ACCOUNT_CLIENT: &str = "x-jc-client";
 
 impl SharedMember {
     fn grant_key(&self, hub: &str) -> GrantKey {
@@ -604,7 +640,7 @@ impl SharedMember {
             "source": hub,
             "view": self.slug,
             "access": "read",
-            "subject": { ANONYMOUS_ROLES.0: ANONYMOUS_ROLES.1 },
+            "subject": { self.caller.0: self.caller.1 },
         });
         if organization(&self.tenant) != organization(hub) {
             grant["crossOrganization"] = Value::Bool(true);
@@ -875,12 +911,16 @@ mod tests {
     }
 
     /// PF-48: registering a member is what exposes it, so it stays inside one steward's project.
+    /// A shared Endpoint of another project is read only as the anonymous caller or the hub's
+    /// ServiceAccount under a SharedSpaceReference (T-7422, T-7426); as the caller never.
     #[test]
     fn a_member_named_in_another_project_is_never_written() {
-        let mirror = mirror_with(vec![csr(
+        let mut caller = csr(
             "transport",
             json!({ "kind": "Endpoint", "name": "transport-read", "namespace": "espoo" }),
-        )]);
+        );
+        caller.spec["federation"] = json!({ "identity": "caller" });
+        let mirror = mirror_with(vec![caller]);
         let (found, refused) = declared(&mirror);
         assert!(found.is_empty());
         assert!(refused[0].2.contains("outside its project"), "{refused:?}");
@@ -993,6 +1033,59 @@ mod tests {
             .err()
             .unwrap_or_default();
         assert!(refused.contains("SharedSpaceReference"), "{refused}");
+    }
+
+    /// FED-15, T-7426: a serviceAccount registration of another project's shared Endpoint is
+    /// read in process as the hub project's account, `{project}/{name}` as the provider's Policy
+    /// names it; it needs that ServiceAccount in the hub's project and an Endpoint whose audience
+    /// admits the hub's project, each refusal naming what is missing.
+    #[test]
+    fn a_shared_endpoint_read_as_a_service_account_is_decided_as_the_hubs_account() {
+        let sync = RegistrationSync::new("http://127.0.0.1:42101/broker");
+        let ngsi_ld = "http://127.0.0.1:42101/broker/ngsi-ld/v1";
+        let base = || {
+            // `csr` reads as the hub's ServiceAccount `hub-reader`, over shared_read's anonymous one
+            let mirror = shared_read(true);
+            mirror.upsert(csr(
+                "from-espoo",
+                json!({ "kind": "Endpoint", "name": "shared", "namespace": "espoo" }),
+            ));
+            mirror
+        };
+        let resolve = |mirror: &Mirror| {
+            let (found, refused) = declared(mirror);
+            assert!(refused.is_empty(), "{refused:?}");
+            let (project, _, hub, _, manifest) = &found[0];
+            sync.shared_member(mirror, project, manifest, ngsi_ld)
+                .map(|shared| shared.map(|s| s.grant(hub)))
+        };
+
+        let said = resolve(&base()).err().unwrap_or_default();
+        assert!(
+            said.contains("ServiceAccount helsinki/hub-reader"),
+            "{said}"
+        );
+
+        let mirror = base();
+        mirror.upsert(envelope(
+            "ServiceAccount",
+            "hub-reader",
+            json!({ "owner": { "user": "u" }, "purpose": "p", "roles": [], "credentials": [] }),
+        ));
+        let said = resolve(&mirror).err().unwrap_or_default();
+        assert!(said.contains("does not admit project helsinki"), "{said}");
+
+        let mut shared = mirror.get("espoo", "Endpoint", "shared").expect("fixture");
+        shared.spec["audience"] = json!("project-list");
+        shared.spec["allowedProjects"] = json!(["helsinki"]);
+        mirror.upsert(shared);
+        let grant = resolve(&mirror).expect("resolves").expect("a shared read");
+        assert_eq!(
+            grant["subject"],
+            json!({ "x-jc-client": "helsinki/hub-reader" })
+        );
+        assert_eq!(grant["view"], json!(SHARED_SLUG));
+        assert_eq!(grant["access"], json!("read"));
     }
 
     /// One request the fake broker saw: method and path.
