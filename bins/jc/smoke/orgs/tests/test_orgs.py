@@ -705,6 +705,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
             return "SET\n" + json.dumps({"pipelines": []})
         if args[-1].startswith("SELECT"):
             return "SET\n" + json.dumps({"organizations": []} if "organizations" in args[-1] else {"knowledge": []})
+        if "logs" in args:
+            return LOG
         return "pod/postgres-cluster-1\n" if "pod" in args else 'mode = "host"\n'
 
     monkeypatch.setattr(watch, "kubectl", fake)
@@ -714,7 +716,9 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
-    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": []}
+    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": [], **watch.log_facts(LOG)}
+    # the log of every jc pod's jc-server container, the last 30 min only
+    assert ("-n", "jc", "logs", "deploy/jc", "-c", "jc-server", "--since=30m", "--all-pods=true") in calls
     queries = [c for c in calls if c[-1].startswith(("SELECT", "WITH"))]
     assert len(queries) == 4 and all("SET default_transaction_read_only = on" in c for c in queries)
     # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
@@ -777,3 +781,83 @@ def test_the_delivering_rows_belong_to_the_projects_organization(tmp_path, edge,
     red = rows["pipelines.delivering.beta-web/events"]
     assert (red["target"], red["result"]) == ("beta", "fail") and "403 Open Data Is Read-Only" in red["actual"]
     assert rows["pipelines.delivering.alpha-web/air"]["result"] == "pass"
+
+
+# jc-server lines as tracing's text format writes them (T-7458): two refusals of one Pipeline's
+# account, one of the project account, a person's (account "-", not counted), a quality refusal
+# (no account), and two drift rounds, the newest of which wins.
+LOG = """\x1b[2m2026-11-20T17:01:00Z\x1b[0m  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: an open-data Endpoint slug=pbyq operation=createEntity account=pl-equipaments account_project=barcelona
+2026-11-20T17:01:30Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: an open-data Endpoint slug=pbyq operation=upsertEntities account=pl-equipaments account_project=barcelona
+2026-11-20T17:02:00Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: no Policy grants it slug=dhiw operation=createEntity account=pipelines account_project=zilina
+2026-11-20T17:02:10Z  INFO request{module="gateway"}: context_gateway::handlers::ngsi_ld: write refused: no Policy grants it slug=dhiw operation=createEntity account=- account_project=-
+2026-11-20T17:02:20Z  INFO request{module="gateway"}: context_gateway::quality: write refused: it breaks a quality rule space=air rule=r1
+2026-11-20T17:00:00Z  INFO joinedcontext_portal::host_registry: every project with Pipelines has an Organization
+2026-11-20T17:05:00Z  WARN joinedcontext_portal::host_registry: projects with Pipelines and no Organization: their runs keep no history and their imports cannot be checked; an operator adds each Organization on the Organizations page projects=barcelona:19,zilina:3
+"""
+
+
+def test_the_log_window_counts_each_pipelines_refused_writes_and_the_newest_unplaced_report():
+    facts = watch.log_facts(LOG)
+    assert facts["refusedWrites"] == [
+        {"project": "barcelona", "account": "pl-equipaments", "reason": "an open-data Endpoint", "count": 2},
+        {"project": "zilina", "account": "pipelines", "reason": "no Policy grants it", "count": 1},
+    ]
+    assert facts["unplacedReport"] == [{"project": "barcelona", "pipelines": 19}, {"project": "zilina", "pipelines": 3}]
+    assert facts["unattributedRefusals"] == []
+    quiet = watch.log_facts(LOG.splitlines()[5] + "\n")
+    assert quiet == {"logWindow": "30m", "unplacedReport": [], "refusedWrites": [], "unattributedRefusals": []}
+    assert watch.log_facts("")["unplacedReport"] is None
+
+
+def test_a_log_that_cannot_be_read_is_named_never_an_empty_window(monkeypatch):
+    def refuse(cfg, *args, timeout=60):
+        raise RuntimeError("kubectl logs deploy/jc: forbidden")
+
+    monkeypatch.setattr(watch, "kubectl", refuse)
+    got = watch.jc_log({"namespace": "jc"})
+    assert got == {"logWindow": "30m", "logError": "kubectl logs deploy/jc: forbidden"}
+    assert orgs.refused_writes(got)[0] == orgs.unplaced_projects(got)[0] == "fail"
+
+
+def test_refused_pipeline_writes_fail_the_row_naming_project_account_and_count():
+    result, got = orgs.refused_writes(watch.log_facts(LOG))
+    assert result == "fail"
+    assert got == ("3 refused in the last 30m: barcelona/pl-equipaments 2 (an open-data Endpoint); "
+                   "zilina/pipelines 1 (no Policy grants it)")
+    # placed and delivering: no refusal in the window
+    assert orgs.refused_writes(watch.log_facts(LOG.splitlines()[5])) == (
+        "pass", "0 refused writes of a Pipeline in the last 30m")
+    assert orgs.refused_writes({})[0] == "skip"
+
+
+def test_a_project_with_pipelines_and_no_organization_fails_the_row_by_name():
+    result, got = orgs.unplaced_projects(watch.log_facts(LOG))
+    assert (result, got) == ("fail", "2 without an Organization: barcelona (19 Pipelines), zilina (3 Pipelines)")
+    assert orgs.unplaced_projects(watch.log_facts(LOG.splitlines()[5])) == (
+        "pass", "every project with Pipelines has an Organization")
+    assert orgs.unplaced_projects(watch.log_facts(""))[0] == "skip"
+    assert orgs.unplaced_projects({})[0] == "skip"
+
+
+def test_the_installation_rows_belong_to_the_deployment_and_fail_the_run(tmp_path, edge, public_sources):
+    doc = {**snapshot(public_sources), **watch.log_facts(LOG)}
+    code, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {r["id"]: r for r in res["checks"] if r["id"] in ("pipelines.refused", "pipelines.unplaced")}
+    assert {(i, r["target"], r["result"]) for i, r in rows.items()} == {
+        ("pipelines.refused", "t", "fail"), ("pipelines.unplaced", "t", "fail")}
+    assert "barcelona/pl-equipaments 2" in rows["pipelines.refused"]["actual"]
+    assert "barcelona (19 Pipelines)" in rows["pipelines.unplaced"]["actual"]
+    assert code == 1
+    # no token, body or record in the rows: names and counts only
+    assert not any(w in json.dumps(rows) for w in ("slug=", "Bearer", "operation="))
+
+
+def test_a_refusal_of_a_jc_before_t7458_names_no_account_and_still_fails_by_slug():
+    old = ("2026-11-20T17:03:00Z  INFO request{module=\"gateway\"}: context_gateway::handlers::ngsi_ld: "
+           "write refused: an open-data Endpoint slug=pbyqbuyoeikryocvqb5uev7nxbx5mr4a operation=createEntity\n")
+    facts = watch.log_facts(old * 3)
+    assert facts["refusedWrites"] == []
+    assert facts["unattributedRefusals"] == [
+        {"slug": "pbyqbuyoeikryocvqb5uev7nxbx5mr4a", "reason": "an open-data Endpoint", "count": 3}]
+    assert orgs.refused_writes(facts) == (
+        "fail", "3 refused in the last 30m: ?/slug pbyqbuyoeikryocvqb5uev7nxbx5mr4a 3 (an open-data Endpoint)")

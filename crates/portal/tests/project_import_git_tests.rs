@@ -492,6 +492,27 @@ async fn the_dry_run_answers_the_plan_and_the_declarations() {
     nothing_created(&server).await;
 }
 
+/// T-7458: on a database installation a project not created yet has no Organization key for
+/// the check of its import, so the dry run says so with 409 instead of a green plan the import
+/// then refuses as unchecked.
+#[tokio::test]
+async fn the_dry_run_of_a_project_with_no_key_answers_409_naming_it() {
+    let (server, state) = world().await;
+    let state = common::on_database(state).await;
+    let answer = import(
+        &state,
+        person("jana"),
+        "?format=git&dryRun=All",
+        &archive(PROJECT, |_| {}),
+        &[],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("doprava"), "{}", answer.text);
+    assert!(answer.text.contains("not created yet"), "{}", answer.text);
+    nothing_created(&server).await;
+}
+
 /// MF-42, MF-47, CC-88: a file that is not the exported one, a project of another apiVersion,
 /// and a value for an undeclared parameter are refused before anything is created.
 #[tokio::test]

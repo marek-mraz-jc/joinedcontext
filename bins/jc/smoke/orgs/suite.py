@@ -56,6 +56,16 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
   names the failures and the newest failure's error text. Never delivered in 7 days, or no run in
   the window (paused, stopped, not due), is a skip; a run that delivered nothing and failed nothing
   passes. ci/known.txt refuses a line holding these rows (all/suite.py load_known).
+Rows of the installation (target the deployment; T-7458), from the snapshot's jc-server log window:
+- pipelines.refused: no write of a Pipeline's account (a verified workload) refused by the gateway
+  in the window (an open-data Endpoint, no Policy, a read-only token, an unverified domain, no
+  reason); the actual names project/account, count and reason per workload, most first. A 401 has
+  no verified caller and names no Pipeline, so it is not counted. A refusal line with no account
+  field (a jc before T-7458) fails the row too, named ?/slug <slug>.
+- pipelines.unplaced: the Portal's newest report in the window names no project whose Pipelines
+  have no Organization; the actual names each project and its count of Pipelines. No report in
+  the window is a skip. A log the watch could not read fails both rows.
+  ci/known.txt refuses a line holding either row, like the delivering rows.
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
 Result lines carry statuses and counts, never a response body or a person's data."""
 
@@ -92,6 +102,7 @@ ASK = {
     "en": ("What does your page \"{t}\" say?", "Please sum up your page \"{t}\"."),
 }
 TITLE_MAX = 120
+LOG_WINDOW = "30m"  # watch.py LOG_WINDOW
 ROLES = {"working": "portal", "opendata": "opendata", "api": "api", "signin": "idm", "apps": "apps"}
 
 
@@ -330,6 +341,42 @@ def delivering(pl: dict, now: dt.datetime) -> tuple[str, str]:
     return FAIL, got + f"; newest error: {clean_title(pl.get('error'))[:160] or 'no error text kept'}"
 
 
+def refused_writes(snap: dict) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of pipelines.refused over the snapshot's log window."""
+    if "logWindow" not in snap:
+        return SKIP, "no jc-server log in the snapshot (watch.py reads it)"
+    if snap.get("logError"):
+        return FAIL, f"the jc-server log was not read: {clean_title(snap['logError'])[:160]}"
+    rows = [r for r in snap.get("refusedWrites") or [] if isinstance(r, dict)]
+    # a jc before T-7458 logs no account: its refusals count by slug, the caller unknown
+    rows += [{**r, "project": "?", "account": f"slug {r.get('slug')}"}
+             for r in snap.get("unattributedRefusals") or [] if isinstance(r, dict)]
+    total = sum(int(r.get("count") or 0) for r in rows)
+    if not total:
+        return PASS, f"0 refused writes of a Pipeline in the last {snap['logWindow']}"
+    named = "; ".join(f"{clean_title(r.get('project'))[:63]}/{clean_title(r.get('account'))[:70]} "
+                      f"{int(r.get('count') or 0)} ({clean_title(r.get('reason'))[:80]})" for r in rows[:12])
+    more = f"; {len(rows) - 12} more" if len(rows) > 12 else ""
+    return FAIL, f"{total} refused in the last {snap['logWindow']}: {named}{more}"
+
+
+def unplaced_projects(snap: dict) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of pipelines.unplaced over the snapshot's log window."""
+    if "logWindow" not in snap:
+        return SKIP, "no jc-server log in the snapshot (watch.py reads it)"
+    if snap.get("logError"):
+        return FAIL, f"the jc-server log was not read: {clean_title(snap['logError'])[:160]}"
+    report = snap.get("unplacedReport")
+    if report is None:
+        return SKIP, f"no report of the Portal's 5-min Organization round in the last {snap['logWindow']}"
+    rows = [r for r in report if isinstance(r, dict)]
+    if not rows:
+        return PASS, "every project with Pipelines has an Organization"
+    named = ", ".join(f"{clean_title(r.get('project'))[:63]} ({int(r.get('pipelines') or 0)} Pipelines)"
+                      for r in rows[:20])
+    return FAIL, f"{len(rows)} without an Organization: {named}"
+
+
 def answered(st: int) -> bool:
     return 200 <= st < 400
 
@@ -337,6 +384,7 @@ def answered(st: int) -> bool:
 class Suite:
     def __init__(self, doc: dict, orgs: dict, res: Results, a):
         self.doc, self.orgs, self.r, self.a = doc, orgs, res, a
+        self.snap: dict = {}
         self.previous = previous_questions(a.previous)
         self.asked: dict[str, str] = {}
         self.rng = random.Random()
@@ -364,6 +412,15 @@ class Suite:
                      f"{self.scheme}://{self.login}{self.login_path}/realms/{self.installation}")
         for o, e in self.orgs.items():
             self.one(o, e)
+        call = f"jc-server log, last {self.snap.get('logWindow', LOG_WINDOW)} (read-only snapshot)"
+        for rid, judge, want in (
+                ("pipelines.refused", refused_writes, "no write of a Pipeline refused by the gateway"),
+                ("pipelines.unplaced", unplaced_projects, "every project with Pipelines has an Organization")):
+            result, got = judge(self.snap)
+            if result == SKIP:
+                self.r.skip(rid, self.a.deployment, call, want, got)
+            else:
+                self.r.check(rid, self.a.deployment, call, want, got, result == PASS)
 
     def one(self, o: str, e: dict) -> None:
         hs = e["hosts"]
@@ -570,6 +627,7 @@ def main(argv) -> int:
     suite = Suite(doc, orgs, res, a)
     # the pipeline windows count from the database's clock at the snapshot, not this host's
     suite.now = parse_time(snap.get("pipelinesAt")) or suite.now
+    suite.snap = snap
     try:
         suite.run()
     finally:

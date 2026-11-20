@@ -139,6 +139,30 @@ pub async fn registered(state: &AppState, pool: &sqlx::PgPool, project: &str) {
     .expect("an Organization of the registry");
 }
 
+/// `state` on the database `JC_PORTAL_TEST_DATABASE_URL` names. A missing variable fails, never
+/// skips.
+pub async fn on_database(state: AppState) -> AppState {
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    state.with_db(pool)
+}
+
+/// [`on_database`] with `project` in the mirror under an Organization of this run the registry
+/// does not hold: a project with no tenancy key, as barcelona was on jc-prod (T-7458).
+pub async fn unplaced(state: AppState, project: &str) -> AppState {
+    let state = on_database(state).await;
+    state.mirror.upsert(envelope(
+        "Project",
+        project,
+        joinedcontext_portal::permissions::ORG_NAMESPACE,
+        json!({ "organizationRef": format!("unregistered-{}", unique::unique()) }),
+    ));
+    state
+}
+
 /// A mirror holding `projects`, each placed in an active Organization of the registry: what a
 /// store built on its own (no `AppState`) needs to keep rows under a project key (T-7198).
 pub async fn keyed_mirror(pool: &sqlx::PgPool, projects: &[&str]) -> Arc<Mirror> {

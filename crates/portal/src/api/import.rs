@@ -1252,7 +1252,7 @@ async fn read_request(
         (status = 400, description = "The bundle was refused", body = ProblemDetails),
         (status = 401, description = "Unauthorized", body = ProblemDetails),
         (status = 403, description = "format=git by anybody who may not open a project (PF-65), format=git or format=app by anybody who does not administer the organization (UI-87)", body = ProblemDetails),
-        (status = 409, description = "A resource already exists and the policy is 'fail', or the bundle has no fresh check of its own (`verdict_required`, PF-57)", body = ProblemDetails),
+        (status = 409, description = "A resource already exists and the policy is 'fail', the bundle has no fresh check of its own (`verdict_required`, PF-57), or the project has no Organization key to keep the check under (T-7458)", body = ProblemDetails),
         (status = 501, description = "Importing from a URL is not implemented", body = ProblemDetails),
         (status = 503, description = "No repository configured", body = ProblemDetails),
     )
@@ -1458,7 +1458,7 @@ pub async fn import_bundle(
         &options.space_mapping,
     );
     if options.dry_run {
-        crate::ops::record_import_check(state, identity, &project, &subject).await;
+        crate::ops::record_import_check(state, identity, &project, &subject).await?;
         return Ok((
             StatusCode::OK,
             serde_json::to_value(report).map_err(|e| ApiError::Internal(e.to_string()))?,

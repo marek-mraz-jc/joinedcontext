@@ -574,15 +574,19 @@ const IMPORT_CHECK_KIND: &str = "ImportBundle";
 
 /// Records the dry run of a bundle as its check (PF-57 on the import door, T-1460). A plan the
 /// import could draw is green; one it could not draw was refused before this with its reason.
+///
+/// A check that could not be recorded is the dry run's answer, never a green report: the import
+/// after it would answer 409 verdict_absent with no reason (T-7458). A project with no
+/// Organization in the registry keeps no draft, so its dry run answers 409 naming the project.
 pub async fn record_import_check(
     state: &AppState,
     identity: &Identity,
     project: &str,
     subject: &Value,
-) {
+) -> Result<(), ApiError> {
     let store = state.drafts.clone();
     let who = &identity.username;
-    if store
+    store
         .put(
             project,
             IMPORT_CHECK_KIND,
@@ -593,16 +597,41 @@ pub async fn record_import_check(
             "import",
         )
         .await
-        .is_ok()
-    {
-        let _ = store
-            .set_verdict(
-                project,
-                IMPORT_CHECK_KIND,
-                who,
-                Verdict::green(subject, None),
-            )
-            .await;
+        .map_err(|err| import_check_error(state, err))?;
+    store
+        .set_verdict(
+            project,
+            IMPORT_CHECK_KIND,
+            who,
+            Verdict::green(subject, None),
+        )
+        .await
+        .map_err(|err| import_check_error(state, err))?;
+    Ok(())
+}
+
+/// The problem a dry run answers when its check could not be recorded: a project with no
+/// Organization in the registry, or one not created yet, has no key to keep it under (T-7458).
+fn import_check_error(state: &AppState, err: DraftError) -> ApiError {
+    match err {
+        DraftError::Unplaced(project)
+            if state
+                .mirror
+                .get(crate::permissions::ORG_NAMESPACE, "Project", &project)
+                .is_none() =>
+        {
+            ApiError::Conflict(format!(
+                "the project {project} is not created yet, so it has no Organization key to keep \
+                 the check of its import under, and the import cannot run; open the project \
+                 empty and import its files with format=files, or ask an operator"
+            ))
+        }
+        DraftError::Unplaced(project) => ApiError::Conflict(format!(
+            "the project {project} belongs to no active Organization of this installation's \
+             registry, so its import cannot be checked or run; an operator adds its Organization \
+             on the Organizations page first"
+        )),
+        other => ApiError::Internal(format!("the import's check was not recorded: {other}")),
     }
 }
 

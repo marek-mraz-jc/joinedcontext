@@ -10,6 +10,8 @@ watch.toml (one per cluster, beside the kubeconfig it names; no secret in it):
     kubeconfig = "/workspace/.secrets/kubeconfig-jc-prod.yaml"
     namespace = "jc"                 # jc's namespace
     jc_configmap = "jc"              # default; the ConfigMap jc mounts at /etc/jc (key jc.toml)
+    jc_workload = "deploy/jc"        # default; whose jc-server log the installation rows read
+    jc_container = "jc-server"       # default
     pg_namespace = "postgres"        # the shared CNPG cluster's namespace
     pg_cluster = "postgres-cluster"  # default
     edge = "203.0.113.10"            # the edge's address
@@ -29,6 +31,9 @@ Each run:
    documents, sampled anew each run for the assistant's question); per Pipeline that ran in 7 days its
    newest runs' delivered and failed counts and the newest failure's masked error text. Counts,
    addresses, public page titles and pipeline error text only: no passage text, no record, no person.
+   Then the jc-server log of the last 30 min (T-7458): the gateway's refused writes counted per
+   project, workload account and reason, and the Portal's newest report of projects with Pipelines
+   and no Organization; names and counts only.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
@@ -122,6 +127,57 @@ SELECT json_build_object('pipelinesAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-
 EMBED_ERROR_SQL = """SELECT json_build_object('embedError', EXISTS (SELECT 1 FROM information_schema.columns
   WHERE table_schema = current_schema() AND table_name = 'chunks' AND column_name = 'embed_error'))"""
 
+# The jc-server log of the last 30 min (T-7458), read with the snapshot: the gateway's refused writes
+# by the verified workload that sent them (context-gateway handlers/ngsi_ld.rs view_request; "-" is a
+# person or nobody signed in, not counted) and the Portal's newest report of the projects whose
+# Pipelines have no Organization (host_registry::report_unplaced_pipelines, every 5 min). Counts and
+# names only: no body, token or record leaves this function.
+LOG_WINDOW = "30m"
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+REFUSED = re.compile(r"write refused: (?P<why>[^=]+?) slug=\S+(?: operation=\S+)? "
+                     r"account=(?P<account>[a-z0-9][a-z0-9-]{0,62}) account_project=(?P<project>[a-z0-9][a-z0-9-]{0,62})\b")
+# A refusal line of a jc before T-7458 names no account: counted by slug, so the row fails on it too.
+UNATTRIBUTED = re.compile(r"write refused: (?P<why>[^=]+?) slug=(?P<slug>[a-z0-9]{1,64})(?: operation=\S+)?\s*$")
+UNPLACED = re.compile(r"projects with Pipelines and no Organization.*\bprojects=(?P<projects>\S+)"
+                      r"|(?P<none>every project with Pipelines has an Organization)")
+PROJECT_COUNT = re.compile(r"([a-z0-9][a-z0-9-]{0,62}):(\d{1,6})")
+
+
+def log_facts(text: str) -> dict:
+    """{refusedWrites: [{project, account, reason, count}], unattributedRefusals: [{slug, reason, count}],
+    unplacedReport: None | [{project, pipelines}]} of a window of the jc-server log; unplacedReport is
+    None when the window holds no report."""
+    refused: dict[tuple[str, str, str], int] = {}
+    unattributed: dict[tuple[str, str], int] = {}
+    report = None
+    for line in ANSI.sub("", text).splitlines():
+        if m := REFUSED.search(line):
+            key = (m["project"], m["account"], m["why"].strip()[:80])
+            refused[key] = refused.get(key, 0) + 1
+        elif m := UNATTRIBUTED.search(line):
+            key = (m["slug"], m["why"].strip()[:80])
+            unattributed[key] = unattributed.get(key, 0) + 1
+        elif m := UNPLACED.search(line):
+            report = [] if m["none"] else [{"project": p, "pipelines": int(n)}
+                                           for p, n in PROJECT_COUNT.findall(m["projects"])]
+    return {"logWindow": LOG_WINDOW, "unplacedReport": report,
+            "refusedWrites": [{"project": p, "account": a, "reason": why, "count": n}
+                              for (p, a, why), n in sorted(refused.items(), key=lambda kv: (-kv[1], kv[0]))],
+            "unattributedRefusals": [{"slug": slug, "reason": why, "count": n}
+                                     for (slug, why), n in sorted(unattributed.items(), key=lambda kv: (-kv[1], kv[0]))]}
+
+
+def jc_log(cfg: dict) -> dict:
+    """log_facts of the jc-server container of every pod of the jc workload; a read that fails is
+    named (logError), so the rows fail instead of passing on nothing."""
+    try:
+        text = kubectl(cfg, "-n", cfg["namespace"], "logs", cfg.get("jc_workload", "deploy/jc"),
+                       "-c", cfg.get("jc_container", "jc-server"),
+                       f"--since={LOG_WINDOW}", "--all-pods=true", timeout=180)
+    except (RuntimeError, subprocess.TimeoutExpired) as err:
+        return {"logWindow": LOG_WINDOW, "logError": str(err)[:200]}
+    return log_facts(text)
+
 
 def assistant_sql(embed_error: bool) -> str:
     if embed_error:
@@ -139,7 +195,11 @@ def load(path: Path) -> dict:
     if missing := [k for k in REQUIRED if not cfg.get(k)]:
         raise SystemExit(f"{path}: missing {', '.join(missing)}")
     cfg.setdefault("jc_configmap", "jc")
-    for k in ("cluster", "owner", "namespace", "pg_namespace", "jc_configmap"):
+    cfg.setdefault("jc_workload", "deploy/jc")
+    cfg.setdefault("jc_container", "jc-server")
+    if not re.fullmatch(r"(deploy|deployment|statefulset)/[a-z0-9][a-z0-9-]{0,62}", str(cfg["jc_workload"])):
+        raise SystemExit(f"{path}: jc_workload {cfg['jc_workload']!r} is not deploy/<name>")
+    for k in ("cluster", "owner", "namespace", "pg_namespace", "jc_configmap", "jc_container"):
         if not NAME.fullmatch(str(cfg[k])):
             raise SystemExit(f"{path}: {k} {cfg[k]!r} is not a lower-case name")
     cfg.setdefault("pg_cluster", "postgres-cluster")
@@ -174,7 +234,7 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
     snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_portal", PIPELINES_SQL),
-            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error))}
+            **query(cfg, pod, "jc_assistant", assistant_sql(embed_error)), **jc_log(cfg)}
     path = run / "snapshot.json"
     path.write_text(json.dumps(snap, indent=1))
     return toml, path
