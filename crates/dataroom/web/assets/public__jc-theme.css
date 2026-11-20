@@ -943,3 +943,11 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-row > * { min-width: 0; }
 .jc-map-frame, .jc-viz-frame { background: rgba(15, 23, 42, .04); border: 1px solid rgba(15, 23, 42, .1); }
 @media (max-width: 599px) { .jc-map-frame { height: 18rem; } }
+@media (max-width: 639px) {
+  .jc-block .table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .jc-block .table tr { display: block; padding: .625rem 0; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+  .jc-block .table td { display: inline; padding: 0; border: 0; }
+  .jc-block .table td:first-child { display: block; font-weight: 600; }
+  .jc-block .table td + td + td::before { content: " · "; }
+  .jc-viz-frame { max-height: 18rem; }
+}
