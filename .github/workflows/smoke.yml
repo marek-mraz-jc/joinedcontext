@@ -106,18 +106,8 @@ jobs:
         with: { python-version: "3.13" }
       - run: python -m pip install pyyaml==6.0.2 pytest==8.4.2 playwright==1.63.0
       - timeout-minutes: 20
-        run: |
-          # Three tries: the runner's apt mirrors (security.ubuntu.com, azure.archive.ubuntu.com)
-          # failed DNS in three runs in a row (43031791849, 43037195781, 43044556087), each with no
-          # verdict. The step still fails when all three do.
-          # Each try is bounded: a hung apt or download held smoke 44665071709 45 min (T-7442);
-          # timeout signals its whole process group, so the apt and node children go too.
-          for i in 1 2 3; do
-            timeout -k 30 300 python -m playwright install --with-deps chromium && exit 0
-            echo "playwright install try $i failed"
-            [ "$i" = 3 ] || sleep 30
-          done
-          exit 1
+        # Three bounded tries; the script says why and how the apt part is bounded (T-7442, T-7456).
+        run: sh .github/scripts/playwright-install.sh
       # test_explore_map serves the explorer bundle jc embeds, the Portal UI's dist-explorer, which
       # is built, never committed (T-7102): the same pins and steps as ci.yml's ui job (T-7108).
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
@@ -213,14 +203,7 @@ jobs:
       # rehearsal.py reads the bundle's YAML; the ui suite and the charts-apps shots drive Chromium.
       - run: python -m pip install pyyaml==6.0.2 pytest==8.4.2 playwright==1.63.0
       - timeout-minutes: 20
-        run: |
-          # Three tries, as in runner-tests.
-          for i in 1 2 3; do
-            timeout -k 30 300 python -m playwright install --with-deps chromium && exit 0
-            echo "playwright install try $i failed"
-            [ "$i" = 3 ] || sleep 30
-          done
-          exit 1
+        run: sh .github/scripts/playwright-install.sh
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with: { name: smoke-bin, path: "${{ runner.temp }}/bin" }
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
