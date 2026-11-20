@@ -50,7 +50,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--jc-space-2, 8px);
+  /* Wider between two values than inside one, so "Value 12" and "Category quantitative" read as pairs (T-7431). */
+  gap: var(--jc-space-1, 4px) var(--jc-space-4, 16px);
   margin: 0;
   padding: var(--jc-space-1, 4px) var(--jc-space-2, 8px);
 }
@@ -79,6 +80,10 @@
 
 .jc-grid-typeline__label {
   color: var(--jc-color-muted, #5f6368);
+}
+
+.jc-grid-typeline__label::after {
+  content: ":";
 }
 
 .jc-grid-scroll {
