@@ -41,6 +41,19 @@ pub const CHANGES_STREAM: &str = "ANTARES_CHANGES";
 pub const REGISTRY_STREAM: &str = "ANTARES_REGISTRY";
 pub const SUBS_BUCKET: &str = "antares_subscriptions";
 
+/// Backstop age of every entry in the subscription bucket. The bucket is a
+/// change feed, never the source of truth: mirrors hydrate from the store at
+/// start and read each document from the store on a delta, so an entry only
+/// has to outlive the watch gap it bridges (a NATS reconnect). Without a
+/// bound every subscription id ever deleted kept one `present:false` entry
+/// for good: 452,560 of them OOM-killed jc-nats on jc-dev (T-7449).
+pub const SUBS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// How long a deleted subscription's `present:false` entry stays before
+/// [`NatsBus::retire_subscription_key`] removes it: long enough for every live
+/// watcher to have been handed the delete (milliseconds in practice).
+pub const SUBS_TOMBSTONE_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Bounded prefetch: how many unacked messages one consumer may
 /// hold. Any unbounded queue is a 3am page.
 pub const MAX_ACK_PENDING: i64 = 256;
@@ -196,9 +209,12 @@ impl NatsBus {
             })
             .await
             .map_err(err)?;
+        // create_or_update: a bucket made before SUBS_MAX_AGE existed takes
+        // the bound on the next start instead of refusing the new config.
         self.js
-            .create_key_value(async_nats::jetstream::kv::Config {
+            .create_or_update_key_value(async_nats::jetstream::kv::Config {
                 bucket: SUBS_BUCKET.into(),
+                max_age: SUBS_MAX_AGE,
                 num_replicas: replicas,
                 ..Default::default()
             })
@@ -338,6 +354,26 @@ impl NatsBus {
     /// The KV bucket holding the compiled-subscription mirror.
     pub async fn subs_kv(&self) -> Result<async_nats::jetstream::kv::Store, BusError> {
         self.js.get_key_value(SUBS_BUCKET).await.map_err(err)
+    }
+
+    /// Remove a deleted subscription's entry from the bucket: every message of
+    /// `key` up to and including `revision` (the `present:false` put), so the
+    /// bucket holds O(live subscriptions) instead of one entry per id ever
+    /// deleted. A put after `revision` (the id created again) survives.
+    /// Call it [`SUBS_TOMBSTONE_GRACE`] after the delete, once the watchers
+    /// have seen it; a reopened watch then simply finds no entry for the id.
+    pub async fn retire_subscription_key(&self, key: &str, revision: u64) -> Result<(), BusError> {
+        let s = self
+            .js
+            .get_stream(format!("KV_{SUBS_BUCKET}"))
+            .await
+            .map_err(err)?;
+        s.purge()
+            .filter(format!("$KV.{SUBS_BUCKET}.{key}"))
+            .sequence(revision + 1)
+            .await
+            .map_err(err)?;
+        Ok(())
     }
 
     /// The Scorpio `$[quarkus.uuid}` lesson: assert at startup that every
