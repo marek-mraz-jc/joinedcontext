@@ -755,6 +755,10 @@ pub enum PlatformAction {
     ReadVersions,
     /// The data subject's rights on the space: export, rectification, erasure (DM-124..DM-126).
     PersonalData,
+    /// Keep a copy of what the grant reads in the grantee's own space: a Pipeline of another
+    /// project copies this space only when a Policy names its account with `store` (SHR-03).
+    /// It grants no read; the copy holds what the grant's own operations and attributes show.
+    Store,
 }
 
 /// Desired specification of a [`Policy`][crate::kinds::Policy] resource (ADR 002, R1..R9).
@@ -1437,5 +1441,30 @@ impl ScopeDefinitionSpec {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SHR-03: `store` round-trips beside the reads it never widens.
+    #[test]
+    fn store_round_trips_beside_a_read() {
+        let store = serde_norway::from_str::<PolicySpec>(
+            "contextSpaceRef: shared\nassigner: did:web:a.example\n\
+             assignee: { kind: serviceAccount, id: b/pl-copy }\n\
+             operations: [queryBatch]\nactions: [store]\n",
+        )
+        .expect("parses");
+        store.validate().expect("store beside a read is a grant");
+        assert_eq!(store.actions, [PlatformAction::Store]);
+        let rendered = serde_json::to_value(&store).expect("renders");
+        assert_eq!(rendered["actions"], serde_json::json!(["store"]));
+        assert_eq!(rendered["operations"], serde_json::json!(["queryBatch"]));
+        assert_eq!(
+            serde_json::from_value::<PolicySpec>(rendered).expect("reads back"),
+            store
+        );
     }
 }

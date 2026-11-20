@@ -34,6 +34,7 @@ def test_the_matrix_holds_every_way_surface_and_check_once():
             assert (f"{way}.{surface}.copy-remains" if way == "w3" else f"{way}.{surface}.revoked") in ids
         assert f"{way}.write.write-refused" in ids
     assert [i for i in ids if i.endswith("write-granted")] == ["w1.write.write-granted"]
+    assert "w3.plan.store-refused" in ids and not cell("w3.plan.store-refused")["control"]
 
 
 def test_reads_need_a_control_and_refusals_judge_themselves():
@@ -184,6 +185,10 @@ def test_the_fixtures_are_manifests_the_share_policies_leave_the_hidden_attribut
     for name in ("sh-share-member", "sh-share-admin", "sh-share-pipeline", "sh-public"):
         spec = docs[f"spaces/sh-src/policies/{name}.yaml"]["spec"]
         assert spec["information"][0]["propertyNames"] == list(suite.SHOWN), name
+    # SHR-03: only the copy Pipeline's own account is permitted `store`
+    stores = [n for n, d in docs.items() if "store" in (d.get("spec") or {}).get("actions", [])]
+    assert stores == ["spaces/sh-src/policies/sh-share-pipeline.yaml"], stores
+    assert docs[stores[0]]["spec"]["assignee"]["id"] == f"{suite.PB}/pl-sh-copy"
     admin = docs["spaces/sh-src/policies/sh-admin.yaml"]["spec"]
     assert "propertyNames" not in admin["information"][0]  # the control sees every attribute
     csr = docs["spaces/sh-fedprot/registrations/sh-shared.yaml"]["spec"]

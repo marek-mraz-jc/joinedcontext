@@ -358,6 +358,9 @@ pub struct Syncer {
     /// Who proposed and approved each Pipeline, re-checked at each render (PL-95). `None` runs
     /// every pipeline whatever its authors reach.
     author_rights: Option<Arc<super::pipeline_authors::AuthorRights>>,
+    /// Whether each stream runs as its Pipeline's own `pl-{pipeline}` account (PL-19) rather
+    /// than its project's `pipelines`: the account another project's `store` must name (SHR-03).
+    pipeline_identity: bool,
     /// Where each pass leaves the resolved inbound secret of every webhook-driven `SyncSource`
     /// (MF-44, T-2297). `None` leaves the webhook route shut, which is what a Portal with no
     /// reconciler should answer.
@@ -478,6 +481,7 @@ impl Syncer {
             credentials: None,
             pipeline_secrets: None,
             author_rights: None,
+            pipeline_identity: false,
             webhook_secrets: None,
             personal_keys: None,
             ckan: None,
@@ -527,6 +531,12 @@ impl Syncer {
     /// nobody, so the pipelines that need them stay undeployed.
     pub fn with_pipeline_secrets(mut self, resolver: crate::pipeline_secrets::Resolver) -> Self {
         self.pipeline_secrets = Some(resolver);
+        self
+    }
+
+    /// Which account a Pipeline's copy of another project's Endpoint is judged for (SHR-03).
+    pub fn with_pipeline_identity(mut self, on: bool) -> Self {
+        self.pipeline_identity = on;
         self
     }
 
@@ -1741,6 +1751,9 @@ impl Syncer {
         //      grant is held out the same way until a grant names it again (PL-93, T-4882).
         let lost = self.paused_for_access(&fresh_mirror, lost).await;
         steps.mark("paused_for_access");
+        // 5a-store. A pipeline copying another project's Endpoint without that project's
+        //      `store` is held out the same way, so a revoked `store` stops the next run (SHR-03).
+        let lost = unstored_pipelines(&fresh_mirror, self.pipeline_identity, lost);
         let held: BTreeMap<_, _> = refused
             .iter()
             .chain(&lost)
@@ -4488,9 +4501,13 @@ fn mark_refused_pipelines(
     let marks = refused
         .iter()
         .map(|entry| (entry, "SecretUnresolved"))
-        .chain(lost.iter().map(|entry| match entry.1.ends_with("(PL-93)") {
-            true => (entry, "AccessRevoked"),
-            false => (entry, "AuthorLostAccess"),
+        .chain(lost.iter().map(|entry| {
+            let code = match entry.1 {
+                reason if reason.ends_with("(PL-93)") => "AccessRevoked",
+                reason if reason.ends_with("(SHR-03)") => "StoreNotGranted",
+                _ => "AuthorLostAccess",
+            };
+            (entry, code)
         }));
     for (((namespace, name), reason), code) in marks {
         let Some(mut envelope) = fresh_mirror.get(namespace, "Pipeline", name) else {
@@ -4502,6 +4519,32 @@ fn mark_refused_pipelines(
         }
         fresh_mirror.upsert(envelope);
     }
+}
+
+/// `lost` with every Pipeline of the mirror that copies another project's Endpoint without
+/// that project's `store` (SHR-03), the refusal as its reason; a reason already held stays.
+fn unstored_pipelines(
+    mirror: &Mirror,
+    pipeline_identity: bool,
+    mut lost: BTreeMap<(String, String), String>,
+) -> BTreeMap<(String, String), String> {
+    for project in mirror.namespaces() {
+        for envelope in mirror
+            .list(&project, "Pipeline", &crate::store::ListOptions::default())
+            .items
+        {
+            let Ok(manifest) = serde_json::to_value(&envelope) else {
+                continue;
+            };
+            let account = crate::pipeline_rights::account(pipeline_identity, &manifest);
+            let refused = crate::pipeline_rights::unstored(mirror, &project, &manifest, &account);
+            if !refused.is_empty() {
+                lost.entry((project.clone(), envelope.metadata.name.clone()))
+                    .or_insert_with(|| refused.join("; "));
+            }
+        }
+    }
+    lost
 }
 
 /// Where one sync run spent its time (T-5804): each step's elapsed_ms since the step before it,
@@ -7930,6 +7973,52 @@ output_error{stream="kpi"} 6
         assert_eq!(
             x.conditions[0].message.as_deref(),
             Some("author lost access to source Endpoint ep-b")
+        );
+    }
+
+    /// SHR-03: a Pipeline copying another project's Endpoint is held out until that project's
+    /// Policy grants its account `store`, and held out again the run after `store` is revoked.
+    #[test]
+    fn a_copy_without_the_providers_store_is_held_out_and_reads_store_not_granted() {
+        let mirror = Mirror::new();
+        let mut shared = envelope("Endpoint", "a", "shared");
+        shared.spec = serde_json::json!({ "contextSpaceRef": "src", "slug": "shared" });
+        mirror.upsert(shared);
+        let mut copy = envelope("Pipeline", "p", "copy");
+        copy.spec = serde_json::json!({
+            "class": "auto", "period": "30s",
+            "source": { "endpointRef": { "kind": "Endpoint", "name": "shared", "namespace": "a" },
+                        "query": { "type": "T" } },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:p.example:dst:dst",
+            "output": { "type": "T", "mode": "upsert" }
+        });
+        mirror.upsert(copy);
+        let grant = |actions: serde_json::Value| {
+            let mut policy = envelope("Policy", "a", "share");
+            policy.spec = serde_json::json!({
+                "contextSpaceRef": "src", "assigner": "did:web:a.example",
+                "assignee": { "kind": "serviceAccount", "id": "p/pl-copy" },
+                "operations": ["queryBatch"], "actions": actions });
+            mirror.upsert(policy);
+        };
+        grant(serde_json::json!(["store"]));
+        assert!(unstored_pipelines(&mirror, true, BTreeMap::new()).is_empty());
+        // Per-pipeline identity off, the run signs in as `p/pipelines`, whom nobody granted.
+        assert_eq!(unstored_pipelines(&mirror, false, BTreeMap::new()).len(), 1);
+
+        grant(serde_json::json!([]));
+        let lost = unstored_pipelines(&mirror, true, BTreeMap::new());
+        let reason = &lost[&("p".to_owned(), "copy".to_owned())];
+        assert!(
+            reason.contains("adds `actions: [store]` to Policy share"),
+            "{reason}"
+        );
+        mark_refused_pipelines(&mirror, &BTreeMap::new(), &lost);
+        let status = status_of(&mirror, "Pipeline", "copy");
+        assert_eq!(status.phase, crate::resource::Phase::Error);
+        assert_eq!(
+            status.conditions[0].reason.as_deref(),
+            Some("StoreNotGranted")
         );
     }
 

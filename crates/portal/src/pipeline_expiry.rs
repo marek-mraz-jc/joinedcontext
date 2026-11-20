@@ -201,7 +201,7 @@ fn problems(
     problems
 }
 
-fn policies(mirror: &Mirror, project: &str) -> Vec<(String, PolicySpec)> {
+pub(crate) fn policies(mirror: &Mirror, project: &str) -> Vec<(String, PolicySpec)> {
     mirror
         .list(project, "Policy", &crate::store::ListOptions::default())
         .items
