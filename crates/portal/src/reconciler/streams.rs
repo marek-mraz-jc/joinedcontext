@@ -2920,12 +2920,23 @@ output:
             format!("pipeline:\n  processors:\n    - http: {{ url: 'https://api.golemio.cz/v3/parking-tariffs', verb: GET, headers: {{ X-Access-Token: '${{{var}}}' }} }}\n")
         };
         let render = |bento: &str| {
-            render_stream(&spec, "golemio-garages", "praha", &ds, "golemio-mr-parkit", "abc123", Some(bento))
+            render_stream(
+                &spec,
+                "golemio-garages",
+                "praha",
+                &ds,
+                "golemio-mr-parkit",
+                "abc123",
+                Some(bento),
+            )
         };
         assert!(render(&step("DS_GOLEMIO_MR_PARKIT_TOKEN")).is_ok());
         for other in ["DS_OTHER_SOURCE_TOKEN", "JC_CLIENT_SECRET_HELSINKI", "HOME"] {
             let refused = render(&step(other)).expect_err(other);
-            assert!(matches!(refused, RenderError::Bento(_)), "{other}: {refused:?}");
+            assert!(
+                matches!(refused, RenderError::Bento(_)),
+                "{other}: {refused:?}"
+            );
         }
     }
 
