@@ -1090,6 +1090,50 @@ async fn a_pipelines_token_names_only_the_endpoints_the_pipeline_names() {
     assert_eq!(audiences_of(&keycloak, "uuid-sa").await, want);
 }
 
+/// W3 (T-7423): a Pipeline whose source `endpointRef` names an Endpoint of another project
+/// reaches it under that project's slug, so its token carries that audience; an Endpoint of the
+/// same name in the Pipeline's own project is not the one it reads. Reading there is still for
+/// the source's Policies to grant.
+#[tokio::test]
+async fn a_pipelines_token_names_a_source_endpoint_of_another_project() {
+    const SHARED: &str = "e3kd7pw2vn5xq4tb6mzh2cyra5";
+    const TWIN: &str = "t4mx2kq7bn5wc3zd6hry2vpja6";
+    let mut copy = drepo();
+    copy.spec["source"] = json!({
+        "endpointRef": { "kind": "Endpoint", "name": "shared", "namespace": "trnava" },
+        "query": { "type": "CreativeWork" },
+    });
+    let mirror = mirror_with(vec![
+        copy,
+        endpoint("zilina", "zilina-uniza", "zilina-uniza", SLUG),
+        endpoint("zilina", "shared", "zilina-uniza", TWIN),
+        endpoint("trnava", "shared", "trnava", SHARED),
+    ]);
+    let keycloak = realm(json!([])).await;
+    creatable(
+        &keycloak,
+        ("zilina", "pl-drepo"),
+        "uuid-pl",
+        (PIPELINES, "pl-zilina-drepo"),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REALM}/clients")))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = sync(&keycloak)
+        .with_pipelines(PIPELINES.to_owned())
+        .converge(&mirror, &Bentos::new())
+        .await;
+    let outcome = outcomes.iter().find(|o| o.app == "zilina/pl-drepo");
+    assert_eq!(outcome.map(|o| o.error.clone()), Some(None), "{outcomes:?}");
+    let mut want = vec![SLUG, SHARED, "portal-internal"];
+    want.sort_unstable();
+    assert_eq!(audiences_of(&keycloak, "uuid-pl").await, want);
+}
+
 /// T-4050: each project gets its pipeline-test harness principal `{project}-pl-pipeline-test`,
 /// federated to `pl-{project}-pipeline-test` in the pipelines' namespace, with the Portal's
 /// internal listener as its one audience: no Endpoint, even beside a Pipeline that writes one.
