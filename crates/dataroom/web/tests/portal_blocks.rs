@@ -275,7 +275,9 @@ fn a_map_or_chart_says_what_it_waits_for_and_when_there_is_nothing_to_draw() {
     assert!(html.contains("Tento dataset zatiaľ nemá graf; údaje sú na stránke datasetu."));
     for name in ["zastavky", "d00", "d01", "d02"] {
         assert!(
-            html.contains(&format!("<a href=\"/m/dataset/{name}\">Otvoriť dataset →</a>")),
+            html.contains(&format!(
+                "<a href=\"/m/dataset/{name}\">Otvoriť dataset →</a>"
+            )),
             "{name}"
         );
     }
