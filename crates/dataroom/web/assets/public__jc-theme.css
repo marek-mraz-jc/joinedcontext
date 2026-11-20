@@ -918,3 +918,23 @@ body.jc-corner-aside .jc-assistant:not([open]) > summary:focus-visible { pointer
 .jc-dashboard-grid { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
 @media (min-width: 992px) { .jc-dashboard-grid { grid-template-columns: 1fr 1fr; } .jc-dashboard-wide { grid-column: 1 / -1; } }
 .jc-dashboard-grid .jc-viz { margin: 0; min-width: 0; }
+
+/* A portal's pages built from blocks (T-7433): rows of one to three blocks, stacked on a phone. */
+.jc-blocks .jc-row-wrap { margin-block: 1.5rem; }
+.jc-row { display: grid; gap: 1.5rem; grid-template-columns: 1fr; }
+@media (min-width: 768px) {
+  .jc-row-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .jc-row-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.jc-block > h2 { font-size: 1.375rem; margin-bottom: .75rem; }
+.jc-block-hero { border-radius: var(--jc-radius-lg, 12px); padding: clamp(1.5rem, 4vw, 3rem); }
+.jc-block-hero h2 { color: var(--jc-primary-fg); font-size: clamp(1.5rem, 1.2rem + 1.4vw, 2.25rem); }
+.jc-hero-image { display: block; max-width: 100%; height: auto; max-height: 20rem; object-fit: cover; border-radius: var(--jc-radius, 8px); margin-bottom: 1rem; }
+.jc-numbers { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 1rem 2.5rem; }
+.jc-numbers strong { display: block; font-size: 2rem; line-height: 1.1; color: var(--jc-primary); }
+.jc-files { list-style: none; padding: 0; margin: 0; }
+.jc-files li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem 0; border-bottom: 1px solid rgba(15, 23, 42, .1); }
+.jc-file-name { overflow-wrap: anywhere; }
+.jc-map-frame { width: 100%; height: 24rem; border: 0; border-radius: var(--jc-radius, 8px); }
+.jc-table-wrap { overflow-x: auto; }
+.jc-block-more { margin-top: .75rem; }

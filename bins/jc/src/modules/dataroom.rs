@@ -771,6 +771,27 @@ fn catalogue_looks(
         let look = top.over(&under.clone().unwrap_or_default());
         out.insert(id, with_appearance(block.clone(), Some(&look)));
     }
+    // T-7433: each portal's pages built from blocks, over whatever look its catalogue has; the
+    // mirror's refresh carries a published change to the page within seconds.
+    for portal in super::portals::in_mirror(mirror).values() {
+        if portal.pages.is_empty() {
+            continue;
+        }
+        let Some((own, under)) = looks.get(&portal.organization_ref) else {
+            continue;
+        };
+        let Some((_, id)) = super::portals::catalogue_key(portal, &orgs) else {
+            continue;
+        };
+        let block = match (out.get(&id), configured.get(own)) {
+            (Some(shown), _) => shown.clone(),
+            (None, Some(base)) => with_appearance(base.clone(), under.as_ref()),
+            (None, None) => continue,
+        };
+        let mut block = block;
+        block.layout.pages.clone_from(&portal.pages);
+        out.insert(id, block);
+    }
     out
 }
 
@@ -871,6 +892,7 @@ fn with_appearance(
             .filter(|l| jc_core::kinds::is_link_url(&l.url))
             .map(|l| (l.url.clone(), l.label.clone()))
             .collect(),
+        pages: Vec::new(),
     };
     // T-7031: the Organization's own page texts, each page and language over the built-in one.
     // A text the manifest's rules refuse never reaches here (jc-core validates every load), and
@@ -2719,6 +2741,39 @@ mod tests {
             BrandingBlock::default(),
             "a removed look is jc's again"
         );
+        // T-7433: a portal's pages reach its own catalogue alone, over its look, and leave with
+        // them; town's catalogue never shows city's pages.
+        let home = serde_json::json!([{ "slug": "home", "rows": [{ "blocks": [
+            { "type": "numbers", "items": ["datasets"] }] }] }]);
+        mirror.upsert(envelope(
+            "Portal",
+            "city-default",
+            serde_json::json!({ "organizationRef": "city", "path": "default", "pages": home }),
+        ));
+        mirror.upsert(envelope(
+            "Portal",
+            "city-mobility",
+            serde_json::json!({ "organizationRef": "city", "path": "mobility", "pages": home,
+                "appearance": { "colours": { "primary": "#7a1f5c" } } }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        assert!(looks[&city].layout.page("home").is_some());
+        assert!(looks[&mobility].layout.page("home").is_some());
+        assert_eq!(
+            looks[&mobility].colours.primary, "#7a1f5c",
+            "pages keep the look"
+        );
+        assert!(
+            looks[&town].layout.pages.is_empty(),
+            "never another Organization's"
+        );
+        mirror.upsert(envelope(
+            "Portal",
+            "city-default",
+            serde_json::json!({ "organizationRef": "city", "path": "default" }),
+        ));
+        let looks = catalogue_looks(&mirror, &catalogue, &portals, &configured);
+        assert!(looks[&city].layout.pages.is_empty(), "removed pages leave");
         const { assert!(super::super::appearance::FOLLOW_LOOK_EVERY.as_secs() < 10) };
     }
 

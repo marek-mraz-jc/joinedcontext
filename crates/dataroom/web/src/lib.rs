@@ -3,6 +3,8 @@
 //! `dataroom`, localized in Slovak (`sk`), Czech (`cs`), English (`en`), Hungarian (`hu`) and
 //! German (`de`).
 
+pub mod blocks;
+pub use blocks::{chart_datasets, render_portal_page, PageInputs};
 pub mod dashboards;
 pub mod groups;
 pub mod helpers;
@@ -554,6 +556,8 @@ pub struct PageChrome {
     pub assistant_widget_url: String,
     pub has_mcp: bool,
     pub footer_pages: Vec<(String, String)>,
+    /// The header entries of the portal's own pages built from blocks (T-7433), `(href, title)`.
+    pub page_links: Vec<(String, String)>,
     pub lang_options: Vec<LangOption>,
     pub nav_active: String,
     pub csp_nonce: String,
@@ -628,6 +632,13 @@ impl PageChrome {
             })
             .collect();
 
+        let page_links = blocks::menu_links(
+            &branding.layout.pages,
+            &norm_lang,
+            &cat.default_language,
+            &lang_prefix,
+        );
+
         let offered = available_languages(&branding.languages.offered);
         let lang_options = offered
             .into_iter()
@@ -655,6 +666,7 @@ impl PageChrome {
             assistant_widget_url,
             has_mcp,
             footer_pages,
+            page_links,
             lang_options,
             nav_active: nav_active.to_owned(),
             csp_nonce: csp_nonce.to_owned(),

@@ -1139,6 +1139,22 @@ fn build_string_table() -> BTreeMap<&'static str, BTreeMap<&'static str, &'stati
         "Még nincs közzétett adatkészlet.",
     );
     add(
+        "gallery_empty",
+        "No dataset matches this selection yet.",
+        "Tomuto výberu zatiaľ nezodpovedá žiadny dataset.",
+        "Tomuto výběru zatím neodpovídá žádná datová sada.",
+        "Zu dieser Auswahl passt noch kein Datensatz.",
+        "Ehhez a válogatáshoz még nincs adatkészlet.",
+    );
+    add(
+        "updated_month",
+        "updated in the last 30 days",
+        "aktualizovaných za 30 dní",
+        "aktualizovaných za 30 dní",
+        "in den letzten 30 Tagen aktualisiert",
+        "frissítve az elmúlt 30 napban",
+    );
+    add(
         "hero_search",
         "Search the open data",
         "Hľadať v otvorených dátach",

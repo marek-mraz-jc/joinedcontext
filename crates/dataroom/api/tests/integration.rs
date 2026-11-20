@@ -1482,6 +1482,7 @@ async fn b4_two_catalogues_on_two_hosts_render_two_looks_and_noindex_robots() {
             dataset_table: true,
             nav_links: vec![("https://www.banskabystrica.sk".into(), "Mesto BB".into())],
             footer_links: vec![("/about#api".into(), "API mesta".into())],
+            pages: Vec::new(),
         },
         ..dataroom_core::branding::BrandingBlock::default()
     };

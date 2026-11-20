@@ -41,7 +41,7 @@
       </hgroup>
       <div class="main-navbar collapse navbar-collapse" id="main-navigation-toggle">
         <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>{% for (href, label) in chrome.branding.layout.nav_links %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
+          <li><a href="{{ chrome.lang_prefix }}/dataset/">{{ labels.nav_datasets }}</a></li><li><a href="{{ chrome.lang_prefix }}/organization/">{{ labels.nav_publishers }}</a></li><li><a href="{{ chrome.lang_prefix }}/about">{{ labels.nav_about }}</a></li>{% for (href, label) in chrome.page_links %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}{% for (href, label) in chrome.branding.layout.nav_links %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
         </ul>
       </div>
     </nav>
