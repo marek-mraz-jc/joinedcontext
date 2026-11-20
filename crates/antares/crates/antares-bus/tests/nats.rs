@@ -461,3 +461,89 @@ async fn publish_all_keeps_page_order_and_acks_every_event() {
     let want: Vec<i64> = (1..=PAGES * PAGE).collect();
     assert_eq!(seqs, want, "every event once, in outbox order");
 }
+
+/// Messages the subscription bucket holds under `prefix` (a key prefix).
+async fn subs_messages(url: &str, prefix: &str) -> u64 {
+    let js = async_nats::jetstream::new(async_nats::connect(url).await.expect("connect"));
+    let s = js
+        .get_stream(format!("KV_{}", antares_bus::nats::SUBS_BUCKET))
+        .await
+        .expect("bucket stream");
+    let mut subjects = s
+        .info_with_subjects(format!("$KV.{}.{prefix}.>", antares_bus::nats::SUBS_BUCKET))
+        .await
+        .expect("info");
+    let mut total = 0;
+    while let Some(entry) = subjects.next().await {
+        total += entry.expect("subject count").1 as u64;
+    }
+    total
+}
+
+/// T-7449: subscription churn (smoke creates and deletes thousands) must
+/// leave O(live) entries. Before the fix every deleted id kept its
+/// `present:false` put for good, 452,560 of them until jc-nats was OOM-killed.
+#[tokio::test(flavor = "multi_thread")]
+async fn subscription_churn_leaves_only_live_entries() {
+    const N: u64 = 10_000;
+    const LIVE: u64 = 10;
+    let url = require_nats!();
+    let bus = std::sync::Arc::new(NatsBus::connect(&url).await.expect("connect"));
+    let kv = bus.subs_kv().await.expect("kv bucket");
+    let prefix = format!("churn{}", nonce());
+    let present = |p: bool| serde_json::to_vec(&serde_json::json!({"present": p})).expect("encode");
+    futures_util::stream::iter(0..N)
+        .map(|i| {
+            let (kv, bus, key) = (kv.clone(), bus.clone(), format!("{prefix}.{i:016x}"));
+            let (on, off) = (present(true), present(false));
+            async move {
+                kv.put(&key, on.into()).await.expect("create");
+                if i >= LIVE {
+                    let rev = kv.put(&key, off.into()).await.expect("delete");
+                    bus.retire_subscription_key(&key, rev)
+                        .await
+                        .expect("retire");
+                }
+            }
+        })
+        .buffer_unordered(64)
+        .collect::<Vec<()>>()
+        .await;
+    let left = subs_messages(&url, &prefix).await;
+    assert_eq!(
+        left,
+        LIVE,
+        "{N} created, {} deleted: only live entries stay",
+        N - LIVE
+    );
+}
+
+/// Retiring a delete keeps a later put of the same id: a subscription
+/// created again inside the grace window must stay visible to a reopened watch.
+#[tokio::test(flavor = "multi_thread")]
+async fn retiring_a_delete_keeps_a_later_create() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let kv = bus.subs_kv().await.expect("kv bucket");
+    let prefix = format!("recreate{}", nonce());
+    let key = format!("{prefix}.k");
+    kv.put(&key, "1".into()).await.expect("create");
+    let deleted = kv.put(&key, "0".into()).await.expect("delete");
+    kv.put(&key, "2".into()).await.expect("create again");
+    bus.retire_subscription_key(&key, deleted)
+        .await
+        .expect("retire");
+    assert_eq!(subs_messages(&url, &prefix).await, 1);
+    let entry = kv.get(&key).await.expect("get").expect("entry");
+    assert_eq!(&entry[..], b"2");
+}
+
+/// The bucket carries the age backstop for entries a crash left unretired.
+#[tokio::test(flavor = "multi_thread")]
+async fn subscription_bucket_is_age_bounded() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let kv = bus.subs_kv().await.expect("kv bucket");
+    let status = kv.status().await.expect("status");
+    assert_eq!(status.max_age(), antares_bus::nats::SUBS_MAX_AGE);
+}

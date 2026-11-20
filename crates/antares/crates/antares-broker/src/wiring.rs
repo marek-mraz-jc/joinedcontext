@@ -192,12 +192,15 @@ pub async fn wire_nats(
         // the store, so the credentials it holds stay in the sealed row.
         let kv = bus.subs_kv().await?;
         let kv_for_hook = kv.clone();
+        let bus_for_subs = bus.clone();
         state.sub_sync = Some(Arc::new(
             move |tenant: &TenantId, kind: Kind, id: &str, doc: Option<&serde_json::Value>| {
                 let kv = kv_for_hook.clone();
+                let bus = bus_for_subs.clone();
+                let present = doc.is_some();
                 let key = kv_key(tenant.as_str(), kind, id);
                 let value = serde_json::json!({
-                    "tenant": tenant.as_str(), "id": id, "present": doc.is_some(),
+                    "tenant": tenant.as_str(), "id": id, "present": present,
                     "csub": kind == Kind::CSourceSubscription,
                 });
                 tokio::spawn(async move {
@@ -210,7 +213,17 @@ pub async fn wire_nats(
                     // until a restart; closing that needs periodic reconciliation.
                     for attempt in 0..MIRROR_SYNC_ATTEMPTS {
                         match kv.put(key.clone(), bytes.clone().into()).await {
-                            Ok(_) => return,
+                            Ok(_) if present => return,
+                            Ok(revision) => {
+                                // A delete: once the watchers had it, drop the
+                                // entry so the bucket stays O(live) (T-7449).
+                                // A failed purge leaves it to SUBS_MAX_AGE.
+                                tokio::time::sleep(nats::SUBS_TOMBSTONE_GRACE).await;
+                                if let Err(e) = bus.retire_subscription_key(&key, revision).await {
+                                    tracing::warn!("sub KV retire of {key} failed: {e}");
+                                }
+                                return;
+                            }
                             Err(e) => {
                                 tracing::warn!("sub KV sync attempt {} failed: {e}", attempt + 1);
                                 tokio::time::sleep(mirror_sync_backoff(attempt)).await;
