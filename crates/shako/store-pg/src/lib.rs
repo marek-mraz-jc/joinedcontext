@@ -360,8 +360,7 @@ impl PgSecretStore {
         instance_id: InstanceId,
         kek: &kaisatsu_crypto::Kek,
     ) -> ShakoResult<Self> {
-        let seal = kaisatsu_crypto::Kek::from_raw_bytes(&kek.derive_subkey("shako-secrets"))
-            .map_err(|_| ShakoError::Storage("the secrets' key cannot be derived".into()))?;
+        let seal = kaisatsu_crypto::Kek::from_bytes(kek.derive_subkey("shako-secrets"));
         Ok(Self {
             pool: store.pool().clone(),
             instance_id,
