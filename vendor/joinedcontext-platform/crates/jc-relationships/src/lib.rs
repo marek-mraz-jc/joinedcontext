@@ -254,6 +254,15 @@ impl RelationshipRules {
         self.by_class.is_empty()
     }
 
+    /// The classes the stored ends of `entity_type` point at, as the model names them: what a
+    /// write of one names and the target check reads (T-7443).
+    pub fn targets(&self, entity_type: &str) -> BTreeSet<String> {
+        self.of_class(entity_type)
+            .into_iter()
+            .flat_map(|(_, ends)| ends.values().map(|end| end.target.clone()))
+            .collect()
+    }
+
     /// Every stored end that points at `entity_type`, the entities a delete of one reaches.
     pub fn referencing(&self, entity_type: &str) -> Vec<Referencing<'_>> {
         let wanted = local(entity_type);
@@ -667,6 +676,11 @@ mod tests {
             "an expanded type is the class"
         );
         assert!(RelationshipRules::from_schema(&json!({})).is_empty());
+        assert_eq!(
+            rules.targets("https://example.org/User"),
+            BTreeSet::from(["Course".to_owned(), "School".to_owned()])
+        );
+        assert!(rules.targets("School").is_empty(), "School stores no end");
     }
 
     #[test]

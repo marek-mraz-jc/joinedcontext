@@ -725,7 +725,7 @@ async fn create_and_gather<T: Gathered>(
         Ok(gather(receiver).await)
     } else if status.is_client_error() {
         Ok(T::refused(
-            lint_errors(&refusal)
+            lint_errors(&runner_lints(&refusal))
                 .into_iter()
                 .map(|error| without_client(error, project))
                 .collect(),
@@ -738,12 +738,34 @@ async fn create_and_gather<T: Gathered>(
     }
 }
 
+/// The runner's refusal as lint lines: the HTTP runner answers `{"lint_errors": [...]}`, which
+/// read line by line was one error holding the whole JSON (T-7443); any other body is kept.
+fn runner_lints(refusal: &str) -> String {
+    let lints: Option<Vec<String>> = serde_json::from_str::<Value>(refusal)
+        .ok()
+        .and_then(|body| {
+            body.get("lint_errors")?
+                .as_array()?
+                .iter()
+                .map(|lint| lint.as_str().map(str::to_owned))
+                .collect()
+        });
+    lints.map_or_else(|| refusal.to_owned(), |lints| lints.join("\n"))
+}
+
 /// A runner refusal for a pipeline client secret it does not hold, in words a person can act
-/// on (T-6832): a project's client reaches the runner within a sync of the project's first one,
-/// and until then the runner names an undefined `JC_CLIENT_SECRET_<PROJECT>`. Any other error is
-/// kept as it is.
+/// on (T-6832): a project's client, or its test harness's under per-pipeline identity
+/// (`JC_PIPELINE_SECRET_<PROJECT>_PL_PIPELINE_TEST`, T-7443), reaches the runner within a sync of
+/// the project's first one, and until then the runner names an undefined variable. Any other
+/// error is kept as it is.
 fn without_client(error: TestError, project: &str) -> TestError {
-    if !(error.message.contains("was not defined") && error.message.contains("'JC_CLIENT_SECRET_"))
+    let harness = crate::reconciler::streams::pipeline_secret_var(
+        project,
+        jc_core::kinds::pipeline_identity::HARNESS,
+    );
+    if !(error.message.contains("was not defined")
+        && (error.message.contains("'JC_CLIENT_SECRET_")
+            || error.message.contains(&format!("'{harness}'"))))
     {
         return error;
     }
@@ -1034,9 +1056,37 @@ mod tests {
         for kept in [
             "environment variable 'MQTT_PASSWORD' was not defined",
             "line 3 char 7: expected a mapping",
+            // Another Pipeline's client is not the harness's: kept as the runner wrote it.
+            "environment variable 'JC_PIPELINE_SECRET_P_PL_AIR' was not defined",
         ] {
             assert_eq!(without_client(error(kept), "p").message, kept);
         }
+    }
+
+    /// T-7443: the runner's JSON refusal is its lint errors one by one, never the JSON; the
+    /// harness's missing client under per-pipeline identity reads as the project's missing one.
+    #[test]
+    fn a_json_refusal_is_its_lint_errors_and_the_harness_client_is_named() {
+        let body = r#"{"lint_errors":["environment variable 'JC_PIPELINE_SECRET_HELSINKI_PL_PIPELINE_TEST' was not defined","line 3 char 7: expected a mapping"],"linting_errors":["x"]}"#;
+        let errors: Vec<TestError> = lint_errors(&runner_lints(body))
+            .into_iter()
+            .map(|error| without_client(error, "helsinki"))
+            .collect();
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0]
+            .message
+            .starts_with("project 'helsinki' has no pipeline client on the runner yet"));
+        assert_eq!(errors[1].message, "line 3 char 7: expected a mapping");
+        assert_eq!(errors[1].line, Some(3));
+        assert!(
+            errors.iter().all(|e| !e.message.contains('{')),
+            "{errors:?}"
+        );
+        assert_eq!(
+            runner_lints("line 1: bad\nline 2: worse"),
+            "line 1: bad\nline 2: worse"
+        );
+        assert_eq!(runner_lints(r#"{"error":"x"}"#), r#"{"error":"x"}"#);
     }
 
     /// jc binds the internal listener on a free loopback port and sets no capture URL: the test

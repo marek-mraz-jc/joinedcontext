@@ -887,8 +887,15 @@ export function PipelineWorkbench({
                   <p className="mt-0.5 break-all font-mono">{sampled.data.errors[0].message}</p>
                 </details>
               </>
-            ) : (
+            ) : sampled.data.errors.length === 1 ? (
               sampled.data.errors[0].message
+            ) : (
+              // Every lint the runner sent, one each (T-7443): the first alone hid the rest.
+              <ul className="list-disc pl-4">
+                {sampled.data.errors.map((error, i) => (
+                  <li key={i}>{error.message}</li>
+                ))}
+              </ul>
             )}
           </Alert>
         ) : sampled.data.count === 0 ? (
