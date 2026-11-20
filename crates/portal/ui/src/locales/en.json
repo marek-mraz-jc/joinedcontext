@@ -13629,7 +13629,8 @@
       "addHere": "Add to this row",
       "addBlock": "Add a block to this row",
       "edit": "Edit {type}",
-      "fold": "Fold {type}"
+      "fold": "Fold {type}",
+      "hidePreview": "Hide the preview"
     }
   },
   "assistantGuides": {

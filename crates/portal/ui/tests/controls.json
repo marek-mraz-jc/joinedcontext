@@ -2822,7 +2822,7 @@
     },
     "src/pages/portals/PortalLayout.tsx": {
       "controls": {
-        "Button": 16,
+        "Button": 17,
         "Checkbox": 4,
         "RadioGroup": 2
       },

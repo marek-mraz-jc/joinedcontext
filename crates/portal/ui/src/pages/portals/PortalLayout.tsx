@@ -103,6 +103,8 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
   const page = pages[current];
   const marked = Object.keys(shownFaults).length;
   const [target, setTarget] = useState("");
+  // Below xl the preview would sit under the whole form: it opens on demand, above the form.
+  const [showPreview, setShowPreview] = useState(false);
   const markedList = Object.keys(shownFaults)
     .map((path) => markedField(path, pages, lang, t))
     .filter((field): field is NonNullable<typeof field> => field !== null);
@@ -223,9 +225,9 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
           setCurrent(pages.length);
         }}
       />
-      <a href="#layout-preview" className="text-body underline xl:hidden">
-        {t("portals.layout.toPreview")}
-      </a>
+      <Button size="sm" variant="secondary" className="xl:hidden" aria-expanded={showPreview} aria-controls="layout-preview" onClick={() => setShowPreview(!showPreview)}>
+        {showPreview ? t("portals.layout.hidePreview") : t("portals.layout.toPreview")}
+      </Button>
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
           {page ? (
@@ -244,7 +246,7 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
             />
           ) : null}
         </div>
-        <div className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+        <div className={showPreview ? "order-first min-w-0 xl:order-none xl:sticky xl:top-4 xl:self-start" : "hidden min-w-0 xl:sticky xl:top-4 xl:block xl:self-start"}>
           {page ? <LayoutPreview page={page} lang={lang} choices={choices} spec={spec} /> : null}
         </div>
       </div>
@@ -506,7 +508,10 @@ function PageForm({
       {rows.length === 0 ? <p className="text-body text-fg-muted">{t("portals.layout.noBlocks")}</p> : null}
       {rows.map((row, r) => (
         <section key={r} aria-label={t("portals.layout.row", { n: r + 1 })} className="space-y-3 border-t border-dashed border-border pt-3 sm:rounded-md sm:border sm:p-3">
-          <p className="text-caption font-medium text-fg-muted">{t("portals.layout.row", { n: r + 1 })}</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-caption font-medium text-fg-muted">{t("portals.layout.row", { n: r + 1 })}</p>
+            {row.blocks.length < MAX_ROW_BLOCKS ? <RowAdd id={`layout-row${r}-type`} onAdd={(type) => onPages((pages) => addToRow(pages, at, r, newBlock(type, lang)))} /> : null}
+          </div>
           {row.blocks.map((block, b) => {
             const where: At = { page: at, row: r, block: b };
             return (
@@ -530,7 +535,6 @@ function PageForm({
               />
             );
           })}
-          {row.blocks.length < MAX_ROW_BLOCKS ? <RowAdd id={`layout-row${r}-type`} onAdd={(type) => onPages((pages) => addToRow(pages, at, r, newBlock(type, lang)))} /> : null}
         </section>
       ))}
       <Card padding="md" className="flex flex-wrap items-end gap-3">
@@ -591,7 +595,8 @@ function BlockCard({
   // A finished block folds to its heading line; a new or incomplete one opens with its form.
   const [editing, setEditing] = useState(() => Object.keys(faultsOfPages([{ slug: HOME, rows: [{ blocks: [block] }] }])).length > 0);
   const open = editing || faulted;
-  const summary = block.type === "text" ? (textOf(block.markdown, lang).split("\n").find((line) => line.trim() !== "") ?? "").replace(/^#+\s*/, "") : textOf(block.title, lang);
+  const dataset = block.type === "map" || block.type === "chart" ? (choices.datasets.find((d) => d.name === block.dataset)?.title ?? block.dataset) : "";
+  const summary = block.type === "text" ? (textOf(block.markdown, lang).split("\n").find((line) => line.trim() !== "") ?? "").replace(/^#+\s*/, "") : textOf(block.title, lang) || dataset;
   const edge = t("portals.layout.cannotMove");
   const titleField =
     block.type === "text" ? null : (

@@ -13629,7 +13629,8 @@
       "addHere": "Pridať do riadku",
       "addBlock": "Pridať blok do riadku",
       "edit": "Upraviť: {type}",
-      "fold": "Zbaliť: {type}"
+      "fold": "Zbaliť: {type}",
+      "hidePreview": "Skryť náhľad"
     }
   },
   "assistantGuides": {

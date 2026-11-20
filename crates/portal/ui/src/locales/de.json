@@ -13629,7 +13629,8 @@
       "addHere": "Zu dieser Zeile hinzufügen",
       "addBlock": "Block zu dieser Zeile hinzufügen",
       "edit": "{type} bearbeiten",
-      "fold": "{type} einklappen"
+      "fold": "{type} einklappen",
+      "hidePreview": "Vorschau ausblenden"
     }
   },
   "assistantGuides": {

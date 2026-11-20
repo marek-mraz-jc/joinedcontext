@@ -142,6 +142,7 @@ for (const width of [1440, 400]) {
       expect(await axeViolations(page)).toEqual([]);
       await noOverflow(page);
 
+      if (width < 1280) await page.getByRole("button", { name: "Show the preview" }).click();
       await page.getByRole("radio", { name: /400/ }).check();
       await expect(page.locator("[data-width='400']")).toBeVisible();
       // The phone preview is as wide as a 400 px phone (28rem of content plus its padding and border).

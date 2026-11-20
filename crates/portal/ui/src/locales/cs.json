@@ -13629,7 +13629,8 @@
       "addHere": "Přidat do řádku",
       "addBlock": "Přidat blok do řádku",
       "edit": "Upravit: {type}",
-      "fold": "Sbalit: {type}"
+      "fold": "Sbalit: {type}",
+      "hidePreview": "Skrýt náhled"
     }
   },
   "assistantGuides": {
