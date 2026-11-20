@@ -114,7 +114,6 @@ export function PortalLayoutTab({ name, spec }: { name: string; spec: PortalSpec
         {markedList.map((field) => (
           <li key={field.name}>
             <Button
-              size="sm"
               variant="ghost"
               className="underline"
               onClick={() => {
@@ -255,7 +254,7 @@ function PublishBar({ dirty, pending, onPublish, onDiscard }: { dirty: boolean; 
   const { t } = useTranslation();
   return (
     <Card padding="md" className={dirty ? "sticky bottom-2 z-10 flex flex-wrap items-center gap-3 shadow-md" : "flex flex-wrap items-center gap-3"}>
-      <p className="min-w-0 flex-1 basis-60 text-caption text-fg-muted">{dirty ? t("portals.layout.unpublished") : t("portals.layout.published")}</p>
+      <p className="min-w-0 flex-1 basis-60 text-body text-fg-muted">{dirty ? t("portals.layout.unpublished") : t("portals.layout.published")}</p>
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" disabled={!dirty || pending} disabledReason={t("portals.layout.why.nothing")} onClick={onDiscard}>
           {t("portals.layout.discard")}
@@ -490,7 +489,7 @@ function PageForm({
           </Button>
         </div>
         {home ? (
-          <p className="text-caption text-fg-muted">{t("portals.layout.homeHint")}</p>
+          <p className="text-body text-fg-muted">{t("portals.layout.homeHint")}</p>
         ) : (
           <>
             <Field id="layout-page-title" label={t("portals.layout.pageTitle")} help={t("portals.layout.hint.pageTitle")} errors={fault(`spec.pages[${at}].title`)} required>
@@ -504,7 +503,7 @@ function PageForm({
       {rows.map((row, r) => (
         <section key={r} aria-label={t("portals.layout.row", { n: r + 1 })} className="space-y-3 border-t border-dashed border-border pt-3 sm:rounded-md sm:border sm:p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-caption font-medium text-fg-muted">{t("portals.layout.row", { n: r + 1 })}</p>
+            <p className="text-body font-medium text-fg-muted">{t("portals.layout.row", { n: r + 1 })}</p>
             {row.blocks.length < MAX_ROW_BLOCKS ? <RowAdd id={`layout-row${r}-type`} onAdd={(type) => onPages((pages) => addToRow(pages, at, r, newBlock(type, lang)))} /> : null}
           </div>
           {row.blocks.map((block, b) => {
@@ -616,7 +615,7 @@ function BlockCard({
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 flex-1">
           <h4 className="text-body font-semibold">{typeLabel}</h4>
-          {!open && summary ? <p className="truncate text-caption text-fg-muted">{summary}</p> : null}
+          {!open && summary ? <p className="truncate text-body text-fg-muted">{summary}</p> : null}
         </div>
         {faulted ? null : (
           <Button size="sm" variant="secondary" aria-expanded={open} aria-controls={`${id}-form`} onClick={() => setEditing(!editing)}>
@@ -708,7 +707,7 @@ function BlockCard({
       ) : block.type === "numbers" ? (
         <fieldset className="flex flex-wrap gap-x-6 gap-y-2">
           <legend className="mb-2 text-body font-medium">{t("portals.layout.numbers")}</legend>
-          <p className="basis-full text-caption text-fg-muted">{t("portals.layout.hint.numbers")}</p>
+          <p className="basis-full text-body text-fg-muted">{t("portals.layout.hint.numbers")}</p>
           {PORTAL_NUMBERS.map((n) => (
             <Checkbox
               key={n}
@@ -746,8 +745,8 @@ function BlockCard({
       ) : block.type === "file-list" ? (
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 text-body font-medium">{t("portals.layout.files")}</legend>
-          <p className="text-caption text-fg-muted">{t("portals.layout.hint.files")}</p>
-          {choices.files.length === 0 ? <p className="text-caption text-fg-muted">{t("portals.layout.noFiles")}</p> : null}
+          <p className="text-body text-fg-muted">{t("portals.layout.hint.files")}</p>
+          {choices.files.length === 0 ? <p className="text-body text-fg-muted">{t("portals.layout.noFiles")}</p> : null}
           {choices.files.map((f) => (
             <Checkbox
               key={f.id}
