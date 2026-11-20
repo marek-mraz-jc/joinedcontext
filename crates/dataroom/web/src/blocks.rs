@@ -106,7 +106,7 @@ pub struct FrameView {
     pub origin: String,
     /// Behind the frame until it paints, and what stays when it fails to load.
     pub waiting: String,
-    /// What the waiting line turns into when a chart frame loads an error page instead.
+    /// What the waiting line turns into when the frame fails (jc-viz.js).
     pub failed: String,
     pub empty: String,
     /// The dataset's page: the way on when the frame shows nothing.
@@ -385,7 +385,7 @@ impl Ctx<'_> {
                     sandbox: "allow-scripts allow-same-origin".into(),
                     origin: String::new(),
                     waiting: jc_t("block_map_waiting", &self.chrome.lang),
-                    failed: String::new(),
+                    failed: jc_t("block_map_failed", &self.chrome.lang),
                     empty: jc_t("map_empty", &self.chrome.lang),
                     href: self.dataset_href(d),
                 })

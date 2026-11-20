@@ -18,19 +18,33 @@ window.addEventListener("message", function (event) {
     }
   });
 });
-// A portal block's chart (T-7433) that loaded yet never said its height drew an error page, not
-// the chart: the frame goes and the line behind it says so. A slow chart gets ten seconds.
+// A portal block's frame (T-7433) that shows nothing: the frame goes and the line behind it says
+// why, from its data-jc-failed or data-jc-empty.
+function jcFrameState(frame, which) {
+  var state = frame.parentNode.querySelector(".jc-frame-state");
+  if (!state || !state.getAttribute(which)) return;
+  state.textContent = state.getAttribute(which);
+  state.removeAttribute("aria-hidden");
+  state.setAttribute("role", "status");
+  frame.hidden = true;
+  frame.parentNode.classList.add("jc-frame-failed");
+}
+// A chart that loaded yet never said its height drew an error page. A slow chart gets ten seconds.
 document.querySelectorAll(".jc-frame iframe[data-jc-viz]").forEach(function (frame) {
   frame.addEventListener("load", function () {
     setTimeout(function () {
-      var state = frame.parentNode.querySelector(".jc-frame-state");
-      if (frame.jcVizSaid || !state) return;
-      state.textContent = state.getAttribute("data-jc-failed");
-      state.removeAttribute("aria-hidden");
-      state.setAttribute("role", "status");
-      frame.hidden = true;
-      frame.parentNode.classList.add("jc-frame-failed");
+      if (!frame.jcVizSaid) jcFrameState(frame, "data-jc-failed");
     }, 10000);
+  });
+});
+// The map page (same origin) says when it could not load or has nothing to draw.
+window.addEventListener("message", function (event) {
+  var data = event.data || {};
+  if (event.origin !== window.location.origin || data.type !== "jc-map-state") return;
+  document.querySelectorAll(".jc-frame iframe.jc-map-frame").forEach(function (frame) {
+    if (frame.contentWindow !== event.source) return;
+    if (data.state === "failed") jcFrameState(frame, "data-jc-failed");
+    if (data.state === "empty") jcFrameState(frame, "data-jc-empty");
   });
 });
 // T-5192: a frame as tall as its content has no viewport of its own, so a dialog it centres lands

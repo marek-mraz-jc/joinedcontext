@@ -10,9 +10,17 @@ const MVT = "application/vnd.mapbox-vector-tile";
 const UNITS = { Cel: "°C", deg: "°", "m/s": "m/s", hPa: "hPa", mm: "mm", m: "m", km: "km", "%": "%" };
 const HIDDEN = new Set(["id", "type", "@context", "location", "geometry"]);
 
+// A portal page block that frames this map (T-7433) shows its own line instead of a blank map.
+function tellFrame(state) {
+  if (typeof window !== "undefined" && window.parent !== window) {
+    window.parent.postMessage({ type: "jc-map-state", state }, window.location.origin);
+  }
+}
+
 if (typeof document !== "undefined") {
   for (const box of document.querySelectorAll("[data-jc-map]")) {
     start(box).catch((error) => {
+      tellFrame("failed");
       // The block says it failed, the console says why; the table above is the data either way.
       console.warn("jc-map:", error);
       const note = box.querySelector(".jc-map-note");
@@ -52,6 +60,7 @@ async function start(box) {
     // Nothing to draw is no failure: the embed page says so, the dataset page keeps the map hidden.
     if (!card) note.textContent = config.t.map_empty || config.t.map_failed;
     box.dataset.state = "empty";
+    tellFrame("empty");
     return;
   }
   if (card) card.hidden = false;
@@ -160,6 +169,7 @@ async function start(box) {
   } catch {
     note.textContent = config.t.map_failed;
     box.dataset.state = "failed";
+    tellFrame("failed");
     return;
   }
   shown = null;

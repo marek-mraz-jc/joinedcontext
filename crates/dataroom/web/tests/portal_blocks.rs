@@ -276,6 +276,12 @@ fn a_map_or_chart_says_what_it_waits_for_and_when_there_is_nothing_to_draw() {
         ),
         "a chart that loads an error page says so (jc-viz.js)"
     );
+    assert!(
+        html.contains(
+            "data-jc-failed=\"Mapa sa nepodarilo načítať; údaje sú na stránke datasetu.\""
+        ),
+        "a map that cannot load says so (jc-map.js tells jc-viz.js)"
+    );
     // Nothing to draw: the block stays, says so and leads to the dataset.
     assert!(html.contains("Tento dataset nemá miesta, ktoré by sa dali ukázať na mape."));
     assert!(html.contains("Tento dataset zatiaľ nemá graf; údaje sú na stránke datasetu."));
