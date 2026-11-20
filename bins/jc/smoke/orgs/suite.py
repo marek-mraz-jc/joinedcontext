@@ -49,6 +49,13 @@ Rows, per Organization O (target O; ids carry O so an incident is one Organizati
   names them; the manifests that say so live in Git, not in a database the watch reads), picked
   at random each run and never the previous run's question (--previous), so the answer cache
   cannot answer it and the router has to search O's pages.
+- pipelines.delivering.<project>/<pipeline> (T-7445), per Pipeline of O's projects that ran in the
+  last 7 days (the snapshot's pipeline_runs): fails when it delivered (sent + unchanged > 0) at
+  least once in those 7 days, delivered nothing in the window, and failed in it; the window is 2 h
+  or two of its periods (the median gap between its newest runs), whichever is longer. The actual
+  names the failures and the newest failure's error text. Never delivered in 7 days, or no run in
+  the window (paused, stopped, not due), is a skip; a run that delivered nothing and failed nothing
+  passes. ci/known.txt refuses a line holding these rows (all/suite.py load_known).
 An outside host (crawl and harvest) is HEAD only and only when DNS names public addresses alone.
 Result lines carry statuses and counts, never a response body or a person's data."""
 
@@ -72,7 +79,7 @@ for p in (SMOKE, SMOKE / "mcp"):
 
 import live
 from client import Mcp
-from common import FAIL, Http, Results, as_json, events, solve
+from common import FAIL, PASS, SKIP, Http, Results, as_json, events, solve
 
 SUITE = "orgs"
 NAME = re.compile(r"[a-z][a-z0-9_-]{0,62}")
@@ -136,7 +143,7 @@ def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | No
 
     def org(name: str) -> dict:
         return orgs.setdefault(name, {"hosts": {}, "catalogue": None, "harvest": [], "crawl": [],
-                                      "assistant": None, "asks": None, "apps": []})
+                                      "assistant": None, "asks": None, "apps": [], "pipelines": []})
 
     for o in doc.get("organizations") or []:
         if not NAME.fullmatch(o.get("name") or "") or o.get("host") == "auto":
@@ -168,6 +175,9 @@ def build(doc: dict, snap: dict, assistants: dict | None = None, apps: dict | No
     for k in snap.get("knowledge") or []:
         if owner.get(k.get("project")) in orgs:
             orgs[owner[k["project"]]]["crawl"].append(k)
+    for pl in snap.get("pipelines") or []:
+        if isinstance(pl, dict) and owner.get(pl.get("project")) in orgs:
+            orgs[owner[pl["project"]]]["pipelines"].append(pl)
     for name, ids in (assistants or {}).items():
         if name in orgs:
             pid, _, projects = ids[-1].partition("@")  # the last flag wins
@@ -293,6 +303,33 @@ def newest_crawl(c: dict) -> tuple[dt.datetime | None, str]:
     return last, "sites.last_crawl"
 
 
+def delivering(pl: dict, now: dt.datetime) -> tuple[str, str]:
+    """(pass, fail or skip, the actual) of one Pipeline's runs: failing and silent for its window
+    after delivering in the last 7 days is a fail (T-7444: 253 silent pipelines for 29 h, no alarm)."""
+    runs = [(at, int(r.get("delivered") or 0), int(r.get("failed") or 0))
+            for r in pl.get("runs") or [] if isinstance(r, dict) and (at := parse_time(r.get("at")))]
+    last = parse_time(pl.get("lastDelivered"))
+    if not last:
+        return SKIP, "never delivered in 7 days"
+    times = sorted(at for at, _, _ in runs)
+    gaps = sorted((b - a).total_seconds() for a, b in itertools.pairwise(times))
+    period = gaps[len(gaps) // 2] if gaps else 0.0
+    window = max(2 * 3600.0, 2 * period)
+    since = now - dt.timedelta(seconds=window)
+    inside = [(d, f) for at, d, f in runs if at >= since]
+    hours = f"{window / 3600:g} h"
+    if not inside:
+        return SKIP, f"no run in the last {hours}: paused, stopped or not due"
+    ago = f"last delivered {(now - last).total_seconds() / 3600:.1f} h ago"
+    if last >= since:
+        return PASS, f"{ago}, {len(inside)} runs in the last {hours}"
+    failed = sum(f for _, f in inside)
+    got = f"0 delivered, {failed} failed in {len(inside)} runs of the last {hours}; {ago}"
+    if not failed:
+        return PASS, got + " (the source sent nothing)"
+    return FAIL, got + f"; newest error: {clean_title(pl.get('error'))[:160] or 'no error text kept'}"
+
+
 def answered(st: int) -> bool:
     return 200 <= st < 400
 
@@ -303,6 +340,7 @@ class Suite:
         self.previous = previous_questions(a.previous)
         self.asked: dict[str, str] = {}
         self.rng = random.Random()
+        self.now = dt.datetime.now(dt.UTC)
         self.scheme = a.scheme
         self.schedules = schedules(Path(a.manifests))
         self.installation = (doc.get("identity") or {}).get("realm") or "jc"
@@ -382,6 +420,15 @@ class Suite:
             self.r.check(f"embed.{o}", o, "chunks.embed_error of O's sources", "0 refused passages",
                          f"{errors} refused, {pending} waiting", errors == 0)
         self.assistant(o, e)
+        for pl in e["pipelines"]:
+            result, got = delivering(pl, self.now)
+            rid = f"pipelines.delivering.{pl.get('project')}/{pl.get('pipeline')}"
+            call = "pipeline_runs of the last 7 days (read-only snapshot)"
+            want = "a Pipeline that delivered in 7 days delivers, or does not fail, in its window"
+            if result == SKIP:
+                self.r.skip(rid, o, call, want, got)
+            else:
+                self.r.check(rid, o, call, want, got, result == PASS)
 
     def job(self, rid: str, o: str, c: dict) -> None:
         """The source's newest finished crawl job is done; a failed one names its error class."""
@@ -521,6 +568,8 @@ def main(argv) -> int:
         res.skip("organizations", a.deployment, "jc.toml and the registry", "an Organization",
                  "no Organization with a working host")
     suite = Suite(doc, orgs, res, a)
+    # the pipeline windows count from the database's clock at the snapshot, not this host's
+    suite.now = parse_time(snap.get("pipelinesAt")) or suite.now
     try:
         suite.run()
     finally:

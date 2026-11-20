@@ -701,6 +701,8 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
         calls.append(args)
         if args[-1] == watch.EMBED_ERROR_SQL:
             return "SET\n" + json.dumps({"embedError": embed_error})
+        if args[-1] == watch.PIPELINES_SQL:
+            return "SET\n" + json.dumps({"pipelines": []})
         if args[-1].startswith("SELECT"):
             return "SET\n" + json.dumps({"organizations": []} if "organizations" in args[-1] else {"knowledge": []})
         return "pod/postgres-cluster-1\n" if "pod" in args else 'mode = "host"\n'
@@ -712,13 +714,66 @@ def test_the_snapshot_reads_only_inside_a_read_only_transaction(monkeypatch, tmp
     assert calls[0] == ("-n", "jc", "get", "configmap", "jc", "-o", r"jsonpath={.data.jc\.toml}")
     assert not any("exec" in c and c[1] == "jc" for c in calls)
     assert toml.read_text() == 'mode = "host"\n'
-    assert json.loads(snap.read_text()) == {"organizations": [], "knowledge": []}
-    queries = [c for c in calls if c[-1].startswith("SELECT")]
-    assert len(queries) == 3 and all("SET default_transaction_read_only = on" in c for c in queries)
+    assert json.loads(snap.read_text()) == {"organizations": [], "pipelines": [], "knowledge": []}
+    queries = [c for c in calls if c[-1].startswith(("SELECT", "WITH"))]
+    assert len(queries) == 4 and all("SET default_transaction_read_only = on" in c for c in queries)
     # Before assistant migration 0025 the query names no chunks.embed_error (the column does not exist).
     assert ("embed_error" in queries[-1][-1]) is embed_error
-    for sql in (watch.PORTAL_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
+    for sql in (watch.PORTAL_SQL, watch.PIPELINES_SQL, watch.assistant_sql(True), watch.assistant_sql(False), watch.EMBED_ERROR_SQL):
         assert not any(w in sql.upper() for w in ("INSERT", "UPDATE ", "DELETE", "DROP", "TRUNCATE", "C.TEXT"))
     # Crawl jobs give their time, kind and the error's class only: never the error's own text.
     assert "split_part(coalesce(j.error, ''), ':', 1)" in watch.assistant_sql(True)
     assert "j.error" not in watch.assistant_sql(True).replace("split_part(coalesce(j.error, ''), ':', 1)", "")
+
+
+def runs(*rows) -> list[dict]:
+    """Newest first, as the snapshot lists them: (hours ago, delivered, failed)."""
+    return [{"at": at(h), "delivered": d, "failed": f} for h, d, f in rows]
+
+
+def test_a_pipeline_that_delivered_and_now_only_fails_is_red_with_its_newest_error():
+    hourly_403 = {"project": "p", "pipeline": "air", "lastDelivered": at(29),
+                  "runs": runs((0.2, 0, 40), (1.2, 0, 40), (2.2, 0, 40), (3.2, 0, 40)),
+                  "error": "write refused: 403 Open Data Is Read-Only\u0007"}
+    result, got = orgs.delivering(hourly_403, NOW)
+    assert result == "fail", got
+    assert got.startswith("0 delivered, 80 failed in 2 runs of the last 2 h; last delivered 29.0 h ago")
+    assert got.endswith("newest error: write refused: 403 Open Data Is Read-Only")
+    # it delivers again: green on the next run
+    back = {**hourly_403, "lastDelivered": at(0.1), "runs": runs((0.1, 12, 0), *[(h, 0, 40) for h in (1.2, 2.2)])}
+    assert orgs.delivering(back, NOW)[0] == "pass"
+
+
+def test_never_delivered_paused_and_an_empty_source_are_not_silent_pipelines():
+    never = {"lastDelivered": None, "runs": runs((0.5, 0, 9), (1.5, 0, 9))}
+    assert orgs.delivering(never, NOW) == ("skip", "never delivered in 7 days")
+    paused = {"lastDelivered": at(30), "runs": runs((30, 5, 0), (31, 5, 0))}
+    assert orgs.delivering(paused, NOW)[0] == "skip"
+    assert "paused" in orgs.delivering(paused, NOW)[1]
+    empty = {"lastDelivered": at(6), "runs": runs((0.5, 0, 0), (1.5, 0, 0), (2.5, 0, 0), (6, 3, 0))}
+    quiet = "0 delivered, 0 failed in 2 runs of the last 2 h; last delivered 6.0 h ago (the source sent nothing)"
+    assert orgs.delivering(empty, NOW) == ("pass", quiet)
+
+
+def test_a_daily_pipeline_gets_two_periods_before_it_counts_as_silent():
+    daily = {"lastDelivered": at(23), "runs": runs((0.5, 0, 3), (23, 8, 0), (47, 8, 0), (71, 8, 0))}
+    assert orgs.delivering(daily, NOW) == ("pass", "last delivered 23.0 h ago, 3 runs in the last 48 h")
+    two_days = {"lastDelivered": at(49), "runs": runs((0.5, 0, 3), (24.5, 0, 3), (49, 8, 0), (73, 8, 0))}
+    assert orgs.delivering(two_days, NOW)[0] == "fail"
+
+
+def test_the_delivering_rows_belong_to_the_projects_organization(tmp_path, edge, public_sources):
+    doc = snapshot(public_sources)
+    doc["pipelinesAt"] = at(0)
+    doc["pipelines"] = [
+        {"project": "beta-web", "pipeline": "events", "lastDelivered": at(20), "runs": runs((0.5, 0, 4), (1.5, 0, 4)),
+         "error": "403 Open Data Is Read-Only"},
+        {"project": "alpha-web", "pipeline": "air", "lastDelivered": at(0.5), "runs": runs((0.5, 7, 0), (1.5, 7, 0))},
+        {"project": "unmapped", "pipeline": "x", "lastDelivered": at(20), "runs": runs((0.5, 0, 4))},
+    ]
+    _, res = run(tmp_path, public_sources, snap_doc=doc)
+    rows = {r["id"]: r for r in res["checks"] if ".delivering." in r["id"]}
+    assert set(rows) == {"pipelines.delivering.beta-web/events", "pipelines.delivering.alpha-web/air"}
+    red = rows["pipelines.delivering.beta-web/events"]
+    assert (red["target"], red["result"]) == ("beta", "fail") and "403 Open Data Is Read-Only" in red["actual"]
+    assert rows["pipelines.delivering.alpha-web/air"]["result"] == "pass"

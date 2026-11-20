@@ -178,6 +178,20 @@ def test_a_known_gap_stays_listed_but_only_a_new_failure_turns_the_verdict_red(t
                            "--known", str(known)]) == 1
 
 
+@pytest.mark.parametrize("line", [r"^orgs/pipelines\.delivering\.  # T-7222 door move",
+                                  r"delivering\.helsinki/area-events$  # filed",
+                                  r"^orgs/  # every org row", r"^pipelines/  # the whole suite", r".*"])
+def test_the_known_list_refuses_a_line_that_would_hold_a_silent_pipeline(tmp_path, line):
+    known = tmp_path / "known.txt"
+    known.write_text("^good/two$  # filed\n" + line + "\n")
+    with pytest.raises(SystemExit, match=r"known.txt:2: .*an incident, never a known failure"):
+        all_suite.load_known(str(known))
+    known.write_text("^pipelines/(status|history|held)$  # runner\n^orgs/crawl\\.  # filed\n")
+    assert len(all_suite.load_known(str(known))) == 2
+    # the gate's own list stays loadable
+    assert all_suite.load_known(str(HERE.parent.parent / "ci" / "known.txt"))
+
+
 def test_the_realm_is_the_state_files_name_else_jc_and_a_bad_name_stops(tmp_path):
     from common import realm_of
     assert realm_of(None) == "jc"

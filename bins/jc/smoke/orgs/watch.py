@@ -26,8 +26,9 @@ Each run:
    Organizations, their served hosts and catalogue, each project's Organization; each knowledge
    source's root, last crawl, newest done and newest finished crawl job (time, kind and, when it
    failed, the error text before its first colon), embedder refusals and up to 12 titles of its public, embedded pages and
-   documents, sampled anew each run for the assistant's question). Counts, addresses and public page
-   titles only: no passage text, no person.
+   documents, sampled anew each run for the assistant's question); per Pipeline that ran in 7 days its
+   newest runs' delivered and failed counts and the newest failure's masked error text. Counts,
+   addresses, public page titles and pipeline error text only: no passage text, no record, no person.
 2. `run orgs` on that, into <state>/runs/<UTC stamp>/ (kept 7 days).
 3. One line appended to <state>/orgs.log (lines older than 7 days dropped):
    `<UTC> <cluster>: N checks, F fail; <org> f/n, ...; red <ids>`.
@@ -98,6 +99,25 @@ ASSISTANT_SQL = """SELECT json_build_object('knowledge', coalesce(json_agg(json_
                      AND length(btrim(coalesce(p.title, d.title))) BETWEEN 3 AND 200) u
                    ORDER BY random() LIMIT 12) t)
 ) ORDER BY s.organization, s.project, s.source), '[]')) FROM sites s"""
+# Per Pipeline that ran in the last 7 days (T-7445): when it last delivered (sent + unchanged > 0),
+# its newest 12 runs and the newest failed line of its newest failing run (pipeline_log keeps the
+# message masked and cut, pipeline_log.rs clean). Counts and the error text only, no record.
+PIPELINES_SQL = """WITH p AS (SELECT DISTINCT project, pipeline FROM pipeline_runs WHERE last_at > now() - interval '7 days')
+SELECT json_build_object('pipelinesAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+  'pipelines', coalesce(json_agg(json_build_object('project', p.project, 'pipeline', p.pipeline,
+  'lastDelivered', (SELECT to_char(max(r.last_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') FROM pipeline_runs r
+                    WHERE r.project = p.project AND r.pipeline = p.pipeline AND r.last_at > now() - interval '7 days'
+                      AND r.sent + coalesce(r.unchanged, 0) > 0),
+  'runs', (SELECT coalesce(json_agg(json_build_object('at', to_char(r.last_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                                                      'delivered', r.sent + coalesce(r.unchanged, 0), 'failed', r.failed)
+                                    ORDER BY r.last_at DESC), '[]')
+           FROM (SELECT * FROM pipeline_runs r WHERE r.project = p.project AND r.pipeline = p.pipeline
+                   AND r.last_at > now() - interval '7 days' ORDER BY r.last_at DESC LIMIT 12) r),
+  'error', (SELECT left(l.message, 200) FROM pipeline_log l WHERE l.project = p.project AND l.pipeline = p.pipeline
+              AND l.outcome = 'failed' AND l.run = (SELECT r.run FROM pipeline_runs r WHERE r.project = p.project
+                AND r.pipeline = p.pipeline AND r.failed > 0 ORDER BY r.last_at DESC LIMIT 1)
+            ORDER BY l.id DESC LIMIT 1)
+) ORDER BY p.project, p.pipeline), '[]')) FROM p"""
 # chunks.embed_error arrives with assistant migration 0025: before it, the errors are unknown (null).
 EMBED_ERROR_SQL = """SELECT json_build_object('embedError', EXISTS (SELECT 1 FROM information_schema.columns
   WHERE table_schema = current_schema() AND table_name = 'chunks' AND column_name = 'embed_error'))"""
@@ -153,7 +173,7 @@ def snapshot(cfg: dict, run: Path) -> tuple[Path, Path]:
     pod = kubectl(cfg, "-n", cfg["pg_namespace"], "get", "pod", "-o", "name", "-l",
                   f"cnpg.io/cluster={cfg['pg_cluster']},cnpg.io/instanceRole=primary").split()[0]
     embed_error = query(cfg, pod, "jc_assistant", EMBED_ERROR_SQL).get("embedError") is True
-    snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL),
+    snap = {**query(cfg, pod, "jc_portal", PORTAL_SQL), **query(cfg, pod, "jc_portal", PIPELINES_SQL),
             **query(cfg, pod, "jc_assistant", assistant_sql(embed_error))}
     path = run / "snapshot.json"
     path.write_text(json.dumps(snap, indent=1))
