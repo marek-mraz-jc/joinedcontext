@@ -124,11 +124,21 @@ pub async fn handle_ckan_post(
 
 async fn dispatch_ckan_action(
     state: DataroomState,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     action: String,
     payload: Value,
     is_get: bool,
 ) -> Response {
+    // A sandboxed page (`Origin: null`) holds no cookie or token of its own: its read of a view
+    // goes on anonymously, whatever the browser attached.
+    let opaque = is_get
+        && action == "resource_view_show"
+        && headers.get(header::ORIGIN).is_some_and(|o| o == "null");
+    if opaque {
+        headers.remove(header::COOKIE);
+        headers.remove(header::AUTHORIZATION);
+        headers.remove("x-ckan-api-key");
+    }
     let (ctx, cat) = match state.resolve_context(&headers).await {
         Ok(v) => v,
         Err(e) => {
@@ -141,17 +151,37 @@ async fn dispatch_ckan_action(
             return ckan_err(&base, &action, e);
         }
     };
-    let viz = is_get
-        .then(|| {
-            cat.effective_branding(Some(&state.branding_of(&cat)))
-                .address(Address::Viz)
-        })
-        .flatten();
+    let (viz, portal) = if is_get {
+        let branding = cat.effective_branding(Some(&state.branding_of(&cat)));
+        (
+            branding.address(Address::Viz),
+            branding.address(Address::Portal),
+        )
+    } else {
+        (None, None)
+    };
+    // On the Portal's origin (jc in slug mode) the chart host runs in an opaque origin, as the
+    // dataset page frames it (`dataroom_web::helpers::viz_frame`): its read comes from `null`.
+    let sandboxed = viz.as_deref().map(origin_of).is_some()
+        && viz.as_deref().map(origin_of) == portal.as_deref().map(origin_of);
     let mut response = answer_ckan_action(state, ctx, cat, action, payload, is_get).await;
-    if is_get {
+    if opaque && sandboxed {
+        allow_opaque_origin(&mut response);
+    } else if is_get {
         allow_viz_origin(&mut response, headers.get(header::ORIGIN), viz.as_deref());
     }
     response
+}
+
+/// The chart host beside the Portal reads its published view from `null` (above): that read alone
+/// gets CORS for `null`, never with credentials, and it went on anonymously.
+fn allow_opaque_origin(response: &mut Response) {
+    let headers = response.headers_mut();
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("null"),
+    );
 }
 
 /// Lets the chart renderer's host page (`https://viz.{domain}`) read the answer: it fetches a

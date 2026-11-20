@@ -50,7 +50,7 @@
   // jc's viz mount answers beside other modules and names the gateway and the catalogue in
   // `<meta name="jc-viz">` (as explore.js reads it): a meta that is present names both, and one it
   // leaves out or names badly is "" (none), never a guess.
-  function hosts(meta, hostname) {
+  function hosts(hostname, meta) {
     var domain = String(hostname).replace(/^viz\./, "");
     var own = { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
     if (meta == null) return own;
@@ -224,7 +224,9 @@
   var queued = [];
   function slot(run) {
     var locks = root.navigator && root.navigator.locks;
-    if (locks && typeof locks.request === "function") {
+    // An opaque origin (the host beside the Portal, jc slug mode) has no lock manager: each
+    // request fails with a SecurityError, so it counts its reads itself.
+    if (locks && typeof locks.request === "function" && root.origin !== "null") {
       var free = function (i) {
         // Every slot taken: wait in line for one of them.
         if (i === READS) return locks.request("jc-viz-read-" + Math.floor(Math.random() * READS), run);
@@ -478,7 +480,7 @@
   function main() {
     var where = parseHash(location.hash);
     var meta = document.querySelector('meta[name="jc-viz"]');
-    var h = hosts(meta ? meta.getAttribute("content") : null, location.hostname);
+    var h = hosts(location.hostname, meta ? meta.getAttribute("content") : null);
     var status = document.getElementById("status");
     var frame = document.getElementById("frame");
     var lang = (where && where.lang) || (navigator.language || "en").slice(0, 2);

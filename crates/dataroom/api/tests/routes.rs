@@ -775,6 +775,70 @@ async fn ckan_reads_answer_cors_for_the_viz_origin_alone() {
     );
 }
 
+/// Beside the Portal (jc slug mode) the chart host runs in an opaque origin and reads its view from
+/// `null` (T-7464: barcelona-charging's chart stayed blank on jc-dev). That read alone gets CORS for
+/// `null`, never with credentials, and goes on anonymously whatever the browser attached; on an
+/// origin of its own (`viz.{domain}`) a `null` read gets no CORS answer.
+#[tokio::test]
+async fn a_view_read_from_the_sandboxed_chart_host_beside_the_portal_is_anonymous() {
+    let w = world_with(|s| {
+        router(s.with_installation_branding(BrandingBlock {
+            domain: "city.test".into(),
+            addresses: dataroom_core::branding::BrandingAddresses {
+                viz: format!("https://{HOST}/embed"),
+                portal: format!("https://{HOST}"),
+                ..Default::default()
+            },
+            ..BrandingBlock::default()
+        }))
+    })
+    .await;
+    let read = |id: &'static str, token: Option<&'static str>, origin: &'static str| {
+        let app = w.app.clone();
+        async move {
+            send(
+                &app,
+                Method::GET,
+                &format!("/api/3/action/resource_view_show?id={id}"),
+                token,
+                &[("origin", origin)],
+                Body::empty(),
+            )
+            .await
+        }
+    };
+    let a = read("view-open", None, "null").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(a.header("access-control-allow-origin"), "null");
+    assert_eq!(a.header("access-control-allow-credentials"), "");
+    assert!(a.vary().to_ascii_lowercase().contains("origin"));
+    // The admin's token rides along but is dropped: the private view stays hidden.
+    assert_eq!(
+        read("view-secret", Some("tok-admin"), "https://data.city.test")
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let a = read("view-secret", Some("tok-admin"), "null").await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
+    // Only the view read: another action from `null` gets no CORS answer.
+    let a = read_from(&w.app, "null").await;
+    assert_eq!(a.header("access-control-allow-origin"), "");
+    // On an origin of its own the chart host is no opaque origin: `null` is refused there.
+    let own = world().await;
+    let a = send(
+        &own.app,
+        Method::GET,
+        "/api/3/action/resource_view_show?id=view-open",
+        None,
+        &[("origin", "null")],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert_eq!(a.header("access-control-allow-origin"), "");
+}
+
 #[tokio::test]
 async fn ckan_site_and_listing_actions() {
     let w = world().await;

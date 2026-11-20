@@ -942,7 +942,7 @@
 +  // jc's viz mount answers beside other modules and names the gateway and the catalogue in
 +  // `<meta name="jc-viz">` (as explore.js reads it): a meta that is present names both, and one it
 +  // leaves out or names badly is "" (none), never a guess.
-+  function hosts(meta, hostname) {
++  function hosts(hostname, meta) {
      var domain = String(hostname).replace(/^viz\./, "");
 -    return { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
 +    var own = { domain: domain, api: "https://api." + domain, data: "https://opendata." + domain };
@@ -957,17 +957,28 @@
    }
  
    // Whether a parent may hand this page a spec (`#show`, ADR-N-053 §2.9): https on the domain or
-@@ -465,7 +477,8 @@
+@@ -212,7 +224,9 @@
+   var queued = [];
+   function slot(run) {
+     var locks = root.navigator && root.navigator.locks;
+-    if (locks && typeof locks.request === "function") {
++    // An opaque origin (the host beside the Portal, jc slug mode) has no lock manager: each
++    // request fails with a SecurityError, so it counts its reads itself.
++    if (locks && typeof locks.request === "function" && root.origin !== "null") {
+       var free = function (i) {
+         // Every slot taken: wait in line for one of them.
+         if (i === READS) return locks.request("jc-viz-read-" + Math.floor(Math.random() * READS), run);
+@@ -465,7 +479,8 @@
  
    function main() {
      var where = parseHash(location.hash);
 -    var h = hosts(location.hostname);
 +    var meta = document.querySelector('meta[name="jc-viz"]');
-+    var h = hosts(meta ? meta.getAttribute("content") : null, location.hostname);
++    var h = hosts(location.hostname, meta ? meta.getAttribute("content") : null);
      var status = document.getElementById("status");
      var frame = document.getElementById("frame");
      var lang = (where && where.lang) || (navigator.language || "en").slice(0, 2);
-@@ -483,6 +496,7 @@
+@@ -483,6 +498,7 @@
      }
      if (location.hash === "#show") return show(h, frame, fail);
      if (!where) return fail("This page draws a chart of the open-data catalogue; the address names none.");
@@ -975,7 +986,7 @@
      if (where.inline) document.body.classList.add("inline");
      var controller = new AbortController();
      var timer = setTimeout(function () { controller.abort(); }, TIMEOUT_MS);
-@@ -572,6 +586,9 @@
+@@ -572,6 +588,9 @@
          if (!ourOrigin(event.origin, h.domain) || data.type !== "jc-viz-show") return;
          parent = event.origin;
          var lang = /^[a-z]{2}$/.test(data.lang) ? data.lang : "en";
@@ -985,7 +996,7 @@
          document.documentElement.lang = lang;
          map = !!data.spec && data.spec.$schema === "urn:joinedcontext:map:v1";
          var errors = map ? root.jcRefuseMap(data.spec, h.domain) : root.jcRefuse(data.spec, h.domain);
-@@ -579,8 +596,8 @@
+@@ -579,8 +598,8 @@
          var title = map ? data.spec.title : null;
          document.getElementById("title").textContent = typeof title === "string" ? title : "";
          pending = map
@@ -1031,7 +1042,22 @@
  <body>
 --- a/site/render.js
 +++ site/render.js
-@@ -24,11 +24,17 @@
+@@ -6,11 +6,12 @@
+   "use strict";
+ 
+   var chart = document.getElementById("chart");
+-  var host = location.origin; // the host page's origin: the URL's, ours is opaque
+   var domain = location.hostname.replace(/^viz\./, "");
+ 
++  // To any parent: beside the Portal (jc slug mode) the host page is an opaque origin too, which no
++  // named target matches, and a ready, a height or a refusal tells a framer nothing it lacks.
+   function tell(message) {
+-    window.parent.postMessage(message, host);
++    window.parent.postMessage(message, "*");
+   }
+ 
+   function height() {
+@@ -24,11 +25,17 @@
    var loader = { load: refused, sanitize: refused, http: refused, file: refused };
  
    function draw(message) {
@@ -1051,7 +1077,7 @@
        ast: true,
        expr: vega.expressionInterpreter,
        loader: loader,
-@@ -42,15 +48,35 @@
+@@ -42,15 +49,35 @@
  
    // The rows go in as the named data set `source` before the first draw, so the chart never
    // draws empty first: Vega-Lite's top-level `datasets`, Vega's data entry of that name.
@@ -1090,6 +1116,17 @@
        }
      } else if (Array.isArray(spec.data)) {
        copy.data = spec.data.map(function (entry) {
+@@ -61,7 +88,9 @@
+   }
+ 
+   window.addEventListener("message", function (event) {
+-    if (event.source !== window.parent || event.origin !== host) return;
++    // Our parent alone: on its own origin the host page's (the URL's; ours is opaque), beside the
++    // Portal `null`, as the host runs sandboxed there too. The spec is checked again below.
++    if (event.source !== window.parent || (event.origin !== location.origin && event.origin !== "null")) return;
+     var message = event.data || {};
+     if (message.type !== "jc-viz-render") return;
+     document.documentElement.lang = /^[a-z]{2}$/.test(message.lang) ? message.lang : "en";
 --- /dev/null
 +++ site/theme.js
 @@ -0,0 +1,82 @@
