@@ -519,7 +519,10 @@ function Publications({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono font-semibold">{publication.endpoint}</span>
                   <StatusChip publication={publication} failed={failedRun} />
-                  {publication.phase ? <LifecycleBadge kind="phase" value={publication.phase} /> : null}
+                  {/* A refused one reads Error by construction: its own badge says it once (UI judge). */}
+                  {publication.phase && !publication.refused ? (
+                    <LifecycleBadge kind="phase" value={publication.phase} />
+                  ) : null}
                   {publication.datasetUrl ? (
                     <ExternalLink
                       href={publication.datasetUrl}
@@ -532,6 +535,18 @@ function Publications({
                     <span className="font-mono">{publication.dataset}</span>
                   )}
                 </div>
+                {/* An endpoint the Portal refused at its load of `main` serves nothing: the reason
+                    stays here instead of the dataset vanishing from the list (T-7455). */}
+                {publication.refused ? (
+                  <p
+                    className="mt-2 border-l-2 border-danger pl-2 text-sm text-fg [overflow-wrap:anywhere]"
+                    data-testid="ckan-refused"
+                  >
+                    {t(mayPublish ? "ckan.publications.refusedWhy" : "ckan.publications.refusedWhyAsk", {
+                      reason: publication.refused,
+                    })}
+                  </p>
+                ) : null}
                 {last ? (
                   <p
                     className={`mt-1 text-sm [overflow-wrap:anywhere] ${failedRun ? "text-danger" : "text-fg-muted"}`}
@@ -589,13 +604,16 @@ function Publications({
   );
 }
 
-/** Published, or the reason it is not: a dangling instance is the usual one. */
+/** Published, or the reason it is not: a refused endpoint or a dangling instance. */
 function StatusChip({ publication, failed }: { publication: PublicationStatus; failed: boolean }): JSX.Element {
   const { t } = useTranslation();
   const missing = publication.instanceMissing;
+  const refused = Boolean(publication.refused);
   return (
-    <Badge tone={missing || failed ? "danger" : "neutral"}>
-      {missing
+    <Badge tone={missing || refused || failed ? "danger" : "neutral"}>
+      {refused
+        ? t("ckan.publications.refused")
+        : missing
         ? t("ckan.publications.missingInstance", { instance: publication.instance })
         : t(failed ? "ckan.publications.notPublishedTo" : "ckan.publications.publishedTo", { instance: publication.instance })}
     </Badge>

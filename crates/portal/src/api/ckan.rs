@@ -22,6 +22,7 @@ use jcctl::loader::{RawManifest, RawMetadata};
 use jcctl::publish::ckan::{package_of, Settings};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
 use crate::auth::session::CurrentUser;
@@ -80,6 +81,10 @@ pub struct PublicationStatus {
     pub dataset_url: Option<String>,
     /// One resource per enabled representation, plus the schema index (EP-64).
     pub resources: Vec<ResourceLink>,
+    /// Why the Portal refused the endpoint at its load of `main`, so nothing of it is published:
+    /// a quota, a Policy it names that is not there (P-2, T-7455).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused: Option<String>,
 }
 
 /// One CKAN resource of a dataset.
@@ -133,7 +138,13 @@ pub async fn get_status(
     let settings = Settings::new(data_host(&state, catalogue.as_ref()));
     let apps = state.mirror.list(&project, "App", &opts).items;
     let endpoints = state.mirror.list(&project, "Endpoint", &opts).items;
-    let publications = publications(endpoints, &apps, &project, &instances, &settings);
+    let mut publications = publications(endpoints, &apps, &project, &instances, &settings);
+    // An endpoint the load refused serves nothing and is no dataset: it stays on this page with
+    // the reason rather than vanishing from it (T-7455).
+    let refused = state.mirror.refused_of(&project, "Endpoint");
+    publications.extend(refused_publications(
+        refused, &apps, &project, &instances, &settings,
+    ));
 
     Ok(Json(CkanStatus {
         instances: instances
@@ -233,6 +244,37 @@ fn publications(
     out
 }
 
+/// The datasets the refused `endpoints` would publish, each carrying the refusal (the message of
+/// its `Accepted=False` condition) and no catalogue address or resource, since none is written.
+fn refused_publications(
+    endpoints: Vec<ResourceEnvelope>,
+    apps: &[ResourceEnvelope],
+    project: &str,
+    instances: &[(String, CkanInstanceSpec)],
+    settings: &Settings,
+) -> Vec<PublicationStatus> {
+    let reasons: BTreeMap<String, String> = endpoints
+        .iter()
+        .map(|env| {
+            let reason = env
+                .status
+                .iter()
+                .flat_map(|status| &status.conditions)
+                .find(|c| c.r#type == "Accepted" && c.status == "False")
+                .and_then(|c| c.message.clone())
+                .unwrap_or_else(|| "the Portal refused this endpoint".to_owned());
+            (env.metadata.name.clone(), reason)
+        })
+        .collect();
+    let mut out = publications(endpoints, apps, project, instances, settings);
+    for row in &mut out {
+        row.refused = reasons.get(&row.endpoint).cloned();
+        row.dataset_url = None;
+        row.resources.clear();
+    }
+    out
+}
+
 /// The status of an endpoint whose `spec.publish.ckan` names an instance the project lacks, or
 /// `None` when it publishes nowhere. Without the instance there is no organization and no
 /// catalogue URL, but the endpoint still says where it wants to go: a dangling reference is
@@ -264,6 +306,7 @@ fn missing(
             .to_owned(),
         dataset_url: None,
         resources: Vec::new(),
+        refused: None,
     })
 }
 
@@ -310,6 +353,7 @@ fn publication(
             .as_array()
             .map(|items| items.iter().map(link).collect())
             .unwrap_or_default(),
+        refused: None,
     })
 }
 
@@ -378,6 +422,57 @@ mod tests {
             "http://api.ba.localhost:42141"
         );
         assert!(organization_catalogue(&state, "helsinki").is_none());
+    }
+
+    /// T-7455: an endpoint the load refused stays on the catalogue page as the dataset it would
+    /// be, with the refusal and no catalogue address; a served one carries no refusal.
+    #[test]
+    fn a_refused_endpoint_shows_its_dataset_with_the_reason_and_no_address() {
+        let instance: CkanInstanceSpec = serde_json::from_value(serde_json::json!({
+            "url": "https://opendata.bratislava.sk",
+            "apiTokenRef": { "name": "ckan-token", "key": "token" },
+            "organizationDefault": "bratislava"
+        }))
+        .unwrap();
+        let instances = vec![("bratislava".to_owned(), instance)];
+        let endpoint = |name: &str, status: Value| -> ResourceEnvelope {
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Endpoint",
+                "metadata": { "name": name, "namespace": "bratislava" },
+                "spec": {
+                    "contextSpaceRef": "bratislava", "slug": "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm",
+                    "audience": "public", "enabledRepresentations": ["ngsi-ld", "csv"],
+                    "publish": { "ckan": { "instanceRef": { "kind": "CkanInstance", "name": "bratislava" } } }
+                },
+                "status": status,
+            }))
+            .unwrap()
+        };
+        let reason =
+            "revision 0123456789ab fails this kind's validation, nothing is served for it: \
+                      quota: publicEndpoints 452 of 450 in project bratislava; raise the quota on \
+                      the project or the organization first (PF-73, PF-74)";
+        let refused = endpoint(
+            "bratislava-zs-kapacita",
+            serde_json::json!({ "phase": "Error", "conditions": [
+                { "type": "Accepted", "status": "False", "reason": "Refused", "message": reason }
+            ] }),
+        );
+        let settings = Settings::new("api.bratislava.sk");
+        let rows = refused_publications(vec![refused], &[], "bratislava", &instances, &settings);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].endpoint, "bratislava-zs-kapacita");
+        assert_eq!(rows[0].dataset, "bratislava-zs-kapacita");
+        assert_eq!(rows[0].refused.as_deref(), Some(reason));
+        assert_eq!(rows[0].dataset_url, None);
+        assert!(rows[0].resources.is_empty());
+        assert_eq!(rows[0].phase.as_deref(), Some("Error"));
+
+        let served = endpoint("bratislava-zs-ziaci", Value::Null);
+        let rows = publications(vec![served], &[], "bratislava", &instances, &settings);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].refused, None);
+        assert!(rows[0].dataset_url.is_some());
     }
 
     /// T-7185: a run-time Organization jc adds publishes into its own catalogue from the next

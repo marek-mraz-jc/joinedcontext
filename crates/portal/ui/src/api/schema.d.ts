@@ -14483,6 +14483,11 @@ export interface components {
             organization?: string | null;
             /** @description The endpoint's lifecycle phase, as the mirror reports it. */
             phase?: string | null;
+            /**
+             * @description Why the Portal refused the endpoint at its load of `main`, so nothing of it is published:
+             *     a quota, a Policy it names that is not there (P-2, T-7455).
+             */
+            refused?: string | null;
             /** @description One resource per enabled representation, plus the schema index (EP-64). */
             resources: components["schemas"]["ResourceLink"][];
         };

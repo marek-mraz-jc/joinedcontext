@@ -700,6 +700,45 @@ mod tests {
         );
     }
 
+    /// T-7455: the bratislava seed (the Organization, the Project and every Endpoint, as jc-dev
+    /// and jc-prod hold them) stands inside its quota under the built-in ceiling. At 450 the load
+    /// of `main` refused bratislava-zmena-priemerneho-veku-v-rokom-2022-a-2035-ba,
+    /// bratislava-zs-kapacita and bratislava-zs-ziaci, the last three of 453 by name, and the
+    /// catalogue lost their datasets.
+    #[test]
+    fn the_bratislava_seed_keeps_every_public_endpoint_inside_its_quota() {
+        let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/components/context-gateway/seed/bratislava");
+        let mut items = Vec::new();
+        for entry in std::fs::read_dir(&seed).expect("the bratislava seed") {
+            let path = entry.expect("a seed file").path();
+            if path.extension().is_none_or(|e| e != "yaml") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable");
+            let Ok(doc) = serde_norway::from_str::<Value>(&text) else {
+                continue;
+            };
+            let (Some(kind), Some(name), Some(namespace)) = (
+                doc["kind"].as_str(),
+                doc["metadata"]["name"].as_str(),
+                doc["metadata"]["namespace"].as_str(),
+            ) else {
+                continue;
+            };
+            if matches!(kind, "Organization" | "Project" | "Endpoint") {
+                items.push(envelope(kind, name, namespace, doc["spec"].clone()));
+            }
+        }
+        let mirror = mirror_with(items);
+        assert_eq!(usage(&mirror, "bratislava")["publicEndpoints"], 453);
+        assert_eq!(
+            beyond(&mirror, "bratislava", "publicEndpoints", &bounds()),
+            Vec::<String>::new(),
+            "every public Endpoint of the seed is served"
+        );
+    }
+
     /// PL-116, S-22: the stricter floor holds, a slower clock passes, and the refusal names the
     /// field, the floor and where it is set.
     #[test]

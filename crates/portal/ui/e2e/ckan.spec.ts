@@ -1,3 +1,5 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { axeViolations } from "./axe";
@@ -255,6 +257,41 @@ test.describe("the open-data page", () => {
     await expect(give).toHaveAccessibleDescription(/Only an administrator who may approve role bindings/);
     await give.click({ force: true });
     expect(writes).toEqual([]);
+  });
+
+  test("keeps an endpoint the Portal refused in the list with the reason, at desktop and phone width (T-7455)", async ({
+    page,
+  }) => {
+    const reason =
+      "revision 0123456789ab fails this kind's validation, nothing is served for it: quota: publicEndpoints 451 of 450 in project helsinki; raise the quota on the project or the organization first (PF-73, PF-74)";
+    const refused = structuredClone(STATUS);
+    refused.publications.push({
+      endpoint: "public-noise",
+      phase: "Error",
+      instance: "hel-fi",
+      instanceMissing: false,
+      dataset: "helsinki-noise",
+      resources: [],
+      refused: reason,
+    } as (typeof STATUS.publications)[number]);
+    await stubApi(page, { status: { code: 200, body: refused } });
+    for (const [width, height, name] of [
+      [1440, 900, "refused-1440"],
+      [400, 860, "refused-400"],
+    ] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto("/projects/helsinki/ckan?lang=en");
+      const entry = page.getByRole("listitem").filter({ hasText: "public-noise" });
+      await expect(entry.getByText("refused by the Portal, not published")).toBeVisible();
+      await expect(entry.getByTestId("ckan-refused")).toContainText("publicEndpoints 451 of 450");
+      await expect(entry.getByRole("link")).toHaveCount(0);
+      const dir = process.env.JC_EVIDENCE_DIR;
+      if (dir) {
+        mkdirSync(dir, { recursive: true });
+        await page.screenshot({ path: join(dir, `${name}.png`), fullPage: true });
+      }
+    }
+    expect(await axeViolations(page)).toEqual([]);
   });
 
   test("has no axe violations", async ({ page }) => {

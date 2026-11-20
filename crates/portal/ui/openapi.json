@@ -65057,6 +65057,13 @@
             ],
             "description": "The endpoint's lifecycle phase, as the mirror reports it."
           },
+          "refused": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the Portal refused the endpoint at its load of `main`, so nothing of it is published:\na quota, a Policy it names that is not there (P-2, T-7455)."
+          },
           "resources": {
             "type": "array",
             "items": {
