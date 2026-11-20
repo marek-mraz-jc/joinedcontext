@@ -253,6 +253,18 @@ describe("ckan publishing manager", () => {
     expect(screen.getAllByText(en.ckan.publications.mapAndTable)[0].closest("a")).toHaveAttribute("href", expect.stringContaining("/dataset/"));
   });
 
+  it("keeps an endpoint the Portal refused in the list with the reason and no link (T-7455)", async () => {
+    const refused = structuredClone(STATUS);
+    const reason = "quota: publicEndpoints 452 of 450 in project banskabystrica; raise the quota on the project or the organization first (PF-73, PF-74)";
+    Object.assign(refused.publications[1], { instance: "open-data", instanceMissing: false, phase: "Error", refused: reason });
+    renderCkan(refused);
+    const entry = (await screen.findByText("hluk-public")).closest("li") as HTMLElement;
+    expect(within(entry).getByText(en.ckan.publications.refused)).toBeInTheDocument();
+    expect(within(entry).queryByText("published to open-data")).not.toBeInTheDocument();
+    expect(within(entry).getByTestId("ckan-refused")).toHaveTextContent(reason);
+    expect(within(entry).queryByRole("link")).toBeNull();
+  });
+
   it("says which endpoint points at a catalogue that is not there", async () => {
     renderCkan();
 
