@@ -97,9 +97,10 @@ async fn placed(state: &AppState, project: &str, from: &str, to: &str) -> Projec
         .expect("keyed");
     sqlx::query(
         "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
-         VALUES ($1, 'Space', 'air', '{}', 'test', 'person')",
+         VALUES ($1, 'ContextSpace', 'air', $2, 'test', 'person')",
     )
     .bind(project)
+    .bind(json!({ "kind": "ContextSpace", "metadata": { "name": "air", "namespace": project } }))
     .execute(&mut *tx)
     .await
     .expect("a draft");
@@ -183,6 +184,57 @@ async fn plan(state: &AppState, who: Identity, project: &str, to: &str) -> (Stat
     (answer.status, body(&answer.text))
 }
 
+/// Organizations `from` and `to` in the mirror, an org-admin of each and a reading member of
+/// `from` (people `{from}-admin`, `{to}-admin`, `{from}-member`), as the cluster binds them.
+fn people(state: &AppState, from: &str, to: &str) {
+    let m = &state.mirror;
+    for organization in [from, to] {
+        m.upsert(envelope(
+            "Organization",
+            organization,
+            ORG_NAMESPACE,
+            json!({ "domain": format!("{organization}.example") }),
+        ));
+    }
+    let kinds: Vec<&str> = joinedcontext_portal::resource::kinds()
+        .map(|info| info.kind)
+        .collect();
+    for (role, verbs) in [
+        ("org-admin", json!(["read", "propose", "approve", "delete"])),
+        ("member", json!(["read"])),
+    ] {
+        m.upsert(envelope(
+            "Role",
+            role,
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": kinds, "verbs": verbs }] }),
+        ));
+    }
+    for (user, role, organization) in [
+        (format!("{from}-admin"), "org-admin", from),
+        (format!("{to}-admin"), "org-admin", to),
+        (format!("{from}-member"), "member", from),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            &user,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": format!("{user}@hel.fi") }],
+                    "role": role, "scope": { "organization": organization } }),
+        ));
+    }
+}
+
+/// `GET path` as the person `name`: the status and the body.
+async fn read_as(state: &AppState, name: &str, path: &str) -> (StatusCode, String) {
+    let answer = send(state, person(name), "GET", path, None).await;
+    (answer.status, answer.text)
+}
+
+fn denied(status: StatusCode) -> bool {
+    status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND
+}
+
 /// The move itself: refused while the manifest names the old Organization, planned with counts,
 /// applied by a second operator; then the rows read under the new key only, the old Organization
 /// keys the project no more, and the audit holds counts, never a row.
@@ -194,6 +246,23 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     let project = run("moved");
     let old = placed(&state, &project, &from, &to).await;
     assert_eq!(drafts_under(&state, old, &project).await, 1);
+    people(&state, &from, &to);
+    let at = format!("/api/v1/projects/{project}");
+    let drafts = format!("{at}/drafts");
+    for reader in [format!("{from}-admin"), format!("{from}-member")] {
+        let (status, text) = read_as(&state, &reader, &at).await;
+        assert_eq!(status, StatusCode::OK, "{reader} before the move: {text}");
+    }
+    let (status, text) = read_as(&state, &format!("{from}-admin"), &drafts).await;
+    assert!(
+        status == StatusCode::OK && text.contains("\"air\""),
+        "{from}-admin reads the draft before the move: {status} {text}"
+    );
+    let (status, text) = read_as(&state, &format!("{to}-admin"), &at).await;
+    assert!(
+        denied(status),
+        "{to}-admin before the move: {status} {text}"
+    );
 
     // The move is asked for while the manifest still names the old Organization (T-7462): the
     // proposal is what lets the Project Change name the target, and the approval waits for it.
@@ -248,6 +317,30 @@ async fn a_moved_project_reads_only_under_its_new_organization() {
     assert_eq!(new.project, old.project, "the project keeps its id");
     assert_ne!(new.org, old.org);
     assert_eq!(drafts_under(&state, new, &project).await, 1);
+
+    // Over HTTP, the bounce's ask: the old Organization's people lose the project, the new
+    // Organization's administrator reads it and its keyed drafts.
+    for reader in [format!("{from}-admin"), format!("{from}-member")] {
+        for path in [&at, &drafts] {
+            let (status, text) = read_as(&state, &reader, path).await;
+            assert!(
+                denied(status),
+                "{reader} on {path} after the move: {status} {text}"
+            );
+        }
+    }
+    let (status, text) = read_as(&state, &format!("{to}-admin"), &at).await;
+    assert_eq!(status, StatusCode::OK, "{to}-admin after the move: {text}");
+    let (status, text) = read_as(&state, &format!("{to}-admin"), &drafts).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{to}-admin drafts after the move: {text}"
+    );
+    assert!(
+        text.contains("\"air\""),
+        "the moved draft reads under B: {text}"
+    );
     assert_eq!(
         joinedcontext_portal::project_ids::key(pool(&state), &from, &project)
             .await
