@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ResolvedGridConfig } from "./config";
 import { complete } from "./filters";
-import { CellView } from "./cells";
+import { CellView, cellDisplayText } from "./cells";
 import type { CellLabels } from "./cells";
 import { DEFAULT_INSPECTOR_LABELS } from "./CellInspector";
 import type { EntityGridProps } from "./EntityGrid";
@@ -10,7 +10,7 @@ import type { FilterColumn } from "./filters";
 import { useGridDetail } from "./GridDetail";
 import { useGridMap } from "./GridMapPanel";
 import { cellText, valueHasHistory } from "./model";
-import type { RichRow } from "./model";
+import type { RichCell, RichRow } from "./model";
 import { useEntitySelection } from "../sdk/panel";
 import { useCellContent } from "./useCellContent";
 import { useColumnControls } from "./useColumnControls";
@@ -29,17 +29,20 @@ const EMPTY_IDS: readonly string[] = [];
  * phone they say nothing a row does not, so they leave the columns for the line above the table. A
  * field empty on every row (value "") leaves too, so the next field with data sits beside the label.
  */
-function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): { attr: string; value: string; place?: true }[] {
+type SharedValue = { attr: string; value: string; place?: true; cell?: RichCell | RichCell[] };
+
+function sharedValues(rows: readonly RichRow[], skip: ReadonlySet<string>): SharedValue[] {
   if (rows.length < 2) return [];
   const isPlace = (cell: RichRow["cells"][string]) => (Array.isArray(cell) ? cell[0] : cell)?.kind === "geo";
   return Object.keys(rows[0].cells)
     .filter((attr) => !skip.has(attr))
-    .flatMap((attr): { attr: string; value: string; place?: true }[] => {
+    .flatMap((attr): SharedValue[] => {
       // A place reads as its shape ("Point") on every row, never as one shared value: it leaves the
       // table for the line above as the way to filter by area (T-7072).
       if (rows.every((row) => isPlace(row.cells[attr]))) return [{ attr, value: "", place: true }];
       const value = cellText(rows[0].cells[attr]);
-      return rows.every((row) => cellText(row.cells[attr]) === value) ? [{ attr, value }] : [];
+      // The stored text tells equal values apart; the line shows the cell as its column would (T-7431).
+      return rows.every((row) => cellText(row.cells[attr]) === value) ? [{ attr, value, cell: rows[0].cells[attr] }] : [];
     });
 }
 
@@ -130,7 +133,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   // row, and a Type every row shares (one type asked) or a value every loaded row shares moves to
   // the line above the table. The shared values come from the last rows read, one render behind.
   const oneType = !options.config.type.includes(",");
-  const [shared, setShared] = useState<{ attr: string; value: string; place?: true }[]>([]);
+  const [shared, setShared] = useState<SharedValue[]>([]);
   const gridHidden = useMemo(() => {
     const narrow = compact ? ["id", ...(oneType ? ["entity:type"] : []), ...shared.map((each) => each.attr)] : [];
     const gone = [...narrow, ...unreadable];
@@ -291,6 +294,11 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
     () => ({ yes: labels.yes, no: labels.no, points: labels.points, openTarget: labels.openTarget, moreInstances: labels.moreInstances }),
     [labels.yes, labels.no, labels.points, labels.openTarget, labels.moreInstances],
   );
+  // A period or a list every row shares reads as words on the phone's line, never as its JSON (T-7431).
+  const sharedShown = useMemo(
+    () => shared.map(({ cell, ...each }) => (cell === undefined || each.value === "" ? each : { ...each, value: cellDisplayText(cell, where, cellLabels) })),
+    [shared, where, cellLabels],
+  );
   const cells = useCellContent(options, grid, { where, cellLabels, renderers, termHref, rules, editable, isPrimary, rowName, openDetail, ...related, refusedCell: edits.refusedCell, ruleProblems: edits.ruleProblems });
   const controls = useColumnControls(options, grid, { tableRef, layout, setLayout, rules, onHide, ownHidden, setOwnHidden });
   // What the source answered, handed to the host as it arrives: the page a person is looking at is
@@ -312,7 +320,7 @@ export function useGridView(props: EntityGridProps & { onDrill?: (urn: string, t
   return {
     props,
     options,
-    shared,
+    shared: sharedShown,
     grid,
     labels,
     columns,
