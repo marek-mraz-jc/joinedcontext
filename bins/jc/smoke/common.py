@@ -8,6 +8,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import os
 import re
 import threading
 import time
@@ -83,6 +84,24 @@ def jwt_claims(token: str | None) -> dict:
         return {}
 
 
+OPENDATA_ORIGIN = "JC_SMOKE_OPENDATA_ORIGIN"
+
+
+def opendata_door(url: str) -> str:
+    """`run all --opendata-origin <url>`: a request under /opendata goes to that loopback origin
+    with the same path. A deployment whose dataroom runs in a pod of its own behind the edge
+    (jc-dev: `[remote.modules] dataroom`) answers /opendata on the jc pod's door with the
+    Portal's page, so its catalogue is read through a second door (the edge, or the dataroom's
+    service)."""
+    origin = os.environ.get(OPENDATA_ORIGIN)
+    u = urllib.parse.urlsplit(url)
+    if not origin or not re.match(r"/opendata(/|$)", u.path):
+        return url
+    loopback_only(origin)
+    o = urllib.parse.urlsplit(origin)
+    return urllib.parse.urlunsplit((o.scheme, o.netloc, u.path, u.query, u.fragment))
+
+
 class Http:
     """Never follows redirects; answers (status, headers with lower-case names, body bytes)."""
 
@@ -105,7 +124,7 @@ class Http:
         if body is not None:
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
             headers.setdefault("Content-Type", "application/json")
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+        req = urllib.request.Request(opendata_door(self.base + path), data=data, method=method, headers=headers)
         try:
             with self.opener.open(req, timeout=self.timeout) as r:
                 return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read()
