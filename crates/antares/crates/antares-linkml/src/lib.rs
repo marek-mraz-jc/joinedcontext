@@ -5,6 +5,8 @@
 //! narrowed to what the caller may see
 //! through the view and the policy engine (`effective = view ∧ engine`,
 //! ADR-0023 rule 5) and rendered from that narrowed model alone (LK1).
+//! A request with the broker's admin token is narrowed by the view alone:
+//! the one projection a mirror of the shared Endpoint pins (SHR-16, T-7425).
 //!
 //! Each path is one discovery operation the view must allow, asked through
 //! [`antares_ops::ViewOps::visible`] with its own clause: the documents and
@@ -161,7 +163,8 @@ async fn serve(
     let Some(wanted) = Wanted::of(rest, accept) else {
         return Refusal::NotFound.ngsi_ld();
     };
-    match answer(&view, cache, id, &wanted, caller).await {
+    let view_only = ops.admits_admin(headers);
+    match answer(&view, cache, id, &wanted, caller, view_only).await {
         Ok((media_type, body)) => respond(method, headers, media_type, &body),
         Err(refusal) => refusal.ngsi_ld(),
     }
@@ -174,6 +177,7 @@ async fn answer(
     id: &str,
     wanted: &Wanted,
     caller: &Caller,
+    view_only: bool,
 ) -> Result<(&'static str, Arc<[u8]>), Refusal> {
     // A Tenant with no schema has its views' LinkML surface closed: the
     // same answer as a path that is not there. An oversized one never got
@@ -208,10 +212,13 @@ async fn answer(
     };
     // An engine refusing a named class or slot answers as an absent one
     // (LK1): a 403 would tell the caller the name is there.
-    let visible = match view
-        .visible(caller, wanted.operation(), &types, &attrs)
-        .await
-    {
+    let asked = if view_only {
+        view.visible_to_view(wanted.operation())
+    } else {
+        view.visible(caller, wanted.operation(), &types, &attrs)
+            .await
+    };
+    let visible = match asked {
         Err(Refusal::Denied(_)) if matches!(wanted, Wanted::Class(_) | Wanted::Slot(_)) => {
             return Err(Refusal::NotFound)
         }

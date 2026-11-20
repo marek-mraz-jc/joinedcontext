@@ -837,6 +837,28 @@ impl ViewOps {
             .map_err(|d| Refusal::Denied(d.0))
     }
 
+    /// [`Self::visible`] through the view alone, the engine not asked: the
+    /// view's own projection, one set whoever reads it. Only a caller with
+    /// the broker's admin token is answered this (the Portal pinning a
+    /// shared Endpoint's schema by digest, SHR-16, T-7425); the gateway
+    /// strips every `Authorization` before it forwards, so no request of a
+    /// person or workload reaches it.
+    ///
+    /// # Errors
+    /// [`Refusal::NotAllowed`] when the view does not allow `op`.
+    pub fn visible_to_view(&self, op: OperationId) -> Result<Visible, Refusal> {
+        let Some(clause) = op.gate_clause().filter(|_| self.allows(op)) else {
+            return Err(Refusal::NotAllowed { allow: Vec::new() });
+        };
+        antares_api::views::with_view(
+            Some(&self.view),
+            clause,
+            Ok(antares_api::policy::unnarrowed()),
+        )
+        .map(|f| Visible::from_filter(&f))
+        .map_err(|d| Refusal::Denied(d.0))
+    }
+
     /// The `type=` a surface's Query Entities pushes for the local type
     /// names `wanted` (the last IRI segment): the view's shown types of
     /// those names, or for a view of every type the Tenant's stored types of
