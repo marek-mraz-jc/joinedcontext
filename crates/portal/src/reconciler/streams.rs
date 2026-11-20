@@ -14,7 +14,7 @@ use jc_core::Condition;
 use serde_json::Value;
 
 mod identity;
-mod render;
+pub(crate) mod render;
 pub use identity::*;
 pub use render::*;
 

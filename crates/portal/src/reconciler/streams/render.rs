@@ -892,7 +892,7 @@ pub(crate) fn source_endpoint(
 
 /// Whether an Endpoint of project `owner` admits a reader from project `reader` by its audience;
 /// one without an audience admits nobody.
-pub(super) fn admits(mirror: &Mirror, spec: &Value, owner: &str, reader: &str) -> bool {
+pub(crate) fn admits(mirror: &Mirror, spec: &Value, owner: &str, reader: &str) -> bool {
     match spec.get("audience").and_then(Value::as_str) {
         Some("public") => true,
         Some("organization") => {

@@ -178,6 +178,10 @@ pub struct Operation<'a> {
     /// What a write by id lands on, as stored (ADR-0023 rule 7): `None`
     /// for a read, a create, or an id the tenant does not hold.
     pub stored: Option<&'a StoredImage>,
+    /// A write by id that leaves in place the stored Attributes its body does not carry: a
+    /// Batch Upsert with `options=update` (clause 6.15.3), which its clause alone does not tell from
+    /// the default replace (T-7424).
+    pub keeps_unwritten: bool,
 }
 
 /// The stored Entity a write by id changes, as an engine judges it
@@ -243,6 +247,7 @@ impl std::fmt::Debug for Operation<'_> {
             .field("geo", &self.geo.is_some())
             .field("body", &self.body.is_some())
             .field("stored", &self.stored.is_some())
+            .field("keeps_unwritten", &self.keeps_unwritten)
             .finish()
     }
 }
@@ -262,6 +267,7 @@ impl Operation<'_> {
             geo: None,
             body: None,
             stored: None,
+            keeps_unwritten: false,
         }
     }
 }
@@ -1478,17 +1484,7 @@ pub async fn offers(
     };
     let ops: Vec<Operation<'_>> = clauses
         .iter()
-        .map(|clause| Operation {
-            clause,
-            ids: &[],
-            types: &[],
-            attrs: &[],
-            q: None,
-            scope_q: None,
-            geo: None,
-            body: None,
-            stored: None,
-        })
+        .map(|&clause| Operation::new(clause))
         .collect();
     let subject = subject_of(tenant, headers);
     guarded(engine, &ops, || engine.offers_each(&subject, &ops))

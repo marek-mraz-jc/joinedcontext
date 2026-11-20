@@ -959,6 +959,61 @@ async fn a_replace_or_delete_keeps_unlisted_stored_attributes_refused() -> Res {
     Ok(())
 }
 
+/// T-7424: a Batch Upsert with `options=update` (clause 6.15.3) changes the Attributes it carries and
+/// removes none, so a grant listing those passes on an Entity holding more; the default replace
+/// of the same Entity still wipes the unlisted ones and stays refused (F-08).
+#[tokio::test]
+async fn an_upsert_update_of_listed_attributes_passes_where_a_replace_is_refused() -> Res {
+    let speed_only = grant("w", "group", "city", &["5.6.8"], cars(&["speed"]));
+    let (st, _) = broker(doc(&[speed_only])).await?;
+    seed(&st, &[car(1, 10, "/a")]).await?;
+    let batch = json!([{"id": "urn:ngsi-ld:Car:1", "type": "Car", "speed": prop(json!(5))}]);
+    let upsert = "/ngsi-ld/v1/entityOperations/upsert";
+    let (code, _) = send(&st, "POST", upsert, &ANA, Some(&batch)).await?;
+    assert_eq!(
+        code,
+        StatusCode::FORBIDDEN,
+        "a replace would drop the colour"
+    );
+    let (code, body) = send(
+        &st,
+        "POST",
+        &format!("{upsert}?options=update"),
+        &ANA,
+        Some(&batch),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{body}");
+    // the update kept the colour it was not granted
+    let (_, stored) = send(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:1",
+        &ADMIN,
+        None,
+    )
+    .await?;
+    assert_eq!(
+        stored.pointer("/colour/value"),
+        Some(&json!("red")),
+        "{stored}"
+    );
+    assert_eq!(stored.pointer("/speed/value"), Some(&json!(5)), "{stored}");
+    // an unlisted Attribute in the body stays refused under update as well
+    let coloured =
+        json!([{"id": "urn:ngsi-ld:Car:1", "type": "Car", "colour": prop(json!("blue"))}]);
+    let (code, _) = send(
+        &st,
+        "POST",
+        &format!("{upsert}?options=update"),
+        &ANA,
+        Some(&coloured),
+    )
+    .await?;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+    Ok(())
+}
+
 /// F-08: a write under a condition must leave the Entity inside it: a PATCH out of the `q`
 /// slice and a replace that drops the stored scope out of `scopeQ` are refused.
 #[tokio::test]

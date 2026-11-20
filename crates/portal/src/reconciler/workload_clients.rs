@@ -388,7 +388,12 @@ fn pipeline_accounts(mirror: &Mirror, namespace: &str, bentos: &Bentos) -> Vec<B
             accounts.push(BoundAccount {
                 project: project.clone(),
                 name: derived.name,
-                reach: Reach::Pipeline(named_endpoints(&spec, &mapping, &slugs)),
+                reach: Reach::Pipeline(named_endpoints(
+                    &spec,
+                    &mapping,
+                    &slugs,
+                    source_slug(mirror, &project, &spec, &slugs),
+                )),
                 auth: Auth::Workload(binding),
                 reports: true,
             });
@@ -460,7 +465,8 @@ fn host_pipeline_accounts(mirror: &Mirror, bentos: &Bentos, own: bool) -> Vec<Bo
             else {
                 continue;
             };
-            let named = named_endpoints(&spec, &mapping, &slugs);
+            let source = source_slug(mirror, &project, &spec, &slugs);
+            let named = named_endpoints(&spec, &mapping, &slugs, source);
             // jc-core refuses the name; one in the mirror anyway must not share the harness's client.
             if own && envelope.metadata.name != HARNESS {
                 accounts.push(BoundAccount {
@@ -514,14 +520,31 @@ fn host_variable(account: &BoundAccount) -> String {
     }
 }
 
-/// The slugs of the Endpoints a Pipeline names (T-5757): its outputs' and its Endpoint source's,
-/// as [`jc_core::kinds::pipeline_identity::derive`] resolves them, and each slug of `slugs` (its
-/// project's Endpoints by name) that `mapping`, its manifest and `bento.yaml` text, calls as
-/// `api/endpoint/{slug}`. A slug of another project, or none, names nothing. Sorted, no repeats.
+/// The slug of a Pipeline's Endpoint source, in the project its `endpointRef` names (W3, T-7423):
+/// a source shared by another project is reached under that project's slug, and the account's
+/// token needs its audience; what it may read there is still the source's Policies' to say.
+fn source_slug(
+    mirror: &Mirror,
+    project: &str,
+    spec: &jc_core::kinds::PipelineSpec,
+    slugs: &BTreeMap<String, String>,
+) -> Option<String> {
+    let reference = spec.source.as_ref()?.endpoint_ref.as_ref()?;
+    match reference.namespace() {
+        Some(owner) if owner != project => endpoint_slugs(mirror, owner).remove(reference.name()),
+        _ => slugs.get(reference.name()).cloned(),
+    }
+}
+
+/// The slugs of the Endpoints a Pipeline names (T-5757): its outputs', its Endpoint source's
+/// (`source`, resolved by [`source_slug`]), and each slug of `slugs` (its project's Endpoints by
+/// name) that `mapping`, its manifest and `bento.yaml` text, calls as `api/endpoint/{slug}`. A
+/// called slug of another project names nothing. Sorted, no repeats.
 fn named_endpoints(
     spec: &jc_core::kinds::PipelineSpec,
     mapping: &str,
     slugs: &BTreeMap<String, String>,
+    source: Option<String>,
 ) -> Vec<String> {
     let own: BTreeSet<&str> = slugs.values().map(String::as_str).collect();
     let called = mapping.split("api/endpoint/").skip(1).filter_map(|rest| {
@@ -533,19 +556,12 @@ fn named_endpoints(
     let declared = spec
         .outputs()
         .into_iter()
-        .map(|output| output.target_endpoint.local_id().to_owned())
-        .chain(
-            spec.source
-                .as_ref()
-                .and_then(|source| source.endpoint_ref.as_ref())
-                .map(|endpoint| endpoint.name().to_owned()),
-        )
-        .filter_map(|name| slugs.get(&name).map(String::as_str))
+        .filter_map(|output| slugs.get(output.target_endpoint.local_id()).cloned())
+        .chain(source)
         .collect::<Vec<_>>();
     declared
         .into_iter()
-        .chain(called)
-        .map(str::to_owned)
+        .chain(called.map(str::to_owned))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()

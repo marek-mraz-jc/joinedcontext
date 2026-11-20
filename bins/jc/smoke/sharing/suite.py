@@ -69,6 +69,7 @@ SHOWN = ("level", "note")
 URN = f"urn:ngsi-ld:{TYPE}:sh-1"
 MODEL = "sh-model"
 PA, PB = "sh-a", "sh-b"  # the fixture projects of A and B
+HUB_ACCOUNT = "sh-fedprot-reader"  # B's ServiceAccount its protected hub forwards as (w2-protected)
 
 WAYS = ("w1", "w2-public", "w2-protected", "w3")
 SURFACES = {
@@ -308,11 +309,22 @@ class Suite(mo.Suite):
                 policy(PA, "sh-src", "sh-share-admin", "user", self.ids("b-admin"), READS + WRITE, SHOWN, revoke),
                 policy(PA, "sh-src", "sh-share-pipeline", "serviceAccount", f"{PB}/pl-sh-copy", ["retrieveOps", "queryBatch"],
                        SHOWN, revoke),
+                # w2-protected: B's hub reads as B's ServiceAccount, which A grants by name (FED-15)
+                policy(PA, "sh-src", "sh-share-hub", "serviceAccount", f"{PB}/{HUB_ACCOUNT}", READS, SHOWN, revoke),
                 policy(PA, "sh-src", "sh-public", "role", "public", ["retrieveOps"], SHOWN, revoke)]
 
     def b_files(self) -> list:
         s, files = self.slugs, [(".jc/layout", "2\n"), ("project.yaml", head("Project", PB, "org")
                                                        + f"spec:\n  organizationRef: {self.org_b}\n")]
+        files.append((f"access/serviceaccounts/{HUB_ACCOUNT}.yaml", head("ServiceAccount", HUB_ACCOUNT, PB)
+                      + f"spec:\n  owner: {{ user: {self.ids('b-admin')} }}\n"
+                      "  purpose: reads A's shared Endpoint for B's hub space sh-fedprot\n"
+                      # a role is required; reading its own hub space is the least it can hold
+                      "  roles: [{ role: space-reader, scope: { contextSpace: sh-fedprot } }]\n"
+                      # an account is a Keycloak client; the in-process read signs in with none of it
+                      "  credentials: [{ kind: oauth-client, name: hub }]\n"))
+        identities = {"sh-open": "{ identity: anonymous }",
+                      "sh-shared": f"{{ identity: serviceAccount, serviceAccountRef: {{ kind: ServiceAccount, name: {HUB_ACCOUNT} }} }}"}
         for space, door, csr in (("sh-fedpub", "sh-fedpub", "sh-open"), ("sh-fedprot", "sh-fedprot", "sh-shared"),
                                  ("sh-copy", "sh-copy", None)):
             files += [*space_files(PB, space), endpoint(PB, space, door, s[door], "organization"),
@@ -320,14 +332,18 @@ class Suite(mo.Suite):
             if csr:
                 files.append((f"spaces/{space}/registrations/{csr}.yaml", head("ContextSourceRegistration", csr, PB)
                               + f"spec:\n  contextSpaceRef: {space}\n  endpointRef: {{ kind: Endpoint, name: {csr}, namespace: {PA} }}\n"
-                              # no token goes on a forward today (45.1): both forward anonymously
-                              "  federation: { identity: anonymous }\n"
+                              # read in process on one broker (SHR-17): the public share as the
+                              # anonymous caller, the protected one as B's ServiceAccount
+                              f"  federation: {identities[csr]}\n"
                               f"  information:\n    - entities:\n        - type: {TYPE}\n"))
         files += [policy(PB, "sh-copy", "sh-copy-pipelines", "serviceAccount", "pipelines", WRITE),
                   ("pipelines/sh-copy/pipeline.yaml", head("Pipeline", "sh-copy", PB)
                    + "spec:\n  class: auto\n  period: 30s\n  source:\n"
                    f"    endpointRef: {{ kind: Endpoint, name: sh-shared, namespace: {PA} }}\n"
-                   f"    query:\n      type: {TYPE}\n  targetEndpoint: urn:ngsi-ld:Endpoint:{{orgDomain}}:sh-copy:sh-copy\n"
+                   f"    query:\n      type: {TYPE}\n"
+                   # an Endpoint-sourced stream runs a mapping (streams::eligible); the copy is the identity
+                   "  compute: { kind: bloblang, bloblang: 'root = this' }\n"
+                   "  targetEndpoint: urn:ngsi-ld:Endpoint:{orgDomain}:sh-copy:sh-copy\n"
                    f"  output: {{ type: {TYPE}, mode: upsert }}\n"),
                   (f"shared/{PA}.yaml", head("SharedSpaceReference", PA, PB)
                    + f"spec:\n  alias: {PA}\n  endpointSlug: {s['sh-shared']}\n  schedule: {{ interval: 1m }}\n")]
